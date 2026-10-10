@@ -2,7 +2,7 @@
 
 use std::mem::size_of;
 
-use crate::{MainRowSelectionFact, SelectedStoredSample};
+use crate::{MainRowSelectionFact, SelectedStoredRow};
 use casa_imaging_model::{
     AntennaSelection, DataDescriptionSelection, IdSelection, IntentSelection, ObservationSource,
     RowSelection, SelectionBound, TimeSelection, UvDistanceUnit, UvSelection,
@@ -40,8 +40,8 @@ impl From<MainRowSelectionFact> for StoredMainRow {
     }
 }
 
-impl From<SelectedStoredSample> for StoredMainRow {
-    fn from(sample: SelectedStoredSample) -> Self {
+impl From<SelectedStoredRow> for StoredMainRow {
+    fn from(sample: SelectedStoredRow) -> Self {
         Self {
             data_description_id: sample.data_description_id(),
             field_id: sample.field_id(),

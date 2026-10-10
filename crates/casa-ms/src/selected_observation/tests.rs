@@ -2,9 +2,8 @@
 
 use super::{
     BoundObservationSource, BoundSelectedObservation, ObservationSourceBinding,
-    SelectedObservationContentBudget, SelectedObservationRow, SelectedObservationTraversalError,
+    SelectedObservationContentBudget, SelectedObservationRow,
     access::{BoundObservationReferenceData, validate_input_weight_group},
-    bound_observation::consume_validated_stream,
 };
 use crate::derived::engine::MsCalEngine;
 use crate::subtables::SubTable;
@@ -32,16 +31,13 @@ use casa_imaging_model::{
     ProductSupportComparison, ProductValidityPolicies, Projection, PsfPhaseCentreLaw,
     ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
     ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, RowSelection,
-    ScientificContract, SelectedColumns, SelectedInputWeightGroup, SelectedMainRow,
-    SelectedObservationInspectionError, SelectedObservationPassError,
-    SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
-    SelectedObservationSample, SelectedRows, SelectedSpectralEvaluation, SelectedVisibilitySample,
-    SelectionBound, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeRange, TimeScale,
-    TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct,
-    WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme, compile,
-    compile_observation,
+    ScientificContract, SelectedColumns, SelectedMainRow, SelectedObservationRunChannel,
+    SelectedObservationRunRow, SelectedRows, SelectionBound, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, TimeRange, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
+    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile, compile_observation,
 };
 use casa_tables::{ColumnSchema, Table, TableOptions};
 use casa_types::measures::{
@@ -54,7 +50,6 @@ use casa_types::measures::{
 };
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
-use std::convert::Infallible;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 
@@ -107,14 +102,6 @@ impl AccountedTestMeasures {
                 dut1_seconds: 0.0,
             }),
         }
-    }
-
-    fn grow(&self, additional: usize) {
-        self.state
-            .lock()
-            .expect("test Measures residency lock")
-            .retained
-            .reserve_exact(additional);
     }
 
     fn mutate_science(&self, identity: u8, dut1_seconds: f64) {
@@ -207,16 +194,8 @@ fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
             > one_row.content_plan().bytes_per_block()
     );
 
-    let one_row_samples = one_row
-        .selected_samples(&problem)
-        .expect("prepare one-row selected stream")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("read one-row selected stream");
-    let two_row_samples = two_rows
-        .selected_samples(&problem)
-        .expect("prepare two-row selected stream")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("read two-row selected stream");
+    let one_row_samples = stream_rows(&problem, 1);
+    let two_row_samples = stream_rows(&problem, 2);
 
     assert_eq!(one_row_samples.len(), 8);
     assert_eq!(one_row_samples, two_row_samples);
@@ -225,9 +204,9 @@ fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
             .iter()
             .map(|sample| {
                 (
-                    sample.address.physical_row,
-                    sample.address.channel_index,
-                    sample.address.correlation_index,
+                    sample.row.physical_row,
+                    sample.channel.channel_index,
+                    sample.correlation.correlation_index(),
                 )
             })
             .collect::<Vec<_>>(),
@@ -243,42 +222,31 @@ fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
         ]
     );
     let first = &one_row_samples[0];
-    assert_eq!(first.address.frequency_centre_hz, 1.4e9);
-    assert_eq!(first.address.frequency_lower_hz, 1.3995e9);
-    assert_eq!(first.address.frequency_upper_hz, 1.4005e9);
-    assert_eq!(first.address.channel_width_hz, 1.0e6);
-    assert_eq!(first.address.frequency_frame, FrequencyFrame::Topocentric);
-    assert_eq!(first.address.correlation_type, CorrelationType::CircularRr);
+    assert_eq!(first.channel.frequency_centre_hz, 1.4e9);
+    assert_eq!(first.channel.frequency_lower_hz, 1.3995e9);
+    assert_eq!(first.channel.frequency_upper_hz, 1.4005e9);
+    assert_eq!(first.channel.channel_width_hz, 1.0e6);
+    assert_eq!(first.channel.frequency_frame, FrequencyFrame::Topocentric);
+    assert_eq!(first.frequency_hz, 1.4e9);
     assert_eq!(
-        first.visibility,
-        SelectedVisibilitySample::Complex32([0.0, 0.0])
+        first.correlation.correlation_type(),
+        CorrelationType::CircularRr
     );
-    assert_eq!(first.coordinates.density_uvw_m, first.coordinates.raw_uvw_m);
+    assert_eq!(first.visibility, Visibility::Complex32([0.0, 0.0]));
+    let coordinates = &first.row.coordinates;
+    assert_eq!(coordinates.density_uvw_m, coordinates.raw_uvw_m);
+    assert_eq!(coordinates.transformed_uvw_m, coordinates.raw_uvw_m);
+    assert_eq!(coordinates.phase_shift_m, 0.0);
+    assert_eq!(coordinates.phase_direction, coordinates.delay_direction);
     assert_eq!(
-        first.coordinates.transformed_uvw_m,
-        first.coordinates.raw_uvw_m
+        coordinates.phase_direction,
+        coordinates.pointing_directions.antenna1
     );
-    assert_eq!(first.coordinates.phase_shift_m, 0.0);
-    assert_eq!(
-        first.coordinates.phase_direction,
-        first.coordinates.delay_direction
-    );
-    assert_eq!(
-        first.coordinates.phase_direction,
-        first.coordinates.pointing_directions.antenna1
-    );
-    assert_eq!(
-        first.coordinates.phase_direction.frame(),
-        DirectionFrame::J2000
-    );
-    assert_eq!(first.metadata.antenna1, 0);
-    assert_eq!(first.metadata.antenna2, 1);
-    assert_eq!(first.metadata.feed1, 0);
-    assert_eq!(first.metadata.feed2, 0);
-    assert_eq!(
-        inspect_samples(&problem, one_row_samples).expect("inspect exact bounded stream"),
-        inspect_samples(&problem, two_row_samples).expect("inspect repartitioned bounded stream")
-    );
+    assert_eq!(coordinates.phase_direction.frame(), DirectionFrame::J2000);
+    assert_eq!(first.row.metadata.antenna1, 0);
+    assert_eq!(first.row.metadata.antenna2, 1);
+    assert_eq!(first.row.metadata.feed1, 0);
+    assert_eq!(first.row.metadata.feed2, 0);
 }
 
 #[test]
@@ -314,30 +282,34 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
     );
     assert!(!ordinary_problem.requires_parallactic_angles());
     let ordinary_source = &ordinary_problem.inputs().observation_snapshot().sources()[0];
-    let ordinary = BoundObservationSource::open(
+    let ordinary = open_observation(
         &ordinary_problem,
         ordinary_source,
         content_budget_for_rows(&ordinary_problem, ordinary_source, 37, 1),
     )
     .unwrap();
     assert_eq!(
-        ordinary.geometry_engine().parallactic_angle_cache_entries(),
+        ordinary
+            .source(0)
+            .geometry_engine()
+            .parallactic_angle_cache_entries(),
         0
     );
-    let ordinary_samples = ordinary
-        .selected_samples(&ordinary_problem)
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
+    let (ordinary, ordinary_samples) = stream(&ordinary_problem, ordinary).unwrap();
     assert!(
-        ordinary_samples
-            .iter()
-            .all(|sample| sample.coordinates.parallactic_angles_rad.is_none())
+        ordinary_samples.iter().all(|sample| sample
+            .row
+            .coordinates
+            .parallactic_angles_rad
+            .is_none())
     );
     // This fresh engine inserts an entry on every PA evaluation, even for a
     // non-alt-az mount. No entries means the unused PA/AZEL chain was not run.
     assert_eq!(
-        ordinary.geometry_engine().parallactic_angle_cache_entries(),
+        ordinary
+            .source(0)
+            .geometry_engine()
+            .parallactic_angle_cache_entries(),
         0
     );
 
@@ -353,26 +325,22 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
     );
     let source = &problem.inputs().observation_snapshot().sources()[0];
     assert!(problem.requires_parallactic_angles());
-    let bound = BoundObservationSource::open(
+    let bound = open_observation(
         &problem,
         source,
         content_budget_for_rows(&problem, source, 37, 1),
     )
     .expect("bind non-toy T33 traversal");
-    let samples = bound
-        .selected_samples(&problem)
-        .expect("prepare non-toy T33 stream")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("read non-toy T33 stream");
+    let (bound, samples) = stream(&problem, bound).expect("read non-toy T33 stream");
     assert_eq!(samples.len(), report.main_row_count * 4);
 
     let measurement_set = MeasurementSet::open(&path).expect("open T33 VLA fixture");
     let geometry = MsCalEngine::new(&measurement_set).expect("bind physical geometry");
     let first = &samples[0];
-    let time_mjd_seconds = first.coordinates.time.mjd_days() * 86_400.0;
-    let field_id = usize::try_from(first.metadata.field_id).expect("field id");
-    let antenna1 = usize::try_from(first.metadata.antenna1).expect("antenna 1");
-    let antenna2 = usize::try_from(first.metadata.antenna2).expect("antenna 2");
+    let time_mjd_seconds = first.row.coordinates.time.mjd_days() * 86_400.0;
+    let field_id = usize::try_from(first.row.metadata.field_id).expect("field id");
+    let antenna1 = usize::try_from(first.row.metadata.antenna1).expect("antenna 1");
+    let antenna2 = usize::try_from(first.row.metadata.antenna2).expect("antenna 2");
     let physical = [
         geometry
             .parallactic_angle(time_mjd_seconds, field_id, antenna1)
@@ -382,6 +350,7 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
             .expect("antenna 2 physical parallactic angle"),
     ];
     for (operator, physical) in first
+        .row
         .coordinates
         .parallactic_angles_rad
         .expect("polarized reconstruction requires physical angles")
@@ -397,12 +366,16 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
     let mut minimum = [f64::INFINITY; 2];
     let mut maximum = [f64::NEG_INFINITY; 2];
     for row_samples in samples.as_chunks::<4>().0 {
-        let expected = row_samples[0].coordinates.parallactic_angles_rad.unwrap();
+        let expected = row_samples[0]
+            .row
+            .coordinates
+            .parallactic_angles_rad
+            .unwrap();
         assert!(expected.iter().all(|angle| angle.is_finite()));
         assert!(
             row_samples
                 .iter()
-                .all(|sample| sample.coordinates.parallactic_angles_rad == Some(expected))
+                .all(|sample| sample.row.coordinates.parallactic_angles_rad == Some(expected))
         );
         for antenna in 0..2 {
             minimum[antenna] = minimum[antenna].min(expected[antenna]);
@@ -413,7 +386,13 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
         (maximum[0] - minimum[0]).abs() > 1.0e-4 || (maximum[1] - minimum[1]).abs() > 1.0e-4,
         "realistic VLA rows must not collapse to a constant feed rotation"
     );
-    assert!(bound.geometry_engine().parallactic_angle_cache_entries() > 0);
+    assert!(
+        bound
+            .source(0)
+            .geometry_engine()
+            .parallactic_angle_cache_entries()
+            > 0
+    );
 }
 
 #[test]
@@ -438,73 +417,37 @@ fn facet_chart_projections_are_domain_major_and_block_partition_invariant() {
     let source = &problem.inputs().observation_snapshot().sources()[0];
 
     let traverse = |rows_per_block| {
-        let observation = BoundSelectedObservation::open(
+        let observation = open_observation(
             &problem,
-            test_measures(&problem),
-            vec![ObservationSourceBinding::new(
-                source_ordinal(source),
-                bound_content_budget_for_rows(&problem, source, rows_per_block, 1),
-            )],
+            source,
+            content_budget_for_rows(&problem, source, rows_per_block, 1),
         )
         .expect("bind multidomain traversal");
-        let (mut source, mut consumer) = observation
-            .into_block_stream(&problem)
-            .expect("split multidomain block traversal");
-        let mut storage = source.create_storage(0);
-        let mut projected_rows = Vec::new();
-        let mut peak_current = 0;
-        let mut peak_capacity = 0;
-        while source
-            .fill_next(&mut storage)
-            .expect("fill multidomain block")
-            .is_some()
-        {
-            peak_current = peak_current.max(
-                storage
-                    .resident_current_bytes()
-                    .expect("measure multidomain current bytes"),
-            );
-            peak_capacity = peak_capacity.max(
-                storage
-                    .resident_capacity_bytes()
-                    .expect("measure multidomain capacity bytes"),
-            );
-            consumer
-                .consume(&storage, |run| {
-                    for reported in run.samples() {
-                        let sample = reported.selected();
-                        let address = sample.address();
-                        if address.channel_index == 0 && address.correlation_index == 0 {
-                            projected_rows.push((
-                                address.physical_row,
-                                sample.coordinates().raw_uvw_m,
-                                sample.domain_projections().iter().collect::<Vec<_>>(),
-                            ));
-                        }
-                    }
-                    Ok::<_, Infallible>(())
-                })
-                .expect("consume multidomain block");
-        }
-        let mut terminal = source.complete().expect("complete multidomain source");
-        terminal
-            .record_runtime_residency(1, peak_current, peak_capacity)
-            .expect("record multidomain residency");
-        let (_, completion) = consumer
-            .complete(terminal)
-            .expect("complete multidomain inspection");
-        (projected_rows, completion)
+        let (_, samples) = stream(&problem, observation).expect("stream multidomain blocks");
+        let projected_rows = samples
+            .iter()
+            .filter(|sample| {
+                sample.channel.channel_index == 0 && sample.correlation.correlation_index() == 0
+            })
+            .map(|sample| {
+                (
+                    sample.row.physical_row,
+                    sample.row.coordinates.raw_uvw_m,
+                    sample.row.domain_projections().iter().collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        (projected_rows, samples.len())
     };
 
-    let (one_row, one_row_completion) = traverse(7);
-    let (two_rows, two_row_completion) = traverse(19);
+    let (one_row, one_row_samples) = traverse(7);
+    let (two_rows, two_row_samples) = traverse(19);
     assert_eq!(
         one_row, two_rows,
         "physical block boundaries are not geometry"
     );
     assert_eq!(
-        one_row_completion.sample_count(),
-        two_row_completion.sample_count(),
+        one_row_samples, two_row_samples,
         "sample count is invariant to block partitioning"
     );
     assert_eq!(one_row.len(), 480);
@@ -530,7 +473,7 @@ fn facet_chart_projections_are_domain_major_and_block_partition_invariant() {
 }
 
 #[test]
-fn selected_projection_preserves_cell_flags_and_derives_parallel_hand_group_flags() {
+fn selected_projection_preserves_cell_flags() {
     let directory = tempfile::tempdir().expect("temporary paired-flag fixture");
     let path = directory.path().join("paired-flag.ms");
     generate_fixture(&path);
@@ -557,36 +500,18 @@ fn selected_projection_preserves_cell_flags_and_derives_parallel_hand_group_flag
     drop(measurement_set);
 
     let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let bound = BoundObservationSource::open(
-        &problem,
-        source,
-        content_budget_for_rows(&problem, source, 1, 1),
-    )
-    .expect("bind paired-flag fixture");
-    let samples = bound
-        .selected_samples(&problem)
-        .expect("prepare paired-flag stream")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("read paired-flag stream");
+    let samples = stream_rows(&problem, 1);
 
-    assert!(samples[0].channel_flag, "the stored RR flag remains exact");
-    assert!(!samples[1].channel_flag, "the stored LL flag remains exact");
-    assert!(samples[0].parallel_hand_group_flag);
+    assert!(samples[0].flag, "the stored RR flag remains exact");
+    assert!(!samples[1].flag, "the stored LL flag remains exact");
     assert!(
-        samples[1].parallel_hand_group_flag,
-        "one flagged parallel hand excludes the complete Stokes-I group"
-    );
-    assert!(
-        samples[2..]
-            .iter()
-            .all(|sample| !sample.parallel_hand_group_flag),
-        "other row/channel groups remain usable"
+        samples[2..].iter().all(|sample| !sample.flag),
+        "other cells remain unflagged"
     );
 }
 
 #[test]
-fn block_traversal_reports_one_canonical_unequal_parallel_hand_weight_group() {
+fn block_traversal_reports_unequal_parallel_hand_weights() {
     let directory = tempfile::tempdir().expect("temporary paired-weight fixture");
     let path = directory.path().join("paired-weight.ms");
     generate_fixture(&path);
@@ -618,43 +543,17 @@ fn block_traversal_reports_one_canonical_unequal_parallel_hand_weight_group() {
     drop(measurement_set);
 
     let problem = compiled_problem(&path, 2);
-    let logical_source = &problem.inputs().observation_snapshot().sources()[0];
-    let observation = BoundSelectedObservation::open(
-        &problem,
-        test_measures(&problem),
-        vec![ObservationSourceBinding::new(
-            source_ordinal(logical_source),
-            bound_content_budget_for_rows(&problem, logical_source, 2, 1),
-        )],
-    )
-    .expect("bind paired-weight fixture");
-    let (mut source, mut consumer) = observation
-        .into_block_stream(&problem)
-        .expect("split paired-weight traversal");
-    let mut storage = source.create_storage(0);
-    assert!(
-        source
-            .fill_next(&mut storage)
-            .expect("fill paired-weight block")
-            .is_some()
-    );
-    let mut reported = Vec::new();
-    consumer
-        .consume(&storage, |run| {
-            reported.extend(run.samples().map(|sample| {
-                let selected = sample.selected();
-                (
-                    selected.address().physical_row,
-                    selected.address().channel_index,
-                    selected.address().correlation_index,
-                    selected.input_weight(),
-                    selected.input_weight_group().endpoints(),
-                    selected.input_weight_group().is_density_owner(),
-                )
-            }));
-            Ok::<_, Infallible>(())
+    let reported = stream_rows(&problem, 2)
+        .into_iter()
+        .map(|sample| {
+            (
+                sample.row.physical_row,
+                sample.channel.channel_index,
+                sample.correlation.correlation_index(),
+                sample.weight,
+            )
         })
-        .expect("consume paired-weight block");
+        .collect::<Vec<_>>();
 
     assert_eq!(reported[0].0, 0);
     assert_eq!(reported[0].1, reported[1].1);
@@ -662,10 +561,6 @@ fn block_traversal_reports_one_canonical_unequal_parallel_hand_weight_group() {
     assert_eq!(reported[1].2, 1);
     assert_eq!(reported[0].3, 3.0);
     assert_eq!(reported[1].3, 7.0);
-    assert_eq!(reported[0].4, (3.0, Some(7.0)));
-    assert_eq!(reported[1].4, (3.0, Some(7.0)));
-    assert!(reported[0].5, "first correlation owns density");
-    assert!(!reported[1].5, "paired correlation reuses that density");
 }
 
 #[test]
@@ -787,23 +682,13 @@ fn sparse_manifest_reads_only_selected_physical_rows() {
         model_lifecycle(snapshot.model()),
     ))
     .expect("compile sparse selected-observation problem");
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let samples = BoundObservationSource::open(
-        &problem,
-        source,
-        content_budget_for_rows(&problem, source, 2, 1),
-    )
-    .expect("bind sparse selected observation")
-    .selected_samples(&problem)
-    .expect("prepare sparse selected stream")
-    .collect::<Result<Vec<_>, _>>()
-    .expect("read sparse selected stream");
+    let samples = stream_rows(&problem, 2);
 
     assert_eq!(samples.len(), 2 * 2 * 2);
     assert_eq!(
         samples
             .iter()
-            .map(|sample| sample.address.physical_row)
+            .map(|sample| sample.row.physical_row)
             .collect::<std::collections::BTreeSet<_>>(),
         [0, 63].into_iter().collect()
     );
@@ -1049,116 +934,10 @@ fn selected_observation_accepts_exact_ephemeris_and_certifies_its_retained_charg
 }
 
 #[test]
-fn measures_provider_growth_during_traversal_prevents_owner_completion() {
-    let directory = tempfile::tempdir().expect("temporary Measures-mutation fixture");
-    let path = directory.path().join("measures-mutation.ms");
+fn cube_traversals_report_native_channels_and_their_output_frame_centres() {
+    let directory = tempfile::tempdir().expect("temporary cube-frequency fixture");
+    let path = directory.path().join("cube-frequencies.ms");
     generate_fixture(&path);
-    let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-
-    let mutable_provider = Arc::new(AccountedTestMeasures::with_heap_bytes(64));
-    let erased_provider: Arc<dyn MeasuresProvider> = mutable_provider.clone();
-    let measures =
-        super::SelectedObservationMeasures::new(erased_provider).expect("account mutable provider");
-    let shared_bytes = selected_observation_shared_bytes(
-        &measures,
-        BoundObservationSource::retained_source_slot_bytes(),
-        single_binding_graph_initialization_bytes(source),
-    );
-    let budget = content_budget_for_rows_with_shared_bytes(&problem, source, shared_bytes, 1, 1);
-    let mut observation = BoundSelectedObservation::open(
-        &problem,
-        measures,
-        vec![ObservationSourceBinding::new(
-            source_ordinal(source),
-            budget,
-        )],
-    )
-    .expect("bind provider before mutation");
-    let mut mutated = false;
-
-    let error = observation
-        .traverse(&problem, |_| {
-            if !mutated {
-                mutable_provider.grow(4_096);
-                mutated = true;
-            }
-            Ok::<_, Infallible>(())
-        })
-        .expect_err("terminal provider mutation must prevent owner completion");
-
-    assert!(matches!(
-        error,
-        SelectedObservationTraversalError::Source(super::BoundObservationSourceError::Storage(
-            crate::MsError::MeasuresRuntime(_)
-        ))
-    ));
-}
-
-#[test]
-fn real_ms_cube_traversal_reports_source_backed_cubic_evaluations() {
-    let directory = tempfile::tempdir().expect("temporary cube-contribution fixture");
-    let path = directory.path().join("cube-contributions.ms");
-    generate_fixture(&path);
-    let problem = compiled_problem_with_sampling(
-        &path,
-        2,
-        SpectralSamplingLaw::CUBIC,
-        SpectralWcs::Tabular {
-            channel_centres_hz: vec![1.3995e9, 1.4005e9, 1.4015e9, 1.4025e9],
-            channel_boundaries_hz: vec![1.399e9, 1.4e9, 1.401e9, 1.402e9, 1.403e9],
-        },
-    );
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let mut observation = BoundSelectedObservation::open(
-        &problem,
-        test_measures(&problem),
-        vec![ObservationSourceBinding::new(
-            source_ordinal(source),
-            content_budget_for_rows(&problem, source, 1, 1),
-        )],
-    )
-    .expect("bind real MeasurementSet cube traversal");
-    let mut values = Vec::new();
-
-    let completion = observation
-        .traverse(&problem, |reported| {
-            let sample = reported.selected();
-            let evaluation = reported.spectral_evaluation();
-            values.push((
-                sample.address().channel_index,
-                evaluation.native(),
-                evaluation.output_frame(),
-                evaluation.effective_weight(),
-                evaluation.is_valid(),
-            ));
-            Ok::<_, Infallible>(())
-        })
-        .expect("complete source-backed cube traversal");
-
-    assert_eq!(completion.sample_count(), 8);
-    assert_eq!(values[0].0, 0);
-    assert_eq!(values[0].1.centre_hz().to_bits(), 1.4e9_f64.to_bits());
-    assert_eq!(values[0].1.boundaries_hz(), [1.3995e9, 1.4005e9]);
-    assert_eq!(values[0].2, values[0].1);
-    assert_eq!(values[0].3, 1.0);
-    assert!(values[0].4);
-    assert_eq!(values[1], values[0]);
-    assert_eq!(values[2].0, 2);
-    assert_eq!(values[2].1.centre_hz().to_bits(), 1.402e9_f64.to_bits());
-    assert_eq!(values[2].1.boundaries_hz(), [1.4015e9, 1.4025e9]);
-    assert_eq!(values[2].2, values[2].1);
-    assert_eq!(values[3], values[2]);
-}
-
-#[test]
-fn t35_source_backed_identity_and_nonidentity_traversals_report_native_evaluations() {
-    let directory = tempfile::tempdir().expect("temporary T35 source-backed fixture");
-    let path = directory.path().join("t35-spectral-tracer.ms");
-    generate_fixture(&path);
-    let output_centres = vec![1.3995e9, 1.4005e9, 1.4015e9, 1.4025e9];
-    let output_boundaries = vec![1.399e9, 1.4e9, 1.401e9, 1.402e9, 1.403e9];
-
     let identity = compiled_problem_with_sampling(
         &path,
         2,
@@ -1168,68 +947,48 @@ fn t35_source_backed_identity_and_nonidentity_traversals_report_native_evaluatio
             channel_boundaries_hz: vec![1.3995e9, 1.401e9, 1.4025e9],
         },
     );
-    let nonidentity = compiled_problem_with_sampling(
+    let cubic = compiled_problem_with_sampling(
         &path,
         2,
         SpectralSamplingLaw::CUBIC,
         SpectralWcs::Tabular {
-            channel_centres_hz: output_centres.clone(),
-            channel_boundaries_hz: output_boundaries,
+            channel_centres_hz: vec![1.3995e9, 1.4005e9, 1.4015e9, 1.4025e9],
+            channel_boundaries_hz: vec![1.399e9, 1.4e9, 1.401e9, 1.402e9, 1.403e9],
         },
     );
 
-    let trace = |problem: &casa_imaging_model::CompiledProblem| {
-        let source = &problem.inputs().observation_snapshot().sources()[0];
-        let mut observation = BoundSelectedObservation::open(
-            problem,
-            test_measures(problem),
-            vec![ObservationSourceBinding::new(
-                source_ordinal(source),
-                content_budget_for_rows(problem, source, 1, 1),
-            )],
-        )
-        .expect("bind the common T35 MeasurementSet");
-        let mut receipts = Vec::new();
-        observation
-            .traverse(problem, |reported| {
-                receipts.push((
-                    reported.selected().to_owned(),
-                    reported.spectral_evaluation(),
-                ));
-                Ok::<_, Infallible>(())
-            })
-            .expect("traverse the common T35 MeasurementSet");
-        receipts
-    };
-
-    let identity_receipts = trace(&identity);
-    assert_eq!(identity_receipts.len(), 8);
-    for (sample, evaluation) in &identity_receipts {
-        assert_eq!(evaluation.native(), evaluation.output_frame());
-        assert_eq!(evaluation.effective_weight(), sample.input_weight as f64);
-        assert_eq!(evaluation.is_valid(), !sample.parallel_hand_group_flag);
+    for problem in [&identity, &cubic] {
+        let samples = stream_rows(problem, 1);
+        assert_eq!(samples.len(), 8);
+        for sample in &samples {
+            // The fixture is TOPO and so is the output frame: the centre
+            // passes through unchanged.
+            assert_eq!(
+                sample.frequency_hz.to_bits(),
+                sample.channel.frequency_centre_hz.to_bits()
+            );
+            assert_eq!(sample.weight, 1.0);
+            assert!(!sample.flag);
+        }
+        let channel = |sample: &Sample| {
+            (
+                sample.channel.channel_index,
+                sample.channel.frequency_centre_hz,
+                [
+                    sample.channel.frequency_lower_hz,
+                    sample.channel.frequency_upper_hz,
+                ],
+            )
+        };
+        assert_eq!(channel(&samples[0]), (0, 1.4e9, [1.3995e9, 1.4005e9]));
+        assert_eq!(channel(&samples[1]), channel(&samples[0]));
+        assert_eq!(channel(&samples[2]), (2, 1.402e9, [1.4015e9, 1.4025e9]));
+        assert_eq!(channel(&samples[3]), channel(&samples[2]));
     }
-
-    let nonidentity_receipts = trace(&nonidentity);
-    let (sample, evaluation) = &nonidentity_receipts[0];
-    assert_eq!(
-        sample.address.frequency_centre_hz.to_bits(),
-        1.4e9_f64.to_bits()
-    );
-    assert_eq!(
-        evaluation.output_frame().centre_hz().to_bits(),
-        1.4e9_f64.to_bits()
-    );
-    assert_eq!(
-        evaluation.output_frame().boundaries_hz(),
-        [1.3995e9, 1.4005e9]
-    );
-    assert_eq!(evaluation.effective_weight(), 1.0);
-    assert!(evaluation.is_valid());
 }
 
 #[test]
-fn selected_row_spectral_geometry_uses_exact_selected_centres_including_flagged_channels() {
+fn selected_channels_report_exact_centres_including_flagged_channels() {
     for (frequencies, selected) in [
         (vec![1.4e9, 1.401e9, 1.402e9, 1.407e9, 1.408e9], vec![1, 3]),
         (
@@ -1290,104 +1049,22 @@ fn selected_row_spectral_geometry_uses_exact_selected_centres_including_flagged_
             model_lifecycle(ModelStateIdentity::Empty),
         ))
         .expect("compile geometry problem");
-        let source = &problem.inputs().observation_snapshot().sources()[0];
-        let binding = ObservationSourceBinding::new(
-            source_ordinal(source),
-            content_budget_for_rows(&problem, source, 1, 1),
-        );
-        let mut observation = BoundSelectedObservation::open(
-            &problem,
-            test_measures(&problem),
-            vec![binding.clone()],
-        )
-        .expect("bind selected geometry source");
-        let mut scalar_samples = Vec::new();
-        let scalar_completion = observation
-            .traverse(&problem, |reported| {
-                let sample = reported.selected();
-                let evaluation = reported.spectral_evaluation();
-                let geometry = evaluation
-                    .row_geometry()
-                    .expect("source-issued row geometry");
-                assert_eq!(sample.row_spectral_geometry(), Some(geometry));
-                assert!(geometry.matches_sample(sample, FrequencyFrame::Topocentric));
-                assert_eq!(geometry.selected_channels(), selected.len());
-                assert_eq!(
-                    geometry.first(),
-                    (selected[0], frequencies[selected[0] as usize])
-                );
-                assert_eq!(
-                    geometry.second(),
-                    selected
-                        .get(1)
-                        .map(|&index| (index, frequencies[index as usize]))
-                );
-                if let Some([first, second]) = geometry.first_pair_hz() {
-                    assert_ne!(
-                        (second - first).abs(),
-                        sample.address().channel_width_hz.abs()
-                    );
-                }
-                assert_eq!(
-                    evaluation.is_valid(),
-                    !(sample.address().physical_row == 0
-                        && sample.address().channel_index == selected[0])
-                );
-                scalar_samples.push((sample.to_owned(), evaluation));
-                Ok::<_, Infallible>(())
-            })
-            .expect("traverse selected geometry");
-        assert_eq!(scalar_samples.len(), 2 * 2 * selected.len());
-        assert_eq!(
-            collect_indexed_samples(&problem, binding.clone(), 2),
-            scalar_samples
-        );
-        let block =
-            BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
-                .expect("bind borrowed geometry source");
-        let (mut source, mut consumer) = block
-            .into_block_stream(&problem)
-            .expect("split borrowed source");
-        let mut storage = source.create_storage(0);
-        let mut borrowed_samples = Vec::new();
-        let mut peak_current = 0;
-        let mut peak_capacity = 0;
-        while source
-            .fill_next(&mut storage)
-            .expect("fill geometry block")
-            .is_some()
-        {
-            peak_current = peak_current.max(storage.resident_current_bytes().expect("block bytes"));
-            peak_capacity =
-                peak_capacity.max(storage.resident_capacity_bytes().expect("block capacity"));
-            consumer
-                .consume(&storage, |run| {
-                    for reported in run.samples() {
-                        assert_eq!(
-                            reported.selected().row_spectral_geometry(),
-                            reported.spectral_evaluation().row_geometry()
-                        );
-                        borrowed_samples.push((
-                            reported.selected().to_owned(),
-                            reported.spectral_evaluation(),
-                        ));
-                    }
-                    Ok::<_, Infallible>(())
-                })
-                .expect("consume geometry block");
+        let samples = stream_rows(&problem, 1);
+        assert_eq!(samples.len(), 2 * 2 * selected.len());
+        for (index, sample) in samples.iter().enumerate() {
+            let channel = selected[index / 2 % selected.len()];
+            assert_eq!(sample.channel.channel_index, channel);
+            assert_eq!(
+                sample.channel.frequency_centre_hz,
+                frequencies[channel as usize]
+            );
+            assert_eq!(sample.frequency_hz, frequencies[channel as usize]);
+            assert_eq!(
+                sample.flag,
+                sample.row.physical_row == 0 && channel == selected[0]
+            );
         }
-        let mut terminal = source.complete().expect("terminal source proof");
-        terminal
-            .record_runtime_residency(1, peak_current, peak_capacity)
-            .expect("one block residency");
-        let (_, borrowed_completion) = consumer
-            .complete(terminal)
-            .expect("complete borrowed source");
-        assert_eq!(
-            borrowed_completion.sample_count(),
-            scalar_completion.sample_count()
-        );
-        assert_eq!(borrowed_samples, scalar_samples);
+        assert_eq!(stream_rows(&problem, 2), samples);
     }
 }
 
@@ -1407,196 +1084,76 @@ fn real_ms_cube_traversal_uses_the_native_field_frame_for_output_conversion() {
     );
     let source = &problem.inputs().observation_snapshot().sources()[0];
     let expected_measures = test_measures(&problem);
-    let expected_shared_bytes = selected_observation_shared_bytes(
-        &expected_measures,
-        BoundObservationSource::retained_source_slot_bytes(),
-        single_binding_graph_initialization_bytes(source),
-    );
-    let expected_budget =
-        content_budget_for_rows_with_shared_bytes(&problem, source, expected_shared_bytes, 1, 1);
-    let expected_source = BoundObservationSource::open_with_measures(
-        &problem,
-        source,
-        &expected_measures,
-        expected_shared_bytes,
-        expected_budget,
-        BoundObservationReferenceData::new(None, None),
-    )
-    .expect("open independent frame-conversion oracle");
     let expected_output_frame = MeasFrame::new()
         .with_measures(expected_measures.provider())
         .with_epoch(MEpoch::from_mjd(59_000.25, EpochRef::UTC))
         .with_position(MPosition::new_itrf(-1_601_188.0, -5_041_977.0, 3_554_875.0))
         .with_direction(MDirection::from_angles(1.0, -0.5, DirectionRef::J2000));
-    let mut observation = BoundSelectedObservation::open(
+    let observation = open_observation(
         &problem,
-        test_measures(&problem),
-        vec![ObservationSourceBinding::new(
-            source_ordinal(source),
-            content_budget_for_rows(&problem, source, 1, 1),
-        )],
+        source,
+        content_budget_for_rows(&problem, source, 1, 1),
     )
     .expect("bind transformed-frame traversal");
+    let (observation, samples) = stream(&problem, observation).expect("stream transformed frames");
     let mut values = Vec::new();
 
-    let completion = observation
-        .traverse(&problem, |reported| {
-            assert_eq!(
-                reported.selected().address().frequency_frame,
-                FrequencyFrame::Topocentric
-            );
-            let sample = reported.selected();
-            let frame = expected_source
-                .geometry_engine()
-                .spectral_frame_observatory(
-                    sample.coordinates().time.mjd_days() * 86_400.0,
-                    usize::try_from(sample.metadata().field_id).expect("non-negative FIELD_ID"),
-                )
-                .expect("independent row frame");
-            let transform_to_output = |frequency_hz| {
-                MFrequency::new(frequency_hz, FrequencyRef::TOPO)
-                    .convert_to(FrequencyRef::GEO, &frame)
-                    .expect("TOPO to GEO")
-                    .convert_to(FrequencyRef::BARY, &frame)
-                    .expect("GEO to BARY")
-                    .convert_to(FrequencyRef::LSRK, &expected_output_frame)
-                    .expect("BARY to LSRK")
-                    .hz()
-            };
-            let image_anchor_hz = transform_to_output(sample.address().frequency_centre_hz);
-            let image_anchor_boundaries = [
-                transform_to_output(sample.address().frequency_lower_hz),
-                transform_to_output(sample.address().frequency_upper_hz),
-            ];
-            let transform_in_native_field_frame = |frequency_hz| {
-                MFrequency::new(frequency_hz, FrequencyRef::TOPO)
-                    .convert_to(FrequencyRef::GEO, &frame)
-                    .expect("source-only TOPO to GEO")
-                    .convert_to(FrequencyRef::BARY, &frame)
-                    .expect("source-only GEO to BARY")
-                    .convert_to(FrequencyRef::LSRK, &frame)
-                    .expect("source-only BARY to LSRK")
-                    .hz()
-            };
-            let native_field_hz =
-                transform_in_native_field_frame(sample.address().frequency_centre_hz);
-            let native_field_boundaries = [
-                transform_in_native_field_frame(sample.address().frequency_lower_hz),
-                transform_in_native_field_frame(sample.address().frequency_upper_hz),
-            ];
-            assert!((image_anchor_hz - native_field_hz).abs() > 1.0);
-            assert_ne!(image_anchor_boundaries, native_field_boundaries);
-            let evaluation = reported.spectral_evaluation();
-            let geometry = evaluation.row_geometry().expect("transformed row geometry");
-            assert_eq!(sample.row_spectral_geometry(), Some(geometry));
-            assert!(geometry.matches_sample(sample, FrequencyFrame::Lsrk));
-            assert_eq!(geometry.selected_channels(), 2);
-            assert_eq!(
-                geometry.first(),
-                (0, transform_in_native_field_frame(1.4e9))
-            );
-            assert_eq!(
-                geometry.second(),
-                Some((2, transform_in_native_field_frame(1.402e9)))
-            );
-            assert_eq!(
-                evaluation.native().centre_hz().to_bits(),
-                sample.address().frequency_centre_hz.to_bits()
-            );
-            assert_eq!(
-                evaluation.native().boundaries_hz(),
-                [
-                    sample.address().frequency_lower_hz,
-                    sample.address().frequency_upper_hz,
-                ]
-            );
-            assert_eq!(
-                evaluation.output_frame().centre_hz().to_bits(),
-                native_field_hz.to_bits()
-            );
-            assert_eq!(
-                evaluation.output_frame().boundaries_hz(),
-                native_field_boundaries
-            );
-            assert_eq!(evaluation.effective_weight(), 1.0);
-            assert!(evaluation.is_valid());
-            values.push((
-                sample.address().channel_index,
-                image_anchor_hz,
-                native_field_hz,
-                native_field_boundaries,
-            ));
-            Ok::<_, Infallible>(())
-        })
-        .expect("owner converts each selected frequency before output mapping");
+    for sample in &samples {
+        assert_eq!(sample.channel.frequency_frame, FrequencyFrame::Topocentric);
+        let frame = observation
+            .source(0)
+            .geometry_engine()
+            .spectral_frame_observatory(
+                sample.row.coordinates.time.mjd_days() * 86_400.0,
+                usize::try_from(sample.row.metadata.field_id).expect("non-negative FIELD_ID"),
+            )
+            .expect("independent row frame");
+        let transform_to_output = |frequency_hz| {
+            MFrequency::new(frequency_hz, FrequencyRef::TOPO)
+                .convert_to(FrequencyRef::GEO, &frame)
+                .expect("TOPO to GEO")
+                .convert_to(FrequencyRef::BARY, &frame)
+                .expect("GEO to BARY")
+                .convert_to(FrequencyRef::LSRK, &expected_output_frame)
+                .expect("BARY to LSRK")
+                .hz()
+        };
+        let image_anchor_hz = transform_to_output(sample.channel.frequency_centre_hz);
+        let transform_in_native_field_frame = |frequency_hz| {
+            MFrequency::new(frequency_hz, FrequencyRef::TOPO)
+                .convert_to(FrequencyRef::GEO, &frame)
+                .expect("source-only TOPO to GEO")
+                .convert_to(FrequencyRef::BARY, &frame)
+                .expect("source-only GEO to BARY")
+                .convert_to(FrequencyRef::LSRK, &frame)
+                .expect("source-only BARY to LSRK")
+                .hz()
+        };
+        let native_field_hz = transform_in_native_field_frame(sample.channel.frequency_centre_hz);
+        assert!((image_anchor_hz - native_field_hz).abs() > 1.0);
+        assert_eq!(sample.frequency_hz.to_bits(), native_field_hz.to_bits());
+        assert_eq!(sample.weight, 1.0);
+        assert!(!sample.flag);
+        values.push((
+            sample.channel.channel_index,
+            image_anchor_hz,
+            native_field_hz,
+        ));
+    }
 
     assert_eq!(
         problem.geometry().spectral().output_frame(),
         FrequencyFrame::Lsrk
     );
-    assert_eq!(completion.sample_count(), 8);
     assert_eq!(values.len(), 8);
     assert_eq!(values[0].0, 0);
     assert!(
         values[0].1 != values[0].2,
         "the image anchor must remain observably distinct from the native FIELD frame"
     );
-    assert_eq!(values[1].3, values[0].3);
+    assert_eq!(values[1].2, values[0].2);
     assert_eq!(values[2].0, 2);
-    assert_eq!(values[3].3, values[2].3);
-}
-
-#[test]
-fn real_ms_cubedata_traversal_reports_source_backed_native_evaluations() {
-    let directory = tempfile::tempdir().expect("temporary cubedata-contribution fixture");
-    let path = directory.path().join("cubedata-contributions.ms");
-    generate_fixture(&path);
-    let problem = compiled_problem_with_sampling(
-        &path,
-        2,
-        SpectralSamplingLaw::CUBIC,
-        SpectralWcs::Tabular {
-            channel_centres_hz: vec![1.3995e9, 1.4005e9, 1.4015e9, 1.4025e9],
-            channel_boundaries_hz: vec![1.399e9, 1.4e9, 1.401e9, 1.402e9, 1.403e9],
-        },
-    );
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let mut observation = BoundSelectedObservation::open(
-        &problem,
-        test_measures(&problem),
-        vec![ObservationSourceBinding::new(
-            source_ordinal(source),
-            content_budget_for_rows(&problem, source, 1, 1),
-        )],
-    )
-    .expect("bind real MeasurementSet cubedata traversal");
-    let mut values = Vec::new();
-
-    observation
-        .traverse(&problem, |reported| {
-            let sample = reported.selected();
-            let evaluation = reported.spectral_evaluation();
-            values.push((
-                sample.address().channel_index,
-                evaluation.native(),
-                evaluation.output_frame(),
-                evaluation.effective_weight(),
-                evaluation.is_valid(),
-            ));
-            Ok::<_, Infallible>(())
-        })
-        .expect("complete source-backed cubedata traversal");
-
-    assert_eq!(values[0].0, 0);
-    assert_eq!(values[0].1, values[0].2);
-    assert_eq!(values[0].3, 1.0);
-    assert!(values[0].4);
-    assert_eq!(values[1], values[0]);
-    assert_eq!(values[2].0, 2);
-    assert_eq!(values[2].1, values[2].2);
-    assert_eq!(values[2].3, 1.0);
-    assert!(values[2].4);
-    assert_eq!(values[3], values[2]);
+    assert_eq!(values[3].2, values[2].2);
 }
 
 #[test]
@@ -1666,15 +1223,6 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
         "the shared provider allocation must have one exact retained owner"
     );
     assert!(large.content_plan().maximum_resident_bytes() <= large_budget.available_bytes());
-    assert_eq!(
-        large
-            .selected_samples(&problem)
-            .expect("prepare accounted provider traversal")
-            .collect::<Result<Vec<_>, _>>()
-            .expect("complete accounted provider traversal")
-            .len(),
-        8
-    );
 }
 
 #[test]
@@ -1961,14 +1509,14 @@ fn retained_opened_table_metadata_is_charged_once_for_oversized_variable_referen
         "borrowed TabRefTypes and TabRefCodes leave only the selected integer cell as scratch"
     );
     assert!(inflated.content_plan().maximum_resident_bytes() <= inflated_budget.available_bytes());
-    let samples = inflated
-        .selected_samples(&problem)
-        .expect("prepare oversized variable-reference source")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("evaluate borrowed TabRefTypes and TabRefCodes");
+    drop(inflated);
+    let inflated = open_observation(&problem, source, inflated_budget)
+        .expect("open oversized variable-reference observation");
+    let (inflated, samples) =
+        stream(&problem, inflated).expect("evaluate borrowed TabRefTypes and TabRefCodes");
     assert_eq!(samples.len(), 8);
     assert_eq!(
-        inflated.retained_storage_metadata_bytes(),
+        inflated.source(0).retained_storage_metadata_bytes(),
         Some(inflated_storage_bytes),
         "bounded traversal must not populate an uncharged retained table cache"
     );
@@ -2073,17 +1621,18 @@ fn variable_pointing_reference_string_scratch_is_charged_once_per_peak() {
         ))
     ));
     assert!(two_rows.content_plan().maximum_resident_bytes() <= two_row_budget.available_bytes());
+    drop(two_rows);
+    let two_rows = open_observation(&problem, source, two_row_budget)
+        .expect("open variable-string reference observation");
     let retained_storage_bytes = two_rows
+        .source(0)
         .retained_storage_metadata_bytes()
         .expect("project retained string-reference storage");
-    let samples = two_rows
-        .selected_samples(&problem)
-        .expect("prepare variable-string reference source")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("evaluate bounded variable-string references");
+    let (two_rows, samples) =
+        stream(&problem, two_rows).expect("evaluate bounded variable-string references");
     assert_eq!(samples.len(), 8);
     assert_eq!(
-        two_rows.retained_storage_metadata_bytes(),
+        two_rows.source(0).retained_storage_metadata_bytes(),
         Some(retained_storage_bytes),
         "variable reference reads must not create hidden retained table state"
     );
@@ -2182,147 +1731,6 @@ fn frontend_row_projection_uses_the_canonical_bounded_observation_evaluator() {
 }
 
 #[test]
-fn terminal_poll_failure_prevents_owner_minted_completion() {
-    let directory = tempfile::tempdir().expect("temporary terminal-poll fixture");
-    let path = directory.path().join("terminal-poll.ms");
-    generate_fixture(&path);
-    let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let bound = BoundObservationSource::open(
-        &problem,
-        source,
-        content_budget_for_rows(&problem, source, 2, 1),
-    )
-    .expect("bind terminal-poll source");
-    let exact = bound
-        .selected_samples(&problem)
-        .expect("prepare exact source stream");
-    let terminal_failure = exact.chain(std::iter::once(Err(
-        super::BoundObservationSourceError::InvalidRowGeometry,
-    )));
-    let mut consumed = 0_usize;
-
-    let error = consume_validated_stream(&problem, terminal_failure, |_| {
-        consumed += 1;
-        Ok::<_, Infallible>(())
-    })
-    .expect_err("a source error on the terminal poll must prevent completion");
-
-    assert_eq!(consumed, 8, "all exact values precede the terminal failure");
-    assert!(matches!(
-        error,
-        SelectedObservationTraversalError::Source(
-            super::BoundObservationSourceError::InvalidRowGeometry
-        )
-    ));
-}
-
-#[test]
-#[cfg(unix)]
-fn replay_proof_requires_one_exhaustive_traversal_and_replays_it() {
-    let directory = tempfile::tempdir().expect("temporary replay-proof fixture");
-    let path = directory.path().join("replay-proof.ms");
-    generate_fixture(&path);
-    let request = owner_resolution_request(&path, 2);
-    let (problem, access) = owner_problem_and_access(request);
-    let mut selected = access.open(&problem).expect("open resolved source");
-    let mut consumed = 0_usize;
-
-    let partial = selected
-        .traverse(&problem, |_| {
-            consumed += 1;
-            Err::<(), _>(std::io::Error::other("stop before exhaustive completion"))
-        })
-        .expect_err("partial traversal cannot mint completion or replay proof");
-    assert_eq!(consumed, 1);
-    assert!(matches!(
-        partial,
-        SelectedObservationTraversalError::Consumer(_)
-    ));
-
-    let initial = selected
-        .traverse(&problem, |_| Ok::<_, Infallible>(()))
-        .expect("exhaustive traversal");
-    initial
-        .replay_proof()
-        .expect("an exhaustive traversal mints the replay proof");
-    let replayed = selected
-        .traverse(&problem, |_| Ok::<_, Infallible>(()))
-        .expect("replayed traversal remains exhaustive");
-    assert!(initial.precedes(&replayed));
-    assert_eq!(replayed.sample_count(), initial.sample_count());
-}
-
-#[test]
-fn row_manifest_validation_occurs_in_the_sole_value_traversal() {
-    let directory = tempfile::tempdir().expect("temporary one-pass fixture");
-    let path = directory.path().join("one-pass.ms");
-    generate_fixture(&path);
-    let measurement_set = MeasurementSet::open(&path).expect("open one-pass fixture");
-    let first_time = main_time_mjd_seconds(&measurement_set, 0);
-    let selected_rows = SelectedRows::from_ordered_main_rows(1, [SelectedMainRow::new(0, 0)])
-        .expect("stale one-row manifest");
-    let first_row_filter = RowSelection::new(
-        IdSelection::All,
-        TimeSelection::Ranges(vec![TimeRange::new(
-            Some(SelectionBound::inclusive(first_time)),
-            Some(SelectionBound::inclusive(first_time)),
-        )]),
-        UvSelection::All,
-        AntennaSelection::All,
-        IdSelection::All,
-        IdSelection::All,
-        IntentSelection::All,
-        IdSelection::All,
-    );
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source_input_with_selected_rows_and_filter(
-            &path,
-            1,
-            selected_rows,
-            first_row_filter,
-        )],
-        vec![(ReferenceDataKind::Measures, identity(90))],
-        ModelStateIdentity::Empty,
-    ))
-    .expect("compile stale one-row observation");
-    let problem = compile(ProblemInput::new(
-        specification(),
-        geometry(),
-        ProblemInputIdentities::new(snapshot.clone()),
-        model_lifecycle(snapshot.model()),
-    ))
-    .expect("compile one-pass problem");
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let binding = ObservationSourceBinding::new(
-        source_ordinal(source),
-        bound_content_budget_for_rows(&problem, source, 1, 1),
-    );
-
-    let mut bound =
-        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
-            .expect("binding must not hide a preliminary MAIN traversal");
-    let mut consumed = 0_usize;
-    let error = bound
-        .traverse(&problem, |_| {
-            consumed += 1;
-            Ok::<_, Infallible>(())
-        })
-        .expect_err("the authoritative traversal must reject the stale row manifest");
-
-    assert_eq!(
-        consumed, 4,
-        "the mismatching second row is validated before reaching the consumer"
-    );
-    assert!(matches!(
-        error,
-        SelectedObservationTraversalError::Source(
-            super::BoundObservationSourceError::SourceRowCountMismatch
-        )
-    ));
-}
-
-#[test]
 fn selected_observation_residency_is_cardinality_independent_and_schedule_invariant() {
     let directory = tempfile::tempdir().expect("temporary residency fixtures");
     let small_path = directory.path().join("small.ms");
@@ -2352,90 +1760,19 @@ fn selected_observation_residency_is_cardinality_independent_and_schedule_invari
             <= double_buffered_budget.available_bytes()
     );
 
-    let synchronous_samples = synchronous
-        .selected_samples(&small_problem)
-        .expect("prepare synchronous replay")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("read synchronous replay");
-    let mut double_buffered_stream = double_buffered
-        .selected_samples(&small_problem)
-        .expect("prepare double-buffered replay");
-    let mut double_buffered_samples = vec![
-        double_buffered_stream
-            .next()
-            .expect("double-buffered replay has a first sample")
-            .expect("read first double-buffered sample"),
-    ];
+    let synchronous_observation =
+        open_observation(&small_problem, small_source, synchronous_budget)
+            .expect("bind synchronous owner traversal");
+    let (_, synchronous_samples) =
+        stream(&small_problem, synchronous_observation).expect("read synchronous replay");
+    let double_buffered_observation =
+        open_observation(&small_problem, small_source, double_buffered_budget)
+            .expect("bind double-buffered owner traversal");
+    let (_, double_buffered_samples) =
+        stream(&small_problem, double_buffered_observation).expect("read double-buffered replay");
     assert_eq!(
-        double_buffered_stream.scheduling_state(),
-        (Some(0), vec![(1, 1)], 2),
-        "the owner must have a distinct second block resident ahead of the active block"
-    );
-    for _ in 0..3 {
-        double_buffered_samples.push(
-            double_buffered_stream
-                .next()
-                .expect("first row has four selected samples")
-                .expect("read first-row sample"),
-        );
-    }
-    double_buffered_samples.push(
-        double_buffered_stream
-            .next()
-            .expect("double-buffered replay reaches its second row")
-            .expect("read second-row sample"),
-    );
-    assert_eq!(
-        double_buffered_stream.scheduling_state(),
-        (Some(1), vec![(0, 2)], 2),
-        "consumption must alternate buffers while the released slot reads ahead"
-    );
-    double_buffered_samples.extend(
-        double_buffered_stream
-            .collect::<Result<Vec<_>, _>>()
-            .expect("read remaining double-buffered replay"),
-    );
-    assert_eq!(synchronous_samples, double_buffered_samples);
-    assert_eq!(
-        inspect_samples(&small_problem, synchronous_samples).expect("inspect synchronous replay"),
-        inspect_samples(&small_problem, double_buffered_samples)
-            .expect("inspect double-buffered replay")
-    );
-
-    let synchronous_plan = ObservationSourceBinding::new(
-        source_ordinal(small_source),
-        bound_content_budget_for_rows(&small_problem, small_source, 1, 1),
-    );
-    let double_buffered_plan = ObservationSourceBinding::new(
-        source_ordinal(small_source),
-        bound_content_budget_for_rows(&small_problem, small_source, 1, 2),
-    );
-    let mut synchronous_observation = BoundSelectedObservation::open(
-        &small_problem,
-        test_measures(&small_problem),
-        vec![synchronous_plan],
-    )
-    .expect("bind synchronous owner traversal");
-    let synchronous_completion = synchronous_observation
-        .traverse(&small_problem, |_| Ok::<_, Infallible>(()))
-        .expect("complete synchronous owner traversal");
-    let mut double_buffered_observation = BoundSelectedObservation::open(
-        &small_problem,
-        test_measures(&small_problem),
-        vec![double_buffered_plan],
-    )
-    .expect("bind double-buffered owner traversal");
-    let double_buffered_completion = double_buffered_observation
-        .traverse(&small_problem, |_| Ok::<_, Infallible>(()))
-        .expect("complete double-buffered owner traversal");
-    assert_eq!(
-        synchronous_completion.sample_count(),
-        double_buffered_completion.sample_count(),
-        "read-ahead scheduling and alternating physical buffers are absent from content identity"
-    );
-    assert_eq!(
-        synchronous_completion.sample_count(),
-        double_buffered_completion.sample_count()
+        synchronous_samples, double_buffered_samples,
+        "the live-block allowance is absent from the selected samples"
     );
 
     let large_problem = compiled_problem(&large_path, 64);
@@ -2487,39 +1824,27 @@ fn selected_observation_residency_is_cardinality_independent_and_schedule_invari
         large_with_small_budget.content_plan().rows_per_block(),
         synchronous.content_plan().rows_per_block()
     );
-    assert_eq!(
-        large
-            .selected_samples(&large_problem)
-            .expect("prepare large bounded replay")
-            .try_fold(0_usize, |count, sample| sample.map(|_| count + 1))
-            .expect("read large bounded replay"),
-        64 * 2 * 2
-    );
+    assert_eq!(stream_rows(&large_problem, 1).len(), 64 * 2 * 2);
 }
 
 #[test]
-fn numeric_block_consumption_preserves_v10_without_unused_pa_and_rejects_failed_work() {
+fn numeric_blocks_skip_unused_parallactic_angles_and_reject_stale_geometry() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("numeric-stream.ms");
     generate_fixture_with_rows(&path, 4);
     let problem = compiled_problem(&path, 4);
     let source = &problem.inputs().observation_snapshot().sources()[0];
-    let binding = ObservationSourceBinding::new(
-        source_ordinal(source),
-        bound_content_budget_for_rows(&problem, source, 1, 1),
-    );
-    let open = || {
-        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding.clone()])
-            .unwrap()
-    };
-    let expected = open()
-        .traverse(&problem, |_| Ok::<_, Infallible>(()))
-        .unwrap();
-    let (mut source, mut consumer) = open().into_block_stream(&problem).unwrap();
-    let mut storage = source.create_storage(0);
+    let observation = open_observation(
+        &problem,
+        source,
+        content_budget_for_rows(&problem, source, 1, 1),
+    )
+    .unwrap();
+    let mut source = observation.into_block_stream(&problem).unwrap();
+    let mut storage = source.create_storage();
     let mut geometry = super::SelectedObservationNumericGeometry::new(1, 2).unwrap();
-    let mut callbacks = 0;
-    while source.fill_next(&mut storage).unwrap().is_some() {
+    let mut blocks = 0;
+    while source.fill_next(&mut storage).unwrap() {
         storage
             .project_numeric_geometry(&problem, &mut geometry)
             .unwrap();
@@ -2535,42 +1860,26 @@ fn numeric_block_consumption_preserves_v10_without_unused_pa_and_rejects_failed_
             );
         }
         assert_eq!(storage.parallactic_angle_cache_entries(), 0);
-        consumer
-            .consume_numeric(&storage, &geometry, || {
-                callbacks += 1;
-                Ok::<_, Infallible>(())
-            })
-            .unwrap();
+        blocks += 1;
     }
-    let (_, actual) = consumer.complete(source.complete().unwrap()).unwrap();
-    assert_eq!(callbacks, 4);
-    assert_eq!(actual.sample_count(), expected.sample_count());
-    assert_eq!(actual.sample_count(), expected.sample_count());
-    assert_eq!(actual.measurements().selected_sample_handoff_bytes(), 0);
+    assert_eq!(blocks, 4);
+    assert!(
+        storage.numeric_row(&geometry, 0).is_err(),
+        "an exhausted block no longer matches the geometry of its last fill"
+    );
+    let observation = source.complete().unwrap();
 
-    for failed_work in [false, true] {
-        let (mut source, mut consumer) = open().into_block_stream(&problem).unwrap();
-        let mut storage = source.create_storage(0);
-        source.fill_next(&mut storage).unwrap().unwrap();
-        storage
-            .project_numeric_geometry(&problem, &mut geometry)
-            .unwrap();
-        let first = consumer.consume_numeric(&storage, &geometry, || {
-            if failed_work {
-                Err(std::io::Error::other("numerical worker failed"))
-            } else {
-                Ok(())
-            }
-        });
-        assert_eq!(first.is_err(), failed_work);
-        assert!(
-            consumer
-                .consume_numeric(&storage, &geometry, || Ok::<_, Infallible>(()))
-                .is_err()
-        );
-        while source.fill_next(&mut storage).unwrap().is_some() {}
-        assert!(consumer.complete(source.complete().unwrap()).is_err());
-    }
+    let mut source = observation.into_block_stream(&problem).unwrap();
+    let mut first = source.create_storage();
+    assert!(source.fill_next(&mut first).unwrap());
+    first
+        .project_numeric_geometry(&problem, &mut geometry)
+        .unwrap();
+    assert!(source.fill_next(&mut first).unwrap());
+    assert!(
+        first.numeric_row(&geometry, 0).is_err(),
+        "geometry projected from one fill is not read against the next"
+    );
 }
 
 #[test]
@@ -2580,15 +1889,15 @@ fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
     generate_fixture_with_rows(&path, 17);
     let problem = compiled_problem(&path, 17);
     let source = &problem.inputs().observation_snapshot().sources()[0];
-    let binding = ObservationSourceBinding::new(
-        source_ordinal(source),
-        bound_content_budget_for_rows(&problem, source, 17, 1),
-    );
-    let selected =
-        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding]).unwrap();
-    let (mut source, mut consumer) = selected.into_block_stream(&problem).unwrap();
-    let mut storage = source.create_storage(0);
-    source.fill_next(&mut storage).unwrap().unwrap();
+    let selected = open_observation(
+        &problem,
+        source,
+        content_budget_for_rows(&problem, source, 17, 1),
+    )
+    .unwrap();
+    let mut source = selected.into_block_stream(&problem).unwrap();
+    let mut storage = source.create_storage();
+    assert!(source.fill_next(&mut storage).unwrap());
     let mut serial = super::SelectedObservationNumericGeometry::new(17, 3).unwrap();
     storage
         .project_numeric_geometry(&problem, &mut serial)
@@ -2611,8 +1920,6 @@ fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
             .unwrap();
         assert_eq!(parallel.row_count(), serial.row_count());
         assert_eq!(parallel.frequencies_hz(), serial.frequencies_hz());
-        assert_eq!(parallel.boundaries_hz(), serial.boundaries_hz());
-        assert_eq!(parallel.original_pairs_hz(), serial.original_pairs_hz());
         for row in 0..serial.row_count() {
             assert_eq!(
                 storage.numeric_row(&parallel, row).unwrap().row,
@@ -2631,31 +1938,19 @@ fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
     );
     assert!(storage.numeric_row(&incomplete, 0).is_err());
 
-    consumer
-        .consume_numeric(&storage, &serial, || Ok::<_, Infallible>(()))
+    while source.fill_next(&mut storage).unwrap() {}
+    let retained = source.complete().unwrap();
+    // The second selected channel (1.402 GHz) and its straddling partner.
+    let mut window_source = retained
+        .into_windowed_block_stream(&problem, [1.4015e9, 1.4025e9])
         .unwrap();
-    while source.fill_next(&mut storage).unwrap().is_some() {
-        storage
-            .project_numeric_geometry(&problem, &mut serial)
-            .unwrap();
-        consumer
-            .consume_numeric(&storage, &serial, || Ok::<_, Infallible>(()))
-            .unwrap();
-    }
-    let (retained, _) = consumer.complete(source.complete().unwrap()).unwrap();
-    let (mut window_source, _) = retained
-        .into_channel_window_block_stream(&problem, 1..2)
-        .unwrap();
-    let mut window_storage = window_source.create_storage(0);
-    window_source
-        .fill_next(&mut window_storage)
-        .unwrap()
-        .unwrap();
-    let mut window_serial = super::SelectedObservationNumericGeometry::new(17, 1).unwrap();
+    let mut window_storage = window_source.create_storage();
+    assert!(window_source.fill_next(&mut window_storage).unwrap());
+    let mut window_serial = super::SelectedObservationNumericGeometry::new(17, 2).unwrap();
     window_storage
         .project_numeric_geometry(&problem, &mut window_serial)
         .unwrap();
-    let mut window_parallel = super::SelectedObservationNumericGeometry::new(17, 1).unwrap();
+    let mut window_parallel = super::SelectedObservationNumericGeometry::new(17, 2).unwrap();
     window_storage
         .project_numeric_geometry_with(&problem, &mut window_parallel, 3, |chunks| {
             std::thread::scope(|scope| {
@@ -2674,10 +1969,6 @@ fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
         window_serial.frequencies_hz(),
         window_parallel.frequencies_hz()
     );
-    assert_eq!(
-        window_serial.original_pairs_hz(),
-        window_parallel.original_pairs_hz()
-    );
     for row in 0..window_serial.row_count() {
         assert_eq!(
             window_storage
@@ -2690,55 +1981,29 @@ fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
 }
 
 #[test]
-fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
+fn refillable_block_stream_reads_whole_numeric_blocks_and_returns_the_owner() {
     let directory = tempfile::tempdir().expect("temporary block-stream fixture");
     let path = directory.path().join("block-stream.ms");
     generate_fixture_with_rows(&path, 4);
     let problem = compiled_problem(&path, 4);
     let source = &problem.inputs().observation_snapshot().sources()[0];
-    let binding = ObservationSourceBinding::new(
-        source_ordinal(source),
-        bound_content_budget_for_rows(&problem, source, 1, 1),
-    );
-    let mut scalar =
-        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding.clone()])
-            .expect("bind scalar traversal");
-    let mut scalar_samples = Vec::new();
-    let scalar_completion = scalar
-        .traverse(&problem, |sample| {
-            scalar_samples.push((sample.selected().to_owned(), sample.spectral_evaluation()));
-            Ok::<_, Infallible>(())
-        })
-        .expect("complete scalar traversal");
-
-    let indexed_samples = collect_indexed_samples(&problem, binding.clone(), 3);
-    assert_eq!(indexed_samples, scalar_samples);
-    let block = BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
-        .expect("bind block traversal");
-    let (mut source, mut consumer) = block
+    let observation = open_observation(
+        &problem,
+        source,
+        content_budget_for_rows(&problem, source, 1, 1),
+    )
+    .expect("bind block traversal");
+    let mut source = observation
         .into_block_stream(&problem)
-        .expect("split block traversal");
-    let mut storage = source.create_storage(0);
-    let mut block_samples = Vec::new();
-    let mut peak_current = 0_u64;
-    let mut peak_capacity = 0_u64;
-    let mut previous_block_identity: Option<super::SelectedObservationBlockIdentity> = None;
+        .expect("open block traversal");
+    let mut storage = source.create_storage();
+    let mut blocks = 0;
     while source
         .fill_next(&mut storage)
         .expect("fill canonical block")
-        .is_some()
     {
-        let numeric_block = storage.numeric_block().expect("filled numeric block");
-        let identity = numeric_block.identity();
-        if let Some(previous) = previous_block_identity {
-            assert_eq!(identity.access_binding(), previous.access_binding());
-            assert_eq!(identity.traversal(), previous.traversal());
-            assert_eq!(identity.ordinal(), previous.ordinal() + 1);
-        } else {
-            assert_eq!(identity.ordinal(), 1);
-        }
-        previous_block_identity = Some(identity);
-        let numeric = numeric_block.columns();
+        blocks += 1;
+        let numeric = storage.numeric_columns().expect("filled numeric block");
         let samples =
             numeric.physical_rows.len() * numeric.channel_range.count * numeric.correlation_count;
         assert_eq!(numeric.flags.len(), samples);
@@ -2762,640 +2027,68 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
                 assert_eq!(values.len(), samples);
             }
         }
-        peak_current = peak_current.max(
-            storage
-                .resident_current_bytes()
-                .expect("measure block current bytes"),
-        );
-        peak_capacity = peak_capacity.max(
-            storage
-                .resident_capacity_bytes()
-                .expect("measure block capacity bytes"),
-        );
-        consumer
-            .consume(&storage, |run| {
-                block_samples
-                    .extend(run.samples().map(|sample| {
-                        (sample.selected().to_owned(), sample.spectral_evaluation())
-                    }));
-                Ok::<_, Infallible>(())
-            })
-            .expect("consume canonical block");
     }
-    let mut terminal = source.complete().expect("complete terminal source poll");
-    terminal
-        .record_runtime_residency(1, peak_current, peak_capacity)
-        .expect("record one-slot residency");
-    let (block, block_completion) = consumer
-        .complete(terminal)
-        .expect("combine source and inspection completion");
+    assert_eq!(blocks, 4);
+    assert!(
+        !source
+            .fill_next(&mut storage)
+            .expect("poll after exhaustion")
+    );
+    let observation = source.complete().expect("return the owner");
 
-    assert_eq!(block_samples, scalar_samples);
-    assert_eq!(
-        block_completion.sample_count(),
-        scalar_completion.sample_count()
-    );
-    assert_eq!(
-        block_completion.sample_count(),
-        scalar_completion.sample_count()
-    );
-    let measurements = block_completion.measurements();
-    assert_eq!(measurements.peak_live_blocks(), 1);
-    assert_eq!(measurements.selected_sample_count(), 16);
-    assert_eq!(measurements.selected_channel_run_count(), 8);
-    assert_eq!(measurements.modeled_physical_read_bytes(), Some(636));
-    assert_eq!(
-        measurements.selected_sample_handoff_bytes(),
-        (4 * size_of::<SelectedObservationRunRow>()
-            + 8 * size_of::<SelectedObservationRunChannel>()
-            + 16 * (size_of::<SelectedObservationRunCorrelation>()
-                + size_of::<SelectedSpectralEvaluation>())) as u64
-    );
-    let expected_scratch = 2
-        * (size_of::<SelectedObservationRunCorrelation>()
-            + size_of::<SelectedSpectralEvaluation>())
-        + size_of::<SelectedInputWeightGroup>();
-    assert_eq!(
-        measurements.peak_consumer_scratch_current_bytes(),
-        expected_scratch as u64
-    );
-    assert!(measurements.consumer_scratch_capacity_bytes() >= expected_scratch as u64);
-    assert!(block.can_resume_after(&block_completion));
+    let (_, replayed) = stream(&problem, observation).expect("stream the returned owner");
+    assert_eq!(replayed.len(), 16);
+    assert_eq!(replayed, stream_rows(&problem, 3));
 }
 
 #[test]
 #[cfg(unix)]
-fn windowed_block_stream_exhausts_rows_without_reading_disjoint_payload() {
-    let directory = tempfile::tempdir().expect("temporary disjoint-window fixture");
-    let path = directory.path().join("disjoint-window.ms");
-    generate_fixture_with_rows(&path, 4);
-    let (problem, access) = owner_problem_and_access(owner_resolution_request(&path, 4));
-    let observation = access
-        .open(&problem)
-        .expect("bind source before window replay");
-    let (mut initial_source, mut initial_consumer) = observation
-        .into_block_stream(&problem)
-        .expect("split initial source replay");
-    let mut initial_storage = initial_source.create_storage(0);
-    while initial_source
-        .fill_next(&mut initial_storage)
-        .expect("fill initial source block")
-        .is_some()
-    {
-        initial_consumer
-            .consume(&initial_storage, |_| Ok::<_, Infallible>(()))
-            .expect("consume initial source block");
-    }
-    let initial_terminal = initial_source.complete().expect("initial terminal poll");
-    let (retained, initial_completion) = initial_consumer
-        .complete(initial_terminal)
-        .expect("mint initial replay proof");
-    assert_eq!(initial_completion.sample_count(), 16);
-
-    let (mut channel_source, mut channel_consumer) = retained
-        .into_channel_window_block_stream(&problem, 1..2)
-        .unwrap();
-    let mut channel_storage = channel_source.create_storage(0);
-    let mut geometry =
-        super::SelectedObservationNumericGeometry::new(channel_source.maximum_rows_per_block(), 2)
-            .unwrap();
-    while channel_source
-        .fill_next(&mut channel_storage)
-        .unwrap()
-        .is_some()
-    {
-        let columns = channel_storage.numeric_block().unwrap().columns();
-        assert_eq!(
-            columns.channel_range.start, 2,
-            "selected ordinal 1 is physical channel 2"
-        );
-        assert_eq!(columns.channel_range.count, 1);
-        channel_storage
-            .project_numeric_geometry(&problem, &mut geometry)
-            .unwrap();
-        channel_consumer
-            .consume_numeric(&channel_storage, &geometry, || Ok::<_, Infallible>(()))
-            .unwrap();
-    }
-    let (retained, channel_completion) = channel_consumer
-        .complete_window(channel_source.complete().unwrap())
-        .unwrap();
-    assert_eq!(
-        channel_completion.commitment_id(),
-        initial_completion.commitment_id()
-    );
-    assert_eq!(channel_completion.channel_ordinals(), Some(1..2));
-    assert_eq!(channel_completion.frequency_bounds_hz(), None);
-    assert_eq!(channel_completion.sample_count(), 8);
-    let replay_proof = initial_completion.replay_proof().unwrap();
-    assert!(
-        replay_proof.validates_rebound_window_completion(&channel_completion),
-        "the fresh restricted traversal belongs to the initial full proof"
-    );
-    assert_eq!(
-        channel_completion
-            .measurements()
-            .selected_sample_handoff_bytes(),
-        0
-    );
-    assert!(
-        channel_completion.measurements().logical_output_bytes()
-            < initial_completion.measurements().logical_output_bytes()
-    );
-
-    let (mut empty_source, empty_consumer) = retained
-        .into_channel_window_block_stream(&problem, 0..0)
-        .expect("an unmapped wave has an empty native support window");
-    let mut empty_storage = empty_source.create_storage(0);
-    assert!(
-        empty_source
-            .fill_next(&mut empty_storage)
-            .unwrap()
-            .is_none()
-    );
-    let (retained, empty_completion) = empty_consumer
-        .complete_window(empty_source.complete().unwrap())
-        .expect("empty support still exhausts the retained row domain");
-    assert_eq!(empty_completion.channel_ordinals(), Some(0..0));
-    assert_eq!(empty_completion.sample_count(), 0);
-    assert!(replay_proof.validates_rebound_window_completion(&empty_completion));
-    assert_eq!(empty_completion.measurements().stored_row_count(), 0);
-    assert_eq!(empty_completion.measurements().logical_output_bytes(), 0);
-    assert_eq!(
-        empty_completion
-            .measurements()
-            .modeled_physical_read_bytes(),
-        Some(0)
-    );
-
-    let (mut window_source, mut window_consumer) = retained
-        .into_windowed_block_stream(&problem, [1.5e9, 1.6e9])
-        .expect("split disjoint window replay");
-    let mut window_storage = window_source.create_storage(0);
-    let mut emitted_sample_count = 0_u64;
-    while window_source
-        .fill_next(&mut window_storage)
-        .expect("scan disjoint source rows")
-        .is_some()
-    {
-        emitted_sample_count += window_storage
-            .selected_sample_count()
-            .expect("count disjoint window block");
-        window_consumer
-            .consume(&window_storage, |_| Ok::<_, Infallible>(()))
-            .expect("consume disjoint window block");
-    }
-    let window_terminal = window_source.complete().expect("window terminal poll");
-    let (_, window_completion) = window_consumer
-        .complete_window(window_terminal)
-        .expect("complete disjoint window");
-    assert_eq!(emitted_sample_count, 0);
-    assert_eq!(window_completion.sample_count(), 0);
-    assert!(!replay_proof.validates_rebound_window_completion(&window_completion));
-    let measurements = window_completion.measurements();
-    assert_eq!(measurements.stored_row_count(), 0);
-    assert_eq!(measurements.logical_output_bytes(), 0);
-    assert_eq!(measurements.modeled_physical_read_bytes(), Some(0));
-}
-
-#[test]
-#[cfg(unix)]
-fn windowed_index_ranges_bound_rows_by_the_actual_channel_window() {
-    let directory = tempfile::tempdir().expect("temporary indexed-window fixture");
-    let path = directory.path().join("indexed-window-row-bound.ms");
+fn windowed_block_streams_read_only_the_reached_channels() {
+    let directory = tempfile::tempdir().expect("temporary window fixture");
+    let path = directory.path().join("window.ms");
     generate_fixture_with_rows(&path, 6);
     let (problem, access) = owner_problem_and_access(owner_resolution_request_with_channels(
         &path,
         6,
         vec![0, 1, 2],
     ));
-    let observation = access
-        .open(&problem)
-        .expect("bind indexed source before window replay");
-    let (mut initial_source, mut initial_consumer) = observation
-        .into_block_stream(&problem)
-        .expect("split initial indexed replay");
-    let mut initial_storage = initial_source.create_storage(0);
-    while initial_source
-        .fill_next(&mut initial_storage)
-        .expect("fill initial indexed block")
-        .is_some()
-    {
-        initial_consumer
-            .consume(&initial_storage, |_| Ok::<_, Infallible>(()))
-            .expect("consume initial indexed block");
-    }
-    let initial_terminal = initial_source.complete().expect("initial indexed terminal");
-    let (retained, _) = initial_consumer
-        .complete(initial_terminal)
-        .expect("mint indexed replay proof");
+    let observation = access.open(&problem).expect("bind source");
+    let (observation, full) = stream(&problem, observation).expect("stream every channel");
+    assert_eq!(full.len(), 6 * 3 * 2);
 
-    let (mut window_source, mut window_consumer) = retained
-        .into_windowed_block_stream(&problem, [1.4001e9, 1.4009e9])
-        .expect("split narrowed indexed replay");
-    let index_plan = super::SelectedObservationBlockIndexPlan::new(&problem, 12)
-        .expect("plan indexed narrowed windows");
-    let mut index = index_plan.create_index();
-    let mut storage = window_source.create_storage(0);
-    let mut indexed_runs = 0_usize;
-    while window_source
-        .fill_next(&mut storage)
-        .expect("fill narrowed indexed block")
-        .is_some()
-    {
-        let count = storage.selected_run_count().expect("narrowed run count");
-        let mut start = 0;
-        while start < count {
-            let range = index_plan
-                .next_range(&storage, start)
-                .expect("bound indexed range by window rows");
-            assert!(range.end > range.start);
-            window_consumer
-                .index_block_range(&storage, range.clone(), &mut index)
-                .expect("index narrowed run range");
-            indexed_runs += range.len();
-            start = range.end;
-        }
-    }
-    let terminal = window_source.complete().expect("narrowed indexed terminal");
-    let (_, completion) = window_consumer
-        .complete_window(terminal)
-        .expect("complete narrowed indexed window");
-    assert_eq!(indexed_runs, 12);
-    assert_eq!(completion.sample_count(), 24);
-}
-
-#[test]
-fn borrowed_and_indexed_run_windows_preserve_complete_groups_across_row_splits_and_tail() {
-    let directory = tempfile::tempdir().expect("indexed window fixture");
-    let path = directory.path().join("indexed-windows.ms");
-    generate_fixture_with_rows(&path, 5);
-    let mut ms = MeasurementSet::open(&path).expect("open indexed fixture");
-    let mut flags = match ms
-        .main_table()
-        .cell_accessor(0, "FLAG")
-        .and_then(|cell| cell.array())
-        .expect("read fixture FLAG")
-        .clone()
-    {
-        ArrayValue::Bool(flags) => flags,
-        _ => panic!("fixture FLAG must be Bool"),
-    };
-    flags[[0, 0]] = true;
-    ms.main_table_mut()
-        .cell_accessor_mut(0, "FLAG")
-        .expect("FLAG")
-        .set(Value::Array(ArrayValue::Bool(flags)))
-        .expect("flag one parallel hand");
-    ms.main_table_mut()
-        .cell_accessor_mut(0, "WEIGHT")
-        .expect("WEIGHT")
-        .set(Value::Array(ArrayValue::Float32(
-            ArrayD::from_shape_vec(vec![2], vec![3.0, 7.0]).expect("weights"),
-        )))
-        .expect("unequal hand weights");
-    ms.save().expect("save indexed fixture");
-    drop(ms);
-    let problem = compiled_problem(&path, 5);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let binding = ObservationSourceBinding::new(
-        source_ordinal(source),
-        bound_content_budget_for_rows(&problem, source, 5, 1),
-    );
-    let observation =
-        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding.clone()])
-            .expect("serial block source");
-    let (mut source, mut consumer) = observation
-        .into_block_stream(&problem)
-        .expect("serial block stream");
-    let mut storage = source.create_storage(0);
-    let mut serial = Vec::new();
-    while source
-        .fill_next(&mut storage)
-        .expect("serial fill")
-        .is_some()
-    {
-        consumer
-            .consume(&storage, |run| {
-                serial
-                    .extend(run.samples().map(|sample| {
-                        (sample.selected().to_owned(), sample.spectral_evaluation())
-                    }));
-                Ok::<_, Infallible>(())
-            })
-            .expect("serial consume");
-    }
-    consumer
-        .complete(source.complete().expect("serial terminal"))
-        .expect("serial completion");
-    assert!(serial[0].0.channel_flag);
-    assert!(!serial[1].0.channel_flag);
-    assert!(serial[1].0.parallel_hand_group_flag);
-    assert_eq!(
-        collect_indexed_samples(&problem, binding.clone(), 3),
-        serial
-    );
-    assert_eq!(collect_borrowed_samples(&problem, binding, 3), serial);
-}
-
-fn collect_borrowed_samples(
-    problem: &casa_imaging_model::CompiledProblem,
-    binding: ObservationSourceBinding,
-    maximum_runs: usize,
-) -> Vec<(SelectedObservationSample, SelectedSpectralEvaluation)> {
-    let observation =
-        BoundSelectedObservation::open(problem, test_measures(problem), vec![binding])
-            .expect("bind borrowed traversal");
-    let (mut source, mut consumer) = observation
-        .into_block_stream(problem)
-        .expect("split borrowed traversal");
-    let mut storage = source.create_storage(0);
-    let mut samples = Vec::new();
-    while source
-        .fill_next(&mut storage)
-        .expect("fill borrowed source")
-        .is_some()
-    {
-        let runs = storage.selected_run_count().expect("borrowed run count");
-        assert_eq!(
-            storage.selected_channels_per_row().expect("row channels"),
-            2
-        );
-        for start in (0..runs).step_by(maximum_runs) {
-            let end = (start + maximum_runs).min(runs);
-            consumer
-                .inspect_block_range(&storage, start..end)
-                .expect("inspect borrowed window");
-            let midpoint = start + (end - start).div_ceil(2);
-            let prepared = std::thread::scope(|scope| {
-                let handles: Vec<_> = [midpoint..end, start..midpoint]
-                    .into_iter()
-                    .map(|range| {
-                        let storage = &storage;
-                        scope.spawn(move || {
-                            let mut projector = super::SelectedObservationProjector::new(problem);
-                            let capacity = projector.capacity_bytes();
-                            assert_eq!(
-                                capacity,
-                                super::SelectedObservationProjector::required_bytes(problem)
-                            );
-                            let mut partition = Vec::new();
-                            projector
-                                .visit_block_range(problem, storage, range, |run| {
-                                    partition.extend(run.samples().map(|sample| {
-                                        (sample.selected().to_owned(), sample.spectral_evaluation())
-                                    }));
-                                    Ok::<_, Infallible>(())
-                                })
-                                .expect("project borrowed worker range");
-                            assert_eq!(projector.capacity_bytes(), capacity);
-                            partition
-                        })
-                    })
-                    .collect();
-                handles
-                    .into_iter()
-                    .rev()
-                    .flat_map(|handle| handle.join().expect("borrowed projection worker"))
-                    .collect::<Vec<_>>()
-            });
-            samples.extend(prepared);
-        }
-    }
-    let (_, completion) = consumer
-        .complete(source.complete().expect("borrowed terminal source"))
-        .expect("borrowed inspection completion");
-    assert_eq!(completion.sample_count(), samples.len() as u64);
-    assert_eq!(
-        completion
-            .measurements()
-            .peak_consumer_scratch_current_bytes(),
-        (2 * size_of::<SelectedObservationRunCorrelation>()) as u64
-    );
-    let sample_count = problem
-        .inspect_selected_observation(
-            samples
-                .iter()
-                .map(|(sample, _)| Ok::<_, Infallible>(sample.clone())),
-            |_| Ok::<_, Infallible>(()),
-        )
-        .expect("independent borrowed sample inspection");
-    assert_eq!(sample_count, completion.sample_count());
-    samples
-}
-
-#[test]
-fn borrowed_source_ranges_reject_invalid_windows_and_propagate_consumer_failure() {
-    let directory = tempfile::tempdir().expect("borrowed source validation fixture");
-    let path = directory.path().join("borrowed-ranges.ms");
-    generate_fixture_with_rows(&path, 2);
-    let problem = compiled_problem(&path, 2);
-    let snapshot_source = &problem.inputs().observation_snapshot().sources()[0];
-    let binding = ObservationSourceBinding::new(
-        source_ordinal(snapshot_source),
-        bound_content_budget_for_rows(&problem, snapshot_source, 2, 1),
-    );
-    let observation =
-        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
-            .expect("bind borrowed validation source");
-    let (mut source, mut consumer) = observation
-        .into_block_stream(&problem)
-        .expect("split borrowed validation stream");
-    let mut storage = source.create_storage(0);
-    let mut projector = super::SelectedObservationProjector::new(&problem);
-    let capacity = projector.capacity_bytes();
-    assert!(
-        projector
-            .visit_block_range(&problem, &storage, 0..0, |_| Ok::<_, Infallible>(()))
-            .is_err()
-    );
-    assert!(consumer.inspect_block_range(&storage, 0..0).is_err());
-    assert!(
-        source
-            .fill_next(&mut storage)
-            .expect("fill validation block")
-            .is_some()
-    );
-    let count = storage.selected_run_count().expect("validation run count");
-    for range in [std::ops::Range { start: 2, end: 1 }, 0..count + 1] {
-        assert!(
-            projector
-                .visit_block_range(&problem, &storage, range.clone(), |_| Ok::<_, Infallible>(
-                    ()
-                ))
-                .is_err()
-        );
-        assert!(consumer.inspect_block_range(&storage, range).is_err());
-    }
-    projector
-        .visit_block_range(
-            &problem,
-            &storage,
-            count..count,
-            |_| -> Result<(), Infallible> {
-                panic!("empty borrowed range must not call consumer");
-            },
-        )
-        .expect("empty range is valid");
-    let error = projector
-        .visit_block_range(&problem, &storage, 0..count, |_| {
-            Err(std::io::Error::other("borrowed consumer failed"))
-        })
-        .expect_err("consumer error must propagate");
-    assert!(matches!(
-        error,
-        SelectedObservationTraversalError::Consumer(_)
-    ));
-    assert_eq!(projector.capacity_bytes(), capacity);
-    consumer
-        .inspect_block_range(&storage, 0..count)
-        .expect("inspect valid range after validation failures");
-    while source
-        .fill_next(&mut storage)
-        .expect("remaining validation blocks")
-        .is_some()
-    {
-        consumer
-            .inspect_block_range(
-                &storage,
-                0..storage.selected_run_count().expect("remaining runs"),
-            )
-            .expect("inspect remaining validation block");
-    }
-    consumer
-        .complete(source.complete().expect("validation terminal"))
-        .expect("invalid windows did not corrupt ordered inspection");
-}
-
-#[test]
-#[cfg(unix)]
-fn borrowed_source_inspection_preserves_rebound_sample_counts_and_completion() {
-    let directory = tempfile::tempdir().expect("borrowed rebound fixture");
-    let path = directory.path().join("borrowed-rebound.ms");
-    generate_fixture_with_rows(&path, 3);
-    let request = owner_resolution_request(&path, 3);
-    let (problem, access) = owner_problem_and_access(request);
-    let mut observation = access.open(&problem).expect("open borrowed rebound source");
-    let initial = observation
-        .traverse(&problem, |_| Ok::<_, Infallible>(()))
-        .expect("initial exhaustive source inspection");
-    let (mut source, mut consumer) = observation
-        .into_block_stream(&problem)
-        .expect("split borrowed rebound source");
-    let mut storage = source.create_storage(0);
-    while source
-        .fill_next(&mut storage)
-        .expect("fill rebound block")
-        .is_some()
-    {
-        let runs = storage.selected_run_count().expect("rebound run count");
-        for start in (0..runs).step_by(3) {
-            consumer
-                .inspect_block_range(&storage, start..(start + 3).min(runs))
-                .expect("inspect borrowed rebound range");
-        }
-    }
-    let (_, completion) = consumer
-        .complete(source.complete().expect("rebound terminal"))
-        .expect("complete borrowed rebound source");
-    assert_eq!(completion.sample_count(), initial.sample_count());
-}
-
-fn collect_indexed_samples(
-    problem: &casa_imaging_model::CompiledProblem,
-    binding: ObservationSourceBinding,
-    maximum_runs: usize,
-) -> Vec<(SelectedObservationSample, SelectedSpectralEvaluation)> {
-    let observation =
-        BoundSelectedObservation::open(problem, test_measures(problem), vec![binding])
-            .expect("bind indexed traversal");
-    let (mut source, mut consumer) = observation
-        .into_block_stream(problem)
-        .expect("split indexed traversal");
-    let mut storage = source.create_storage(0);
-    let plan =
-        super::SelectedObservationBlockIndexPlan::new(problem, maximum_runs).expect("index plan");
-    let mut index = plan.create_index();
-    let initial_capacity = index.capacity_bytes().expect("index capacity");
-    assert_eq!(initial_capacity, plan.capacity_bytes());
-    let mut samples = Vec::new();
-    let mut last_block_was_indexed = false;
-    while source
-        .fill_next(&mut storage)
-        .expect("fill indexed source")
-        .is_some()
-    {
-        if last_block_was_indexed {
-            assert!(
-                index.view(&storage, problem).is_err(),
-                "refill invalidates the old index"
-            );
-        }
-        let runs = storage.selected_run_count().expect("run count");
-        for start in (0..runs).step_by(maximum_runs) {
-            let end = (start + maximum_runs).min(runs);
-            consumer
-                .index_block_range(&storage, start..end, &mut index)
-                .expect("inspect window");
-            let view = index
-                .view(&storage, problem)
-                .expect("borrow indexed window");
-            assert_eq!(view.run_count(), end - start);
-            let midpoint = view.run_count().div_ceil(2);
-            let prepared = std::thread::scope(|scope| {
-                // Start the later range first, then restore canonical order on join.
-                let handles: Vec<_> = [midpoint..view.run_count(), 0..midpoint]
-                    .into_iter()
-                    .map(|range| {
-                        let view = &view;
-                        scope.spawn(move || {
-                            let mut projector = super::SelectedObservationProjector::new(problem);
-                            assert_eq!(
-                                projector.capacity_bytes(),
-                                super::SelectedObservationProjector::required_bytes(problem)
-                            );
-                            let mut partition = Vec::new();
-                            view.visit_range(&mut projector, range, |run| {
-                                partition.extend(run.samples().map(|sample| {
-                                    (sample.selected().to_owned(), sample.spectral_evaluation())
-                                }));
-                                Ok::<_, Infallible>(())
-                            })
-                            .expect("project disjoint range");
-                            partition
-                        })
-                    })
-                    .collect();
-                handles
-                    .into_iter()
-                    .rev()
-                    .flat_map(|handle| handle.join().expect("projection worker"))
-                    .collect::<Vec<_>>()
-            });
-            samples.extend(prepared);
+    let window = |observation: BoundSelectedObservation, bounds| {
+        let mut source = observation
+            .into_windowed_block_stream(&problem, bounds)
+            .expect("open windowed replay");
+        let mut storage = source.create_storage();
+        let mut geometry =
+            super::SelectedObservationNumericGeometry::new(source.maximum_rows_per_block(), 3)
+                .unwrap();
+        let mut channels = Vec::new();
+        while source.fill_next(&mut storage).expect("fill window block") {
+            let columns = storage.numeric_columns().unwrap();
+            channels.push((columns.channel_range.start, columns.channel_range.count));
+            storage
+                .project_numeric_geometry(&problem, &mut geometry)
+                .unwrap();
             assert_eq!(
-                index.capacity_bytes().expect("reused index capacity"),
-                initial_capacity
+                geometry.channels().len(),
+                columns.channel_range.count,
+                "the geometry covers exactly the channels read"
             );
-            assert!(index.current_bytes().expect("index populated bytes") <= initial_capacity);
         }
-        last_block_was_indexed = true;
-    }
-    let terminal = source.complete().expect("indexed terminal source");
-    let (_, completion) = consumer
-        .complete(terminal)
-        .expect("indexed inspection completion");
-    assert_eq!(completion.sample_count(), samples.len() as u64);
-    let sample_count = problem
-        .inspect_selected_observation(
-            samples
-                .iter()
-                .map(|(sample, _)| Ok::<_, Infallible>(sample.clone())),
-            |_| Ok::<_, Infallible>(()),
-        )
-        .expect("independent indexed sample inspection");
-    assert_eq!(sample_count, completion.sample_count());
-    samples
+        (source.complete().expect("exhaust the window"), channels)
+    };
+
+    // 1.4001-1.4009 GHz lies between the first two channels: the straddling
+    // pair is read, the third channel is not.
+    let (observation, narrowed) = window(observation, [1.4001e9, 1.4009e9]);
+    assert!(!narrowed.is_empty());
+    assert!(narrowed.iter().all(|&range| range == (0, 2)));
+
+    // A window that reaches no channel reads no payload at all.
+    let (_, disjoint) = window(observation, [1.5e9, 1.6e9]);
+    assert!(disjoint.is_empty());
 }
 
 #[test]
@@ -3479,10 +2172,10 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     let two_row_residency =
         BoundSelectedObservation::certify_residency(&problem, &two_row_bindings)
             .expect("certify reordered two-row source budgets");
-    let mut one_row = BoundSelectedObservation::open(&problem, one_row_measures, one_row_bindings)
+    let one_row = BoundSelectedObservation::open(&problem, one_row_measures, one_row_bindings)
         .expect("bind canonical multi-source observation");
-    let mut two_rows = BoundSelectedObservation::open(&problem, two_row_measures, two_row_bindings)
-        .expect("bind reordered source states and budgets by typed identity");
+    let two_rows = BoundSelectedObservation::open(&problem, two_row_measures, two_row_bindings)
+        .expect("bind reordered source budgets by snapshot position");
 
     assert_eq!(one_row.residency_certificate(), &one_row_residency);
     assert_eq!(two_rows.residency_certificate(), &two_row_residency);
@@ -3527,89 +2220,22 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
         );
     }
 
-    let mut one_row_samples = Vec::new();
-    let one_row_completion = one_row
-        .traverse(&problem, |sample| {
-            one_row_samples.push((sample.selected().to_owned(), sample.spectral_evaluation()));
-            Ok::<_, Infallible>(())
-        })
-        .expect("complete canonical multi-source traversal");
-    let mut two_row_samples = Vec::new();
-    let two_row_completion = two_rows
-        .traverse(&problem, |sample| {
-            two_row_samples.push((sample.selected().to_owned(), sample.spectral_evaluation()));
-            Ok::<_, Infallible>(())
-        })
-        .expect("complete repartitioned multi-source traversal");
+    let (one_row, one_row_samples) =
+        stream(&problem, one_row).expect("stream canonical multi-source blocks");
+    let (_, two_row_samples) =
+        stream(&problem, two_rows).expect("stream repartitioned multi-source blocks");
 
     assert_eq!(one_row_samples.len(), 16);
-    assert_eq!(one_row_samples, two_row_samples);
-    assert_eq!(one_row_completion.sample_count(), 16);
-    let one_row_measurements = one_row_completion.measurements();
-    assert_eq!(one_row_measurements.source_pass_count(), 2);
-    assert_eq!(one_row_measurements.block_count(), 4);
-    assert_eq!(one_row_measurements.stored_row_count(), 4);
-    assert_eq!(one_row_measurements.stored_sample_count(), 24);
-    assert_eq!(one_row_measurements.logical_output_bytes(), 636);
     assert_eq!(
-        one_row_measurements.modeled_physical_read_bytes(),
-        Some(636)
-    );
-    assert_eq!(one_row_measurements.source_read_operations(), 76);
-    assert_eq!(one_row_measurements.request_handoff_bytes(), 32);
-    assert_eq!(one_row_measurements.selected_sample_count(), 16);
-    assert_eq!(one_row_measurements.selected_channel_run_count(), 0);
-    assert_eq!(
-        one_row_measurements.selected_sample_handoff_bytes(),
-        16 * size_of::<super::SelectedObservationTraversalSample<'static>>() as u64
-    );
-    assert_eq!(one_row_measurements.allocated_storage_buffers(), 38);
-    assert_eq!(one_row_measurements.reused_storage_buffers(), 38);
-    assert_eq!(one_row_measurements.peak_live_blocks(), 1);
-    assert!(
-        one_row_measurements.peak_live_capacity_bytes()
-            >= one_row_measurements.peak_live_current_bytes()
-    );
-    assert!(one_row_measurements.source_read_nanos() > 0);
-    assert!(one_row_measurements.source_fill_nanos() >= one_row_measurements.source_read_nanos());
-    assert!(one_row_measurements.source_arrangement_nanos() > 0);
-    let two_row_measurements = two_row_completion.measurements();
-    assert_eq!(two_row_measurements.source_pass_count(), 2);
-    assert_eq!(two_row_measurements.block_count(), 2);
-    assert_eq!(two_row_measurements.stored_row_count(), 4);
-    assert_eq!(two_row_measurements.stored_sample_count(), 24);
-    assert_eq!(two_row_measurements.logical_output_bytes(), 636);
-    assert_eq!(
-        two_row_measurements.modeled_physical_read_bytes(),
-        Some(636)
-    );
-    assert_eq!(two_row_measurements.source_read_operations(), 38);
-    assert_eq!(two_row_measurements.request_handoff_bytes(), 32);
-    assert_eq!(two_row_measurements.allocated_storage_buffers(), 38);
-    assert_eq!(two_row_measurements.reused_storage_buffers(), 0);
-    assert_eq!(
-        one_row_completion.sample_count(),
-        two_row_completion.sample_count(),
-        "physical source and row blocking are absent from content identity"
-    );
-    assert_eq!(
-        one_row_completion.observation_snapshot_id(),
-        problem.inputs().observation_snapshot().snapshot_id()
-    );
-    assert_eq!(
-        one_row_completion.observation_provenance_id(),
-        problem.inputs().observation_snapshot().provenance_id()
-    );
-    assert_eq!(
-        one_row_completion.commitment_id(),
-        problem.selected_observation().commitment_id()
+        one_row_samples, two_row_samples,
+        "physical source and row blocking are absent from the selected samples"
     );
     assert_eq!(
         one_row_samples
             .as_chunks::<8>()
             .0
             .iter()
-            .map(|samples| samples[0].0.address.measurement_set)
+            .map(|samples| samples[0].row.measurement_set)
             .collect::<Vec<_>>(),
         problem
             .selected_observation()
@@ -3619,107 +2245,8 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
             .map(|source| source.measurement_set())
             .collect::<Vec<_>>()
     );
-    assert!(one_row.can_resume_after(&one_row_completion));
-    assert!(!two_rows.can_resume_after(&one_row_completion));
-    let repeated = one_row
-        .traverse(&problem, |_| Ok::<_, Infallible>(()))
-        .expect("mint a fresh completion for a repeated retained traversal");
-    assert_eq!(
-        one_row_completion.sample_count(),
-        repeated.sample_count(),
-        "sample count remains stable across attempts"
-    );
-    assert!(one_row_completion.precedes(&repeated));
-    assert!(!one_row_completion.same_access_binding(&two_row_completion));
-    assert!(!one_row.can_resume_after(&one_row_completion));
-    assert!(one_row.can_resume_after(&repeated));
-}
-
-#[test]
-fn retained_observation_cannot_be_rebound_to_equivalent_cross_provenance_problem() {
-    let directory = tempfile::tempdir().expect("temporary provenance-binding fixture");
-    let path = directory.path().join("provenance.ms");
-    generate_fixture(&path);
-    let compile_with_request = |selection_request| {
-        let selected_rows = SelectedRows::from_ordered_main_rows(
-            2,
-            [SelectedMainRow::new(0, 0), SelectedMainRow::new(1, 0)],
-        )
-        .expect("selected provenance-test rows");
-        let source = source_input_with_selected_rows_filter_and_request(
-            &path,
-            selected_rows,
-            RowSelection::new(
-                IdSelection::All,
-                TimeSelection::All,
-                UvSelection::All,
-                AntennaSelection::All,
-                IdSelection::All,
-                IdSelection::All,
-                IntentSelection::All,
-                IdSelection::All,
-            ),
-            selection_request,
-        );
-        let snapshot = compile_observation(ObservationSnapshotInput::new(
-            vec![source],
-            vec![(ReferenceDataKind::Measures, identity(90))],
-            ModelStateIdentity::Empty,
-        ))
-        .expect("compile provenance-test snapshot");
-        compile(ProblemInput::new(
-            specification(),
-            geometry(),
-            ProblemInputIdentities::new(snapshot.clone()),
-            model_lifecycle(snapshot.model()),
-        ))
-        .expect("compile provenance-test problem")
-    };
-    let first_problem = compile_with_request(identity(211));
-    let second_problem = compile_with_request(identity(212));
-    assert_eq!(
-        first_problem.inputs().observation_snapshot().snapshot_id(),
-        second_problem.inputs().observation_snapshot().snapshot_id(),
-        "source provenance is deliberately absent from scientific snapshot identity"
-    );
-    assert_eq!(first_problem.problem_id(), second_problem.problem_id());
-    assert_ne!(
-        first_problem
-            .inputs()
-            .observation_snapshot()
-            .provenance_id(),
-        second_problem
-            .inputs()
-            .observation_snapshot()
-            .provenance_id()
-    );
-    let source = &first_problem.inputs().observation_snapshot().sources()[0];
-    let binding = ObservationSourceBinding::new(
-        source_ordinal(source),
-        bound_content_budget_for_rows(&first_problem, source, 2, 1),
-    );
-    let mut retained = BoundSelectedObservation::open(
-        &first_problem,
-        test_measures(&first_problem),
-        vec![binding],
-    )
-    .expect("bind first provenance exactly");
-    let mut consumed = 0_usize;
-
-    let error = retained
-        .traverse(&second_problem, |_| {
-            consumed += 1;
-            Ok::<_, Infallible>(())
-        })
-        .expect_err("equivalent science cannot relabel retained access with new provenance");
-
-    assert_eq!(consumed, 0);
-    assert!(matches!(
-        error,
-        SelectedObservationTraversalError::Binding(
-            super::BoundSelectedObservationError::ProblemMismatch
-        )
-    ));
+    let (_, repeated) = stream(&problem, one_row).expect("repeat the retained traversal");
+    assert_eq!(repeated, one_row_samples);
 }
 
 #[test]
@@ -3739,36 +2266,19 @@ fn retained_selected_samples_evaluate_fixed_centres_and_uvw_coordinates() {
             PointingCentreLaw::Fixed(pointing),
         ),
     );
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let bound = BoundObservationSource::open(
-        &problem,
-        source,
-        content_budget_for_rows(&problem, source, 2, 1),
-    )
-    .expect("bind fixed-centre source");
-    let samples = bound
-        .selected_samples(&problem)
-        .expect("prepare fixed-centre stream")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("evaluate fixed-centre samples");
+    let samples = stream_rows(&problem, 2);
 
     assert_eq!(samples.len(), 8);
     for sample in &samples {
-        assert_eq!(sample.coordinates.phase_direction, phase);
-        assert_eq!(sample.coordinates.delay_direction, delay);
-        assert_eq!(sample.coordinates.pointing_directions.antenna1, pointing);
-        assert_eq!(sample.coordinates.pointing_directions.antenna2, pointing);
-        assert_ne!(
-            sample.coordinates.transformed_uvw_m,
-            sample.coordinates.raw_uvw_m
-        );
-        assert_eq!(
-            sample.coordinates.density_uvw_m,
-            sample.coordinates.raw_uvw_m
-        );
-        assert_ne!(sample.coordinates.phase_shift_m, 0.0);
+        let coordinates = &sample.row.coordinates;
+        assert_eq!(coordinates.phase_direction, phase);
+        assert_eq!(coordinates.delay_direction, delay);
+        assert_eq!(coordinates.pointing_directions.antenna1, pointing);
+        assert_eq!(coordinates.pointing_directions.antenna2, pointing);
+        assert_ne!(coordinates.transformed_uvw_m, coordinates.raw_uvw_m);
+        assert_eq!(coordinates.density_uvw_m, coordinates.raw_uvw_m);
+        assert_ne!(coordinates.phase_shift_m, 0.0);
     }
-    inspect_samples(&problem, samples).expect("inspect fixed-centre stream");
 }
 
 #[test]
@@ -3788,18 +2298,14 @@ fn retained_mosaic_projection_uses_girar_uvw_with_adjoint_phase_sign() {
         geometry_with_centres_and_uvw(centres, UvwCoordinateLaw::MosaicPhaseTrackingCentre),
     );
     let source = &problem.inputs().observation_snapshot().sources()[0];
-    let bound = BoundObservationSource::open(
+    let bound = open_observation(
         &problem,
         source,
         content_budget_for_rows(&problem, source, 2, 1),
     )
     .expect("bind mosaic-projection source");
-    let sample = bound
-        .selected_samples(&problem)
-        .expect("prepare mosaic-projection stream")
-        .next()
-        .expect("one selected sample")
-        .expect("evaluate mosaic-projection sample");
+    let (bound, samples) = stream(&problem, bound).expect("evaluate mosaic-projection samples");
+    let sample = &samples[0];
     let target_direction = problem.geometry().domains()[0].model_phase_centre();
     let target = MDirection::from_angles(
         target_direction.longitude_rad(),
@@ -3807,14 +2313,16 @@ fn retained_mosaic_projection_uses_girar_uvw_with_adjoint_phase_sign() {
         DirectionRef::J2000,
     );
     let (expected_uvw_m, casa_dphase_m) = bound
+        .source(0)
         .geometry_engine()
         .reproject_raw_uvw_for_mosaic_to_direction(
-            sample.coordinates.raw_uvw_m,
-            usize::try_from(sample.metadata.field_id).expect("field id"),
+            sample.row.coordinates.raw_uvw_m,
+            usize::try_from(sample.row.metadata.field_id).expect("field id"),
             &target,
         )
         .expect("CASA girarUVW projection");
     let projection = sample
+        .row
         .domain_projections
         .iter()
         .next()
@@ -3840,22 +2348,30 @@ fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
         ),
     );
     let source = &problem.inputs().observation_snapshot().sources()[0];
-    let samples = BoundObservationSource::open(
-        &problem,
-        source,
-        content_budget_for_rows(&problem, source, 1, 1),
+    let budget = SelectedObservationContentBudget::new(64 << 20, 1, 4);
+    let ephemeris = crate::SelectedObservationEphemeris::named(
+        "Mars",
+        identity(90),
+        budget.reference_data_budget(),
     )
-    .expect("bind moving-centre source")
-    .selected_samples(&problem)
-    .expect("prepare moving-centre stream")
-    .collect::<Result<Vec<_>, _>>()
-    .expect("evaluate moving-centre samples");
+    .expect("admit the Mars ephemeris");
+    let observation = BoundSelectedObservation::open(
+        &problem,
+        test_measures(&problem),
+        vec![
+            ObservationSourceBinding::new(source_ordinal(source), budget)
+                .with_ephemeris(Some(ephemeris)),
+        ],
+    )
+    .expect("bind moving-centre source");
+    let (_, samples) = stream(&problem, observation).expect("evaluate moving-centre samples");
 
-    let first = &samples[0];
-    let second_row = samples
+    let first = &samples[0].row;
+    let second_row = &samples
         .iter()
-        .find(|sample| sample.address.physical_row == 1)
-        .expect("second selected row");
+        .find(|sample| sample.row.physical_row == 1)
+        .expect("second selected row")
+        .row;
     assert_ne!(
         first.coordinates.phase_direction,
         second_row.coordinates.phase_direction
@@ -3866,28 +2382,23 @@ fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
         "moving rows must not retain one fixed primary-domain projection",
     );
     for sample in &samples {
+        let coordinates = &sample.row.coordinates;
+        assert_eq!(coordinates.phase_direction, coordinates.delay_direction);
         assert_eq!(
-            sample.coordinates.phase_direction,
-            sample.coordinates.delay_direction
+            coordinates.phase_direction,
+            coordinates.pointing_directions.antenna1
         );
-        assert_eq!(
-            sample.coordinates.phase_direction,
-            sample.coordinates.pointing_directions.antenna1
-        );
-        assert_ne!(sample.coordinates.phase_shift_m, 0.0);
+        assert_ne!(coordinates.phase_shift_m, 0.0);
         let primary = sample
+            .row
             .domain_projections
             .iter()
             .next()
             .expect("primary image-domain projection")
             .model();
-        assert_eq!(
-            primary.transformed_uvw_m(),
-            sample.coordinates.transformed_uvw_m,
-        );
-        assert_eq!(primary.phase_shift_m(), sample.coordinates.phase_shift_m);
+        assert_eq!(primary.transformed_uvw_m(), coordinates.transformed_uvw_m);
+        assert_eq!(primary.phase_shift_m(), coordinates.phase_shift_m);
     }
-    inspect_samples(&problem, samples).expect("inspect moving-centre stream");
 }
 
 #[test]
@@ -3944,21 +2455,13 @@ fn retained_selected_samples_preserve_bounded_per_antenna_pointing_directions() 
         one_row.content_plan().preparation_bytes_per_block()
             > one_row.content_plan().bytes_per_block()
     );
-    let one_row_samples = one_row
-        .selected_samples(&problem)
-        .expect("prepare one-row POINTING stream")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("read one-row POINTING stream");
-    let two_row_samples = two_rows
-        .selected_samples(&problem)
-        .expect("prepare two-row POINTING stream")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("read two-row POINTING stream");
+    let one_row_samples = stream_rows(&problem, 1);
+    let two_row_samples = stream_rows(&problem, 2);
 
     assert_eq!(one_row_samples, two_row_samples);
     for sample in &one_row_samples {
         assert_eq!(
-            sample.coordinates.pointing_directions.antenna1,
+            sample.row.coordinates.pointing_directions.antenna1,
             SkyDirection::new(
                 DirectionFrame::J2000,
                 antenna1_pointing[0],
@@ -3966,7 +2469,7 @@ fn retained_selected_samples_preserve_bounded_per_antenna_pointing_directions() 
             )
         );
         assert_eq!(
-            sample.coordinates.pointing_directions.antenna2,
+            sample.row.coordinates.pointing_directions.antenna2,
             SkyDirection::new(
                 DirectionFrame::J2000,
                 antenna2_pointing[0],
@@ -3974,7 +2477,6 @@ fn retained_selected_samples_preserve_bounded_per_antenna_pointing_directions() 
             )
         );
     }
-    inspect_samples(&problem, one_row_samples).expect("inspect exact bounded POINTING stream");
 }
 
 #[test]
@@ -4003,25 +2505,15 @@ fn observation_pointing_missing_policy_is_explicit_and_fail_closed() {
             observation_pointing(MissingPointingPolicy::UsePhaseTrackingCentre),
         ),
     );
-    let source = &fallback_problem.inputs().observation_snapshot().sources()[0];
-    let fallback = BoundObservationSource::open(
-        &fallback_problem,
-        source,
-        content_budget_for_rows(&fallback_problem, source, 2, 1),
-    )
-    .expect("bind fallback POINTING source")
-    .selected_samples(&fallback_problem)
-    .expect("prepare fallback POINTING stream")
-    .collect::<Result<Vec<_>, _>>()
-    .expect("explicitly fall back to phase centre");
-    for sample in fallback {
+    for sample in stream_rows(&fallback_problem, 2) {
+        let coordinates = &sample.row.coordinates;
         assert_eq!(
-            sample.coordinates.pointing_directions.antenna1,
-            sample.coordinates.phase_direction
+            coordinates.pointing_directions.antenna1,
+            coordinates.phase_direction
         );
         assert_eq!(
-            sample.coordinates.pointing_directions.antenna2,
-            sample.coordinates.phase_direction
+            coordinates.pointing_directions.antenna2,
+            coordinates.phase_direction
         );
     }
 
@@ -4035,16 +2527,15 @@ fn observation_pointing_missing_policy_is_explicit_and_fail_closed() {
         ),
     );
     let source = &rejecting_problem.inputs().observation_snapshot().sources()[0];
-    let error = BoundObservationSource::open(
+    let observation = open_observation(
         &rejecting_problem,
         source,
         content_budget_for_rows(&rejecting_problem, source, 2, 1),
     )
-    .expect("bind rejecting POINTING source")
-    .selected_samples(&rejecting_problem)
-    .expect("prepare rejecting POINTING stream")
-    .collect::<Result<Vec<_>, _>>()
-    .expect_err("missing required POINTING must fail closed");
+    .expect("bind rejecting POINTING source");
+    let error = stream(&rejecting_problem, observation)
+        .err()
+        .expect("missing required POINTING must fail closed");
     assert!(matches!(
         error,
         super::BoundObservationSourceError::MissingPointingDirection { .. }
@@ -4129,61 +2620,24 @@ fn observation_pointing_interpolates_each_antenna_on_the_shortest_arc() {
             )),
         ),
     );
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let samples = BoundObservationSource::open(
-        &problem,
-        source,
-        content_budget_for_rows(&problem, source, 2, 1),
-    )
-    .expect("bind interpolated POINTING source")
-    .selected_samples(&problem)
-    .expect("prepare interpolated POINTING stream")
-    .collect::<Result<Vec<_>, _>>()
-    .expect("interpolate POINTING directions");
+    let samples = stream_rows(&problem, 2);
 
+    let longitudes = |sample: &Sample| {
+        let pointing = sample.row.coordinates.pointing_directions;
+        [
+            pointing.antenna1.longitude_rad(),
+            pointing.antenna2.longitude_rad(),
+        ]
+    };
     for sample in &samples[..4] {
-        assert!(
-            (sample
-                .coordinates
-                .pointing_directions
-                .antenna1
-                .longitude_rad()
-                - 0.05)
-                .abs()
-                < 1.0e-12
-        );
-        assert!(
-            (sample
-                .coordinates
-                .pointing_directions
-                .antenna2
-                .longitude_rad()
-                - 0.45)
-                .abs()
-                < 1.0e-12
-        );
+        let [antenna1, antenna2] = longitudes(sample);
+        assert!((antenna1 - 0.05).abs() < 1.0e-12);
+        assert!((antenna2 - 0.45).abs() < 1.0e-12);
     }
     for sample in &samples[4..] {
-        assert!(
-            (sample
-                .coordinates
-                .pointing_directions
-                .antenna1
-                .longitude_rad()
-                - 0.15)
-                .abs()
-                < 1.0e-12
-        );
-        assert!(
-            (sample
-                .coordinates
-                .pointing_directions
-                .antenna2
-                .longitude_rad()
-                - 0.55)
-                .abs()
-                < 1.0e-12
-        );
+        let [antenna1, antenna2] = longitudes(sample);
+        assert!((antenna1 - 0.15).abs() < 1.0e-12);
+        assert!((antenna2 - 0.55).abs() < 1.0e-12);
     }
 }
 
@@ -4240,29 +2694,19 @@ fn selected_rows_pair_owner_derived_heterogeneous_apertures_with_antenna_pointin
         model_lifecycle(snapshot.model()),
     ))
     .expect("compile heterogeneous response problem");
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let samples = BoundObservationSource::open(
-        &problem,
-        source,
-        content_budget_for_rows(&problem, source, 2, 1),
-    )
-    .expect("bind heterogeneous source")
-    .selected_samples(&problem)
-    .expect("prepare heterogeneous stream")
-    .collect::<Result<Vec<_>, _>>()
-    .expect("evaluate heterogeneous stream");
+    let samples = stream_rows(&problem, 2);
 
     assert!(!samples.is_empty());
     for sample in samples {
-        let responses = sample
-            .metadata
+        let metadata = sample.row.metadata;
+        let responses = metadata
             .antenna_responses
             .expect("direction-dependent rows carry response classes");
         assert_eq!(responses.antenna1, AntennaResponseClass::CasaAlma12m);
         assert_eq!(responses.antenna2, AntennaResponseClass::CasaAca7m);
         assert_eq!(responses.family_envelope, AntennaResponseClass::CasaAlma12m);
-        assert_eq!(sample.metadata.antenna1, 0);
-        assert_eq!(sample.metadata.antenna2, 1);
+        assert_eq!(metadata.antenna1, 0);
+        assert_eq!(metadata.antenna2, 1);
     }
 }
 
@@ -4286,36 +2730,27 @@ fn multi_spw_selection_is_block_invariant_across_prediction_and_residual_replays
     ))
     .expect("compile multi-SPW problem");
     let source = &problem.inputs().observation_snapshot().sources()[0];
-    let one_row = BoundObservationSource::open(
+    let one_row = open_observation(
         &problem,
         source,
         content_budget_for_rows(&problem, source, 1, 1),
     )
     .expect("bind one-row multi-SPW stream");
-    let three_rows = BoundObservationSource::open(
+    let three_rows = open_observation(
         &problem,
         source,
         content_budget_for_rows(&problem, source, 3, 1),
     )
     .expect("bind three-row multi-SPW stream");
-    assert_eq!(one_row.content_plan().rows_per_block(), 1);
-    assert_eq!(three_rows.content_plan().rows_per_block(), 3);
+    assert_eq!(one_row.source_content_plan(0).unwrap().rows_per_block(), 1);
+    assert_eq!(
+        three_rows.source_content_plan(0).unwrap().rows_per_block(),
+        3
+    );
 
-    let prediction = one_row
-        .selected_samples(&problem)
-        .expect("prepare prediction replay")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("read prediction replay");
-    let residual = one_row
-        .selected_samples(&problem)
-        .expect("prepare residual replay")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("read residual replay");
-    let repartitioned = three_rows
-        .selected_samples(&problem)
-        .expect("prepare repartitioned replay")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("read repartitioned replay");
+    let (one_row, prediction) = stream(&problem, one_row).expect("read prediction replay");
+    let (_, residual) = stream(&problem, one_row).expect("read residual replay");
+    let (_, repartitioned) = stream(&problem, three_rows).expect("read repartitioned replay");
 
     assert_eq!(prediction, residual);
     assert_eq!(prediction, repartitioned);
@@ -4325,11 +2760,11 @@ fn multi_spw_selection_is_block_invariant_across_prediction_and_residual_replays
             .iter()
             .map(|sample| {
                 (
-                    sample.address.physical_row,
-                    sample.address.data_description_id,
-                    sample.address.spectral_window_id,
-                    sample.address.channel_index,
-                    sample.address.correlation_index,
+                    sample.row.physical_row,
+                    sample.row.data_description_id,
+                    sample.row.spectral_window_id,
+                    sample.channel.channel_index,
+                    sample.correlation.correlation_index(),
                 )
             })
             .collect::<Vec<_>>(),
@@ -4352,25 +2787,133 @@ fn multi_spw_selection_is_block_invariant_across_prediction_and_residual_replays
             (3, 1, 1, 2, 1),
         ]
     );
-    assert_eq!(prediction[8].address.frequency_centre_hz, 1.501e9);
-    assert_eq!(prediction[12].address.frequency_centre_hz, 1.501e9);
-    let prediction_inspection =
-        inspect_samples(&problem, prediction).expect("inspect prediction replay");
-    let residual_inspection = inspect_samples(&problem, residual).expect("inspect residual replay");
-    assert_eq!(prediction_inspection, residual_inspection);
+    assert_eq!(prediction[8].channel.frequency_centre_hz, 1.501e9);
+    assert_eq!(prediction[12].channel.frequency_centre_hz, 1.501e9);
 }
 
-fn inspect_samples(
+/// A selected visibility in its MeasurementSet storage representation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Visibility {
+    Float32(f32),
+    Complex32([f32; 2]),
+}
+
+/// One selected sample as the imaging source reads it: a numeric row of the
+/// block stream, one of its channels and one of its correlations.
+#[derive(Debug, Clone, PartialEq)]
+struct Sample {
+    row: SelectedObservationRunRow,
+    channel: SelectedObservationRunChannel,
+    correlation: CorrelationProduct,
+    /// The channel centre in the compiled output frame.
+    frequency_hz: f64,
+    visibility: Visibility,
+    flag: bool,
+    weight: f32,
+}
+
+/// Open the one source of `problem` under `budget`, with the POINTING query
+/// domain the resolver derives when the problem reads observed pointings.
+fn open_observation(
     problem: &casa_imaging_model::CompiledProblem,
-    samples: impl IntoIterator<Item = SelectedObservationSample>,
-) -> Result<u64, SelectedObservationInspectionError> {
-    match problem.inspect_selected_observation(samples.into_iter().map(Ok::<_, Infallible>), |_| {
-        Ok::<_, Infallible>(())
-    }) {
-        Ok(inspection) => Ok(inspection),
-        Err(SelectedObservationPassError::Inspection(error)) => Err(error),
-        Err(SelectedObservationPassError::External(error)) => match error {},
+    source: &ObservationSource,
+    budget: SelectedObservationContentBudget,
+) -> Result<BoundSelectedObservation, super::BoundSelectedObservationError> {
+    let mut binding = ObservationSourceBinding::new(source_ordinal(source), budget);
+    if matches!(
+        problem.geometry().centres().pointing(),
+        PointingCentreLaw::Observation(_)
+    ) {
+        let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())
+            .expect("open fixture for its POINTING query domain");
+        binding = binding.with_pointing_query_domain(
+            crate::observation_owner::validate_test_physical_selection(
+                &measurement_set,
+                source.selection(),
+                budget,
+            )
+            .expect("derive the POINTING query domain"),
+        );
     }
+    BoundSelectedObservation::open(problem, test_measures(problem), vec![binding])
+}
+
+/// Every selected sample in stream order, read through the production block
+/// stream exactly as the imaging source reads it. Returns the observation for
+/// the next traversal.
+fn stream(
+    problem: &casa_imaging_model::CompiledProblem,
+    observation: BoundSelectedObservation,
+) -> Result<(BoundSelectedObservation, Vec<Sample>), super::BoundObservationSourceError> {
+    let mut source = observation
+        .into_block_stream(problem)
+        .expect("open the block stream");
+    let mut block = source.create_storage();
+    let channels = problem
+        .selected_observation()
+        .read_set()
+        .sources()
+        .iter()
+        .flat_map(|source| source.selection().spectral_windows())
+        .map(|window| window.channel_indices().len())
+        .max()
+        .unwrap_or(0);
+    let mut geometry =
+        super::SelectedObservationNumericGeometry::new(source.maximum_rows_per_block(), channels)
+            .expect("allocate numeric geometry");
+    let mut samples = Vec::new();
+    while source.fill_next(&mut block)? {
+        block.project_numeric_geometry(problem, &mut geometry)?;
+        for row in 0..geometry.row_count() {
+            let numeric = block.numeric_row(&geometry, row)?;
+            let frequencies = &geometry.frequencies_hz()
+                [row * numeric.channels.len()..(row + 1) * numeric.channels.len()];
+            for (channel, frequency_hz) in numeric.channels.iter().zip(frequencies) {
+                let stored = (channel.channel_index - numeric.first_stored_channel) as usize;
+                for correlation in numeric.correlations {
+                    let index = stored * numeric.stored_correlations
+                        + correlation.correlation_index() as usize;
+                    samples.push(Sample {
+                        row: numeric.row.clone(),
+                        channel: *channel,
+                        correlation: *correlation,
+                        frequency_hz: *frequency_hz,
+                        visibility: match numeric.visibility {
+                            crate::SelectedNumericVisibility::Complex32(values) => {
+                                Visibility::Complex32([values[index].re, values[index].im])
+                            }
+                            crate::SelectedNumericVisibility::Float32(values) => {
+                                Visibility::Float32(values[index])
+                            }
+                        },
+                        flag: numeric.flags[index],
+                        weight: match numeric.weights {
+                            crate::SelectedNumericWeights::PerRow(values) => {
+                                values[correlation.correlation_index() as usize]
+                            }
+                            crate::SelectedNumericWeights::PerChannel(values) => values[index],
+                        },
+                    });
+                }
+            }
+        }
+    }
+    Ok((source.complete()?, samples))
+}
+
+/// Open the one source of `problem` with blocks of `rows` rows and read
+/// every selected sample.
+fn stream_rows(problem: &casa_imaging_model::CompiledProblem, rows: usize) -> Vec<Sample> {
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let observation = open_observation(
+        problem,
+        source,
+        content_budget_for_rows(problem, source, rows, 1),
+    )
+    .expect("open the selected observation");
+    stream(problem, observation)
+        .expect("stream the selected observation")
+        .1
 }
 
 fn extend_fixture_with_second_spw(path: &std::path::Path) {
@@ -4670,26 +3213,6 @@ fn test_measures(
 }
 
 fn content_budget_for_rows(
-    problem: &casa_imaging_model::CompiledProblem,
-    source: &ObservationSource,
-    target_rows_per_block: usize,
-    maximum_live_blocks: usize,
-) -> SelectedObservationContentBudget {
-    let measures = test_measures(problem);
-    content_budget_for_rows_with_shared_bytes(
-        problem,
-        source,
-        selected_observation_shared_bytes(
-            &measures,
-            BoundObservationSource::retained_source_slot_bytes(),
-            single_binding_graph_initialization_bytes(source),
-        ),
-        target_rows_per_block,
-        maximum_live_blocks,
-    )
-}
-
-fn bound_content_budget_for_rows(
     problem: &casa_imaging_model::CompiledProblem,
     source: &ObservationSource,
     target_rows_per_block: usize,

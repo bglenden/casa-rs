@@ -20,8 +20,19 @@ use super::access::{
     BoundObservationSource, BufferedObservationBlock, EvaluatedRowGeometry, SelectedChannel,
     SelectedCoordinates, SelectedReplayRow,
 };
-use super::maximum_selected_correlations;
 use super::row_selection::CompiledRowPredicate;
+
+fn maximum_selected_correlations(problem: &CompiledProblem) -> usize {
+    problem
+        .selected_observation()
+        .read_set()
+        .sources()
+        .iter()
+        .flat_map(|source| source.selection().correlations())
+        .map(|selection| selection.products().len())
+        .max()
+        .unwrap_or(0)
+}
 
 mod requirements;
 pub use requirements::SelectedObservationContentRequirements;
@@ -552,9 +563,6 @@ pub(crate) fn selected_content_requirements(
         pointing_reference_scratch_bytes
     };
     Ok(SelectedObservationContentRequirements {
-        problem: problem.problem_id(),
-        provenance: problem.inputs().observation_snapshot().provenance_id(),
-        source: source.input_ordinal(),
         retained_bytes,
         initialization_scratch_bytes,
         initialization_scan_bytes_per_row,

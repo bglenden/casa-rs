@@ -146,28 +146,20 @@ pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 pub use selected_observation::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
     DeferredSelectedObservationAccess, ObservationSourceBinding, SelectedObservationBlock,
-    SelectedObservationBlockConsumer, SelectedObservationBlockIdentity,
-    SelectedObservationBlockIndex, SelectedObservationBlockIndexPlan,
-    SelectedObservationBlockSource, SelectedObservationCompletion,
-    SelectedObservationContentBudget, SelectedObservationContentPlan,
-    SelectedObservationContentPlanError, SelectedObservationContentRequirements,
-    SelectedObservationIndexedBlock, SelectedObservationMeasures, SelectedObservationMeasuresError,
-    SelectedObservationNumericBlock, SelectedObservationNumericGeometry,
-    SelectedObservationProjector, SelectedObservationReferenceDataBudget,
-    SelectedObservationReplayProof, SelectedObservationResidencyCertificate,
+    SelectedObservationBlockSource, SelectedObservationContentBudget,
+    SelectedObservationContentPlan, SelectedObservationContentPlanError,
+    SelectedObservationContentRequirements, SelectedObservationMeasures,
+    SelectedObservationMeasuresError, SelectedObservationNumericGeometry,
+    SelectedObservationReferenceDataBudget, SelectedObservationResidencyCertificate,
     SelectedObservationRow, SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
-    SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralRange,
-    SelectedObservationSpectralRangeMeasurements, SelectedObservationSpectralWindow,
-    SelectedObservationTerminal, SelectedObservationTraversalError,
-    SelectedObservationTraversalMeasurements, SelectedObservationTraversalRun,
-    SelectedObservationTraversalSample, SelectedObservationWindowCompletion,
+    SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralWindow,
 };
 pub use selected_observation_buffer::{
     SelectedNumericVisibility, SelectedNumericWeights, SelectedObservationNumericColumns,
 };
 pub(crate) use selected_observation_buffer::{
-    SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredSample,
-    SelectedStoredVisibility, SelectedVisibilityColumn, SelectedWeightColumn,
+    SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredRow,
+    SelectedVisibilityColumn, SelectedWeightColumn,
 };
 pub(crate) use selected_pointing::{
     PointingDirectionBracket, PointingDirectionColumn, PointingDirectionQuery, PointingReadPlan,

@@ -1722,30 +1722,6 @@ struct ModeledColumnPhysicalRead {
     bytes: u64,
 }
 
-/// Apply the visibility-buffer storage-manager model to one MAIN-table column.
-pub(crate) fn modeled_main_column_physical_read_bytes(
-    table: &Table,
-    column_name: &str,
-    channelized: bool,
-    channel_start: usize,
-    requested_channels: usize,
-    elements_per_channel_or_row: usize,
-    row_count: usize,
-) -> MsResult<u64> {
-    let primitive = main_column_primitive_type(table, column_name)?;
-    Ok(modeled_column_physical_read(&ColumnReportInput {
-        table,
-        column_name,
-        primitive,
-        channelized,
-        channel_start,
-        requested_channels,
-        elements_per_channel_or_row,
-        row_count,
-    })?
-    .bytes)
-}
-
 fn column_report(input: ColumnReportInput<'_>) -> MsResult<VisibilityBufferColumnReport> {
     let physical_read = modeled_column_physical_read(&input)?;
     let ColumnReportInput {

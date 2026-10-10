@@ -1,22 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_imaging_model::{CompiledProblem, CompiledProblemId, ObservationProvenanceId};
-
 use super::{
     BufferedObservationBlock, SelectedObservationContentBudget, SelectedObservationContentPlan,
     SelectedObservationContentPlanError,
 };
 
-/// Payload-free, identity-bound memory requirements for one selected source.
+/// Payload-free memory requirements for one selected source.
 ///
 /// The storage owner derives this curve under a short-lived read lock. It includes
 /// retained metadata, source-specific plans, POINTING construction, and overlapping
 /// block preparation. It retains neither table handles nor a prepared catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectedObservationContentRequirements {
-    pub(super) problem: CompiledProblemId,
-    pub(super) provenance: ObservationProvenanceId,
-    pub(super) source: usize,
     pub(super) retained_bytes: usize,
     pub(super) initialization_scratch_bytes: usize,
     pub(super) initialization_scan_bytes_per_row: usize,
@@ -32,12 +27,6 @@ pub struct SelectedObservationContentRequirements {
 }
 
 impl SelectedObservationContentRequirements {
-    pub(crate) fn matches(&self, problem: &CompiledProblem, source: usize) -> bool {
-        self.problem == problem.problem_id()
-            && self.provenance == problem.inputs().observation_snapshot().provenance_id()
-            && self.source == source
-    }
-
     /// Return the smallest complete envelope admitting one selected row.
     pub fn minimum_bytes(
         self,

@@ -473,13 +473,9 @@ impl ResolvedSelectedObservationAccess {
     /// Finalize both source-read and selected-output storage budgets from one quote.
     pub fn with_content_budget(
         mut self,
-        problem: &casa_imaging_model::CompiledProblem,
         requirements: &crate::SelectedObservationContentRequirements,
         budget: SelectedObservationContentBudget,
     ) -> Result<Self, BoundSelectedObservationError> {
-        if !requirements.matches(problem, self.binding.measurement_set()) {
-            return Err(BoundSelectedObservationError::ProblemMismatch);
-        }
         requirements
             .plan(budget)
             .map_err(|error| BoundSelectedObservationError::Source {

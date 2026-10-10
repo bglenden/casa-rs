@@ -11,8 +11,8 @@ use casa_imaging_runtime::pass::{
     BoundedSource, DomainProjection, NativeBlock, NativeRowHeader, RowAddress, SourceError,
 };
 use casa_ms::{
-    BoundSelectedObservation, SelectedObservationBlock, SelectedObservationBlockConsumer,
-    SelectedObservationBlockSource, SelectedObservationNumericGeometry,
+    BoundSelectedObservation, SelectedObservationBlock, SelectedObservationBlockSource,
+    SelectedObservationNumericGeometry,
 };
 use num_complex::Complex32;
 
@@ -81,10 +81,6 @@ fn pointing_offset(
     ])
 }
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "one state per source, idle once per pass; the per-block stream is boxed"
-)]
 enum Traversal<'a> {
     Idle(BoundSelectedObservation),
     Streaming(Box<Stream<'a>>),
@@ -93,24 +89,21 @@ enum Traversal<'a> {
 
 struct Stream<'a> {
     source: SelectedObservationBlockSource<'a>,
-    consumer: SelectedObservationBlockConsumer<'a>,
     block: SelectedObservationBlock,
     geometry: SelectedObservationNumericGeometry,
-    windowed: bool,
 }
 
 /// Native rows of the selected observation, projected onto every image
 /// domain.
 ///
-/// The first traversal reads every selected channel; it proves the selected
-/// row sequence, after which a restricted cube wave may read only the
-/// channels whose output-frame frequencies reach its planes (casa-ms keeps
-/// the straddling pair at each edge, so linear interpolation keeps both
-/// partners). A compiled continuum transform fits each whole row, so its
-/// traversals are never restricted. Rows CASA excludes from imaging and
-/// flagged rows arrive with their row flag set; autocorrelations arrive
-/// unflagged, since CASA weighs them in the density grids and only
-/// `GridFT` drops them.
+/// The first traversal reads every selected channel, after which a
+/// restricted cube wave may read only the channels whose output-frame
+/// frequencies reach its planes (casa-ms keeps the straddling pair at each
+/// edge, so linear interpolation keeps both partners). A compiled continuum
+/// transform fits each whole row, so its traversals are never restricted.
+/// Rows CASA excludes from imaging and flagged rows arrive with their row
+/// flag set; autocorrelations arrive unflagged, since CASA weighs them in the
+/// density grids and only `GridFT` drops them.
 pub(crate) struct MeasurementSetSource<'a> {
     problem: &'a CompiledProblem,
     domains: usize,
@@ -307,11 +300,11 @@ impl BoundedSource for MeasurementSetSource<'_> {
             && planes != PlaneRange::new(0, self.planes))
         .then(|| self.bounds.as_ref().map(|bounds| bounds(planes)))
         .flatten();
-        let (source, consumer) = match window {
+        let source = match window {
             Some(bounds) => selected.into_windowed_block_stream(self.problem, bounds)?,
             None => selected.into_block_stream(self.problem)?,
         };
-        let block = source.create_storage(0);
+        let block = source.create_storage();
         let channels = self
             .problem
             .selected_observation()
@@ -326,58 +319,31 @@ impl BoundedSource for MeasurementSetSource<'_> {
             SelectedObservationNumericGeometry::new(source.maximum_rows_per_block(), channels)?;
         self.traversal = Traversal::Streaming(Box::new(Stream {
             source,
-            consumer,
             block,
             geometry,
-            windowed: window.is_some(),
         }));
         Ok(())
     }
 
     fn fill(&mut self, out: &mut NativeBlock) -> Result<bool, SourceError> {
-        loop {
-            let Traversal::Streaming(mut stream) =
-                std::mem::replace(&mut self.traversal, Traversal::Failed)
-            else {
-                return Err("no traversal is in progress".into());
-            };
-            let Stream {
-                source,
-                consumer,
-                block,
-                geometry,
-                ..
-            } = &mut *stream;
-            if source.fill_next(block)?.is_none() {
-                let Stream {
-                    source,
-                    consumer,
-                    windowed,
-                    ..
-                } = *stream;
-                let terminal = source.complete()?;
-                let selected = if windowed {
-                    consumer.complete_window(terminal)?.0
-                } else {
-                    self.proven = true;
-                    consumer.complete(terminal)?.0
-                };
-                self.traversal = Traversal::Idle(selected);
-                return Ok(false);
-            }
-            block.project_numeric_geometry(self.problem, geometry)?;
-            if geometry.row_count() == 0 {
-                self.traversal = Traversal::Streaming(stream);
-                continue;
-            }
-            let mut converted = Ok(());
-            consumer.consume_numeric(block, geometry, || {
-                converted = self.convert(block, geometry, out);
-                Ok::<_, std::convert::Infallible>(())
-            })?;
-            converted?;
-            self.traversal = Traversal::Streaming(stream);
-            return Ok(true);
+        let Traversal::Streaming(mut stream) =
+            std::mem::replace(&mut self.traversal, Traversal::Failed)
+        else {
+            return Err("no traversal is in progress".into());
+        };
+        let Stream {
+            source,
+            block,
+            geometry,
+        } = &mut *stream;
+        if !source.fill_next(block)? {
+            self.proven = true;
+            self.traversal = Traversal::Idle(stream.source.complete()?);
+            return Ok(false);
         }
+        block.project_numeric_geometry(self.problem, geometry)?;
+        self.convert(block, geometry, out)?;
+        self.traversal = Traversal::Streaming(stream);
+        Ok(true)
     }
 }

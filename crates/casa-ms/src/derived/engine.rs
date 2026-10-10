@@ -542,21 +542,6 @@ impl MsCalEngine {
         self.sampled_ephemeris_direction_j2000(time_mjd_sec, sample)
     }
 
-    pub(crate) fn tracked_field_direction_j2000(
-        &self,
-        time_mjd_sec: f64,
-        field_id: usize,
-        ephemeris: &SelectedObservationEphemeris,
-    ) -> MsResult<MDirection> {
-        let direction =
-            self.ephemeris_direction_j2000(time_mjd_sec, field_id, "TRACKFIELD", ephemeris)?;
-        let [offset_longitude, offset_latitude] = *self
-            .field_phase_offsets
-            .get(field_id)
-            .ok_or_else(|| MsError::InvalidInput(format!("FIELD_ID {field_id} out of range")))?;
-        shift_direction_true_angle(direction, offset_longitude, offset_latitude)
-    }
-
     /// Evaluate an immutable ephemeris radial velocity at the CASA `MeasComet`
     /// sampling epoch corresponding to one MeasurementSet timestamp.
     pub fn ephemeris_radial_velocity(

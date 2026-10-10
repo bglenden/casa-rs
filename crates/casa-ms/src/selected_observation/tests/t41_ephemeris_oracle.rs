@@ -179,17 +179,15 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
         "the production observation snapshot must commit the same ephemeris identity",
     );
 
-    let mut bound = access.open(&problem)?;
+    let (_, samples) = stream(&problem, access.open(&problem)?)?;
     let mut actual = BTreeMap::new();
-    let completion = bound.traverse(&problem, |sample| {
-        let selected = sample.selected();
-        actual.entry(selected.address().physical_row).or_insert((
-            selected.coordinates().time.mjd_days(),
-            selected.coordinates().phase_direction,
+    for sample in &samples {
+        actual.entry(sample.row.physical_row).or_insert((
+            sample.row.coordinates.time.mjd_days(),
+            sample.row.coordinates.phase_direction,
         ));
-        Ok::<_, std::convert::Infallible>(())
-    })?;
-    assert_eq!(completion.sample_count(), 6);
+    }
+    assert_eq!(samples.len(), 6);
     assert_eq!(actual.len(), 3);
 
     for expected in &oracle.samples {

@@ -80,7 +80,7 @@ pub fn finalize_source_access(
         requirements.maximum_pointing_polynomial_terms(),
     );
     Ok((
-        access.with_content_budget(problem, &requirements, budget)?,
+        access.with_content_budget(&requirements, budget)?,
         reservation,
     ))
 }

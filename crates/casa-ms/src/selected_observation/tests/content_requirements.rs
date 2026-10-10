@@ -38,72 +38,14 @@ fn t51_content_requirements_admit_the_exact_minimum_and_bound_live_blocks() {
         Err(SelectedObservationContentPlanError::InvalidBudget)
     ));
 
-    let access = access
-        .with_content_budget(&problem, &requirements, budget)
-        .unwrap();
+    let access = access.with_content_budget(&requirements, budget).unwrap();
     assert_eq!(access.source_binding().content_budget(), budget);
     let deferred = access.into_deferred();
     let certificate = deferred.certify_residency(&problem).unwrap();
-    let mut opened = deferred.open(&problem).unwrap();
+    let opened = deferred.open(&problem).unwrap();
     assert_eq!(opened.residency_certificate(), &certificate);
-    opened
-        .traverse(&problem, |_| Ok::<_, Infallible>(()))
-        .unwrap();
-}
-
-#[test]
-fn t51_content_requirements_cannot_finalize_another_source() {
-    let directory = tempfile::tempdir().unwrap();
-    let first = directory.path().join("first.ms");
-    let second = directory.path().join("second.ms");
-    for path in [&first, &second] {
-        generate_fixture(path);
-    }
-    let (first_problem, first_access) =
-        owner_problem_and_access(owner_resolution_request(&first, 2));
-    let (second_problem, second_access) =
-        owner_problem_and_access(owner_resolution_request(&second, 2));
-    let requirements = first_access.content_requirements(&first_problem).unwrap();
-    let budget =
-        SelectedObservationContentBudget::new(requirements.minimum_bytes(1).unwrap(), 1, 4);
-    assert!(matches!(
-        second_access.with_content_budget(&second_problem, &requirements, budget),
-        Err(super::super::BoundSelectedObservationError::ProblemMismatch)
-    ));
-}
-
-#[test]
-fn t51_content_requirements_reject_equal_science_with_different_provenance() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("provenance.ms");
-    generate_fixture(&path);
-    let (first_problem, first_access) = owner_problem_and_access(
-        owner_resolution_request_with_identity(&path, 2, identity(211)),
-    );
-    let (second_problem, second_access) = owner_problem_and_access(
-        owner_resolution_request_with_identity(&path, 2, identity(212)),
-    );
-    assert_eq!(first_problem.problem_id(), second_problem.problem_id());
-    assert_ne!(
-        first_problem
-            .inputs()
-            .observation_snapshot()
-            .provenance_id(),
-        second_problem
-            .inputs()
-            .observation_snapshot()
-            .provenance_id(),
-    );
-    let requirements = first_access.content_requirements(&first_problem).unwrap();
-    let budget =
-        SelectedObservationContentBudget::new(requirements.minimum_bytes(1).unwrap(), 1, 4);
-    assert!(matches!(
-        second_access.with_content_budget(&second_problem, &requirements, budget),
-        Err(super::super::BoundSelectedObservationError::ProblemMismatch),
-    ));
-    first_access
-        .with_content_budget(&first_problem, &requirements, budget)
-        .unwrap();
+    let (_, samples) = stream(&problem, opened).unwrap();
+    assert_eq!(samples.len(), 8);
 }
 
 #[test]
