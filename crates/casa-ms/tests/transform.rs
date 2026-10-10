@@ -630,6 +630,44 @@ fn published_modify_counter(ms_path: &std::path::Path) -> u32 {
     main.locked_modify_counter().expect("modify counter")
 }
 
+/// A save that fails while writing MAIN publishes nothing for a subtable it
+/// never reached: ANTENNA, with a third row pending in memory, is unchanged
+/// on disk, keeps its modify counter, and still reopens with two rows, in
+/// casa-rs as in casacore, which both take the row count from the sync data.
+#[test]
+fn a_save_that_fails_on_main_publishes_no_unwritten_subtable() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let antenna = ms_path.join("ANTENNA");
+    let antenna_dat = std::fs::read(antenna.join("table.dat")).expect("ANTENNA table.dat");
+    let antenna_counter = published_modify_counter(&antenna);
+    let antenna_rows = casa_tables::Table::open(casa_tables::TableOptions::new(&antenna))
+        .expect("open ANTENNA")
+        .row_count();
+
+    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open MeasurementSet");
+    common::stage_an_antenna_row(&mut measurement_set);
+    common::make_main_unwritable(&ms_path);
+    assert!(
+        measurement_set.save().is_err(),
+        "the save of MAIN must fail"
+    );
+    drop(measurement_set);
+
+    assert_eq!(
+        std::fs::read(antenna.join("table.dat")).expect("ANTENNA table.dat"),
+        antenna_dat
+    );
+    assert_eq!(published_modify_counter(&antenna), antenna_counter);
+    assert_published_as_persisted(&antenna);
+    assert_eq!(
+        casa_tables::Table::open(casa_tables::TableOptions::new(&antenna))
+            .expect("reopen ANTENNA")
+            .row_count(),
+        antenna_rows
+    );
+}
+
 /// Columns a mutation session creates are persisted one by one. When a
 /// later installation fails, the columns installed before it stay on disk,
 /// and releasing the lock publishes the change, so other processes re-read

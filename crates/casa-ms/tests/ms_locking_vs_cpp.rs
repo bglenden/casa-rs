@@ -45,3 +45,28 @@ fn cpp_relocks_a_measurement_set_saved_in_place() {
         assert_cpp_relocks(&table);
     }
 }
+
+/// A save that fails while writing MAIN publishes nothing for a subtable it
+/// never reached: C++ still finds ANTENNA's persisted rows, not the row that
+/// was pending in memory.
+#[test]
+fn cpp_reads_an_unwritten_subtable_as_persisted_after_a_failed_save() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let antenna = ms_path.join("ANTENNA");
+    let rows_before = persisted_table_shape(&antenna).rows;
+    let mut measurement_set = casa_ms::MeasurementSet::open(&ms_path).expect("open MeasurementSet");
+    common::stage_an_antenna_row(&mut measurement_set);
+    common::make_main_unwritable(&ms_path);
+    assert!(
+        measurement_set.save().is_err(),
+        "the save of MAIN must fail"
+    );
+    drop(measurement_set);
+    assert_eq!(persisted_table_shape(&antenna).rows, rows_before);
+    assert_cpp_relocks(&antenna);
+}

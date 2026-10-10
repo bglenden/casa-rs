@@ -1049,3 +1049,34 @@ fn default_value_for_def(c: &ColumnDef) -> Value {
         }
     }
 }
+
+/// Make every save of MAIN fail: each storage-manager file (`table.f*`)
+/// becomes a directory, which the save can neither read nor rewrite. This
+/// fails for root too, unlike a read-only file.
+pub fn make_main_unwritable(ms_path: &Path) {
+    for entry in std::fs::read_dir(ms_path).expect("list MAIN") {
+        let path = entry.expect("MAIN entry").path();
+        let is_storage_file = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("table.f"));
+        if is_storage_file && path.is_file() {
+            std::fs::remove_file(&path).expect("remove a MAIN storage file");
+            std::fs::create_dir(&path).expect("replace it with a directory");
+            std::fs::write(path.join("blocker"), b"").expect("keep the directory non-empty");
+        }
+    }
+}
+
+/// Stage one more ANTENNA row in memory by cloning row 0.
+pub fn stage_an_antenna_row(measurement_set: &mut MeasurementSet) {
+    let antenna = measurement_set
+        .subtable_mut(SubtableId::Antenna)
+        .expect("ANTENNA");
+    let row = antenna
+        .row_accessor()
+        .row(0)
+        .expect("ANTENNA row 0")
+        .clone();
+    antenna.add_row(row).expect("stage an ANTENNA row");
+}
