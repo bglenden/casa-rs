@@ -14,10 +14,7 @@ use casa_imaging_model::{ImageDomainRole, LogicalIdentity};
 use num_complex::Complex64;
 use thiserror::Error;
 
-use crate::{
-    ModelGenerationId, WeightingGenerationId, WeightingReplayId, block_normal::BlockNormalPlan,
-    canonical_f64_bits,
-};
+use crate::{ModelGenerationId, block_normal::BlockNormalPlan, canonical_f64_bits};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum SpectralBasisPlan {
@@ -335,28 +332,12 @@ pub enum SpectralPrimitiveCatalog {
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct CompleteDataOwnerCompletion {
-    pub(crate) weighting_generation: WeightingGenerationId,
-    pub(crate) replay: WeightingReplayId,
-
     pub(crate) primitives: SpectralPrimitiveCatalog,
-
     pub(crate) sample_count: u64,
     pub(crate) block_count: u64,
 }
 
 impl CompleteDataOwnerCompletion {
-    /// Return the imaging-weight generation every pass used.
-    #[must_use]
-    pub const fn weighting_generation(&self) -> WeightingGenerationId {
-        self.weighting_generation
-    }
-
-    /// Return the identity of the traversal that formed the state.
-    #[must_use]
-    pub const fn replay_id(&self) -> WeightingReplayId {
-        self.replay
-    }
-
     /// Return the versioned primitive set produced by the operator.
     #[must_use]
     pub const fn primitive_catalog(&self) -> SpectralPrimitiveCatalog {

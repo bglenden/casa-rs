@@ -21,7 +21,7 @@ use casa_imaging_reconstruction::{
     ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MajorCycleCompletion,
     MajorCycleOwner, MajorCyclePreparation, MinorCycleImageResponse, ModelGeneration,
     ModelLifecycle, ModelStoragePlan, PassNormalState, ReconstructionMaskPlan,
-    ReconstructionMaskSet, WeightingGenerationId,
+    ReconstructionMaskSet,
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain, PassError,
@@ -84,7 +84,6 @@ struct Run<'a> {
     domains: Vec<DomainOperator>,
     source: MeasurementSetSource<'a>,
     weighting: WeightingGeneration,
-    weighting_id: WeightingGenerationId,
     team: &'a WorkerTeam,
     cancel: Cancel,
     host: HostResources,
@@ -372,7 +371,6 @@ impl<'a> Run<'a> {
             domains,
             source,
             weighting,
-            weighting_id: WeightingGenerationId::next(),
             team,
             cancel,
             host,
@@ -412,7 +410,6 @@ impl<'a> Run<'a> {
         let (residency, _pass) = self.admit_pass(self.initial_modes(), false)?;
         let state = PassNormalState::initial(
             self.problem,
-            self.weighting_id,
             preparation.final_model_generation(),
             self.normal_storage(residency)?,
         )?;
@@ -494,14 +491,11 @@ impl<'a> Run<'a> {
             writer.as_mut(),
         )?;
         let pass_seconds = started.elapsed().as_secs_f64();
-        let final_model = preparation.final_model_generation();
         let visibility = writer
             .map(VisibilityWriter::complete)
             .transpose()
             .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?
-            .map(|samples| {
-                VisibilityProductCompletion::new(final_model, self.weighting_id, samples)
-            });
+            .map(VisibilityProductCompletion::new);
         let normal = state.finish(summary.samples, summary.blocks)?;
         let owner = MajorCycleOwner::from_complete_data(normal, preparation)?;
         let completion = owner.reconcile(&mut lifecycle)?;

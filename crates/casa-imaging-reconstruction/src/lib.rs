@@ -18,7 +18,6 @@ mod mask;
 mod model_lifecycle;
 mod model_storage;
 mod spectral_operator;
-mod weighting_identity;
 
 #[doc(hidden)]
 pub use model_storage::{
@@ -74,4 +73,3 @@ pub use model_lifecycle::{
     ModelGenerationOrigin, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
 };
 pub use spectral_operator::normal_storage::FinalNormalPlaneReader;
-pub use weighting_identity::{WeightingGenerationId, WeightingReplayId};

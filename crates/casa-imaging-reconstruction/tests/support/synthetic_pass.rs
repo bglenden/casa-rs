@@ -29,7 +29,7 @@
 use casa_imaging_model::{CompiledProblem, ModelSupport, ReconstructionBasis};
 use casa_imaging_reconstruction::{
     FinalNormalState, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation,
-    ModelGeneration, ModelLifecycle, PassImages, PassNormalState, WeightingGenerationId,
+    ModelGeneration, ModelLifecycle, PassImages, PassNormalState,
     runtime_adapter::{CompleteDataNormalState, NormalStoragePlan},
 };
 
@@ -221,35 +221,25 @@ impl Scene {
     }
 
     /// The complete normal state of an initial pass over `preparation`'s
-    /// final model, under a fresh weighting generation.
+    /// final model.
     pub fn initial(
         &self,
         problem: &CompiledProblem,
         preparation: &MajorCyclePreparation,
     ) -> CompleteDataNormalState {
-        self.initial_with(
-            problem,
-            preparation,
-            self.resident_storage(),
-            WeightingGenerationId::next(),
-        )
+        self.initial_with(problem, preparation, self.resident_storage())
     }
 
-    /// An initial pass written to `storage` and tagged with `weighting`.
+    /// An initial pass written to `storage`.
     pub fn initial_with(
         &self,
         problem: &CompiledProblem,
         preparation: &MajorCyclePreparation,
         storage: NormalStoragePlan,
-        weighting: WeightingGenerationId,
     ) -> CompleteDataNormalState {
-        let mut state = PassNormalState::initial(
-            problem,
-            weighting,
-            preparation.final_model_generation(),
-            storage,
-        )
-        .expect("initial synthetic pass state");
+        let mut state =
+            PassNormalState::initial(problem, preparation.final_model_generation(), storage)
+                .expect("initial synthetic pass state");
         state
             .append(self.pass_images(preparation.final_model(), true))
             .expect("append synthetic initial pass images");
@@ -258,8 +248,7 @@ impl Scene {
             .expect("complete synthetic initial pass")
     }
 
-    /// A residual refresh of `previous` for `preparation`'s final model,
-    /// under `previous`'s weighting generation.
+    /// A residual refresh of `previous` for `preparation`'s final model.
     pub fn refresh(
         &self,
         problem: &CompiledProblem,

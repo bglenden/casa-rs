@@ -22,7 +22,7 @@ use crate::{
     FinalModelCompletionId, FinalModelContinuation, FinalNormalStateCompletionId,
     MAJOR_CYCLE_DOMAIN, MAJOR_CYCLE_VERSION, MajorCycleCompletionId, ModelDelta, ModelGeneration,
     ModelGenerationId, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
-    SpectralOperatorError, SpectralPrimitiveCatalog, WeightingGenerationId, WeightingReplayId,
+    SpectralOperatorError, SpectralPrimitiveCatalog,
     runtime_adapter::CompleteDataNormalState,
     spectral_operator::normal_storage::{NormalStatePrimitives, NormalStateWindowPayload},
 };
@@ -86,9 +86,6 @@ pub enum NormalStateCatalog {
 #[derive(Debug)]
 pub struct FinalNormalState {
     completion_id: FinalNormalStateCompletionId,
-    weighting_generation: WeightingGenerationId,
-    replay: WeightingReplayId,
-
     catalog: NormalStateCatalog,
     sample_count: u64,
     block_count: u64,
@@ -160,18 +157,6 @@ impl FinalNormalState {
     #[must_use]
     pub const fn completion_id(&self) -> FinalNormalStateCompletionId {
         self.completion_id
-    }
-
-    /// Return the frozen T18 weighting generation behind the state.
-    #[must_use]
-    pub const fn weighting_generation(&self) -> WeightingGenerationId {
-        self.weighting_generation
-    }
-
-    /// Return the terminal replay whose exhaustive coverage produced the state.
-    #[must_use]
-    pub const fn replay_id(&self) -> WeightingReplayId {
-        self.replay
     }
 
     /// Return the versioned Normal State Generation catalog.
@@ -919,9 +904,6 @@ impl MajorCycleCompletion {
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct MajorCycleOwner {
-    weighting_generation: WeightingGenerationId,
-    replay: WeightingReplayId,
-
     catalog: SpectralPrimitiveCatalog,
     sample_count: u64,
     block_count: u64,
@@ -953,21 +935,12 @@ impl MajorCycleOwner {
             .require_residual_model(preparation.final_model_generation())
             .map_err(MajorCycleError::Residual)?;
         Ok(Self {
-            weighting_generation: completion.weighting_generation(),
-            replay: completion.replay_id(),
-
             catalog: completion.primitive_catalog(),
             sample_count: completion.sample_count(),
             block_count: completion.block_count(),
             primitives,
             preparation,
         })
-    }
-
-    /// Return the frozen T18 weighting generation this owner reconciles against.
-    #[must_use]
-    pub const fn weighting_generation(&self) -> WeightingGenerationId {
-        self.weighting_generation
     }
 
     /// Return the exhaustive selected-sample count of the retained evidence.
@@ -1006,14 +979,9 @@ impl MajorCycleOwner {
                 authority,
                 attempt,
                 epoch,
-                self.weighting_generation,
-                self.replay,
                 input_model_generation,
                 final_model_generation,
             ),
-            weighting_generation: self.weighting_generation,
-            replay: self.replay,
-
             catalog: match self.catalog {
                 SpectralPrimitiveCatalog::UnnormalizedPlaneV1 => {
                     NormalStateCatalog::UnnormalizedPlaneV1
@@ -1051,14 +1019,10 @@ impl MajorCycleOwner {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn final_normal_state_id(
     authority: LogicalIdentity,
     attempt: casa_imaging_model::ModelExecutionAttemptId,
     epoch: u64,
-    weighting_generation: WeightingGenerationId,
-    replay: WeightingReplayId,
-
     input_model_generation: ModelGenerationId,
     final_model_generation: ModelGenerationId,
 ) -> FinalNormalStateCompletionId {
@@ -1066,9 +1030,6 @@ fn final_normal_state_id(
     encoder.identity(authority.as_bytes());
     encoder.identity(attempt.identity().as_bytes());
     encoder.u64(epoch);
-    encoder.u64(weighting_generation.ordinal());
-    encoder.u64(replay.ordinal());
-
     encoder.identity(input_model_generation.as_bytes());
     encoder.identity(final_model_generation.as_bytes());
     FinalNormalStateCompletionId(LogicalIdentity::from_bytes(encoder.finish()))

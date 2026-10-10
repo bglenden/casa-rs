@@ -19,7 +19,7 @@ use casa_imaging_model::{
 use casa_imaging_reconstruction::{
     ImageDomainReconstructionMaskPlans, MajorCycleCompletion, MajorCycleOwner,
     MajorCyclePreparation, MinorCycleImageResponse, PassImages, PassNormalState,
-    ReconstructionMaskPlan, WeightingGenerationId, runtime_adapter::NormalStoragePlan,
+    ReconstructionMaskPlan, runtime_adapter::NormalStoragePlan,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{
@@ -62,7 +62,6 @@ fn completion(
     let channels = images.channels.len();
     let mut pass = PassNormalState::initial(
         problem,
-        WeightingGenerationId::next(),
         preparation.final_model_generation(),
         NormalStoragePlan::resident(channels).expect("storage"),
     )

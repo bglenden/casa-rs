@@ -56,12 +56,7 @@ fn normal_reconciliation_transfers_owned_storage_without_reading_arrays() {
     let preparation = MajorCyclePreparation::prepare(&lifecycle, initial, None).unwrap();
     let reads = Arc::new(AtomicUsize::new(0));
     let storage = NormalStoragePlan::new(Arc::new(Factory(reads.clone())), 2).unwrap();
-    let stored = scene(&problem).initial_with(
-        &problem,
-        &preparation,
-        storage,
-        WeightingGenerationId::next(),
-    );
+    let stored = scene(&problem).initial_with(&problem, &preparation, storage);
     reads.store(0, Ordering::Relaxed);
     let joined = MajorCycleOwner::from_complete_data(stored, preparation)
         .unwrap()
@@ -94,11 +89,9 @@ fn reconciliation_applies_one_pending_delta_through_the_model_owner() {
     let complete = scene.initial(&problem, &preparation);
     let sample_count = complete.completion().sample_count();
     let block_count = complete.completion().block_count();
-    let weighting_generation = complete.completion().weighting_generation();
 
     let owner =
         MajorCycleOwner::from_complete_data(complete, preparation).expect("T20 owner from T19");
-    assert_eq!(owner.weighting_generation(), weighting_generation);
     let joined = owner
         .reconcile(&mut lifecycle)
         .expect("atomic Major-Cycle reconciliation");
@@ -442,11 +435,6 @@ fn completion_ids_distinguish_owners_while_science_and_replay_remain_stable() {
     );
     let first_normal = first_join.normal_state();
     let second_normal = second_join.normal_state();
-    assert_ne!(
-        first_normal.weighting_generation(),
-        second_normal.weighting_generation()
-    );
-    assert_ne!(first_normal.replay_id(), second_normal.replay_id());
     assert_eq!(
         first_normal.diagnostic_content_identity().unwrap(),
         second_normal.diagnostic_content_identity().unwrap()
@@ -559,7 +547,6 @@ fn incomplete_or_inconsistent_passes_cannot_become_a_major_cycle_owner() {
     let state = || {
         PassNormalState::initial(
             &problem,
-            WeightingGenerationId::next(),
             preparation.final_model_generation(),
             NormalStoragePlan::resident(1).expect("resident normal storage"),
         )
@@ -689,7 +676,6 @@ fn incomplete_or_inconsistent_passes_cannot_become_a_major_cycle_owner() {
     };
     let refreshed = || {
         let previous = previous_state();
-        let weighting = previous.weighting_generation();
         let samples = previous.sample_count();
         let mut refresh = PassNormalState::refresh(
             &problem,
@@ -702,14 +688,13 @@ fn incomplete_or_inconsistent_passes_cannot_become_a_major_cycle_owner() {
         residual_only.psf = None;
         residual_only.sum_weights.clear();
         refresh.append(residual_only).expect("residual planes");
-        (refresh, weighting, samples)
+        (refresh, samples)
     };
-    let (refresh, _, samples) = refreshed();
+    let (refresh, samples) = refreshed();
     assert!(matches!(
         refresh.finish(samples + 1, 1),
         Err(SpectralOperatorError::ReusableNormalStateMismatch)
     ));
-    let (refresh, weighting, samples) = refreshed();
-    let complete = refresh.finish(samples, 2).expect("a complete refresh");
-    assert_eq!(complete.completion().weighting_generation(), weighting);
+    let (refresh, samples) = refreshed();
+    refresh.finish(samples, 2).expect("a complete refresh");
 }

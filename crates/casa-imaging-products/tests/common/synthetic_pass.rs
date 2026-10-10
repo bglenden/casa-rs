@@ -31,7 +31,7 @@ use casa_imaging_model::{
 use casa_imaging_reconstruction::{
     FinalNormalState, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation,
     ModelGeneration, ModelLifecycle, ModelStoragePlan, PassImages, PassNormalState,
-    WeightingGenerationId, runtime_adapter::NormalStoragePlan,
+    runtime_adapter::NormalStoragePlan,
 };
 
 /// Traversal counts every synthetic pass reports; any positive pair proves
@@ -223,7 +223,7 @@ impl Scene {
     }
 
     /// Run an initial pass over every domain and reconcile it with
-    /// `preparation` under a fresh weighting generation.
+    /// `preparation`.
     pub fn reconcile_initial(
         &self,
         problem: &CompiledProblem,
@@ -232,7 +232,6 @@ impl Scene {
     ) -> MajorCycleCompletion {
         let mut state = PassNormalState::initial(
             problem,
-            WeightingGenerationId::next(),
             preparation.final_model_generation(),
             self.storage(),
         )
@@ -251,8 +250,8 @@ impl Scene {
             .expect("reconcile the synthetic pass")
     }
 
-    /// Refresh `previous` with the residual of `preparation`'s final model
-    /// under `previous`'s weighting generation, and reconcile.
+    /// Refresh `previous` with the residual of `preparation`'s final model,
+    /// and reconcile.
     pub fn reconcile_refresh(
         &self,
         problem: &CompiledProblem,

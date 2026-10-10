@@ -22,7 +22,7 @@ use super::{
     SpectralPrimitiveCatalog, SpectralPrimitiveDomains, SpectralSlabPlan, checked_cells,
 };
 use crate::block_normal::BlockNormalPlan;
-use crate::{FinalNormalState, ModelGenerationId, WeightingGenerationId, WeightingReplayId};
+use crate::{FinalNormalState, ModelGenerationId};
 
 /// Unnormalised images of one image domain from one pass over a contiguous
 /// range of output channels.
@@ -81,9 +81,6 @@ enum DomainState {
 /// A normal state being assembled domain by domain and, for a
 /// channel-local basis, channel range by channel range in order.
 pub struct PassNormalState {
-    /// The imaging weights the state is formed with; a finished state
-    /// carries them in its completion.
-    weighting: WeightingGenerationId,
     basis: SpectralBasisPlan,
     total_channels: usize,
     polarizations: usize,
@@ -99,18 +96,15 @@ pub struct PassNormalState {
 }
 
 impl PassNormalState {
-    /// An empty state for the initial pass of `problem` with imaging
-    /// weights `weighting`, whose images were formed with model generation
-    /// `model`.
+    /// An empty state for the initial pass of `problem`, whose images were
+    /// formed with model generation `model`.
     pub fn initial(
         problem: &CompiledProblem,
-        weighting: WeightingGenerationId,
         model: ModelGenerationId,
         storage: NormalStoragePlan,
     ) -> Result<Self, SpectralOperatorError> {
         let domains = problem.geometry().domains();
         Ok(Self {
-            weighting,
             basis: basis_plan(problem)?,
             total_channels: problem.geometry().spectral().output_channels(),
             polarizations: problem.reconstruction().polarization().coordinates().len(),
@@ -138,7 +132,7 @@ impl PassNormalState {
         model: ModelGenerationId,
         storage: NormalStoragePlan,
     ) -> Result<Self, SpectralOperatorError> {
-        let mut state = Self::initial(problem, previous.weighting_generation(), model, storage)?;
+        let mut state = Self::initial(problem, model, storage)?;
         state.refreshed_samples = Some(previous.sample_count());
         match previous.primitives() {
             NormalStatePrimitives::ChannelLocal(domains) => {
@@ -275,8 +269,6 @@ impl PassNormalState {
         Ok(CompleteDataNormalState {
             primitives,
             completion: CompleteDataOwnerCompletion {
-                weighting_generation: self.weighting,
-                replay: WeightingReplayId::next(),
                 primitives: catalog,
                 sample_count: samples,
                 block_count: blocks,
