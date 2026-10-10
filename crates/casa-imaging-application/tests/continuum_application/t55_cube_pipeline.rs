@@ -2,65 +2,60 @@
 
 use super::*;
 
+/// A cleaned 64 × 64 cube of the four-channel line fixture, its channels
+/// in descending order, with a common restoring beam, and `overrides`.
+fn clark_cube(
+    measurement_set: &Path,
+    image_name: &Path,
+    overrides: serde_json::Value,
+) -> ImagingRequest {
+    let mut values = json!({
+        "deconvolver": "clark",
+        "imsize": 64,
+        "spw": "0:0~3",
+        "channel_count": 4,
+        "specmode": "cube",
+        "outframe": "TOPO",
+        "restoringbeam": "common",
+        "niter": 3,
+        "minor_cycle_length": 1,
+        "nmajor": 3,
+        "gain": 0.37,
+        "threshold": "1e-12Jy",
+        "nsigma": 1.0e-12,
+    });
+    values
+        .as_object_mut()
+        .expect("cube controls")
+        .extend(overrides.as_object().expect("overrides").clone());
+    request(measurement_set, image_name, values)
+}
+
 #[test]
 fn streaming_cube_complete_application_handoff() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
     let image_name = root.path().join("native-cube");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Clark,
-    );
-    imaging.image_size = 64;
-    imaging.weighting = ContinuumWeighting::Natural;
-    imaging.spectral_window = Some("0:0~3".into());
-    imaging.channel_count = Some(4);
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::TOPO,
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(4),
-    };
-    imaging.beam_policy = ContinuumBeamPolicy::Common;
-    imaging.iterations = 3;
-    imaging.cycle_iterations = 1;
-    imaging.maximum_major_cycles = Some(3);
-    imaging.gain = 0.37;
-    imaging.threshold_jy = 1.0e-12;
-    imaging.noise_sigma = Some(1.0e-12);
-    imaging.resource_policy = ResourcePolicy::Explicit {
-        workers: 1,
-        memory: 4 << 30,
-    };
-    let mut capped = imaging.clone();
-    capped.resource_policy = ResourcePolicy::Explicit {
-        workers: 1,
-        memory: 1 << 20,
-    };
-    let error = execute_continuum(capped)
+    let mut imaging = clark_cube(&measurement_set, &image_name, json!({}));
+    let one_worker = |memory| ResourcePolicy::Explicit { workers: 1, memory };
+    let error = casa_imaging_application::execute(&imaging, context_with(one_worker(1 << 20)))
         .err()
         .expect("insufficient memory must fail closed");
     assert!(
-        matches!(
-            error,
-            casa_imaging_application::ApplicationDispatchError::Admission(_)
-        ),
+        matches!(error, ApplicationDispatchError::Admission(_)),
         "{error}"
     );
     assert!(!image_name.with_extension("image").exists());
 
-    let result = execute_continuum(imaging.clone()).expect("complete native cube application");
-    assert_standard_products(&image_name, &result.product_names);
-    assert_eq!(result.outcome.output.major_cycle_count, 3);
-    assert_eq!(result.outcome.output.minor_cycles.len(), 2);
-    assert!(result.actual_minor_iterations > 0);
+    let outcome = casa_imaging_application::execute(&imaging, context_with(one_worker(4 << 30)))
+        .expect("complete native cube application");
+    assert_standard_products(&image_name, &outcome.product_names());
+    assert_eq!(outcome.major_cycle_count, 3);
+    assert_eq!(outcome.minor_cycles.len(), 2);
+    assert!(outcome.total_actual_minor_iterations > 0);
     for channel in 0..4 {
-        let normal = result
-            .outcome
-            .output
+        let normal = outcome
             .scientific
             .normal_state()
             .read_window(channel..channel + 1)
@@ -72,15 +67,18 @@ fn streaming_cube_complete_application_handoff() {
                 .all(|v| v.re.is_finite() && v.im.is_finite())
         );
     }
-    drop(result);
-    imaging.image_name = root.path().join("cube-model-column");
-    imaging.save_model_column = true;
-    imaging.resource_policy = ResourcePolicy::Explicit {
-        workers: 2,
-        memory: 4 << 30,
-    };
-    let output = execute_continuum(imaging).expect("cube visibility output keeps its owner");
-    assert_eq!(output.outcome.output.major_cycle_count, 3);
+    drop(outcome);
+    imaging.imagename = root.path().join("cube-model-column");
+    imaging.savemodel = true;
+    let outcome = casa_imaging_application::execute(
+        &imaging,
+        context_with(ResourcePolicy::Explicit {
+            workers: 2,
+            memory: 4 << 30,
+        }),
+    )
+    .expect("cube visibility output keeps its owner");
+    assert_eq!(outcome.major_cycle_count, 3);
 }
 
 #[test]
@@ -88,32 +86,30 @@ fn streaming_cube_single_output_runs_clean_refresh_and_publication() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
-    let mut imaging = request(
-        measurement_set,
-        root.path().join("single-plane"),
-        ContinuumAlgorithm::Clark,
+    let prefix = root.path().join("single-plane");
+    let imaging = request(
+        &measurement_set,
+        &prefix,
+        json!({
+            "deconvolver": "clark",
+            "imsize": 64,
+            "spw": "0:0~3",
+            "channel_count": 1,
+            "specmode": "cube",
+            "outframe": "TOPO",
+            "niter": 3,
+            "minor_cycle_length": 1,
+            "nmajor": 3,
+            "gain": 0.37,
+            "threshold": "1e-12Jy",
+        }),
     );
-    imaging.image_size = 64;
-    imaging.spectral_window = Some("0:0~3".into());
-    imaging.channel_count = Some(4);
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::TOPO,
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(1),
-    };
-    imaging.iterations = 3;
-    imaging.cycle_iterations = 1;
-    imaging.maximum_major_cycles = Some(3);
-    imaging.gain = 0.37;
-    imaging.threshold_jy = 1.0e-12;
-    imaging.task_requirements = vec![TaskRequirement::SerialCpu];
-    let prefix = imaging.image_name.clone();
-    let result = execute_continuum(imaging).expect("one output plane on native cube path");
-    assert_standard_products(&prefix, &result.product_names);
-    assert_eq!(result.actual_minor_iterations, 3);
-    assert_eq!(result.outcome.output.major_cycle_count, 4);
+    let outcome =
+        casa_imaging_application::execute(&imaging, context_with(imaging.resource_policy()))
+            .expect("one output plane on native cube path");
+    assert_standard_products(&prefix, &outcome.product_names());
+    assert_eq!(outcome.total_actual_minor_iterations, 3);
+    assert_eq!(outcome.major_cycle_count, 4);
     assert_eq!(
         PagedImage::<f32>::open(prefix.with_extension("image"))
             .unwrap()
@@ -127,34 +123,25 @@ fn t55_shifted_cube_density_retains_native_endpoint_weights() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = four_channel_measurement_set(root.path());
-    let mut imaging = request(
-        measurement_set,
-        root.path().join("shifted-density"),
-        ContinuumAlgorithm::Dirty,
+    let imaging = request(
+        &measurement_set,
+        &root.path().join("shifted-density"),
+        json!({
+            "niter": 0,
+            "weighting": "briggs",
+            "robust": 0.5,
+            "spw": "0:0~3",
+            "channel_count": 4,
+            "specmode": "cube",
+            "outframe": "TOPO",
+            "start": "43999800000Hz",
+            "width": "1MHz",
+            "perchanweightdensity": true,
+        }),
     );
-    imaging.weighting = ContinuumWeighting::Briggs(0.5);
-    imaging.spectral_window = Some("0:0~3".into());
-    imaging.channel_count = Some(4);
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::TOPO,
-            start: Some(CubeAxisValue::FrequencyHz {
-                hz: 44.0e9 - 200_000.0,
-                frame: Some(FrequencyRef::TOPO),
-            }),
-            width: Some(CubeAxisValue::FrequencyHz {
-                hz: 1_000_000.0,
-                frame: Some(FrequencyRef::TOPO),
-            }),
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(4),
-    };
-    imaging.task_requirements =
-        vec![casa_imaging_application::TaskRequirement::PerChannelWeightDensity];
-    let result = execute_continuum(imaging).expect("shifted native endpoint density execution");
+    let outcome = execute(&imaging).expect("shifted native endpoint density execution");
     // CASA `estimateSwingChanPad`: no frame swing, plus max(min(4, nchan/10), 1).
-    let weighting = result.outcome.output.problem.weighting();
+    let weighting = outcome.problem.weighting();
     assert_eq!(weighting.casa_cube_density_padding(), Some(1));
     assert_eq!(
         weighting.density_scope(),
@@ -169,36 +156,24 @@ fn t55_per_channel_density_request_is_bound_into_the_executed_cube() {
     let measurement_set = spectral_line_measurement_set(root.path());
     for cube in [true, false] {
         for per_channel in [true, false] {
-            for weighting in [
-                ContinuumWeighting::Briggs(0.5),
-                ContinuumWeighting::Uniform,
-                ContinuumWeighting::Natural,
-            ] {
-                let mut imaging = request(
-                    measurement_set.clone(),
-                    root.path()
-                        .join(format!("density-{cube}-{per_channel}-{weighting:?}")),
-                    ContinuumAlgorithm::Dirty,
+            for weighting in ["briggs", "uniform", "natural"] {
+                let imaging = request(
+                    &measurement_set,
+                    &root
+                        .path()
+                        .join(format!("density-{cube}-{per_channel}-{weighting}")),
+                    json!({
+                        "niter": 0,
+                        "weighting": weighting,
+                        "spw": "0:0~3",
+                        "channel_count": 4,
+                        "specmode": if cube { "cube" } else { "mfs" },
+                        "outframe": "TOPO",
+                        "perchanweightdensity": per_channel,
+                    }),
                 );
-                imaging.weighting = weighting;
-                imaging.spectral_window = Some("0:0~3".into());
-                imaging.channel_count = Some(4);
-                if cube {
-                    imaging.spectral_mode = SpectralImagingMode::Cube {
-                        axis: CubeAxisConfig {
-                            outframe: FrequencyRef::TOPO,
-                            ..CubeAxisConfig::default()
-                        },
-                        output_channels: Some(4),
-                    };
-                }
-                if per_channel {
-                    imaging
-                        .task_requirements
-                        .push(casa_imaging_application::TaskRequirement::PerChannelWeightDensity);
-                }
-                let result = execute_continuum(imaging).expect("density scope execution");
-                let expected = if weighting == ContinuumWeighting::Natural {
+                let outcome = execute(&imaging).expect("density scope execution");
+                let expected = if weighting == "natural" {
                     WeightDensityScope::NotApplicable
                 } else if cube && per_channel {
                     WeightDensityScope::PerOutputChannel
@@ -206,9 +181,9 @@ fn t55_per_channel_density_request_is_bound_into_the_executed_cube() {
                     WeightDensityScope::GlobalSelection
                 };
                 assert_eq!(
-                    result.outcome.output.problem.weighting().density_scope(),
+                    outcome.problem.weighting().density_scope(),
                     expected,
-                    "cube={cube} per_channel={per_channel} weighting={weighting:?}",
+                    "cube={cube} per_channel={per_channel} weighting={weighting}",
                 );
             }
         }
@@ -217,10 +192,7 @@ fn t55_per_channel_density_request_is_bound_into_the_executed_cube() {
 
 #[test]
 fn t55_clark_cube_products_and_repeated_cycles_agree_across_worker_counts() {
-    compare_clark_cube_cases(
-        &[(1, None), (2, None), (4, None)],
-        &[ContinuumWeighting::Natural, ContinuumWeighting::Briggs(0.5)],
-    );
+    compare_clark_cube_cases(&[(1, None), (2, None), (4, None)], &["natural", "briggs"]);
 }
 
 #[test]
@@ -232,11 +204,11 @@ fn t55_clark_cube_products_and_repeated_cycles_agree_across_channel_windows() {
             (1, Some((9 << 20) + (128 << 10))),
             (1, Some((10 << 20) + (128 << 10))),
         ],
-        &[ContinuumWeighting::Briggs(0.5)],
+        &["briggs"],
     );
 }
 
-fn compare_clark_cube_cases(cases: &[(usize, Option<u64>)], weightings: &[ContinuumWeighting]) {
+fn compare_clark_cube_cases(cases: &[(usize, Option<u64>)], weightings: &[&str]) {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
@@ -245,58 +217,43 @@ fn compare_clark_cube_cases(cases: &[(usize, Option<u64>)], weightings: &[Contin
         for &(workers, memory_bytes) in cases {
             let image_name = root
                 .path()
-                .join(format!("clark-{weighting:?}-{workers}-{memory_bytes:?}"));
-            let mut imaging = request(
-                measurement_set.clone(),
-                image_name.clone(),
-                ContinuumAlgorithm::Clark,
+                .join(format!("clark-{weighting}-{workers}-{memory_bytes:?}"));
+            let imaging = clark_cube(
+                &measurement_set,
+                &image_name,
+                json!({ "weighting": weighting, "start": "3", "width": "-1" }),
             );
-            imaging.image_size = 64;
-            imaging.weighting = weighting;
-            imaging.spectral_window = Some("0:0~3".into());
-            imaging.channel_count = Some(4);
-            imaging.spectral_mode = SpectralImagingMode::Cube {
-                axis: CubeAxisConfig {
-                    outframe: FrequencyRef::TOPO,
-                    start: Some(CubeAxisValue::Channel(3)),
-                    width: Some(CubeAxisValue::Channel(-1)),
-                    ..CubeAxisConfig::default()
-                },
-                output_channels: Some(4),
-            };
-            imaging.beam_policy = ContinuumBeamPolicy::Common;
-            imaging.iterations = 3;
-            imaging.cycle_iterations = 1;
-            imaging.maximum_major_cycles = Some(3);
-            imaging.gain = 0.37;
-            imaging.threshold_jy = 1.0e-12;
-            imaging.noise_sigma = Some(1.0e-12);
             // A four-thread host, so the policy, not this machine, sets the team.
-            imaging.host = HostResources {
-                threads: 4,
-                performance_cores: 4,
-                ..HostResources::detect().expect("host")
-            };
-            imaging.resource_policy = ResourcePolicy::Explicit {
-                workers,
-                memory: memory_bytes.unwrap_or(u64::MAX),
+            let context = RunContext {
+                host: HostResources {
+                    threads: 4,
+                    performance_cores: 4,
+                    ..HostResources::detect().expect("host")
+                },
+                policy: ResourcePolicy::Explicit {
+                    workers,
+                    memory: memory_bytes.unwrap_or(u64::MAX),
+                },
+                cancel: Cancel::new(),
+                summary: None,
             };
             let started = std::time::Instant::now();
-            let result = execute_continuum(imaging).expect("bounded production Clark cube");
+            let outcome = casa_imaging_application::execute(&imaging, context)
+                .expect("bounded production Clark cube");
             eprintln!(
-                "t55_canonical_cube_timing image_size=64 channels=4 weighting={weighting:?} requested_workers={workers} memory_bytes={memory_bytes:?} execute_continuum_seconds={:.9} major_cycles={} minor_iterations={}",
+                "t55_canonical_cube_timing image_size=64 channels=4 weighting={weighting} requested_workers={workers} memory_bytes={memory_bytes:?} execute_seconds={:.9} major_cycles={} minor_iterations={}",
                 started.elapsed().as_secs_f64(),
-                result.outcome.output.major_cycle_count,
-                result.actual_minor_iterations
+                outcome.major_cycle_count,
+                outcome.total_actual_minor_iterations
             );
-            assert_standard_products(&image_name, &result.product_names);
-            assert!(result.outcome.output.major_cycle_count > 1);
+            assert_standard_products(&image_name, &outcome.product_names());
+            assert!(outcome.major_cycle_count > 1);
             assert!(
-                result.outcome.output.minor_cycles.len() > 1,
+                outcome.minor_cycles.len() > 1,
                 "fixture must cross a synchronized major-cycle boundary"
             );
-            assert!(result.actual_minor_iterations > 0);
-            assert_eq!(result.outcome.output.workers, workers);
+            assert!(outcome.total_actual_minor_iterations > 0);
+            assert_eq!(outcome.workers, workers);
             let mut products = Vec::new();
             for suffix in PRODUCT_SUFFIXES {
                 let product = PagedImage::<f32>::open(PathBuf::from(format!(
@@ -356,7 +313,7 @@ fn compare_clark_cube_cases(cases: &[(usize, Option<u64>)], weightings: &[Contin
                     last,
                 ));
             }
-            let science = &result.outcome.output.scientific;
+            let science = &outcome.scientific;
             let evidence = (
                 products,
                 fixture_model_samples(science.final_model()),
@@ -372,8 +329,8 @@ fn compare_clark_cube_cases(cases: &[(usize, Option<u64>)], weightings: &[Contin
                     })
                     .collect::<Vec<_>>(),
                 science.normal_state().sum_weights().to_vec(),
-                result.actual_minor_iterations,
-                result.outcome.output.major_cycle_count,
+                outcome.total_actual_minor_iterations,
+                outcome.major_cycle_count,
             );
             if let Some((products, model, residual, weights, iterations, majors)) =
                 baseline.replace(evidence)
@@ -404,9 +361,9 @@ fn t55_signed_primary_beam_limit_separates_pixels_search_support_and_stored_mask
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = vla_spectral_line_measurement_set(root.path());
-    for weighting in [ContinuumWeighting::Natural, ContinuumWeighting::Briggs(0.5)] {
+    for weighting in ["natural", "briggs"] {
         for cell_arcsec in [1.0, 120.0] {
-            let image_stem = format!("signed-pb-{weighting:?}-{cell_arcsec}");
+            let image_stem = format!("signed-pb-{weighting}-{cell_arcsec}");
             let negative_image_name = root.path().join(format!("{image_stem}-negative"));
             let mut positive_pixels = None;
             let mut positive_graph = None;
@@ -416,50 +373,34 @@ fn t55_signed_primary_beam_limit_separates_pixels_search_support_and_stored_mask
                 } else {
                     negative_image_name.clone()
                 };
-                let mut imaging = request(
-                    measurement_set.clone(),
-                    image_name.clone(),
-                    ContinuumAlgorithm::Clark,
+                let imaging = clark_cube(
+                    &measurement_set,
+                    &image_name,
+                    json!({
+                        "imsize": 16,
+                        "cell": format!("{cell_arcsec}arcsec"),
+                        "weighting": weighting,
+                        "start": "3",
+                        "width": "-1",
+                        "threshold": "0Jy",
+                        "pblimit": pblimit,
+                        "write_pb": true,
+                        "pbcor": true,
+                        "mask_box": "3,4,10,12",
+                    }),
                 );
-                imaging.cell_arcsec = cell_arcsec;
-                imaging.weighting = weighting;
-                imaging.channel_count = Some(4);
-                imaging.spectral_window = Some("0:0~3".into());
-                imaging.spectral_mode = SpectralImagingMode::Cube {
-                    axis: CubeAxisConfig {
-                        outframe: FrequencyRef::TOPO,
-                        start: Some(CubeAxisValue::Channel(3)),
-                        width: Some(CubeAxisValue::Channel(-1)),
-                        ..CubeAxisConfig::default()
-                    },
-                    output_channels: Some(4),
-                };
-                imaging.beam_policy = ContinuumBeamPolicy::Common;
-                imaging.iterations = 3;
-                imaging.cycle_iterations = 1;
-                imaging.maximum_major_cycles = Some(3);
-                imaging.gain = 0.37;
-                imaging.noise_sigma = Some(1.0e-12);
-                imaging.primary_beam_limit = pblimit;
-                imaging.write_primary_beam = true;
-                imaging.pbcor = true;
-                imaging.mask = ContinuumMask::Boxes(vec![ContinuumMaskBox {
-                    blc: [3, 4],
-                    trc: [10, 12],
-                }]);
-                imaging.task_requirements = vec![TaskRequirement::SerialCpu];
-                imaging.resource_policy =
-                    resource_policy_for_task_requirements(&imaging.task_requirements);
-                let result = execute_continuum(imaging).expect("signed PB cube");
-                assert!(result.outcome.output.major_cycle_count > 1);
+                let outcome = casa_imaging_application::execute(
+                    &imaging,
+                    context_with(imaging.resource_policy()),
+                )
+                .expect("signed PB cube");
+                assert!(outcome.major_cycle_count > 1);
                 for role in [
                     ProductRole::Residual(ProductTerm::Single),
                     ProductRole::RestoredImage(ProductTerm::Single),
                 ] {
                     assert_eq!(
-                        result
-                            .outcome
-                            .output
+                        outcome
                             .planned_products
                             .members()
                             .iter()
@@ -557,8 +498,8 @@ fn t55_signed_primary_beam_limit_separates_pixels_search_support_and_stored_mask
                 let psf = open(".psf");
                 assert_eq!(psf.units(), "");
                 assert!(!psf.image_info().unwrap().beam_set.is_empty());
-                let pixels = result
-                    .product_names
+                let product_names = outcome.product_names();
+                let pixels = product_names
                     .iter()
                     .map(|suffix| {
                         let product = open(suffix);
@@ -573,7 +514,7 @@ fn t55_signed_primary_beam_limit_separates_pixels_search_support_and_stored_mask
                         )
                     })
                     .collect::<Vec<_>>();
-                let graph = result.outcome.output.planned_products.graph_id();
+                let graph = outcome.planned_products.graph_id();
                 if let Some(positive) = &positive_pixels {
                     assert_eq!(
                         positive, &pixels,
@@ -583,7 +524,7 @@ fn t55_signed_primary_beam_limit_separates_pixels_search_support_and_stored_mask
                 } else {
                     positive_pixels = Some(pixels);
                     positive_graph = Some(graph);
-                    for suffix in &result.product_names {
+                    for suffix in &product_names {
                         std::fs::rename(
                             PathBuf::from(format!("{}{suffix}", image_name.display())),
                             PathBuf::from(format!("{}{suffix}", negative_image_name.display())),

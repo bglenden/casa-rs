@@ -2,7 +2,7 @@
 format = 1
 surface = "imager"
 kind = "task"
-contract = 19
+contract = 20
 
 [parameters]
 vis = ["representative-continuum.ms"]

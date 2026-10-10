@@ -6,6 +6,13 @@ execution concepts used by the imaging architecture.
 
 ## Imaging science
 
+**Imaging Request**:
+The one typed request for an imaging run, deserialized from the imager
+parameters the provider catalog resolves and validated once. Every frontend
+reaches it through the same catalog resolution; compiling it against its
+MeasurementSet yields the Compiled Problem.
+_Avoid_: CLI configuration, task request mirror
+
 **Compiled Problem**:
 An immutable logical-science description for one imaging run, bound to an
 Observation Snapshot, reference-data identities, reconstruction and coordinate

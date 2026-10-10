@@ -1190,19 +1190,16 @@ cell = "0.0002777777777777778deg"
                 ("usepointing", ParameterValue::Bool(true)),
                 ("nterms", ParameterValue::Integer(2)),
                 ("parallel", ParameterValue::Bool(false)),
-                (
-                    "standard_mfs_acceleration",
-                    ParameterValue::String("cpu".into()),
-                ),
+                ("interpolation", ParameterValue::String("linear".into())),
             ] {
                 assert_eq!(resolved.values[name], expected, "{label}.{name}");
             }
-            assert!(
-                !resolved
-                    .explicit_overrides
-                    .contains_key("standard_mfs_acceleration"),
-                "{label}.standard_mfs_acceleration must adopt the current default"
-            );
+            for name in ["parallel", "interpolation"] {
+                assert!(
+                    !resolved.explicit_overrides.contains_key(name),
+                    "{label}.{name} must adopt the current default"
+                );
+            }
             for name in ["cfcache", "cf_resident_mb", "wprojplanes", "usepointing"] {
                 assert!(
                     resolved.explicit_overrides.contains_key(name),

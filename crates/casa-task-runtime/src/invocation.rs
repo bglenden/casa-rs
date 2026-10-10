@@ -474,11 +474,6 @@ mod tests {
             ("parallel", ParameterValue::Bool(false)),
             ("usepointing", ParameterValue::Bool(true)),
             ("write_pb", ParameterValue::Bool(true)),
-            ("aterm", ParameterValue::Bool(true)),
-            ("psterm", ParameterValue::Bool(false)),
-            ("wbawp", ParameterValue::Bool(true)),
-            ("conjbeams", ParameterValue::Bool(true)),
-            ("mosweight", ParameterValue::Bool(false)),
         ] {
             session
                 .set(name, value)
@@ -488,7 +483,6 @@ mod tests {
             ("nterms", 2_i64),
             ("wprojplanes", 32),
             ("cf_resident_mb", 256),
-            ("facets", 1),
         ] {
             session
                 .set(name, ParameterValue::Integer(value))
@@ -515,7 +509,6 @@ mod tests {
             ("--gridder", "awproject"),
             ("--cfcache", "/cache/vlass"),
             ("--cf-resident-mb", "256"),
-            ("--facets", "1"),
             ("--wprojplanes", "32"),
             ("--deconvolver", "mtmfs"),
             ("--nterms", "2"),
@@ -529,16 +522,7 @@ mod tests {
                 invocation.args
             );
         }
-        for flag in [
-            "--usepointing",
-            "--write-pb",
-            "--aterm",
-            "--no-psterm",
-            "--wbawp",
-            "--conjbeams",
-            "--no-mosweight",
-            "--no-parallel",
-        ] {
+        for flag in ["--usepointing", "--write-pb", "--no-parallel"] {
             assert!(
                 invocation.args.iter().any(|argument| argument == flag),
                 "missing {flag}: {:?}",

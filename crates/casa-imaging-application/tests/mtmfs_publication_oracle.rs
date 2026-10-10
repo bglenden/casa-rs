@@ -11,12 +11,12 @@ use std::{
 
 use casa_coordinates::{CoordinateModel, StokesType};
 use casa_images::PagedImage;
-use casa_imaging_application::{
-    Cancel, ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumMask,
-    ContinuumWeighting, HogbomIterationAccounting, HostResources, ResourcePolicy,
-    SpectralImagingMode, TaskRequirement, execute_continuum,
-};
+use casa_imaging_application::{ImagingOutcome, ImagingRequest, ResourcePolicy, execute};
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
+use serde_json::json;
+
+#[path = "common/imaging.rs"]
+mod imaging;
 
 const DATASET: &str = "measurementset/vla/ref_vlass_wtsp_creation.ms";
 const OUTPUT_ENV: &str = "CASA_RS_T44_APPLICATION_PREFIX";
@@ -71,71 +71,23 @@ fn t44_application_mtmfs_publishes_frozen_casa_product_contract() -> Result<(), 
     copy_tree(&source, &staged)?;
     casa_ms::initialize_measurement_set_owner_manifest(&staged)?;
 
-    let request = ContinuumImagingRequest {
-        measurement_set: staged,
-        image_name: output.clone(),
-        image_size: IMAGE_SIZE,
-        facets: 1,
-        cell_arcsec: 2.5,
-        phase_center_field: None,
-        phase_center: None,
-        outlier_file: None,
-        field_ids: Some(vec![0]),
-        uv_range: None,
-        intent: None,
-        data_description: None,
-        spectral_window: Some("0:0~15,1:0~15".to_string()),
-        channel_start: None,
-        channel_count: None,
-        spectral_mode: SpectralImagingMode::Continuum,
-        continuum_subtraction: None,
-        data_column: Some("DATA".to_string()),
-        polarizations: vec![casa_imaging_application::PolarizationCoordinate::StokesI],
-        algorithm: ContinuumAlgorithm::Mtmfs {
-            terms: 2,
-            scales_px: vec![0.0, 5.0],
-            small_scale_bias: 0.0,
-        },
-        weighting: ContinuumWeighting::Natural,
-        iterations: 8,
-        cycle_iterations: 2,
-        hogbom_iteration_accounting: HogbomIterationAccounting::Strict,
-        maximum_major_cycles: None,
-        noise_sigma: None,
-        cycle_factor: 1.0,
-        minimum_psf_fraction: 0.05,
-        maximum_psf_fraction: 0.8,
-        gain: 0.1,
-        threshold_jy: 0.0,
-        psf_cutoff: casa_imaging_products::DEFAULT_PSF_CUTOFF,
-        primary_beam_limit: 0.2,
-        normalization: casa_imaging_model::ProductNormalization::UnitResponse,
-        beam_policy: ContinuumBeamPolicy::Common,
-        mask: ContinuumMask::FullPlane,
-        save_model_column: false,
-        save_continuum_residual: false,
-        write_primary_beam: true,
-        pbcor: true,
-        mosaic_use_pointing: false,
-        w_projection_planes: None,
-        aw_projection: None,
-        task_requirements: vec![TaskRequirement::SerialCpu],
-        host: HostResources::detect()?,
-        resource_policy: ResourcePolicy::Explicit {
+    let request = mtmfs_request(json!({
+        "vis": staged,
+        "imagename": output,
+        "imsize": IMAGE_SIZE,
+        "cell": "2.5arcsec",
+        "spw": "0:0~15,1:0~15",
+    }));
+    let outcome = run(
+        &request,
+        ResourcePolicy::Explicit {
             workers: 1,
             memory: u64::MAX,
         },
-        backend: casa_imaging_application::BackendChoice::Cpu,
-        cancel: Cancel::new(),
-        summary: None,
-    };
-    let result = execute_continuum(request)?;
-    let expected_names = PRODUCT_NAMES.map(str::to_string).to_vec();
-    assert_eq!(result.product_names, expected_names);
-    assert_eq!(result.minor_iterations, 8);
-    assert_eq!(result.outcome.output.major_cycle_count, 5);
-
-    let outcome = &result.outcome.output;
+    )?;
+    assert_eq!(outcome.product_names(), PRODUCT_NAMES.map(str::to_string));
+    assert_eq!(outcome.total_minor_iterations, 8);
+    assert_eq!(outcome.major_cycle_count, 5);
     assert_eq!(
         outcome
             .products
@@ -188,18 +140,26 @@ fn issue607_representative_mtmfs_matches_casa_products() -> Result<(), Box<dyn E
     measurement_set.save_as(&staged)?;
     casa_ms::initialize_measurement_set_owner_manifest(&staged)?;
     let output = staging.path().join("rust-mtmfs-representative");
-    let mut request = representative_mtmfs_request(staged, output.clone());
-    request.spectral_window = Some("0~3".to_string());
-    let result = execute_continuum(request)?;
-    assert_eq!(result.minor_iterations, 8);
-    assert_eq!(result.product_names, PRODUCT_NAMES.map(str::to_string));
+    let request = mtmfs_request(json!({
+        "vis": staged,
+        "imagename": output,
+        "imsize": 512,
+        "cell": "1arcsec",
+        "phasecenter_field": "0",
+        "spw": "0~3",
+        "channel_count": 8,
+    }));
+    let outcome = run(
+        &request,
+        ResourcePolicy::Explicit {
+            workers: 1,
+            memory: 1 << 30,
+        },
+    )?;
+    assert_eq!(outcome.total_minor_iterations, 8);
+    assert_eq!(outcome.product_names(), PRODUCT_NAMES.map(str::to_string));
     assert_eq!(
-        result
-            .outcome
-            .output
-            .scientific
-            .normal_state()
-            .sample_count(),
+        outcome.scientific.normal_state().sample_count(),
         1_336_320,
         "representative MT-MFS selected sample count changed",
     );
@@ -207,68 +167,31 @@ fn issue607_representative_mtmfs_matches_casa_products() -> Result<(), Box<dyn E
     Ok(())
 }
 
-fn representative_mtmfs_request(
-    measurement_set: PathBuf,
-    image_name: PathBuf,
-) -> ContinuumImagingRequest {
-    ContinuumImagingRequest {
-        measurement_set,
-        image_name,
-        image_size: 512,
-        facets: 1,
-        cell_arcsec: 1.0,
-        phase_center_field: Some(0),
-        phase_center: None,
-        outlier_file: None,
-        field_ids: Some(vec![0]),
-        uv_range: None,
-        intent: None,
-        data_description: None,
-        spectral_window: None,
-        channel_start: None,
-        channel_count: Some(8),
-        spectral_mode: SpectralImagingMode::Continuum,
-        continuum_subtraction: None,
-        data_column: Some("DATA".to_string()),
-        polarizations: vec![casa_imaging_application::PolarizationCoordinate::StokesI],
-        algorithm: ContinuumAlgorithm::Mtmfs {
-            terms: 2,
-            scales_px: vec![0.0, 5.0],
-            small_scale_bias: 0.0,
-        },
-        weighting: ContinuumWeighting::Natural,
-        iterations: 8,
-        cycle_iterations: 2,
-        hogbom_iteration_accounting: HogbomIterationAccounting::Strict,
-        maximum_major_cycles: None,
-        noise_sigma: None,
-        cycle_factor: 1.0,
-        minimum_psf_fraction: 0.05,
-        maximum_psf_fraction: 0.8,
-        gain: 0.1,
-        threshold_jy: 0.0,
-        psf_cutoff: casa_imaging_products::DEFAULT_PSF_CUTOFF,
-        primary_beam_limit: 0.2,
-        normalization: casa_imaging_model::ProductNormalization::UnitResponse,
-        beam_policy: ContinuumBeamPolicy::Common,
-        mask: ContinuumMask::FullPlane,
-        save_model_column: false,
-        save_continuum_residual: false,
-        write_primary_beam: true,
-        pbcor: true,
-        mosaic_use_pointing: false,
-        w_projection_planes: None,
-        aw_projection: None,
-        task_requirements: vec![TaskRequirement::SerialCpu],
-        host: HostResources::detect().expect("host"),
-        resource_policy: ResourcePolicy::Explicit {
-            workers: 1,
-            memory: 1 << 30,
-        },
-        backend: casa_imaging_application::BackendChoice::Cpu,
-        cancel: Cancel::new(),
-        summary: None,
-    }
+/// Two-term, two-scale MT-MFS of field 0's `DATA`: eight components in
+/// minor cycles of two, a common restoring beam, the primary beam and its
+/// corrected images; `values` adds the data and geometry.
+fn mtmfs_request(values: serde_json::Value) -> ImagingRequest {
+    let mut request = json!({
+        "field": "0",
+        "datacolumn": "DATA",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "scales": "0,5",
+        "niter": 8,
+        "minor_cycle_length": 2,
+        "restoringbeam": "common",
+        "write_pb": true,
+        "pbcor": true,
+    });
+    request
+        .as_object_mut()
+        .expect("MT-MFS controls")
+        .extend(values.as_object().expect("request values").clone());
+    imaging::request(request)
+}
+
+fn run(request: &ImagingRequest, policy: ResourcePolicy) -> Result<ImagingOutcome, Box<dyn Error>> {
+    Ok(execute(request, imaging::context(policy))?)
 }
 
 struct OracleProduct {

@@ -713,60 +713,58 @@ pub(super) fn string(value: &str) -> Value {
     Value::Scalar(ScalarValue::String(value.to_string()))
 }
 
+/// A request imaging `measurement_set` to `image_name`, resolved through
+/// the catalog from the fixture's controls and `overrides` (a `null`
+/// override restores the catalog's default). The fixture's controls: a
+/// 16 × 16 image of 1 arcsec cells over field 0, data description 0 and
+/// channel 0 of `DATA`, cleaned by one Högbom iteration of gain 1 in one
+/// major cycle, with a PSF cutoff and primary-beam limit of 0.2.
 pub(super) fn request(
-    measurement_set: PathBuf,
-    image_name: PathBuf,
-    algorithm: ContinuumAlgorithm,
-) -> ContinuumImagingRequest {
-    ContinuumImagingRequest {
-        measurement_set,
-        image_name,
-        image_size: 16,
-        facets: 1,
-        cell_arcsec: 1.0,
-        phase_center_field: None,
-        phase_center: None,
-        outlier_file: None,
-        field_ids: Some(vec![0]),
-        uv_range: None,
-        intent: None,
-        data_description: Some(0),
-        spectral_window: None,
-        channel_start: Some(0),
-        channel_count: Some(1),
-        spectral_mode: SpectralImagingMode::Continuum,
-        continuum_subtraction: None,
-        data_column: Some("DATA".to_string()),
-        polarizations: vec![casa_imaging_application::PolarizationCoordinate::StokesI],
-        algorithm,
-        weighting: ContinuumWeighting::Natural,
-        iterations: 1,
-        cycle_iterations: 1,
-        hogbom_iteration_accounting: casa_imaging_application::HogbomIterationAccounting::Strict,
-        maximum_major_cycles: Some(1),
-        noise_sigma: None,
-        cycle_factor: 1.0,
-        minimum_psf_fraction: 0.05,
-        maximum_psf_fraction: 0.8,
-        gain: 1.0,
-        threshold_jy: 0.0,
-        psf_cutoff: 0.2,
-        primary_beam_limit: 0.2,
-        normalization: casa_imaging_model::ProductNormalization::UnitResponse,
-        beam_policy: ContinuumBeamPolicy::PerPlane,
-        mask: ContinuumMask::FullPlane,
-        save_model_column: false,
-        save_continuum_residual: false,
-        write_primary_beam: false,
-        pbcor: false,
-        mosaic_use_pointing: false,
-        w_projection_planes: None,
-        aw_projection: None,
-        task_requirements: Vec::new(),
-        host: casa_imaging_application::HostResources::detect().expect("host"),
-        resource_policy: casa_imaging_application::ResourcePolicy::Balanced,
-        backend: casa_imaging_application::BackendChoice::Cpu,
-        cancel: casa_imaging_application::Cancel::new(),
-        summary: None,
+    measurement_set: &Path,
+    image_name: &Path,
+    overrides: serde_json::Value,
+) -> ImagingRequest {
+    let mut values = serde_json::json!({
+        "vis": measurement_set,
+        "imagename": image_name,
+        "imsize": 16,
+        "cell": "1arcsec",
+        "field": "0",
+        "ddid": "0",
+        "channel_start": 0,
+        "channel_count": 1,
+        "datacolumn": "DATA",
+        "niter": 1,
+        "minor_cycle_length": 1,
+        "nmajor": 1,
+        "gain": 1.0,
+        "psfcutoff": 0.2,
+        "pblimit": 0.2,
+    });
+    let fields = values.as_object_mut().expect("controls");
+    for (name, value) in overrides.as_object().expect("overrides object") {
+        if value.is_null() {
+            fields.remove(name);
+        } else {
+            fields.insert(name.clone(), value.clone());
+        }
     }
+    imaging::request(values)
+}
+
+/// The detected host, its balanced share, and no summary.
+pub(super) fn context() -> RunContext {
+    context_with(ResourcePolicy::Balanced)
+}
+
+/// The detected host under `policy`, and no summary.
+pub(super) fn context_with(policy: ResourcePolicy) -> RunContext {
+    imaging::context(policy)
+}
+
+/// Run `request` in [`context`].
+pub(super) fn execute(
+    request: &ImagingRequest,
+) -> Result<ImagingOutcome, ApplicationDispatchError> {
+    casa_imaging_application::execute(request, context())
 }

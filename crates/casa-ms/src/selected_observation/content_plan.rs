@@ -118,6 +118,18 @@ impl SelectedObservationContentBudget {
     pub const fn maximum_pointing_polynomial_terms(self) -> usize {
         self.maximum_pointing_polynomial_terms
     }
+
+    /// The read budget of one pass over the selected MAIN rows: this
+    /// budget's bytes and live blocks, at a row's stored size.
+    #[must_use]
+    pub const fn row_io_budget(self) -> crate::MsSelectionIoBudget {
+        crate::MsSelectionIoBudget {
+            available_bytes: self.available_bytes,
+            maximum_live_blocks: self.maximum_live_blocks,
+            requested_bytes_per_row: crate::SelectedObservationRow::STORAGE_BYTES_PER_ROW,
+            storage_alignment_rows: None,
+        }
+    }
 }
 
 impl SelectedObservationReferenceDataBudget {

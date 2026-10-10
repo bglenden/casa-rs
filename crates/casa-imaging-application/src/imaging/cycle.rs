@@ -14,7 +14,9 @@ use casa_imaging_deconvolution::{CleanStop, Controller, CycleControls};
 use casa_imaging_model::{
     CompiledProblem, ModelDeltaTerm, ModelInputCommitment, SpectralWcs, WeightingScheme,
 };
-use casa_imaging_operator::{BandwidthTaper, Basis, ModeSet, PlaneRange, WeightingGeneration};
+use casa_imaging_operator::{
+    BandwidthTaper, Basis, GridPrecision, ModeSet, PlaneRange, WeightingGeneration,
+};
 use casa_imaging_products::VisibilityProductCompletion;
 use casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan;
 use casa_imaging_reconstruction::{
@@ -61,6 +63,8 @@ pub(crate) struct ImagingInputs<'a> {
     /// The AW catalog of an A-projection run.
     pub(crate) aw_catalog: Option<AwCatalogDeployment>,
     pub(crate) backend: BackendChoice,
+    /// The requested grid precision; `None` is plan decision D2's rule.
+    pub(crate) grid_precision: Option<GridPrecision>,
 }
 
 /// The final reconciliation and the record of the cycles that led to it.
@@ -312,11 +316,6 @@ impl<'a> Run<'a> {
     fn open(inputs: ImagingInputs<'a>) -> Result<Self, ImagingError> {
         let problem = inputs.problem;
         let backend = inputs.backend;
-        if backend == BackendChoice::Metal && !inputs.host.metal {
-            return Err(ImagingError::Unsupported {
-                reason: "the Metal backend needs a unified-memory Metal 3 device",
-            });
-        }
         let correlations = selected_correlations(problem)?;
         let selected = inputs
             .access
@@ -334,6 +333,7 @@ impl<'a> Run<'a> {
                     domain,
                     &correlations,
                     backend,
+                    inputs.grid_precision,
                     inputs.aw_catalog.as_ref(),
                     &dish_classes,
                 )

@@ -36,10 +36,9 @@ use crate::selected_pointing::SelectedPointingQueryDomain;
 use crate::subtables::SubTable;
 use crate::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
-    MeasurementSet, MsError, MsSelectionIoBudget, ObservationSourceBinding,
-    SelectedObservationContentBudget, SelectedObservationEphemeris, SelectedObservationMeasures,
-    SelectedObservationMeasuresError, SelectedObservationResidencyCertificate,
-    SelectedObservationRow, SelectedObservationRowSelection, SubtableId,
+    MeasurementSet, MsError, ObservationSourceBinding, SelectedObservationContentBudget,
+    SelectedObservationEphemeris, SelectedObservationMeasures, SelectedObservationMeasuresError,
+    SelectedObservationResidencyCertificate, SelectedObservationRowSelection, SubtableId,
 };
 
 const OWNER_MANIFEST_KEYWORD: &str = "CASA_RS_IMAGING_OWNER_MANIFEST";
@@ -1365,7 +1364,7 @@ fn validate_physical_selection(
     let mut invalid = false;
     measurement_set.visit_selected_observation_rows(
         &row_selection,
-        physical_selection_io_budget(content_budget),
+        content_budget.row_io_budget(),
         |row| {
             if !invalid {
                 invalid = actual
@@ -1405,17 +1404,6 @@ pub(crate) fn validate_test_physical_selection(
     content_budget: SelectedObservationContentBudget,
 ) -> Result<SelectedPointingQueryDomain, ObservationOwnerError> {
     validate_physical_selection(measurement_set, selection, content_budget)
-}
-
-fn physical_selection_io_budget(
-    content_budget: SelectedObservationContentBudget,
-) -> MsSelectionIoBudget {
-    MsSelectionIoBudget {
-        available_bytes: content_budget.available_bytes(),
-        maximum_live_blocks: content_budget.maximum_live_blocks(),
-        requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
-        storage_alignment_rows: None,
-    }
 }
 
 fn mint_owner_identity(entropy: &[u8; 32], ordinal: u64, label: &[u8]) -> LogicalIdentity {
@@ -1560,7 +1548,7 @@ fn derive_column_storage_plan(
     let mut selected_error = false;
     measurement_set.visit_selected_observation_rows(
         &SelectedObservationRowSelection::from_compiled(selection),
-        physical_selection_io_budget(content_budget),
+        content_budget.row_io_budget(),
         |row| {
             let Some(bytes) = usize::try_from(row.data_description_id())
                 .ok()
@@ -1580,11 +1568,9 @@ fn derive_column_storage_plan(
     let mut additional_persistent_bytes = 0_u64;
     if create_if_absent && !has_column {
         let mut invalid_data_description = false;
-        let plan = crate::MsReadPlan::new(
-            measurement_set.row_count(),
-            physical_selection_io_budget(content_budget),
-        )
-        .map_err(|_| ObservationOwnerError::PredictionAddress)?;
+        let plan =
+            crate::MsReadPlan::new(measurement_set.row_count(), content_budget.row_io_budget())
+                .map_err(|_| ObservationOwnerError::PredictionAddress)?;
         measurement_set.visit_main_row_selection_blocks(plan, |block| {
             for offset in 0..block.len() {
                 let fact = block
@@ -1822,14 +1808,14 @@ mod tests {
     #[test]
     fn physical_selection_batches_rows_within_the_owner_content_budget() {
         let content_budget = SelectedObservationContentBudget::new(64 << 20, 2, 4);
-        let io_budget = physical_selection_io_budget(content_budget);
+        let io_budget = content_budget.row_io_budget();
 
         assert_eq!(
             io_budget,
-            MsSelectionIoBudget {
+            crate::MsSelectionIoBudget {
                 available_bytes: 64 << 20,
                 maximum_live_blocks: 2,
-                requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
+                requested_bytes_per_row: crate::SelectedObservationRow::STORAGE_BYTES_PER_ROW,
                 storage_alignment_rows: None,
             }
         );

@@ -18,6 +18,10 @@ pub(crate) enum PlotRenderInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(
+    dead_code,
+    reason = "imaging runs write no preview images; #681 removes the imaging plot target"
+)]
 pub(crate) enum ImagingPlotPayload {
     ArtifactPreview { title: String, image_path: PathBuf },
 }

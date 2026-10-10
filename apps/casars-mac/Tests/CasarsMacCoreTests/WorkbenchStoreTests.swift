@@ -4,7 +4,7 @@ import XCTest
 @testable import CasarsMacCore
 
 /// Mirrors `IMAGER_TASK_PROTOCOL_VERSION` in `crates/casars-imager/src/task_contract.rs`.
-private let imagerTaskProtocolVersion: UInt32 = 11
+private let imagerTaskProtocolVersion: UInt32 = 12
 
 final class WorkbenchStoreTests: XCTestCase {
     func testAssistantContextsUseEachTaskTabSessionAndPreserveUserSelection() throws {
@@ -749,12 +749,12 @@ final class WorkbenchStoreTests: XCTestCase {
             "vis", "imagename", "imsize", "cell", "field", "phasecenter_field",
             "spw", "datacolumn", "specmode", "channel_count", "start", "width",
             "outframe", "restfreq", "deconvolver", "weighting", "robust",
-            "gridder", "standard_mfs_acceleration",
+            "gridder", "backend", "gridprecision",
             "perchanweightdensity",
             "restoringbeam", "niter", "nmajor", "gain",
             "threshold", "usemask", "noisethreshold", "sidelobethreshold",
             "lownoisethreshold", "minbeamfrac", "negativethreshold",
-            "deconvolver", "scales", "smallscalebias", "wterm", "wprojplanes",
+            "deconvolver", "scales", "smallscalebias", "wprojplanes",
             "nterms", "savemodel", "outlierfile", "write_pb", "pbcor", "pblimit"
         ]
 
@@ -1256,7 +1256,7 @@ final class WorkbenchStoreTests: XCTestCase {
         let schema = try makeImagerTaskUISchema()
         let defaultSnapshot = try client.defaults(surfaceID: "imager")
 
-        for name in ["cfcache", "cf_resident_mb", "aterm", "psterm", "wbawp", "conjbeams", "normtype"] {
+        for name in ["cfcache", "cf_resident_mb", "pointingoffsetsigdev", "normtype"] {
             let argument = try XCTUnwrap(schema.arguments.first { $0.id == name })
             XCTAssertEqual(argument.group, "Advanced Wide-Field", "unexpected group for \(name)")
             XCTAssertTrue(argument.advanced, "\(name) must remain an advanced control")
@@ -1268,7 +1268,8 @@ final class WorkbenchStoreTests: XCTestCase {
         let usepointing = try XCTUnwrap(schema.arguments.first { $0.id == "usepointing" })
         XCTAssertEqual(usepointing.group, "Advanced Wide-Field")
         XCTAssertTrue(usepointing.advanced)
-        XCTAssertTrue(try XCTUnwrap(defaultSnapshot.states["usepointing"]).active)
+        // Only mosaic and AW projection read pointing.
+        XCTAssertFalse(try XCTUnwrap(defaultSnapshot.states["usepointing"]).active)
 
         let fixtureRoot = repositoryRootURL().appendingPathComponent("resources/test-profiles", isDirectory: true)
         let profileURL = fixtureRoot.appendingPathComponent("vlass-single-field-awproject.toml")
@@ -1284,7 +1285,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.states["gridder"]?.value, .string(value: "awproject"))
         XCTAssertFalse(snapshot.diagnostics.contains { $0.level == "error" }, "\(snapshot.diagnostics)")
         XCTAssertTrue(snapshot.diagnostics.isEmpty)
-        let wideFieldNames = ["cfcache", "cf_resident_mb", "aterm", "psterm", "wbawp", "conjbeams"]
+        let wideFieldNames = ["cfcache", "cf_resident_mb", "pointingoffsetsigdev"]
         for name in wideFieldNames + ["usepointing", "normtype"] {
             XCTAssertTrue(try XCTUnwrap(snapshot.states[name]).active, "\(name) must activate for AWProject")
         }
@@ -1331,10 +1332,6 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(invocation.args, ["--managed-output", "true", "--json-run", "-"])
         XCTAssertEqual(invocation.protocolName, "casa_imager_task")
         XCTAssertEqual(invocation.protocolVersion, imagerTaskProtocolVersion)
-        // IF-3 installed the AW and W-projection sets (#652); only the
-        // unconsumed source-stream control remains.
-        let unsupported = Set(invocation.unsupportedReasons.map(\.id))
-        XCTAssertEqual(unsupported, Set(["task.memory_target"]))
 
         let stdin = try XCTUnwrap(invocation.stdin)
         let envelope = try XCTUnwrap(
@@ -1342,28 +1339,21 @@ final class WorkbenchStoreTests: XCTestCase {
         )
         XCTAssertEqual(envelope["kind"] as? String, "run")
         let request = try XCTUnwrap(envelope["request"] as? [String: Any])
-        XCTAssertEqual(request["measurement_set"] as? String, "VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms")
-        XCTAssertEqual(request["image_name"] as? String, "products/vlass-single-field")
-        XCTAssertEqual(request["image_size"] as? Int, 12_150)
+        XCTAssertEqual(request["vis"] as? [String], ["VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"])
+        XCTAssertEqual(request["imagename"] as? String, "products/vlass-single-field")
+        XCTAssertEqual(request["imsize"] as? [Int], [12_150, 12_150])
         XCTAssertEqual(request["uvrange"] as? String, "<12km")
         XCTAssertEqual(request["intent"] as? String, "OBSERVE_TARGET#UNSPECIFIED")
-        XCTAssertEqual(request["spw_selector"] as? String, "2~17")
-        XCTAssertEqual(request["w_project_planes"] as? Int, 32)
-        XCTAssertEqual(request["use_pointing"] as? Bool, true)
-        let awProject = try XCTUnwrap(request["aw_project"] as? [String: Any])
-        let cfSource = try XCTUnwrap(awProject["source"] as? [String: Any])
-        XCTAssertEqual(cfSource["kind"] as? String, "casa-import")
-        XCTAssertEqual(cfSource["cf_cache"] as? String, "cf-cache/vlass-spw2-17")
-        XCTAssertEqual(awProject["cf_resident_mb"] as? Int, 384)
-        XCTAssertEqual(awProject["a_term"] as? Bool, true)
-        XCTAssertEqual(awProject["ps_term"] as? Bool, false)
-        XCTAssertEqual(awProject["wb_awp"] as? Bool, true)
-        XCTAssertEqual(awProject["conjugate_beams"] as? Bool, true)
+        XCTAssertEqual(request["spw"] as? String, "2~17")
+        XCTAssertEqual(request["gridder"] as? String, "awproject")
+        XCTAssertEqual(request["wprojplanes"] as? Int, 32)
+        XCTAssertEqual(request["usepointing"] as? Bool, true)
+        XCTAssertEqual(request["aw_cf_source"] as? String, "casa-import")
+        XCTAssertEqual(request["cfcache"] as? String, "cf-cache/vlass-spw2-17")
+        XCTAssertEqual(request["cf_resident_mb"] as? Int, 384)
     }
 
-    func testT64WorkbenchBlocksTypedVlassInfeasibilityAndLaunchesSupportedRequest() throws {
-        let fixtureRoot = repositoryRootURL().appendingPathComponent("resources/test-profiles", isDirectory: true)
-        let profileURL = fixtureRoot.appendingPathComponent("vlass-single-field-awproject.toml")
+    func testT64WorkbenchBlocksAnInvalidRequestAndLaunchesASupportedOne() throws {
         let blockedTaskClient = HoldingGenericTaskClient()
         var blockedState = EmptyWorkbench.makeState()
         blockedState.applicationCatalog = [makeImagerApplicationCatalogEntry()]
@@ -1377,15 +1367,25 @@ final class WorkbenchStoreTests: XCTestCase {
         )
 
         blockedStore.loadTaskUISchemaIfNeeded("imager", instanceID: "tab-imager")
-        blockedStore.loadActiveParameterProfile(from: profileURL.path, discardEdits: true)
+        for (argumentID, value) in [
+            ("vis", "input.ms"),
+            ("imagename", "products/blocked"),
+            ("wprojplanes", "4"),
+        ] {
+            blockedStore.setGenericTaskValue(
+                taskID: "imager",
+                instanceID: "tab-imager",
+                argumentID: argumentID,
+                value: value
+            )
+        }
+        // W planes without W projection: the catalog refuses the request.
         let blockedReadiness = blockedStore.taskLaunchReadiness(taskID: "imager", instanceID: "tab-imager")
-        XCTAssertEqual(blockedReadiness.status, .infeasible)
-        XCTAssertEqual(blockedReadiness.protocolName, "casa_imager_task")
-        XCTAssertEqual(blockedReadiness.protocolVersion, imagerTaskProtocolVersion)
-        // IF-3 installed the AW and W-projection sets (#652); the unconsumed
-        // source-stream control still blocks the launch.
-        let blockedReasons = Set(blockedReadiness.unsupportedReasons.map(\.id))
-        XCTAssertEqual(blockedReasons, Set(["task.memory_target"]))
+        XCTAssertEqual(blockedReadiness.status, .invalid)
+        XCTAssertTrue(
+            blockedReadiness.diagnostics.contains { $0.contains("wprojplanes") },
+            "\(blockedReadiness.diagnostics)"
+        )
 
         blockedStore.setGenericTaskConfirmation(
             taskID: "imager",
@@ -1394,11 +1394,6 @@ final class WorkbenchStoreTests: XCTestCase {
         )
         blockedStore.runTask()
         XCTAssertTrue(blockedTaskClient.requests.isEmpty)
-        XCTAssertEqual(blockedStore.state.taskRun.state, .failed)
-        XCTAssertTrue(
-            blockedStore.state.taskRun.diagnostics.contains { $0.hasSuffix(": task.memory_target") },
-            "\(blockedStore.state.taskRun.diagnostics)"
-        )
 
         let supportedTaskClient = HoldingGenericTaskClient()
         var supportedState = EmptyWorkbench.makeState()
@@ -4956,7 +4951,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(values["phasecenter_field"], "none")
         XCTAssertEqual(values["specmode"], "mfs")
         XCTAssertEqual(values["gridder"], "standard")
-        XCTAssertEqual(values["interpolation"], "none")
+        XCTAssertEqual(values["interpolation"], "linear")
         XCTAssertEqual(values["channel_start"], "none")
         XCTAssertEqual(values["channel_count"], "none")
         XCTAssertEqual(values["imsize"], "512,512")
@@ -7235,8 +7230,7 @@ private func makeSurfaceProviderInvocation(
         protocolName: nil,
         protocolVersion: nil,
         args: args,
-        stdin: stdin,
-        unsupportedReasons: []
+        stdin: stdin
     )
 }
 

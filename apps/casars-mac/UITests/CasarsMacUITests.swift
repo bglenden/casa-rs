@@ -45,7 +45,7 @@ final class CasarsMacUITests: XCTestCase {
         }
     }
 
-    func testT64CanonicalImagingReadinessIsVisibleAndBlocksInfeasibleLaunch() throws {
+    func testT64CanonicalImagingReadinessIsVisibleAndBlocksInvalidLaunch() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -64,7 +64,7 @@ final class CasarsMacUITests: XCTestCase {
             "-ApplePersistenceIgnoreState", "YES",
             "--open-imager-ms", measurementSet.path,
             "--imagename", "products/t64-readiness",
-            "--set-task-value", "imaging_memory_target_mb", "4096",
+            "--set-task-value", "wprojplanes", "4",
         ]
         launchTestApplication()
         app.activate()
@@ -74,11 +74,10 @@ final class CasarsMacUITests: XCTestCase {
             app.debugDescription
         )
         XCTAssertTrue(try require("task.imagerReadiness").exists)
-        XCTAssertTrue(try textValue(try require("task.imagerReadiness.capability")).contains("Unsupported request"))
+        // W planes without W projection: the catalog refuses the request.
+        XCTAssertTrue(try textValue(try require("task.imagerReadiness.capability")).contains("Invalid"))
         XCTAssertTrue(try textValue(try require("task.imagerReadiness.plan")).contains("Pending launch"))
         XCTAssertTrue(try textValue(try require("task.imagerReadiness.cache")).contains("none"))
-        XCTAssertTrue(try textValue(try require("task.imagerReadiness.provider")).contains("casa_imager_task v11"))
-        XCTAssertTrue(try require("task.imagerReadiness.unsupported.task.memory_target").exists)
         XCTAssertFalse(try require("task.run").isEnabled)
     }
 
@@ -2325,7 +2324,7 @@ final class CasarsMacUITests: XCTestCase {
         format = 1
         surface = "imager"
         kind = "task"
-        contract = 19
+        contract = 20
 
         [parameters]
         vis = "data/science.bin"

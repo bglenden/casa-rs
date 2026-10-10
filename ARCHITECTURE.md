@@ -148,11 +148,15 @@ execution. It compiles the logical request, checks it against the implementation
 installed in the build, and either invokes that implementation or returns a
 typed unavailable result before planning. A selected production failure is
 terminal; there is no alternate
-implementation, retry path, or stage-level delegation. `casars-imager` is a
-thin frontend projection over this interface:
-it owns parsing, unit and representation conversion, canonical request
-construction, and result presentation only. Unsupported capabilities remain
-typed unavailable until their ticket adds one final-owner implementation.
+implementation, retry path, or stage-level delegation. Its input is one
+`ImagingRequest`, deserialized from the imager parameters the provider
+catalog resolves and validated once. Every route (command line,
+`--json-run`, TUI, Python and the workbench) reaches it through the same
+catalog resolution, so the catalog is the only source of defaults and refuses
+a parameter its gridder does not read. `casars-imager` is a thin frontend over
+this interface: it resolves its parameters through the catalog and presents
+the result. Unsupported capabilities remain typed unavailable until their
+ticket adds one final-owner implementation.
 
 The remaining programme introduces the product owner only in the ticket that
 can migrate all callers and enforce its exact dependencies.
@@ -244,7 +248,7 @@ Additional constraints:
   enforced by `scripts/check-imaging-dependencies.py` in `just arch-check`
   (ADR-0016).
 
-The native interface has one `ImagingRequest` contract (version 3) and exactly
+The model's compile input is one `ProblemInput`, and there is exactly
 one `compile` / `plan` / `run` sequence. `compile` validates and canonicalizes
 logical science, including immutable coordinate and image-domain geometry.
 Compiled Geometry identity is derived only by `compile`; callers supply geometry
@@ -404,7 +408,9 @@ the `MODEL_DATA` commit is the interoperability boundary and passes the
 applicable Rust/C++ RR, RC, CR, and CC matrix.
 
 Installed-implementation availability is an application-owned result checked
-before any phase, so a typed-unavailable request starts no work. A run leaves
+once, by `availability::check` on the compiled problem, the run's backend and
+grid precision, and the host, before any phase, so a typed-unavailable request
+starts no work. A run leaves
 one record beside its products, the run summary of plan section 8.3
 (`<imagename>.summary.json` for `casars-imager`): the request echo, each
 phase with whether it completed, its wall time and the process's peak
@@ -603,9 +609,9 @@ or provider semantics that bypass the Rust-owned contracts.
 
 ### Imaging execution
 
-`casars-imager` owns only user-facing parsing, unit and representation
-conversion, canonical task-request projection, protocol telemetry, and result
-presentation. `casa-imaging-application` owns MeasurementSet expression
+`casars-imager` owns only catalog resolution of its parameters, the task
+protocol, and result presentation. `casa-imaging-application` owns the
+`ImagingRequest` and its validation, MeasurementSet expression
 resolution, bounded source access, installed-implementation admission, runtime policy, and
 independently atomic product publication. Resolved immutable selection identity
 belongs to `casa-imaging-model`'s Observation Snapshot compiler. Scientific
@@ -663,19 +669,17 @@ whole row. The residency is planned once per major cycle for the pass and its
 paged normal state; a run that writes visibilities must hold every plane in
 its final pass and is refused at the start otherwise.
 
-Imager task protocol v10 carries the local execution controls (`parallel` and
-the shared imaging memory target). It defines a newline-delimited progress
-event schema (v1) with an embedded observability snapshot (v2), but the
-installed imager emits no progress events; the cycle loop logs worker counts
-and stage timings through `tracing`. `parallel=false` runs the pass with one
-worker. All production FFTs use FFTW; there is no FFT backend selector or
-fallback.
+Imager task protocol v12 carries the resolved imager parameters by catalog
+name, on stdin for `--json-run`; the result echoes them. The imager emits no
+progress events; the cycle loop logs worker counts and stage timings through
+`tracing`, and the run summary records each phase. `parallel=false` (the
+default) runs the pass with one worker. All production FFTs use FFTW; there is
+no FFT backend selector or fallback.
 
-W-projection, AW-projection, mosaics (including `mtmfs` via cube), facets and
-cubic spectral interpolation are typed unavailability in
-`casa-imaging-application`'s availability check, before planning, until the
-convolution-function sets of IF-3 install them in the pass (facets #664 and
-cubic #42 follow IF-4).
+W-projection, AW-projection and mosaics run on the pass since IF-3. Facets,
+`mtmfs` via cube and cubic spectral interpolation are not in the catalog, so no
+request names them; a compiled problem with faceted geometry is typed
+unavailability in `availability::check` (facets #664, cubic #42).
 
 `backend = metal` (macOS, a unified-memory Metal 3 device) grids every pass on
 the Metal device: `casa-imaging-metal` implements the operator's
@@ -687,10 +691,10 @@ equal the CPU's; every dispatch completes inside `apply`, cut into
 sub-blocks over a three-slot ring. Operators are `f32` for every basis on
 Metal (D2). Placement and the native-channel predictions of multi-domain or
 linearly interpolated residuals stay on the CPU workers.
-Reconstruction's AW, mosaic and primary-beam modules, the runtime
-prepared-artifact store and the application's AW preparation are kept, unused,
-for IF-3. Application availability is the capability boundary: component
-presence alone never makes a route available.
+Metal grids the standard kernel set only; W projection, mosaics and AW
+projection run on the CPU, and `availability::check` refuses them on Metal.
+Application availability is the capability boundary: component presence alone
+never makes a route available.
 
 ## Persistence / external systems
 

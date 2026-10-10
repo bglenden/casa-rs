@@ -200,7 +200,6 @@ public extension SurfaceRunSafetyClass {
 public enum TaskLaunchReadinessStatus: String, Codable, Equatable, Sendable {
     case unavailable
     case invalid
-    case infeasible
     case ready
 }
 
@@ -210,20 +209,17 @@ public struct TaskLaunchReadiness: Codable, Equatable, Sendable {
     public var status: TaskLaunchReadinessStatus
     public var protocolName: String?
     public var protocolVersion: UInt32?
-    public var unsupportedReasons: [SurfaceProviderUnsupportedReason]
     public var diagnostics: [String]
 
     public init(
         status: TaskLaunchReadinessStatus,
         protocolName: String? = nil,
         protocolVersion: UInt32? = nil,
-        unsupportedReasons: [SurfaceProviderUnsupportedReason] = [],
         diagnostics: [String] = []
     ) {
         self.status = status
         self.protocolName = protocolName
         self.protocolVersion = protocolVersion
-        self.unsupportedReasons = unsupportedReasons
         self.diagnostics = diagnostics
     }
 

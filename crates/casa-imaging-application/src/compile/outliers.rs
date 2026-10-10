@@ -8,22 +8,24 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{ApplicationError, ContinuumMask};
+use super::domains::DomainMask;
+use crate::ApplicationError;
 
-pub(crate) struct ContinuumDomainInput {
-    pub(crate) name: String,
-    pub(crate) output: PathBuf,
-    pub(crate) image_size: usize,
-    pub(crate) cell_arcsec: f64,
-    pub(crate) phase_center: String,
-    pub(crate) mask: ContinuumMask,
+/// One outlier image domain as the outlier file defines it.
+pub(super) struct OutlierDomain {
+    pub(super) name: String,
+    pub(super) output: PathBuf,
+    pub(super) image_size: usize,
+    pub(super) cell_arcsec: f64,
+    pub(super) phase_center: String,
+    pub(super) mask: DomainMask,
 }
 
-pub(crate) fn read_outlier_domains(
+pub(super) fn read_outlier_domains(
     path: &Path,
     default_size: usize,
     default_cell_arcsec: f64,
-) -> Result<Vec<ContinuumDomainInput>, ApplicationError> {
+) -> Result<Vec<OutlierDomain>, ApplicationError> {
     let text = fs::read_to_string(path).map_err(|error| {
         boxed(format!(
             "cannot read outlier file {}: {error}",
@@ -96,7 +98,7 @@ fn compile_record(
     mut fields: BTreeMap<String, String>,
     default_size: usize,
     default_cell_arcsec: f64,
-) -> Result<ContinuumDomainInput, ApplicationError> {
+) -> Result<OutlierDomain, ApplicationError> {
     let name = take_required(&mut fields, "imagename", ordinal)?;
     let output = resolve_output(path, &name);
     let image_size = fields
@@ -115,7 +117,7 @@ fn compile_record(
         .filter(|value| !value.is_empty())
         .map(|value| circle_mask(&value, image_size))
         .transpose()?
-        .unwrap_or(ContinuumMask::FullPlane);
+        .unwrap_or(DomainMask::FullPlane);
 
     admit_default(&mut fields, "usemask", &["", "user"])?;
     admit_default(&mut fields, "specmode", &["", "mfs", "cont"])?;
@@ -140,7 +142,7 @@ fn compile_record(
             fields.keys().cloned().collect::<Vec<_>>().join(", ")
         )));
     }
-    Ok(ContinuumDomainInput {
+    Ok(OutlierDomain {
         name,
         output,
         image_size,
@@ -219,7 +221,7 @@ fn parse_arcsec(text: &str) -> Result<f64, ApplicationError> {
         .map_err(|error| boxed(format!("invalid outlier cell {text:?}: {error}")))
 }
 
-fn circle_mask(text: &str, image_size: usize) -> Result<ContinuumMask, ApplicationError> {
+fn circle_mask(text: &str, image_size: usize) -> Result<DomainMask, ApplicationError> {
     let compact = trim_string(text)
         .chars()
         .filter(|character| !character.is_whitespace())
@@ -256,7 +258,7 @@ fn circle_mask(text: &str, image_size: usize) -> Result<ContinuumMask, Applicati
             support.push(dx * dx + dy * dy <= radius_squared);
         }
     }
-    Ok(ContinuumMask::PixelSupport(support.into_boxed_slice()))
+    Ok(DomainMask::PixelSupport(support.into_boxed_slice()))
 }
 
 fn parse_pixels(text: &str) -> Result<f64, ApplicationError> {
@@ -328,7 +330,7 @@ mod tests {
         assert_eq!(domains[0].image_size, 80);
         assert_eq!(domains[0].cell_arcsec, 8.0);
         assert_eq!(domains[0].output, directory.path().join("outlier"));
-        let ContinuumMask::PixelSupport(support) = &domains[0].mask else {
+        let DomainMask::PixelSupport(support) = &domains[0].mask else {
             panic!("expected pixel support");
         };
         assert!(support[40 * 80 + 40]);

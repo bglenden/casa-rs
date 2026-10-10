@@ -2,7 +2,7 @@
 format = 1
 surface = "imager"
 kind = "task"
-contract = 19
+contract = 20
 
 [parameters]
 vis = ["VLASS.multi-spw.ms"]
@@ -38,4 +38,3 @@ uvrange = "<12km"
 intent = "OBSERVE_TARGET#UNSPECIFIED"
 cfcache = "cf-cache/vlass-spw2-17"
 cf_resident_mb = 512
-imaging_memory_target_mb = 32768

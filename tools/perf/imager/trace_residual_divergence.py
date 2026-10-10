@@ -143,43 +143,34 @@ def case_controls(case: str) -> dict[str, Any]:
     raise ValueError(f"unsupported case {case!r}")
 
 
-def rust_weighting(weighting: str, robust: float) -> dict[str, Any]:
-    normalized = weighting.lower()
-    if normalized == "natural":
-        return {"kind": "natural"}
-    if normalized == "uniform":
-        return {"kind": "uniform"}
-    if normalized == "briggs":
-        return {"kind": "briggs", "robust": robust}
-    raise ValueError(f"unsupported weighting {weighting!r}")
-
-
 def run_rust(args: argparse.Namespace, case: str, prefix: pathlib.Path) -> dict[str, Any]:
     controls = case_controls(case)
+    # Imager parameters by catalog name; the imager resolves the rest.
     request = {
-        "measurement_set": str(args.ms),
-        "image_name": str(prefix),
-        "image_size": args.imsize,
-        "cell_arcsec": args.cell_arcsec,
-        "field_ids": [int(args.field)],
-        "spw_selector": args.spw,
+        "vis": str(args.ms),
+        "imagename": str(prefix),
+        "imsize": args.imsize,
+        "cell": f"{args.cell_arcsec}arcsec",
+        "field": str(args.field),
+        "spw": args.spw,
         "channel_start": args.channel_start,
         "channel_count": args.channel_count,
-        "data_column": "DATA",
-        "spectral_mode": "mfs",
-        "weighting": rust_weighting(args.weighting, args.robust),
+        "datacolumn": "DATA",
+        "specmode": "mfs",
+        "weighting": args.weighting.lower(),
+        "robust": args.robust,
         "deconvolver": args.deconvolver,
         "nterms": 1,
         "niter": controls["niter"],
         "gain": args.gain,
-        "threshold_jy": args.threshold_jy,
+        "threshold": f"{args.threshold_jy}Jy",
         "nsigma": 0.0,
-        "psf_cutoff": args.psfcutoff,
+        "psfcutoff": args.psfcutoff,
         "minor_cycle_length": controls["cycleniter"],
         "cyclefactor": args.cyclefactor,
-        "min_psf_fraction": args.minpsffraction,
-        "max_psf_fraction": args.maxpsffraction,
-        "hogbom_iteration_mode": "casa_inclusive"
+        "minpsffraction": args.minpsffraction,
+        "maxpsffraction": args.maxpsffraction,
+        "hogbom_iteration_mode": "casa-inclusive"
         if args.hogbom_iteration_mode == "casa"
         else args.hogbom_iteration_mode,
         "dirty_only": controls["dirty_only"],

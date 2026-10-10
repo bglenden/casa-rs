@@ -7878,7 +7878,7 @@ struct GenericTaskPanel: View {
                 ) {
                     readinessMetric(
                         title: "Capability",
-                        value: readiness.status == .infeasible ? "Unsupported request" : readinessLabel(readiness.status),
+                        value: readinessLabel(readiness.status),
                         identifier: "task.imagerReadiness.capability"
                     )
                     readinessMetric(
@@ -7896,18 +7896,6 @@ struct GenericTaskPanel: View {
                         value: providerLabel(readiness),
                         identifier: "task.imagerReadiness.provider"
                     )
-                }
-                ForEach(readiness.unsupportedReasons, id: \.id) { reason in
-                    HStack(spacing: 6) {
-                        Image(systemName: "xmark.octagon.fill")
-                            .accessibilityHidden(true)
-                        Text("\(reason.kind): \(reason.id)")
-                    }
-                    .workbenchFont(.caption, design: .monospaced)
-                    .foregroundStyle(.red)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(reason.kind): \(reason.id)")
-                    .accessibilityIdentifier("task.imagerReadiness.unsupported.\(reason.id)")
                 }
                 ForEach(readiness.diagnostics, id: \.self) { diagnostic in
                     Label(diagnostic, systemImage: "exclamationmark.triangle.fill")
@@ -7967,7 +7955,6 @@ struct GenericTaskPanel: View {
         switch status {
         case .unavailable: "Unavailable"
         case .invalid: "Invalid"
-        case .infeasible: "Infeasible"
         case .ready: "Ready"
         }
     }
@@ -7975,7 +7962,6 @@ struct GenericTaskPanel: View {
     private func readinessIcon(_ status: TaskLaunchReadinessStatus) -> String {
         switch status {
         case .ready: "checkmark.circle.fill"
-        case .infeasible: "xmark.octagon.fill"
         case .invalid: "exclamationmark.triangle.fill"
         case .unavailable: "questionmark.circle"
         }
@@ -7984,7 +7970,6 @@ struct GenericTaskPanel: View {
     private func readinessColor(_ status: TaskLaunchReadinessStatus) -> Color {
         switch status {
         case .ready: .green
-        case .infeasible: .red
         case .invalid: .orange
         case .unavailable: .secondary
         }

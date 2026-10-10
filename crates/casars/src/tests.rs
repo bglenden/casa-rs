@@ -244,10 +244,14 @@ fn tui_typed_session_matches_shared_imager_cross_surface_profile() {
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(app_definition, schema, config);
     app.configure_parameter_runtime(temp.path().to_path_buf(), false, Some(session));
-    let preflight = app
+    let stdin = app
         .execution_stdin_for_test()
-        .expect_err("unconsumed source-stream controls must surface owner diagnostics first");
-    assert!(preflight.contains("task/task.memory_target"), "{preflight}");
+        .expect("the TUI execution plan")
+        .expect("the imager request on stdin");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&stdin).expect("request JSON"),
+        expected["request"]
+    );
 
     for name in ["vis", "imagename", "imsize", "cell", "niter"] {
         assert_eq!(
@@ -9456,7 +9460,7 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
     let overview = render_app(&app, 140, 32);
     assert!(overview.contains("Imaging Run"));
     assert!(overview.contains("Mode: mfs"));
-    assert!(overview.contains("W-term"));
+    assert!(overview.contains("Gridder: standard"));
 
     app.set_active_result_tab(ResultTab::Products);
     let products = render_app(&app, 160, 34);

@@ -14,7 +14,7 @@ const POINT: Component = Component {
     spectral_index: 0.0,
 };
 /// Five times the 1.0 mJy thermal image noise.
-const THRESHOLD_JY: f32 = 0.005;
+const THRESHOLD: &str = "0.005Jy";
 
 #[test]
 fn model_column_predicts_the_deconvolved_sky_at_every_sample() {
@@ -22,11 +22,11 @@ fn model_column_predicts_the_deconvolved_sky_at_every_sample() {
     let (_, products) = observation.image(
         "model-column",
         json!({
-            "weighting": { "kind": "natural" },
+            "weighting": "natural",
             "deconvolver": "hogbom",
             "niter": 500,
-            "threshold_jy": THRESHOLD_JY,
-            "save_model": "model_column",
+            "threshold": THRESHOLD,
+            "savemodel": "modelcolumn",
         }),
     );
     let model_jy = box_sum(&products.get(".model").pixels, component_pixel(POINT), 2);

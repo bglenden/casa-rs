@@ -94,7 +94,7 @@ fn run_c_array(block: bool) {
     assert_eq!(spectral.num_chan(0).unwrap(), 512);
     assert_eq!(
         spectral.meas_freq_ref(0).unwrap(),
-        FrequencyRef::LSRK.casacore_code()
+        casa_types::measures::frequency::FrequencyRef::LSRK.casacore_code()
     );
     assert_eq!(
         spectral.chan_freq(0).unwrap()[channel as usize],
@@ -103,59 +103,52 @@ fn run_c_array(block: bool) {
     drop(ms);
     fs::create_dir(&root).expect("fresh retained output directory");
     let prefix = root.join("image");
-    let mut imaging = request(input, prefix.clone(), ContinuumAlgorithm::Clark);
-    imaging.image_size = image_size;
-    imaging.cell_arcsec = 0.06;
-    imaging.data_description = None;
-    imaging.spectral_window = Some(format!("0:{input_start}~{input_end}"));
-    imaging.channel_start = None;
-    imaging.channel_count = Some(input_channels);
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::LSRK,
-            interpolation: casa_ms::CubeInterpolation::Linear,
-            start: Some(CubeAxisValue::FrequencyHz {
-                hz: frequency_hz,
-                frame: None,
-            }),
-            width: Some(CubeAxisValue::FrequencyHz {
-                hz: 2e6,
-                frame: None,
-            }),
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(output_channels),
-    };
-    imaging.weighting = ContinuumWeighting::Natural;
-    imaging.iterations = if dirty_only { 0 } else { iterations };
-    imaging.cycle_iterations = 1000;
-    imaging.maximum_major_cycles = maximum_major_cycles;
-    imaging.gain = 0.1;
-    imaging.threshold_jy = 0.0005;
-    imaging.psf_cutoff = 0.35;
-    imaging.primary_beam_limit = -0.2;
-    imaging.normalization = casa_imaging_model::ProductNormalization::FlatNoise;
-    imaging.mask = ContinuumMask::Image(mask);
-    imaging.write_primary_beam = true;
-    imaging.task_requirements = vec![TaskRequirement::PerChannelWeightDensity];
-    if !block {
-        imaging.task_requirements.push(TaskRequirement::SerialCpu);
-    }
+    let imaging = request(
+        &input,
+        &prefix,
+        json!({
+            "deconvolver": "clark",
+            "imsize": image_size,
+            "cell": "0.06arcsec",
+            "ddid": null,
+            "spw": format!("0:{input_start}~{input_end}"),
+            "channel_start": null,
+            "channel_count": output_channels,
+            "specmode": "cube",
+            "outframe": "LSRK",
+            "interpolation": "linear",
+            "start": format!("{frequency_hz}Hz"),
+            "width": "2MHz",
+            "niter": if dirty_only { 0 } else { iterations },
+            "minor_cycle_length": 1000,
+            "nmajor": maximum_major_cycles.map_or(-1, |limit| i64::try_from(limit).unwrap()),
+            "gain": 0.1,
+            "threshold": "0.0005Jy",
+            "psfcutoff": 0.35,
+            "pblimit": -0.2,
+            "mask_image": mask,
+            "write_pb": true,
+            "perchanweightdensity": true,
+        }),
+    );
     let memory_bytes = std::env::var("CASA_RS_C_ARRAY_MEMORY_BYTES")
         .map(|value| value.parse::<u64>().expect("explicit native memory budget"))
         .unwrap_or(16 << 30);
     assert!(memory_bytes > 0 && memory_bytes <= 16 << 30);
-    imaging.resource_policy = ResourcePolicy::Explicit {
-        workers,
-        memory: memory_bytes,
-    };
     fs::write(root.join("request.txt"), format!("{imaging:#?}\n")).unwrap();
     eprintln!(
         "C-array matched application start channel={channel} root={}",
         root.display()
     );
     let started = std::time::Instant::now();
-    let result = execute_continuum(imaging).unwrap_or_else(|error| {
+    let output = casa_imaging_application::execute(
+        &imaging,
+        context_with(ResourcePolicy::Explicit {
+            workers,
+            memory: memory_bytes,
+        }),
+    )
+    .unwrap_or_else(|error| {
         fs::write(root.join("failure.txt"), format!("{error:#?}\n")).unwrap();
         panic!("C-array application failed: {error}");
     });
@@ -163,11 +156,10 @@ fn run_c_array(block: bool) {
     eprintln!("C-array application completed channel={channel} seconds={seconds}");
     if !block && !dirty_only && channel == 511 && iterations == 20_000 {
         assert_eq!(
-            result.actual_minor_iterations, 3731,
+            output.total_actual_minor_iterations, 3731,
             "CASA stops at the masked global peak after the final major cycle"
         );
     }
-    let output = &result.outcome.output;
     if dirty_only {
         assert_eq!(output.major_cycle_count, 1);
     }
@@ -179,11 +171,8 @@ fn run_c_array(block: bool) {
     }
     let mut expected = products.clone();
     expected.sort_unstable();
-    let mut actual = result
-        .product_names
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
+    let product_names = output.product_names();
+    let mut actual = product_names.iter().map(String::as_str).collect::<Vec<_>>();
     actual.sort_unstable();
     assert_eq!(actual, expected);
     for suffix in products {
@@ -220,12 +209,13 @@ fn run_c_array(block: bool) {
         "weighting": "natural", "deconvolver": "clark", "interpolation": "linear",
         "pass_workers": output.workers,
         "native_memory_bytes": memory_bytes, "image_size": image_size, "cell_arcsec": 0.06,
-        "iterations": result.actual_minor_iterations, "reported_iterations": result.minor_iterations,
+        "iterations": output.total_actual_minor_iterations,
+        "reported_iterations": output.total_minor_iterations,
         "dirty_only": dirty_only,
         "maximum_major_cycles": maximum_major_cycles,
-        "majors": output.major_cycle_count, "stop_reason": format!("{:?}", result.stop),
-        "prefix": prefix, "products": result.product_names,
-        "timing_boundary": "execute_continuum from selected input preparation through publication; excludes input copy and comparison"
+        "majors": output.major_cycle_count, "stop_reason": format!("{:?}", output.stop),
+        "prefix": prefix, "products": product_names,
+        "timing_boundary": "execute from selected input preparation through publication; excludes input copy and comparison"
     });
     fs::write(
         root.join("summary.json"),

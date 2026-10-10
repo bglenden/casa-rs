@@ -14,7 +14,7 @@ const POINT: Component = Component {
     spectral_index: -1.0,
 };
 /// Ten times the 0.5 mJy thermal noise of the 16-channel band.
-const THRESHOLD_JY: f32 = 0.005;
+const THRESHOLD: &str = "0.005Jy";
 
 #[test]
 fn mtmfs_two_terms_recover_flux_and_spectral_index() {
@@ -22,11 +22,11 @@ fn mtmfs_two_terms_recover_flux_and_spectral_index() {
     let (summary, products) = observation.image(
         "mtmfs",
         json!({
-            "weighting": { "kind": "natural" },
+            "weighting": "natural",
             "deconvolver": "mtmfs",
             "nterms": 2,
             "niter": 1000,
-            "threshold_jy": THRESHOLD_JY,
+            "threshold": THRESHOLD,
         }),
     );
     let tt0 = products.get(".image.tt0");

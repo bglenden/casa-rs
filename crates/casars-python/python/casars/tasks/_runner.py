@@ -15,7 +15,6 @@ from .._task_runtime import _resolve_task_binary
 from ..parameters import (
     ParameterData,
     ProviderInvocation,
-    ProviderUnsupportedReason,
     SurfaceParameters,
     TaskParameters,
     _frontend,
@@ -34,18 +33,6 @@ class TaskInvocationError(RuntimeError):
 
 class TaskResultError(RuntimeError):
     """Raised when Rust rejects a successful provider result contract."""
-
-
-class TaskCapabilityError(RuntimeError):
-    """Raised from exact canonical provider-owned infeasibility reasons."""
-
-    def __init__(
-        self, task: str, reasons: tuple[ProviderUnsupportedReason, ...]
-    ) -> None:
-        self.task = task
-        self.reasons = reasons
-        detail = ", ".join(f"{reason.kind}/{reason.id}" for reason in reasons)
-        super().__init__(f"{task} is unavailable in this installed build: {detail}")
 
 
 class TaskExecutionError(RuntimeError):
@@ -144,8 +131,6 @@ def run(
     if merged_overrides:
         resolved.set_many(merged_overrides)
     provider_invocation = resolved.provider_invocation()
-    if provider_invocation.unsupported_reasons:
-        raise TaskCapabilityError(task, provider_invocation.unsupported_reasons)
 
     executable = _resolve_casars_binary(binary)
     with TemporaryDirectory(prefix=f"casars-{task}-parameters-") as temporary:

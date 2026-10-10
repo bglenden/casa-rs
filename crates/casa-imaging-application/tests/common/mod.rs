@@ -30,13 +30,6 @@ pub fn model_lifecycle() -> ModelLifecycleRequirements {
 pub fn problem_inputs(
     reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
 ) -> ProblemInputIdentities {
-    problem_inputs_with_spectral_window(reference_data, SpectralWindowSelection::new(0, vec![0]))
-}
-
-pub fn problem_inputs_with_spectral_window(
-    reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
-    spectral_window: SpectralWindowSelection,
-) -> ProblemInputIdentities {
     let columns = [
         MsColumnKind::Data,
         MsColumnKind::Flag,
@@ -91,7 +84,7 @@ pub fn problem_inputs_with_spectral_window(
             IdSelection::All,
         ),
         vec![DataDescriptionSelection::new(0, 0, 0)],
-        vec![spectral_window],
+        vec![SpectralWindowSelection::new(0, vec![0])],
         vec![CorrelationSelection::new(
             0,
             vec![CorrelationProduct::new(0, CorrelationType::StokesI)],

@@ -24,7 +24,7 @@ use casa_ms::{ResolvedSelectedObservationAccess, SelectedObservationResolutionRe
 use crate::imaging::{self, ImagingError};
 use crate::{
     ApplicationError, ApplicationNative, ApplicationPublication, ApplicationRuntime,
-    NativeApplicationOutcome, visibility_write_selection,
+    ImagingOutcome, visibility_write_selection,
 };
 
 /// What the native run needs besides the compiled problem and its runtime.
@@ -108,7 +108,7 @@ pub(crate) fn run_native(
     problem: &CompiledProblem,
     input: NativeInput,
     native: Result<ApplicationNative, ApplicationError>,
-) -> Result<NativeApplicationOutcome, NativeError> {
+) -> Result<ImagingOutcome, NativeError> {
     let native = native?;
     let target = native.runtime.summary.clone();
     let mut summary = RunSummary {
@@ -145,7 +145,7 @@ fn run(
     input: NativeInput,
     native: ApplicationNative,
     summary: &mut RunSummary,
-) -> Result<NativeApplicationOutcome, NativeError> {
+) -> Result<ImagingOutcome, NativeError> {
     let ApplicationNative {
         runtime,
         publication,
@@ -185,6 +185,7 @@ fn run(
             spill_directory: &runtime.spill_directory,
             aw_catalog,
             backend: runtime.backend,
+            grid_precision: runtime.grid_precision,
         },
         summary,
     )?;
@@ -207,7 +208,7 @@ fn run(
         .iter()
         .map(|member| member.name().to_string())
         .collect();
-    Ok(NativeApplicationOutcome {
+    Ok(ImagingOutcome {
         problem: problem.clone(),
         minor_cycles: outcome.minor_cycles,
         stop: outcome.stop,

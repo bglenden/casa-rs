@@ -5,16 +5,12 @@
 //! on the device), and a dirty cube with output channels twice the native
 //! width imaged in waves. Skipped, saying so, without a Metal device.
 
-use casa_imaging_application::BackendChoice;
+use casa_imaging_application::{BackendChoice, availability::Unsupported};
 
 use super::*;
 
 /// Every pixel of a product within this fraction of the product's peak.
 const TOLERANCE: f64 = 1.0e-4;
-
-/// The application's refusal of a Metal run on a host whose inventory has
-/// no Metal device.
-const NO_METAL_DEVICE: &str = "the Metal backend needs a unified-memory Metal 3 device";
 
 fn values(base: &Path, suffix: &str) -> (Vec<usize>, Vec<f32>) {
     let image = PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", base.display())))
@@ -56,32 +52,39 @@ fn assert_products_close(metal: &Path, cpu: &Path, suffixes: &[&str], label: &st
     }
 }
 
-/// Run `imaging` on both backends; returns the Metal and CPU image names
-/// and the Metal run's planes per wave, or `None` (saying so) when the host
-/// has no Metal device.
+/// Run `imaging` with `backend = metal`, then `cpu`, each under the
+/// policy `policy` gives it; returns the Metal and CPU image names and the
+/// Metal run's planes per wave, or `None` (saying so) when the host has no
+/// Metal device.
 fn both(
     root: &Path,
     label: &str,
-    imaging: impl Fn(PathBuf, BackendChoice) -> ContinuumImagingRequest,
+    imaging: impl Fn(&Path, &str) -> ImagingRequest,
+    policy: impl Fn(BackendChoice) -> ResourcePolicy,
 ) -> Option<(PathBuf, PathBuf, Option<u32>)> {
-    if !cfg!(target_os = "macos") {
-        // Availability refuses Metal off macOS (pinned in tests/availability.rs).
-        eprintln!("skipped: Metal is macOS only");
-        return None;
-    }
     let metal = root.join(format!("{label}-metal"));
-    let result = match execute_continuum(imaging(metal.clone(), BackendChoice::Metal)) {
-        Ok(result) => result,
-        Err(error) if format!("{error:?}").contains(NO_METAL_DEVICE) => {
+    let outcome = match casa_imaging_application::execute(
+        &imaging(&metal, "metal"),
+        context_with(policy(BackendChoice::Metal)),
+    ) {
+        Ok(outcome) => outcome,
+        Err(ApplicationDispatchError::Unavailable(unavailable))
+            if unavailable
+                .unsupported()
+                .contains(&Unsupported::NoMetalDevice) =>
+        {
             eprintln!("skipped: no Metal device");
             return None;
         }
         Err(error) => panic!("{label} on Metal: {error:?}"),
     };
     let cpu = root.join(format!("{label}-cpu"));
-    execute_continuum(imaging(cpu.clone(), BackendChoice::Cpu))
-        .unwrap_or_else(|error| panic!("{label} on the CPU: {error:?}"));
-    Some((metal, cpu, result.outcome.output.planes_per_wave))
+    casa_imaging_application::execute(
+        &imaging(&cpu, "cpu"),
+        context_with(policy(BackendChoice::Cpu)),
+    )
+    .unwrap_or_else(|error| panic!("{label} on the CPU: {error:?}"));
+    Some((metal, cpu, outcome.planes_per_wave))
 }
 
 #[test]
@@ -89,11 +92,12 @@ fn metal_mfs_clean_equals_the_cpu_clean() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = multi_row_measurement_set(root.path());
-    let Some((metal, cpu, _)) = both(root.path(), "mfs", |name, backend| {
-        let mut imaging = request(measurement_set.clone(), name, ContinuumAlgorithm::Hogbom);
-        imaging.backend = backend;
-        imaging
-    }) else {
+    let Some((metal, cpu, _)) = both(
+        root.path(),
+        "mfs",
+        |name, backend| request(&measurement_set, name, json!({ "backend": backend })),
+        |_| ResourcePolicy::Balanced,
+    ) else {
         return;
     };
     assert_products_close(&metal, &cpu, &DIRTY_PRODUCT_SUFFIXES, "mfs");
@@ -104,27 +108,30 @@ fn metal_cleaned_cube_equals_the_cpu_cube() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
-    let Some((metal, cpu, _)) = both(root.path(), "cube", |name, backend| {
-        let mut imaging = request(measurement_set.clone(), name, ContinuumAlgorithm::Hogbom);
-        imaging.image_size = 64;
-        imaging.spectral_window = Some("0:0~3".into());
-        imaging.channel_count = Some(4);
-        imaging.spectral_mode = SpectralImagingMode::Cube {
-            axis: CubeAxisConfig {
-                outframe: FrequencyRef::TOPO,
-                ..CubeAxisConfig::default()
-            },
-            output_channels: Some(4),
-        };
-        imaging.iterations = 3;
-        imaging.cycle_iterations = 1;
-        imaging.maximum_major_cycles = Some(3);
-        imaging.gain = 0.37;
-        imaging.threshold_jy = 1.0e-12;
-        imaging.task_requirements = vec![TaskRequirement::SpectralCube];
-        imaging.backend = backend;
-        imaging
-    }) else {
+    let Some((metal, cpu, _)) = both(
+        root.path(),
+        "cube",
+        |name, backend| {
+            request(
+                &measurement_set,
+                name,
+                json!({
+                    "imsize": 64,
+                    "spw": "0:0~3",
+                    "channel_count": 4,
+                    "specmode": "cube",
+                    "outframe": "TOPO",
+                    "niter": 3,
+                    "minor_cycle_length": 1,
+                    "nmajor": 3,
+                    "gain": 0.37,
+                    "threshold": "1e-12Jy",
+                    "backend": backend,
+                }),
+            )
+        },
+        |_| ResourcePolicy::Balanced,
+    ) else {
         return;
     };
     assert_products_close(&metal, &cpu, &DIRTY_PRODUCT_SUFFIXES, "cube");
@@ -138,32 +145,35 @@ fn metal_cube_with_coarse_output_channels_in_waves_equals_the_cpu_cube() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
-    let Some((metal, cpu, waves)) = both(root.path(), "coarse", |name, backend| {
-        let mut imaging = request(measurement_set.clone(), name, ContinuumAlgorithm::Dirty);
-        imaging.image_size = 128;
-        imaging.spectral_window = Some("0:1~30".to_string());
-        imaging.channel_start = Some(1);
-        imaging.channel_count = Some(30);
-        imaging.spectral_mode = SpectralImagingMode::Cube {
-            axis: CubeAxisConfig {
-                outframe: FrequencyRef::TOPO,
-                start: Some(CubeAxisValue::Channel(1)),
-                width: Some(CubeAxisValue::Channel(2)),
-                ..CubeAxisConfig::default()
-            },
-            output_channels: Some(15),
-        };
-        imaging.task_requirements = vec![TaskRequirement::SpectralCube];
-        imaging.resource_policy = ResourcePolicy::Explicit {
+    let Some((metal, cpu, waves)) = both(
+        root.path(),
+        "coarse",
+        |name, backend| {
+            request(
+                &measurement_set,
+                name,
+                json!({
+                    "niter": 0,
+                    "imsize": 128,
+                    "spw": "0:1~30",
+                    "channel_start": 1,
+                    "channel_count": 15,
+                    "specmode": "cube",
+                    "outframe": "TOPO",
+                    "start": "1",
+                    "width": "2",
+                    "backend": backend,
+                }),
+            )
+        },
+        |backend| ResourcePolicy::Explicit {
             workers: 2,
             memory: match backend {
                 BackendChoice::Metal => COARSE_METAL_MEMORY_BYTES,
                 BackendChoice::Cpu => 4 << 30,
             },
-        };
-        imaging.backend = backend;
-        imaging
-    }) else {
+        },
+    ) else {
         return;
     };
     assert!(

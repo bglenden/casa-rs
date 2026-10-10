@@ -405,9 +405,9 @@ mod tests {
                 "--cell-arcsec=0.0002777777777777778deg".into(),
                 "--gridder".into(),
                 "awproject".into(),
-                "--no-psterm".into(),
-                "--standard-mfs-acceleration".into(),
-                "multi-cpu".into(),
+                "--no-parallel".into(),
+                "--gridprecision".into(),
+                "f64".into(),
             ],
         )
         .unwrap();
@@ -424,10 +424,10 @@ mod tests {
             patch.values["cell"],
             ParameterValue::Array(vec![ParameterValue::String("1arcsec".into()); 2])
         );
-        assert_eq!(patch.values["psterm"], ParameterValue::Bool(false));
+        assert_eq!(patch.values["parallel"], ParameterValue::Bool(false));
         assert_eq!(
-            patch.values["standard_mfs_acceleration"],
-            ParameterValue::String("multi-cpu".into())
+            patch.values["gridprecision"],
+            ParameterValue::String("f64".into())
         );
 
         let alias = parse_parameter_cli_overrides(&bundle, &["--threshold".into(), "1Jy".into()])

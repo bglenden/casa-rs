@@ -46,7 +46,7 @@ const OFF_AXIS: Component = Component {
 };
 const NOISE_JY: f32 = 0.65;
 /// About five times the thermal image noise of the 1-hour track.
-const THRESHOLD_JY: f32 = 0.01;
+const THRESHOLD_JY: f64 = 0.01;
 /// CASA `tclean` freezes the EVLA cache at 32 W planes.
 const W_PLANES: usize = 32;
 
@@ -145,25 +145,22 @@ fn aw_projection_generates_its_catalog_and_recovers_the_sky() {
     let (summary, products) = observation.image(
         "aw",
         json!({
-            "weighting": { "kind": "natural" },
+            "weighting": "natural",
             "deconvolver": "hogbom",
             "niter": 3000,
-            "threshold_jy": THRESHOLD_JY,
-            "w_project_planes": W_PLANES,
-            "aw_project": {
-                "source": {
-                    "kind": "native-evla",
-                    "root": catalog,
-                    "surface": surface,
-                    "policy": "generate-missing",
-                    "working_size": 2048,
-                    "oversampling": 4,
-                    "cache_bytes": 2_147_483_648_u64,
-                    "maximum_cells": 128,
-                },
-                "cf_resident_mb": 512,
-                "normalization": "flatnoise",
-            },
+            "threshold": format!("{THRESHOLD_JY}Jy"),
+            "gridder": "awproject",
+            "wprojplanes": W_PLANES,
+            "aw_cf_source": "native-evla",
+            "native_cf_cache": catalog,
+            "evla_surface": surface,
+            "native_cf_policy": "generate-missing",
+            "native_cf_working_size": 2048,
+            "native_cf_oversampling": 4,
+            "native_cf_cache_bytes": 2_147_483_648_u64,
+            "native_cf_maximum_cells": 128,
+            "cf_resident_mb": 512,
+            "normtype": "flatnoise",
             "pbcor": true,
             "write_pb": true,
         }),
@@ -263,7 +260,7 @@ fn aw_projection_generates_its_catalog_and_recovers_the_sky() {
         "centre model {model_centre_wide:?} Jy in the 13 and 25 px boxes"
     );
     assert!(
-        residual_centre.abs() < 2.0 * f64::from(THRESHOLD_JY),
+        residual_centre.abs() < 2.0 * THRESHOLD_JY,
         "centre residual {residual_centre} Jy"
     );
     // Off axis the flat-noise image holds the attenuated flux the standard

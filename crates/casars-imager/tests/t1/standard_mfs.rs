@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use casars_imager::RunSummary;
+use casars_imager::ImagerRunReport;
 use serde_json::{Value, json};
 
 use super::fixture::{
@@ -25,14 +25,14 @@ const GAUSSIAN: Component = Component {
     spectral_index: 0.0,
 };
 /// Five times the 1.0 mJy thermal image noise.
-const THRESHOLD_JY: f32 = 0.005;
+const THRESHOLD: &str = "0.005Jy";
 
 fn controls(deconvolver: &str) -> Value {
     json!({
-        "weighting": { "kind": "natural" },
+        "weighting": "natural",
         "deconvolver": deconvolver,
         "niter": 500,
-        "threshold_jy": THRESHOLD_JY,
+        "threshold": THRESHOLD,
     })
 }
 
@@ -41,7 +41,7 @@ fn controls(deconvolver: &str) -> Value {
 pub(super) fn assert_recovers_the_point(
     name: &str,
     controls: Value,
-) -> (Observation, RunSummary, Products) {
+) -> (Observation, ImagerRunReport, Products) {
     let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
     let (summary, products) = observation.image(name, controls);
     let image = products.get(".image");
@@ -145,7 +145,7 @@ fn standard_mfs_clark_recovers_the_analytic_sky() {
 #[test]
 fn standard_mfs_multiscale_recovers_the_extended_flux() {
     let mut multiscale = controls("multiscale");
-    multiscale["multiscale_scales"] = json!([0.0, 6.0, 12.0]);
+    multiscale["scales"] = json!("0,6,12");
     let (_, _, products) = assert_recovers_the_point("standard-mfs-multiscale", multiscale);
     // The 41-pixel box holds the Gaussian's 0.5 Jy to 1e-7. Cleaning stops
     // at 5 mJy/beam, so up to ~30 mJy (six beams of source at the threshold)

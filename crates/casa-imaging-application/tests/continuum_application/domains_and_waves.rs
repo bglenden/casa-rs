@@ -2,7 +2,7 @@
 //! Cubes whose passes run in waves, the admission of their memory, and
 //! outlier domains of their own shape in the paged cube state.
 
-use casa_imaging_application::{Admission, ApplicationDispatchError, SummaryTarget};
+use casa_imaging_application::{Admission, SummaryTarget};
 
 use super::*;
 
@@ -11,28 +11,29 @@ const fn memory_policy(memory: u64) -> ResourcePolicy {
     ResourcePolicy::Explicit { workers: 1, memory }
 }
 
-/// A dirty cube of the 32-channel fixture's channels 1 … 30 at `image_name`.
-fn line_cube(measurement_set: &Path, image_name: PathBuf) -> ContinuumImagingRequest {
-    let mut imaging = request(
-        measurement_set.to_path_buf(),
-        image_name,
-        ContinuumAlgorithm::Dirty,
-    );
-    imaging.image_size = 32;
-    imaging.spectral_window = Some("0:1~30".to_string());
-    imaging.channel_start = Some(1);
-    imaging.channel_count = Some(30);
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::TOPO,
-            start: Some(CubeAxisValue::Channel(1)),
-            width: Some(CubeAxisValue::Channel(1)),
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(30),
-    };
-    imaging.task_requirements = vec![TaskRequirement::SpectralCube];
-    imaging
+/// A dirty cube of the 32-channel fixture's channels 1 … 30 at
+/// `image_name`, with `overrides`.
+fn line_cube(
+    measurement_set: &Path,
+    image_name: &Path,
+    overrides: serde_json::Value,
+) -> ImagingRequest {
+    let mut values = json!({
+        "niter": 0,
+        "imsize": 32,
+        "spw": "0:1~30",
+        "channel_start": 1,
+        "channel_count": 30,
+        "specmode": "cube",
+        "outframe": "TOPO",
+        "start": "1",
+        "width": "1",
+    });
+    values
+        .as_object_mut()
+        .expect("cube controls")
+        .extend(overrides.as_object().expect("overrides").clone());
+    request(measurement_set, image_name, values)
 }
 
 fn read_product(base: &Path, suffix: &str) -> (Vec<usize>, ArrayD<f32>) {
@@ -58,16 +59,19 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
     for (label, continuum) in [("windowed", false), ("continuum", true)] {
         let cube = |name: &str, memory: u64| {
             let image_name = root.path().join(format!("{label}-{name}"));
-            let mut imaging = line_cube(&measurement_set, image_name.clone());
-            imaging.image_size = 128;
-            imaging.continuum_subtraction = continuum.then(|| VisibilityContinuumSubtraction {
-                fit_spw: "0:0;31".to_string(),
-                fit_order: 1,
-            });
-            imaging.resource_policy = memory_policy(memory);
-            let result = execute_continuum(imaging)
-                .unwrap_or_else(|error| panic!("{label} {name}: {error:?}"));
-            (image_name, result.outcome.output.planes_per_wave)
+            let imaging = line_cube(
+                &measurement_set,
+                &image_name,
+                if continuum {
+                    json!({ "imsize": 128, "fitspw": "0:0;31", "fitorder": 1 })
+                } else {
+                    json!({ "imsize": 128 })
+                },
+            );
+            let outcome =
+                casa_imaging_application::execute(&imaging, context_with(memory_policy(memory)))
+                    .unwrap_or_else(|error| panic!("{label} {name}: {error:?}"));
+            (image_name, outcome.planes_per_wave)
         };
         let (resident, resident_waves) = cube("resident", 4 << 30);
         assert_eq!(resident_waves, None, "{label}: every plane fits 4 GiB");
@@ -107,11 +111,13 @@ fn a_memory_ceiling_refuses_what_cannot_fit_and_one_plane_runs_one_plane_waves()
         names
     };
     let before = entries();
+    let imaging = line_cube(
+        &measurement_set,
+        &root.path().join("admitted"),
+        json!({ "imsize": 128 }),
+    );
     let run = |memory: u64| {
-        let mut imaging = line_cube(&measurement_set, root.path().join("admitted"));
-        imaging.image_size = 128;
-        imaging.resource_policy = memory_policy(memory);
-        execute_continuum(imaging)
+        casa_imaging_application::execute(&imaging, context_with(memory_policy(memory)))
     };
     // Raise the ceiling by what each refusal reports missing until the pass
     // itself is admitted. Each phase admitted before the pass also takes a
@@ -121,7 +127,7 @@ fn a_memory_ceiling_refuses_what_cannot_fit_and_one_plane_runs_one_plane_waves()
     let mut refusals = 0;
     let waves = loop {
         match run(memory) {
-            Ok(result) => break result.outcome.output.planes_per_wave,
+            Ok(outcome) => break outcome.planes_per_wave,
             Err(ApplicationDispatchError::Admission(Admission {
                 required,
                 available,
@@ -140,7 +146,7 @@ fn a_memory_ceiling_refuses_what_cannot_fit_and_one_plane_runs_one_plane_waves()
     assert_eq!(waves, Some(1), "a ceiling just above one plane");
 }
 
-/// A refused run still leaves its summary when the request names one: the
+/// A refused run still leaves its summary when the context names one: the
 /// request echo and the error, and no products.
 #[test]
 fn a_refused_run_records_its_error_in_its_summary() {
@@ -148,16 +154,20 @@ fn a_refused_run_records_its_error_in_its_summary() {
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
     let image_name = root.path().join("refused");
-    let mut imaging = line_cube(&measurement_set, image_name.clone());
-    imaging.resource_policy = memory_policy(64 << 10);
+    let imaging = line_cube(&measurement_set, &image_name, json!({}));
     let path = root.path().join("refused.summary.json");
-    imaging.summary = Some(SummaryTarget {
-        path: path.clone(),
-        request: serde_json::json!({ "case": "refused" }),
-    });
-    let error = execute_continuum(imaging)
-        .err()
-        .expect("64 KiB holds no cube");
+    let error = casa_imaging_application::execute(
+        &imaging,
+        RunContext {
+            summary: Some(SummaryTarget {
+                path: path.clone(),
+                request: json!({ "case": "refused" }),
+            }),
+            ..context_with(memory_policy(64 << 10))
+        },
+    )
+    .err()
+    .expect("64 KiB holds no cube");
     assert!(
         matches!(error, ApplicationDispatchError::Admission(_)),
         "{error}"
@@ -182,17 +192,21 @@ fn a_completed_cube_keeps_its_cache_charged_until_its_state_drops() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
-    let mut imaging = line_cube(&measurement_set, root.path().join("held"));
-    imaging.image_size = 128;
-    imaging.resource_policy = memory_policy(64 << 20);
-    let (host, policy) = (imaging.host, imaging.resource_policy);
+    let imaging = line_cube(
+        &measurement_set,
+        &root.path().join("held"),
+        json!({ "imsize": 128 }),
+    );
+    let context = context_with(memory_policy(64 << 20));
+    let (host, policy) = (context.host, context.policy);
     let free = casa_imaging_runtime::free_memory(&host, &policy);
-    let result = execute_continuum(imaging).expect("a cube within 64 MiB");
+    let outcome =
+        casa_imaging_application::execute(&imaging, context).expect("a cube within 64 MiB");
     assert!(
         casa_imaging_runtime::free_memory(&host, &policy) < free,
         "the returned cube state still charges its cache"
     );
-    drop(result);
+    drop(outcome);
     assert_eq!(casa_imaging_runtime::free_memory(&host, &policy), free);
 }
 
@@ -204,37 +218,31 @@ fn a_large_source_leaves_room_for_the_cube_cache_and_the_pass() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_many_row_measurement_set(root.path());
-    let mut imaging = line_cube(&measurement_set, root.path().join("rows"));
-    imaging.resource_policy = memory_policy(8 << 20);
-    let result = execute_continuum(imaging).unwrap_or_else(|error| panic!("{error}"));
-    assert_eq!(result.outcome.output.major_cycle_count, 1);
+    let imaging = line_cube(&measurement_set, &root.path().join("rows"), json!({}));
+    let outcome = casa_imaging_application::execute(&imaging, context_with(memory_policy(8 << 20)))
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert_eq!(outcome.major_cycle_count, 1);
 }
 
 /// A cleaned cube of the spectral-line fixture's four channels at
 /// `image_name`, 64 × 64.
-fn cleaned_cube(measurement_set: &Path, image_name: PathBuf) -> ContinuumImagingRequest {
-    let mut imaging = request(
-        measurement_set.to_path_buf(),
+fn cleaned_cube(measurement_set: &Path, image_name: &Path) -> ImagingRequest {
+    request(
+        measurement_set,
         image_name,
-        ContinuumAlgorithm::Hogbom,
-    );
-    imaging.image_size = 64;
-    imaging.spectral_window = Some("0:0~3".into());
-    imaging.channel_count = Some(4);
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::TOPO,
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(4),
-    };
-    imaging.iterations = 3;
-    imaging.cycle_iterations = 1;
-    imaging.maximum_major_cycles = Some(3);
-    imaging.gain = 0.37;
-    imaging.threshold_jy = 1.0e-12;
-    imaging.task_requirements = vec![TaskRequirement::SpectralCube];
-    imaging
+        json!({
+            "imsize": 64,
+            "spw": "0:0~3",
+            "channel_count": 4,
+            "specmode": "cube",
+            "outframe": "TOPO",
+            "niter": 3,
+            "minor_cycle_length": 1,
+            "nmajor": 3,
+            "gain": 0.37,
+            "threshold": "1e-12Jy",
+        }),
+    )
 }
 
 /// An outlier cube of its own size pages its own planes: a dirty cube with
@@ -260,23 +268,17 @@ fn outlier_cubes_of_another_size_page_their_own_planes() {
         )
         .expect("write the outlier file");
         let (mut imaging, main_pixels, channels) = if label == "dirty" {
-            let mut imaging = line_cube(&line_set, main.clone());
-            imaging.field_ids = Some(vec![0, 1]);
-            (imaging, 32, 30)
+            (
+                line_cube(&line_set, &main, json!({ "field": "0,1" })),
+                32,
+                30,
+            )
         } else {
-            (cleaned_cube(&clean_set, main.clone()), 64, 4)
+            (cleaned_cube(&clean_set, &main), 64, 4)
         };
-        imaging.outlier_file = Some(outlier_file);
-        let result = execute_continuum(imaging).expect("a cube with a smaller outlier");
-        assert_eq!(
-            result
-                .outcome
-                .output
-                .scientific
-                .normal_state()
-                .domain_count(),
-            2
-        );
+        imaging.outlierfile = Some(outlier_file);
+        let outcome = execute(&imaging).expect("a cube with a smaller outlier");
+        assert_eq!(outcome.scientific.normal_state().domain_count(), 2);
         for suffix in DIRTY_PRODUCT_SUFFIXES {
             let plane = |pixels: usize| -> Vec<usize> {
                 if suffix == ".sumwt" {

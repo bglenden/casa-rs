@@ -167,7 +167,7 @@ pub struct PassDomain<'a> {
 /// operator of the pass must be `f32`; placement and the native-channel
 /// predictions of a multi-domain or linearly interpolated residual stay on
 /// the CPU workers.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BackendChoice {
     /// [`casa_imaging_operator::CpuBackend`].

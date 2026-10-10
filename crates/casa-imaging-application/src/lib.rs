@@ -2,136 +2,107 @@
 #![warn(missing_docs)]
 //! Production composition owner for native imaging.
 //!
-//! This crate is the single application-layer seam that binds compiled request
-//! availability to MeasurementSet observation authority, scientific
-//! reconstruction and products, and the physical execution runtime. Frontends
-//! submit requests here; they do not compose native execution stages directly.
+//! This crate is the single application-layer seam: it compiles an
+//! [`ImagingRequest`] against its MeasurementSet, checks the installed
+//! implementation can run it, and runs it on the execution runtime.
+//! Frontends submit requests here; they do not compose native execution
+//! stages directly.
 
-mod availability;
+pub mod availability;
 mod casa_product_sink;
-mod continuum_domains;
-mod continuum_request;
+mod compile;
 mod imaging;
 mod native;
-pub use availability::{
-    ImagingCapabilityCatalogEntry, ImagingCapabilityRequirement, ImplementationUnavailable,
-    TaskRequirement, UnsupportedRequirement, installed_imaging_capability_catalog,
-    validate_installed_implementation,
-};
+mod request;
+
 pub use casa_imaging_deconvolution::CleanStop;
 pub use casa_imaging_model::{
-    HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization,
+    HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, RestoringBeamPolicy,
 };
+pub use casa_imaging_operator::GridPrecision;
 pub use casa_imaging_runtime::pass::{BackendChoice, Cancel};
 pub use casa_imaging_runtime::{
     Admission, HostResources, Phase, ResourcePolicy, RunSummary, SummaryTarget, TracedComponent,
 };
 pub use casa_product_sink::{CasaImageDomainOutput, CasaImageProductSink};
-pub use continuum_request::{
-    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwCfSource, ContinuumAwProjection,
-    ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumImagingResult, ContinuumMask,
-    ContinuumMaskBox, ContinuumWeighting, NativeAwCachePolicy, NativeEvlaAwCache,
-    SpectralImagingMode, VisibilityContinuumSubtraction, execute_continuum,
-    resource_policy_for_task_requirements,
+pub use request::{
+    AwCfSource, AwProjection, DataColumn, Deconvolver, Gridder, ImagingRequest, InvalidRequest,
+    NativeAwCachePolicy, SpecMode, UseMask, Weighting,
 };
 
 use std::{error::Error, fmt, io, path::PathBuf, sync::Arc};
 
 use casa_imaging_model::{
-    CompileProblemError, CompiledProblem, GeometryInput, ModelLifecycleRequirements,
-    ObservationSelection, ProblemInput, ProblemInputIdentities, ProblemSpecification,
-    SpectralWindowSelection, compile, compile_observation,
+    CompileProblemError, CompiledProblem, ObservationSelection, ProblemInput,
+    ProblemInputIdentities, SpectralWindowSelection, compile, compile_observation,
 };
 use casa_imaging_products::{
     ContinuumProductControls, PlannedContinuumGeneration, PublishedContinuumGeneration,
     VisibilityProductCompletion,
 };
-use casa_imaging_reconstruction::{
-    ImageDomainReconstructionMaskPlans, MajorCycleCompletion, MinorCycleImageResponse,
-};
-use casa_ms::{SelectedObservationResolutionRequest, resolve_selected_observation};
+use casa_imaging_reconstruction::MajorCycleCompletion;
+use casa_ms::resolve_selected_observation;
 use native::{NativeError, NativeInput, run_native};
 
 /// Boxed application failure accepted by the native application composition.
 pub type ApplicationError = Box<dyn Error + Send + Sync>;
 
-/// The host, policy, backend and cancellation of one native run.
+/// What a run needs besides its request: the host, how much of it the run
+/// may use, the cancellation the caller sets, and where the run summary
+/// goes.
 #[derive(Clone, Debug)]
-pub struct ApplicationRuntime {
+pub struct RunContext {
     /// The host the run admits its phases against.
     pub host: HostResources,
     /// How much of the host the run may use.
-    pub resource_policy: ResourcePolicy,
-    /// Where the major-cycle passes grid (`backend`).
-    pub backend: BackendChoice,
-    /// Set to stop the run at the next block boundary or phase.
+    pub policy: ResourcePolicy,
+    /// Set (SIGINT in `casars-imager`) to stop the run at the next block
+    /// boundary or phase; nothing is published.
     pub cancel: Cancel,
-    /// Directory the paged cube state of a channel-local run lives in.
-    pub spill_directory: PathBuf,
     /// Where the run writes its summary, whether it completes or fails;
     /// `None` writes no file.
     pub summary: Option<SummaryTarget>,
 }
 
-/// Exact native request template resolved at the sole application boundary.
-pub struct ApplicationRequest {
-    /// Backend-independent scientific and product contract.
-    pub specification: ProblemSpecification,
-    /// Requested image geometry.
-    pub geometry: GeometryInput,
-    /// Initial-model lifecycle contract.
-    pub model_lifecycle: ModelLifecycleRequirements,
-    /// Deferred reconstruction-mask owner input.
-    pub masks: ImageDomainReconstructionMaskPlans,
-    /// Scientific image-coordinate normalization bound independently of output selection.
-    pub minor_cycle_image_response: Option<MinorCycleImageResponse>,
-    /// Storage-owner request for the single selected MeasurementSet.
-    pub observation: SelectedObservationResolutionRequest,
-    /// Whether final paired-operator predictions are committed to `MODEL_DATA`.
-    pub write_model_column: bool,
-    /// Whether transformed output-role observations overwrite existing `CORRECTED_DATA`.
-    pub write_corrected_data: bool,
-    /// Task-surface constraints that cannot be inferred from the compiled
-    /// backend-independent problem.
-    pub task_requirements: Vec<TaskRequirement>,
-    /// Native-only deployment inputs evaluated after request compilation.
-    /// A preparation error is terminal; there is no alternate execution path.
-    pub native: Result<ApplicationNative, ApplicationError>,
+/// The host, policy, backend and cancellation of one native run.
+#[derive(Clone, Debug)]
+pub(crate) struct ApplicationRuntime {
+    pub(crate) host: HostResources,
+    pub(crate) resource_policy: ResourcePolicy,
+    pub(crate) backend: BackendChoice,
+    /// The requested grid precision; `None` is plan decision D2's rule.
+    pub(crate) grid_precision: Option<GridPrecision>,
+    pub(crate) cancel: Cancel,
+    /// Directory the paged cube state of a channel-local run lives in.
+    pub(crate) spill_directory: PathBuf,
+    pub(crate) summary: Option<SummaryTarget>,
 }
 
-/// Runtime and publication inputs consumed only by the Native engine port.
-pub struct ApplicationNative {
-    /// The run's host, policy, backend and cancellation.
-    pub runtime: ApplicationRuntime,
-    /// Product-generation and independently atomic publication configuration.
-    pub publication: ApplicationPublication,
-    /// The AW convolution-function catalog of an A-projection run.
-    pub aw_catalog: Option<AwCatalogDeployment>,
+/// The runtime, product publication and AW catalog of the native run.
+pub(crate) struct ApplicationNative {
+    pub(crate) runtime: ApplicationRuntime,
+    pub(crate) publication: ApplicationPublication,
+    pub(crate) aw_catalog: Option<AwCatalogDeployment>,
 }
 
 /// The AW catalog a run opens (`AwCatalog::open_casa`): a directory of CASA
 /// `CFS_*`/`WTCFS_*` cells, imported or generated natively at preparation,
 /// its index rules and the resident cell bound.
 #[derive(Clone, Debug)]
-pub struct AwCatalogDeployment {
-    /// Directory holding the cell images.
-    pub root: PathBuf,
-    /// Conjugate-beam and parallactic-angle cell rules.
-    pub indexing: casa_imaging_operator::AwIndexing,
-    /// Largest number of bytes of cells resident at once.
-    pub resident_bytes: usize,
+pub(crate) struct AwCatalogDeployment {
+    pub(crate) root: PathBuf,
+    pub(crate) indexing: casa_imaging_operator::AwIndexing,
+    pub(crate) resident_bytes: usize,
 }
 
 /// Product-generation controls and the storage sink.
-pub struct ApplicationPublication {
-    /// Scientific continuum-product controls.
-    pub controls: ContinuumProductControls,
-    /// Storage adapter that privately stages and atomically publishes members.
-    pub sink: CasaImageProductSink,
+pub(crate) struct ApplicationPublication {
+    pub(crate) controls: ContinuumProductControls,
+    pub(crate) sink: CasaImageProductSink,
 }
 
-/// Typed native result of one whole run.
-pub struct NativeApplicationOutcome {
+/// The result of one whole run.
+pub struct ImagingOutcome {
     /// The compiled problem the run executed.
     pub problem: CompiledProblem,
     /// Ordered solve evidence captured before each major-cycle pass.
@@ -161,6 +132,18 @@ pub struct NativeApplicationOutcome {
     pub planned_products: PlannedContinuumGeneration,
     /// Payload-free authorized generation retained after publication.
     pub products: PublishedContinuumGeneration,
+}
+
+impl ImagingOutcome {
+    /// The CASA suffixes of the published products, for example `.image`.
+    #[must_use]
+    pub fn product_names(&self) -> Vec<String> {
+        self.planned_products
+            .members()
+            .iter()
+            .map(|member| member.name().to_string())
+            .collect()
+    }
 }
 
 /// Stable application projection of the T21 owner evidence.
@@ -246,46 +229,49 @@ impl NativeMinorCycleStopReason {
     }
 }
 
-/// Whole-run result from the sole installed implementation.
-pub struct ApplicationOutcome {
-    /// Output returned by the installed implementation.
-    pub output: Box<NativeApplicationOutcome>,
-}
-
-/// Execute one imaging request through the sole installed implementation.
-/// Unsupported requirements fail typed before physical planning or execution.
+/// Run one imaging request on the installed implementation: validate it,
+/// compile it against its MeasurementSet, check once that the
+/// implementation can run it ([`Unsupported`]), and run it.
 pub fn execute(
-    request: ApplicationRequest,
-) -> Result<ApplicationOutcome, ApplicationDispatchError> {
-    let resolved = resolve_selected_observation(request.observation.clone())
+    request: &ImagingRequest,
+    context: RunContext,
+) -> Result<ImagingOutcome, ApplicationDispatchError> {
+    request
+        .validate()
+        .map_err(ApplicationDispatchError::Request)?;
+    let prepared =
+        compile::prepare(request, &context).map_err(ApplicationDispatchError::Preparation)?;
+    let resolved = resolve_selected_observation(prepared.observation.clone())
         .map_err(|error| ApplicationDispatchError::Preparation(Box::new(error)))?;
     let (snapshot, access) = resolved.into_parts();
     let observation = compile_observation(snapshot)
         .map_err(|error| ApplicationDispatchError::Preparation(Box::new(error)))?;
     let problem = compile(ProblemInput::new(
-        request.specification,
-        request.geometry,
+        prepared.specification,
+        prepared.geometry,
         ProblemInputIdentities::new(observation),
-        request.model_lifecycle,
+        prepared.model_lifecycle,
     ))
     .map_err(ApplicationDispatchError::Compile)?;
-    validate_installed_implementation(&problem, request.task_requirements)
-        .map_err(ApplicationDispatchError::Unavailable)?;
+    availability::check(
+        &problem,
+        request.backend,
+        request.gridprecision,
+        &context.host,
+    )
+    .map_err(ApplicationDispatchError::Unavailable)?;
     let input = NativeInput {
-        observation: request.observation,
+        observation: prepared.observation,
         initial_access: access,
-        write_model_column: request.write_model_column,
-        write_corrected_data: request.write_corrected_data,
-        masks: request.masks,
-        minor_cycle_image_response: request.minor_cycle_image_response,
+        write_model_column: prepared.write_model_column,
+        write_corrected_data: prepared.write_corrected_data,
+        masks: prepared.masks,
+        minor_cycle_image_response: prepared.minor_cycle_image_response,
     };
-    let output = run_native(&problem, input, request.native).map_err(|error| match error {
+    run_native(&problem, input, prepared.native).map_err(|error| match error {
         NativeError::Admission(admission) => ApplicationDispatchError::Admission(admission),
         NativeError::Cancelled(_) => ApplicationDispatchError::Cancelled,
         NativeError::Other(error) => ApplicationDispatchError::Native(error),
-    })?;
-    Ok(ApplicationOutcome {
-        output: Box::new(output),
     })
 }
 
@@ -336,12 +322,14 @@ pub(crate) fn visibility_write_selection(
 /// Failure before or within the installed whole-run implementation.
 #[derive(Debug)]
 pub enum ApplicationDispatchError {
+    /// The request's parameters contradict each other.
+    Request(InvalidRequest),
     /// MeasurementSet resolution or request preparation failed before availability checking.
     Preparation(ApplicationError),
     /// Backend-independent request compilation failed.
     Compile(CompileProblemError),
-    /// No installed implementation satisfies the compiled and task contract.
-    Unavailable(ImplementationUnavailable),
+    /// The installed implementation cannot run the compiled problem.
+    Unavailable(availability::ImplementationUnavailable),
     /// A phase's memory did not fit the resource policy; nothing was
     /// published.
     Admission(Admission),
@@ -354,6 +342,7 @@ pub enum ApplicationDispatchError {
 impl fmt::Display for ApplicationDispatchError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Request(error) => error.fmt(formatter),
             Self::Preparation(error) => {
                 write!(formatter, "imaging application preparation failed: {error}")
             }

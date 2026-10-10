@@ -6,22 +6,36 @@ use std::io::Read;
 
 use casa_imaging_model::{
     EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput, NativeAwTerms,
+    PolarizationCoordinate,
 };
+use casa_ms::{MeasurementSet, SelectedObservationRow};
+use casa_types::ArrayValue;
 
-use super::*;
+use super::boxed;
+use super::selection::Survey;
+use super::spectral::PreparedSpectralAxis;
+use crate::{AwCfSource, AwProjection, ImagingRequest};
 
 /// Bounded metadata acquisition; pixel generation remains in the admitted phase.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn resolve(
-    request: &ContinuumImagingRequest,
-    controls: &NativeEvlaAwCache,
+    request: &ImagingRequest,
+    aw: &AwProjection,
     ms: &MeasurementSet,
-    windows: &[SourceSpectralWindow],
+    survey: &Survey,
     spectral: &PreparedSpectralAxis,
     first_row: SelectedObservationRow,
     geometry_engine: &casa_ms::derived::engine::MsCalEngine,
 ) -> Result<NativeAwRequestInput, crate::ApplicationError> {
-    let aw = request.aw_projection.as_ref().expect("native AW source");
+    let AwCfSource::NativeEvla {
+        evla_surface,
+        native_cf_working_size,
+        native_cf_oversampling,
+        native_cf_maximum_cells,
+        ..
+    } = &aw.cf_source
+    else {
+        unreachable!("native AW resolves only a native cache");
+    };
     let observation = ms.observation()?;
     if observation
         .string(first_row.observation_id() as usize, "TELESCOPE_NAME")?
@@ -43,7 +57,7 @@ pub(super) fn resolve(
     // The reference data is an explicit input with bounded acquisition, never
     // discovered through a CASA installation or downloaded during execution.
     let mut bytes = Vec::new();
-    std::fs::File::open(&controls.surface)?
+    std::fs::File::open(evla_surface)?
         .take(1_048_577)
         .read_to_end(&mut bytes)?;
     if bytes.len() > 1_048_576 {
@@ -52,7 +66,8 @@ pub(super) fn resolve(
         ));
     }
     let surface = EvlaDishSurface::from_surface_text(std::str::from_utf8(&bytes)?)?;
-    let mut frequencies = windows
+    let mut frequencies = survey
+        .spectral_windows
         .iter()
         .map(|window| {
             let selected = spectral
@@ -83,19 +98,11 @@ pub(super) fn resolve(
         })
         .collect::<Result<Vec<_>, crate::ApplicationError>>()?;
     frequencies.sort_by(|left, right| left.cf_frequency_hz.total_cmp(&right.cf_frequency_hz));
-    if !aw.wideband {
-        let selected_frequencies = frequencies
-            .iter()
-            .flat_map(|g| g.channel_frequencies_hz.iter().copied())
-            .collect();
-        frequencies = vec![NativeAwFrequencyGroup {
-            spectral_window: frequencies[0].spectral_window,
-            channel_frequencies_hz: selected_frequencies,
-            cf_frequency_hz: spectral.reference_frequency_hz,
-        }];
-    }
-    let planes = aw.w_plane_count.expect("validated native AW W-plane count");
-    let sky_cell = request.cell_arcsec.to_radians() / 3600.0;
+    let planes = aw
+        .wprojplanes
+        .expect("a validated AW request names its W planes")
+        .get();
+    let sky_cell = request.cell.to_radians() / 3600.0;
     // CASA AWConvFunc derives its W grid from the requested field of view,
     // not the observed W envelope: maxUVW=1/(4*sky_increment), w=i²/wScale.
     let max_w = 1.0 / (sky_cell * 4.0);
@@ -107,8 +114,8 @@ pub(super) fn resolve(
     let w_values = (0..planes)
         .map(|index| (index * index) as f64 / w_increment)
         .collect();
-    let working_cell = sky_cell * controls.oversampling as f64 * request.image_size as f64
-        / controls.working_size as f64;
+    let working_cell = sky_cell * *native_cf_oversampling as f64 * request.imsize as f64
+        / *native_cf_working_size as f64;
     let pa = geometry_engine.parallactic_angle(
         first_row.time_mjd_seconds(),
         first_row.field_id() as usize,
@@ -123,7 +130,7 @@ pub(super) fn resolve(
     // The catalog routes each hand through its own element and, for the
     // conjugate baseline, the opposite hand (`makeConjPolMap`), so a
     // single-hand image still needs both diagonal elements.
-    let mueller_elements = match request.polarizations.as_slice() {
+    let mueller_elements = match request.stokes.as_slice() {
         [PolarizationCoordinate::CircularRr]
         | [PolarizationCoordinate::CircularLl]
         | [PolarizationCoordinate::StokesI] => vec![0, 15],
@@ -143,18 +150,19 @@ pub(super) fn resolve(
         mueller_elements,
         reference_frequency_hz: spectral.reference_frequency_hz,
         grid: NativeAwGrid {
-            size: controls.working_size,
+            size: *native_cf_working_size,
             sky_increment_rad: [-working_cell, working_cell],
-            oversampling: controls.oversampling,
+            oversampling: *native_cf_oversampling,
         },
+        // The installed A-projection (see `specification::aw_projection`).
         terms: NativeAwTerms {
-            aperture: aw.a_term,
+            aperture: true,
             w_term: true,
-            prolate_spheroidal: aw.ps_term,
-            wideband: aw.wideband,
-            conjugate_beams: aw.conjugate_beams,
+            prolate_spheroidal: false,
+            wideband: true,
+            conjugate_beams: true,
         },
-        maximum_cells: controls.maximum_cells,
+        maximum_cells: *native_cf_maximum_cells,
     })
 }
 

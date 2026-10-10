@@ -10,13 +10,13 @@ use std::{
 };
 
 use casa_images::PagedImage;
-use casa_imaging_application::{
-    ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumMask,
-    ContinuumMaskBox, ContinuumWeighting, HogbomIterationAccounting, SpectralImagingMode,
-    TaskRequirement, execute_continuum,
-};
+use casa_imaging_application::{ImagingOutcome, ResourcePolicy, execute};
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
+use serde_json::json;
 use sha2::{Digest, Sha256};
+
+#[path = "common/imaging.rs"]
+mod imaging;
 
 const DATASET: &str = "measurementset/vla/refim_twopoints_twochan.ms";
 const CASA_PREFIX_ENV: &str = "CASA_RS_T31_CASA_PREFIX";
@@ -44,38 +44,30 @@ fn t31_multidomain_geometry_matches_frozen_casa_dirty_and_hogbom() -> Result<(),
     casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
     let mut failures = Vec::new();
 
-    for (label, algorithm, iterations) in [
-        ("dirty", ContinuumAlgorithm::Dirty, 0),
-        ("clean", ContinuumAlgorithm::Hogbom, 10),
-    ] {
+    for (label, iterations) in [("dirty", 0), ("clean", 10)] {
         let rust_main = staging.path().join(format!("rust-{label}-main"));
         let rust_outlier = staging.path().join(format!("rust-{label}-outlier"));
         let outlier_file = staging.path().join(format!("rust-{label}.outlier"));
         write_outlier_file(&outlier_file, &rust_outlier)?;
-        let result = execute_continuum(request(
-            measurement_set.clone(),
-            rust_main.clone(),
-            outlier_file,
-            algorithm,
+        let result = run(
+            &measurement_set,
+            &rust_main,
+            &outlier_file,
             iterations,
-        ))?;
-        assert_eq!(
-            result
-                .outcome
-                .output
-                .scientific
-                .normal_state()
-                .domain_count(),
-            2
-        );
+            json!({ "phasecenter": MAIN_PHASE_CENTRE }),
+        )?;
+        assert_eq!(result.scientific.normal_state().domain_count(), 2);
         let expected_counts = if label == "dirty" { (0, 0) } else { (13, 14) };
         assert_eq!(
-            (result.minor_iterations, result.actual_minor_iterations),
+            (
+                result.total_minor_iterations,
+                result.total_actual_minor_iterations
+            ),
             expected_counts,
             "CASA compares the shared iteration budget only after every image field exits its minor cycle"
         );
         assert_eq!(
-            result.outcome.output.major_cycle_count,
+            result.major_cycle_count,
             if label == "dirty" { 1 } else { 2 },
             "clean publication requires the final shared major cycle"
         );
@@ -139,10 +131,7 @@ fn issue607_representative_main_and_outlier_match_casa() -> Result<(), Box<dyn E
     copy_tree(&source, &measurement_set)?;
     casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
 
-    for (label, algorithm, iterations) in [
-        ("dirty", ContinuumAlgorithm::Dirty, 0),
-        ("clean", ContinuumAlgorithm::Hogbom, 25),
-    ] {
+    for (label, iterations) in [("dirty", 0), ("clean", 25)] {
         let rust_case = rust_root.join(label);
         fs::create_dir_all(&rust_case)?;
         let rust_main = rust_case.join("main");
@@ -155,43 +144,23 @@ fn issue607_representative_main_and_outlier_match_casa() -> Result<(), Box<dyn E
                 rust_outlier.display()
             ),
         )?;
-        let mut request = request(
-            measurement_set.clone(),
-            rust_main.clone(),
-            outlier_file,
-            algorithm,
+        let result = run(
+            &measurement_set,
+            &rust_main,
+            &outlier_file,
             iterations,
-        );
-        request.image_size = 512;
-        request.cell_arcsec = 0.35;
-        request.phase_center = None;
-        request.field_ids = Some(vec![0]);
-        request.spectral_window = Some("0:0~23".to_string());
-        request.channel_count = Some(24);
-        request.minimum_psf_fraction = 0.05;
-        request.mask = ContinuumMask::Boxes(vec![ContinuumMaskBox {
-            blc: [192, 192],
-            trc: [319, 319],
-        }]);
-        let result = execute_continuum(request)?;
-        assert_eq!(
-            result
-                .outcome
-                .output
-                .scientific
-                .normal_state()
-                .domain_count(),
-            2
-        );
-        assert_eq!(
-            result
-                .outcome
-                .output
-                .scientific
-                .normal_state()
-                .sample_count(),
-            6_284_304,
-        );
+            json!({
+                "imsize": 512,
+                "cell": "0.35arcsec",
+                "field": "0",
+                "spw": "0:0~23",
+                "channel_count": 24,
+                "minpsffraction": 0.05,
+                "mask_box": "192,192,319,319",
+            }),
+        )?;
+        assert_eq!(result.scientific.normal_state().domain_count(), 2);
+        assert_eq!(result.scientific.normal_state().sample_count(), 6_284_304);
 
         for (role, rust_prefix) in [("main", &rust_main), ("outlier", &rust_outlier)] {
             let casa_prefix = casa_root.join(label).join(role);
@@ -221,64 +190,38 @@ fn issue607_representative_main_and_outlier_match_casa() -> Result<(), Box<dyn E
     Ok(())
 }
 
-fn request(
-    measurement_set: PathBuf,
-    image_name: PathBuf,
-    outlier_file: PathBuf,
-    algorithm: ContinuumAlgorithm,
+/// Image `measurement_set` to `image_name` with the domains of
+/// `outlier_file`: 100 × 100 of 8 arcsec cells over every field's `DATA`,
+/// dirty when `iterations` is zero and otherwise cleaned by Högbom in one
+/// minor cycle with CASA's inclusive iteration accounting; `overrides`
+/// replaces any of these.
+fn run(
+    measurement_set: &Path,
+    image_name: &Path,
+    outlier_file: &Path,
     iterations: usize,
-) -> ContinuumImagingRequest {
-    ContinuumImagingRequest {
-        measurement_set,
-        image_name,
-        image_size: 100,
-        facets: 1,
-        cell_arcsec: 8.0,
-        phase_center_field: None,
-        phase_center: Some(MAIN_PHASE_CENTRE.to_string()),
-        outlier_file: Some(outlier_file),
-        field_ids: None,
-        uv_range: None,
-        intent: None,
-        data_description: None,
-        spectral_window: None,
-        channel_start: None,
-        channel_count: None,
-        spectral_mode: SpectralImagingMode::Continuum,
-        continuum_subtraction: None,
-        data_column: Some("DATA".to_string()),
-        polarizations: vec![casa_imaging_application::PolarizationCoordinate::StokesI],
-        algorithm,
-        weighting: ContinuumWeighting::Natural,
-        iterations,
-        cycle_iterations: iterations.max(1),
-        hogbom_iteration_accounting: HogbomIterationAccounting::CasaInclusive,
-        maximum_major_cycles: None,
-        noise_sigma: None,
-        cycle_factor: 1.0,
-        minimum_psf_fraction: 0.1,
-        maximum_psf_fraction: 0.8,
-        gain: 0.1,
-        threshold_jy: 0.0,
-        psf_cutoff: 0.35,
-        primary_beam_limit: 0.2,
-        normalization: casa_imaging_model::ProductNormalization::UnitResponse,
-        beam_policy: ContinuumBeamPolicy::PerPlane,
-        mask: ContinuumMask::FullPlane,
-        save_model_column: false,
-        save_continuum_residual: false,
-        write_primary_beam: false,
-        pbcor: false,
-        mosaic_use_pointing: false,
-        w_projection_planes: None,
-        aw_projection: None,
-        task_requirements: vec![TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu],
-        host: casa_imaging_application::HostResources::detect().expect("host"),
-        resource_policy: casa_imaging_application::ResourcePolicy::Balanced,
-        backend: casa_imaging_application::BackendChoice::Cpu,
-        cancel: casa_imaging_application::Cancel::new(),
-        summary: None,
-    }
+    overrides: serde_json::Value,
+) -> Result<ImagingOutcome, Box<dyn Error>> {
+    let mut values = json!({
+        "vis": measurement_set,
+        "imagename": image_name,
+        "outlierfile": outlier_file,
+        "imsize": 100,
+        "cell": "8arcsec",
+        "datacolumn": "DATA",
+        "niter": iterations,
+        "minor_cycle_length": iterations.max(1),
+        "hogbom_iteration_mode": "casa-inclusive",
+        "minpsffraction": 0.1,
+    });
+    values
+        .as_object_mut()
+        .expect("T31 controls")
+        .extend(overrides.as_object().expect("overrides").clone());
+    Ok(execute(
+        &imaging::request(values),
+        imaging::context(ResourcePolicy::Balanced),
+    )?)
 }
 
 fn write_outlier_file(path: &Path, output: &Path) -> Result<(), Box<dyn Error>> {

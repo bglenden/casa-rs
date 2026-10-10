@@ -21,6 +21,8 @@ mod model_column;
 mod mosaic;
 #[path = "t1/mtmfs.rs"]
 mod mtmfs;
+#[path = "t1/routes.rs"]
+mod routes;
 #[path = "t1/standard_mfs.rs"]
 mod standard_mfs;
 #[path = "t1/standard_mfs_masks.rs"]

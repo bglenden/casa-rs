@@ -13,23 +13,22 @@ fn t53_cube_rest_frequency_uses_selected_native_channels_not_the_output_axis() {
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
     let prefix = root.path().join("selected-rest-frequency");
-    let mut imaging = request(measurement_set, prefix.clone(), ContinuumAlgorithm::Dirty);
-    imaging.spectral_window = Some("0:0~3".into());
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::LSRK,
-            interpolation: casa_ms::CubeInterpolation::Nearest,
-            start: Some(CubeAxisValue::Channel(0)),
-            width: Some(CubeAxisValue::Channel(1)),
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(2),
-    };
-    imaging
-        .task_requirements
-        .push(TaskRequirement::SpectralCube);
-    let result = execute_continuum(imaging).expect("selected spectral application");
-    for suffix in result.product_names {
+    let imaging = request(
+        &measurement_set,
+        &prefix,
+        json!({
+            "niter": 0,
+            "spw": "0:0~3",
+            "specmode": "cube",
+            "outframe": "LSRK",
+            "interpolation": "nearest",
+            "start": "0",
+            "width": "1",
+            "channel_count": 2,
+        }),
+    );
+    let result = execute(&imaging).expect("selected spectral application");
+    for suffix in result.product_names() {
         let product =
             PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", prefix.display())))
                 .expect("spectral product");
@@ -55,49 +54,39 @@ fn t53_one_channel_standard_cubes_preserve_all_products() {
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
     let mut products = Vec::new();
-    for interpolation in [
-        None,
-        Some(casa_ms::CubeInterpolation::Nearest),
-        Some(casa_ms::CubeInterpolation::Linear),
-    ] {
+    for interpolation in [None, Some("nearest"), Some("linear")] {
         let image_name = root.path().join(format!("standard-{interpolation:?}"));
-        let mut imaging = request(
-            measurement_set.clone(),
-            image_name.clone(),
-            ContinuumAlgorithm::Dirty,
-        );
-        imaging.image_size = 32;
-        imaging.cell_arcsec = 1.0;
-        imaging.spectral_window = Some("0:0".to_string());
-        imaging.field_ids = Some(vec![0, 1]);
+        let mut controls = json!({
+            "niter": 0,
+            "imsize": 32,
+            "spw": "0:0",
+            "field": "0,1",
+        });
         if let Some(interpolation) = interpolation {
-            imaging.spectral_mode = SpectralImagingMode::Cube {
-                axis: CubeAxisConfig {
-                    outframe: FrequencyRef::LSRK,
-                    interpolation,
-                    start: Some(CubeAxisValue::Channel(0)),
-                    width: Some(CubeAxisValue::Channel(1)),
-                    ..CubeAxisConfig::default()
-                },
-                output_channels: Some(1),
-            };
-            imaging
-                .task_requirements
-                .push(TaskRequirement::SpectralCube);
+            controls.as_object_mut().expect("controls").extend(
+                json!({
+                    "specmode": "cube",
+                    "outframe": "LSRK",
+                    "interpolation": interpolation,
+                    "start": "0",
+                    "width": "1",
+                })
+                .as_object()
+                .expect("cube controls")
+                .clone(),
+            );
         }
-        let result = execute_continuum(imaging)
+        let result = execute(&request(&measurement_set, &image_name, controls))
             .unwrap_or_else(|error| panic!("standard {interpolation:?}: {error}"));
         assert!(
             result
-                .outcome
-                .output
                 .scientific
                 .normal_state()
                 .sum_weights()
                 .iter()
                 .all(|weight| *weight > 0.0)
         );
-        products.push((image_name, result.product_names));
+        products.push((image_name, result.product_names()));
     }
     // Plan decision D2 grids channel-local cubes in single precision and the
     // continuum in double, so the one-channel cube equals the continuum
@@ -163,43 +152,26 @@ fn t53_nonidentity_linear_sampling_preserves_affine_spectra() {
             ms.save().expect("save unit spectrum");
         }
         let image_name = case.join("image");
-        let mut imaging = request(
-            measurement_set,
-            image_name.clone(),
-            ContinuumAlgorithm::Dirty,
+        let imaging = request(
+            &measurement_set,
+            &image_name,
+            json!({
+                "niter": 0,
+                "imsize": 64,
+                "spw": "0:0~1",
+                "channel_count": 2,
+                "specmode": "cube",
+                "outframe": "TOPO",
+                "interpolation": "linear",
+                "start": "44000250000Hz",
+                "width": "500000Hz",
+            }),
         );
-        imaging.image_size = 64;
-        imaging.cell_arcsec = 1.0;
-        imaging.spectral_window = Some("0:0~1".to_string());
-        imaging.channel_count = Some(2);
-        let first_hz = 44.0e9;
-        imaging.spectral_mode = SpectralImagingMode::Cube {
-            axis: CubeAxisConfig {
-                outframe: FrequencyRef::TOPO,
-                interpolation: casa_ms::CubeInterpolation::Linear,
-                start: Some(CubeAxisValue::FrequencyHz {
-                    hz: first_hz + 250_000.0,
-                    frame: Some(FrequencyRef::TOPO),
-                }),
-                width: Some(CubeAxisValue::FrequencyHz {
-                    hz: 500_000.0,
-                    frame: Some(FrequencyRef::TOPO),
-                }),
-                ..CubeAxisConfig::default()
-            },
-            output_channels: Some(2),
-        };
-        imaging.task_requirements = vec![TaskRequirement::SerialCpu, TaskRequirement::SpectralCube];
-        imaging.resource_policy = ResourcePolicy::Explicit {
-            workers: 1,
-            memory: u64::MAX,
-        };
-        let result = execute_continuum(imaging)
-            .unwrap_or_else(|error| panic!("standard affine={}: {error}", !unit));
+        let result =
+            casa_imaging_application::execute(&imaging, context_with(imaging.resource_policy()))
+                .unwrap_or_else(|error| panic!("standard affine={}: {error}", !unit));
         assert!(
             result
-                .outcome
-                .output
                 .scientific
                 .normal_state()
                 .sum_weights()
@@ -207,7 +179,7 @@ fn t53_nonidentity_linear_sampling_preserves_affine_spectra() {
                 .all(|weight| *weight > 0.0),
             "standard must cover both output channels"
         );
-        products.push((image_name, result.product_names));
+        products.push((image_name, result.product_names()));
     }
     assert_eq!(
         products[0].1, products[1].1,

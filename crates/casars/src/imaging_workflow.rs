@@ -4,9 +4,13 @@
 use crate::workflow::{
     WorkflowArtifactDisplay, WorkflowArtifactGroupDisplay, WorkflowCatalogEntryDisplay,
 };
-use casars_imager::{ManagedImagingArtifact, ManagedImagingOutput};
+use casars_imager::{ImagerArtifact, ImagerArtifactKind, ImagerRunTaskResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(
+    dead_code,
+    reason = "imaging runs write no preview images; #681 removes the preview catalog"
+)]
 pub(crate) enum ImagingDiagnosticKind {
     Psf,
     Residual,
@@ -27,47 +31,28 @@ impl ImagingDiagnosticKind {
     }
 }
 
-pub(crate) fn imaging_preferred_diagnostic(output: &ManagedImagingOutput) -> ImagingDiagnosticKind {
-    if artifact_preview_available(&output.artifacts, "image") {
-        ImagingDiagnosticKind::Image
-    } else if artifact_preview_available(&output.artifacts, "residual") {
-        ImagingDiagnosticKind::Residual
-    } else {
-        ImagingDiagnosticKind::Psf
-    }
+/// The diagnostic shown first. Imaging runs write no preview images
+/// (#681), so it is the PSF's.
+pub(crate) fn imaging_preferred_diagnostic(_output: &ImagerRunTaskResult) -> ImagingDiagnosticKind {
+    ImagingDiagnosticKind::Psf
 }
 
+/// The diagnostics with previews; imaging runs write none (#681).
 pub(crate) fn imaging_catalog_entries(
-    output: &ManagedImagingOutput,
-    selected: ImagingDiagnosticKind,
+    _output: &ImagerRunTaskResult,
+    _selected: ImagingDiagnosticKind,
 ) -> Vec<WorkflowCatalogEntryDisplay<ImagingDiagnosticKind>> {
-    let mut entries = Vec::new();
-    for (kind, artifact_kind) in [
-        (ImagingDiagnosticKind::Psf, "psf"),
-        (ImagingDiagnosticKind::Residual, "residual"),
-        (ImagingDiagnosticKind::Model, "model"),
-        (ImagingDiagnosticKind::Image, "image"),
-        (ImagingDiagnosticKind::Alpha, "alpha"),
-    ] {
-        if artifact_preview_available(&output.artifacts, artifact_kind) {
-            entries.push(WorkflowCatalogEntryDisplay {
-                target: kind,
-                label: kind.label().to_string(),
-                selected: selected == kind,
-            });
-        }
-    }
-    entries
+    Vec::new()
 }
 
 pub(crate) fn imaging_products_display_groups(
-    output: &ManagedImagingOutput,
+    output: &ImagerRunTaskResult,
 ) -> Vec<WorkflowArtifactGroupDisplay> {
     let mut rendered = Vec::new();
     let main_products = output
         .artifacts
         .iter()
-        .filter(|artifact| !artifact.kind.ends_with("alpha"))
+        .filter(|artifact| artifact.kind != ImagerArtifactKind::Alpha)
         .map(render_artifact)
         .collect::<Vec<_>>();
     if !main_products.is_empty() {
@@ -79,7 +64,7 @@ pub(crate) fn imaging_products_display_groups(
     let derived = output
         .artifacts
         .iter()
-        .filter(|artifact| artifact.kind == "alpha")
+        .filter(|artifact| artifact.kind == ImagerArtifactKind::Alpha)
         .map(render_artifact)
         .collect::<Vec<_>>();
     if !derived.is_empty() {
@@ -91,39 +76,17 @@ pub(crate) fn imaging_products_display_groups(
     rendered
 }
 
-fn render_artifact(artifact: &ManagedImagingArtifact) -> WorkflowArtifactDisplay {
-    let mut detail_lines = vec![format!(
-        "status={}  path={}",
-        if artifact.exists {
-            "written"
-        } else {
-            "missing"
-        },
-        artifact.path
-    )];
-    if let Some(preview) = &artifact.preview_png_path {
-        detail_lines.push(format!(
-            "preview={}  exists={}",
-            preview,
-            if artifact.preview_png_exists {
-                "yes"
-            } else {
-                "no"
-            }
-        ));
-    }
+fn render_artifact(artifact: &ImagerArtifact) -> WorkflowArtifactDisplay {
     WorkflowArtifactDisplay {
         heading: artifact.label.clone(),
-        detail_lines,
+        detail_lines: vec![format!(
+            "status={}  path={}",
+            if artifact.exists {
+                "written"
+            } else {
+                "missing"
+            },
+            artifact.path
+        )],
     }
-}
-
-fn artifact_preview_available(artifacts: &[ManagedImagingArtifact], kind: &str) -> bool {
-    artifacts.iter().any(|artifact| {
-        artifact.kind == kind
-            && artifact
-                .preview_png_path
-                .as_ref()
-                .is_some_and(|_| artifact.preview_png_exists)
-    })
 }

@@ -59,17 +59,17 @@ fn an_interrupted_cube_clean_exits_130_and_leaves_nothing_behind() {
     let request = json!({
         "kind": "run",
         "request": {
-            "measurement_set": observation.measurement_set(),
-            "image_name": image_name,
-            "image_size": geometry.image_size,
-            "cell_arcsec": geometry.cell_arcsec,
-            "spectral_mode": "cube",
+            "vis": observation.measurement_set(),
+            "imagename": image_name,
+            "imsize": geometry.image_size,
+            "cell": format!("{}arcsec", geometry.cell_arcsec),
+            "specmode": "cube",
             "channel_count": 4,
             "deconvolver": "hogbom",
             "niter": 1_000_000,
             "minor_cycle_length": 1,
             "gain": 0.01,
-            "threshold_jy": 0.0,
+            "threshold": "0Jy",
         },
     });
     let request_path = observation.scratch("request.json");

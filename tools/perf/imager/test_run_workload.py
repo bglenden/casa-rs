@@ -1447,7 +1447,8 @@ real 1.145408
         )
 
         bench = (run_workload.REPO_ROOT / "scripts/bench-imager-vs-casa.sh").read_text()
-        self.assertIn('--facets "$facets"', bench)
+        # CASA images the facets; casars-imager refuses them (#664).
+        self.assertIn("casars-imager has no faceted geometry", bench)
         self.assertIn('--stokes "$stokes"', bench)
         self.assertIn("rust_pointing_flags+=(--usepointing)", bench)
         self.assertIn("facets=facets,", bench)

@@ -616,7 +616,7 @@ def build_plan(
             float_value(imaging, "casa_pblimit", float_value(imaging, "pblimit", 0.2))
         ),
         "IMAGER_BENCH_STANDARD_MFS_ACCELERATION": str_value(
-            imaging, "standard_mfs_acceleration", "auto"
+            imaging, "standard_mfs_acceleration", "cpu"
         ),
         "IMAGER_BENCH_IMAGING_FFT_PRECISION": str_value(
             imaging, "imaging_fft_precision", "auto"
@@ -768,7 +768,7 @@ def build_plan(
             ),
             "deconvolver": str_value(imaging, "deconvolver", "hogbom"),
             "standard_mfs_acceleration": str_value(
-                imaging, "standard_mfs_acceleration", "auto"
+                imaging, "standard_mfs_acceleration", "cpu"
             ),
             "parallel": (
                 bool_value(imaging, "parallel", True)

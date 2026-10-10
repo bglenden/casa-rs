@@ -4,25 +4,45 @@
 
 use super::*;
 
+/// Channel 1 of the line fixture as a one-channel cube, after a
+/// zeroth-order continuum fit to channels 0 and 3, with `overrides`.
+fn continuum_subtracted_line(
+    measurement_set: &Path,
+    image_name: &Path,
+    overrides: serde_json::Value,
+) -> ImagingRequest {
+    let mut values = json!({
+        "channel_start": 1,
+        "channel_count": 1,
+        "spw": "0:1",
+        "specmode": "cube",
+        "outframe": "TOPO",
+        "start": "1",
+        "width": "1",
+        "fitspw": "0:0;3",
+        "fitorder": 0,
+    });
+    values
+        .as_object_mut()
+        .expect("line controls")
+        .extend(overrides.as_object().expect("overrides").clone());
+    request(measurement_set, image_name, values)
+}
+
 #[test]
 fn application_commits_exact_final_prediction_to_model_data() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
     let image_name = root.path().join("savemodel");
-    let mut imaging = request(
-        measurement_set.clone(),
-        image_name,
-        ContinuumAlgorithm::Hogbom,
+    let imaging = request(
+        &measurement_set,
+        &image_name,
+        json!({ "savemodel": "modelcolumn" }),
     );
-    imaging.save_model_column = true;
-    imaging.task_requirements = vec![TaskRequirement::SerialCpu];
-    imaging.resource_policy = casa_imaging_runtime::ResourcePolicy::Balanced;
 
-    let result = execute_continuum(imaging).expect("native save-model application execution");
+    let result = execute(&imaging).expect("native save-model application execution");
     let visibility = result
-        .outcome
-        .output
         .visibility_products
         .expect("final visibility completion");
     assert_eq!(visibility.sample_count(), 1);
@@ -41,18 +61,14 @@ fn application_commits_exact_final_prediction_to_model_data() {
     assert_ne!(model[[0, 0]], Complex32::new(0.0, 0.0));
     drop(reopened);
 
-    let mut overwrite = request(
-        measurement_set,
-        root.path().join("savemodel-overwrite"),
-        ContinuumAlgorithm::Hogbom,
+    let overwrite = request(
+        &measurement_set,
+        &root.path().join("savemodel-overwrite"),
+        json!({ "savemodel": "modelcolumn" }),
     );
-    overwrite.save_model_column = true;
-    let overwrite_result =
-        execute_continuum(overwrite).expect("native in-place MODEL_DATA overwrite");
+    let overwrite_result = execute(&overwrite).expect("native in-place MODEL_DATA overwrite");
     assert_eq!(
         overwrite_result
-            .outcome
-            .output
             .visibility_products
             .expect("overwrite visibility completion")
             .sample_count(),
@@ -66,35 +82,15 @@ fn continuum_fit_only_channels_are_read_but_not_persisted_as_line_model_data() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
-    let mut imaging = request(
-        measurement_set.clone(),
-        root.path().join("continuum-subtracted-line"),
-        ContinuumAlgorithm::Hogbom,
+    let imaging = continuum_subtracted_line(
+        &measurement_set,
+        &root.path().join("continuum-subtracted-line"),
+        json!({ "savemodel": "modelcolumn" }),
     );
-    imaging.channel_start = Some(1);
-    imaging.channel_count = Some(1);
-    imaging.spectral_window = Some("0:1".to_string());
-    let axis = CubeAxisConfig {
-        outframe: FrequencyRef::TOPO,
-        start: Some(CubeAxisValue::Channel(1)),
-        width: Some(CubeAxisValue::Channel(1)),
-        ..CubeAxisConfig::default()
-    };
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis,
-        output_channels: Some(1),
-    };
-    imaging.continuum_subtraction = Some(VisibilityContinuumSubtraction {
-        fit_spw: "0:0;3".to_string(),
-        fit_order: 0,
-    });
-    imaging.save_model_column = true;
 
-    let result = execute_continuum(imaging).expect("line-only MODEL_DATA write");
+    let result = execute(&imaging).expect("line-only MODEL_DATA write");
     assert_eq!(
         result
-            .outcome
-            .output
             .visibility_products
             .expect("final visibility completion")
             .sample_count(),
@@ -150,34 +146,16 @@ fn continuum_residual_persistence_overwrites_only_output_roles_in_the_terminal_p
         .cloned();
     drop(before);
 
-    let mut imaging = request(
-        measurement_set.clone(),
-        root.path().join("persisted-continuum-residual"),
-        ContinuumAlgorithm::Hogbom,
+    let imaging = continuum_subtracted_line(
+        &measurement_set,
+        &root.path().join("persisted-continuum-residual"),
+        json!({ "savemodel": "modelcolumn", "save_continuum_residual": true }),
     );
-    imaging.channel_start = Some(1);
-    imaging.channel_count = Some(1);
-    imaging.spectral_window = Some("0:1".to_string());
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::TOPO,
-            start: Some(CubeAxisValue::Channel(1)),
-            width: Some(CubeAxisValue::Channel(1)),
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(1),
-    };
-    imaging.continuum_subtraction = Some(VisibilityContinuumSubtraction {
-        fit_spw: "0:0;3".to_string(),
-        fit_order: 0,
-    });
-    imaging.save_model_column = true;
-    imaging.save_continuum_residual = true;
 
-    let result = execute_continuum(imaging).expect("persist continuum residual");
-    assert_eq!(result.outcome.output.major_cycle_count, 2);
+    let result = execute(&imaging).expect("persist continuum residual");
+    assert_eq!(result.major_cycle_count, 2);
     assert!(
-        result.outcome.output.visibility_products.is_some(),
+        result.visibility_products.is_some(),
         "the terminal pass completes the combined visibility write"
     );
 
@@ -239,34 +217,17 @@ fn dirty_continuum_residual_persistence_is_independent_of_model_writeback() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
-    let mut imaging = request(
-        measurement_set.clone(),
-        root.path().join("dirty-persisted-continuum-residual"),
-        ContinuumAlgorithm::Dirty,
+    let imaging = continuum_subtracted_line(
+        &measurement_set,
+        &root.path().join("dirty-persisted-continuum-residual"),
+        json!({ "niter": 0, "save_continuum_residual": true }),
     );
-    imaging.channel_start = Some(1);
-    imaging.channel_count = Some(1);
-    imaging.spectral_window = Some("0:1".to_string());
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::TOPO,
-            start: Some(CubeAxisValue::Channel(1)),
-            width: Some(CubeAxisValue::Channel(1)),
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(1),
-    };
-    imaging.continuum_subtraction = Some(VisibilityContinuumSubtraction {
-        fit_spw: "0:0;3".to_string(),
-        fit_order: 0,
-    });
-    imaging.save_continuum_residual = true;
-    assert!(!imaging.save_model_column);
+    assert!(!imaging.savemodel);
 
-    let result = execute_continuum(imaging).expect("dirty residual-only persistence");
-    assert_eq!(result.outcome.output.major_cycle_count, 1);
+    let result = execute(&imaging).expect("dirty residual-only persistence");
+    assert_eq!(result.major_cycle_count, 1);
     assert!(
-        result.outcome.output.visibility_products.is_some(),
+        result.visibility_products.is_some(),
         "the sole dirty pass completes the residual-only visibility write"
     );
 
@@ -298,18 +259,14 @@ fn application_replaces_every_selected_model_cell_when_flags_and_correlations_di
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = flagged_polarized_measurement_set(root.path());
-    let mut imaging = request(
-        measurement_set.clone(),
-        root.path().join("polarized-savemodel"),
-        ContinuumAlgorithm::Hogbom,
+    let imaging = request(
+        &measurement_set,
+        &root.path().join("polarized-savemodel"),
+        json!({ "channel_count": 2, "savemodel": "modelcolumn" }),
     );
-    imaging.channel_count = Some(2);
-    imaging.save_model_column = true;
 
-    let result = execute_continuum(imaging).expect("partially flagged MODEL_DATA write");
+    let result = execute(&imaging).expect("partially flagged MODEL_DATA write");
     let visibility = result
-        .outcome
-        .output
         .visibility_products
         .expect("terminal visibility completion");
     assert_eq!(

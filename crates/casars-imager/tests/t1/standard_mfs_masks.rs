@@ -21,7 +21,7 @@ const GAUSSIAN: Component = Component {
     spectral_index: 0.0,
 };
 /// Five times the 1.0 mJy thermal image noise.
-const THRESHOLD_JY: f32 = 0.005;
+const THRESHOLD: &str = "0.005Jy";
 
 fn assert_model_inside(model: &Array2<f32>, mask: &Array2<f32>) {
     let outside = model
@@ -56,11 +56,17 @@ fn box_mask_confines_the_model_and_leaves_the_masked_out_source() {
     let (_, products) = observation.image(
         "box-mask",
         json!({
-            "weighting": { "kind": "natural" },
+            "weighting": "natural",
             "deconvolver": "hogbom",
             "niter": 500,
-            "threshold_jy": THRESHOLD_JY,
-            "mask_boxes": [[px - half_width, py - half_width, px + half_width, py + half_width]],
+            "threshold": THRESHOLD,
+            "mask_box": format!(
+                "{},{},{},{}",
+                px - half_width,
+                py - half_width,
+                px + half_width,
+                py + half_width
+            ),
         }),
     );
     let mask = &products.get(".mask").pixels;
@@ -93,11 +99,11 @@ fn auto_multithresh_masks_both_sources_and_confines_the_model() {
     let (summary, products) = observation.image(
         "auto-multithresh",
         json!({
-            "weighting": { "kind": "natural" },
+            "weighting": "natural",
             "deconvolver": "hogbom",
             "niter": 500,
-            "threshold_jy": THRESHOLD_JY,
-            "use_mask": "auto-multithresh",
+            "threshold": THRESHOLD,
+            "usemask": "auto-multithresh",
         }),
     );
     let mask = &products.get(".mask").pixels;

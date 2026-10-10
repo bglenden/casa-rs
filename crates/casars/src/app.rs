@@ -46,7 +46,7 @@ use casars_imagebrowser_protocol::{
     ImageMaskReference as ProtocolImageMaskReference, ImagePlaneContentMode, ImageProfilePayload,
     ImageRegionReference as ProtocolImageRegionReference,
 };
-use casars_imager::ManagedImagingOutput;
+use casars_imager::ImagerRunTaskResult;
 use casars_tablebrowser_protocol::{
     BrowserBookmark, BrowserCommand, BrowserComplex32Value, BrowserComplex64Value,
     BrowserContentMode, BrowserFocus, BrowserInspectorSnapshot, BrowserParameters,
@@ -2353,7 +2353,7 @@ struct ResultState {
 enum StructuredResult {
     MeasurementSetSummary(Box<MeasurementSetSummary>),
     Calibration(Box<ManagedCalibrationOutput>),
-    Imaging(Box<ManagedImagingOutput>),
+    Imaging(Box<ImagerRunTaskResult>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -11868,7 +11868,7 @@ impl AppState {
         }
     }
 
-    fn current_imaging_report(&self) -> Option<&ManagedImagingOutput> {
+    fn current_imaging_report(&self) -> Option<&ImagerRunTaskResult> {
         match self.result.structured.as_ref() {
             Some(StructuredResult::Imaging(report)) => Some(report.as_ref()),
             Some(StructuredResult::MeasurementSetSummary(_))
@@ -12016,7 +12016,7 @@ impl AppState {
         self.result.status_kind = StatusKind::Ok;
     }
 
-    fn apply_imaging_post_run_guidance(&mut self, report: &ManagedImagingOutput) {
+    fn apply_imaging_post_run_guidance(&mut self, report: &ImagerRunTaskResult) {
         if !(self.app.shell_kind() == AppShellKind::Workflow && self.app.id == "imager") {
             return;
         }
@@ -12028,7 +12028,7 @@ impl AppState {
         self.result.status_line = format!(
             "Imaging completed. {} artifacts recorded at {}.",
             report.artifacts.len(),
-            report.request.imagename
+            imaging_parameter(report, "imagename")
         );
         self.result.status_kind = StatusKind::Ok;
     }
@@ -12397,27 +12397,9 @@ impl AppState {
                 report,
             )));
         match target {
+            // Imaging runs write no preview images (#681).
             PlotCatalogTarget::Imaging(kind) => {
-                let artifact_kind = match kind {
-                    ImagingDiagnosticKind::Psf => "psf",
-                    ImagingDiagnosticKind::Residual => "residual",
-                    ImagingDiagnosticKind::Model => "model",
-                    ImagingDiagnosticKind::Image => "image",
-                    ImagingDiagnosticKind::Alpha => "alpha",
-                };
-                let artifact = report
-                    .artifacts
-                    .iter()
-                    .find(|artifact| artifact.kind == artifact_kind)
-                    .ok_or_else(|| format!("no artifact recorded for {artifact_kind}"))?;
-                let preview = artifact
-                    .preview_png_path
-                    .as_ref()
-                    .ok_or_else(|| format!("no preview image available for {}", artifact.label))?;
-                Ok(ImagingPlotPayload::ArtifactPreview {
-                    title: artifact.label.clone(),
-                    image_path: PathBuf::from(preview),
-                })
+                Err(format!("no preview image available for {}", kind.label()))
             }
             PlotCatalogTarget::Calibration(_)
             | PlotCatalogTarget::Preset(_)
@@ -12494,7 +12476,8 @@ impl AppState {
                 )));
             return Ok(format!(
                 "{}\u{1f}{}\u{1f}{target:?}",
-                report.request.imagename, report.request.spectral_mode
+                imaging_parameter(report, "imagename"),
+                imaging_parameter(report, "specmode")
             ));
         }
         self.build_execution_plan().map(|plan| {
@@ -14147,10 +14130,6 @@ impl AppState {
             .render_sparse()
             .map_err(|error| error.to_string())?;
         let invocation = crate::parameters_cli::project_task_invocation(parameter_session)?;
-        crate::parameters_cli::ensure_supported_invocation(
-            parameter_session.bundle().surface.id(),
-            &invocation,
-        )?;
         let arguments = invocation
             .args
             .into_iter()
@@ -15760,7 +15739,7 @@ impl AppState {
                     }
                 }
             } else if matches!(running.renderer.as_deref(), Some("imager-run-v1")) {
-                match serde_json::from_str::<ManagedImagingOutput>(&self.result.stdout) {
+                match serde_json::from_str::<ImagerRunTaskResult>(&self.result.stdout) {
                     Ok(report) => {
                         self.record_history_entry(
                             None,
@@ -16135,65 +16114,71 @@ fn build_calibration_overview_lines(report: &ManagedCalibrationOutput) -> Vec<St
     }
 }
 
-fn build_imaging_overview_lines(report: &ManagedImagingOutput) -> Vec<String> {
-    let mut lines = vec![
+/// One resolved imager parameter of `report` as text: a string or a
+/// one-element list as itself, anything else as JSON.
+fn imaging_parameter(report: &ImagerRunTaskResult, name: &str) -> String {
+    match report.request.0.get(name) {
+        Some(serde_json::Value::String(text)) => text.clone(),
+        Some(serde_json::Value::Array(items)) if items.len() == 1 => match &items[0] {
+            serde_json::Value::String(text) => text.clone(),
+            item => item.to_string(),
+        },
+        Some(value) => value.to_string(),
+        None => "n/a".to_string(),
+    }
+}
+
+fn imaging_stop(report: &ImagerRunTaskResult) -> Option<String> {
+    report
+        .run
+        .clean_stop_reason
+        .map(|reason| format!("{reason:?}"))
+}
+
+fn build_imaging_overview_lines(report: &ImagerRunTaskResult) -> Vec<String> {
+    vec![
         "Imaging Run".to_string(),
-        format!("MS: {}", report.request.measurement_set),
-        format!("Image Prefix: {}", report.request.imagename),
+        format!("MS: {}", imaging_parameter(report, "vis")),
+        format!("Image Prefix: {}", imaging_parameter(report, "imagename")),
         format!(
             "Mode: {}   Deconvolver: {}   Weighting: {}",
-            report.request.spectral_mode, report.request.deconvolver, report.request.weighting
+            imaging_parameter(report, "specmode"),
+            imaging_parameter(report, "deconvolver"),
+            imaging_parameter(report, "weighting")
         ),
         format!(
-            "W-term: {}   Dirty Only: {}   Gridded Samples: {}",
-            report.request.w_term_mode,
-            yes_no(report.request.dirty_only),
+            "Gridder: {}   Dirty Only: {}   Gridded Samples: {}",
+            imaging_parameter(report, "gridder"),
+            imaging_parameter(report, "dirty_only"),
             report.run.gridded_samples
         ),
         format!(
             "Major Cycles: {}   Minor Iterations: {}   Stop: {}",
             report.run.major_cycles,
             report.run.minor_iterations,
-            report.run.clean_stop_reason.as_deref().unwrap_or("n/a")
+            imaging_stop(report).as_deref().unwrap_or("n/a")
         ),
-    ];
-    if !report.run.warnings.is_empty() {
-        lines.push(String::new());
-        lines.push("Warnings".to_string());
-        lines.extend(
-            report
-                .run
-                .warnings
-                .iter()
-                .take(4)
-                .map(|warning| format!("  {warning}")),
-        );
-        if report.run.warnings.len() > 4 {
-            lines.push(format!(
-                "  … {} more warnings",
-                report.run.warnings.len() - 4
-            ));
-        }
-    }
-    lines.push(String::new());
-    lines.push(format!(
-        "Elapsed: {}",
-        format_duration_ns(report.run.elapsed_ns)
-    ));
-    lines
+        String::new(),
+        format!("Elapsed: {}", format_duration_ns(report.run.elapsed_ns)),
+    ]
 }
 
-fn imaging_history_details(report: &ManagedImagingOutput) -> Vec<String> {
-    let mut details = vec![
-        format!("prefix={}", report.request.imagename),
-        format!("specmode={}", report.request.spectral_mode),
-        format!("weighting={}", report.request.weighting),
-        format!("deconvolver={}", report.request.deconvolver),
+fn imaging_history_details(report: &ImagerRunTaskResult) -> Vec<String> {
+    let mut details = ["imagename", "specmode", "weighting", "deconvolver"]
+        .map(|name| {
+            format!(
+                "{}={}",
+                if name == "imagename" { "prefix" } else { name },
+                imaging_parameter(report, name)
+            )
+        })
+        .to_vec();
+    details.extend([
         format!("gridded_samples={}", report.run.gridded_samples),
         format!("major_cycles={}", report.run.major_cycles),
         format!("minor_iterations={}", report.run.minor_iterations),
-    ];
-    if let Some(stop) = &report.run.clean_stop_reason {
+    ]);
+    if let Some(stop) = imaging_stop(report) {
         details.push(format!("stop={stop}"));
     }
     details.push(format!(
@@ -16562,14 +16547,12 @@ fn build_workflow_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSectio
             "smallscalebias",
             "weighting",
             "robust",
-            "uvtaper",
             "gridder",
             "wprojplanes",
             "usepointing",
             "write_pb",
             "pbcor",
             "pblimit",
-            "wterm",
         ];
         let stage_parameters = fields
             .iter()
@@ -16581,12 +16564,6 @@ fn build_workflow_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSectio
             .iter()
             .enumerate()
             .filter(|(_, field)| field.schema.group == "Advanced Wide-Field")
-            .map(|(index, _)| StaticFormItem::Field(index))
-            .collect::<Vec<_>>();
-        let execution_resources = fields
-            .iter()
-            .enumerate()
-            .filter(|(_, field)| field.schema.group == "Execution Resources")
             .map(|(index, _)| StaticFormItem::Field(index))
             .collect::<Vec<_>>();
         return vec![
@@ -16613,11 +16590,6 @@ fn build_workflow_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSectio
             FormSection {
                 name: "Advanced Wide-Field".to_string(),
                 content: FormSectionContent::Items(advanced_wide_field),
-                collapsed: true,
-            },
-            FormSection {
-                name: "Execution Resources".to_string(),
-                content: FormSectionContent::Items(execution_resources),
                 collapsed: true,
             },
         ];
@@ -20052,21 +20024,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert!(ids.contains(&"cfcache"));
-        assert!(ids.contains(&"aterm"));
+        assert!(ids.contains(&"aw_cf_source"));
         assert!(ids.contains(&"normtype"));
-
-        let resources = sections
-            .iter()
-            .find(|section| section.name == "Execution Resources")
-            .expect("execution resources section");
-        let FormSectionContent::Items(items) = &resources.content;
-        let ids = items
-            .iter()
-            .map(|item| match item {
-                StaticFormItem::Field(index) => fields[*index].schema.id.as_str(),
-                other => panic!("unexpected execution-resources item: {other:?}"),
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(ids, ["imaging_memory_target_mb"]);
     }
 }

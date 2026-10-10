@@ -2,7 +2,7 @@
 format = 1
 surface = "imager"
 kind = "task"
-contract = 19
+contract = 20
 
 [parameters]
 vis = ["VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"]
@@ -15,7 +15,6 @@ phasecenter_field = "1525"
 spw = "2~17"
 channel_start = 0
 channel_count = 64
-interpolation = "linear"
 restoringbeam = "common"
 perchanweightdensity = true
 nsigma = 5
@@ -31,9 +30,7 @@ usepointing = true
 write_pb = true
 pblimit = 0.0001
 gridder = "awproject"
-parallel = false
 uvrange = "<12km"
 intent = "OBSERVE_TARGET#UNSPECIFIED"
 cfcache = "cf-cache/vlass-spw2-17"
 cf_resident_mb = 512
-imaging_memory_target_mb = 32768
