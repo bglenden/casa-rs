@@ -5551,8 +5551,11 @@ mod lock_tests {
         lock.release().unwrap();
         assert_eq!(published(&path), persisted(&path));
 
-        // Table::unlock rewrites the table with the data manager of its open
-        // options, here one manager, and the published counters shrink to it.
+        // Table::unlock currently saves through Table::save with the data
+        // manager of its open options, which collapses the three managers to
+        // one; that is a known problem of the save, not of the publication.
+        // Whatever the save leaves, the published counters follow it, here
+        // shrinking from three to one.
         let mut locked = Table::open_with_lock(
             TableOptions::new(&path),
             LockOptions::new(LockMode::UserLocking),

@@ -67,9 +67,10 @@ refused, because what it read beforehand is stale. A save that locks several
 tables of a MeasurementSet never waits while it holds another table's lock,
 and is refused before writing when another process wrote a table it released
 to wait. A released write lock publishes the table as persisted (rows,
-columns and one change counter per data manager, read from `table.dat`),
-only for tables actually written, and only when something changed, as
-casacore's `PlainTable::putFile` does.
+columns and one change counter per data manager, read from `table.dat`).
+An in-place writer publishes every table it started to write, so a write
+interrupted part way is announced; a locked table handle publishes only
+when it changed, as casacore's `PlainTable::putFile` does.
 A conflicting handle in the same process is refused at once, because it may
 belong to the waiting thread. casa-rs does not yet release a lock it holds
 when another process requests it
