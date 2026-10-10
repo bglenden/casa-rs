@@ -77,6 +77,106 @@ fn t51_content_requirements_catalog_budget_charges_shared_source_plan_once() {
     );
 }
 
+/// A block's buffer is allocated once and refilled in place, so whatever it
+/// holds after any fill, short or long, of either DATA_DESCRIPTION, is
+/// within what the plan charges for it. Seven-row blocks over three rows of
+/// DATA_DESCRIPTION 0 (three covering channels) then seventeen of
+/// DATA_DESCRIPTION 1 (two) fill 3, 7, 7 and 3 rows. The buffer's vector
+/// capacities are measured after each fill, for DATA read tile by tile and
+/// cell by cell.
+#[test]
+fn refilled_blocks_hold_no_more_than_the_plan_charges_for_their_buffer() {
+    const ROWS_PER_BLOCK: usize = 7;
+    let directory = tempfile::tempdir().unwrap();
+    let tiled = directory.path().join("tiled.ms");
+    generate_fixture_with_rows(&tiled, 10);
+    extend_fixture_with_second_spw(&tiled);
+    let mut measurement_set = MeasurementSet::open(&tiled).unwrap();
+    for row in 3..10 {
+        measurement_set
+            .main_table_mut()
+            .row_accessor_mut()
+            .set_cell(row, "DATA_DESC_ID", Value::Scalar(ScalarValue::Int32(1)))
+            .unwrap();
+    }
+    measurement_set.save().unwrap();
+    drop(measurement_set);
+    let standard = directory.path().join("standard.ms");
+    copy_with_main_column_stored_by(
+        &tiled,
+        &standard,
+        "DATA",
+        casa_tables::DataManagerKind::StandardStMan,
+    );
+
+    for path in [&tiled, &standard] {
+        let selected_rows = SelectedRows::from_ordered_main_rows(
+            20,
+            (0..20).map(|row| SelectedMainRow::new(row, u32::from(row >= 3))),
+        )
+        .unwrap();
+        let selection = ObservationSelection::new(
+            selected_rows,
+            RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
+            vec![
+                DataDescriptionSelection::new(0, 0, 0),
+                DataDescriptionSelection::new(1, 1, 0),
+            ],
+            vec![
+                SpectralWindowSelection::new(0, vec![0, 2]),
+                SpectralWindowSelection::new(1, vec![1, 2]),
+            ],
+            vec![CorrelationSelection::new(
+                0,
+                vec![
+                    CorrelationProduct::new(0, CorrelationType::CircularRr),
+                    CorrelationProduct::new(1, CorrelationType::CircularLl),
+                ],
+            )],
+        );
+        let problem = compile(ProblemInput::new(
+            specification(),
+            geometry(),
+            compile_observation(ObservationSnapshotInput::new(vec![fixture_source_input(
+                path, selection,
+            )]))
+            .unwrap(),
+            model_lifecycle(),
+        ))
+        .unwrap();
+        let source = &problem.observation().sources()[0];
+        let observation = open_observation(
+            &problem,
+            source,
+            content_budget_for_rows(&problem, source, ROWS_PER_BLOCK, 1),
+        )
+        .unwrap();
+        let plan = observation.source_content_plan(0).unwrap();
+        assert_eq!(plan.rows_per_block(), ROWS_PER_BLOCK);
+        let charged = plan.buffer_bytes_per_block();
+
+        let mut stream = observation.into_block_stream(&problem);
+        let mut block = stream.create_storage();
+        let mut filled_rows = Vec::new();
+        while let Some(filled) = stream.fill_next(&mut block).unwrap() {
+            filled_rows.push(filled.numeric_columns().physical_rows.len());
+            drop(filled);
+            let allocated = block.buffer_allocated_bytes();
+            assert!(
+                allocated <= charged,
+                "{}: after a {}-row fill the buffer holds {allocated} B against {charged} B charged",
+                path.display(),
+                filled_rows.last().unwrap()
+            );
+            // Nor is the charge larger than the allocation once every
+            // vector is in use.
+            assert_eq!(allocated, charged, "{}", path.display());
+        }
+        assert_eq!(filled_rows, [3, 7, 7, 3], "{}", path.display());
+        stream.complete().unwrap();
+    }
+}
+
 /// Copy the generated `source` MeasurementSet to `destination` with MAIN
 /// `column` stored by `manager`, as CASA may have chosen.
 fn copy_with_main_column_stored_by(

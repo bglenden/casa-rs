@@ -26,6 +26,14 @@ impl SelectedVisibilityColumn {
             Self::FloatData => "FLOAT_DATA",
         }
     }
+
+    /// Bytes of one stored sample.
+    const fn sample_bytes(self) -> usize {
+        match self {
+            Self::FloatData => size_of::<f32>(),
+            Self::Data | Self::CorrectedData => size_of::<casa_types::Complex32>(),
+        }
+    }
 }
 
 /// Exact MeasurementSet input-weight column read for selected-observation input.
@@ -100,8 +108,12 @@ pub struct SelectedObservationNumericColumns<'a> {
 }
 
 /// Caller-owned bounded storage block for exact selected-observation values.
+///
+/// It is allocated once at its [`SelectedObservationBufferCapacity`] and
+/// refilled in place; no fill within that capacity grows a vector.
 #[derive(Debug)]
 pub(crate) struct SelectedObservationBuffer {
+    capacity: SelectedObservationBufferCapacity,
     row_indices: Vec<usize>,
     channel_range: VisibilityChannelReadRange,
     correlation_count: usize,
@@ -145,12 +157,7 @@ pub(crate) fn selected_observation_read_staging(
     stored_channels: usize,
 ) -> Option<SelectedObservationReadStaging> {
     let samples = correlations.checked_mul(stored_channels)?;
-    let visibility_bytes = match visibility {
-        SelectedVisibilityColumn::FloatData => size_of::<f32>(),
-        SelectedVisibilityColumn::Data | SelectedVisibilityColumn::CorrectedData => {
-            size_of::<num_complex::Complex32>()
-        }
-    };
+    let visibility_bytes = visibility.sample_bytes();
     let weight_read = match weight {
         SelectedWeightColumn::Weight => (
             main.selected_cell_read_footprint("WEIGHT"),
@@ -192,54 +199,159 @@ pub(crate) fn selected_observation_read_staging(
     )
 }
 
-/// Project the bytes a buffer holds after
-/// [`MeasurementSet::fill_selected_observation_buffer`] fills it with `rows`
-/// rows. The fill copies the request's stored rows and reads the channelized
-/// columns straight into these vectors, so this is also its peak besides
-/// the read staging ([`selected_observation_read_staging`]).
-pub(crate) fn selected_observation_buffer_resident_bytes(
+/// The storage a [`SelectedObservationBuffer`] is allocated with: `rows`
+/// selected rows, each with room for the packed samples and input weight
+/// values of the widest selected DATA_DESCRIPTION.
+///
+/// The buffer is refilled in place, one DATA_DESCRIPTION per block, so it
+/// retains the largest of each of its vectors over every block, whichever
+/// DATA_DESCRIPTION that block came from. A capacity is therefore the
+/// componentwise largest ([`Self::union`]) of its rows' needs, and
+/// [`Self::retained_bytes`] is what a buffer of it holds after any fill:
+/// [`MeasurementSet::fill_selected_observation_buffer`] copies the stored
+/// rows and reads the channelized columns straight into its vectors, so
+/// this is also the fill's peak besides the read staging
+/// ([`selected_observation_read_staging`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct SelectedObservationBufferCapacity {
     rows: usize,
-    packed_samples: usize,
-    weight_values: usize,
-    visibility_bytes: usize,
-) -> Option<usize> {
-    let row_indices = rows.checked_mul(size_of::<usize>())?;
-    let visibility = packed_samples.checked_mul(visibility_bytes)?;
-    let flags = packed_samples.checked_mul(size_of::<bool>())?;
-    let weights = weight_values.checked_mul(size_of::<f32>())?;
-    let scalar_payload =
-        rows.checked_mul(4 * size_of::<i32>() + 2 * size_of::<f64>() + size_of::<bool>())?;
-    let uvw = rows.checked_mul(size_of::<[f64; 3]>())?;
-    row_indices
-        .checked_add(visibility)?
-        .checked_add(flags)?
-        .checked_add(weights)?
-        .checked_add(scalar_payload)?
-        .checked_add(uvw)
+    samples_per_row: usize,
+    weight_values_per_row: usize,
+    sample_bytes: usize,
 }
 
-impl Default for SelectedObservationBuffer {
-    fn default() -> Self {
+impl SelectedObservationBufferCapacity {
+    /// Bytes of row metadata per row: the physical row index, the four
+    /// `i32` ids, the two times, `FLAG_ROW` and UVW.
+    const METADATA_BYTES_PER_ROW: usize = size_of::<usize>()
+        + 4 * size_of::<i32>()
+        + 2 * size_of::<f64>()
+        + size_of::<bool>()
+        + size_of::<[f64; 3]>();
+
+    /// One row of a DATA_DESCRIPTION whose blocks read `channels` channels of
+    /// `correlations` correlations from `visibility`, with input weights
+    /// from `weight`; `None` if the sample count overflows.
+    pub(crate) fn row(
+        visibility: SelectedVisibilityColumn,
+        weight: SelectedWeightColumn,
+        correlations: usize,
+        channels: usize,
+    ) -> Option<Self> {
+        let samples_per_row = correlations.checked_mul(channels)?;
+        Some(Self {
+            rows: 1,
+            samples_per_row,
+            weight_values_per_row: match weight {
+                SelectedWeightColumn::Weight => correlations,
+                SelectedWeightColumn::WeightSpectrum => samples_per_row,
+            },
+            sample_bytes: visibility.sample_bytes(),
+        })
+    }
+
+    /// Room for both `self` and `other`: the larger of each.
+    #[must_use]
+    pub(crate) fn union(self, other: Self) -> Self {
         Self {
-            row_indices: Vec::new(),
-            channel_range: VisibilityChannelReadRange::new(0, 0),
-            correlation_count: 0,
-            visibility: None,
-            flags: Vec::new(),
-            weights: None,
-            row_flag: Vec::new(),
-            uvw_m: Vec::new(),
-            data_description_ids: Vec::new(),
-            field_ids: Vec::new(),
-            antenna1: Vec::new(),
-            antenna2: Vec::new(),
-            time_mjd_seconds: Vec::new(),
-            time_centroid_mjd_seconds: Vec::new(),
+            rows: self.rows.max(other.rows),
+            samples_per_row: self.samples_per_row.max(other.samples_per_row),
+            weight_values_per_row: self.weight_values_per_row.max(other.weight_values_per_row),
+            sample_bytes: self.sample_bytes.max(other.sample_bytes),
         }
+    }
+
+    /// This capacity with room for `rows` rows.
+    #[must_use]
+    pub(crate) const fn with_rows(self, rows: usize) -> Self {
+        Self { rows, ..self }
+    }
+
+    /// The rows this capacity holds.
+    #[must_use]
+    pub(crate) const fn rows(self) -> usize {
+        self.rows
+    }
+
+    /// The bytes a buffer of this capacity retains; `None` on overflow.
+    pub(crate) fn retained_bytes(self) -> Option<usize> {
+        let samples = self.rows.checked_mul(self.samples_per_row)?;
+        let weights = self.rows.checked_mul(self.weight_values_per_row)?;
+        self.rows
+            .checked_mul(Self::METADATA_BYTES_PER_ROW)?
+            .checked_add(samples.checked_mul(self.sample_bytes + size_of::<bool>())?)?
+            .checked_add(weights.checked_mul(size_of::<f32>())?)
+    }
+
+    fn samples(self) -> usize {
+        self.rows
+            .checked_mul(self.samples_per_row)
+            .expect("an allocated buffer capacity fits usize")
+    }
+
+    fn weight_values(self) -> usize {
+        self.rows
+            .checked_mul(self.weight_values_per_row)
+            .expect("an allocated buffer capacity fits usize")
     }
 }
 
 impl SelectedObservationBuffer {
+    /// An empty buffer allocated for blocks within `capacity`.
+    pub(crate) fn with_capacity(capacity: SelectedObservationBufferCapacity) -> Self {
+        let rows = capacity.rows;
+        Self {
+            capacity,
+            row_indices: Vec::with_capacity(rows),
+            channel_range: VisibilityChannelReadRange::new(0, 0),
+            correlation_count: 0,
+            // Installed at this capacity by the first fill, which knows
+            // the stored type.
+            visibility: None,
+            flags: Vec::with_capacity(capacity.samples()),
+            weights: None,
+            row_flag: Vec::with_capacity(rows),
+            uvw_m: Vec::with_capacity(rows * 3),
+            data_description_ids: Vec::with_capacity(rows),
+            field_ids: Vec::with_capacity(rows),
+            antenna1: Vec::with_capacity(rows),
+            antenna2: Vec::with_capacity(rows),
+            time_mjd_seconds: Vec::with_capacity(rows),
+            time_centroid_mjd_seconds: Vec::with_capacity(rows),
+        }
+    }
+
+    /// The bytes this buffer's vectors hold allocated: each one's capacity,
+    /// not its length.
+    pub(crate) fn allocated_bytes(&self) -> usize {
+        fn bytes<T>(values: &Vec<T>) -> usize {
+            values.capacity() * size_of::<T>()
+        }
+        let visibility = match &self.visibility {
+            None => 0,
+            Some(SelectedStoredVisibilities::Float32(values)) => bytes(values),
+            Some(SelectedStoredVisibilities::Complex32(values)) => bytes(values),
+        };
+        let weights = match &self.weights {
+            None => 0,
+            Some(
+                SelectedStoredWeights::PerRow(values) | SelectedStoredWeights::PerChannel(values),
+            ) => bytes(values),
+        };
+        visibility
+            + weights
+            + bytes(&self.row_indices)
+            + bytes(&self.flags)
+            + bytes(&self.row_flag)
+            + bytes(&self.uvw_m)
+            + bytes(&self.data_description_ids)
+            + bytes(&self.field_ids)
+            + bytes(&self.antenna1)
+            + bytes(&self.antenna2)
+            + bytes(&self.time_mjd_seconds)
+            + bytes(&self.time_centroid_mjd_seconds)
+    }
+
     pub(crate) fn numeric_columns(&self) -> Option<SelectedObservationNumericColumns<'_>> {
         let visibility = match self.visibility.as_ref()? {
             SelectedStoredVisibilities::Float32(values) => {
@@ -354,6 +466,8 @@ impl MeasurementSet {
     ///
     /// This selected-channel operation requires a lazily reopened disk-backed MeasurementSet with
     /// no pending array-cell writes. It never falls back to cloning complete array cells.
+    ///
+    /// A request within the buffer's capacity grows none of its vectors.
     pub(crate) fn fill_selected_observation_buffer(
         &self,
         request: &SelectedObservationBufferRequest<'_>,
@@ -362,6 +476,8 @@ impl MeasurementSet {
         validate_request(self, request)?;
         buffer.copy_stored_rows(request.rows);
         buffer.channel_range = request.channel_range;
+        let samples = buffer.capacity.samples();
+        let weight_values = buffer.capacity.weight_values();
         let row_indices = buffer.row_indices.as_slice();
 
         let visibility_shape = match request.visibility {
@@ -370,7 +486,9 @@ impl MeasurementSet {
                     buffer.visibility,
                     Some(SelectedStoredVisibilities::Float32(_))
                 ) {
-                    buffer.visibility = Some(SelectedStoredVisibilities::Float32(Vec::new()));
+                    buffer.visibility = Some(SelectedStoredVisibilities::Float32(
+                        Vec::with_capacity(samples),
+                    ));
                 }
                 let Some(SelectedStoredVisibilities::Float32(values)) = buffer.visibility.as_mut()
                 else {
@@ -396,7 +514,9 @@ impl MeasurementSet {
                     buffer.visibility,
                     Some(SelectedStoredVisibilities::Complex32(_))
                 ) {
-                    buffer.visibility = Some(SelectedStoredVisibilities::Complex32(Vec::new()));
+                    buffer.visibility = Some(SelectedStoredVisibilities::Complex32(
+                        Vec::with_capacity(samples),
+                    ));
                 }
                 let Some(SelectedStoredVisibilities::Complex32(values)) =
                     buffer.visibility.as_mut()
@@ -452,7 +572,9 @@ impl MeasurementSet {
         let weight_shape = match request.weight {
             SelectedWeightColumn::Weight => {
                 if !matches!(buffer.weights, Some(SelectedStoredWeights::PerRow(_))) {
-                    buffer.weights = Some(SelectedStoredWeights::PerRow(Vec::new()));
+                    buffer.weights = Some(SelectedStoredWeights::PerRow(Vec::with_capacity(
+                        weight_values,
+                    )));
                 }
                 let Some(SelectedStoredWeights::PerRow(values)) = buffer.weights.as_mut() else {
                     unreachable!("per-row weight destination installed above")
@@ -473,7 +595,9 @@ impl MeasurementSet {
             }
             SelectedWeightColumn::WeightSpectrum => {
                 if !matches!(buffer.weights, Some(SelectedStoredWeights::PerChannel(_))) {
-                    buffer.weights = Some(SelectedStoredWeights::PerChannel(Vec::new()));
+                    buffer.weights = Some(SelectedStoredWeights::PerChannel(Vec::with_capacity(
+                        weight_values,
+                    )));
                 }
                 let Some(SelectedStoredWeights::PerChannel(values)) = buffer.weights.as_mut()
                 else {
@@ -504,6 +628,10 @@ impl MeasurementSet {
                 correlation_count,
             )?;
         }
+        debug_assert!(
+            buffer.allocated_bytes() <= buffer.capacity.retained_bytes().unwrap_or(usize::MAX),
+            "a selected-observation fill grew its buffer past the planned capacity"
+        );
         Ok(())
     }
 }
@@ -512,6 +640,10 @@ impl SelectedObservationBuffer {
     /// Replace the row indices and row metadata with those of `rows`,
     /// keeping the vectors' storage.
     fn copy_stored_rows(&mut self, rows: &[SelectedObservationRow]) {
+        debug_assert!(
+            rows.len() <= self.capacity.rows,
+            "a selected-observation block exceeds its buffer's planned rows"
+        );
         self.row_indices.clear();
         self.data_description_ids.clear();
         self.field_ids.clear();
@@ -589,12 +721,23 @@ mod tests {
     use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
     use ndarray::ArrayD;
 
+    use super::SelectedObservationBufferCapacity;
     use crate::{
         MeasurementSet, MeasurementSetBuilder, MsReadPlan, MsSelectionIoBudget, OptionalMainColumn,
         SelectedNumericVisibility, SelectedNumericWeights, SelectedObservationBuffer,
         SelectedObservationBufferRequest, SelectedObservationRow, SelectedVisibilityColumn,
         SelectedWeightColumn, VisibilityChannelReadRange, test_helpers::default_value,
     };
+
+    /// A buffer with room for the rows of `request`, each holding the
+    /// fixture's whole 2-correlation x 4-channel cells.
+    fn buffer_for(request: &SelectedObservationBufferRequest<'_>) -> SelectedObservationBuffer {
+        SelectedObservationBuffer::with_capacity(
+            SelectedObservationBufferCapacity::row(request.visibility, request.weight, 2, 4)
+                .unwrap()
+                .with_rows(request.rows.len()),
+        )
+    }
 
     /// The stored MAIN rows at `physical_rows`, in that order, as the row
     /// walk reads them.
@@ -640,7 +783,7 @@ mod tests {
             &rows,
             VisibilityChannelReadRange::new(1, 2),
         );
-        let mut buffer = SelectedObservationBuffer::default();
+        let mut buffer = buffer_for(&request);
         ms.fill_selected_observation_buffer(&request, &mut buffer)
             .unwrap();
 
@@ -714,7 +857,7 @@ mod tests {
             &rows,
             VisibilityChannelReadRange::new(1, 2),
         );
-        let mut buffer = SelectedObservationBuffer::default();
+        let mut buffer = buffer_for(&request);
 
         let snapshot = |buffer: &SelectedObservationBuffer| {
             let columns = buffer.numeric_columns().unwrap();
@@ -741,6 +884,43 @@ mod tests {
         assert_eq!(snapshot(&buffer), first);
     }
 
+    /// Refilling the row metadata of 2^14 + 1 rows between shorter blocks
+    /// holds exactly its 65 B a row (1,065,025 B), where growing the vectors
+    /// row by row held 1,867,776 B.
+    #[test]
+    fn refilled_row_metadata_holds_exactly_its_charge() {
+        const ROWS: usize = 16_385;
+        let capacity = SelectedObservationBufferCapacity::row(
+            SelectedVisibilityColumn::Data,
+            SelectedWeightColumn::Weight,
+            1,
+            1,
+        )
+        .unwrap()
+        .with_rows(ROWS);
+        let mut buffer = SelectedObservationBuffer::with_capacity(capacity);
+        let rows = (0..ROWS)
+            .map(|physical_row| SelectedObservationRow {
+                physical_row,
+                data_description_id: 0,
+                field_id: 0,
+                antenna1: 0,
+                antenna2: 1,
+                time_mjd_seconds: 0.0,
+                time_centroid_mjd_seconds: 0.0,
+                state_id: 0,
+                observation_id: 0,
+                flag_row: false,
+                uvw_m: [0.0; 3],
+            })
+            .collect::<Vec<_>>();
+        for count in [17, ROWS, 1_025] {
+            buffer.copy_stored_rows(&rows[..count]);
+            let metadata = buffer.allocated_bytes() - buffer.flags.capacity();
+            assert_eq!(metadata, 1_065_025, "after a {count}-row refill");
+        }
+    }
+
     #[test]
     fn selected_observation_buffer_never_falls_back_from_weight_spectrum() {
         let directory = tempfile::tempdir().unwrap();
@@ -762,7 +942,7 @@ mod tests {
             VisibilityChannelReadRange::new(0, 1),
         );
         let error = ms
-            .fill_selected_observation_buffer(&request, &mut SelectedObservationBuffer::default())
+            .fill_selected_observation_buffer(&request, &mut buffer_for(&request))
             .unwrap_err();
         assert!(error.to_string().contains("WEIGHT_SPECTRUM"));
     }
@@ -822,7 +1002,7 @@ mod tests {
             &rows,
             VisibilityChannelReadRange::new(1, 2),
         );
-        let mut buffer = SelectedObservationBuffer::default();
+        let mut buffer = buffer_for(&request);
         ms.fill_selected_observation_buffer(&request, &mut buffer)
             .unwrap();
 

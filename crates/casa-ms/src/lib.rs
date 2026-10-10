@@ -156,8 +156,8 @@ pub use selected_observation_buffer::{
     SelectedNumericVisibility, SelectedNumericWeights, SelectedObservationNumericColumns,
 };
 pub(crate) use selected_observation_buffer::{
-    SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredRow,
-    SelectedVisibilityColumn, SelectedWeightColumn,
+    SelectedObservationBuffer, SelectedObservationBufferCapacity, SelectedObservationBufferRequest,
+    SelectedStoredRow, SelectedVisibilityColumn, SelectedWeightColumn,
 };
 pub(crate) use selected_pointing::{
     PointingDirectionBracket, PointingDirectionColumn, PointingDirectionQuery, PointingReadPlan,
