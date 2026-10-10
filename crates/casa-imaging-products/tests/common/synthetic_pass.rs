@@ -88,8 +88,7 @@ impl Scene {
         };
         let (planes, channel_local, weights) = match problem.reconstruction().basis() {
             ReconstructionBasis::Constant => (1, false, vec![moment(0)]),
-            ReconstructionBasis::Taylor { terms }
-            | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => {
+            ReconstructionBasis::Taylor { terms } => {
                 (terms, false, (0..2 * terms - 1).map(moment).collect())
             }
             ReconstructionBasis::ChannelLocal { channels } => (

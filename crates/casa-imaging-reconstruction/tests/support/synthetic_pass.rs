@@ -64,8 +64,7 @@ impl Scene {
         let shape = problem.geometry().domains()[0].shape().pixels();
         let (planes, channel_local, weights) = match problem.reconstruction().basis() {
             ReconstructionBasis::Constant => (1, false, vec![1.0]),
-            ReconstructionBasis::Taylor { terms }
-            | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => {
+            ReconstructionBasis::Taylor { terms } => {
                 let moments = (0..2 * terms - 1)
                     .map(|order| {
                         TAYLOR_SAMPLES

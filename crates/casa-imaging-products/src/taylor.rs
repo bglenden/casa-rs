@@ -4,8 +4,7 @@
 
 use casa_imaging_model::{
     ProductBlankingPolicy, ProductNormalization, ProductRole, ProductSupportComparison,
-    ProductTerm, ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy,
-    TaylorSupportReference,
+    ProductTerm, ProductValidityRule, RestoringBeamPolicy, TaylorSupportReference,
 };
 use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 
@@ -39,17 +38,6 @@ pub(crate) struct TaylorProducts {
     clean_mask: Vec<f32>,
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
-}
-
-fn normalize_channel_major_sum_weight(
-    publication_numerator: f64,
-    principal_sum_weight: f64,
-) -> Result<f64, ProductsError> {
-    let published = publication_numerator / principal_sum_weight;
-    published
-        .is_finite()
-        .then_some(published)
-        .ok_or(ProductsError::GeneratedNonfinite)
 }
 
 fn normalize_taylor_plane(
@@ -202,27 +190,16 @@ impl TaylorProducts {
             .iter()
             .map(|value| *value as f32)
             .collect::<Vec<_>>();
-        let channel_major_publication = matches!(
-            inputs.problem().reconstruction().basis(),
-            ReconstructionBasis::TaylorViaChannelMajor { .. }
-        );
         let published_sum_weights = state.published_sum_weights();
-        if channel_major_publication && published_sum_weights.len() != moments {
-            return Err(ProductsError::SourceLineageMismatch);
-        }
         // Direct CASA AW Taylor completion keeps two principal sums: the
         // WTCF normal sum scales PSF/sensitivity products, while the CFS
         // publication sum scales dirty/residual image products. They are
         // equal for non-AW direct Taylor reconstruction.
-        let residual_sum_weight = if channel_major_publication {
-            principal_sum_weight
-        } else {
-            published_sum_weights
-                .first()
-                .copied()
-                .filter(|value| value.is_finite() && *value > 0.0)
-                .ok_or(ProductsError::SourceLineageMismatch)?
-        };
+        let residual_sum_weight = published_sum_weights
+            .first()
+            .copied()
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .ok_or(ProductsError::SourceLineageMismatch)?;
         let preparation_nanos = envelope_started.map(|started| started.elapsed().as_nanos());
         let mut psf = Vec::with_capacity(moments);
         let mut weight: Vec<Vec<f32>> = Vec::with_capacity(moments);
@@ -257,14 +234,7 @@ impl TaylorProducts {
                     .map(|value| (*value / weight_scale) as f32)
                     .collect(),
             );
-            let sum_weight = if channel_major_publication {
-                normalize_channel_major_sum_weight(
-                    published_sum_weight.ok_or(ProductsError::SourceLineageMismatch)?,
-                    principal_sum_weight,
-                )?
-            } else {
-                published_sum_weight.ok_or(ProductsError::SourceLineageMismatch)?
-            };
+            let sum_weight = published_sum_weight.ok_or(ProductsError::SourceLineageMismatch)?;
             if !sum_weight.is_finite() {
                 return Err(ProductsError::GeneratedNonfinite);
             }
@@ -1165,15 +1135,6 @@ mod tests {
         )
         .expect("scale-invariant PB spectral correction");
         assert_eq!(scaled, corrected);
-    }
-
-    #[test]
-    fn channel_major_sum_weight_uses_complete_family_denominator() {
-        assert_eq!(
-            super::normalize_channel_major_sum_weight(24.0, 6.0)
-                .expect("finite CASA publication statistic"),
-            4.0
-        );
     }
 
     #[test]

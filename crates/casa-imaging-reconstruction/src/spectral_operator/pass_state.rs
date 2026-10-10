@@ -481,9 +481,7 @@ fn widen(values: &[f32]) -> Box<[Complex64]> {
 }
 
 /// The coefficient basis of `problem`; a Taylor basis expands about the
-/// image's reference frequency. Taylor terms via channel cubes (CASA `mvc`)
-/// keep `Σ W² xᵗ` as their published weights, which no pass forms, so they
-/// are unsupported; no request names them, and #656 removes the basis.
+/// image's reference frequency.
 fn basis_plan(problem: &CompiledProblem) -> Result<SpectralBasisPlan, SpectralOperatorError> {
     let reference_hz = || match problem.geometry().spectral().wcs() {
         SpectralWcs::Linear {
@@ -501,8 +499,5 @@ fn basis_plan(problem: &CompiledProblem) -> Result<SpectralBasisPlan, SpectralOp
             BlockNormalPlan::taylor(reference_hz()?, terms)
                 .ok_or(SpectralOperatorError::ResidencyOverflow)?,
         ),
-        ReconstructionBasis::TaylorViaChannelMajor { .. } => {
-            return Err(SpectralOperatorError::UnsupportedProblem);
-        }
     })
 }

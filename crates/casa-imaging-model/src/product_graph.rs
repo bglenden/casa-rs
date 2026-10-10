@@ -668,7 +668,6 @@ impl<'a> GraphBuilder<'a> {
                 if matches!(
                     self.reconstruction.basis(),
                     ReconstructionBasis::Taylor { .. }
-                        | ReconstructionBasis::TaylorViaChannelMajor { .. }
                 ) && self
                     .products
                     .contains(ProductKind::PbCorrectedSpectralIndex)
@@ -1029,8 +1028,7 @@ impl<'a> GraphBuilder<'a> {
 
     fn primary_beam_term(&self) -> ProductTerm {
         match self.reconstruction.basis() {
-            ReconstructionBasis::Taylor { .. }
-            | ReconstructionBasis::TaylorViaChannelMajor { .. } => ProductTerm::Taylor(0),
+            ReconstructionBasis::Taylor { .. } => ProductTerm::Taylor(0),
             ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } => {
                 ProductTerm::Single
             }
@@ -1047,10 +1045,7 @@ impl<'a> GraphBuilder<'a> {
 
     fn image_terms(&self) -> Vec<ProductTerm> {
         match self.reconstruction.basis() {
-            ReconstructionBasis::Taylor { terms }
-            | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => {
-                (0..terms).map(ProductTerm::Taylor).collect()
-            }
+            ReconstructionBasis::Taylor { terms } => (0..terms).map(ProductTerm::Taylor).collect(),
             ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } => {
                 vec![ProductTerm::Single]
             }
@@ -1059,12 +1054,9 @@ impl<'a> GraphBuilder<'a> {
 
     fn convolution_terms(&self) -> Vec<ProductTerm> {
         match self.reconstruction.basis() {
-            ReconstructionBasis::Taylor { terms }
-            | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => {
-                (0..terms.saturating_mul(2).saturating_sub(1))
-                    .map(ProductTerm::Taylor)
-                    .collect()
-            }
+            ReconstructionBasis::Taylor { terms } => (0..terms.saturating_mul(2).saturating_sub(1))
+                .map(ProductTerm::Taylor)
+                .collect(),
             ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } => {
                 vec![ProductTerm::Single]
             }
@@ -1350,10 +1342,9 @@ fn product_axes(
     let polarization = reconstruction.polarization().coordinates();
     let spectral = match kind {
         ProductAxisKind::Metadata => 0,
-        ProductAxisKind::SkyImage | ProductAxisKind::PlaneState => match reconstruction.basis() {
-            ReconstructionBasis::TaylorViaChannelMajor { .. } => 1,
-            _ => geometry.spectral().output_channels(),
-        },
+        ProductAxisKind::SkyImage | ProductAxisKind::PlaneState => {
+            geometry.spectral().output_channels()
+        }
     };
     let mut shape = [0; 4];
     for (position, axis) in domain.axes().positions().iter().enumerate() {

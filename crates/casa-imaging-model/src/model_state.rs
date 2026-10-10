@@ -1572,8 +1572,7 @@ fn model_coefficient_space_identity(space: &ModelCoefficientSpace) -> LogicalIde
 const fn coefficient_count(basis: ReconstructionBasis) -> usize {
     match basis {
         ReconstructionBasis::Constant => 1,
-        ReconstructionBasis::Taylor { terms }
-        | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => terms,
+        ReconstructionBasis::Taylor { terms } => terms,
         ReconstructionBasis::ChannelLocal { channels } => channels,
     }
 }

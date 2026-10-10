@@ -543,8 +543,7 @@ fn basis_conversion_terms(
 const fn polynomial_terms(basis: ReconstructionBasis) -> Option<usize> {
     match basis {
         ReconstructionBasis::Constant => Some(1),
-        ReconstructionBasis::Taylor { terms }
-        | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => Some(terms),
+        ReconstructionBasis::Taylor { terms } => Some(terms),
         ReconstructionBasis::ChannelLocal { .. } => None,
     }
 }
