@@ -206,6 +206,14 @@ impl SelectedVisibilityStoragePlan {
 impl SelectedVisibilityWrite {
     /// Take the MAIN write lock and start an in-place write. `MODEL_DATA` is
     /// created, zero-filled, when MAIN lacks it, as CASA does.
+    ///
+    /// The MeasurementSet is opened with retained read locks, which wait for
+    /// a writer in another process, and the MAIN write lock is then tried
+    /// once, without waiting. Unlike the other in-place writers, this one
+    /// upgrades a read lock it holds: waiting for the write lock while holding
+    /// it would deadlock with another process upgrading its own, because
+    /// casa-rs does not yet release a lock on request
+    /// ([#694](https://github.com/bglenden/casa-rs/issues/694)).
     pub fn begin(
         path: impl AsRef<Path>,
         targets: SelectedVisibilityWriteTargets,

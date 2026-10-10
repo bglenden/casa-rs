@@ -9,6 +9,10 @@ Reaffirmed: 2026-08-26
 Amended: 2026-10-09, on owner direction: casa-rs writes nothing into a
 MeasurementSet that CASA does not write.
 
+Amended: 2026-10-10, on owner direction: in-place mutation waits for a table
+lock another process holds, as casacore does, instead of being refused at
+once.
+
 ## Context
 
 CASA interoperability depends on the casacore table data model and persisted
@@ -48,9 +52,22 @@ time, bounded-queue wait, assembly, physical-write, and finalization time.
 Creation uses a sibling staging directory and publishes it only after a
 complete interoperable table has been written. In-place mutation holds
 casacore's table write lock from its first change until it completes or is
-abandoned, as CASA does. Unlike casacore, whose default is to wait for a held
-lock, casa-rs makes one attempt: a writer that finds the lock held, by another
-process or through another handle, is refused at once. On a file system
+abandoned, as CASA does. When another process holds a lock on the table,
+in-place mutation waits for it, as casacore does by default: the waiter adds
+its process id to the request list in `table.lock`, so that a holder using
+casacore's `AutoLocking` releases its lock at its next inspection, and the
+wait is logged when it starts, periodically while it lasts, and when it ends.
+A writer that finds another process wrote the table while it waited is
+refused, because what it read beforehand is stale. A save that locks several
+tables of a MeasurementSet never waits while it holds another table's lock.
+A conflicting handle in the same process is refused at once, because it may
+belong to the waiting thread. casa-rs does not yet release a lock it holds
+when another process requests it
+([#694](https://github.com/bglenden/casa-rs/issues/694)); a waiter, CASA's or
+casa-rs's, waits until a casa-rs holder, such as an imaging run with its
+retained read locks, finishes, and the imaging writer of
+`MODEL_DATA` and `CORRECTED_DATA`, which upgrades a read lock it holds, still
+makes one attempt for the write lock. On a file system
 without lock support (`fcntl` refused with `ENOLCK`, or `ENOTSUP` as on macOS
 SMB mounts) the table is used unlocked, with a warning, as casacore does for
 `ENOLCK`; there is then no cross-process exclusion. casa-rs adds nothing of its

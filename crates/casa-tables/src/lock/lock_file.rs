@@ -20,8 +20,9 @@
 //! descriptor, which is closed only when the last handle is dropped, and the
 //! registry arbitrates the locks the handles hold through it:
 //!
-//! - a write lock is held by at most one handle in the process, so a second
-//!   handle is refused exactly as another process would be;
+//! - a write lock is held by at most one handle in the process, and a second
+//!   handle is refused it at once, without waiting, because the holder may
+//!   be the thread that would wait;
 //! - read locks never conflict within the process, as with casacore's shared
 //!   table;
 //! - the process's `fcntl` lock is the strongest lock any handle holds, so
@@ -30,6 +31,18 @@
 //! Nothing here is persisted: the registry is process memory, and the file
 //! protocol is casacore's own, so casacore and casa-rs processes exclude each
 //! other through the same byte ranges.
+//!
+//! # Waiting for another process
+//!
+//! A lock another process holds is waited for as casacore's
+//! `LockFile::acquire` waits: after one failed attempt the process's id is
+//! added to the request list at the start of the lock file, which a casacore
+//! holder using `AutoLocking` inspects and answers by releasing its lock, and
+//! it is removed again once the wait ends. The request list is casacore's
+//! layout: a big-endian `Int` count followed by 32 big-endian
+//! `(pid, hostid)` pairs, with host id 0 as casacore writes it. casacore's
+//! holder reads only the count. A wait is reported once when it starts, every
+//! ten seconds while it lasts, and once more when the lock is acquired.
 //!
 //! # File systems without locking
 //!
@@ -71,6 +84,9 @@ pub(crate) const LOCK_FILE_NAME: &str = "table.lock";
 
 /// Interval between attempts while waiting indefinitely for another process.
 const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Interval between progress reports while waiting for another process.
+const WAIT_REPORT_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Identity of an open lock file: device and inode.
 type LockFileKey = (u64, u64);
@@ -181,13 +197,53 @@ fn fd_key(fd: RawFd) -> io::Result<LockFileKey> {
     Ok((stat.st_dev as u64, stat.st_ino as u64))
 }
 
-/// Outcome of one non-blocking lock attempt.
-enum Attempt {
+/// Outcome of a lock request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LockOutcome {
+    /// This handle holds the lock.
     Acquired,
-    /// Another handle in this process holds the write lock.
+    /// Another handle in this process holds the write lock. It is never
+    /// waited for, because it may belong to the waiting thread.
     HeldInProcess,
-    /// Another process holds a conflicting lock.
+    /// Another process holds a conflicting lock, still after the attempts
+    /// the request allowed.
     HeldByAnotherProcess,
+}
+
+impl LockOutcome {
+    /// Whether the lock was acquired.
+    pub(crate) fn is_acquired(self) -> bool {
+        self == Self::Acquired
+    }
+
+    /// Why a request for `lock_type` with `nattempts` attempts was refused,
+    /// worded for [`TableError::LockFailed`](crate::TableError::LockFailed).
+    pub(crate) fn refusal(self, lock_type: LockType, nattempts: u32) -> String {
+        match self {
+            Self::Acquired => format!("the {} lock was acquired", lock_name(lock_type)),
+            Self::HeldInProcess => "the write lock is held by another handle on this table in \
+                                    this process; a lock held in this process is never waited for"
+                .to_string(),
+            Self::HeldByAnotherProcess => {
+                let held = match lock_type {
+                    LockType::Read => "another process holds the write lock",
+                    LockType::Write => "another process holds a read or write lock",
+                };
+                match nattempts {
+                    0 | 1 => format!("{held} (one attempt, without waiting)"),
+                    attempts => format!("{held}, still after {attempts} attempts one second apart"),
+                }
+            }
+        }
+    }
+}
+
+/// The lock type as casacore's messages name it.
+fn lock_name(lock_type: LockType) -> &'static str {
+    match lock_type {
+        LockType::Read => "read",
+        LockType::Write => "write",
+    }
 }
 
 /// Low-level lock file protocol handler.
@@ -335,107 +391,138 @@ impl LockFile {
         Ok(lf)
     }
 
-    /// Acquire a lock of the given type.
+    /// Acquire a lock of the given type, as casacore's `LockFile::acquire`
+    /// does.
     ///
-    /// `nattempts`: number of attempts. 0 means wait indefinitely for another
-    /// process. 1 means try once without waiting. >1 means try with 1-second
-    /// sleep between attempts.
+    /// One attempt is made without waiting. When another process holds a
+    /// conflicting lock and `nattempts` is not 1, this process's id is added
+    /// to the lock file's request list (when the file is writable), so that a
+    /// casacore holder using `AutoLocking` releases its lock at its next
+    /// inspection, and the attempts continue: with `nattempts == 0` every
+    /// 50 ms until the lock is acquired, however long that takes, and
+    /// otherwise once a second up to `nattempts` attempts in all. The id is
+    /// removed from the request list when the wait ends. A wait is logged
+    /// when it starts, every ten seconds while it lasts and when it succeeds.
     ///
-    /// A write lock another handle in this process holds is never waited on
-    /// indefinitely: that handle may belong to the waiting thread, so with
-    /// `nattempts == 0` the attempt fails at once.
+    /// A write lock another handle in this process holds is never waited for,
+    /// whatever `nattempts` is: that handle may belong to the waiting thread.
+    /// The request is answered [`LockOutcome::HeldInProcess`] at once.
     ///
-    /// Returns `true` if the lock was acquired, `false` if it failed
-    /// after all attempts.
-    pub fn acquire(&mut self, lock_type: LockType, nattempts: u32) -> io::Result<bool> {
+    /// # Errors
+    ///
+    /// Returns an I/O error when `fcntl` fails for a reason other than a held
+    /// lock or missing lock support.
+    pub fn acquire(&mut self, lock_type: LockType, nattempts: u32) -> io::Result<LockOutcome> {
         let first = self.try_acquire(lock_type)?;
-        if matches!(first, Attempt::Acquired) {
-            return Ok(true);
-        }
-        if nattempts == 1 || (nattempts == 0 && matches!(first, Attempt::HeldInProcess)) {
-            return Ok(false);
-        }
-
-        // Add to request list if enabled.
-        let added = if self.add_to_list && self.shared.writable {
-            self.add_request_id().ok();
-            true
-        } else {
-            false
-        };
-
-        let result = if nattempts == 0 {
-            // Wait indefinitely for the other process.
-            loop {
-                std::thread::sleep(WAIT_POLL_INTERVAL);
-                match self.try_acquire(lock_type) {
-                    Ok(Attempt::Acquired) => break Ok(true),
-                    Ok(Attempt::HeldInProcess) => break Ok(false),
-                    Ok(Attempt::HeldByAnotherProcess) => {}
-                    Err(error) => break Err(error),
-                }
-            }
-        } else {
-            // Retry with sleep.
-            let mut result = Ok(false);
-            for _ in 1..nattempts {
-                std::thread::sleep(Duration::from_secs(1));
-                match self.try_acquire(lock_type) {
-                    Ok(Attempt::Acquired) => {
-                        result = Ok(true);
-                        break;
-                    }
-                    Ok(_) => {}
-                    Err(error) => {
-                        result = Err(error);
-                        break;
-                    }
-                }
+        let result = if first == LockOutcome::HeldByAnotherProcess && nattempts != 1 {
+            let added = self.add_to_list && self.shared.writable && self.add_request_id().is_ok();
+            let result = self.wait_for_other_process(lock_type, nattempts);
+            if added {
+                self.remove_request_id().ok();
             }
             result
+        } else {
+            Ok(first)
         };
-
-        if added {
-            self.remove_request_id().ok();
-        }
-
         self.last_inspect = Instant::now();
         self.inspect_count = 0;
-
         result
+    }
+
+    /// Repeat the attempt while another process holds a conflicting lock:
+    /// indefinitely for `nattempts == 0`, otherwise up to `nattempts`
+    /// attempts in all, one second apart.
+    fn wait_for_other_process(
+        &mut self,
+        lock_type: LockType,
+        nattempts: u32,
+    ) -> io::Result<LockOutcome> {
+        let table = self.path.parent().unwrap_or(&self.path).to_path_buf();
+        let lock = lock_name(lock_type);
+        let (interval, mut attempts_left) = if nattempts == 0 {
+            tracing::warn!(
+                table = %table.display(),
+                lock,
+                "the table is locked by another process; waiting until it is released, \
+                 as casacore does"
+            );
+            (WAIT_POLL_INTERVAL, None)
+        } else {
+            tracing::warn!(
+                table = %table.display(),
+                lock,
+                attempts = nattempts,
+                "the table is locked by another process; retrying once a second"
+            );
+            (Duration::from_secs(1), Some(nattempts - 1))
+        };
+        let started = Instant::now();
+        let mut next_report = started + WAIT_REPORT_INTERVAL;
+        loop {
+            if let Some(left) = attempts_left.as_mut() {
+                if *left == 0 {
+                    return Ok(LockOutcome::HeldByAnotherProcess);
+                }
+                *left -= 1;
+            }
+            std::thread::sleep(interval);
+            match self.try_acquire(lock_type)? {
+                LockOutcome::HeldByAnotherProcess => {}
+                LockOutcome::Acquired => {
+                    tracing::info!(
+                        table = %table.display(),
+                        lock,
+                        waited_s = started.elapsed().as_secs_f64(),
+                        "acquired the table lock another process held"
+                    );
+                    return Ok(LockOutcome::Acquired);
+                }
+                LockOutcome::HeldInProcess => return Ok(LockOutcome::HeldInProcess),
+            }
+            let now = Instant::now();
+            if now >= next_report {
+                tracing::info!(
+                    table = %table.display(),
+                    lock,
+                    waited_s = now.duration_since(started).as_secs_f64(),
+                    "still waiting for the table lock another process holds"
+                );
+                next_report = now + WAIT_REPORT_INTERVAL;
+            }
+        }
     }
 
     /// One non-blocking attempt, arbitrated against the other handles of this
     /// process before the process's `fcntl` lock is changed.
-    fn try_acquire(&mut self, lock_type: LockType) -> io::Result<Attempt> {
+    fn try_acquire(&mut self, lock_type: LockType) -> io::Result<LockOutcome> {
         let shared = &self.shared;
         let mut state = shared.state();
         match lock_type {
             LockType::Write => {
                 match state.writer {
-                    Some(writer) if writer == self.id => return Ok(Attempt::Acquired),
-                    Some(_) => return Ok(Attempt::HeldInProcess),
+                    Some(writer) if writer == self.id => return Ok(LockOutcome::Acquired),
+                    Some(_) => return Ok(LockOutcome::HeldInProcess),
                     None => {}
                 }
                 if !shared.set_lock(libc::F_WRLCK as i32, 0, 1)? {
-                    return Ok(Attempt::HeldByAnotherProcess);
+                    return Ok(LockOutcome::HeldByAnotherProcess);
                 }
                 if self.held == Some(LockType::Read) {
                     state.readers -= 1;
                 }
                 state.writer = Some(self.id);
                 self.held = Some(LockType::Write);
-                Ok(Attempt::Acquired)
+                Ok(LockOutcome::Acquired)
             }
             LockType::Read => match self.held {
-                Some(LockType::Read) => Ok(Attempt::Acquired),
+                Some(LockType::Read) => Ok(LockOutcome::Acquired),
                 Some(LockType::Write) => {
                     // casacore converts a held write lock to a read lock.
                     shared.set_lock(libc::F_RDLCK as i32, 0, 1)?;
                     state.writer = None;
                     state.readers += 1;
                     self.held = Some(LockType::Read);
-                    Ok(Attempt::Acquired)
+                    Ok(LockOutcome::Acquired)
                 }
                 None => {
                     // The process's lock already covers reading when another
@@ -444,11 +531,11 @@ impl LockFile {
                         && state.writer.is_none()
                         && !shared.set_lock(libc::F_RDLCK as i32, 0, 1)?
                     {
-                        return Ok(Attempt::HeldByAnotherProcess);
+                        return Ok(LockOutcome::HeldByAnotherProcess);
                     }
                     state.readers += 1;
                     self.held = Some(LockType::Read);
-                    Ok(Attempt::Acquired)
+                    Ok(LockOutcome::Acquired)
                 }
             },
         }
@@ -887,7 +974,7 @@ mod tests {
         let mut lf = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
 
         assert!(!lf.has_lock(LockType::Write));
-        assert!(lf.acquire(LockType::Write, 1).unwrap());
+        assert!(lf.acquire(LockType::Write, 1).unwrap().is_acquired());
         assert!(lf.has_lock(LockType::Write));
         assert!(lf.has_lock(LockType::Read));
 
@@ -900,7 +987,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut lf = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
 
-        assert!(lf.acquire(LockType::Read, 1).unwrap());
+        assert!(lf.acquire(LockType::Read, 1).unwrap().is_acquired());
         assert!(lf.has_lock(LockType::Read));
         assert!(!lf.has_lock(LockType::Write));
 
@@ -1020,18 +1107,66 @@ mod tests {
         let mut first = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
         let mut second = LockFile::create_or_open(dir.path(), false, 5.0, false).unwrap();
 
-        assert!(first.acquire(LockType::Write, 1).unwrap());
-        assert!(!second.acquire(LockType::Write, 1).unwrap());
-        // Waiting indefinitely on a writer in this process could wait on
-        // this very thread, so it fails at once.
-        assert!(!second.acquire(LockType::Write, 0).unwrap());
+        assert!(first.acquire(LockType::Write, 1).unwrap().is_acquired());
+        assert_eq!(
+            second.acquire(LockType::Write, 1).unwrap(),
+            LockOutcome::HeldInProcess
+        );
+        // Waiting on a writer in this process could wait on this very
+        // thread, so neither an indefinite nor a bounded wait waits.
+        let started = Instant::now();
+        for nattempts in [0, 3] {
+            assert_eq!(
+                second.acquire(LockType::Write, nattempts).unwrap(),
+                LockOutcome::HeldInProcess
+            );
+        }
+        assert!(started.elapsed() < Duration::from_secs(1));
         // Reads within one process never conflict.
-        assert!(second.acquire(LockType::Read, 1).unwrap());
+        assert!(second.acquire(LockType::Read, 1).unwrap().is_acquired());
         assert!(second.release().unwrap());
 
         assert!(first.release().unwrap());
-        assert!(second.acquire(LockType::Write, 1).unwrap());
-        assert!(!first.acquire(LockType::Write, 1).unwrap());
+        assert!(second.acquire(LockType::Write, 1).unwrap().is_acquired());
+        assert_eq!(
+            first.acquire(LockType::Write, 1).unwrap(),
+            LockOutcome::HeldInProcess
+        );
+    }
+
+    #[test]
+    fn refusals_say_who_holds_the_lock() {
+        let in_process = LockOutcome::HeldInProcess.refusal(LockType::Write, 0);
+        assert!(in_process.contains("another handle on this table in this process"));
+        let once = LockOutcome::HeldByAnotherProcess.refusal(LockType::Write, 1);
+        assert!(once.contains("another process holds a read or write lock"));
+        assert!(once.contains("one attempt"));
+        let bounded = LockOutcome::HeldByAnotherProcess.refusal(LockType::Read, 5);
+        assert!(bounded.contains("another process holds the write lock"));
+        assert!(bounded.contains("5 attempts"));
+        for message in [in_process, once, bounded] {
+            assert!(!message.contains("write-locked"), "{message}");
+        }
+    }
+
+    /// The request list is casacore's: a big-endian count followed by
+    /// big-endian `(pid, hostid)` pairs, host id 0.
+    #[test]
+    fn request_ids_use_the_casacore_layout() {
+        let dir = TempDir::new().unwrap();
+        let lf = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
+        let header = || std::fs::read(dir.path().join(LOCK_FILE_NAME)).unwrap()[..12].to_vec();
+
+        lf.add_request_id().unwrap();
+        let mut expected = 1i32.to_be_bytes().to_vec();
+        expected.extend(lf.pid.to_be_bytes());
+        expected.extend(0i32.to_be_bytes());
+        assert_eq!(header(), expected);
+        assert_eq!(lf.read_request_count().unwrap(), 1);
+
+        lf.remove_request_id().unwrap();
+        assert_eq!(header(), vec![0; 12]);
+        assert_eq!(lf.read_request_count().unwrap(), 0);
     }
 
     #[test]
@@ -1039,8 +1174,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut reader = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
         let mut writer = LockFile::create_or_open(dir.path(), false, 5.0, false).unwrap();
-        assert!(reader.acquire(LockType::Read, 1).unwrap());
-        assert!(writer.acquire(LockType::Write, 1).unwrap());
+        assert!(reader.acquire(LockType::Read, 1).unwrap().is_acquired());
+        assert!(writer.acquire(LockType::Write, 1).unwrap().is_acquired());
         assert_eq!(writer.shared.state().readers, 1);
 
         assert!(writer.release().unwrap());
@@ -1059,7 +1194,7 @@ mod tests {
     fn sync_data_peek_reads_through_a_registered_descriptor() {
         let dir = TempDir::new().unwrap();
         let mut holder = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
-        assert!(holder.acquire(LockType::Write, 1).unwrap());
+        assert!(holder.acquire(LockType::Write, 1).unwrap().is_acquired());
         let sync = SyncData {
             nrrow: 7,
             nrcolumn: 1,

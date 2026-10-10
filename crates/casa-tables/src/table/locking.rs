@@ -11,12 +11,20 @@ impl Table {
     /// - [`LockMode::PermanentLocking`]: acquires a write lock immediately;
     ///   fails if unavailable.
     /// - [`LockMode::PermanentLockingWait`]: acquires a write lock, waiting
-    ///   indefinitely.
-    /// - [`LockMode::AutoLocking`]: acquires a read lock immediately; write
-    ///   operations temporarily acquire/release a write lock.
+    ///   indefinitely for another process.
+    /// - [`LockMode::AutoLocking`]: acquires a read lock, waiting
+    ///   indefinitely, as casacore does, while another process holds the
+    ///   write lock; write operations temporarily acquire/release a write
+    ///   lock.
     /// - [`LockMode::UserLocking`]: no lock is acquired until
     ///   [`lock()`](Table::lock) is called.
     /// - [`LockMode::NoLocking`]: equivalent to [`open()`](Table::open).
+    ///
+    /// A wait adds this process to the request list in `table.lock`, so a
+    /// casacore holder using `AutoLocking` releases its lock at its next
+    /// inspection, and is logged when it starts, every ten seconds and when
+    /// it ends. A write lock held by another handle in this process is never
+    /// waited for. The table's metadata is read only once the lock is held.
     ///
     /// C++ equivalent: `Table(name, TableLock(...), Table::Old)`.
     #[cfg(unix)]
@@ -39,54 +47,33 @@ impl Table {
                     message: e.to_string(),
                 })?;
 
-        // Acquire initial lock based on mode.
-        match lock_opts.mode {
-            LockMode::PermanentLocking => {
-                if !lock_file
-                    .acquire(LockType::Write, 1)
+        // Acquire the initial lock the mode asks for, with casacore's number
+        // of attempts (`TableLockData::makeLock`, `PlainTable`).
+        let initial = match lock_opts.mode {
+            LockMode::PermanentLocking => Some((LockType::Write, 1)),
+            LockMode::PermanentLockingWait => Some((LockType::Write, 0)),
+            LockMode::AutoLocking | LockMode::DefaultLocking => Some((LockType::Read, 0)),
+            // AutoNoReadLocking skips the read lock on open; only write
+            // locks are acquired.
+            LockMode::AutoNoReadLocking
+            | LockMode::UserLocking
+            | LockMode::UserNoReadLocking
+            | LockMode::NoLocking => None,
+        };
+        if let Some((lock_type, nattempts)) = initial {
+            let outcome =
+                lock_file
+                    .acquire(lock_type, nattempts)
                     .map_err(|e| TableError::LockIo {
                         path: options.path.display().to_string(),
                         message: e.to_string(),
-                    })?
-                {
-                    return Err(TableError::LockFailed {
-                        path: options.path.display().to_string(),
-                        message: "table is locked by another process".into(),
-                    });
-                }
+                    })?;
+            if !outcome.is_acquired() {
+                return Err(TableError::LockFailed {
+                    path: options.path.display().to_string(),
+                    message: outcome.refusal(lock_type, nattempts),
+                });
             }
-            LockMode::PermanentLockingWait => {
-                if !lock_file
-                    .acquire(LockType::Write, 0)
-                    .map_err(|e| TableError::LockIo {
-                        path: options.path.display().to_string(),
-                        message: e.to_string(),
-                    })?
-                {
-                    return Err(TableError::LockFailed {
-                        path: options.path.display().to_string(),
-                        message: "could not acquire permanent lock".into(),
-                    });
-                }
-            }
-            LockMode::AutoLocking | LockMode::DefaultLocking => {
-                if !lock_file
-                    .acquire(LockType::Read, 1)
-                    .map_err(|e| TableError::LockIo {
-                        path: options.path.display().to_string(),
-                        message: e.to_string(),
-                    })?
-                {
-                    return Err(TableError::LockFailed {
-                        path: options.path.display().to_string(),
-                        message: "could not acquire retained read lock".into(),
-                    });
-                }
-            }
-            LockMode::AutoNoReadLocking => {
-                // Skip read lock on open — only write locks are acquired.
-            }
-            LockMode::UserLocking | LockMode::UserNoReadLocking | LockMode::NoLocking => {}
         }
 
         // Metadata must be read only after the initial lock is acquired. A
@@ -122,11 +109,15 @@ impl Table {
     /// Re-reads the table data from disk if another process modified it
     /// since the last lock was held.
     ///
-    /// `nattempts`: number of lock attempts. 0 means wait indefinitely,
-    /// 1 means try once without waiting.
+    /// `nattempts`: number of lock attempts. 0 means wait indefinitely for
+    /// another process, 1 means try once without waiting, and more retries
+    /// once a second. A wait adds this process to the request list in
+    /// `table.lock`, as casacore's does, and is logged. A write lock held by
+    /// another handle in this process is never waited for.
     ///
     /// Returns `true` if the lock was acquired, `false` if it could not
-    /// be acquired within the given attempts.
+    /// be acquired within the given attempts or another handle in this
+    /// process holds the write lock.
     ///
     /// C++ equivalent: `Table::lock(type, nattempts)`.
     #[cfg(unix)]
@@ -157,14 +148,14 @@ impl Table {
             return Ok(true);
         }
 
-        let acquired =
-            state
-                .lock_file
-                .acquire(lock_type, nattempts)
-                .map_err(|e| TableError::LockIo {
-                    path: state.path.display().to_string(),
-                    message: e.to_string(),
-                })?;
+        let acquired = state
+            .lock_file
+            .acquire(lock_type, nattempts)
+            .map_err(|e| TableError::LockIo {
+                path: state.path.display().to_string(),
+                message: e.to_string(),
+            })?
+            .is_acquired();
 
         if acquired {
             // Read sync data and check if we need to reload.
@@ -400,18 +391,21 @@ impl Table {
                     return Ok(false);
                 }
 
-                let acquired = state.lock_file.acquire(LockType::Write, 0).map_err(|e| {
+                let outcome = state.lock_file.acquire(LockType::Write, 0).map_err(|e| {
                     TableError::LockIo {
                         path: state.path.display().to_string(),
                         message: e.to_string(),
                     }
                 })?;
-                if acquired {
+                if outcome.is_acquired() {
                     Ok(true)
                 } else {
                     Err(TableError::LockFailed {
                         path: state.path.display().to_string(),
-                        message: format!("could not acquire temporary write lock for {operation}"),
+                        message: format!(
+                            "{operation} needs a temporary write lock: {}",
+                            outcome.refusal(LockType::Write, 0)
+                        ),
                     })
                 }
             }

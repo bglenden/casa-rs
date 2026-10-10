@@ -475,13 +475,19 @@ impl MeasurementSet {
     /// keyword payloads using casacore's relative `././SUBTABLE` form.
     ///
     /// Every table rewritten in place is written under casacore's table write
-    /// lock, taken once without waiting before anything is written and
-    /// released after the save; see [`TableWriteLock`].
+    /// lock, taken before anything is written and released after the save;
+    /// see [`TableWriteLock`]. A lock another process holds is waited for,
+    /// as casacore waits, but never while this save holds the lock of
+    /// another table of the MeasurementSet: the save releases those, waits
+    /// for the held one alone and then takes the others again, so it cannot
+    /// deadlock with a process that holds one table while it waits for
+    /// another.
     ///
     /// # Errors
     ///
-    /// [`MsError::Table`] with [`TableError::LockFailed`] when another writer
-    /// holds the write lock on MAIN or a subtable.
+    /// [`MsError::Table`] with [`TableError::LockFailed`] when another handle
+    /// in this process holds the write lock on MAIN or a subtable, or when
+    /// another process wrote such a table while the save waited for it.
     pub fn save(&mut self) -> MsResult<()> {
         let path = self
             .path
@@ -524,6 +530,14 @@ impl MeasurementSet {
     /// changed in place, and is not locked. Each write is recorded before
     /// anything is written, so an interrupted save still tells other processes
     /// to re-read the table.
+    ///
+    /// A lock another process holds is waited for, but never while this save
+    /// holds another table's lock: a process waiting for a lock the save holds
+    /// may hold the one the save waits for, and polling for a lock cannot
+    /// detect that deadlock as a blocking `fcntl` would. On the first table
+    /// that is held, every lock taken so far is released, unrecorded, the
+    /// save waits for that table alone and keeps it, and then tries the rest
+    /// again.
     fn lock_tables_for_in_place_save(
         &self,
         path: &Path,
@@ -539,16 +553,36 @@ impl MeasurementSet {
                     .map(|id| (Some(*id), self.subtable_path(path, *id))),
             );
         }
-        let mut locks = Vec::with_capacity(tables.len());
-        for (id, table_path) in tables {
-            if !table_path.join("table.dat").is_file() {
-                continue;
+        tables.retain(|(_, table_path)| table_path.join("table.dat").is_file());
+        let mut held: Vec<Option<TableWriteLock>> = tables.iter().map(|_| None).collect();
+        'acquire: loop {
+            for (index, (_, table_path)) in tables.iter().enumerate() {
+                if held[index].is_some() {
+                    continue;
+                }
+                match TableWriteLock::acquire(table_path, 1) {
+                    Ok(lock) => held[index] = Some(lock),
+                    Err(TableError::LockFailed { .. }) => {
+                        // Release before waiting; a holder in this process is
+                        // refused again at once by the waiting request.
+                        held.iter_mut().for_each(|lock| *lock = None);
+                        held[index] = Some(TableWriteLock::acquire(table_path, 0)?);
+                        continue 'acquire;
+                    }
+                    Err(error) => return Err(error.into()),
+                }
             }
-            let mut lock = TableWriteLock::acquire(&table_path, 1)?;
-            lock.record_write(self.locked_table(id));
-            locks.push((id, lock));
+            break;
         }
-        Ok(locks)
+        Ok(tables
+            .into_iter()
+            .zip(held)
+            .map(|((id, _), lock)| {
+                let mut lock = lock.expect("every table is locked");
+                lock.record_write(self.locked_table(id));
+                (id, lock)
+            })
+            .collect())
     }
 
     /// Publish each saved table's shape in its sync data and release the

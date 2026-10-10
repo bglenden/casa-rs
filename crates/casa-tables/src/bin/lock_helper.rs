@@ -14,6 +14,10 @@
 //!   creates `signal_file` to indicate readiness, waits for `wait_file`
 //!   to appear, then unlocks and exits.
 //!
+//! - `hold_read_lock <signal_file> <wait_file>` —
+//!   Like `hold_write_lock` with a read lock, as an idle casacore reader
+//!   holds one; releasing it publishes nothing.
+//!
 //! - `try_write_lock` —
 //!   Opens the table with UserLocking, tries to acquire a write lock
 //!   (nattempts=1). Exits 0 if acquired, exits 1 if not.
@@ -52,21 +56,24 @@ fn main() {
     let lock_opts = LockOptions::new(LockMode::UserLocking);
 
     match command.as_str() {
-        "hold_write_lock" => {
+        "hold_write_lock" | "hold_read_lock" => {
             if args.len() < 5 {
-                eprintln!(
-                    "Usage: lock_helper <table_dir> hold_write_lock <signal_file> <wait_file>"
-                );
+                eprintln!("Usage: lock_helper <table_dir> {command} <signal_file> <wait_file>");
                 process::exit(2);
             }
             let signal_file = &args[3];
             let wait_file = &args[4];
+            let lock_type = if command == "hold_read_lock" {
+                LockType::Read
+            } else {
+                LockType::Write
+            };
 
             let mut table = Table::open_with_lock(opts, lock_opts).unwrap_or_else(|e| {
                 eprintln!("open_with_lock failed: {e}");
                 process::exit(3);
             });
-            table.lock(LockType::Write, 1).unwrap_or_else(|e| {
+            table.lock(lock_type, 1).unwrap_or_else(|e| {
                 eprintln!("lock failed: {e}");
                 process::exit(3);
             });

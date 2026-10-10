@@ -1043,8 +1043,9 @@ pub enum MeasurementSetWriteError {
     },
     /// casacore's write lock on MAIN could not be taken or released.
     ///
-    /// [`TableError::LockFailed`] means another writer holds it: another
-    /// process, casacore's or casa-rs's, or another handle in this process.
+    /// [`TableError::LockFailed`] means another handle in this process holds
+    /// it, or another process wrote MAIN while this writer waited for it; a
+    /// lock another process holds is waited for.
     #[error("casacore write lock on MeasurementSet {path}: {source}")]
     WriteLock {
         /// MeasurementSet (MAIN table) directory.
@@ -1771,19 +1772,23 @@ impl MeasurementSetWriteSession {
 
     /// Start a bounded selected-row mutation of `measurement_set` in place.
     ///
-    /// The session takes casacore's write lock on MAIN, once and without
-    /// waiting, before it changes anything, and holds it until
-    /// [`finish_mutation`](Self::finish_mutation) or until the session is
-    /// dropped. Another writer is therefore refused while the session lives:
-    /// a casacore or casa-rs process, another handle in this process, and a
-    /// [`MeasurementSet::save`] of any handle, this one included; the session
-    /// persists its own batches. `measurement_set` must be opened without
-    /// table locking ([`MeasurementSet::open`]).
+    /// The session takes casacore's write lock on MAIN before it changes
+    /// anything, and holds it until [`finish_mutation`](Self::finish_mutation)
+    /// or until the session is dropped. When another process holds a lock on
+    /// MAIN, read or write, the session waits for it as casacore does,
+    /// registered in the lock file's request list so that a casacore holder
+    /// using `AutoLocking` releases it at its next inspection; the wait is
+    /// logged. Another writer is excluded while the session lives: a casacore
+    /// or casa-rs process waits, and another handle in this process and a
+    /// [`MeasurementSet::save`] of any handle, this one included, are refused
+    /// at once; the session persists its own batches. `measurement_set` must
+    /// be opened without table locking ([`MeasurementSet::open`]).
     ///
     /// # Errors
     ///
-    /// [`MeasurementSetWriteError::WriteLock`] when the lock is held
-    /// elsewhere or cannot be taken.
+    /// [`MeasurementSetWriteError::WriteLock`] when another handle in this
+    /// process holds the lock, when another process wrote MAIN while the
+    /// session waited for it, or when the lock cannot be taken.
     #[doc(hidden)]
     pub fn start_selected_row_mutation(
         measurement_set: &mut MeasurementSet,
@@ -1821,7 +1826,7 @@ impl MeasurementSetWriteSession {
                     .to_string(),
             ));
         }
-        let mut write_lock = TableWriteLock::acquire(path, 1).map_err(|source| {
+        let mut write_lock = TableWriteLock::acquire(path, 0).map_err(|source| {
             MeasurementSetWriteError::WriteLock {
                 path: path.display().to_string(),
                 source,

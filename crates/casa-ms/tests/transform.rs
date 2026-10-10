@@ -584,19 +584,39 @@ fn finish_flag_row_mutation(
 }
 
 const WRITE_LOCK_PROBE_TABLE: &str = "CASA_RS_WRITE_LOCK_PROBE_TABLE";
+const WRITE_LOCK_HOLD_SIGNAL: &str = "CASA_RS_WRITE_LOCK_HOLD_SIGNAL";
+const WRITE_LOCK_HOLD_RELEASE: &str = "CASA_RS_WRITE_LOCK_HOLD_RELEASE";
 
-/// Child-process half of the write-lock test: tries casacore's write lock on
-/// the table named by the environment, as another process would, and
-/// reports the outcome. Without the environment variable it does nothing.
+/// Child-process half of the write-lock tests: tries casacore's write lock on
+/// the table named by the environment once, as another process would, and
+/// reports the outcome. With a signal and a release file named too, it holds
+/// the lock, creates the signal file, and releases once the release file
+/// appears (or after 20 s). Without the environment it does nothing.
 #[test]
 fn write_lock_probe_from_another_process() {
     let Some(table) = std::env::var_os(WRITE_LOCK_PROBE_TABLE) else {
         return;
     };
-    match casa_tables::TableWriteLock::acquire(&table, 1) {
-        Ok(_) => println!("write-lock-probe: acquired"),
-        Err(error) => println!("write-lock-probe: refused ({error})"),
+    let lock = match casa_tables::TableWriteLock::acquire(&table, 1) {
+        Ok(lock) => lock,
+        Err(error) => {
+            println!("write-lock-probe: refused ({error})");
+            return;
+        }
+    };
+    println!("write-lock-probe: acquired");
+    if let (Some(signal), Some(release)) = (
+        std::env::var_os(WRITE_LOCK_HOLD_SIGNAL),
+        std::env::var_os(WRITE_LOCK_HOLD_RELEASE),
+    ) {
+        std::fs::write(signal, "locked").expect("signal the held lock");
+        let release = std::path::PathBuf::from(release);
+        let start = std::time::Instant::now();
+        while !release.exists() && start.elapsed() < std::time::Duration::from_secs(20) {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
     }
+    drop(lock);
 }
 
 /// Whether another process can take casacore's write lock on `table`.
@@ -620,9 +640,10 @@ fn another_process_takes_the_write_lock(table: &std::path::Path) -> bool {
 }
 
 /// An in-place mutation holds casacore's write lock on MAIN from start to
-/// completion. A second writer is refused until the first completes, whether
-/// it is another handle in this process or another process, and opening and
-/// closing other handles on the MeasurementSet meanwhile does not drop it.
+/// completion. Until the first completes, another handle in this process is
+/// refused at once and another process cannot take the lock (one attempt
+/// fails), and opening and closing other handles on the MeasurementSet
+/// meanwhile does not drop it.
 #[test]
 fn selected_row_mutation_holds_the_table_write_lock_until_it_completes() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -632,17 +653,16 @@ fn selected_row_mutation_holds_the_table_write_lock_until_it_completes() {
 
     let session = start_flag_row_mutation(&mut first).expect("first session starts");
     let refused = start_flag_row_mutation(&mut second);
-    assert!(
-        matches!(
-            refused,
-            Err(casa_ms::MeasurementSetWriteError::WriteLock {
-                source: casa_tables::TableError::LockFailed { .. },
-                ..
-            })
+    match &refused {
+        Err(casa_ms::MeasurementSetWriteError::WriteLock {
+            source: casa_tables::TableError::LockFailed { message, .. },
+            ..
+        }) => assert!(message.contains("in this process"), "{message}"),
+        _ => panic!(
+            "a second in-place writer was admitted while the first session was live: {:?}",
+            refused.err()
         ),
-        "a second in-place writer was admitted while the first session was live: {:?}",
-        refused.err()
-    );
+    }
     assert!(matches!(
         second.save_main_table_only(),
         Err(casa_ms::MsError::Table(
@@ -676,4 +696,131 @@ fn an_abandoned_selected_row_mutation_releases_the_table_write_lock() {
     let session = start_flag_row_mutation(&mut second)
         .expect("a new session is admitted once the first is abandoned");
     finish_flag_row_mutation(session, &mut second);
+}
+
+/// Hold casacore's write lock on `table` in another process until
+/// `release` appears; returns once the lock is held.
+fn hold_the_write_lock_in_another_process(
+    table: &std::path::Path,
+    signal: &std::path::Path,
+    release: &std::path::Path,
+) -> std::process::Child {
+    let holder = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "write_lock_probe_from_another_process",
+            "--exact",
+            "--nocapture",
+        ])
+        .env(WRITE_LOCK_PROBE_TABLE, table)
+        .env(WRITE_LOCK_HOLD_SIGNAL, signal)
+        .env(WRITE_LOCK_HOLD_RELEASE, release)
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("start the lock holder");
+    let start = std::time::Instant::now();
+    while !signal.exists() {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(20),
+            "the other process did not take the write lock"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    holder
+}
+
+/// The process ids in the request list of `table`'s `table.lock`, read as
+/// casacore's `LockFile` reads it: a big-endian count, then `(pid, hostid)`
+/// pairs. A casacore holder using AutoLocking releases its lock when the
+/// count is not zero.
+///
+/// Reading through a separate descriptor and closing it drops every `fcntl`
+/// lock this process holds on the file, so it is read only while this
+/// process waits for the lock, before the holder is told to release.
+fn requesting_pids(table: &std::path::Path) -> Vec<i32> {
+    let bytes = std::fs::read(table.join("table.lock")).unwrap_or_default();
+    let int = |offset: usize| {
+        bytes
+            .get(offset..offset + 4)
+            .map(|word| i32::from_be_bytes(word.try_into().expect("four bytes")))
+    };
+    let count = int(0).unwrap_or(0).clamp(0, 32) as usize;
+    (0..count).filter_map(|slot| int(4 + 8 * slot)).collect()
+}
+
+/// Wait until this process is in the request list of `table`'s lock file.
+fn this_process_requests_the_lock(table: &std::path::Path) -> bool {
+    let pid = std::process::id() as i32;
+    let start = std::time::Instant::now();
+    while start.elapsed() < std::time::Duration::from_secs(10) {
+        if requesting_pids(table).contains(&pid) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    false
+}
+
+/// An in-place mutation waits, as casacore does, while another process holds
+/// MAIN's write lock: it is in MAIN's request list, where a casacore holder
+/// using AutoLocking sees it and releases, and it starts once the holder
+/// releases.
+#[test]
+fn selected_row_mutation_waits_for_another_process_holding_main() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let signal = dir.path().join("holder-locked.signal");
+    let release = dir.path().join("holder-release.signal");
+    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open MeasurementSet");
+    let mut holder = hold_the_write_lock_in_another_process(&ms_path, &signal, &release);
+
+    let releaser = {
+        let ms_path = ms_path.clone();
+        std::thread::spawn(move || {
+            let requested = this_process_requests_the_lock(&ms_path);
+            std::fs::write(&release, "release").expect("release the holder");
+            requested
+        })
+    };
+    let session = start_flag_row_mutation(&mut measurement_set);
+    let requested = releaser.join().expect("releaser thread");
+    assert!(holder.wait().expect("holder exits").success());
+
+    assert!(
+        requested,
+        "the waiting writer was not in MAIN's request list"
+    );
+    let session = session.expect("the mutation starts once the other process releases");
+    finish_flag_row_mutation(session, &mut measurement_set);
+    assert!(requesting_pids(&ms_path).is_empty());
+}
+
+/// A save waiting for a subtable another process holds does not hold MAIN
+/// meanwhile, so it cannot deadlock with a process that holds the subtable
+/// while it waits for MAIN; it completes once the subtable is released.
+#[test]
+fn an_in_place_save_waits_for_a_held_subtable_without_holding_main() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let antenna = ms_path.join("ANTENNA");
+    let signal = dir.path().join("holder-locked.signal");
+    let release = dir.path().join("holder-release.signal");
+    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open MeasurementSet");
+    let mut holder = hold_the_write_lock_in_another_process(&antenna, &signal, &release);
+
+    let releaser = {
+        let ms_path = ms_path.clone();
+        std::thread::spawn(move || {
+            let requested = this_process_requests_the_lock(&antenna);
+            let main_free = another_process_takes_the_write_lock(&ms_path);
+            std::fs::write(&release, "release").expect("release the holder");
+            (requested, main_free)
+        })
+    };
+    let saved = measurement_set.save();
+    let (requested, main_free) = releaser.join().expect("releaser thread");
+    assert!(holder.wait().expect("holder exits").success());
+
+    assert!(requested, "the save was not in ANTENNA's request list");
+    assert!(main_free, "the save held MAIN while it waited for ANTENNA");
+    saved.expect("the save completes once ANTENNA is released");
 }

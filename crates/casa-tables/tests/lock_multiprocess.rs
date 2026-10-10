@@ -122,8 +122,52 @@ fn write_lock_contention_across_processes() {
     );
 }
 
+/// The big-endian `Int` at `offset` in the lock file's request list.
+fn request_list_int(bytes: &[u8], offset: usize) -> i32 {
+    i32::from_be_bytes(bytes[offset..offset + 4].try_into().unwrap())
+}
+
+/// The process ids in the request list of `table`'s `table.lock`, read as
+/// casacore's `LockFile` reads it: a big-endian count, then `(pid, hostid)`
+/// pairs. A casacore holder using AutoLocking releases its lock when the
+/// count is not zero.
+///
+/// Reading through a separate descriptor and closing it drops every `fcntl`
+/// lock this process holds on the file, so it is called only while this
+/// process waits for the main lock and before it is told to stop waiting, or
+/// after it has released the lock again.
+fn requesting_pids(table: &Path) -> Vec<i32> {
+    let bytes = fs::read(table.join("table.lock")).unwrap_or_default();
+    if bytes.len() < 4 {
+        return Vec::new();
+    }
+    let count = request_list_int(&bytes, 0).clamp(0, 32) as usize;
+    (0..count)
+        .map(|slot| 4 + 8 * slot)
+        .take_while(|offset| offset + 4 <= bytes.len())
+        .map(|offset| request_list_int(&bytes, offset))
+        .collect()
+}
+
+/// Wait until this process is in the request list of `table`'s lock file.
+fn wait_for_request_from_this_process(table: &Path, timeout: Duration) -> bool {
+    let pid = std::process::id() as i32;
+    let start = std::time::Instant::now();
+    while start.elapsed() < timeout {
+        if requesting_pids(table).contains(&pid) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    false
+}
+
+/// An auto-locked open waits, as casacore's does, for the read lock while
+/// another process holds the write lock, registered in the request list, and
+/// reads the table's metadata only once it holds the lock: `table.dat` is
+/// missing until the writer releases.
 #[test]
-fn auto_locked_open_acquires_read_lock_before_loading_metadata() {
+fn auto_locked_open_waits_for_the_read_lock_before_loading_metadata() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = create_test_table(tmp.path());
     let helper = helper_binary();
@@ -148,16 +192,119 @@ fn auto_locked_open_acquires_read_lock_before_loading_metadata() {
     let table_dat = opts.path().join("table.dat");
     let hidden_table_dat = opts.path().join("table.dat.hidden-by-lock-order-test");
     fs::rename(&table_dat, &hidden_table_dat).unwrap();
-    let result = Table::open_with_lock(opts, LockOptions::new(LockMode::AutoLocking));
-    fs::rename(&hidden_table_dat, &table_dat).unwrap();
-    fs::write(&release_file, "release").unwrap();
+    let table_path = opts.path().to_path_buf();
+    let releaser = thread::spawn(move || {
+        let requested = wait_for_request_from_this_process(&table_path, Duration::from_secs(8));
+        fs::rename(&hidden_table_dat, &table_dat).unwrap();
+        fs::write(&release_file, "release").unwrap();
+        requested
+    });
+    let result = Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::AutoLocking));
+
+    assert!(
+        releaser.join().unwrap(),
+        "the waiting open did not register in the request list"
+    );
     let status = writer.wait().expect("lock holder wait failed");
+    assert!(status.success(), "lock holder should exit cleanly");
+    let table = result.expect("the open waits for the writer and then reads the metadata");
+    assert_eq!(table.row_count(), 1);
+    drop(table);
+    assert!(requesting_pids(opts.path()).is_empty());
+}
+
+/// A lock another process holds is waited for by an in-place writer, as
+/// casacore waits: the waiter's process id is in the request list, where a
+/// casacore holder using AutoLocking sees it and releases, and it is removed
+/// once the lock is acquired. The holder is an idle reader, as a casacore
+/// session holding the table open is.
+#[test]
+fn table_write_lock_waits_for_another_process_in_the_request_list() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let opts = create_test_table(tmp.path());
+    let helper = helper_binary();
+    let table_dir = opts.path().to_str().unwrap();
+    let locked_file = tmp.path().join("holder-locked.signal");
+    let release_file = tmp.path().join("holder-release.signal");
+
+    let mut holder = Command::new(&helper)
+        .args([
+            table_dir,
+            "hold_read_lock",
+            locked_file.to_str().unwrap(),
+            release_file.to_str().unwrap(),
+        ])
+        .spawn()
+        .expect("failed to spawn lock holder");
+    assert!(
+        wait_for_file(&locked_file, Duration::from_secs(10)),
+        "holder did not acquire its lock"
+    );
+
+    let table_path = opts.path().to_path_buf();
+    let waiter = thread::spawn(move || TableWriteLock::acquire(&table_path, 0));
+    let requested = wait_for_request_from_this_process(opts.path(), Duration::from_secs(8));
+    fs::write(&release_file, "release").unwrap();
+    let lock = waiter.join().unwrap();
+    let status = holder.wait().expect("lock holder wait failed");
 
     assert!(status.success(), "lock holder should exit cleanly");
     assert!(
-        matches!(result, Err(TableError::LockFailed { .. })),
-        "retained open must fail on the held read lock before consulting unavailable metadata: {result:?}"
+        requested,
+        "the waiting writer did not register in the request list"
     );
+    let lock = lock.expect("the writer waits for the other process and then takes the lock");
+    lock.release().unwrap();
+    assert!(
+        requesting_pids(opts.path()).is_empty(),
+        "the request is removed once the lock is acquired"
+    );
+}
+
+/// A writer that waited is refused when the holder wrote the table in the
+/// meantime: what it read before waiting is stale.
+#[test]
+fn table_write_lock_refuses_a_table_written_while_it_waited() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let opts = create_test_table(tmp.path());
+    let helper = helper_binary();
+    let table_dir = opts.path().to_str().unwrap();
+    let staged_file = tmp.path().join("row-staged.signal");
+    let publish_file = tmp.path().join("publish.signal");
+
+    let mut writer = Command::new(&helper)
+        .args([
+            table_dir,
+            "hold_write_with_row",
+            "42",
+            "published",
+            staged_file.to_str().unwrap(),
+            publish_file.to_str().unwrap(),
+        ])
+        .spawn()
+        .expect("failed to spawn staged writer");
+    assert!(
+        wait_for_file(&staged_file, Duration::from_secs(10)),
+        "writer did not stage the new row while holding its lock"
+    );
+
+    let table_path = opts.path().to_path_buf();
+    let waiter = thread::spawn(move || TableWriteLock::acquire(&table_path, 0));
+    let requested = wait_for_request_from_this_process(opts.path(), Duration::from_secs(8));
+    fs::write(&publish_file, "publish").unwrap();
+    let result = waiter.join().unwrap();
+    let status = writer.wait().expect("staged writer wait failed");
+
+    assert!(status.success(), "staged writer should exit cleanly");
+    assert!(requested, "the waiting writer did not register");
+    match result {
+        Err(TableError::LockFailed { message, .. }) => {
+            assert!(message.contains("wrote the table while"), "{message}");
+        }
+        other => panic!("a table written during the wait must be refused: {other:?}"),
+    }
+    // The refused writer released the lock.
+    assert!(TableWriteLock::acquire(opts.path(), 1).is_ok());
 }
 
 #[test]
@@ -305,6 +452,20 @@ fn table_write_lock_survives_other_handles_in_this_process() {
         TableWriteLock::acquire(opts.path(), 1),
         Err(TableError::LockFailed { .. })
     ));
+    // A holder in this process is never waited for, even when the request
+    // would wait indefinitely for another process.
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let table_path = opts.path().to_path_buf();
+    thread::spawn(move || {
+        let _ = sender.send(TableWriteLock::acquire(&table_path, 0).map(drop));
+    });
+    match receiver.recv_timeout(Duration::from_secs(10)) {
+        Ok(Err(TableError::LockFailed { message, .. })) => {
+            assert!(message.contains("in this process"), "{message}");
+        }
+        Ok(other) => panic!("a holder in this process must be refused: {other:?}"),
+        Err(_) => panic!("a holder in this process was waited for"),
+    }
     drop(Table::open(opts.clone()).unwrap());
     let mut user_locked =
         Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
