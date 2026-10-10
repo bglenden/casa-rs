@@ -39,6 +39,13 @@ pkg-config = "0.3"
 casa-logging = { path = "../casa-logging" }
 casa-ms = { path = "../casa-ms" }
 
+# A held-open C++ casacore reader for the locking interop tests, which run it
+# in its own process.
+[[bin]]
+name = "casacore-held-table-reader"
+path = "src/bin/casacore-held-table-reader.rs"
+required-features = ["cpp-interop-tests"]
+
 [[test]]
 name = "aipsio_cross_matrix"
 path = "tests/aipsio_cross_matrix.rs"

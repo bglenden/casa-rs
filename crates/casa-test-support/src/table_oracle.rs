@@ -155,3 +155,65 @@ impl TableOracle {
         })
     }
 }
+
+/// A C++ casacore reader that holds a table open between its lock periods,
+/// as a casacore session holding a table open does.
+///
+/// The table is opened with `TableLock::UserLocking` and keeps its
+/// `ScalarColumn<Int>` "id" open. Each [`read_id`](Self::read_id) takes a
+/// read lock, reads `id(0)` and releases the lock without closing the table,
+/// so what it read stays cached: casacore re-reads the table at the next lock
+/// only when the sync data in `table.lock` says another process wrote it
+/// (`PlainTable::lock`, `ColumnSet::resync`). It therefore observes whether a
+/// writer announced its write, which a table opened afresh cannot.
+///
+/// `fcntl` locks belong to a process, so a writer whose announcement is under
+/// test must run in another process than this reader; the
+/// `casacore-held-table-reader` binary runs one. Keep no other casacore oracle
+/// operation on the same table in the reader's process.
+pub struct HeldCppTableReader {
+    #[cfg(has_casacore_cpp)]
+    handle: Option<CppHeldReaderHandle>,
+}
+
+#[cfg_attr(not(has_casacore_cpp), allow(unused_variables))]
+impl HeldCppTableReader {
+    /// Open the table at `path`, which has an Int column "id", without
+    /// taking a lock.
+    pub fn open(path: &std::path::Path) -> Result<Self, OracleError> {
+        table_operation!("table.held_reader_open", {
+            cpp_held_reader_open(path)
+                .map(|handle| Self {
+                    handle: Some(handle),
+                })
+                .map_err(|message| OracleError::CppFailure {
+                    operation: "table.held_reader_open",
+                    message,
+                })
+        })
+    }
+
+    /// Take a read lock, read `id(0)` and release the lock, keeping the
+    /// table open.
+    pub fn read_id(&mut self) -> Result<i32, OracleError> {
+        table_operation!("table.held_reader_read_id", {
+            let handle = self.handle.as_mut().expect("an open reader");
+            cpp_held_reader_read_id(handle).map_err(|message| OracleError::CppFailure {
+                operation: "table.held_reader_read_id",
+                message,
+            })
+        })
+    }
+}
+
+impl Drop for HeldCppTableReader {
+    fn drop(&mut self) {
+        #[cfg(has_casacore_cpp)]
+        if let Some(handle) = self.handle.take() {
+            let _guard = crate::oracle_runtime::CasacoreOracleRuntime::lock_operation(
+                "table.held_reader_close",
+            );
+            cpp_held_reader_close(handle);
+        }
+    }
+}
