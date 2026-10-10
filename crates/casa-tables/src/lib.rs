@@ -284,8 +284,8 @@ pub use table::{
     RecordColumnIter, RequiredScalarColumnDestination, RequiredScalarColumnValues,
     RequiredScalarColumnValuesMut, RowRange, STREAMING_SCALAR_COLUMN_BUFFER_BYTES,
     SelectedArray1DCells, SelectedArray1DCellsMut, SelectedArray1DShape, SelectedArray2D,
-    SelectedArray2DCells, SelectedArray2DCellsMut, SelectedArray2DShape, Slicer, SortOrder,
-    StreamedScalarColumn, StreamedScalarType, StreamingScalarColumnWriter, Table, TableCell,
-    TableCellMut, TableColumn, TableColumnMut, TableError, TableKind, TableOptions, TableRow,
-    TableRowMut, TableWritePlan,
+    SelectedArray2DCells, SelectedArray2DCellsMut, SelectedArray2DShape, SelectedReadFootprint,
+    Slicer, SortOrder, StreamedScalarColumn, StreamedScalarType, StreamingScalarColumnWriter,
+    Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
+    TableOptions, TableRow, TableRowMut, TableWritePlan,
 };

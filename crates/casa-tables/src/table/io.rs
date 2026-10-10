@@ -1355,6 +1355,40 @@ impl Table {
         &self.dm_info
     }
 
+    /// What the typed selected 2-D channel-range readers hold for `column`
+    /// besides their packed output; see [`SelectedReadFootprint`].
+    ///
+    /// Only `TiledShapeStMan` streams the selected channels. A column with no
+    /// stored data manager (a table held in memory) counts as streamed.
+    #[must_use]
+    pub fn selected_channel_read_footprint(&self, column: &str) -> SelectedReadFootprint {
+        self.column_data_manager(column)
+            .map_or(SelectedReadFootprint::Streamed, |manager| {
+                crate::storage::channel_read_footprint(manager)
+            })
+    }
+
+    /// What the typed selected 1-D readers hold for `column` besides their
+    /// packed output; see [`SelectedReadFootprint`].
+    ///
+    /// `IncrementalStMan`, `TiledColumnStMan` and `TiledShapeStMan` stream the
+    /// selected rows. A column with no stored data manager (a table held in
+    /// memory) counts as streamed.
+    #[must_use]
+    pub fn selected_cell_read_footprint(&self, column: &str) -> SelectedReadFootprint {
+        self.column_data_manager(column)
+            .map_or(SelectedReadFootprint::Streamed, |manager| {
+                crate::storage::cell_read_footprint(manager)
+            })
+    }
+
+    fn column_data_manager(&self, column: &str) -> Option<&str> {
+        self.dm_info
+            .iter()
+            .find(|manager| manager.columns.iter().any(|name| name == column))
+            .map(|manager| manager.dm_type.as_str())
+    }
+
     /// Returns the channel-axis tile width for a tiled rank-2 array column.
     ///
     /// Non-tiled columns, in-memory tables, or columns whose tiled shape is not
