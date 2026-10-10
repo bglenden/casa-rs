@@ -6,7 +6,8 @@
 
 pub(crate) mod normal_storage;
 mod pass_state;
-pub use pass_state::{PassImages, PassNormalState};
+pub use pass_state::PassImages;
+pub(crate) use pass_state::PassNormalState;
 
 use std::mem::size_of;
 

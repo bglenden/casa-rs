@@ -86,7 +86,7 @@ enum DomainState {
 
 /// A normal state being assembled domain by domain and, for a
 /// channel-local basis, channel range by channel range in order.
-pub struct PassNormalState {
+pub(crate) struct PassNormalState {
     basis: SpectralBasisPlan,
     total_channels: usize,
     polarizations: usize,
@@ -167,7 +167,7 @@ impl PassNormalState {
     /// policies differ only on non-finite inputs, which the source flags or
     /// rejects before gridding. Nothing is changed when an append fails
     /// validation.
-    pub fn append(&mut self, images: PassImages) -> Result<(), SpectralOperatorError> {
+    pub(crate) fn append(&mut self, images: PassImages) -> Result<(), SpectralOperatorError> {
         let index = images.domain;
         if self.shapes.get(index) != Some(&images.shape)
             || images.polarizations != self.polarizations
@@ -295,7 +295,7 @@ impl PassNormalState {
             // A channel-local state keeps the per-plane `sumwt` as its
             // sensitivity (`SensitivityValues::PerPlane`); the application
             // refuses the kernel sets that grid a weight image for a cube
-            // until the cube tickets store it (IF-3 deviation on #652).
+            // until a cube stores it (#652).
             weight: _,
         } = images;
         let planes = channels.len() * polarizations;

@@ -163,7 +163,7 @@ pub struct CompleteDataNormalState {
 }
 
 impl CompleteDataNormalState {
-    /// Exact complete-data proof retained through sealing.
+    /// The completed pass's primitive catalog and sample and block counts.
     #[must_use]
     pub const fn completion(&self) -> &CompleteDataOwnerCompletion {
         &self.completion

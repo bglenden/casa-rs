@@ -60,7 +60,7 @@ fn completion(
         scene.resident_storage(),
     )
     .expect("major cycle");
-    let (model, pass) = cycle.parts();
+    let (model, mut pass) = cycle.parts();
     let mut images = scene.pass_images(model, true);
     edit(&mut images);
     pass.append(images).expect("images");

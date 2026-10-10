@@ -251,7 +251,7 @@ impl Scene {
     ) -> MajorCycle {
         let mut cycle =
             MajorCycle::initial(problem, model, storage).expect("initial synthetic major cycle");
-        let (model, state) = cycle.parts();
+        let (model, mut state) = cycle.parts();
         state
             .append(self.pass_images(model, true))
             .expect("append synthetic initial pass images");
@@ -280,7 +280,7 @@ impl Scene {
     ) -> MajorCycle {
         let mut cycle = MajorCycle::refresh(problem, previous, model, self.resident_storage())
             .expect("synthetic residual refresh");
-        let (model, state) = cycle.parts();
+        let (model, mut state) = cycle.parts();
         state
             .append(self.pass_images(model, false))
             .expect("append synthetic residual pass images");

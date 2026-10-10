@@ -376,7 +376,7 @@ pub fn produce_continuum_members(
         || inputs.final_model().shape().domains().len()
             != inputs.problem().geometry().domains().len()
     {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     let requires_beam = planned
         .members
@@ -419,7 +419,7 @@ pub fn produce_continuum_members(
                 }
             })?;
             for slot in slots {
-                fitted.push(slot.ok_or(ProductsError::SourceLineageMismatch)?);
+                fitted.push(slot.ok_or(ProductsError::ProblemShapeMismatch)?);
             }
         }
         fitted.into_boxed_slice()
@@ -455,7 +455,7 @@ pub fn produce_continuum_members(
             .shape()
             .domains()
             .get(domain_ordinal)
-            .ok_or(ProductsError::SourceLineageMismatch)?
+            .ok_or(ProductsError::ProblemShapeMismatch)?
             .pixels();
         let reconstruction_only = matches!(
             member.role,
@@ -469,12 +469,12 @@ pub fn produce_continuum_members(
                 && (member.validity != ProductValidityRule::All
                     || member.storage.pixel_mask() != ProductPixelMask::Absent))
         {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         let beam_offset = domain_ordinal
             .checked_mul(channel_count)
             .and_then(|offset| offset.checked_mul(normal_state.polarization_count()))
-            .ok_or(ProductsError::SourceLineageMismatch)?;
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
         let layout = storage_plan.layout(member.axes())?;
         let member_beams = beams_for_member(
             member,
@@ -550,7 +550,7 @@ pub fn produce_continuum_members(
                         let plane =
                             normal_state.read_plane(domain_ordinal, channel, polarization)?;
                         if plane.shape() != plane_shape {
-                            return Err(ProductsError::SourceLineageMismatch);
+                            return Err(ProductsError::ProblemShapeMismatch);
                         }
                         let output_channel = plane.output_channel() - window_start;
                         if matches!(member.role, ProductRole::SumWeights(_)) {
@@ -964,7 +964,7 @@ fn reconstruction_mask_for_domain<'a>(
         let ordinal = inputs.model_domain_ordinal(role)?;
         return masks
             .get(ordinal)
-            .ok_or(ProductsError::SourceLineageMismatch)
+            .ok_or(ProductsError::ProblemShapeMismatch)
             .map(Some);
     };
     let domain = inputs
@@ -973,11 +973,11 @@ fn reconstruction_mask_for_domain<'a>(
         .domains()
         .iter()
         .find(|domain| domain.role() == role)
-        .ok_or(ProductsError::SourceLineageMismatch)?;
+        .ok_or(ProductsError::ProblemShapeMismatch)?;
     if mask.shape() == domain.shape().pixels() && mask.coordinate() == domain.direction() {
         Ok(Some(mask))
     } else {
-        Err(ProductsError::SourceLineageMismatch)
+        Err(ProductsError::ProblemShapeMismatch)
     }
 }
 
@@ -1075,7 +1075,7 @@ fn correct_primary_beam(
     policy: casa_imaging_model::PrimaryBeamValidityPolicy,
 ) -> Result<Vec<f32>, ProductsError> {
     if values.len() != primary_beam.len() {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     values
         .iter()
@@ -1098,7 +1098,7 @@ fn correct_primary_beam(
 
 fn zero_invalid_plane_values(payload: &mut [f32], validity: &[bool]) -> Result<(), ProductsError> {
     if payload.len() != validity.len() {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     for (value, valid) in payload.iter_mut().zip(validity) {
         if !*valid {
@@ -1126,7 +1126,7 @@ fn model_real_plane(
             != Some(plane_shape)
         || model.sample_count() != model.shape().sample_count()
     {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     // Canonical model order is y-major (`flat = y * W + x`); product planes
     // are stored x-major like every normal-state primitive.
@@ -1151,7 +1151,7 @@ fn scatter_image_polarization_plane<T: Copy>(
 ) -> Result<(), ProductsError> {
     let [width, height] = plane_shape;
     if width == 0 || height == 0 || width.checked_mul(height) != Some(plane.len()) {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     let last = product_offset(
         order,
@@ -1162,7 +1162,7 @@ fn scatter_image_polarization_plane<T: Copy>(
         output_channel,
     )?;
     if last >= payload.len() {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     let base = product_offset(order, storage_shape, 0, 0, polarization, output_channel)?;
     let (mut longitude_stride, mut latitude_stride) = (0, 0);
@@ -1175,7 +1175,7 @@ fn scatter_image_polarization_plane<T: Copy>(
         }
         stride = stride
             .checked_mul(extent)
-            .ok_or(ProductsError::SourceLineageMismatch)?;
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
     }
     for (x, column) in plane.chunks_exact(height).enumerate() {
         let start = base + x * longitude_stride;
@@ -1224,12 +1224,12 @@ fn product_offset(
         };
         let extent = storage_shape[position];
         if coordinate >= extent {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         offset = offset
             .checked_mul(extent)
             .and_then(|offset| offset.checked_add(coordinate))
-            .ok_or(ProductsError::SourceLineageMismatch)?;
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
     }
     Ok(offset)
 }
@@ -1257,7 +1257,7 @@ fn beams_for_member(
         }
         domain_count += 1;
     }
-    let domain_ordinal = domain_ordinal.ok_or(ProductsError::SourceLineageMismatch)?;
+    let domain_ordinal = domain_ordinal.ok_or(ProductsError::ProblemShapeMismatch)?;
     Ok(resolve_beams(
         rule,
         domain_beam_slice(fitted, domain_ordinal, domain_count)?,
@@ -1274,15 +1274,15 @@ fn domain_beam_slice(
         return Ok(beams);
     }
     if domain_count == 0 || !beams.len().is_multiple_of(domain_count) {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     let channels = beams.len() / domain_count;
     let start = domain_ordinal
         .checked_mul(channels)
-        .ok_or(ProductsError::SourceLineageMismatch)?;
+        .ok_or(ProductsError::ProblemShapeMismatch)?;
     beams
         .get(start..start + channels)
-        .ok_or(ProductsError::SourceLineageMismatch)
+        .ok_or(ProductsError::ProblemShapeMismatch)
 }
 
 fn resolve_beams(

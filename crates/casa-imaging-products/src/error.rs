@@ -63,9 +63,11 @@ pub enum ProductsError {
         /// The offending Taylor term.
         term: ProductTerm,
     },
-    /// The source evidence did not come from the same Major-Cycle result.
-    #[error("source evidence does not match the Major-Cycle lineage")]
-    SourceLineageMismatch,
+    /// The normal state, final model, masks or beams given to the products
+    /// do not match the compiled problem: its image domains, their shapes,
+    /// planes or Taylor terms.
+    #[error("product inputs do not match the shape of the compiled problem")]
+    ProblemShapeMismatch,
     /// A produced payload length disagreed with its declared shape.
     #[error("member payload requires {expected} values but carries {actual}")]
     PayloadLengthMismatch {

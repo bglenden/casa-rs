@@ -25,15 +25,18 @@ pub use model_storage::{
 };
 
 pub use image_response::{ImageResponseError, MinorCycleImageResponse, MosaicSensitivity};
+pub(crate) use spectral_operator::PassNormalState;
 pub use spectral_operator::{
-    PassImages, PassNormalState, SpectralChannelValidity, SpectralOperatorError,
-    SpectralOperatorPrimitives, SpectralPrimitiveCatalog, SpectralSlabPlan,
+    PassImages, SpectralChannelValidity, SpectralOperatorError, SpectralOperatorPrimitives,
+    SpectralPrimitiveCatalog, SpectralSlabPlan,
 };
 
-/// Internal composition surface used by `casa-imaging-runtime`.
+/// The normal-state storage seam: `casa-imaging-runtime` implements paged
+/// storage behind it, and a run chooses the storage plan its major cycles
+/// write.
 ///
 /// These opaque operations are public only because Rust crates have no friend
-/// visibility. Application code should use the runtime's plan-bound T19 API.
+/// visibility.
 #[doc(hidden)]
 pub mod runtime_adapter {
     pub use crate::spectral_operator::CompleteDataOwnerCompletion;
@@ -50,7 +53,8 @@ pub use continuum_transform::{
 pub use major_cycle::{
     FinalNormalDomainState, FinalNormalState, FinalNormalStateCoefficientTerm,
     FinalNormalStateNormalMoment, FinalNormalStatePlane, FinalNormalStateWindow, MajorCycle,
-    MajorCycleCompletion, MajorCycleError, NormalStateCatalog, normal_state_window_residency_bytes,
+    MajorCycleCompletion, MajorCycleError, NormalStateCatalog, PassAppender,
+    normal_state_window_residency_bytes,
 };
 pub use mask::{
     AutoMaskBeam, AutoMultithreshControls, AutoMultithreshEvidence, ImageDomainMaskMaterialization,

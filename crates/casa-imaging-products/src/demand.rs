@@ -249,7 +249,7 @@ impl PlannedContinuumGeneration {
         let state = inputs.normal_state();
         let domains = state.domain_count();
         if domains == 0 {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         let requires_beam = self
             .members()
@@ -332,7 +332,7 @@ impl PlannedContinuumGeneration {
             for ordinal in 0..domains {
                 let shape = state
                     .domain_shape(ordinal)
-                    .ok_or(ProductsError::SourceLineageMismatch)?;
+                    .ok_or(ProductsError::ProblemShapeMismatch)?;
                 let cells = checked_shape_values([shape[0], shape[1], 1, 1])?;
                 let input = bytes_for::<f32>(cells, "beam real PSF")?;
                 // Paged PSFs own the decoded complex plane while converting to
@@ -379,7 +379,7 @@ fn generic_scratch_bytes(
         let shape = inputs
             .normal_state()
             .domain_shape(ordinal)
-            .ok_or(ProductsError::SourceLineageMismatch)?;
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
         let cells = checked_shape_values([shape[0], shape[1], 1, 1])?;
         let plane = bytes_for::<f32>(cells, "generic plane")?;
         let validity = bytes_for::<bool>(cells, "generic validity plane")?;
@@ -429,7 +429,7 @@ fn taylor_scratch_bytes(inputs: &ContinuumProductInputs<'_>) -> Result<u64, Prod
     let moments = u64::try_from(state.normal_moment_count())
         .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor moment count"))?;
     if terms < 2 || moments != terms.saturating_mul(2).saturating_sub(1) {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     let cells = u64::try_from(cells)
         .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor cell count"))?;

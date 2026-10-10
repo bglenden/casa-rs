@@ -86,7 +86,7 @@ fn primary_beam_correct_spectral_index(
             .take(terms)
             .any(|moment| moment.len() != cells)
     {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
 
     let mut corrected = vec![0.0; cells];
@@ -138,11 +138,11 @@ impl TaylorProducts {
         let state = inputs.normal_state();
         let state = &state.read_window(state.slab().core_range())?;
         if state.domain_count() != 1 || inputs.final_model().shape().domains().len() != 1 {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         let domain_role = state
             .domain(0)
-            .ok_or(ProductsError::SourceLineageMismatch)?
+            .ok_or(ProductsError::ProblemShapeMismatch)?
             .role();
         let shape = state.shape();
         let cells = shape[0] * shape[1];
@@ -152,14 +152,14 @@ impl TaylorProducts {
             || moments != terms.saturating_mul(2).saturating_sub(1)
             || inputs.final_model().shape().coefficients() != terms
         {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         let principal_normal = state
             .normal_moment(0)
-            .ok_or(ProductsError::SourceLineageMismatch)?;
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
         let principal_sum_weight = principal_normal.sum_weight();
         if !(principal_sum_weight.is_finite() && principal_sum_weight > 0.0) {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         let normalization = inputs.problem().products().normalization();
         let aw_projection = inputs
@@ -199,7 +199,7 @@ impl TaylorProducts {
             .first()
             .copied()
             .filter(|value| value.is_finite() && *value > 0.0)
-            .ok_or(ProductsError::SourceLineageMismatch)?;
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
         let preparation_nanos = envelope_started.map(|started| started.elapsed().as_nanos());
         let mut psf = Vec::with_capacity(moments);
         let mut weight: Vec<Vec<f32>> = Vec::with_capacity(moments);
@@ -208,7 +208,7 @@ impl TaylorProducts {
             let published_sum_weight = published_sum_weights.get(moment).copied();
             let source = state
                 .normal_moment(moment)
-                .ok_or(ProductsError::SourceLineageMismatch)?;
+                .ok_or(ProductsError::ProblemShapeMismatch)?;
             psf.push(normalize_plane(
                 &source
                     .normal_approximation()
@@ -234,7 +234,7 @@ impl TaylorProducts {
                     .map(|value| (*value / weight_scale) as f32)
                     .collect(),
             );
-            let sum_weight = published_sum_weight.ok_or(ProductsError::SourceLineageMismatch)?;
+            let sum_weight = published_sum_weight.ok_or(ProductsError::ProblemShapeMismatch)?;
             if !sum_weight.is_finite() {
                 return Err(ProductsError::GeneratedNonfinite);
             }
@@ -245,7 +245,7 @@ impl TaylorProducts {
             .map(|term| {
                 let source = state
                     .coefficient_term(term)
-                    .ok_or(ProductsError::SourceLineageMismatch)?;
+                    .ok_or(ProductsError::ProblemShapeMismatch)?;
                 if let Some(sensitivity) = directional {
                     let response = sensitivity.with_normal_sum_weight(principal_sum_weight)?;
                     return source
@@ -308,7 +308,7 @@ impl TaylorProducts {
             .enumerate()
             .max_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
             .map(|(index, _)| index)
-            .ok_or(ProductsError::SourceLineageMismatch)?;
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
         let mut normal = vec![0.0; terms * terms];
         for row in 0..terms {
             for column in 0..terms {
@@ -537,7 +537,7 @@ impl TaylorProducts {
                             .map(|value| normalized_psf_value(*value, self.principal_psf_peak))
                             .collect()
                     })
-                    .ok_or(ProductsError::SourceLineageMismatch);
+                    .ok_or(ProductsError::ProblemShapeMismatch);
             }
             ProductRole::Residual(value) => self.residual.get(term(value)?),
             ProductRole::Model(value) => self.model.get(term(value)?),
@@ -556,7 +556,7 @@ impl TaylorProducts {
                     .get(term(value)?)
                     .copied()
                     .map(|value| vec![value])
-                    .ok_or(ProductsError::SourceLineageMismatch);
+                    .ok_or(ProductsError::ProblemShapeMismatch);
             }
             _ => None,
         }
@@ -945,7 +945,7 @@ fn model_term(
             .map(|domain| domain.pixels())
             != Some(shape)
     {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     let mut plane = vec![0.0; shape[0] * shape[1]];
     let samples = model.read_plane(0, coefficient, 0)?;
