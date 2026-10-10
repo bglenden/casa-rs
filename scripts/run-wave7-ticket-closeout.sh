@@ -15,8 +15,8 @@ repeats="${WAVE7_TICKET_REPEATS:-1}"
 mkdir -p "$outdir"
 log_file="$outdir/wave7-ticket-closeout.log"
 
-if [[ -z "${CASA_RS_CASA_PYTHON:-}" && -x "$HOME/SoftwareProjects/casa-build/venv/bin/python" ]]; then
-  export CASA_RS_CASA_PYTHON="$HOME/SoftwareProjects/casa-build/venv/bin/python"
+if [[ -z "${CASA_RS_CASA_PYTHON:-}" && -x "/Applications/CASA.app/Contents/MacOS/python3" ]]; then
+  export CASA_RS_CASA_PYTHON="/Applications/CASA.app/Contents/MacOS/python3"
 fi
 
 if [[ -z "${CASA_RS_TUTORIAL_DATA_ROOT:-}" && -d "$HOME/SoftwareProjects/casa-tutorial-data" ]]; then

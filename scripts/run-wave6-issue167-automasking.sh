@@ -3,7 +3,7 @@ set -euo pipefail
 
 outdir="${1:-target/wave6-issue167-automasking}"
 tutorial_root="${CASA_RS_TUTORIAL_DATA_ROOT:-$HOME/SoftwareProjects/casa-tutorial-data}"
-casa_py="${CASA_RS_CASA_PYTHON:-$HOME/SoftwareProjects/casa-build/venv/bin/python}"
+casa_py="${CASA_RS_CASA_PYTHON:-/Applications/CASA.app/Contents/MacOS/python3}"
 skip_casa="${CASA_RS_WAVE6_ISSUE167_SKIP_CASA:-0}"
 skip_rust="${CASA_RS_WAVE6_ISSUE167_SKIP_RUST:-0}"
 skip_imaging="${CASA_RS_WAVE6_ISSUE167_SKIP_IMAGING:-0}"

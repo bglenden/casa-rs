@@ -41,7 +41,7 @@ CASA_SCENARIO_PROGRAM = (
 )
 DEFAULT_CASA_PYTHON = os.environ.get(
     "CASA_RS_CASA_PYTHON",
-    "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python",
+    "/Applications/CASA.app/Contents/MacOS/python3",
 )
 TARGET_NATIVE_MB_PER_SECOND = 500.0
 ACA_REFERENCE_FREQUENCY_HZ = 330.076e9

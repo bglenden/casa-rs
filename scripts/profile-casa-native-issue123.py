@@ -28,7 +28,7 @@ def default_casa_python() -> Path:
     configured = os.environ.get("CASA_RS_CASA_PYTHON")
     if configured:
         return Path(configured)
-    return Path.home() / "SoftwareProjects/casa-build/venv/bin/python"
+    return Path("/Applications/CASA.app/Contents/MacOS/python3")
 
 
 def wait_for(path: Path, timeout_seconds: float) -> None:

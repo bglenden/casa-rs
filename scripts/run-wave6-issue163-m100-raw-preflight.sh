@@ -8,7 +8,7 @@ else
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-casa_python="${CASA_RS_CASA_PYTHON:-/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python}"
+casa_python="${CASA_RS_CASA_PYTHON:-/Applications/CASA.app/Contents/MacOS/python3}"
 tutorial_root="${CASA_RS_TUTORIAL_DATA_ROOT:-$HOME/SoftwareProjects/casa-tutorial-data}"
 raw_dir="$tutorial_root/tutorial-parity/alma/m100/band3-combine/raw"
 extract_dir="$raw_dir/extracted"
