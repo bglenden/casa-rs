@@ -812,15 +812,15 @@
 
 <h1 id="agent-reference">Agent Reference<a class="headerlink" href="#agent-reference" title="Permanent link">&para;</a></h1>
 <p>Truth class: normative
-Last reality check: 2026-10-06
+Last reality check: 2026-10-10
 Verification: just docs-check</p>
 <p>This is situational guidance for agents. Read only the section relevant to the
 task; root <code>AGENTS.md</code> remains the short always-loaded contract.</p>
 <h2 id="casa-and-c-oracles">CASA And C++ Oracles<a class="headerlink" href="#casa-and-c-oracles" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Local CASA/C++ task runs use
-  <code>/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python</code>, which
-  has the locally built <code>casatasks</code> and <code>casatools</code> wheels installed.</li>
+<li>Local CASA task runs use the CASA 6.7.6 release's Python,
+  <code>/Applications/CASA.app/Contents/MacOS/python3</code>, which has <code>casatasks</code> and
+  <code>casatools</code>. Scripts take <code>CASA_RS_CASA_PYTHON</code> to use another one.</li>
 <li>Before implementing CASA/casacore behavior, inspect the corresponding
   upstream source path. Use targeted instrumentation on both implementations
   for parity investigations.</li>
