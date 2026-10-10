@@ -156,10 +156,14 @@ Additional constraints:
   existing table; heterogeneous `TiledShapeStMan` rows share one hypercube per
   distinct shape. MeasurementSet producers use one bounded plan/session whose
   memory ceiling includes every owned scalar and array sink. New tables publish
-  from staging; in-place changes write under casacore's table lock and add
-  nothing CASA would not write (no keywords, marker files, generations or
-  identities). General rollback, snapshots, journaling, and copy-on-write
-  generations are not part of the persistence contract.
+  from staging; in-place changes hold casacore's table write lock for the whole
+  change and add nothing CASA would not write (no keywords, marker files,
+  generations or identities). A held lock is refused at once (one attempt,
+  where casacore by default waits); on a file system without lock support
+  (`ENOLCK`, or `ENOTSUP` on macOS SMB) tables are used unlocked with a
+  warning, as casacore does for `ENOLCK`. General rollback, snapshots,
+  journaling, and copy-on-write generations are not part of the persistence
+  contract.
 - Versioned provider bundles are boundary contracts; UI projections are derived
   views, not separate truth sources.
 - `casa-provider-contracts::ApplicationCatalog` is the sole application

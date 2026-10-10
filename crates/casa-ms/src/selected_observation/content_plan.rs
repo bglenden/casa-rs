@@ -5,8 +5,11 @@ use crate::{
     SelectedPointingCatalogMeasurements, derived::engine::MsCalEngine,
 };
 use crate::{
-    selected_observation_buffer::selected_observation_buffer_residency,
-    selected_pointing::selected_pointing_preparation_peak_bytes, subtables::SubTable,
+    selected_observation_buffer::{
+        selected_observation_buffer_residency, selected_observation_read_staging,
+    },
+    selected_pointing::selected_pointing_preparation_peak_bytes,
+    subtables::SubTable,
 };
 use casa_imaging_model::{
     CompiledProblem, CorrelationProduct, ObservationSource, PointingCentreLaw,
@@ -17,7 +20,7 @@ use thiserror::Error;
 
 use super::access::{
     BoundObservationSource, BufferedObservationBlock, EvaluatedRowGeometry, SelectedChannel,
-    SelectedCoordinates, SelectedReplayRow,
+    SelectedCoordinates, SelectedReplayRow, selected_visibility, selected_weight,
 };
 use super::row_selection::CompiledRowPredicate;
 
@@ -373,9 +376,11 @@ pub(crate) fn selected_content_requirements(
         .and_then(|bytes| bytes.checked_add(CONSTRUCTION_SLACK_BYTES))
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let polarization = measurement_set.polarization()?;
+    let spectral_window = measurement_set.spectral_window()?;
     let mut resident_bytes_per_row = 0_usize;
     let mut fill_bytes_per_row = 0_usize;
     let mut preparation_bytes_per_row = 0_usize;
+    let mut read_staging_fixed_bytes = 0_usize;
     let empty_fill = selected_observation_buffer_residency(0, 0, 0, 0)
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let fill_fixed_bytes = empty_fill.fill_peak_bytes;
@@ -447,10 +452,29 @@ pub(crate) fn selected_content_requirements(
                 bytes.checked_add(size_of::<SelectedReplayRow>() + size_of::<usize>())
             })
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+        // A column its data manager reads cell by cell holds each selected
+        // row's whole stored cell, every channel of the spectral window, while
+        // the covering channels are packed.
+        let spectral_window_row = usize::try_from(description.spectral_window_id())
+            .map_err(|_| SelectedObservationContentPlanError::InvalidCoordinateShape)?;
+        let stored_channels =
+            selected_i32_scalar(spectral_window.table(), "NUM_CHAN", spectral_window_row)?
+                .and_then(|channels| usize::try_from(channels).ok())
+                .ok_or(SelectedObservationContentPlanError::InvalidCoordinateShape)?;
+        let read_staging = selected_observation_read_staging(
+            measurement_set.main_table(),
+            selected_visibility(source.columns().visibility()),
+            selected_weight(source.columns().weights()),
+            correlations,
+            stored_channels,
+        )
+        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+        read_staging_fixed_bytes = read_staging_fixed_bytes.max(read_staging.fixed_bytes);
         let fill = buffer
             .fill_peak_bytes
             .checked_sub(fill_fixed_bytes)
             .and_then(|bytes| bytes.checked_add(retained_geometry))
+            .and_then(|bytes| bytes.checked_add(read_staging.bytes_per_row))
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
         let geometry_build = buffer
             .resident_bytes
@@ -520,7 +544,9 @@ pub(crate) fn selected_content_requirements(
         resident_bytes_per_row,
         fill_bytes_per_row,
         preparation_bytes_per_row,
-        fill_fixed_bytes,
+        fill_fixed_bytes: fill_fixed_bytes
+            .checked_add(read_staging_fixed_bytes)
+            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
         selected_rows,
         maximum_pointing_polynomial_terms,
     })
@@ -622,6 +648,26 @@ fn selected_f64_array_len(
             .flatten()
         {
             Some(casa_types::ArrayValue::Float64(values)) => Some(values.len()),
+            _ => None,
+        },
+    )
+}
+
+fn selected_i32_scalar(
+    table: &casa_tables::Table,
+    column: &str,
+    row: usize,
+) -> Result<Option<i32>, SelectedObservationContentPlanError> {
+    Ok(
+        match table
+            .column_accessor(column)
+            .map_err(MsError::from)?
+            .scalar_cells_owned_for_rows(&[row])
+            .map_err(MsError::from)?
+            .pop()
+            .flatten()
+        {
+            Some(casa_types::ScalarValue::Int32(value)) => Some(value),
             _ => None,
         },
     )

@@ -161,6 +161,12 @@
 //! - **`NoLocking`** — no lock file (the default, for single-process use;
 //!   unsafe for concurrent writers).
 //!
+//! An in-place writer on a table opened without locking holds a
+//! [`TableWriteLock`] for the duration of its change. Locks are arbitrated
+//! per process as casacore's table cache does: handles on one table share
+//! one `table.lock` descriptor, and a second handle is refused the write lock
+//! exactly as another process is.
+//!
 //! # Memory tables
 //!
 //! A memory table ([`TableKind::Memory`]) holds all data in process memory
@@ -253,7 +259,7 @@ pub mod taql;
 
 pub use concat_table::ConcatTable;
 pub use indexing::ColumnsIndex;
-pub use lock::{ExternalLockSync, LockMode, LockOptions, LockType};
+pub use lock::{ExternalLockSync, LockMode, LockOptions, LockType, TableWriteLock};
 pub use ref_table::{RefTable, RefTableMut};
 pub use schema::{
     ArrayShapeContract, ColumnOptions, ColumnSchema, ColumnType, SchemaError, TableSchema,
@@ -278,8 +284,8 @@ pub use table::{
     RecordColumnIter, RequiredScalarColumnDestination, RequiredScalarColumnValues,
     RequiredScalarColumnValuesMut, RowRange, STREAMING_SCALAR_COLUMN_BUFFER_BYTES,
     SelectedArray1DCells, SelectedArray1DCellsMut, SelectedArray1DShape, SelectedArray2D,
-    SelectedArray2DCells, SelectedArray2DCellsMut, SelectedArray2DShape, Slicer, SortOrder,
-    StreamedScalarColumn, StreamedScalarType, StreamingScalarColumnWriter, Table, TableCell,
-    TableCellMut, TableColumn, TableColumnMut, TableError, TableKind, TableOptions, TableRow,
-    TableRowMut, TableWritePlan,
+    SelectedArray2DCells, SelectedArray2DCellsMut, SelectedArray2DShape, SelectedReadFootprint,
+    Slicer, SortOrder, StreamedScalarColumn, StreamedScalarType, StreamingScalarColumnWriter,
+    Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
+    TableOptions, TableRow, TableRowMut, TableWritePlan,
 };
