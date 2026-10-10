@@ -68,6 +68,13 @@ pub enum ProductsError {
     /// planes or Taylor terms.
     #[error("product inputs do not match the shape of the compiled problem")]
     ProblemShapeMismatch,
+    /// A Taylor run's principal sum of weights, normal or published, is not
+    /// positive and finite: no weighted sample reached the image.
+    #[error("Taylor products need a positive principal sum of weights, not {sum_weight}")]
+    PrincipalSumWeight {
+        /// The principal sum of weights.
+        sum_weight: f64,
+    },
     /// A produced payload length disagreed with its declared shape.
     #[error("member payload requires {expected} values but carries {actual}")]
     PayloadLengthMismatch {

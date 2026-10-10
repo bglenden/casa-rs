@@ -159,7 +159,9 @@ impl TaylorProducts {
             .ok_or(ProductsError::ProblemShapeMismatch)?;
         let principal_sum_weight = principal_normal.sum_weight();
         if !(principal_sum_weight.is_finite() && principal_sum_weight > 0.0) {
-            return Err(ProductsError::ProblemShapeMismatch);
+            return Err(ProductsError::PrincipalSumWeight {
+                sum_weight: principal_sum_weight,
+            });
         }
         let normalization = inputs.problem().products().normalization();
         let aw_projection = inputs
@@ -195,11 +197,14 @@ impl TaylorProducts {
         // WTCF normal sum scales PSF/sensitivity products, while the CFS
         // publication sum scales dirty/residual image products. They are
         // equal for non-AW direct Taylor reconstruction.
-        let residual_sum_weight = published_sum_weights
+        let residual_sum_weight = *published_sum_weights
             .first()
-            .copied()
-            .filter(|value| value.is_finite() && *value > 0.0)
             .ok_or(ProductsError::ProblemShapeMismatch)?;
+        if !(residual_sum_weight.is_finite() && residual_sum_weight > 0.0) {
+            return Err(ProductsError::PrincipalSumWeight {
+                sum_weight: residual_sum_weight,
+            });
+        }
         let preparation_nanos = envelope_started.map(|started| started.elapsed().as_nanos());
         let mut psf = Vec::with_capacity(moments);
         let mut weight: Vec<Vec<f32>> = Vec::with_capacity(moments);
