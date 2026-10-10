@@ -41,6 +41,7 @@ pub struct TableWriteLock {
     path: PathBuf,
     #[cfg(unix)]
     lock_file: Option<LockFile>,
+    #[cfg_attr(not(unix), allow(dead_code))]
     written: Option<WrittenTable>,
 }
 

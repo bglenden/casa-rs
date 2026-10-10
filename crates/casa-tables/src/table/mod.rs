@@ -248,12 +248,15 @@ pub struct ColumnBinding {
 /// [`staging_bytes_per_row`](Self::staging_bytes_per_row) and once per read
 /// with [`staging_fixed_bytes`](Self::staging_fixed_bytes).
 ///
-/// Two costs are outside this footprint because the selection does not
-/// bound them: the tiled managers' tile buffers (a read's recent tiles and the
-/// process-wide table cache, see [`set_table_cache_budget_bytes`](crate::set_table_cache_budget_bytes)),
-/// which depend on the tile shape, and data-manager metadata a reader parses
-/// for any read (bucket indices, tile layouts), which depends on the stored
-/// table.
+/// A cell-by-cell read stages only the selected rows' cells, however the
+/// selection is strided: `StandardStMan` is read bucket by bucket, keeping the
+/// selected rows of each, and `StManAipsIO` row by row. Two costs are outside
+/// this footprint because the selection does not bound them: a reader's I/O
+/// buffers, which depend on the stored layout (a `StandardStMan` bucket's worth
+/// at a time; a tiled manager's recent tiles and the process-wide table cache, see
+/// [`set_table_cache_budget_bytes`](crate::set_table_cache_budget_bytes)), and
+/// data-manager metadata a reader parses for any read (bucket indices, tile
+/// layouts), which depends on the stored table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectedReadFootprint {
     /// The data manager streams the selected rows (and channels) into the
