@@ -88,21 +88,27 @@ sampling and instrument response. The data metric W is a separate contract.
 _Avoid_: Gridder, FT machine
 
 **Normal State Generation**:
-A versioned semantic generation identifying the observation, model, and
-weighting generations; A*W(d-Ax); normal-operator or PSF approximation;
-sensitivity and sum weights; valid support; numerics; and provenance. It need
+The normal state one Major Cycle forms with its final model: A*W(d-Ax), the
+normal-operator or PSF approximation, sensitivity and sum weights, and channel
+validity, with the counts of the samples and blocks that formed it. It carries
+no identity and is released together with the model that formed it. It need
 not be one resident image.
 _Avoid_: Dirty image bundle, solver scratch
 
 **Minor Cycle View**:
-An immutable bounded approximation with an identifier, valid domain,
-error/staleness bound, threshold, and maximum admissible model update.
+What one minor cycle of one plane works on, read from the Normal State
+Generation: the residual terms in Jy/beam, the PSF terms normalized to a
+term-0 peak of 1, a summary of that PSF, and the support where components may
+be placed. It is immutable; the cycle's threshold, iteration budget and gain
+come from the cycle controls.
 _Avoid_: Mutable residual image, solver workspace
 
 **Major Cycle**:
-A complete-data reconciliation that evaluates the current model against every
-selected sample with a frozen weighting generation and produces an
-authoritative Normal State Generation.
+A complete-data pass that evaluates the current model against every selected
+sample under the run's imaging weights, formed once before the first pass, and
+forms a Normal State Generation. A `MajorCycle` owns its final model and that
+normal state and releases them together as one `MajorCycleCompletion`, which
+the next major cycle consumes. Neither carries an identity.
 _Avoid_: Outer loop, residual refresh callback
 
 **Minor Cycle**:
