@@ -126,14 +126,32 @@ fn rc_lock_file() {
         .save(TableOptions::new(&table_path))
         .expect("save table data");
 
-    // Open with locking, acquire write lock, then unlock to produce
-    // a table.lock file with sync data.
+    // Open with locking, change the table under the write lock, then unlock
+    // to produce a table.lock file with sync data. A write lock that changes
+    // nothing publishes no sync data, as in casacore.
     let lock_opts = LockOptions::new(LockMode::UserLocking);
-    let mut locked =
-        Table::open_with_lock(TableOptions::new(&table_path), lock_opts).expect("open with lock");
+    let mut locked = Table::open_with_lock(TableOptions::new(&table_path), lock_opts.clone())
+        .expect("open with lock");
     locked.lock(LockType::Write, 1).expect("acquire write lock");
+    locked
+        .row_accessor_mut()
+        .set_cell(
+            0,
+            "name",
+            Value::Scalar(ScalarValue::String("from_rust".into())),
+        )
+        .expect("rewrite row 0");
     locked.unlock().expect("unlock (flushes sync data)");
     drop(locked);
+    let mut reader =
+        Table::open_with_lock(TableOptions::new(&table_path), lock_opts).expect("reopen");
+    assert!(reader.lock(LockType::Read, 1).expect("read lock"));
+    assert_eq!(
+        reader.locked_modify_counter().expect("modify counter"),
+        1,
+        "Rust published the write in the sync data"
+    );
+    drop(reader);
 
     assert!(
         table_path.join("table.lock").exists(),

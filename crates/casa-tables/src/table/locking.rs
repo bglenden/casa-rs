@@ -99,6 +99,7 @@ impl Table {
             options: lock_opts,
             data_manager: options.data_manager,
             endian_format: options.endian_format,
+            flushed_generation: table.inner.generation(),
         });
 
         Ok(table)
@@ -192,9 +193,11 @@ impl Table {
                     snapshot.column_keywords,
                     snapshot.schema,
                 );
-                // Update our stored sync data.
+                // Update our stored sync data. The reloaded table is what is
+                // on disk, so there is nothing to flush.
                 if let Some(s) = self.lock_state.as_mut() {
                     s.sync_data = new_sync;
+                    s.flushed_generation = self.inner.generation();
                 }
             }
         }
@@ -204,8 +207,12 @@ impl Table {
 
     /// Releases the current lock.
     ///
-    /// If a write lock was held, the table is flushed to disk first and
-    /// sync data is updated in the lock file.
+    /// If a write lock was held and the table changed since it was opened,
+    /// reloaded or last flushed, the table is flushed to disk first and the
+    /// change is published in the lock file's sync data, raising its modify
+    /// counter so other processes re-read the table. A write lock under
+    /// which nothing changed writes and publishes nothing, as casacore's
+    /// `PlainTable::putFile` writes only what changed.
     ///
     /// In permanent locking modes, this is a no-op (lock is held until close).
     ///
@@ -233,18 +240,19 @@ impl Table {
             return Ok(());
         }
         // Extract the info we need before borrowing self for save/schema.
-        let (is_write_locked, save_opts, mode) = {
+        let (flush, save_opts, mode) = {
             let state = self
                 .lock_state
                 .as_ref()
                 .ok_or_else(|| TableError::NotLocked {
                     operation: "unlock".into(),
                 })?;
-            let wl = state.lock_file.has_lock(LockType::Write);
+            let flush = state.lock_file.has_lock(LockType::Write)
+                && state.has_unflushed_changes(&self.inner);
             let opts = TableOptions::new(&state.path)
                 .with_data_manager(state.data_manager)
                 .with_endian_format(state.endian_format);
-            (wl, opts, state.options.mode)
+            (flush, opts, state.options.mode)
         };
 
         if matches!(
@@ -254,8 +262,8 @@ impl Table {
             return Ok(());
         }
 
-        // If write-locked, flush data to disk.
-        if is_write_locked {
+        // If write-locked with changes, flush them to disk and publish them.
+        if flush {
             if metadata_only {
                 self.save_metadata_only(save_opts)?;
             } else {
@@ -267,6 +275,7 @@ impl Table {
             let nrcolumn = self.schema().map(|s| s.columns().len() as u32).unwrap_or(0);
 
             // Now borrow lock_state mutably for sync data update.
+            let generation = self.inner.generation();
             let state = self.lock_state.as_mut().expect("lock_state present");
             state.sync_data.record_write(nrrow, nrcolumn, true, &[true]);
 
@@ -277,6 +286,7 @@ impl Table {
                     path: state.path.display().to_string(),
                     message: e.to_string(),
                 })?;
+            state.flushed_generation = generation;
         }
 
         let state = self.lock_state.as_mut().expect("lock_state present");
@@ -362,6 +372,9 @@ impl Table {
         if self.kind == TableKind::Memory {
             return Ok(false);
         }
+        // Some write operations change only the data managers or the files
+        // on disk, which the change count of the rows does not see.
+        self.inner.note_change();
 
         let Some(state) = self.lock_state.as_mut() else {
             return Ok(false);

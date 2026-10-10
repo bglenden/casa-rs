@@ -5482,6 +5482,45 @@ mod lock_tests {
         );
     }
 
+    /// casacore raises the modify counter only when a write lock period
+    /// changed the table (`TableSyncData::write`, `PlainTable::putFile`): a
+    /// write lock released without a change publishes nothing, and a change
+    /// is published once, however many lock periods follow it.
+    #[test]
+    fn a_write_lock_that_changes_nothing_publishes_nothing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+        let lock_opts = LockOptions::new(LockMode::UserLocking);
+        let published = || {
+            let mut reader = Table::open_with_lock(opts.clone(), lock_opts.clone()).unwrap();
+            assert!(reader.lock(LockType::Read, 1).unwrap());
+            reader.locked_modify_counter().unwrap()
+        };
+        let before = published();
+
+        let mut writer = Table::open_with_lock(opts.clone(), lock_opts.clone()).unwrap();
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        assert_eq!(writer.row_count(), 1);
+        writer.unlock().unwrap();
+        assert_eq!(published(), before, "an unchanged write lock was published");
+
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        writer
+            .keywords_mut()
+            .upsert("CHANGED", Value::Scalar(ScalarValue::Bool(true)));
+        writer.unlock().unwrap();
+        assert_eq!(published(), before.wrapping_add(1));
+
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        writer.unlock().unwrap();
+        drop(writer);
+        assert_eq!(
+            published(),
+            before.wrapping_add(1),
+            "a change was published twice"
+        );
+    }
+
     #[test]
     fn lock_reloads_after_external_modification() {
         let tmp = tempfile::TempDir::new().unwrap();

@@ -261,6 +261,45 @@ fn table_write_lock_waits_for_another_process_in_the_request_list() {
     );
 }
 
+/// A holder that takes the write lock and changes nothing publishes nothing,
+/// as in casacore, so a writer that waited for it is not refused as stale.
+#[test]
+fn table_write_lock_admits_a_writer_after_a_holder_that_wrote_nothing() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let opts = create_test_table(tmp.path());
+    let helper = helper_binary();
+    let table_dir = opts.path().to_str().unwrap();
+    let locked_file = tmp.path().join("holder-locked.signal");
+    let release_file = tmp.path().join("holder-release.signal");
+
+    let mut holder = Command::new(&helper)
+        .args([
+            table_dir,
+            "hold_write_lock",
+            locked_file.to_str().unwrap(),
+            release_file.to_str().unwrap(),
+        ])
+        .spawn()
+        .expect("failed to spawn lock holder");
+    assert!(
+        wait_for_file(&locked_file, Duration::from_secs(10)),
+        "holder did not acquire its lock"
+    );
+
+    let table_path = opts.path().to_path_buf();
+    let waiter = thread::spawn(move || TableWriteLock::acquire(&table_path, 0));
+    let requested = wait_for_request_from_this_process(opts.path(), Duration::from_secs(8));
+    fs::write(&release_file, "release").unwrap();
+    let lock = waiter.join().unwrap();
+    let status = holder.wait().expect("lock holder wait failed");
+
+    assert!(status.success(), "lock holder should exit cleanly");
+    assert!(requested, "the waiting writer did not register");
+    lock.expect("a holder that wrote nothing does not make the waiting writer stale")
+        .release()
+        .unwrap();
+}
+
 /// A writer that waited is refused when the holder wrote the table in the
 /// meantime: what it read before waiting is stale.
 #[test]
