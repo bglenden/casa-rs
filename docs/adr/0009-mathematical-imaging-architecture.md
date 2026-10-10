@@ -131,7 +131,11 @@ row/channel/correlation selection semantics, reference-data and ephemeris
 identities, and input-model identities. Bulk samples remain bounded streams;
 snapshot does not mean materialization. (Amended 2026-10-09 on owner direction:
 nothing of casa-rs's is stored in the MeasurementSet, so there are no source
-identities, generations or marker files; see ADR-0008.)
+identities, generations or marker files; see ADR-0008. The reference-data,
+ephemeris and input-model identities above, and the model-completion authority
+and normal-state evidence below, are superseded by ADR-0016 rule 5 (no
+identity hashing; compare directly or by ownership), under the owner's
+decision C on #656.)
 
 Read and write sets are explicit. Scientific products use their planned
 per-member publication protocol after final complete-data reconciliation.
