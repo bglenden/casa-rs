@@ -133,6 +133,9 @@ pub struct ImagingOutcome {
     pub planned_products: PlannedContinuumGeneration,
     /// Payload-free authorized generation retained after publication.
     pub products: PublishedContinuumGeneration,
+    /// The charge of the memory `scientific` holds resident, released when
+    /// the outcome drops.
+    _retained: casa_imaging_runtime::Reservation,
 }
 
 impl ImagingOutcome {

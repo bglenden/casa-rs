@@ -220,6 +220,7 @@ fn run(
         scientific: products.scientific,
         planned_products: products.planned,
         products: products.published,
+        _retained: outcome.retained,
     })
 }
 

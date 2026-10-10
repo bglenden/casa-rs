@@ -75,6 +75,9 @@ pub(crate) struct ImagingOutcome {
     pub(crate) total_actual_minor_iterations: usize,
     pub(crate) visibility_products: Option<VisibilityProductCompletion>,
     pub(crate) planes_per_wave: Option<u32>,
+    /// The charge of the memory `scientific` holds resident, released with
+    /// it.
+    pub(crate) retained: Reservation,
 }
 
 /// Fixed parts of one run shared by every pass.
@@ -99,6 +102,9 @@ struct Run<'a> {
     /// Whether the initial pass also grids the sensitivity image
     /// (`Mode::Weight`): a kernel set with weight taps on any domain.
     weight_image: bool,
+    /// The charge of the memory the latest completion holds resident (its
+    /// normal state and model), held while it lives.
+    retained: Reservation,
 }
 
 /// One reconciled major cycle.
@@ -120,6 +126,7 @@ impl ImagingOutcome {
             total_actual_minor_iterations: 0,
             visibility_products: major.visibility,
             planes_per_wave: run.planes_per_wave,
+            retained: Reservation::none(),
         }
     }
 }
@@ -148,6 +155,7 @@ pub(crate) fn run(
     let major = run_phase("major cycle 1", &cancel, summary, || run.initial(!cleaning))?;
     let mut outcome = ImagingOutcome::initial(major, &run);
     if !cleaning {
+        outcome.retained = std::mem::replace(&mut run.retained, Reservation::none());
         return Ok(outcome);
     }
     let mut controller = Controller::new(&controls);
@@ -225,6 +233,7 @@ pub(crate) fn run(
         })?;
     }
     outcome.planes_per_wave = run.planes_per_wave;
+    outcome.retained = std::mem::replace(&mut run.retained, Reservation::none());
     Ok(outcome)
 }
 
@@ -386,6 +395,7 @@ impl<'a> Run<'a> {
             visibility_write: inputs.visibility_write,
             planes_per_wave: None,
             weight_image,
+            retained: Reservation::none(),
         };
         if run.visibility_write.is_some() {
             // The pass that writes is the initial one without cleaning and a
@@ -397,7 +407,7 @@ impl<'a> Run<'a> {
             } else {
                 (run.initial_modes(), false)
             };
-            if run.admit_pass(modes, with_model)?.0 != Residency::All {
+            if run.admit_pass(modes, with_model, 0)?.0 != Residency::All {
                 return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
             }
         }
@@ -407,12 +417,16 @@ impl<'a> Run<'a> {
     /// The initial major cycle: data and PSF, from an empty model; it writes
     /// visibilities when it is also final.
     fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
+        // The model is admitted with the pass, before it is allocated.
+        let (residency, pass) =
+            self.admit_pass(self.initial_modes(), false, self.lifecycle.resident_bytes())?;
         let model = self
             .lifecycle
             .prepare_final_model(self.lifecycle.initial_empty()?, [])?;
-        let (residency, _pass) = self.admit_pass(self.initial_modes(), false)?;
         let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(residency)?)?;
-        self.reconcile(cycle, true, last, residency)
+        let major = self.reconcile(cycle, true, last, residency)?;
+        self.retain(&major, pass)?;
+        Ok(major)
     }
 
     /// The major cycle after a minor cycle: the residual of the model updated
@@ -423,16 +437,40 @@ impl<'a> Run<'a> {
         terms: Vec<ModelDeltaTerm>,
         last: bool,
     ) -> Result<Major, ImagingError> {
+        // The retained charge still covers the normal state and model the
+        // pass refreshes; the pass adds its scratch and the new residual.
         let (normal_state, model) = completion.into_parts();
+        let (residency, pass) = self.admit_pass(ModeSet::DATA, true, 0)?;
         let model = self.lifecycle.prepare_final_model(model, terms)?;
-        let (residency, _pass) = self.admit_pass(ModeSet::DATA, true)?;
         let cycle = MajorCycle::refresh(
             self.problem,
             normal_state,
             model,
             self.normal_storage(residency)?,
         )?;
-        self.reconcile(cycle, false, last, residency)
+        let major = self.reconcile(cycle, false, last, residency)?;
+        self.retain(&major, pass)?;
+        Ok(major)
+    }
+
+    /// Hand the pass's charge on to what `major` holds resident: join it to
+    /// the retained charge and keep only the completion's resident bytes.
+    fn retain(&mut self, major: &Major, pass: Reservation) -> Result<(), ImagingError> {
+        let resident = major.completion.resident_bytes()?;
+        self.retained.join(pass);
+        if resident > self.retained.memory() {
+            // The pass's plan undercounted what it hands on.
+            self.retained.join(admit(
+                &self.host,
+                &self.policy,
+                &Demand {
+                    phase: "retained normal state",
+                    memory: resident - self.retained.memory(),
+                },
+            )?);
+        }
+        self.retained.retain(resident);
+        Ok(())
     }
 
     /// Run `cycle`'s pass and finish it. The initial pass grids the data;
@@ -515,13 +553,14 @@ impl<'a> Run<'a> {
     }
 
     /// The waves of a pass accumulating `modes`, with a model when
-    /// `with_model`, that fit the free memory, and the reservation of one
-    /// wave: planned once per major cycle for both the pass and its normal
-    /// storage, and held while the pass runs.
+    /// `with_model`, that fit the free memory beside `besides` bytes the
+    /// pass also allocates (an initial model), and the reservation of both:
+    /// planned once per major cycle for the pass and its normal storage.
     fn admit_pass(
         &self,
         modes: ModeSet,
         with_model: bool,
+        besides: u64,
     ) -> Result<(Residency, Reservation), ImagingError> {
         let domains = pass_domains(&self.domains, self.team.workers());
         let demand = WaveDemand {
@@ -532,7 +571,8 @@ impl<'a> Run<'a> {
             workers: self.team.workers(),
             backend: self.backend,
         };
-        let residency = Residency::plan(&demand, free_memory(&self.host, &self.policy));
+        let free = free_memory(&self.host, &self.policy).saturating_sub(besides);
+        let residency = Residency::plan(&demand, free);
         let planes = match residency {
             Residency::All => demand.planes(),
             Residency::Waves { planes_per_wave } => planes_per_wave,
@@ -542,7 +582,7 @@ impl<'a> Run<'a> {
             &self.policy,
             &Demand {
                 phase: "major-cycle pass",
-                memory: demand.bytes(planes),
+                memory: demand.bytes(planes) + besides,
             },
         )?;
         Ok((residency, reservation))

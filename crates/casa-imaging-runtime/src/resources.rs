@@ -142,10 +142,35 @@ pub struct Reservation {
 }
 
 impl Reservation {
+    /// A reservation holding nothing, for state not yet formed.
+    pub const fn none() -> Self {
+        Self { memory: 0 }
+    }
+
     /// Bytes held.
     #[must_use]
     pub const fn memory(&self) -> u64 {
         self.memory
+    }
+
+    /// Keep `memory` of the held bytes and release the rest: what a phase
+    /// hands on stays charged with that state when its scratch is released.
+    ///
+    /// # Panics
+    ///
+    /// When `memory` exceeds the bytes held.
+    pub fn retain(&mut self, memory: u64) {
+        assert!(
+            memory <= self.memory,
+            "a reservation retains at most what it holds"
+        );
+        RESERVED.fetch_sub(self.memory - memory, Ordering::AcqRel);
+        self.memory = memory;
+    }
+
+    /// Hold `other`'s bytes too, until this reservation drops.
+    pub fn join(&mut self, mut other: Self) {
+        self.memory += std::mem::take(&mut other.memory);
     }
 }
 
