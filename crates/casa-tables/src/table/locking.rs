@@ -100,6 +100,7 @@ impl Table {
             data_manager: options.data_manager,
             endian_format: options.endian_format,
             flushed_generation: table.inner.generation(),
+            unpublished_write: std::sync::atomic::AtomicBool::new(false),
         });
 
         Ok(table)
@@ -208,11 +209,25 @@ impl Table {
     /// Releases the current lock.
     ///
     /// If a write lock was held and the table changed since it was opened,
-    /// reloaded or last flushed, the table is flushed to disk first and the
-    /// change is published in the lock file's sync data, raising its modify
-    /// counter so other processes re-read the table. A write lock under
-    /// which nothing changed writes and publishes nothing, as casacore's
-    /// `PlainTable::putFile` writes only what changed.
+    /// reloaded or last flushed, the table is flushed to disk first. Every
+    /// write this handle made to the disk under the lock, by that flush or
+    /// earlier (a [`flush`](Table::flush), a save or a write plan's in-place
+    /// save), is then published in the lock file's sync data, raising its
+    /// modify counter so other processes re-read the table. A write is
+    /// published even when a [`resync`](Table::resync) has since reloaded
+    /// the table, and even when it failed after writing part of its change.
+    /// A write lock under which nothing reached the disk writes and
+    /// publishes nothing, as casacore's `PlainTable::putFile` writes and
+    /// announces only what changed.
+    ///
+    /// casacore announces each flush when it writes it; casa-rs announces the
+    /// lock period's writes once, when the lock is released. Other processes
+    /// read the announcement only when they take a lock, which they cannot do
+    /// before the write lock is released, so they see the same change.
+    ///
+    /// If the flush or the publication fails, the error is returned and the
+    /// lock is kept, with the write still to be published by a later
+    /// `unlock` or when the table is dropped.
     ///
     /// In permanent locking modes, this is a no-op (lock is held until close).
     ///
@@ -262,17 +277,24 @@ impl Table {
             return Ok(());
         }
 
-        // If write-locked with changes, flush them to disk and publish them.
+        // If write-locked with changes, flush them to disk. The save records
+        // its write before it starts, so a save that fails part way is still
+        // published, by a later unlock or the drop.
         if flush {
             if metadata_only {
                 self.save_metadata_only(save_opts)?;
             } else {
                 self.save(save_opts)?;
             }
-
-            // Publish the table as persisted, as casacore's putFile does.
             let generation = self.inner.generation();
             let state = self.lock_state.as_mut().expect("lock_state present");
+            state.flushed_generation = generation;
+        }
+
+        // Publish every write this lock period made to the disk, describing
+        // the table as persisted, as casacore's putFile does.
+        let state = self.lock_state.as_mut().expect("lock_state present");
+        if state.lock_file.has_lock(LockType::Write) && state.has_unpublished_write() {
             state.sync_data =
                 publish_persisted_write(&state.lock_file, &state.path).map_err(|e| {
                     TableError::LockIo {
@@ -280,10 +302,11 @@ impl Table {
                         message: e.to_string(),
                     }
                 })?;
-            state.flushed_generation = generation;
+            state
+                .unpublished_write
+                .store(false, std::sync::atomic::Ordering::Relaxed);
         }
 
-        let state = self.lock_state.as_mut().expect("lock_state present");
         state.lock_file.release().map_err(|e| TableError::LockIo {
             path: state.path.display().to_string(),
             message: e.to_string(),
@@ -360,6 +383,30 @@ impl Table {
     pub fn lock_options(&self) -> Option<&LockOptions> {
         self.lock_state.as_ref().map(|s| &s.options)
     }
+
+    /// Record that this handle is about to write the table directory at
+    /// `path`. Called by every persistence path before its first write.
+    ///
+    /// A write to the handle's own table under the write lock it holds is
+    /// published when the lock is released (see [`unlock`](Table::unlock)),
+    /// however the handle's state changes in between: a resync or reload
+    /// does not withdraw it, and a write that fails part way is still
+    /// published. A write to another directory, such as a copy, or made
+    /// without the write lock, is not recorded.
+    #[cfg(unix)]
+    pub(super) fn note_persisted_write(&self, path: &Path) {
+        let Some(state) = self.lock_state.as_ref() else {
+            return;
+        };
+        if state.lock_file.has_lock(LockType::Write) && same_directory(&state.path, path) {
+            state
+                .unpublished_write
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn note_persisted_write(&self, _path: &Path) {}
 
     #[cfg(unix)]
     pub(super) fn begin_write_operation(&mut self, operation: &str) -> Result<bool, TableError> {
@@ -467,4 +514,15 @@ impl Table {
     ) -> Result<R, TableError> {
         result
     }
+}
+
+/// Whether `a` and `b` name the same directory: the same path, or two
+/// spellings of one existing directory.
+#[cfg(unix)]
+fn same_directory(a: &Path, b: &Path) -> bool {
+    a == b
+        || matches!(
+            (std::fs::canonicalize(a), std::fs::canonicalize(b)),
+            (Ok(a), Ok(b)) if a == b
+        )
 }

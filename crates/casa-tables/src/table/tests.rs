@@ -5644,6 +5644,143 @@ mod lock_tests {
         );
     }
 
+    /// The modify counter published for the table at `opts`, read through a
+    /// new handle.
+    fn published_counter(opts: &TableOptions) -> u32 {
+        let mut reader =
+            Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+        assert!(reader.lock(LockType::Read, 1).unwrap());
+        reader.locked_modify_counter().unwrap()
+    }
+
+    fn set_id(table: &mut Table, id: i32) {
+        table
+            .row_accessor_mut()
+            .set_cell(0, "id", Value::Scalar(ScalarValue::Int32(id)))
+            .unwrap();
+    }
+
+    /// A write persisted under the write lock is published once when the
+    /// lock is released, whether the handle then still holds it, reloaded it
+    /// with a resync, or never flushed it itself; a resync that discards
+    /// changes that never reached the disk publishes nothing.
+    #[test]
+    fn a_persisted_write_is_published_once_even_after_a_resync() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+        let mut writer =
+            Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+        let mut expected = published_counter(&opts);
+        let mut lock_period = |write: &dyn Fn(&mut Table), publishes: bool| {
+            assert!(writer.lock(LockType::Write, 1).unwrap());
+            write(&mut writer);
+            writer.unlock().unwrap();
+            expected = expected.wrapping_add(u32::from(publishes));
+            assert_eq!(published_counter(&opts), expected);
+        };
+
+        // A flush followed by the unlock's own flush: one publication.
+        lock_period(
+            &|table| {
+                set_id(table, 2);
+                table.flush().unwrap();
+            },
+            true,
+        );
+        // A flush, then a resync.
+        lock_period(
+            &|table| {
+                set_id(table, 3);
+                table.flush().unwrap();
+                table.resync().unwrap();
+            },
+            true,
+        );
+        // Rows saved in place by a write plan, then a resync.
+        lock_period(
+            &|table| {
+                set_id(table, 4);
+                table
+                    .prepare_write()
+                    .save_selected_rows(&["id"], &[0])
+                    .unwrap();
+                table.resync().unwrap();
+            },
+            true,
+        );
+        // A change discarded by a resync before it reached the disk.
+        lock_period(
+            &|table| {
+                set_id(table, 5);
+                table.resync().unwrap();
+            },
+            false,
+        );
+        // Nothing at all.
+        lock_period(&|_| {}, false);
+
+        drop(writer);
+        let reopened = Table::open(opts).unwrap();
+        assert_eq!(
+            reopened.cell_accessor(0, "id").unwrap().scalar().unwrap(),
+            &ScalarValue::Int32(4)
+        );
+    }
+
+    /// Dropping a handle that holds the write lock publishes a write it
+    /// persisted and then reloaded.
+    #[test]
+    fn dropping_a_handle_publishes_a_write_persisted_before_a_resync() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+        let before = published_counter(&opts);
+        let mut writer =
+            Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        set_id(&mut writer, 2);
+        writer.flush().unwrap();
+        writer.resync().unwrap();
+        drop(writer);
+        assert_eq!(published_counter(&opts), before.wrapping_add(1));
+    }
+
+    /// An unlock whose flush fails returns the error and keeps the write
+    /// lock and the write it started; the next unlock flushes and publishes
+    /// it once.
+    #[test]
+    fn an_unlock_whose_flush_fails_keeps_the_lock_and_publishes_later() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+        let before = published_counter(&opts);
+        let mut writer =
+            Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        set_id(&mut writer, 2);
+
+        // The storage file becomes a directory, which the save cannot write.
+        // The save removes every other `table.f*` file, so the original is
+        // kept under another name.
+        let storage = opts.path().join("table.f0");
+        let hidden = opts.path().join("hidden-storage");
+        std::fs::rename(&storage, &hidden).unwrap();
+        std::fs::create_dir(&storage).unwrap();
+        std::fs::write(storage.join("blocker"), b"").unwrap();
+        assert!(writer.unlock().is_err(), "the blocked flush succeeded");
+        assert!(writer.has_lock(LockType::Write), "a failed unlock released");
+        std::fs::remove_dir_all(&storage).unwrap();
+        std::fs::rename(&hidden, &storage).unwrap();
+
+        writer.unlock().unwrap();
+        assert!(!writer.has_lock(LockType::Write));
+        drop(writer);
+        assert_eq!(published_counter(&opts), before.wrapping_add(1));
+        let reopened = Table::open(opts).unwrap();
+        assert_eq!(
+            reopened.cell_accessor(0, "id").unwrap().scalar().unwrap(),
+            &ScalarValue::Int32(2)
+        );
+    }
+
     #[test]
     fn lock_reloads_after_external_modification() {
         let tmp = tempfile::TempDir::new().unwrap();

@@ -69,8 +69,10 @@ and is refused before writing when another process wrote a table it released
 to wait. A released write lock publishes the table as persisted (rows,
 columns and one change counter per data manager, read from `table.dat`).
 An in-place writer publishes every table it started to write, so a write
-interrupted part way is announced; a locked table handle publishes only
-when it changed, as casacore's `PlainTable::putFile` does.
+interrupted part way is announced; a locked table handle publishes when it
+wrote the table under its write lock, even if it reloaded the table
+afterwards, and publishes nothing when nothing reached the disk, as
+casacore's `PlainTable::putFile` announces each write it makes.
 A conflicting handle in the same process is refused at once, because it may
 belong to the waiting thread. casa-rs does not yet release a lock it holds
 when another process requests it

@@ -10,14 +10,17 @@
 // The helper is a package bin target (`src/bin/lock_helper.rs`), so Cargo
 // builds it for tests and exposes `CARGO_BIN_EXE_lock_helper`.
 
+use std::collections::HashMap;
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
 use casa_tables::{
-    LockMode, LockOptions, LockType, Table, TableError, TableOptions, TableWriteLock,
+    ColumnBinding, DataManagerKind, LockMode, LockOptions, LockType, Table, TableError,
+    TableOptions, TableWriteLock,
 };
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
@@ -647,4 +650,258 @@ fn table_write_lock_survives_other_handles_in_this_process() {
     lock.release().unwrap();
     assert_eq!(published_modify_counter(&opts), counter_before + 1);
     assert!(another_process_takes_the_write_lock());
+}
+
+/// A `lock_helper held_reader` process: a reader in another process that
+/// holds the table open between its lock periods, as a casacore session
+/// does, so what it read stays cached until a published write tells it to
+/// re-read the table.
+struct HeldReader {
+    child: Child,
+    stdin: Option<ChildStdin>,
+    stdout: BufReader<ChildStdout>,
+}
+
+impl HeldReader {
+    fn open(table: &Path) -> Self {
+        let mut child = Command::new(helper_binary())
+            .args([table.to_str().unwrap(), "held_reader"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn the held reader");
+        let stdin = child.stdin.take();
+        let stdout = BufReader::new(child.stdout.take().expect("reader stdout"));
+        let mut reader = Self {
+            child,
+            stdin,
+            stdout,
+        };
+        assert_eq!(reader.reply(), "ready");
+        reader
+    }
+
+    fn reply(&mut self) -> String {
+        let mut line = String::new();
+        self.stdout.read_line(&mut line).expect("reader reply");
+        line.trim_end().to_owned()
+    }
+
+    /// Lock, read and unlock again: the `id` of row 0 and the modify counter
+    /// the reader sees.
+    fn read(&mut self) -> (i32, u32) {
+        let stdin = self.stdin.as_mut().expect("reader stdin");
+        writeln!(stdin, "read").expect("send read");
+        stdin.flush().expect("flush read");
+        let reply = self.reply();
+        let fields: Vec<&str> = reply.split(' ').collect();
+        match fields.as_slice() {
+            ["id", id, "counter", counter] => (id.parse().unwrap(), counter.parse().unwrap()),
+            _ => panic!("held reader replied {reply:?}"),
+        }
+    }
+}
+
+impl Drop for HeldReader {
+    fn drop(&mut self) {
+        drop(self.stdin.take());
+        let _ = self.child.wait();
+    }
+}
+
+/// A one-row table whose Int32 column `id` holds 1, with that write
+/// published. With `second_manager`, the String column `name` ("initial")
+/// is stored by StandardStMan and `id` by StManAipsIO; otherwise both are
+/// stored by StManAipsIO.
+fn create_published_table(dir: &Path, second_manager: bool) -> PathBuf {
+    let path = if second_manager {
+        let path = dir.join("two-managers.tbl");
+        let schema = casa_tables::TableSchema::new(vec![
+            casa_tables::ColumnSchema::scalar("id", PrimitiveType::Int32),
+            casa_tables::ColumnSchema::scalar("name", PrimitiveType::String),
+        ])
+        .unwrap();
+        let mut table = Table::with_schema(schema);
+        table
+            .add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(1))),
+                RecordField::new("name", Value::Scalar(ScalarValue::String("initial".into()))),
+            ]))
+            .unwrap();
+        let bindings = HashMap::from([(
+            "name".to_string(),
+            ColumnBinding {
+                data_manager: DataManagerKind::StandardStMan,
+                tile_shape: None,
+            },
+        )]);
+        table
+            .save_with_bindings(TableOptions::new(&path), &bindings)
+            .unwrap();
+        path
+    } else {
+        create_test_table(dir).path().to_path_buf()
+    };
+    let mut lock = TableWriteLock::acquire(&path, 1).unwrap();
+    lock.record_write();
+    lock.release().unwrap();
+    path
+}
+
+/// Run `write` on a handle that holds the table's write lock, then release
+/// the lock, while a reader in another process holds the table open. Returns
+/// the published modify counters before and after, and the `id` and counter
+/// the held reader sees when it locks again.
+fn write_under_a_held_reader(
+    table: &Path,
+    write: impl FnOnce(&mut Table, &Path),
+) -> (u32, u32, (i32, u32)) {
+    let opts = TableOptions::new(table);
+    let before = published_modify_counter(&opts);
+    let mut reader = HeldReader::open(table);
+    assert_eq!(reader.read(), (1, before));
+
+    let mut writer =
+        Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+    assert!(writer.lock(LockType::Write, 1).unwrap());
+    write(&mut writer, table);
+    writer.unlock().unwrap();
+    drop(writer);
+
+    let after = published_modify_counter(&opts);
+    (before, after, reader.read())
+}
+
+fn set_id(table: &mut Table, id: i32) {
+    table
+        .row_accessor_mut()
+        .set_cell(0, "id", Value::Scalar(ScalarValue::Int32(id)))
+        .unwrap();
+}
+
+fn cell(table: &Table, column: &str) -> ScalarValue {
+    table
+        .cell_accessor(0, column)
+        .and_then(|cell| cell.scalar())
+        .unwrap()
+        .clone()
+}
+
+/// A write flushed to disk and followed by a resync is still announced when
+/// the write lock is released, as casacore announces every flush that wrote
+/// (`PlainTable::putFile`): the resync makes the handle match the disk, but
+/// a reader holding the table open has not yet been told it changed.
+#[test]
+fn a_held_reader_sees_a_flushed_write_after_the_writer_resyncs() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let table = create_published_table(tmp.path(), false);
+    let (before, after, seen) = write_under_a_held_reader(&table, |writer, _| {
+        set_id(writer, 2);
+        writer.flush().unwrap();
+        writer.resync().unwrap();
+    });
+    assert_eq!(
+        seen,
+        (2, before + 1),
+        "the held reader kept its stale cache"
+    );
+    assert_eq!(after, before + 1, "the flushed write was not published");
+}
+
+/// Rows persisted in place by a write plan and followed by a resync are
+/// announced when the write lock is released.
+#[test]
+fn a_held_reader_sees_selected_rows_saved_before_the_writer_resyncs() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let table = create_published_table(tmp.path(), false);
+    let (before, after, seen) = write_under_a_held_reader(&table, |writer, _| {
+        set_id(writer, 2);
+        writer
+            .prepare_write()
+            .save_selected_rows(&["id"], &[0])
+            .unwrap();
+        writer.resync().unwrap();
+    });
+    assert_eq!(
+        seen,
+        (2, before + 1),
+        "the held reader kept its stale cache"
+    );
+    assert_eq!(after, before + 1, "the persisted rows were not published");
+}
+
+/// A write that fails after persisting part of its change, and is then
+/// discarded by a resync, still announces the part that reached the disk.
+/// The second data manager's storage file is replaced by a directory, which
+/// the in-place save cannot open after it has written the first.
+#[test]
+fn a_held_reader_sees_the_persisted_part_of_a_failed_write_after_a_resync() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let table = create_published_table(tmp.path(), true);
+    let (before, after, seen) = write_under_a_held_reader(&table, |writer, path| {
+        set_id(writer, 2);
+        writer
+            .row_accessor_mut()
+            .set_cell(
+                0,
+                "name",
+                Value::Scalar(ScalarValue::String("changed".into())),
+            )
+            .unwrap();
+        let managers = writer.data_manager_info();
+        let holding = |column: &str| {
+            managers
+                .iter()
+                .position(|dm| dm.columns.iter().any(|name| name == column))
+                .unwrap()
+        };
+        assert!(
+            holding("id") < holding("name"),
+            "the save must reach id's manager first: {managers:?}"
+        );
+        let storage = path.join(format!("table.f{}", managers[holding("name")].seq_nr));
+        let hidden = path.join("name-storage.hidden");
+        fs::rename(&storage, &hidden).unwrap();
+        fs::create_dir(&storage).unwrap();
+        fs::write(storage.join("blocker"), b"").unwrap();
+        let saved = writer
+            .prepare_write()
+            .save_selected_rows(&["id", "name"], &[0]);
+        fs::remove_dir_all(&storage).unwrap();
+        fs::rename(&hidden, &storage).unwrap();
+        assert!(saved.is_err(), "the blocked save succeeded");
+
+        writer.resync().unwrap();
+        assert_eq!(
+            cell(writer, "id"),
+            ScalarValue::Int32(2),
+            "id was not persisted"
+        );
+        assert_eq!(cell(writer, "name"), ScalarValue::String("initial".into()));
+    });
+    assert_eq!(
+        seen,
+        (2, before + 1),
+        "the held reader kept its stale cache"
+    );
+    assert_eq!(after, before + 1, "the persisted part was not published");
+}
+
+/// A write lock that changes nothing, and one whose change a resync discards
+/// before it reaches the disk, publish nothing, as in casacore.
+#[test]
+fn a_held_reader_sees_no_change_from_a_write_lock_that_wrote_nothing() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let table = create_published_table(tmp.path(), false);
+    let (before, after, seen) = write_under_a_held_reader(&table, |_, _| {});
+    assert_eq!(after, before, "an unchanged write lock was published");
+    assert_eq!(seen, (1, before));
+
+    let (before, after, seen) = write_under_a_held_reader(&table, |writer, _| {
+        set_id(writer, 2);
+        writer.resync().unwrap();
+        assert_eq!(cell(writer, "id"), ScalarValue::Int32(1));
+    });
+    assert_eq!(after, before, "a discarded change was published");
+    assert_eq!(seen, (1, before));
 }

@@ -32,7 +32,7 @@ pub use image_oracle_impl::{
 pub use lattice_oracle::LatticeOracle;
 pub use lattice_oracle_impl::CppLatticeStatisticsBenchResult;
 pub use oracle_runtime::OracleError;
-pub use table_oracle::TableOracle;
+pub use table_oracle::{HeldCppTableReader, TableOracle};
 pub use table_oracle_impl::{
     BulkScalarIoBenchResult, CellSliceBenchParams, CellSliceBenchResult, CppTableFixture,
     DeepCopyBenchResult, SetAlgebraBenchResult,

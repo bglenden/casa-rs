@@ -1979,10 +1979,21 @@ struct LockState {
     data_manager: DataManagerKind,
     endian_format: EndianFormat,
     /// The table's change count when its state last matched the disk (open,
-    /// reload or flush). Releasing a write lock writes and publishes the
-    /// table only when the count has moved since, as casacore's
-    /// `PlainTable::putFile` writes only what changed.
+    /// reload or flush). Releasing a write lock writes the table only when
+    /// the count has moved since, as casacore's `PlainTable::putFile` writes
+    /// only what changed.
     flushed_generation: u64,
+    /// Whether this handle has written the table on disk, or started to,
+    /// under the write lock it holds, and has not yet published that write
+    /// in the sync data. Releasing the lock publishes the write when this is
+    /// set, and only a successful publication clears it.
+    ///
+    /// It is set before a write starts, so a write that fails part way is
+    /// still announced. A reload never clears it: a [`Table::resync`] makes
+    /// the handle match the disk again, but other processes have not been
+    /// told that the disk changed. It is atomic because `Table::flush` and
+    /// `Table::save` write through a shared borrow.
+    unpublished_write: std::sync::atomic::AtomicBool,
 }
 
 #[cfg(unix)]
@@ -1990,6 +2001,13 @@ impl LockState {
     /// Whether the table changed since its state last matched the disk.
     fn has_unflushed_changes(&self, table: &TableImpl) -> bool {
         table.generation() != self.flushed_generation
+    }
+
+    /// Whether this lock period wrote the table on disk without yet
+    /// publishing the write.
+    fn has_unpublished_write(&self) -> bool {
+        self.unpublished_write
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -2452,15 +2470,19 @@ impl Drop for Table {
                             .with_data_manager(state.data_manager)
                             .with_endian_format(state.endian_format)
                     });
-
                     if let Some(save_opts) = save_opts {
-                        // Whatever part of the save reached the disk is
-                        // published, describing the table as persisted.
                         let _ = self.save(save_opts);
-                        if let Some(state) = self.lock_state.as_ref() {
-                            let _ = publish_persisted_write(&state.lock_file, &state.path);
-                        }
                     }
+                }
+
+                // Whatever part of this save, or of an earlier write under
+                // the lock, reached the disk is published, describing the
+                // table as persisted.
+                if let Some(state) = self.lock_state.as_ref()
+                    && state.lock_file.has_lock(LockType::Write)
+                    && state.has_unpublished_write()
+                {
+                    let _ = publish_persisted_write(&state.lock_file, &state.path);
                 }
             }
         }

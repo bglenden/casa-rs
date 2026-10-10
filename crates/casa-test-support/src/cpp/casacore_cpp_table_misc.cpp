@@ -124,6 +124,30 @@ void lock_read_relock_impl(const std::string& path, uint64_t* out_rows,
     table.unlock();
 }
 
+// A reader that keeps a table and its Int column "id" open between lock
+// periods, as a casacore session holding a table open does. What it read
+// stays cached in the column; a later lock re-reads the table only when the
+// sync data in table.lock says another process wrote it (PlainTable::lock,
+// ColumnSet::resync).
+struct HeldTableReader {
+    casacore::Table table;
+    casacore::ScalarColumn<casacore::Int> id;
+
+    explicit HeldTableReader(const std::string& path)
+        : table(path, casacore::TableLock(casacore::TableLock::UserLocking),
+                casacore::Table::Old),
+          id(table, "id") {}
+};
+
+// Take a read lock, read id(0) and release the lock, keeping the table open.
+int32_t held_reader_read_id_impl(HeldTableReader& reader) {
+    if (!reader.table.lock(casacore::FileLocker::Read, 1))
+        throw std::runtime_error("read lock was not acquired");
+    casacore::Int value = reader.id(0);
+    reader.table.unlock();
+    return value;
+}
+
 // ===== RefTable =====
 
 void write_ref_table_impl(const std::string& dir) {
@@ -519,6 +543,23 @@ int32_t cpp_table_lock_read_relock(const char* path, uint64_t* out_rows,
     try { lock_read_relock_impl(path, out_rows, out_columns); return 0;
     } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
     } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+int32_t cpp_table_held_reader_open(const char* path, void** out_reader,
+                                   char** out_error) {
+    try { *out_reader = new HeldTableReader(path); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+int32_t cpp_table_held_reader_read_id(void* reader, int32_t* out_id,
+                                      char** out_error) {
+    try {
+        *out_id = held_reader_read_id_impl(*static_cast<HeldTableReader*>(reader));
+        return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+void cpp_table_held_reader_close(void* reader) {
+    delete static_cast<HeldTableReader*>(reader);
 }
 int32_t cpp_table_verify_with_lock(const char* path, char** out_error) {
     try { verify_with_lock_impl(path); return 0;

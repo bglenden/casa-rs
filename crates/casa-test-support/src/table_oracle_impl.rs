@@ -514,6 +514,54 @@ pub(crate) fn cpp_lock_read_relock(path: &std::path::Path) -> Result<(u64, u32),
     Ok((rows, columns))
 }
 
+/// A C++ casacore `Table` and its `ScalarColumn<Int>` "id", opened with
+/// `UserLocking` and held open; closed with [`cpp_held_reader_close`].
+#[cfg(has_casacore_cpp)]
+pub(crate) struct CppHeldReaderHandle(std::ptr::NonNull<std::ffi::c_void>);
+
+/// Open the table at `path` in C++ casacore with `UserLocking`, without
+/// taking a lock, and keep it and its Int column "id" open.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_held_reader_open(path: &std::path::Path) -> Result<CppHeldReaderHandle, String> {
+    let c_path =
+        CasacoreOracleRuntime::c_path("table path", path).map_err(|error| error.to_string())?;
+    let mut reader: *mut std::ffi::c_void = std::ptr::null_mut();
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { cpp_table_held_reader_open(c_path.as_ptr(), &mut reader, &mut error) };
+    unsafe {
+        CasacoreOracleRuntime::cpp_status("table.held_reader_open", rc, error, cpp_table_free_error)
+    }
+    .map_err(|error| error.to_string())?;
+    std::ptr::NonNull::new(reader)
+        .map(CppHeldReaderHandle)
+        .ok_or_else(|| "the C++ reader returned a null table".to_owned())
+}
+
+/// Take a read lock on the held table, read `id(0)` and release the lock,
+/// keeping the table open.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_held_reader_read_id(reader: &mut CppHeldReaderHandle) -> Result<i32, String> {
+    let mut id: i32 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { cpp_table_held_reader_read_id(reader.0.as_ptr(), &mut id, &mut error) };
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "table.held_reader_read_id",
+            rc,
+            error,
+            cpp_table_free_error,
+        )
+    }
+    .map_err(|error| error.to_string())?;
+    Ok(id)
+}
+
+/// Close the held table.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_held_reader_close(reader: CppHeldReaderHandle) {
+    unsafe { cpp_table_held_reader_close(reader.0.as_ptr()) };
+}
+
 /// Times `nqueries` exact `ColumnsIndex` lookups for `key_value` on the `"id"`
 /// column of the table at `path` using the C++ casacore implementation.
 ///
