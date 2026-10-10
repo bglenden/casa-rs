@@ -66,11 +66,11 @@ pub fn finalize_source_access(
     );
     let planned = requirements.plan(budget)?;
     tracing::info!(
-        "selected-observation source plan: rows_per_block={} envelope_bytes={} minimum_bytes={} live_blocks={}",
-        planned.rows_per_block(),
-        planned.maximum_resident_bytes(),
-        minimum,
-        maximum_live_blocks,
+        rows_per_block = planned.rows_per_block(),
+        envelope_bytes = planned.maximum_resident_bytes(),
+        minimum_bytes = minimum,
+        live_blocks = maximum_live_blocks,
+        "selected-observation source plan"
     );
     let reservation = admit(
         host,

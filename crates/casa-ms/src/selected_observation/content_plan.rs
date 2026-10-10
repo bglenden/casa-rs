@@ -2,7 +2,7 @@
 
 use crate::{
     MeasurementSet, MsError, PointingDirectionBracket, PointingDirectionQuery,
-    SelectedPointingCatalogMeasurements, derived::engine::MsCalEngine,
+    SelectedPointingCatalogMeasurements, SelectedPointingQueryDomain, derived::engine::MsCalEngine,
 };
 use crate::{
     selected_observation_buffer::{
@@ -28,10 +28,28 @@ use super::row_selection::CompiledRowPredicate;
 /// coordinate arrays charged by size: one subtable cell at a time from
 /// ANTENNA, FIELD, OBSERVATION and POINTING, the predicate's DATA_DESCRIPTION
 /// table, the binding and source-slot vectors and the POINTING query domain.
-/// Each is at most a few kilobytes; the slack covers them without reading
-/// every subtable row to size them. It is charged to traversal as well, so
-/// it never decides which phase bounds a block.
+/// The two that grow with the observation are bounded by its stations and
+/// selected DATA_DESCRIPTION rows: a 512-station array's query domain is
+/// 512 × 40 B = 20 KiB, and the predicate's table holds 16 B per selected
+/// DATA_DESCRIPTION row, so 1,024 rows add 16 KiB. The slack covers them
+/// without reading every subtable row to size them, and
+/// [`construction_scratch_fits_slack`] checks that in debug builds. It is
+/// charged to traversal as well, so it never decides which phase bounds a
+/// block.
 const CONSTRUCTION_SLACK_BYTES: usize = 64 << 10;
+
+/// Whether the construction scratch that grows with the observation, the
+/// POINTING query domain and the predicate's DATA_DESCRIPTION table, fits
+/// [`CONSTRUCTION_SLACK_BYTES`].
+pub(super) fn construction_scratch_fits_slack(
+    source: &ObservationSource,
+    pointing_query_domain: Option<&SelectedPointingQueryDomain>,
+) -> bool {
+    let domain_bytes = pointing_query_domain.map_or(0, SelectedPointingQueryDomain::heap_bytes);
+    let data_description_bytes =
+        source.selection().data_descriptions().len() * size_of::<(u32, f64)>();
+    domain_bytes + data_description_bytes <= CONSTRUCTION_SLACK_BYTES
+}
 
 mod requirements;
 pub use requirements::SelectedObservationContentRequirements;
@@ -369,8 +387,8 @@ pub(crate) fn selected_content_requirements(
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let row_replay_fixed_bytes = BoundObservationSource::row_replay_fixed_bytes();
     let traversal_base_bytes = retained_bytes
-        // The generation encoder may retain the final row's shared projection
-        // payload while its source block is recycled.
+        // A margin of one row's shared projection payload over the per-row
+        // charges below.
         .checked_add(domain_projection_payload_bytes)
         .and_then(|bytes| bytes.checked_add(row_replay_fixed_bytes))
         .and_then(|bytes| bytes.checked_add(CONSTRUCTION_SLACK_BYTES))

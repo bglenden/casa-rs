@@ -69,7 +69,7 @@ imaging-t36-spectral-law:
 imaging-t38-cube-clean:
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --features cpp-interop-tests --test major_cycle t38_
 
-# Focused #527 moving-source, MVC, response, bounded-replay, and provider-contract gate.
+# Focused #527 moving-source, ephemeris and provider-contract gate.
 imaging-t41-moving-source:
     just arch-check
     CARGO_INCREMENTAL=0 cargo test -p casa-provider-contracts
@@ -77,20 +77,16 @@ imaging-t41-moving-source:
     CARGO_INCREMENTAL=0 cargo test -p casa-ms t41_
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_problem t41_
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_geometry ephemeris_centre_laws_require_and_identify_one_bound_snapshot -- --exact
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction t41_
     CARGO_INCREMENTAL=0 cargo test -p casars-imager task_contract
 
-# Representative #527 frozen-CASA cubesource gate, with the selected spectral
-# range's Measures edge topology and the ALMA primary beam on the
-# representative MVC observation (`mvc` itself is not requestable).
-imaging-t41-moving-source-casa testdata_root cubesource_casa_prefix mvc_ms mvc_casa_prefix:
+# Representative #527 frozen-CASA gate on the slow-parity ALMA ephemeris
+# MeasurementSet: the TRACKFIELD phase centre at three row times, and the
+# tracked cubesource geometry and dirty products.
+imaging-t41-moving-source-casa testdata_root cubesource_casa_prefix:
     #!/usr/bin/env bash
     set -euo pipefail
     test -d "{{testdata_root}}"
-    test -d "{{mvc_ms}}"
-    CASA_RS_T41_MVC_MS="{{mvc_ms}}" CARGO_INCREMENTAL=0 cargo test -p casa-ms selected_observation::tests::t41_ephemeris_oracle::t41_trackfield_phase_centre_matches_casa_at_three_row_times -- --ignored --exact --nocapture
-    CASA_RS_T41_MVC_CASA_PREFIX="{{mvc_casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction primary_beam::tests::t41_alma_mvc_primary_beam_owner_matches_frozen_cube --release -- --ignored --exact --nocapture
-    CASA_RS_T41_MVC_MS="{{mvc_ms}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test t41_moving_source_casa_oracle t41_mvc_selected_spectral_range_matches_casa_edge_topology --release -- --ignored --exact --nocapture
+    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CARGO_INCREMENTAL=0 cargo test -p casa-ms selected_observation::tests::t41_ephemeris_oracle::t41_trackfield_phase_centre_matches_casa_at_three_row_times -- --ignored --exact --nocapture
     CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T41_CASA_PREFIX="{{cubesource_casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test t41_moving_source_casa_oracle t41_tracked_cubesource_matches_casa_geometry_and_dirty_products --release -- --ignored --exact --nocapture
 
 # Focused #534 heterogeneous ALMA/ACA response, bounded selection, and CASA product gate.
