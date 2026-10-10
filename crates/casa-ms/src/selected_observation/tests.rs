@@ -828,7 +828,7 @@ fn selected_observation_rejects_missing_substituted_and_unexpected_ephemeris_bef
 }
 
 #[test]
-fn selected_observation_accepts_exact_ephemeris_and_certifies_its_retained_charge() {
+fn selected_observation_accepts_exact_ephemeris_within_its_budget() {
     let directory = tempfile::tempdir().expect("temporary exact ephemeris fixture");
     let path = directory.path().join("exact-ephemeris.ms");
     generate_fixture(&path);
@@ -850,24 +850,24 @@ fn selected_observation_accepts_exact_ephemeris_and_certifies_its_retained_charg
     )
     .expect("admit exact ephemeris fixture");
     let binding = ObservationSourceBinding::new(source_ordinal(source), budget)
-        .with_ephemeris(Some(ephemeris));
+        .with_ephemeris(Some(ephemeris.clone()));
     let reference_data_bytes = binding.reference_data_bytes();
-    let certificate =
-        BoundSelectedObservation::certify_residency(&problem, std::slice::from_ref(&binding))
-            .expect("certify exact ephemeris binding");
-
     assert!(reference_data_bytes > 0);
-    assert_eq!(
-        certificate.reference_data_bytes(source.input_ordinal()),
-        Some(reference_data_bytes)
-    );
-    assert_eq!(
-        certificate.aggregate_reference_data_bytes(),
-        reference_data_bytes
-    );
-    let bound = BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
+    BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
         .expect("open exact ephemeris binding");
-    assert_eq!(bound.residency_certificate(), &certificate);
+
+    let tight = ObservationSourceBinding::new(
+        source_ordinal(source),
+        SelectedObservationContentBudget::new(reference_data_bytes - 1, 1, 4),
+    )
+    .with_ephemeris(Some(ephemeris));
+    assert!(matches!(
+        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![tight]),
+        Err(super::BoundSelectedObservationError::ReferenceDataBudgetExceeded {
+            required_bytes,
+            ..
+        }) if required_bytes == reference_data_bytes
+    ));
 }
 
 #[test]
@@ -2063,13 +2063,6 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
             )
         })
         .collect();
-    let one_row_expected_bytes = one_row_bindings
-        .iter()
-        .map(|binding| binding.content_budget().available_bytes())
-        .sum::<usize>();
-    let one_row_residency =
-        BoundSelectedObservation::certify_residency(&problem, &one_row_bindings)
-            .expect("certify every one-row source budget");
     let two_row_measures = test_measures(&problem);
     let mut two_row_bindings: Vec<_> = sources
         .iter()
@@ -2096,34 +2089,10 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
         })
         .collect();
     two_row_bindings.reverse();
-    let two_row_expected_bytes = two_row_bindings
-        .iter()
-        .map(|binding| binding.content_budget().available_bytes())
-        .sum::<usize>();
-    let two_row_residency =
-        BoundSelectedObservation::certify_residency(&problem, &two_row_bindings)
-            .expect("certify reordered two-row source budgets");
     let one_row = BoundSelectedObservation::open(&problem, one_row_measures, one_row_bindings)
         .expect("bind canonical multi-source observation");
     let two_rows = BoundSelectedObservation::open(&problem, two_row_measures, two_row_bindings)
         .expect("bind reordered source budgets by snapshot position");
-
-    assert_eq!(one_row.residency_certificate(), &one_row_residency);
-    assert_eq!(two_rows.residency_certificate(), &two_row_residency);
-    assert_eq!(
-        one_row_residency.aggregate_resident_bytes(),
-        one_row_expected_bytes
-    );
-    assert_eq!(
-        two_row_residency.aggregate_resident_bytes(),
-        two_row_expected_bytes
-    );
-    assert_eq!(one_row_residency.peak_live_blocks(), 1);
-    assert_eq!(two_row_residency.peak_live_blocks(), 1);
-    assert_ne!(
-        one_row_residency, two_row_residency,
-        "per-source budget facts remain part of the opaque owner certificate"
-    );
 
     let shared_measures_bytes = test_measures(&problem).retained_bytes();
     for (source_index, source) in sources.iter().enumerate() {

@@ -117,9 +117,7 @@ pub use observation_owner::{
     SelectedObservationResolutionRequest, resolve_selected_observation,
 };
 #[cfg(unix)]
-pub use observation_owner::{
-    SelectedVisibilityStoragePlan, SelectedVisibilityWrite, SelectedVisibilityWriteTargets,
-};
+pub use observation_owner::{SelectedVisibilityWrite, SelectedVisibilityWriteTargets};
 pub use plot::{
     ListObsPlotExportFormat as MeasurementSetPlotExportFormat,
     ListObsPlotKind as MeasurementSetPlotKind, ListObsPlotPayload as MeasurementSetPlotPayload,
@@ -150,8 +148,8 @@ pub use selected_observation::{
     SelectedObservationContentPlan, SelectedObservationContentPlanError,
     SelectedObservationContentRequirements, SelectedObservationMeasures,
     SelectedObservationMeasuresError, SelectedObservationNumericGeometry,
-    SelectedObservationReferenceDataBudget, SelectedObservationResidencyCertificate,
-    SelectedObservationRow, SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
+    SelectedObservationReferenceDataBudget, SelectedObservationRow,
+    SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
     SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralWindow,
 };
 pub use selected_observation_buffer::{

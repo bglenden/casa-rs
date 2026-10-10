@@ -23,7 +23,6 @@ pub use access::{
 pub use bound_observation::{
     BoundSelectedObservation, BoundSelectedObservationError, DeferredSelectedObservationAccess,
     ObservationSourceBinding, SelectedObservationBlockSource,
-    SelectedObservationResidencyCertificate,
 };
 pub use content_plan::{
     SelectedObservationContentBudget, SelectedObservationContentPlan,

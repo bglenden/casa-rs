@@ -25,133 +25,31 @@ pub struct ObservationSourceBinding {
     pointing_query_domain: Option<SelectedPointingQueryDomain>,
 }
 
-/// Opaque storage-owner certificate for one complete selected-observation residency contract.
-///
-/// The certificate is derived only from the compiler's canonical source set and
-/// every source binding supplied to [`BoundSelectedObservation::open`]. Callers
-/// can inspect the aggregate hard bound and peak queue depth needed by a
-/// scheduler, but cannot construct or alter the per-source facts that bind those
-/// values to the retained owner.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SelectedObservationResidencyCertificate {
-    sources: Vec<SelectedObservationSourceResidency>,
-    aggregate_resident_bytes: usize,
-    aggregate_reference_data_bytes: usize,
-    peak_live_blocks: usize,
-    maximum_pointing_polynomial_terms: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct SelectedObservationSourceResidency {
-    measurement_set: usize,
-    content_budget: SelectedObservationContentBudget,
-    reference_data_bytes: usize,
-}
-
-impl SelectedObservationResidencyCertificate {
-    fn mint(
-        problem: &CompiledProblem,
-        bindings: &[ObservationSourceBinding],
-    ) -> Result<Self, BoundSelectedObservationError> {
-        let expected = problem.inputs().observation_snapshot().sources();
-        if bindings.len() != expected.len() {
-            return Err(BoundSelectedObservationError::BindingSetMismatch);
-        }
-        let mut aggregate_resident_bytes = 0_usize;
-        let mut aggregate_reference_data_bytes = 0_usize;
-        let mut peak_live_blocks = 0_usize;
-        let mut maximum_pointing_polynomial_terms = 0_usize;
-        let mut sources = Vec::with_capacity(expected.len());
-        for source in expected {
-            let measurement_set = source.input_ordinal();
-            let binding = source_binding(bindings, measurement_set)?;
-            let expected_ephemeris = problem.geometry().ephemeris_reference();
-            let actual_ephemeris = binding.ephemeris_identity();
-            if actual_ephemeris != expected_ephemeris {
-                return Err(BoundSelectedObservationError::EphemerisReferenceMismatch {
-                    measurement_set,
-                    expected: expected_ephemeris,
-                    actual: actual_ephemeris,
-                });
-            }
-            let content_budget = binding.content_budget();
-            let reference_data_bytes = binding.reference_data_bytes();
-            if reference_data_bytes > content_budget.available_bytes() {
-                return Err(BoundSelectedObservationError::ReferenceDataBudgetExceeded {
-                    measurement_set,
-                    required_bytes: reference_data_bytes,
-                    available_bytes: content_budget.available_bytes(),
-                });
-            }
-            aggregate_resident_bytes = aggregate_resident_bytes
-                .checked_add(content_budget.available_bytes())
-                .ok_or(BoundSelectedObservationError::ResidencyByteOverflow)?;
-            aggregate_reference_data_bytes = aggregate_reference_data_bytes
-                .checked_add(reference_data_bytes)
-                .ok_or(BoundSelectedObservationError::ReferenceDataByteOverflow)?;
-            peak_live_blocks = peak_live_blocks.max(content_budget.maximum_live_blocks());
-            maximum_pointing_polynomial_terms = maximum_pointing_polynomial_terms
-                .max(content_budget.maximum_pointing_polynomial_terms());
-            sources.push(SelectedObservationSourceResidency {
-                measurement_set,
-                content_budget,
-                reference_data_bytes,
-            });
-        }
-        Ok(Self {
-            sources,
-            aggregate_resident_bytes,
-            aggregate_reference_data_bytes,
-            peak_live_blocks,
-            maximum_pointing_polynomial_terms,
-        })
+/// Check that a binding carries the ephemeris the compiled geometry tracks,
+/// and that its reference data fits its content budget.
+fn check_reference_data(
+    problem: &CompiledProblem,
+    binding: &ObservationSourceBinding,
+) -> Result<(), BoundSelectedObservationError> {
+    let expected = problem.geometry().ephemeris_reference();
+    let actual = binding.ephemeris_identity();
+    if actual != expected {
+        return Err(BoundSelectedObservationError::EphemerisReferenceMismatch {
+            measurement_set: binding.measurement_set,
+            expected,
+            actual,
+        });
     }
-
-    /// Return the aggregate hard byte ceiling across every retained source owner.
-    #[must_use]
-    pub const fn aggregate_resident_bytes(&self) -> usize {
-        self.aggregate_resident_bytes
+    let available_bytes = binding.content_budget.available_bytes();
+    let required_bytes = binding.reference_data_bytes();
+    if required_bytes > available_bytes {
+        return Err(BoundSelectedObservationError::ReferenceDataBudgetExceeded {
+            measurement_set: binding.measurement_set,
+            required_bytes,
+            available_bytes,
+        });
     }
-
-    /// Return the exact immutable reference-data allocation retained by all bindings.
-    #[must_use]
-    pub const fn aggregate_reference_data_bytes(&self) -> usize {
-        self.aggregate_reference_data_bytes
-    }
-
-    /// Return the peak simultaneously live selected-content block count.
-    ///
-    /// Sources are traversed serially in canonical order, so this is the maximum
-    /// source-local queue depth rather than the sum of mutually exclusive depths.
-    #[must_use]
-    pub const fn peak_live_blocks(&self) -> usize {
-        self.peak_live_blocks
-    }
-
-    /// Return the largest source-local POINTING polynomial term ceiling.
-    #[must_use]
-    pub const fn maximum_pointing_polynomial_terms(&self) -> usize {
-        self.maximum_pointing_polynomial_terms
-    }
-
-    /// Return the exact source-local budget certified for one snapshot source.
-    #[must_use]
-    pub fn content_budget(
-        &self,
-        measurement_set: usize,
-    ) -> Option<SelectedObservationContentBudget> {
-        self.sources.iter().find_map(|source| {
-            (source.measurement_set == measurement_set).then_some(source.content_budget)
-        })
-    }
-
-    /// Return one source binding's exact retained reference-data allocation.
-    #[must_use]
-    pub fn reference_data_bytes(&self, measurement_set: usize) -> Option<usize> {
-        self.sources.iter().find_map(|source| {
-            (source.measurement_set == measurement_set).then_some(source.reference_data_bytes)
-        })
-    }
+    Ok(())
 }
 
 /// Find the one binding for a snapshot source.
@@ -266,14 +164,6 @@ impl DeferredSelectedObservationAccess {
         Self { measures, bindings }
     }
 
-    /// Derive the unchanged aggregate source-residency certificate without opening tables.
-    pub fn certify_residency(
-        &self,
-        problem: &CompiledProblem,
-    ) -> Result<SelectedObservationResidencyCertificate, BoundSelectedObservationError> {
-        BoundSelectedObservation::certify_residency(problem, &self.bindings)
-    }
-
     /// Open under fresh read locks only when execution admits this source owner.
     #[cfg(unix)]
     pub fn open(
@@ -297,7 +187,6 @@ impl DeferredSelectedObservationAccess {
 /// let _ = std::mem::size_of::<SelectedObservationBufferRequest>();
 /// ```
 pub struct BoundSelectedObservation {
-    residency: SelectedObservationResidencyCertificate,
     sources: Vec<BoundObservationSource>,
 }
 
@@ -340,18 +229,6 @@ impl BoundSelectedObservation {
                 measurement_set: source.input_ordinal(),
                 error: Box::new(error),
             })
-    }
-
-    /// Mint the opaque aggregate residency contract for a complete source-binding set.
-    ///
-    /// The same canonical derivation is repeated and retained by [`Self::open`],
-    /// allowing a scheduler to plan before opening while execution still fails
-    /// closed if a different owner or budget set is later supplied.
-    pub fn certify_residency(
-        problem: &CompiledProblem,
-        bindings: &[ObservationSourceBinding],
-    ) -> Result<SelectedObservationResidencyCertificate, BoundSelectedObservationError> {
-        SelectedObservationResidencyCertificate::mint(problem, bindings)
     }
 
     fn shared_bytes(
@@ -399,10 +276,12 @@ impl BoundSelectedObservation {
         bindings: Vec<ObservationSourceBinding>,
     ) -> Result<Self, BoundSelectedObservationError> {
         measures.validate_problem(problem)?;
-        let residency = SelectedObservationResidencyCertificate::mint(problem, &bindings)?;
         let expected = problem.inputs().observation_snapshot().sources();
         if bindings.len() != expected.len() {
             return Err(BoundSelectedObservationError::BindingSetMismatch);
+        }
+        for source in expected {
+            check_reference_data(problem, source_binding(&bindings, source.input_ordinal())?)?;
         }
         let mut sources = Vec::with_capacity(expected.len());
         let first_source_shared_bytes = Self::shared_bytes(
@@ -437,13 +316,7 @@ impl BoundSelectedObservation {
                 })?,
             );
         }
-        Ok(Self { residency, sources })
-    }
-
-    /// Return the exact aggregate residency certificate retained by this owner.
-    #[must_use]
-    pub const fn residency_certificate(&self) -> &SelectedObservationResidencyCertificate {
-        &self.residency
+        Ok(Self { sources })
     }
 
     #[cfg(test)]
@@ -647,9 +520,6 @@ pub enum BoundSelectedObservationError {
     /// The consumed source-binding graph exceeded the host byte domain.
     #[error("selected-observation binding-graph byte projection overflowed")]
     BindingGraphByteOverflow,
-    /// Aggregate selected-source residency exceeded the host byte domain.
-    #[error("selected-observation aggregate residency projection overflowed")]
-    ResidencyByteOverflow,
     /// Aggregate retained reference data exceeded the host byte domain.
     #[error("selected-observation reference-data residency projection overflowed")]
     ReferenceDataByteOverflow,

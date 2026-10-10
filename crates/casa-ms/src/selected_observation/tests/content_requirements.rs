@@ -40,10 +40,7 @@ fn t51_content_requirements_admit_the_exact_minimum_and_bound_live_blocks() {
 
     let access = access.with_content_budget(budget);
     assert_eq!(access.source_binding().content_budget(), budget);
-    let deferred = access.into_deferred();
-    let certificate = deferred.certify_residency(&problem).unwrap();
-    let opened = deferred.open(&problem).unwrap();
-    assert_eq!(opened.residency_certificate(), &certificate);
+    let opened = access.into_deferred().open(&problem).unwrap();
     let (_, samples) = stream(&problem, opened).unwrap();
     assert_eq!(samples.len(), 8);
 }
