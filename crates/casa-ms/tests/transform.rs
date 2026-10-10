@@ -583,6 +583,52 @@ fn finish_flag_row_mutation(
     session.finish_mutation().expect("finish mutation");
 }
 
+/// A mutation session writes only the MeasurementSet it locked: a batch
+/// given another MeasurementSet is refused before anything is written, and
+/// the session can still complete on its own MeasurementSet.
+#[test]
+fn a_mutation_session_refuses_a_batch_for_another_measurement_set() {
+    let first_dir = tempfile::tempdir().expect("tempdir");
+    let second_dir = tempfile::tempdir().expect("tempdir");
+    let first_path = common::create_msexplore_spectrum_fixture_ms(first_dir.path(), true, &[]);
+    let second_path = common::create_msexplore_spectrum_fixture_ms(second_dir.path(), true, &[]);
+    let mut first = MeasurementSet::open(&first_path).expect("open first MeasurementSet");
+    let mut second = MeasurementSet::open(&second_path).expect("open second MeasurementSet");
+    let flag_row_0 = |path: &std::path::Path| {
+        MeasurementSet::open(path)
+            .expect("reopen")
+            .main_table()
+            .cell_accessor(0, "FLAG_ROW")
+            .and_then(|cell| cell.scalar().cloned())
+            .expect("FLAG_ROW")
+    };
+    let second_before = flag_row_0(&second_path);
+
+    let mut session = start_flag_row_mutation(&mut first).expect("session on the first");
+    let refused = session.write_mutation_batch(
+        &mut second,
+        MeasurementSetMutationBatch {
+            row_indices: vec![0],
+            columns: vec![MeasurementSetMutationColumnBatch {
+                name: "FLAG_ROW".to_string(),
+                values: MeasurementSetMutationColumnValues::Scalars(vec![ScalarValue::Bool(
+                    !matches!(second_before, ScalarValue::Bool(true)),
+                )]),
+            }],
+        },
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(casa_ms::MeasurementSetWriteError::ForeignMeasurementSet { .. })
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(flag_row_0(&second_path), second_before);
+    finish_flag_row_mutation(session, &mut first);
+    assert_eq!(flag_row_0(&first_path), ScalarValue::Bool(true));
+}
+
 const WRITE_LOCK_PROBE_TABLE: &str = "CASA_RS_WRITE_LOCK_PROBE_TABLE";
 const WRITE_LOCK_HOLD_SIGNAL: &str = "CASA_RS_WRITE_LOCK_HOLD_SIGNAL";
 const WRITE_LOCK_HOLD_RELEASE: &str = "CASA_RS_WRITE_LOCK_HOLD_RELEASE";
