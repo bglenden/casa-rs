@@ -11,11 +11,11 @@
 use casa_imaging_model::AntennaResponseClass;
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
+use casa_types::measures::MeasuresProvider;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::position::MPosition;
-use casa_types::measures::{MeasuresProvider, MeasuresProviderState};
 use casa_types::{ArrayD, ArrayValue, ScalarValue, Value};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -62,7 +62,6 @@ pub struct MsCalEngine {
     /// Epoch reference used by MAIN.TIME.
     time_reference: EpochRef,
     measures: Option<Arc<dyn MeasuresProvider>>,
-    selected_observation_measures_state: Option<MeasuresProviderState>,
     selected_observation_ephemeris: Option<Arc<SelectedObservationEphemeris>>,
     azel_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
     hadec_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
@@ -204,7 +203,6 @@ impl MsCalEngine {
             observatory_position,
             time_reference,
             measures: Some(measures),
-            selected_observation_measures_state: None,
             selected_observation_ephemeris: None,
             azel_cache: RwLock::new(HashMap::new()),
             hadec_cache: RwLock::new(HashMap::new()),
@@ -218,7 +216,6 @@ impl MsCalEngine {
     pub(crate) fn new_selected_observation(
         ms: &MeasurementSet,
         measures: Arc<dyn MeasuresProvider>,
-        measures_state: MeasuresProviderState,
         ephemeris: Option<Arc<SelectedObservationEphemeris>>,
     ) -> MsResult<Self> {
         let antenna = ms.antenna()?;
@@ -283,7 +280,6 @@ impl MsCalEngine {
             observatory_position,
             time_reference: detect_time_reference(ms),
             measures: Some(measures),
-            selected_observation_measures_state: Some(measures_state),
             selected_observation_ephemeris: ephemeris,
             azel_cache: RwLock::new(HashMap::new()),
             hadec_cache: RwLock::new(HashMap::new()),
@@ -338,33 +334,12 @@ impl MsCalEngine {
             observatory_position,
             time_reference: EpochRef::UTC,
             measures: Some(measures),
-            selected_observation_measures_state: None,
             selected_observation_ephemeris: None,
             azel_cache: RwLock::new(HashMap::new()),
             hadec_cache: RwLock::new(HashMap::new()),
             parallactic_angle_cache: RwLock::new(HashMap::new()),
             mosaic_uvw_cache: RwLock::new(HashMap::new()),
         }
-    }
-
-    pub(crate) fn verify_selected_observation_measures(&self) -> MsResult<()> {
-        let expected = self.selected_observation_measures_state.ok_or_else(|| {
-            MsError::InvalidInput(
-                "geometry engine has no bounded Measures provider state".to_string(),
-            )
-        })?;
-        let measures = self.measures.as_ref().ok_or_else(|| {
-            MsError::InvalidInput("geometry engine has no Measures provider".to_string())
-        })?;
-        let actual = measures
-            .prepare_bounded_state()
-            .map_err(MsError::MeasuresRuntime)?;
-        if actual != Some(expected) {
-            return Err(MsError::MeasuresRuntime(format!(
-                "bounded provider state changed from {expected:?} to {actual:?}"
-            )));
-        }
-        Ok(())
     }
 
     /// Number of antennas.
@@ -540,21 +515,6 @@ impl MsCalEngine {
             .sample(field_id, ephemeris_mjd_tdb)
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
         self.sampled_ephemeris_direction_j2000(time_mjd_sec, sample)
-    }
-
-    pub(crate) fn tracked_field_direction_j2000(
-        &self,
-        time_mjd_sec: f64,
-        field_id: usize,
-        ephemeris: &SelectedObservationEphemeris,
-    ) -> MsResult<MDirection> {
-        let direction =
-            self.ephemeris_direction_j2000(time_mjd_sec, field_id, "TRACKFIELD", ephemeris)?;
-        let [offset_longitude, offset_latitude] = *self
-            .field_phase_offsets
-            .get(field_id)
-            .ok_or_else(|| MsError::InvalidInput(format!("FIELD_ID {field_id} out of range")))?;
-        shift_direction_true_angle(direction, offset_longitude, offset_latitude)
     }
 
     /// Evaluate an immutable ephemeris radial velocity at the CASA `MeasComet`
@@ -1707,17 +1667,6 @@ fn borrowed_measure_reference<'a>(
             Some(BorrowedMeasureReference::Fixed(refer))
         }
         _ => None,
-    }
-}
-
-pub(crate) fn selected_direction_reference_column<'a>(
-    table: &'a Table,
-    column: &str,
-) -> Option<&'a str> {
-    match borrowed_measure_reference(table, column) {
-        Some(BorrowedMeasureReference::VariableInt { ref_column, .. })
-        | Some(BorrowedMeasureReference::VariableString { ref_column }) => Some(ref_column),
-        Some(BorrowedMeasureReference::Fixed(_)) | None => None,
     }
 }
 

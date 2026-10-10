@@ -1182,14 +1182,7 @@ fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
         SelectedObservationContentBudget::new(1 << 20, 2, 64),
         casa_test_support::deterministic_measures_provider_for_identity([91; 32]),
     );
-    let resolved = resolve_selected_observation(request).expect("resolve C++ fixture");
-    let (_, access) = resolved.into_parts();
-    let storage = access
-        .selected_visibility_storage_plan(SelectedVisibilityWriteTargets::new(true, false))
-        .expect("MODEL_DATA storage plan");
-    assert_eq!(storage.additional_persistent_bytes(), 768);
-    assert_eq!(storage.maximum_cell_bytes(), 512);
-    assert_eq!(storage.write_buffer_bytes(), 1_024);
+    resolve_selected_observation(request).expect("resolve C++ fixture");
 
     let mut writer =
         SelectedVisibilityWrite::begin(&path, SelectedVisibilityWriteTargets::new(true, false))

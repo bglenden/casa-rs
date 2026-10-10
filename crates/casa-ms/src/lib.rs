@@ -117,9 +117,7 @@ pub use observation_owner::{
     SelectedObservationResolutionRequest, resolve_selected_observation,
 };
 #[cfg(unix)]
-pub use observation_owner::{
-    SelectedVisibilityStoragePlan, SelectedVisibilityWrite, SelectedVisibilityWriteTargets,
-};
+pub use observation_owner::{SelectedVisibilityWrite, SelectedVisibilityWriteTargets};
 pub use plot::{
     ListObsPlotExportFormat as MeasurementSetPlotExportFormat,
     ListObsPlotKind as MeasurementSetPlotKind, ListObsPlotPayload as MeasurementSetPlotPayload,
@@ -145,29 +143,21 @@ pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 pub use selected_observation::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
-    DeferredSelectedObservationAccess, ObservationSourceBinding, SelectedObservationBlock,
-    SelectedObservationBlockConsumer, SelectedObservationBlockIdentity,
-    SelectedObservationBlockIndex, SelectedObservationBlockIndexPlan,
-    SelectedObservationBlockSource, SelectedObservationCompletion,
+    DeferredSelectedObservationAccess, FilledObservationBlock, ObservationSourceBinding,
+    ProjectedObservationBlock, SelectedObservationBlock, SelectedObservationBlockSource,
     SelectedObservationContentBudget, SelectedObservationContentPlan,
     SelectedObservationContentPlanError, SelectedObservationContentRequirements,
-    SelectedObservationIndexedBlock, SelectedObservationMeasures, SelectedObservationMeasuresError,
-    SelectedObservationNumericBlock, SelectedObservationNumericGeometry,
-    SelectedObservationProjector, SelectedObservationReferenceDataBudget,
-    SelectedObservationReplayProof, SelectedObservationResidencyCertificate,
+    SelectedObservationMeasures, SelectedObservationMeasuresError,
+    SelectedObservationNumericGeometry, SelectedObservationReferenceDataBudget,
     SelectedObservationRow, SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
-    SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralRange,
-    SelectedObservationSpectralRangeMeasurements, SelectedObservationSpectralWindow,
-    SelectedObservationTerminal, SelectedObservationTraversalError,
-    SelectedObservationTraversalMeasurements, SelectedObservationTraversalRun,
-    SelectedObservationTraversalSample, SelectedObservationWindowCompletion,
+    SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralWindow,
 };
 pub use selected_observation_buffer::{
     SelectedNumericVisibility, SelectedNumericWeights, SelectedObservationNumericColumns,
 };
 pub(crate) use selected_observation_buffer::{
-    SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredSample,
-    SelectedStoredVisibility, SelectedVisibilityColumn, SelectedWeightColumn,
+    SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredRow,
+    SelectedVisibilityColumn, SelectedWeightColumn,
 };
 pub(crate) use selected_pointing::{
     PointingDirectionBracket, PointingDirectionColumn, PointingDirectionQuery, PointingReadPlan,

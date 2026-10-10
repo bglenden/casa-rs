@@ -834,10 +834,6 @@ impl SelectedRowSequenceAccumulator {
             self.used_data_description_ids.into_iter().collect(),
         )
     }
-
-    pub(crate) const fn observed_row_count(&self) -> u64 {
-        self.observed_row_count
-    }
 }
 
 /// One selected `DATA_DESCRIPTION` row and its exact coordinate pairing.

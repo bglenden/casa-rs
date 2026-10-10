@@ -82,8 +82,7 @@ pub use native_aw::{
 };
 
 pub use selected_observation::{
-    SelectedObservationCommitment, SelectedObservationCommitmentId, SelectedObservationInspection,
-    SelectedObservationInspectionError, SelectedObservationPassError, SelectedSampleEvaluation,
+    SelectedObservationCommitment, SelectedObservationCommitmentId, SelectedSampleEvaluation,
 };
 
 mod selected_numeric;
@@ -91,13 +90,9 @@ pub use selected_numeric::{SelectedNumericRow, SelectedNumericVisibility, Select
 
 pub use selected_observation_sample::{
     AntennaResponseClass, SelectedAntennaResponses, SelectedImageDomainProjection,
-    SelectedImageDomainProjections, SelectedInputWeightGroup, SelectedObservationRunChannel,
-    SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
-    SelectedObservationSampleView, SelectedPhaseCentreProjection, SelectedPointingDirections,
-    SelectedPredictionTarget, SelectedRowSpectralGeometry, SelectedSampleAddress,
-    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
-    SelectedSpectralContributions, SelectedSpectralEvaluation, SelectedSpectralInterval,
-    SelectedVisibilitySample,
+    SelectedImageDomainProjections, SelectedObservationRunChannel, SelectedObservationRunRow,
+    SelectedPhaseCentreProjection, SelectedPointingDirections, SelectedSampleCoordinates,
+    SelectedSampleMetadata,
 };
 
 pub use product_graph::{

@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Focused T41 moving-source gate against a frozen CASA Uranus cube, and the
-//! casa-ms Measures edge topology of the selected spectral range on the
-//! representative T41 observation.
+//! Focused T41 moving-source gate against a frozen CASA Uranus cube.
 
 use std::{
     error::Error,
@@ -13,11 +11,6 @@ use std::{
 use casa_coordinates::CoordinateModel;
 use casa_images::PagedImage;
 use casa_imaging_application::execute;
-use casa_imaging_model::SpectralWindowSelection;
-use casa_ms::{
-    MeasurementSet, MsSelectionIoBudget, SelectedObservationContentBudget,
-    SelectedObservationEphemeris, SelectedObservationRow,
-};
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 use casa_types::measures::frequency::FrequencyRef;
 use serde_json::json;
@@ -29,74 +22,6 @@ const DATASET: &str = "measurementset/alma/alma_ephemobj_icrs.ms";
 const CASA_PREFIX_ENV: &str = "CASA_RS_T41_CASA_PREFIX";
 const PRODUCTS: [&str; 5] = [".psf", ".residual", ".model", ".image", ".sumwt"];
 const SELECTED_SAMPLE_COUNT: u64 = 1_620 * 1_024 * 2;
-// The selected-range gate pins the casa-ms Measures edge topology on the
-// representative T41 observation; it executes no imaging.
-const MVC_MS_ENV: &str = "CASA_RS_T41_MVC_MS";
-
-#[test]
-#[ignore = "requires the representative T41 MS and frozen CASA MVC spectral coordinates"]
-fn t41_mvc_selected_spectral_range_matches_casa_edge_topology() -> Result<(), Box<dyn Error>> {
-    set_mmap_io_environment();
-    let measurement_set = MeasurementSet::open(required_table(MVC_MS_ENV)?)?;
-    let row_selection =
-        measurement_set.selected_observation_row_selection(&[0, 1], Some(&[1]), None, None)?;
-    let mut first_time_mjd_seconds = None;
-    let selection_io = MsSelectionIoBudget {
-        available_bytes: 64 << 20,
-        maximum_live_blocks: 2,
-        requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
-        storage_alignment_rows: None,
-    };
-    measurement_set.visit_selected_observation_rows(&row_selection, selection_io, |row| {
-        first_time_mjd_seconds.get_or_insert(row.time_mjd_seconds());
-    })?;
-    let first_time_mjd_seconds = first_time_mjd_seconds.ok_or("empty T41 selection")?;
-    let engine = casa_ms::derived::engine::MsCalEngine::new(&measurement_set)?;
-    let ephemeris = SelectedObservationEphemeris::tracked_fields(
-        &measurement_set,
-        [1],
-        SelectedObservationContentBudget::new(64 << 20, 2, 4).reference_data_budget(),
-    )?;
-    let phase =
-        engine.ephemeris_direction_j2000(first_time_mjd_seconds, 1, "TRACKFIELD", &ephemeris)?;
-    let range = measurement_set.selected_observation_spectral_range(
-        &row_selection,
-        &[
-            SpectralWindowSelection::new(0, (0..1_024).collect()),
-            SpectralWindowSelection::new(1, (0..256).collect()),
-        ],
-        FrequencyRef::TOPO,
-        FrequencyRef::LSRK,
-        1,
-        first_time_mjd_seconds,
-        phase,
-        Some(&ephemeris),
-        &engine,
-        selection_io,
-    )?;
-    let [low_hz, high_hz] = range.selected_edges_hz();
-    let [reference_low_hz, reference_high_hz] = range.reference_edges_hz();
-    let increment_hz = (high_hz - low_hz) / 40.0;
-    let first_centre_hz = low_hz.max(reference_low_hz) + increment_hz / 2.0;
-    let public_reference_hz = first_centre_hz + 19.5 * increment_hz;
-    eprintln!(
-        "t41_mvc_range low={low_hz:.17} high={high_hz:.17} reference_low={reference_low_hz:.17} reference_high={reference_high_hz:.17} first_centre={first_centre_hz:.17} public_reference={public_reference_hz:.17} rows={} evaluations={}",
-        range.measurements().selected_rows(),
-        range.measurements().edge_evaluations(),
-    );
-
-    // The current Rust Measures transform follows CASA's selected-row extrema
-    // algorithm and edge/centre topology. Its high-edge conversion differs by
-    // 4.22 Hz on this frozen observation, which this evidence gate bounds
-    // without changing either implementation's coordinates.
-    assert!((low_hz - 230_388_238_202.374_33).abs() <= 5.0);
-    assert!((high_hz - 235_307_541_333.341_28).abs() <= 5.0);
-    assert!((first_centre_hz - 230_449_729_492.188_84).abs() <= 5.0);
-    assert!((public_reference_hz - 232_847_889_768.535_16).abs() <= 5.0);
-    assert_eq!(range.measurements().selected_rows(), 3_240);
-    assert_eq!(range.measurements().edge_evaluations(), 120);
-    Ok(())
-}
 
 #[test]
 #[ignore = "requires slow-parity casatestdata and matching frozen CASA T41 products"]
@@ -291,14 +216,6 @@ fn assert_matching_wcs(rust_prefix: &Path, casa_prefix: &Path) -> Result<(), Box
         assert_eq!(spectral.world_frequency_ref(), FrequencyRef::REST);
     }
     Ok(())
-}
-
-fn required_table(name: &str) -> Result<PathBuf, Box<dyn Error>> {
-    let path = PathBuf::from(std::env::var_os(name).ok_or_else(|| format!("{name} is not set"))?);
-    if !path.is_dir() {
-        return Err(format!("{name} does not name a table: {}", path.display()).into());
-    }
-    Ok(path)
 }
 
 fn copy_tree(source: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {

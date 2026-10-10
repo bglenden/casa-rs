@@ -11,7 +11,6 @@ use serde::Deserialize;
 use std::{collections::BTreeMap, error::Error, fs, path::Path};
 
 const DATASET: &str = "measurementset/alma/alma_ephemobj_icrs.ms";
-const MVC_MS_ENV: &str = "CASA_RS_T41_MVC_MS";
 const ORACLE: &str = include_str!("../../../tests/fixtures/t41_trackfield_casa_6_7_6_14.json");
 const FIELD_ID: u32 = 1;
 const DATA_DESCRIPTION_ID: u32 = 0;
@@ -42,10 +41,8 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
     assert_eq!(oracle.casa_version, "6.7.6-14");
     assert_eq!(oracle.samples.len(), 3);
 
-    let source = std::env::var_os(MVC_MS_ENV)
-        .map(std::path::PathBuf::from)
-        .or_else(|| casatestdata_path_for_tier(CasaTestDataTier::SlowParity, DATASET))
-        .ok_or("T41 MVC MeasurementSet is unavailable")?;
+    let source = casatestdata_path_for_tier(CasaTestDataTier::SlowParity, DATASET)
+        .ok_or("the slow-parity ALMA ephemeris MeasurementSet is unavailable")?;
     let staging = tempfile::tempdir()?;
     let measurement_set = staging.path().join("alma_ephemobj_icrs.ms");
     MeasurementSet::open(&source)?.save_as(&measurement_set)?;
@@ -179,17 +176,15 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
         "the production observation snapshot must commit the same ephemeris identity",
     );
 
-    let mut bound = access.open(&problem)?;
+    let (_, samples) = stream(&problem, access.open(&problem)?)?;
     let mut actual = BTreeMap::new();
-    let completion = bound.traverse(&problem, |sample| {
-        let selected = sample.selected();
-        actual.entry(selected.address().physical_row).or_insert((
-            selected.coordinates().time.mjd_days(),
-            selected.coordinates().phase_direction,
+    for sample in &samples {
+        actual.entry(sample.row.physical_row).or_insert((
+            sample.row.coordinates.time.mjd_days(),
+            sample.row.coordinates.phase_direction,
         ));
-        Ok::<_, std::convert::Infallible>(())
-    })?;
-    assert_eq!(completion.sample_count(), 6);
+    }
+    assert_eq!(samples.len(), 6);
     assert_eq!(actual.len(), 3);
 
     for expected in &oracle.samples {

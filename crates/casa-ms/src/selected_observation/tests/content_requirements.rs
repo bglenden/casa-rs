@@ -4,13 +4,13 @@ use super::*;
 use crate::SelectedObservationContentPlanError;
 
 #[test]
-fn t51_content_requirements_admit_the_exact_minimum_and_bound_live_blocks() {
+fn t51_content_requirements_admit_the_exact_minimum() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("requirements.ms");
     generate_fixture(&path);
     let (problem, access) = owner_problem_and_access(owner_resolution_request(&path, 2));
     let requirements = access.content_requirements(&problem).unwrap();
-    let minimum = requirements.minimum_bytes(2).unwrap();
+    let minimum = requirements.minimum_bytes().unwrap();
     assert!(
         requirements
             .plan(SelectedObservationContentBudget::new(minimum - 1, 2, 4))
@@ -21,16 +21,11 @@ fn t51_content_requirements_admit_the_exact_minimum_and_bound_live_blocks() {
     assert!(plan.rows_per_block() >= 1);
     assert_eq!(plan.maximum_resident_bytes(), minimum);
     assert_eq!(
-        requirements.bytes_for_rows(usize::MAX, 2).unwrap(),
-        requirements.bytes_for_rows(2, 2).unwrap()
+        requirements.bytes_for_rows(usize::MAX).unwrap(),
+        requirements.bytes_for_rows(2).unwrap()
     );
-    assert!(requirements.minimum_bytes(3).unwrap() >= minimum);
     assert!(matches!(
-        requirements.bytes_for_rows(0, 2),
-        Err(SelectedObservationContentPlanError::InvalidBudget)
-    ));
-    assert!(matches!(
-        requirements.minimum_bytes(0),
+        requirements.bytes_for_rows(0),
         Err(SelectedObservationContentPlanError::InvalidBudget)
     ));
     assert!(matches!(
@@ -38,72 +33,11 @@ fn t51_content_requirements_admit_the_exact_minimum_and_bound_live_blocks() {
         Err(SelectedObservationContentPlanError::InvalidBudget)
     ));
 
-    let access = access
-        .with_content_budget(&problem, &requirements, budget)
-        .unwrap();
+    let access = access.with_content_budget(budget);
     assert_eq!(access.source_binding().content_budget(), budget);
-    let deferred = access.into_deferred();
-    let certificate = deferred.certify_residency(&problem).unwrap();
-    let mut opened = deferred.open(&problem).unwrap();
-    assert_eq!(opened.residency_certificate(), &certificate);
-    opened
-        .traverse(&problem, |_| Ok::<_, Infallible>(()))
-        .unwrap();
-}
-
-#[test]
-fn t51_content_requirements_cannot_finalize_another_source() {
-    let directory = tempfile::tempdir().unwrap();
-    let first = directory.path().join("first.ms");
-    let second = directory.path().join("second.ms");
-    for path in [&first, &second] {
-        generate_fixture(path);
-    }
-    let (first_problem, first_access) =
-        owner_problem_and_access(owner_resolution_request(&first, 2));
-    let (second_problem, second_access) =
-        owner_problem_and_access(owner_resolution_request(&second, 2));
-    let requirements = first_access.content_requirements(&first_problem).unwrap();
-    let budget =
-        SelectedObservationContentBudget::new(requirements.minimum_bytes(1).unwrap(), 1, 4);
-    assert!(matches!(
-        second_access.with_content_budget(&second_problem, &requirements, budget),
-        Err(super::super::BoundSelectedObservationError::ProblemMismatch)
-    ));
-}
-
-#[test]
-fn t51_content_requirements_reject_equal_science_with_different_provenance() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("provenance.ms");
-    generate_fixture(&path);
-    let (first_problem, first_access) = owner_problem_and_access(
-        owner_resolution_request_with_identity(&path, 2, identity(211)),
-    );
-    let (second_problem, second_access) = owner_problem_and_access(
-        owner_resolution_request_with_identity(&path, 2, identity(212)),
-    );
-    assert_eq!(first_problem.problem_id(), second_problem.problem_id());
-    assert_ne!(
-        first_problem
-            .inputs()
-            .observation_snapshot()
-            .provenance_id(),
-        second_problem
-            .inputs()
-            .observation_snapshot()
-            .provenance_id(),
-    );
-    let requirements = first_access.content_requirements(&first_problem).unwrap();
-    let budget =
-        SelectedObservationContentBudget::new(requirements.minimum_bytes(1).unwrap(), 1, 4);
-    assert!(matches!(
-        second_access.with_content_budget(&second_problem, &requirements, budget),
-        Err(super::super::BoundSelectedObservationError::ProblemMismatch),
-    ));
-    first_access
-        .with_content_budget(&first_problem, &requirements, budget)
-        .unwrap();
+    let opened = access.into_deferred().open(&problem).unwrap();
+    let (_, samples) = stream(&problem, opened).unwrap();
+    assert_eq!(samples.len(), 8);
 }
 
 #[test]
@@ -119,27 +53,26 @@ fn t51_content_requirements_catalog_budget_charges_shared_source_plan_once() {
     let source = &problem.inputs().observation_snapshot().sources()[0];
     let measurement_set = MeasurementSet::open_retained_read(&path).unwrap();
     let budget = SelectedObservationContentBudget::new(1 << 20, 2, 4);
-    let base = SelectedObservationSharedBytes::new(97, 31, 211, 79);
+    let base = SelectedObservationSharedBytes::new(97, 31);
     let with_source = base.with_source_plan_retained_bytes(4096);
     let unreserved =
-        selected_pointing_catalog_budget(&measurement_set, &problem, source, base, budget).unwrap();
+        selected_pointing_catalog_budget(&measurement_set, source, base, budget).unwrap();
     let reserved =
-        selected_pointing_catalog_budget(&measurement_set, &problem, source, with_source, budget)
-            .unwrap();
+        selected_pointing_catalog_budget(&measurement_set, source, with_source, budget).unwrap();
     assert_eq!(unreserved - reserved, 4096);
     let requirements = |shared| {
         selected_content_requirements(&measurement_set, &problem, source, shared, 4, None, 0)
             .unwrap()
     };
     assert_eq!(
-        requirements(with_source).minimum_bytes(2).unwrap()
-            - requirements(base).minimum_bytes(2).unwrap(),
+        requirements(with_source).minimum_bytes().unwrap()
+            - requirements(base).minimum_bytes().unwrap(),
         4096
     );
     assert!(
-        requirements(base).minimum_bytes(2).unwrap()
+        requirements(base).minimum_bytes().unwrap()
             > requirements(SelectedObservationSharedBytes::NONE)
-                .minimum_bytes(2)
+                .minimum_bytes()
                 .unwrap()
     );
 }
@@ -245,8 +178,7 @@ fn whole_cell_reads_charge_the_stored_cell_and_admit_fewer_rows() {
         .content_requirements(&standard_problem)
         .unwrap();
     let per_row = |requirements: crate::SelectedObservationContentRequirements| {
-        requirements.bytes_for_rows(ROWS, 1).unwrap()
-            - requirements.bytes_for_rows(ROWS - 1, 1).unwrap()
+        requirements.bytes_for_rows(ROWS).unwrap() - requirements.bytes_for_rows(ROWS - 1).unwrap()
     };
     assert!(
         per_row(standard) >= full_cell_bytes,
@@ -255,8 +187,7 @@ fn whole_cell_reads_charge_the_stored_cell_and_admit_fewer_rows() {
     );
     assert!(per_row(tiled) < full_cell_bytes);
 
-    let budget =
-        SelectedObservationContentBudget::new(standard.bytes_for_rows(2, 1).unwrap(), 1, 4);
+    let budget = SelectedObservationContentBudget::new(standard.bytes_for_rows(2).unwrap(), 1, 4);
     let standard_rows = standard.plan(budget).unwrap().rows_per_block();
     let tiled_rows = tiled.plan(budget).unwrap().rows_per_block();
     assert_eq!(standard_rows, 2);
@@ -266,14 +197,17 @@ fn whole_cell_reads_charge_the_stored_cell_and_admit_fewer_rows() {
     );
 
     // The whole-cell layout reads through the bounded traversal it was
-    // planned for.
-    let mut opened = standard_access
-        .with_content_budget(&standard_problem, &standard, budget)
-        .unwrap()
-        .into_deferred()
-        .open(&standard_problem)
-        .unwrap();
-    opened
-        .traverse(&standard_problem, |_| Ok::<_, Infallible>(()))
-        .unwrap();
+    // planned for, and yields what the channel-bounded layout yields.
+    let samples = |problem, access: crate::ResolvedSelectedObservationAccess| {
+        let opened = access
+            .with_content_budget(budget)
+            .into_deferred()
+            .open(problem)
+            .unwrap();
+        stream(problem, opened).unwrap().1
+    };
+    assert_eq!(
+        samples(&standard_problem, standard_access),
+        samples(&tiled_problem, tiled_access)
+    );
 }

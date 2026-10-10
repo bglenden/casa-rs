@@ -2,7 +2,7 @@
 
 use std::mem::size_of;
 
-use crate::{MainRowSelectionFact, SelectedStoredSample};
+use crate::{MainRowSelectionFact, SelectedStoredRow};
 use casa_imaging_model::{
     AntennaSelection, DataDescriptionSelection, IdSelection, IntentSelection, ObservationSource,
     RowSelection, SelectionBound, TimeSelection, UvDistanceUnit, UvSelection,
@@ -40,8 +40,8 @@ impl From<MainRowSelectionFact> for StoredMainRow {
     }
 }
 
-impl From<SelectedStoredSample> for StoredMainRow {
-    fn from(sample: SelectedStoredSample) -> Self {
+impl From<SelectedStoredRow> for StoredMainRow {
+    fn from(sample: SelectedStoredRow) -> Self {
         Self {
             data_description_id: sample.data_description_id(),
             field_id: sample.field_id(),
@@ -186,26 +186,6 @@ impl CompiledRowPredicate {
             && id_matches(selection.observations(), row.observation_id)
             && intent_matches(selection.intents(), row.state_id)
             && id_matches(selection.arrays(), row.array_id)
-    }
-
-    pub(crate) fn requires_every_source_row(&self, data_description_count: usize) -> bool {
-        let selection = self.catalog.selection();
-        let data_descriptions = self.catalog.data_descriptions();
-        matches!(selection.fields(), IdSelection::All)
-            && matches!(selection.times(), TimeSelection::All)
-            && matches!(selection.uv_distances(), UvSelection::All)
-            && matches!(selection.antennas(), AntennaSelection::All)
-            && matches!(selection.scans(), IdSelection::All)
-            && matches!(selection.observations(), IdSelection::All)
-            && matches!(selection.intents(), IntentSelection::All)
-            && matches!(selection.arrays(), IdSelection::All)
-            && data_descriptions.len() == data_description_count
-            && data_descriptions
-                .iter()
-                .enumerate()
-                .all(|(index, description)| {
-                    usize::try_from(description.data_description_id()).ok() == Some(index)
-                })
     }
 }
 

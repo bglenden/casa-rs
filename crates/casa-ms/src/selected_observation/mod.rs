@@ -9,7 +9,6 @@
 mod access;
 mod bound_observation;
 mod content_plan;
-mod indexed_block;
 mod measures;
 mod row_access;
 mod row_selection;
@@ -17,47 +16,23 @@ mod spectral_evaluation;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use access::{
-    BoundObservationSamples, BoundObservationSource, validate_selected_coordinates,
-};
+pub(crate) use access::BoundObservationSource;
 pub use access::{
-    BoundObservationSourceError, SelectedObservationBlock, SelectedObservationBlockIdentity,
-    SelectedObservationNumericBlock, SelectedObservationNumericGeometry,
+    BoundObservationSourceError, FilledObservationBlock, ProjectedObservationBlock,
+    SelectedObservationBlock, SelectedObservationNumericGeometry,
 };
 pub use bound_observation::{
     BoundSelectedObservation, BoundSelectedObservationError, DeferredSelectedObservationAccess,
-    ObservationSourceBinding, SelectedObservationBlockConsumer, SelectedObservationBlockSource,
-    SelectedObservationCompletion, SelectedObservationReplayProof,
-    SelectedObservationResidencyCertificate, SelectedObservationTerminal,
-    SelectedObservationTraversalError, SelectedObservationTraversalMeasurements,
-    SelectedObservationWindowCompletion,
+    ObservationSourceBinding, SelectedObservationBlockSource,
 };
 pub use content_plan::{
     SelectedObservationContentBudget, SelectedObservationContentPlan,
     SelectedObservationContentPlanError, SelectedObservationContentRequirements,
     SelectedObservationReferenceDataBudget,
 };
-pub use indexed_block::{
-    SelectedObservationBlockIndex, SelectedObservationBlockIndexPlan,
-    SelectedObservationIndexedBlock, SelectedObservationProjector,
-};
 pub use measures::{SelectedObservationMeasures, SelectedObservationMeasuresError};
 pub use row_access::{SelectedObservationRow, SelectedObservationRowSelection};
 pub use spectral_evaluation::{
     SelectedObservationSpectralEnvelope, SelectedObservationSpectralEnvelopeReducer,
-    SelectedObservationSpectralRange, SelectedObservationSpectralRangeMeasurements,
-    SelectedObservationSpectralWindow, SelectedObservationTraversalRun,
-    SelectedObservationTraversalSample,
+    SelectedObservationSpectralWindow,
 };
-
-fn maximum_selected_correlations(problem: &casa_imaging_model::CompiledProblem) -> usize {
-    problem
-        .selected_observation()
-        .read_set()
-        .sources()
-        .iter()
-        .flat_map(|source| source.selection().correlations())
-        .map(|selection| selection.products().len())
-        .max()
-        .unwrap_or(0)
-}

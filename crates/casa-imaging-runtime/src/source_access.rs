@@ -52,7 +52,7 @@ pub fn finalize_source_access(
         .source_binding()
         .content_budget()
         .maximum_live_blocks();
-    let minimum = requirements.minimum_bytes(maximum_live_blocks)?;
+    let minimum = requirements.minimum_bytes()?;
     let free = usize::try_from(free_memory(host, policy)).unwrap_or(usize::MAX);
     let growth = bootstrap_source_budget()
         .available_bytes()
@@ -65,6 +65,13 @@ pub fn finalize_source_access(
         requirements.maximum_pointing_polynomial_terms(),
     );
     let planned = requirements.plan(budget)?;
+    tracing::info!(
+        rows_per_block = planned.rows_per_block(),
+        envelope_bytes = planned.maximum_resident_bytes(),
+        minimum_bytes = minimum,
+        live_blocks = maximum_live_blocks,
+        "selected-observation source plan"
+    );
     let reservation = admit(
         host,
         policy,
@@ -79,8 +86,5 @@ pub fn finalize_source_access(
         maximum_live_blocks,
         requirements.maximum_pointing_polynomial_terms(),
     );
-    Ok((
-        access.with_content_budget(problem, &requirements, budget)?,
-        reservation,
-    ))
+    Ok((access.with_content_budget(budget), reservation))
 }

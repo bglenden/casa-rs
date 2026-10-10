@@ -19,10 +19,8 @@ use crate::model_state::{
 use crate::observation::{FlagPolicy, ObservationSnapshot, ObservationSnapshotId, WeightColumn};
 use crate::product_graph::{ProductGraph, compile_product_graph};
 use crate::selected_observation::{
-    SelectedObservationCommitment, SelectedObservationInspection, SelectedObservationPassError,
-    compile_selected_observation_commitment, inspect_selected_observation,
+    SelectedObservationCommitment, compile_selected_observation_commitment,
 };
-use crate::selected_observation_sample::SelectedObservationSample;
 use crate::transaction::{
     ObservationTransactionCompileError, ObservationTransactionContract,
     ObservationTransactionRequirements, compile_observation_transaction,
@@ -2160,33 +2158,6 @@ impl CompiledProblem {
     #[must_use]
     pub const fn selected_observation(&self) -> &SelectedObservationCommitment {
         &self.selected_observation
-    }
-
-    /// Validate and consume one canonical selected-observation sample pass.
-    ///
-    /// Each sample is scientifically validated before reaching `consume`. The
-    /// inspection state never escapes this closed
-    /// call. This does not prove retained source access or mint completion.
-    pub fn inspect_selected_observation<E>(
-        &self,
-        samples: impl IntoIterator<Item = Result<SelectedObservationSample, E>>,
-        consume: impl FnMut(SelectedObservationSample) -> Result<(), E>,
-    ) -> Result<u64, SelectedObservationPassError<E>> {
-        inspect_selected_observation(
-            &self.selected_observation,
-            self.observation_transaction.write_set(),
-            samples,
-            consume,
-        )
-    }
-
-    /// Begin incremental validation for one bounded canonical selected-observation pass.
-    #[must_use]
-    pub fn begin_selected_observation_inspection(&self) -> SelectedObservationInspection<'_> {
-        SelectedObservationInspection::new(
-            &self.selected_observation,
-            self.observation_transaction.write_set(),
-        )
     }
 
     /// Return numerical requirements.

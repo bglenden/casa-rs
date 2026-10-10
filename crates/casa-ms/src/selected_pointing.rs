@@ -77,6 +77,12 @@ impl SelectedPointingQueryDomain {
         SelectedPointingQueryDomainBuilder::default()
     }
 
+    /// Heap bytes of the per-antenna bounds.
+    #[must_use]
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.antennas.len() * size_of::<AntennaPointingQueryDomain>()
+    }
+
     pub(crate) fn antenna_ids(&self) -> impl ExactSizeIterator<Item = i32> + '_ {
         self.antennas.iter().map(|antenna| antenna.antenna_id)
     }
@@ -96,11 +102,6 @@ impl SelectedPointingQueryDomain {
             PointingTimeSampling::VisibilityTime => Some(antenna.visibility_time_bounds),
             PointingTimeSampling::VisibilityTimeCentroid => Some(antenna.centroid_time_bounds),
         }
-    }
-
-    #[must_use]
-    pub(crate) fn retained_bytes(&self) -> usize {
-        self.antennas.len() * size_of::<AntennaPointingQueryDomain>()
     }
 }
 

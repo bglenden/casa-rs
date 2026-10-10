@@ -656,7 +656,6 @@ version = "0.27.0"
 dependencies = [
  "num-complex",
  "sha2",
- "smallvec",
  "thiserror 2.0.18",
 ]
 
