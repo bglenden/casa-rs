@@ -2,14 +2,11 @@
 
 //! Closed commitments and value schemas for authoritative model state.
 
-use std::fmt;
-
 use thiserror::Error;
 
 use crate::{
-    CompiledGeometry, DirectionCoordinateSpec, ImageDomainRole, ImageShape, LogicalIdentity,
-    ModelCoefficientSpace, NumericPrecision, NumericsContract, ReconstructionBasis,
-    SpectralCoordinateSpec,
+    CompiledGeometry, DirectionCoordinateSpec, ImageDomainRole, ImageShape, ModelCoefficientSpace,
+    NumericPrecision, NumericsContract, ReconstructionBasis, SpectralCoordinateSpec,
 };
 
 /// One finite, canonical semantic `f64` model coefficient or increment.
@@ -451,34 +448,6 @@ impl ModelDeltaTerm {
     #[must_use]
     pub const fn increment(self) -> ModelValue {
         self.increment
-    }
-}
-
-/// Typed identity of one execution attempt bound to reconstruction evidence.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ModelExecutionAttemptId(LogicalIdentity);
-
-impl ModelExecutionAttemptId {
-    /// Bind an already established execution-attempt identity.
-    #[must_use]
-    pub const fn new(identity: LogicalIdentity) -> Self {
-        Self(identity)
-    }
-
-    /// Return the exact logical identity.
-    #[must_use]
-    pub const fn identity(self) -> LogicalIdentity {
-        self.0
-    }
-}
-
-impl fmt::Debug for ModelExecutionAttemptId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("ModelExecutionAttemptId(")?;
-        for byte in self.0.as_bytes() {
-            write!(formatter, "{byte:02x}")?;
-        }
-        formatter.write_str(")")
     }
 }
 

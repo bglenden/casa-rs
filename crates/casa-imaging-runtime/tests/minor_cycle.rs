@@ -17,15 +17,14 @@ use casa_imaging_model::{
     ReconstructionBasis, ReconstructionControls,
 };
 use casa_imaging_reconstruction::{
-    ImageDomainReconstructionMaskPlans, MajorCycleCompletion, MajorCycleOwner,
-    MajorCyclePreparation, MinorCycleImageResponse, PassImages, PassNormalState,
-    ReconstructionMaskPlan, runtime_adapter::NormalStoragePlan,
+    ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, MinorCycleImageResponse,
+    PassImages, ReconstructionMaskPlan,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{
     MinorCycleOutcome, MinorCycleSetup, PsfCache, prepare_minor_cycle, run_minor_cycle,
 };
-use problems::{attempt, bind_lifecycle, reconstruction_problem, validity};
+use problems::{empty_final_model, model_lifecycle, reconstruction_problem, validity};
 use synthetic_pass::{BLOCKS, SAMPLES, Scene};
 
 fn problem(
@@ -54,26 +53,18 @@ fn completion(
     scene: &Scene,
     edit: impl FnOnce(&mut PassImages),
 ) -> MajorCycleCompletion {
-    let mut lifecycle = bind_lifecycle(problem, attempt(32));
-    let empty = lifecycle.initial_empty().expect("empty model");
-    let preparation = MajorCyclePreparation::prepare(&lifecycle, empty, None).expect("prepare");
-    let mut images = scene.pass_images(preparation.final_model(), true);
-    edit(&mut images);
-    let channels = images.channels.len();
-    let mut pass = PassNormalState::initial(
+    let lifecycle = model_lifecycle(problem);
+    let mut cycle = MajorCycle::initial(
         problem,
-        preparation.final_model_generation(),
-        NormalStoragePlan::resident(channels).expect("storage"),
+        empty_final_model(&lifecycle),
+        scene.resident_storage(),
     )
-    .expect("pass");
+    .expect("major cycle");
+    let (model, pass) = cycle.parts();
+    let mut images = scene.pass_images(model, true);
+    edit(&mut images);
     pass.append(images).expect("images");
-    MajorCycleOwner::from_complete_data(
-        pass.finish(SAMPLES, BLOCKS).expect("complete"),
-        preparation,
-    )
-    .expect("owner")
-    .reconcile(&mut lifecycle)
-    .expect("reconcile")
+    cycle.finish(SAMPLES, BLOCKS).expect("complete")
 }
 
 fn setup(problem: &CompiledProblem, response: Option<MinorCycleImageResponse>) -> MinorCycleSetup {

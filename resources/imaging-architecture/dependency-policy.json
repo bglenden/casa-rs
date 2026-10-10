@@ -242,9 +242,7 @@
     ".rs"
    ],
    "regex": "\\bsha2::|\\bSha256\\b|\\bcrc32c?::|\\bcrc::",
-   "grandfathered": [
-    "crates/casa-imaging-reconstruction/src/identity.rs"
-   ]
+   "grandfathered": []
   },
   {
    "id": "selected-observation-provider-injection",

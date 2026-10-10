@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! Synthetic major cycles: the normal state a pass forms for a known sky,
-//! assembled through `PassNormalState` from explicit planes.
+//! assembled through `MajorCycle` from explicit planes.
 //!
 //! Product tests exercise product generation, not gridding, so the residual,
 //! PSF and `sumwt` planes are chosen here instead of gridded. Each image
@@ -25,17 +25,15 @@
 //! sees every sample unless a test replaces its weights.
 
 use casa_imaging_model::{
-    CompiledProblem, ModelDeltaTerm, ModelExecutionAttemptId, ModelSupport, ReconstructionBasis,
-    SpectralWcs,
+    CompiledProblem, ModelDeltaTerm, ModelSupport, ReconstructionBasis, SpectralWcs,
 };
 use casa_imaging_reconstruction::{
-    FinalNormalState, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation,
-    ModelGeneration, ModelLifecycle, ModelStoragePlan, PassImages, PassNormalState,
-    runtime_adapter::NormalStoragePlan,
+    FinalNormalState, MajorCycle, MajorCycleCompletion, ModelGeneration, ModelLifecycle,
+    ModelStoragePlan, PassImages, PreparedFinalModel, runtime_adapter::NormalStoragePlan,
 };
 
 /// Traversal counts every synthetic pass reports; any positive pair proves
-/// coverage to the major-cycle owner.
+/// coverage to the major cycle.
 pub const SAMPLES: u64 = 2;
 pub const BLOCKS: u64 = 1;
 
@@ -46,9 +44,6 @@ const SPECTRAL_SAMPLES: [(f64, f64); 2] = [(1.05e9, 1.0), (1.15e9, 2.0)];
 /// elliptical, with its major axis along y, and wide enough that an 8 × 8
 /// plane holds more than a dozen samples above the beam-fit cutoff.
 const PSF_FWHM_PX: [f64; 2] = [3.0, 4.0];
-
-/// Model epoch of the initial major cycle of a two-cycle round.
-const INITIAL_EPOCH: u64 = 7;
 
 /// One image domain of a [`Scene`].
 #[derive(Clone, Debug)]
@@ -222,62 +217,50 @@ impl Scene {
         }
     }
 
-    /// Run an initial pass over every domain and reconcile it with
-    /// `preparation`.
+    /// Run an initial major cycle with final model `model`: one pass over
+    /// every domain, finished with the synthetic traversal counts.
     pub fn reconcile_initial(
         &self,
         problem: &CompiledProblem,
-        lifecycle: &mut ModelLifecycle,
-        preparation: MajorCyclePreparation,
+        model: PreparedFinalModel,
     ) -> MajorCycleCompletion {
-        let mut state = PassNormalState::initial(
-            problem,
-            preparation.final_model_generation(),
-            self.storage(),
-        )
-        .expect("initial synthetic pass state");
-        for domain in 0..self.domains.len() {
-            state
-                .append(self.pass_images(domain, preparation.final_model(), true))
-                .expect("append synthetic initial pass images");
+        let mut cycle = MajorCycle::initial(problem, model, self.storage())
+            .expect("initial synthetic major cycle");
+        {
+            let (model, state) = cycle.parts();
+            for domain in 0..self.domains.len() {
+                state
+                    .append(self.pass_images(domain, model, true))
+                    .expect("append synthetic initial pass images");
+            }
         }
-        let normal = state
+        cycle
             .finish(SAMPLES, BLOCKS)
-            .expect("complete synthetic initial pass");
-        MajorCycleOwner::from_complete_data(normal, preparation)
-            .expect("major-cycle owner of the synthetic pass")
-            .reconcile(lifecycle)
-            .expect("reconcile the synthetic pass")
+            .expect("finish the synthetic initial major cycle")
     }
 
-    /// Refresh `previous` with the residual of `preparation`'s final model,
-    /// and reconcile.
+    /// Refresh `previous` with the residual of final model `model`: one
+    /// residual pass over every domain, finished with the synthetic
+    /// traversal counts.
     pub fn reconcile_refresh(
         &self,
         problem: &CompiledProblem,
-        lifecycle: &mut ModelLifecycle,
         previous: FinalNormalState,
-        preparation: MajorCyclePreparation,
+        model: PreparedFinalModel,
     ) -> MajorCycleCompletion {
-        let mut state = PassNormalState::refresh(
-            problem,
-            previous,
-            preparation.final_model_generation(),
-            self.storage(),
-        )
-        .expect("refresh synthetic pass state");
-        for domain in 0..self.domains.len() {
-            state
-                .append(self.pass_images(domain, preparation.final_model(), false))
-                .expect("append synthetic residual pass images");
+        let mut cycle = MajorCycle::refresh(problem, previous, model, self.storage())
+            .expect("refresh synthetic major cycle");
+        {
+            let (model, state) = cycle.parts();
+            for domain in 0..self.domains.len() {
+                state
+                    .append(self.pass_images(domain, model, false))
+                    .expect("append synthetic residual pass images");
+            }
         }
-        let normal = state
+        cycle
             .finish(SAMPLES, BLOCKS)
-            .expect("complete synthetic residual pass");
-        MajorCycleOwner::from_complete_data(normal, preparation)
-            .expect("major-cycle owner of the synthetic refresh")
-            .reconcile(lifecycle)
-            .expect("reconcile the synthetic refresh")
+            .expect("finish the synthetic refresh major cycle")
     }
 
     fn storage(&self) -> NormalStoragePlan {
@@ -286,57 +269,42 @@ impl Scene {
     }
 }
 
-/// Two major cycles of `attempt`: an initial pass over the empty model at
-/// epoch 7 and, when `delta` has terms, a residual refresh after applying it
-/// at epoch 8. Without terms the initial reconciliation is the result.
+/// Two major cycles of one run: an initial pass over the empty model and,
+/// when `delta` has terms, a residual refresh after applying them. Without
+/// terms the initial major cycle is the result.
 pub fn two_cycle_round(
     problem: &CompiledProblem,
     scene: &Scene,
-    attempt: ModelExecutionAttemptId,
     delta: Vec<ModelDeltaTerm>,
 ) -> MajorCycleCompletion {
-    let mut lifecycle = ModelLifecycle::bind(problem, attempt, INITIAL_EPOCH, model_storage())
-        .expect("initial model lifecycle");
+    let lifecycle = ModelLifecycle::new(problem, model_storage());
     let empty = lifecycle.initial_empty().expect("empty model");
-    let preparation =
-        MajorCyclePreparation::prepare(&lifecycle, empty, None).expect("initial preparation");
-    let initial = scene.reconcile_initial(problem, &mut lifecycle, preparation);
+    let model = lifecycle
+        .prepare_final_model(empty, [])
+        .expect("initial final model");
+    let initial = scene.reconcile_initial(problem, model);
     if delta.is_empty() {
         return initial;
     }
-    let (normal, continuation) = initial.into_continuation();
-    let (mut lifecycle, named) = ModelLifecycle::continue_from(
-        problem,
-        attempt,
-        INITIAL_EPOCH + 1,
-        continuation,
-        model_storage(),
-    )
-    .expect("continued model lifecycle");
-    let delta = lifecycle
-        .compile_delta(&named, delta)
-        .expect("nonzero model delta");
-    let preparation =
-        MajorCyclePreparation::prepare(&lifecycle, named, Some(delta)).expect("final preparation");
-    scene.reconcile_refresh(problem, &mut lifecycle, normal, preparation)
+    let (normal, model) = initial.into_parts();
+    let model = lifecycle
+        .prepare_final_model(model, delta)
+        .expect("final model after the nonzero delta");
+    scene.reconcile_refresh(problem, normal, model)
 }
 
-/// One more major cycle continuing `prior` under `attempt` at `epoch`, with
-/// the model unchanged.
+/// One more major cycle continuing `prior`, with the model unchanged.
 pub fn continue_round(
     problem: &CompiledProblem,
     scene: &Scene,
-    attempt: ModelExecutionAttemptId,
-    epoch: u64,
     prior: MajorCycleCompletion,
 ) -> MajorCycleCompletion {
-    let (normal, continuation) = prior.into_continuation();
-    let (mut lifecycle, named) =
-        ModelLifecycle::continue_from(problem, attempt, epoch, continuation, model_storage())
-            .expect("continue model lifecycle");
-    let preparation =
-        MajorCyclePreparation::prepare(&lifecycle, named, None).expect("prepare continuation");
-    scene.reconcile_refresh(problem, &mut lifecycle, normal, preparation)
+    let lifecycle = ModelLifecycle::new(problem, model_storage());
+    let (normal, model) = prior.into_parts();
+    let model = lifecycle
+        .prepare_final_model(model, [])
+        .expect("unchanged final model");
+    scene.reconcile_refresh(problem, normal, model)
 }
 
 fn model_storage() -> ModelStoragePlan {

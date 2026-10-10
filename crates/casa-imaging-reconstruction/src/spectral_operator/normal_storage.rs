@@ -4,15 +4,14 @@
 
 use std::{borrow::Cow, fmt, ops::Range, sync::Arc};
 
-use casa_imaging_model::{ImageDomainRole, LogicalIdentity};
+use casa_imaging_model::ImageDomainRole;
 use num_complex::Complex64;
 
 use super::{
-    CompleteDataOwnerCompletion, NORMAL_STATE_CONTENT_DOMAIN, SpectralBasisPlan,
-    SpectralChannelValidity, SpectralDomainPrimitives, SpectralOperatorError,
-    SpectralOperatorPrimitives, SpectralPrimitiveDomains, SpectralSlabPlan, checked_cells,
+    CompleteDataOwnerCompletion, SpectralBasisPlan, SpectralChannelValidity,
+    SpectralDomainPrimitives, SpectralOperatorError, SpectralOperatorPrimitives,
+    SpectralPrimitiveDomains, SpectralSlabPlan, checked_cells,
 };
-use crate::{ModelGenerationId, canonical_f64_bits};
 
 // num-complex 0.4.6 supplies Pod for its repr(C) real/imaginary pair.
 // Checked casts preserve all floating-point bits without copying payloads.
@@ -178,12 +177,6 @@ impl CompleteDataNormalState {
         Ok(CompleteDataNormalWindow {
             primitives: self.primitives.read_window(channels)?,
         })
-    }
-
-    /// Explicit diagnostic fingerprint, independent of the storage window.
-    /// This reads the arrays and is not part of ordinary completion or handoff.
-    pub fn diagnostic_content_identity(&self) -> Result<LogicalIdentity, SpectralOperatorError> {
-        self.primitives.content_identity()
     }
 }
 
@@ -391,49 +384,6 @@ impl NormalStatePrimitives {
             }
         }
     }
-
-    /// Reject a state whose residual some domain formed with a model other
-    /// than `model`.
-    pub(crate) fn require_residual_model(
-        &self,
-        model: ModelGenerationId,
-    ) -> Result<(), SpectralOperatorError> {
-        let formed_with_model = match self {
-            Self::ChannelLocal(domains) => domains
-                .iter()
-                .all(|domain| domain.residual_model == Some(model)),
-            Self::Coupled(domains) => domains
-                .iter()
-                .all(|domain| domain.primitives.residual_model == Some(model)),
-        };
-        if formed_with_model {
-            Ok(())
-        } else {
-            Err(SpectralOperatorError::ModelMismatch)
-        }
-    }
-
-    pub(crate) fn content_identity(&self) -> Result<LogicalIdentity, SpectralOperatorError> {
-        match self {
-            Self::Coupled(domains) => Ok(domains.normal_state_content_identity()),
-            Self::ChannelLocal(domains) => {
-                let mut encoder = crate::Encoder::new(NORMAL_STATE_CONTENT_DOMAIN, 4);
-                encoder.usize(domains.len());
-                for d in domains {
-                    encoder.usize(d.ordinal);
-                    match &d.role {
-                        ImageDomainRole::Main => encoder.u8(0),
-                        ImageDomainRole::Outlier(name) => {
-                            encoder.u8(1);
-                            encoder.bytes(name.as_bytes());
-                        }
-                    }
-                    encoder.identity(d.content_identity()?.as_bytes());
-                }
-                Ok(LogicalIdentity::from_bytes(encoder.finish()))
-            }
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -542,7 +492,6 @@ pub(crate) struct StoredChannelNormalDomain {
     sum_weights: Box<[f64]>,
     published_sum_weights: Box<[f64]>,
     validity: Box<[SpectralChannelValidity]>,
-    residual_model: Option<ModelGenerationId>,
     fields: ChannelNormalFields,
     storage: Box<dyn NormalArrayStorage>,
     invariants: Arc<Box<dyn NormalArrayStorage>>,
@@ -684,11 +633,7 @@ impl<'a> FinalNormalPlaneReader<'a> {
 }
 
 impl StoredChannelNormalDomain {
-    pub(crate) fn refresh(
-        &self,
-        model: ModelGenerationId,
-        plan: &NormalStoragePlan,
-    ) -> Result<Self, SpectralOperatorError> {
+    pub(crate) fn refresh(&self, plan: &NormalStoragePlan) -> Result<Self, SpectralOperatorError> {
         if !self.is_complete() {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
@@ -708,7 +653,6 @@ impl StoredChannelNormalDomain {
             sum_weights: self.sum_weights.clone(),
             published_sum_weights: self.published_sum_weights.clone(),
             validity: self.validity.clone(),
-            residual_model: Some(model),
             fields,
             storage,
             invariants: self.invariants.clone(),
@@ -718,12 +662,11 @@ impl StoredChannelNormalDomain {
     }
 
     /// Write the refreshed residual planes `[channel][pol]` (x-major) of the
-    /// next channel range, formed with model generation `model`.
+    /// next channel range.
     pub(crate) fn append_residual_planes(
         &mut self,
         range: Range<usize>,
         shape: [usize; 2],
-        model: ModelGenerationId,
         residual: &[f32],
     ) -> Result<(), SpectralOperatorError> {
         if range.start != self.next_channel
@@ -733,7 +676,6 @@ impl StoredChannelNormalDomain {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
         if shape != self.shape
-            || self.residual_model != Some(model)
             || residual.len() != range.len() * self.polarizations * checked_cells(self.shape)?
         {
             return Err(SpectralOperatorError::ProblemMismatch);
@@ -808,7 +750,6 @@ impl StoredChannelNormalDomain {
             sum_weights: vec![0.0; planes].into_boxed_slice(),
             published_sum_weights: vec![0.0; planes].into_boxed_slice(),
             validity: vec![SpectralChannelValidity::Unmapped; planes].into_boxed_slice(),
-            residual_model: p.residual_model,
             fields,
             storage,
             invariants: Arc::new(invariants),
@@ -1008,74 +949,7 @@ impl StoredChannelNormalDomain {
                 sum_weights: self.sum_weights[plane_range.clone()].into(),
                 published_sum_weights: self.published_sum_weights[plane_range.clone()].into(),
                 validity: self.validity[plane_range].into(),
-                residual_model: self.residual_model,
             },
         ))
-    }
-
-    pub(crate) fn content_identity(&self) -> Result<LogicalIdentity, SpectralOperatorError> {
-        if !self.is_complete() {
-            return Err(SpectralOperatorError::IncompleteCoverage);
-        }
-        let published_differ = self.published_sum_weights != self.sum_weights;
-        let mut encoder = crate::Encoder::new(
-            NORMAL_STATE_CONTENT_DOMAIN,
-            if published_differ { 4 } else { 1 },
-        );
-        encoder.usize(self.shape[0]);
-        encoder.usize(self.shape[1]);
-        encoder.usize(self.total_channels);
-        encoder.usize(0);
-        encoder.usize(self.total_channels);
-        let window_values = checked_cells(self.shape)?
-            .checked_mul(self.polarizations)
-            .and_then(|n| n.checked_mul(self.window_channels.min(self.total_channels)))
-            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        for field in [&self.fields.dirty, &self.fields.psf] {
-            let width = window_values
-                .checked_mul(2)
-                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-            for start in (field.start..field.end).step_by(width) {
-                for &value in self
-                    .read_scalars(start..start.saturating_add(width).min(field.end))?
-                    .iter()
-                {
-                    encoder.u64(value.to_bits());
-                }
-            }
-        }
-        if self.fields.scalar_sensitivity {
-            let cells = checked_cells(self.shape)?;
-            for &weight in &self.sum_weights {
-                for _ in 0..cells {
-                    encoder.u64(canonical_f64_bits(weight));
-                }
-            }
-        } else {
-            let field = &self.fields.sensitivity;
-            for start in (field.start..field.end).step_by(window_values) {
-                for &value in self
-                    .read_scalars(start..start.saturating_add(window_values).min(field.end))?
-                    .iter()
-                {
-                    encoder.u64(canonical_f64_bits(value));
-                }
-            }
-        }
-        for &value in &self.sum_weights {
-            encoder.u64(canonical_f64_bits(value));
-        }
-        if published_differ {
-            for &value in &self.published_sum_weights {
-                encoder.u64(canonical_f64_bits(value));
-            }
-        }
-        for validity in &self.validity {
-            encoder.u8(match validity {
-                SpectralChannelValidity::Valid => 0,
-                SpectralChannelValidity::Unmapped => 2,
-            });
-        }
-        Ok(LogicalIdentity::from_bytes(encoder.finish()))
     }
 }

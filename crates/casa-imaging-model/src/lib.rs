@@ -16,9 +16,9 @@ mod visibility_transform;
 pub use compiled_problem::{
     AwProjectionContract, AwProjectionContractError, CompileProblemError, CompiledProblem,
     FiniteValuePolicy, HogbomIterationAccounting, InstrumentModel, InstrumentResponse,
-    LogicalIdentity, MeasurementEquationContract, NumericPrecision, NumericalStage,
-    NumericsContract, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInput, ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    MeasurementEquationContract, NumericPrecision, NumericalStage, NumericsContract,
+    PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput,
+    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
     ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     ProductValidityPolicyError, ReconstructionAlgorithm, ReconstructionBasis,
     ReconstructionContract, ReconstructionControls, ReductionPolicy, RequiredCapability,
@@ -49,9 +49,8 @@ pub use measurement_equation::{
 };
 
 pub use model_state::{
-    ModelBounds, ModelCell, ModelContractError, ModelDeltaTerm, ModelExecutionAttemptId,
-    ModelLifecycleContract, ModelLifecycleRequirements, ModelSample, ModelSourceShape,
-    ModelSupport, ModelValue,
+    ModelBounds, ModelCell, ModelContractError, ModelDeltaTerm, ModelLifecycleContract,
+    ModelLifecycleRequirements, ModelSample, ModelSourceShape, ModelSupport, ModelValue,
 };
 
 pub use observation::{

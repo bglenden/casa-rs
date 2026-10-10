@@ -6,7 +6,7 @@
 //! explicit synthetic pass planes (`common::synthetic_pass`), not gridded.
 
 mod common;
-use common::observation::{attempt, source};
+use common::observation::source;
 use common::synthetic_pass::{Scene, two_cycle_round};
 use common::{GeneratedMember, GeneratedProducts, MemoryProductOutput, full_window};
 
@@ -187,33 +187,30 @@ fn taylor_scene(problem: &casa_imaging_model::CompiledProblem) -> Scene {
     Scene::new(problem).with_point(0, CENTRE, &[1.0, -0.5])
 }
 
-fn run_round(problem: &casa_imaging_model::CompiledProblem, seed: u8) -> MajorCycleCompletion {
-    run_round_with_model(problem, seed, Some(0.75))
+fn run_round(problem: &casa_imaging_model::CompiledProblem) -> MajorCycleCompletion {
+    run_round_with_model(problem, Some(0.75))
 }
 
 fn run_round_with_model(
     problem: &casa_imaging_model::CompiledProblem,
-    seed: u8,
     model_value: Option<f64>,
 ) -> MajorCycleCompletion {
     let terms = model_value
         .into_iter()
         .map(|value| (0, value))
         .collect::<Vec<_>>();
-    run_round_with_terms(problem, seed, &terms)
+    run_round_with_terms(problem, &terms)
 }
 
 /// The initial major cycle and, when `model_terms` names any
 /// `(coefficient, value)` at the centre, a residual refresh after them.
 fn run_round_with_terms(
     problem: &casa_imaging_model::CompiledProblem,
-    seed: u8,
     model_terms: &[(usize, f64)],
 ) -> MajorCycleCompletion {
     two_cycle_round(
         problem,
         &taylor_scene(problem),
-        attempt(seed),
         model_terms
             .iter()
             .map(|(coefficient, value)| {
@@ -299,7 +296,7 @@ fn principal_residuals(join: &MajorCycleCompletion) -> [Vec<f32>; TERMS] {
 #[test]
 fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
     let problem = taylor_problem(201, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar);
-    let join = run_round(&problem, 202);
+    let join = run_round(&problem);
     let generated = generate(&problem, &join);
     let names = generated
         .members()
@@ -412,7 +409,7 @@ fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
 #[test]
 fn t44_alpha_and_error_use_strict_principal_support_and_zero_false_blanking() {
     let problem = taylor_problem(203, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar);
-    let join = run_round_with_model(&problem, 204, None);
+    let join = run_round_with_model(&problem, None);
     let principal = principal_residuals(&join);
     let generated = generate(&problem, &join);
     let image0 = member(&generated, ".image.tt0");
@@ -452,7 +449,7 @@ fn t44_alpha_and_error_use_strict_principal_support_and_zero_false_blanking() {
 
     let strict_problem =
         taylor_problem_with_fraction(207, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar, 1.0);
-    let strict_join = run_round_with_model(&strict_problem, 208, None);
+    let strict_join = run_round_with_model(&strict_problem, None);
     let strict = generate(&strict_problem, &strict_join);
     for name in [".alpha", ".alpha.error"] {
         let product = member(&strict, name);
@@ -520,7 +517,7 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
         "the frozen standard CASA row emits no standalone weight family"
     );
 
-    let join = run_round(&problem, 206);
+    let join = run_round(&problem);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join);
     assert_eq!(
         PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
@@ -582,7 +579,7 @@ fn t47_mosaic_taylor_products_publish_weight_and_pb_corrected_alpha() {
         ProductKind::Beam,
     ];
     let problem = taylor_problem(211, &products, InstrumentResponse::Scalar);
-    let join = run_round(&problem, 212);
+    let join = run_round(&problem);
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::MosaicSensitivity);
     let generated = generate_with_controls(&problem, &join, controls);
@@ -698,7 +695,7 @@ fn t51_weight_derived_mtmfs_plan_matches_casa_eighteen_member_inventory() {
 #[test]
 fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
     let problem = taylor_problem(209, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar);
-    let join = run_round(&problem, 210);
+    let join = run_round(&problem);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join);
     let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
         .expect("Taylor plan");

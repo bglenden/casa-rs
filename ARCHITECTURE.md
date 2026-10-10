@@ -336,37 +336,16 @@ its frontend projection delegates to the same bounded `casa-ms` predicate as
 native Selected Observation access.
 
 `casa-imaging-model` carries the dependency-free model-state schemas and the
-compiler-owned lifecycle commitment introduced by T28/#514.
-`casa-imaging-reconstruction::ModelLifecycle` is the solver-independent owner
-of model generations, ingest, reprojection, deltas, and affine final-model
-completion. The Compiled Problem commitment binds the sole target shape,
-observation and initial-model identities, typed WCS/basis/polarization source
-provenance, an opaque owner-derived reprojection commitment, exact bounds,
-Product Graph, Numerics Contract, selected conversion precision, canonical
-finite-`f64` state encoding, and explicit validity semantics. Reconstruction
-alone prepares the target-ordered samples; the model contract derives and
-validates the preparation, mapping, support, and proof identities atomically.
-Another Product or Numerics Contract is rejected.
-Aligned ingest is a fallible one-pass stream
-whose terminal source errors remain source errors. Reconstruction-derived
-target-ordered reprojection accepts only the closed direction, spectral-basis,
-and real parallel-hand polarization conversions owned by reconstruction: a
-source reader supplies typed geometry and samples but cannot supply mappings or
-fallbacks. The owner derives stencils, projected support, and exact evidence
-with only the target generation plus the current bounded stencil resident.
-Invalid support never aliases numeric zero; any invalid non-zero contributor
-invalidates its target, and uncovered targets remain invalid. Sparse deltas
-must be non-empty, non-zero, canonical, base-bound, within valid support and
-explicit bounds, and are applied in place only by the private authority seal
-that minted them. Resume preserves the exact generation named by the compiled
-input, after
-which new deltas bind the current attempt and epoch. The sole final affine
-operation consumes its private finalization authority and returns the next
-generation plus a distinct opaque reconstruction completion, never a Product
-Generation seal. Major Cycle, Minor Cycle, and Product Generation owners may
-consume this surface but cannot construct raw generations. No
-MeasurementSet/image persistence, runner, or model-column writer changes in
-T28.
+compiler-owned lifecycle commitment: the target shape, the bounds and the
+arithmetic precision. `casa-imaging-reconstruction::ModelLifecycle` owns a
+run's model: every run starts from the empty generation, and each major cycle's
+final model is the previous generation updated by the minor cycle's sparse
+terms, which must be canonical, non-zero, within valid support and within the
+bounds. Invalid support never aliases numeric zero. A `MajorCycle` owns its
+final model and the normal state its pass forms with that model, and releases
+them together as one `MajorCycleCompletion`, which the next major cycle
+consumes. Generations, completions and masks carry no identities: ownership
+pairs what belongs together. Callers cannot construct raw generations.
 
 The Compiled Problem also derives one Observation Transaction: the canonical
 read set of every consumed per-MS selection and selected columns, and the

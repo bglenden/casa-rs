@@ -188,11 +188,6 @@ impl ModelSamples {
         f64::from_bits(self.maximum_magnitude.load(Ordering::Relaxed))
     }
 
-    pub(crate) fn record_validated_bound(&mut self, bound: f64) {
-        self.maximum_magnitude
-            .fetch_min(bound.to_bits(), Ordering::Relaxed);
-    }
-
     pub(crate) fn queue_updates<I>(
         &mut self,
         updates: I,

@@ -4,30 +4,27 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts, DirectionCoordinateSpec,
     DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
     GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
-    LogicalIdentity, MeasurementEquationContract, ModelBounds, ModelCell, ModelColumnWrite,
-    ModelDeltaTerm, ModelExecutionAttemptId, ModelInnerProduct, ModelLifecycleRequirements,
-    ModelSample, ModelValue, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput, ProblemSpecification,
-    ProductBlankingPolicy, ProductKind, ProductNormalization, ProductRequirements,
-    ProductSupportComparison, ProductValidityPolicies, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, UvwCoordinateLaw,
-    VisibilityInnerProduct, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    MeasurementEquationContract, ModelBounds, ModelCell, ModelColumnWrite, ModelDeltaTerm,
+    ModelInnerProduct, ModelLifecycleRequirements, ModelSample, ModelValue, NumericPrecision,
+    NumericalStage, NumericsContract, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
+    ProblemInput, ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile,
 };
 use casa_imaging_reconstruction::{
-    FinalModelCompletionId, ModelGenerationId, ModelLifecycle, ModelLifecycleError,
+    MajorCycle, ModelGeneration, ModelLifecycle, ModelLifecycleError, ModelStoragePlan, PassImages,
+    PreparedFinalModel, runtime_adapter::NormalStoragePlan,
 };
 
 #[path = "../../casa-imaging-model/tests/common/mod.rs"]
 #[allow(dead_code)]
 mod common;
-
-fn identity(byte: u8) -> LogicalIdentity {
-    LogicalIdentity::from_bytes([byte; 32])
-}
 
 fn bounds() -> ModelBounds {
     ModelBounds::new(16, 8, 1.0e30, 1.0e30).expect("valid bounds")
@@ -220,23 +217,44 @@ fn value(value: f64) -> ModelValue {
     ModelValue::new(value).expect("finite model value")
 }
 
-fn attempt(byte: u8) -> ModelExecutionAttemptId {
-    ModelExecutionAttemptId::new(identity(byte))
+fn model_lifecycle(problem: &CompiledProblem) -> ModelLifecycle {
+    ModelLifecycle::new(
+        problem,
+        ModelStoragePlan::resident(usize::MAX).expect("positive model window"),
+    )
 }
 
-fn bind_direct(
-    problem: &CompiledProblem,
-    attempt: ModelExecutionAttemptId,
-    epoch: u64,
-) -> ModelLifecycle {
-    ModelLifecycle::bind(
+/// Complete `model` through a major cycle whose pass reads no model sample:
+/// a zero residual and unit PSF of `problem`'s one constant-basis domain.
+fn complete(problem: &CompiledProblem, model: PreparedFinalModel) -> ModelGeneration {
+    let shape = problem.geometry().domains()[0].shape().pixels();
+    let cells = shape[0] * shape[1];
+    let mut cycle = MajorCycle::initial(
         problem,
-        attempt,
-        epoch,
-        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
-            .expect("positive model window"),
+        model,
+        NormalStoragePlan::resident(1).expect("resident normal storage"),
     )
-    .expect("bind model lifecycle")
+    .expect("initial major cycle");
+    cycle
+        .parts()
+        .1
+        .append(PassImages {
+            domain: 0,
+            shape,
+            channels: 0..1,
+            polarizations: 1,
+            residual: vec![0.0; cells],
+            psf: Some(vec![1.0; cells]),
+            published_sum_weights: vec![1.0],
+            sum_weights: vec![1.0],
+            weight: None,
+        })
+        .expect("append the pass images");
+    cycle
+        .finish(1, 1)
+        .expect("complete the major cycle")
+        .into_parts()
+        .1
 }
 
 #[test]
@@ -285,16 +303,21 @@ fn non_power_of_two_delta_bound_uses_the_explicit_canonical_capacity() {
         ModelLifecycleRequirements::new(bounded, NumericPrecision::F64),
         NumericPrecision::F64,
     );
-    let owner = bind_direct(&compiled, attempt(89), 1);
+    let owner = model_lifecycle(&compiled);
     let base = owner.initial_empty().expect("bounded empty generation");
-    let delta = owner
-        .compile_delta(
-            &base,
+    let prepared = owner
+        .prepare_final_model(
+            base,
             (0..TERMS).map(|x| ModelDeltaTerm::new(cell(x), value(1.0))),
         )
-        .expect("compile the full non-power-of-two delta bound");
+        .expect("prepare the full non-power-of-two update bound");
 
-    assert_eq!(delta.terms().len(), TERMS);
+    let samples = prepared
+        .generation()
+        .read_samples(0..TERMS)
+        .expect("read the updated model");
+    assert_eq!(samples.len(), TERMS);
+    assert!(samples.iter().all(|sample| sample.value().value() == 1.0));
 }
 
 #[test]
@@ -305,7 +328,7 @@ fn final_model_restores_highest_ordinal_domain_across_overlaps() {
         empty_requirements(NumericPrecision::F64),
         NumericPrecision::F64,
     );
-    let mut owner = bind_direct(&compiled, attempt(88), 1);
+    let owner = model_lifecycle(&compiled);
     let base = owner.initial_empty().expect("empty multi-domain model");
     let terms = [
         ModelDeltaTerm::new(ModelCell::new(0, 0, 0, [0, 0]), value(1.0)),
@@ -313,11 +336,8 @@ fn final_model_restores_highest_ordinal_domain_across_overlaps() {
         ModelDeltaTerm::new(ModelCell::new(1, 0, 0, [1, 0]), value(10.0)),
         ModelDeltaTerm::new(ModelCell::new(2, 0, 0, [2, 0]), value(30.0)),
     ];
-    let delta = owner
-        .compile_delta(&base, terms)
-        .expect("multi-domain delta");
     let update = owner
-        .apply_final_delta(base, delta)
+        .prepare_final_model(base, terms)
         .expect("restore canonical overlap ownership");
     let shape = update.generation().shape();
     let sample = |domain, x| {
@@ -338,7 +358,7 @@ fn final_model_restores_highest_ordinal_domain_across_overlaps() {
 }
 
 #[test]
-fn t55_model_windows_preserve_values_and_support_with_owner_scoped_identities() {
+fn t55_model_windows_preserve_values_and_support() {
     let compiled = problem_with_geometry(
         1,
         geometry(5),
@@ -346,40 +366,25 @@ fn t55_model_windows_preserve_values_and_support_with_owner_scoped_identities() 
         NumericPrecision::F64,
     );
     let mut expected = None;
-    let mut identities = std::collections::BTreeSet::new();
     for window in [5, 1, 2, 3] {
-        let mut owner = ModelLifecycle::bind(
-            &compiled,
-            attempt(90),
-            1,
-            casa_imaging_reconstruction::ModelStoragePlan::resident(window).unwrap(),
-        )
-        .unwrap();
+        let owner = ModelLifecycle::new(&compiled, ModelStoragePlan::resident(window).unwrap());
         let base = owner.initial_empty().unwrap();
         if window < 5 {
             assert!(base.read_samples(0..5).is_err());
         }
-        let initial = base.generation_id();
-        let delta = owner
-            .compile_delta(
-                &base,
+        let prepared = owner
+            .prepare_final_model(
+                base,
                 [
                     ModelDeltaTerm::new(cell(0), value(-0.25)),
                     ModelDeltaTerm::new(cell(4), value(1.5)),
                 ],
             )
             .unwrap();
-        let delta_id = delta.delta_id();
-        let update = owner.apply_final_delta(base, delta).unwrap();
+        let generation = complete(&compiled, prepared);
         let samples = (0..5)
-            .map(|index| update.generation().read_samples(index..index + 1).unwrap()[0])
+            .map(|index| generation.read_samples(index..index + 1).unwrap()[0])
             .collect::<Vec<_>>();
-        assert!(identities.insert((
-            initial,
-            delta_id,
-            update.generation().generation_id(),
-            update.completion().completion_id(),
-        )));
         if let Some(expected) = &expected {
             assert_eq!(&samples, expected);
         } else {
@@ -476,23 +481,15 @@ fn sparse_delta_reuses_owned_storage_and_does_not_touch_unchanged_windows() {
         NumericPrecision::F32,
     );
     let counts = Arc::new(ModelIoCounts::default());
-    let mut owner = ModelLifecycle::bind(
+    let owner = ModelLifecycle::new(
         &compiled,
-        attempt(90),
-        1,
-        casa_imaging_reconstruction::ModelStoragePlan::new(
-            Arc::new(CountedModelFactory(counts.clone())),
-            2,
-        )
-        .unwrap(),
-    )
-    .unwrap();
+        ModelStoragePlan::new(Arc::new(CountedModelFactory(counts.clone())), 2).unwrap(),
+    );
     let base = owner.initial_empty().unwrap();
-    let delta = owner
-        .compile_delta(&base, [ModelDeltaTerm::new(cell(3), value(2.0))])
-        .unwrap();
     counts.reads.store(0, Relaxed);
-    let prepared = owner.prepare_final_model(base, Some(delta)).unwrap();
+    let prepared = owner
+        .prepare_final_model(base, [ModelDeltaTerm::new(cell(3), value(2.0))])
+        .unwrap();
     assert_eq!(
         counts.creations.load(Relaxed),
         1,
@@ -500,8 +497,8 @@ fn sparse_delta_reuses_owned_storage_and_does_not_touch_unchanged_windows() {
     );
     assert_eq!(
         counts.reads.load(Relaxed),
-        0,
-        "preparation must not scan the cube"
+        1,
+        "preparation reads only the updated cell's support and must not scan the cube"
     );
     assert_eq!(
         counts.updated.load(Relaxed),
@@ -514,7 +511,7 @@ fn sparse_delta_reuses_owned_storage_and_does_not_touch_unchanged_windows() {
     assert_eq!(samples[1].value().value(), 2.0);
     assert_eq!(counts.updated.load(Relaxed), 1, "only the changed cell");
     let reads = counts.reads.load(Relaxed);
-    owner.commit_final_model(prepared).unwrap();
+    complete(&compiled, prepared);
     assert_eq!(counts.reads.load(Relaxed), reads, "no completion reread");
     assert_eq!(counts.creations.load(Relaxed), 1);
 }
@@ -529,102 +526,41 @@ fn owned_model_handoffs_do_not_read_contents_and_scientific_reads_remain_fallibl
         NumericPrecision::F64,
     );
     let counts = Arc::new(ModelIoCounts::default());
-    let mut owner = ModelLifecycle::bind(
+    let owner = ModelLifecycle::new(
         &compiled,
-        attempt(90),
-        1,
-        casa_imaging_reconstruction::ModelStoragePlan::new(
-            Arc::new(CountedModelFactory(counts.clone())),
-            2,
-        )
-        .unwrap(),
-    )
-    .unwrap();
+        ModelStoragePlan::new(Arc::new(CountedModelFactory(counts.clone())), 2).unwrap(),
+    );
     let base = owner.initial_empty().unwrap();
-    owner.validate_named_generation(&base).unwrap();
-    owner.validate_named_generation(&base).unwrap();
-    let prepared = owner.prepare_final_model(base, None).unwrap();
-    let update = owner.commit_final_model(prepared).unwrap();
+    let base = complete(&compiled, owner.prepare_final_model(base, []).unwrap());
+    let base = complete(&compiled, owner.prepare_final_model(base, []).unwrap());
     assert_eq!(
         counts.reads.load(Relaxed),
         0,
         "mint, handoff and completion must not inspect owned contents"
     );
-    let (base, _) = update.into_parts();
-    let _delta = owner
-        .compile_delta(&base, [ModelDeltaTerm::new(cell(0), value(1.0))])
+    let prepared = owner
+        .prepare_final_model(base, [ModelDeltaTerm::new(cell(0), value(1.0))])
         .unwrap();
     assert_eq!(
         counts.reads.load(Relaxed),
         1,
-        "sparse delta checks only its affected support"
+        "a sparse update checks only its affected support"
     );
+    let base = complete(&compiled, prepared);
     counts.fail_reads.store(true, Relaxed);
-    owner.validate_named_generation(&base).unwrap();
     assert!(matches!(
         base.read_samples(0..1),
         Err(ModelLifecycleError::Storage(_))
     ));
+    let base = complete(&compiled, owner.prepare_final_model(base, []).unwrap());
     assert!(matches!(
-        owner.compile_delta(&base, [ModelDeltaTerm::new(cell(1), value(1.0))]),
+        owner.prepare_final_model(base, [ModelDeltaTerm::new(cell(1), value(1.0))]),
         Err(ModelLifecycleError::Storage(_))
     ));
 }
 
 #[test]
-fn generations_are_distinct_and_finalization_is_affine() {
-    let compiled = problem(
-        1,
-        2,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let mut owner = bind_direct(&compiled, attempt(90), 1);
-    let base = owner.initial_empty().expect("empty generation");
-    let replay_base = owner.initial_empty().expect("second pre-final base");
-    assert_eq!(ModelGenerationId::SCHEMA_VERSION, 4);
-    assert_eq!(FinalModelCompletionId::SCHEMA_VERSION, 2);
-    assert_ne!(base.generation_id(), replay_base.generation_id());
-
-    let delta = owner
-        .compile_delta(&base, [ModelDeltaTerm::new(cell(0), value(1.5))])
-        .expect("compile delta");
-    let replay_delta = owner
-        .compile_delta(&replay_base, [ModelDeltaTerm::new(cell(0), value(1.5))])
-        .expect("compile replay delta");
-    assert_ne!(delta.delta_id(), replay_delta.delta_id());
-    let update = owner
-        .apply_final_delta(base, delta)
-        .expect("apply final affine update");
-    assert_eq!(
-        update
-            .generation()
-            .read_samples(0..update.generation().sample_count())
-            .expect("read fixture model")[0]
-            .value()
-            .value(),
-        1.5
-    );
-    assert_eq!(
-        update.completion().generation(),
-        update.generation().generation_id()
-    );
-    assert_ne!(
-        update.completion().completion_id().as_bytes(),
-        update.generation().generation_id().as_bytes()
-    );
-    assert!(matches!(
-        owner.apply_final_delta(replay_base, replay_delta),
-        Err(ModelLifecycleError::FinalModelAlreadyCompleted)
-    ));
-    assert!(matches!(
-        owner.initial_empty(),
-        Err(ModelLifecycleError::FinalModelAlreadyCompleted)
-    ));
-}
-
-#[test]
-fn owner_rejects_zero_noncanonical_and_foreign_deltas() {
+fn owner_rejects_zero_and_noncanonical_deltas() {
     assert!(ModelBounds::new(1, 0, 1.0, 1.0).is_err());
     let compiled = problem(
         5,
@@ -632,26 +568,21 @@ fn owner_rejects_zero_noncanonical_and_foreign_deltas() {
         empty_requirements(NumericPrecision::F64),
         NumericPrecision::F64,
     );
-    let first = bind_direct(&compiled, attempt(93), 1);
-    let duplicate = bind_direct(&compiled, attempt(93), 1);
-    let base = first.initial_empty().expect("base");
+    let owner = model_lifecycle(&compiled);
+    let base = || owner.initial_empty().expect("base");
     assert!(matches!(
-        first.compile_delta(&base, [ModelDeltaTerm::new(cell(0), value(0.0))]),
+        owner.prepare_final_model(base(), [ModelDeltaTerm::new(cell(0), value(0.0))]),
         Err(ModelLifecycleError::ZeroDeltaTerm)
     ));
     assert!(matches!(
-        first.compile_delta(
-            &base,
+        owner.prepare_final_model(
+            base(),
             [
                 ModelDeltaTerm::new(cell(1), value(1.0)),
                 ModelDeltaTerm::new(cell(0), value(1.0)),
             ],
         ),
         Err(ModelLifecycleError::NonCanonicalDelta)
-    ));
-    assert!(matches!(
-        duplicate.compile_delta(&base, [ModelDeltaTerm::new(cell(0), value(1.0))]),
-        Err(ModelLifecycleError::ForeignModelLifecycle)
     ));
 }
 
@@ -669,43 +600,28 @@ fn compiled_precision_governs_delta_arithmetic() {
         empty_requirements(NumericPrecision::F64),
         NumericPrecision::F64,
     );
-    let f32_owner = bind_direct(&f32_problem, attempt(95), 1);
-    let f64_owner = bind_direct(&f64_problem, attempt(95), 1);
-    let f32_base = f32_owner.initial_empty().expect("f32 base");
-    let f64_base = f64_owner.initial_empty().expect("f64 base");
-    let f32_seed_delta = f32_owner
-        .compile_delta(
-            &f32_base,
-            [ModelDeltaTerm::new(cell(0), value(16_777_216.0))],
-        )
-        .expect("f32 seed delta");
-    let f64_seed_delta = f64_owner
-        .compile_delta(
-            &f64_base,
-            [ModelDeltaTerm::new(cell(0), value(16_777_216.0))],
-        )
-        .expect("f64 seed delta");
-    let f32_base = f32_owner
-        .apply_delta(f32_base, f32_seed_delta)
-        .expect("f32 seed apply");
-    let f64_base = f64_owner
-        .apply_delta(f64_base, f64_seed_delta)
-        .expect("f64 seed apply");
-    let f32_delta = f32_owner
-        .compile_delta(&f32_base, [ModelDeltaTerm::new(cell(0), value(1.0))])
-        .expect("f32 delta");
-    let f64_delta = f64_owner
-        .compile_delta(&f64_base, [ModelDeltaTerm::new(cell(0), value(1.0))])
-        .expect("f64 delta");
-    let f32_next = f32_owner
-        .apply_delta(f32_base, f32_delta)
-        .expect("f32 apply");
-    let f64_next = f64_owner
-        .apply_delta(f64_base, f64_delta)
-        .expect("f64 apply");
+    // Each model is seeded at 2^24 by one major cycle, then updated by one.
+    let next = |problem: &CompiledProblem| {
+        let owner = model_lifecycle(problem);
+        let seeded = complete(
+            problem,
+            owner
+                .prepare_final_model(
+                    owner.initial_empty().expect("empty base"),
+                    [ModelDeltaTerm::new(cell(0), value(16_777_216.0))],
+                )
+                .expect("seed update"),
+        );
+        owner
+            .prepare_final_model(seeded, [ModelDeltaTerm::new(cell(0), value(1.0))])
+            .expect("unit update")
+    };
+    let f32_next = next(&f32_problem);
+    let f64_next = next(&f64_problem);
     assert_eq!(
         f32_next
-            .read_samples(0..f32_next.sample_count())
+            .generation()
+            .read_samples(0..f32_next.generation().sample_count())
             .expect("read fixture model")[0]
             .value()
             .value(),
@@ -713,41 +629,11 @@ fn compiled_precision_governs_delta_arithmetic() {
     );
     assert_eq!(
         f64_next
-            .read_samples(0..f64_next.sample_count())
+            .generation()
+            .read_samples(0..f64_next.generation().sample_count())
             .expect("read fixture model")[0]
             .value()
             .value(),
         16_777_217.0
     );
-}
-
-#[test]
-fn identical_lifecycle_bindings_cannot_substitute_a_different_owners_generation() {
-    let initial_problem = problem(
-        7,
-        2,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let first_owner = bind_direct(&initial_problem, attempt(96), 1);
-    let other_owner = bind_direct(&initial_problem, attempt(96), 1);
-    let first_base = first_owner.initial_empty().unwrap();
-    let other_base = other_owner.initial_empty().unwrap();
-    assert_ne!(first_base.generation_id(), other_base.generation_id());
-    let first_delta = first_owner
-        .compile_delta(&first_base, [ModelDeltaTerm::new(cell(0), value(1.0))])
-        .unwrap();
-    let other_delta = other_owner
-        .compile_delta(&other_base, [ModelDeltaTerm::new(cell(0), value(2.0))])
-        .unwrap();
-    let first = first_owner.apply_delta(first_base, first_delta).unwrap();
-    let other = other_owner.apply_delta(other_base, other_delta).unwrap();
-    assert_ne!(first.generation_id(), other.generation_id());
-    assert_eq!(first.read_samples(0..1).unwrap()[0].value().value(), 1.0);
-    assert_eq!(other.read_samples(0..1).unwrap()[0].value().value(), 2.0);
-    assert!(matches!(
-        first_owner.validate_named_generation(&other),
-        Err(ModelLifecycleError::ForeignModelLifecycle)
-    ));
-    first_owner.validate_named_generation(&first).unwrap();
 }

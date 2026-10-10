@@ -6,25 +6,12 @@
 
 use casa_imaging_model::{
     CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    FlagPolicy, IdSelection, IntentSelection, LogicalIdentity, ModelExecutionAttemptId,
-    ObservationSelection, ObservationSourceInput, ObservationSourceProvenance,
-    PrimaryBeamValidityPolicy, ProductBlankingPolicy, ProductSupportComparison,
-    ProductValidityPolicies, RowSelection, SelectedColumns, SelectedMainRow, SelectedRows,
-    SpectralWindowSelection, TaylorSupportReference, TaylorValidityPolicy, UvSelection,
-    VisibilityColumn, WeightColumn,
+    FlagPolicy, IdSelection, IntentSelection, ObservationSelection, ObservationSourceInput,
+    ObservationSourceProvenance, PrimaryBeamValidityPolicy, ProductBlankingPolicy,
+    ProductSupportComparison, ProductValidityPolicies, RowSelection, SelectedColumns,
+    SelectedMainRow, SelectedRows, SpectralWindowSelection, TaylorSupportReference,
+    TaylorValidityPolicy, UvSelection, VisibilityColumn, WeightColumn,
 };
-
-/// A deterministic logical identity distinguished by `seed` and `scope`.
-pub fn identity(seed: u8, scope: u8) -> LogicalIdentity {
-    let mut bytes = [seed; 32];
-    bytes[0] = scope;
-    LogicalIdentity::from_bytes(bytes)
-}
-
-/// The model execution attempt named by `seed`.
-pub fn attempt(seed: u8) -> ModelExecutionAttemptId {
-    ModelExecutionAttemptId::new(identity(seed, 0))
-}
 
 /// One measurement set selecting rows 0 and 2 of `3 + seed`, each in its own
 /// spectral window, with provenance `fixture://<label>/<seed>`.

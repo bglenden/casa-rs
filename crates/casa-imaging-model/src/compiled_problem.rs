@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::{collections::BTreeSet, fmt};
+use std::collections::BTreeSet;
 
 use thiserror::Error;
 
@@ -19,40 +19,6 @@ use crate::transaction::{
     ObservationTransactionCompileError, ObservationTransactionContract,
     ObservationTransactionRequirements, compile_observation_transaction,
 };
-
-/// An identity supplied by an owner outside the problem compiler.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LogicalIdentity([u8; 32]);
-
-impl LogicalIdentity {
-    /// An identity of 32 opaque bytes. Only equality is meaningful: the
-    /// owner chooses the bytes (a digest, a counter or a tag), and nothing
-    /// reads structure from them.
-    #[must_use]
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
-    /// The identity's 32 bytes.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-}
-
-impl fmt::Debug for LogicalIdentity {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("LogicalIdentity(")?;
-        write_hex(formatter, &self.0)?;
-        formatter.write_str(")")
-    }
-}
-
-impl fmt::Display for LogicalIdentity {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_hex(formatter, &self.0)
-    }
-}
 
 /// Spectral coefficient kernel shared exactly by prediction and adjoint imaging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2553,11 +2519,4 @@ fn derive_capabilities(
             .map(RequiredCapability::Product),
     );
     capabilities
-}
-
-fn write_hex(formatter: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
-    for byte in bytes {
-        write!(formatter, "{byte:02x}")?;
-    }
-    Ok(())
 }

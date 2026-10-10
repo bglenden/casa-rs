@@ -10,11 +10,11 @@ pub use pass_state::{PassImages, PassNormalState};
 
 use std::mem::size_of;
 
-use casa_imaging_model::{ImageDomainRole, LogicalIdentity};
+use casa_imaging_model::ImageDomainRole;
 use num_complex::Complex64;
 use thiserror::Error;
 
-use crate::{ModelGenerationId, block_normal::BlockNormalPlan, canonical_f64_bits};
+use crate::block_normal::BlockNormalPlan;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum SpectralBasisPlan {
@@ -37,13 +37,6 @@ impl SpectralBasisPlan {
         }
     }
 
-    const fn polynomial(self) -> Option<BlockNormalPlan> {
-        match self {
-            Self::ChannelLocal => None,
-            Self::Polynomial(plan) => Some(plan),
-        }
-    }
-
     fn normal_moment_index(self, row: usize, column: usize) -> Option<usize> {
         match self {
             Self::Polynomial(plan) => plan.normal_moment_index(row, column),
@@ -51,8 +44,6 @@ impl SpectralBasisPlan {
         }
     }
 }
-
-const NORMAL_STATE_CONTENT_DOMAIN: &[u8] = b"casa-rs-normal-state-content";
 
 /// The output channels one normal state covers.
 ///
@@ -119,7 +110,6 @@ pub struct SpectralOperatorPrimitives {
     sum_weights: Box<[f64]>,
     published_sum_weights: Box<[f64]>,
     validity: Box<[SpectralChannelValidity]>,
-    residual_model: Option<ModelGenerationId>,
 }
 
 impl SpectralOperatorPrimitives {
@@ -247,63 +237,6 @@ impl SpectralOperatorPrimitives {
             "cube normal state has per-channel weights"
         );
         self.sum_weights[0]
-    }
-
-    /// Explicitly fingerprint unnormalized values for tests and diagnostics.
-    /// Ordinary Major-Cycle completion and handoff do not invoke this pass.
-    #[must_use]
-    pub fn normal_state_content_identity(&self) -> LogicalIdentity {
-        let taylor = self
-            .basis
-            .polynomial()
-            .filter(|plan| plan.coefficient_term_count() > 1);
-        let published_sum_weights_differ = self.published_sum_weights != self.sum_weights;
-        let mut encoder = crate::Encoder::new(
-            NORMAL_STATE_CONTENT_DOMAIN,
-            if published_sum_weights_differ {
-                4
-            } else if taylor.is_some() {
-                2
-            } else {
-                1
-            },
-        );
-        encoder.usize(self.shape[0]);
-        encoder.usize(self.shape[1]);
-        encoder.usize(self.slab.total_channels);
-        encoder.usize(self.slab.core_start);
-        encoder.usize(self.slab.core_end);
-        if let Some(plan) = taylor {
-            encoder.u64(canonical_f64_bits(plan.reference_frequency_hz()));
-            encoder.usize(plan.coefficient_term_count());
-            encoder.usize(plan.normal_moment_count());
-        }
-        for value in self.dirty().iter() {
-            encoder.u64(value.re.to_bits());
-            encoder.u64(value.im.to_bits());
-        }
-        for value in self.psf().iter() {
-            encoder.u64(value.re.to_bits());
-            encoder.u64(value.im.to_bits());
-        }
-        for value in self.sensitivity().iter() {
-            encoder.u64(canonical_f64_bits(value));
-        }
-        for value in &self.sum_weights {
-            encoder.u64(canonical_f64_bits(*value));
-        }
-        if published_sum_weights_differ {
-            for value in &self.published_sum_weights {
-                encoder.u64(canonical_f64_bits(*value));
-            }
-        }
-        for validity in &self.validity {
-            encoder.u8(match validity {
-                SpectralChannelValidity::Valid => 0,
-                SpectralChannelValidity::Unmapped => 2,
-            });
-        }
-        LogicalIdentity::from_bytes(encoder.finish())
     }
 }
 
@@ -449,23 +382,6 @@ impl SpectralPrimitiveDomains {
     pub(crate) fn get(&self, ordinal: usize) -> Option<&SpectralDomainPrimitives> {
         self.domains.get(ordinal)
     }
-
-    pub(crate) fn normal_state_content_identity(&self) -> LogicalIdentity {
-        let mut encoder = crate::Encoder::new(NORMAL_STATE_CONTENT_DOMAIN, 4);
-        encoder.usize(self.domains.len());
-        for domain in &self.domains {
-            encoder.usize(domain.domain_ordinal);
-            match &domain.domain_role {
-                ImageDomainRole::Main => encoder.u8(0),
-                ImageDomainRole::Outlier(name) => {
-                    encoder.u8(1);
-                    encoder.bytes(name.as_bytes());
-                }
-            }
-            encoder.identity(domain.primitives.normal_state_content_identity().as_bytes());
-        }
-        LogicalIdentity::from_bytes(encoder.finish())
-    }
 }
 
 impl std::ops::Deref for SpectralPrimitiveDomains {
@@ -521,9 +437,6 @@ pub enum SpectralOperatorError {
     /// A pass's images do not cover the state's channels exactly once.
     #[error("spectral operator pass coverage does not match the normal state")]
     IncompleteCoverage,
-    /// A different model was named after residual replay was prepared.
-    #[error("spectral operator residual belongs to another final model generation")]
-    ModelMismatch,
     /// A later major pass did not carry the exact prior invariant normal state.
     #[error("spectral operator reusable normal state does not match the residual refresh")]
     ReusableNormalStateMismatch,

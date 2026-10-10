@@ -40,6 +40,28 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
 }
 
 #[test]
+fn a_clean_that_stops_before_its_first_minor_cycle_publishes_its_products() {
+    // The clean stops at its first convergence check, so the products come
+    // from the initial major cycle with the mask formed after it.
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+    let image_name = root.path().join("threshold-above-peak");
+
+    let result = execute(&request(
+        &measurement_set,
+        &image_name,
+        json!({ "niter": 10, "threshold": "1000Jy" }),
+    ))
+    .expect("a clean whose threshold is above the peak publishes");
+
+    assert!(result.minor_cycles.is_empty());
+    assert_eq!(result.total_minor_iterations, 0);
+    assert_eq!(result.stop, Some(CleanStop::Threshold));
+    assert_standard_products(&image_name, &result.product_names());
+}
+
+#[test]
 fn a_serial_request_runs_on_one_worker() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");

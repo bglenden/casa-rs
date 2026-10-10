@@ -4,12 +4,12 @@
 //! Authoritative solver-independent model-state lifecycle.
 //!
 //! The model crate supplies only closed commitments and value schemas. This
-//! crate owns the model, delta application, and opaque completion evidence
-//! without importing storage, execution, product, or solver APIs.
+//! crate owns the model, its updates and the major cycle that pairs it with
+//! the normal state, without importing storage, execution, product, or solver
+//! APIs.
 
 mod block_normal;
 mod continuum_transform;
-mod identity;
 mod image_response;
 mod major_cycle;
 mod normal_values;
@@ -47,19 +47,10 @@ pub use continuum_transform::{
     ContinuumFitError, ContinuumFitStatus, ContinuumRowInput, ContinuumRowResult, ContinuumSample,
     fit_and_subtract_continuum,
 };
-pub(crate) use identity::{
-    Encoder, FINAL_NORMAL_STATE_DOMAIN, FINAL_NORMAL_STATE_VERSION, MAJOR_CYCLE_DOMAIN,
-    MAJOR_CYCLE_VERSION, canonical_f64_bits,
-};
-pub use identity::{
-    FinalModelCompletionId, FinalNormalStateCompletionId, MajorCycleCompletionId, ModelDeltaId,
-    ModelGenerationId,
-};
 pub use major_cycle::{
     FinalNormalDomainState, FinalNormalState, FinalNormalStateCoefficientTerm,
-    FinalNormalStateNormalMoment, FinalNormalStatePlane, FinalNormalStateWindow,
-    MajorCycleCompletion, MajorCycleError, MajorCycleOwner, MajorCyclePreparation,
-    NormalStateCatalog, normal_state_window_residency_bytes,
+    FinalNormalStateNormalMoment, FinalNormalStatePlane, FinalNormalStateWindow, MajorCycle,
+    MajorCycleCompletion, MajorCycleError, NormalStateCatalog, normal_state_window_residency_bytes,
 };
 pub use mask::{
     AutoMaskBeam, AutoMultithreshControls, AutoMultithreshEvidence, ImageDomainMaskMaterialization,
@@ -69,7 +60,6 @@ pub use mask::{
 };
 pub(crate) use model_lifecycle::validate_model_value;
 pub use model_lifecycle::{
-    FinalModelCompletion, FinalModelContinuation, FinalModelUpdate, ModelDelta, ModelGeneration,
-    ModelGenerationOrigin, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
+    ModelGeneration, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
 };
 pub use spectral_operator::normal_storage::FinalNormalPlaneReader;

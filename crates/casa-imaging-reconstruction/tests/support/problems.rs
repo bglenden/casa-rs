@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! Compiled reconstruction problems on a small synthetic observation, and
-//! the model lifecycles bound to them, for tests that drive major and minor
-//! cycles over `synthetic_pass` scenes. Shared with the runtime's minor-cycle
+//! their model lifecycles, for tests that drive major and minor cycles over
+//! `synthetic_pass` scenes. Shared with the runtime's minor-cycle
 //! tests by `#[path]`.
 
 #![allow(
@@ -15,33 +15,23 @@ use casa_imaging_model::{
     CorrelationType, DataDescriptionSelection, DeclaredInnerProducts, DirectionCoordinateSpec,
     DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
     GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    InstrumentResponse, IntentSelection, LogicalIdentity, MeasurementEquationContract, ModelBounds,
-    ModelColumnWrite, ModelExecutionAttemptId, ModelInnerProduct, ModelLifecycleRequirements,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
-    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput, ProblemSpecification,
-    ProductBlankingPolicy, ProductKind, ProductNormalization, ProductRequirements,
-    ProductSupportComparison, ProductValidityPolicies, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract, SelectedColumns,
-    SelectedMainRow, SelectedRows, SkyDirection, SpectralContract, SpectralCoordinateSpec,
-    SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs,
-    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
-    UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
+    InstrumentResponse, IntentSelection, MeasurementEquationContract, ModelBounds,
+    ModelColumnWrite, ModelInnerProduct, ModelLifecycleRequirements, NumericPrecision,
+    NumericalStage, NumericsContract, ObservationSelection, ObservationSnapshotInput,
+    ObservationSourceInput, ObservationSourceProvenance, ObservationTransactionRequirements,
+    PhaseCentreLaw, PointingCentreLaw, PolarizationContract, PolarizationCoordinate,
+    PrimaryBeamValidityPolicy, ProblemInput, ProblemSpecification, ProductBlankingPolicy,
+    ProductKind, ProductNormalization, ProductRequirements, ProductSupportComparison,
+    ProductValidityPolicies, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, RestFrequency,
+    RestoringBeamPolicy, RowSelection, ScientificContract, SelectedColumns, SelectedMainRow,
+    SelectedRows, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, UvSelection, UvwCoordinateLaw,
+    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile, compile_observation,
 };
-use casa_imaging_reconstruction::ModelLifecycle;
-
-pub fn identity(seed: u8, scope: u8) -> LogicalIdentity {
-    let mut bytes = [seed; 32];
-    bytes[0] = scope;
-    LogicalIdentity::from_bytes(bytes)
-}
-
-pub fn attempt(byte: u8) -> ModelExecutionAttemptId {
-    ModelExecutionAttemptId::new(identity(byte, 0))
-}
+use casa_imaging_reconstruction::{ModelLifecycle, ModelStoragePlan, PreparedFinalModel};
 
 pub fn source(seed: u8) -> ObservationSourceInput {
     ObservationSourceInput::new(
@@ -103,30 +93,56 @@ pub fn reconstruction_problem(
     algorithm: ReconstructionAlgorithm,
     controls: ReconstructionControls,
 ) -> CompiledProblem {
+    reconstruction_problem_with_domains(observation, width, channels, 1, basis, algorithm, controls)
+}
+
+/// A problem of `domains` equal-shape image domains: the main field and
+/// outliers `outlier-1`, `outlier-2`, …, each on the main field's tangent
+/// plane and displaced one image width further along the first axis, so no
+/// two domains overlap.
+pub fn reconstruction_problem_with_domains(
+    observation: u8,
+    width: usize,
+    channels: usize,
+    domains: usize,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    controls: ReconstructionControls,
+) -> CompiledProblem {
     let centre = width as f64 / 2.0;
-    let direction = DirectionCoordinateSpec::new(
-        Projection::Sin,
-        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-        [centre, centre],
-        [-1.0e-6, 1.0e-6],
-        [[1.0, 0.0], [0.0, 1.0]],
-        [180.0, 0.0],
-    );
+    let direction = |ordinal: usize| {
+        DirectionCoordinateSpec::new(
+            Projection::Sin,
+            SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+            [centre + (ordinal * width) as f64, centre],
+            [-1.0e-6, 1.0e-6],
+            [[1.0, 0.0], [0.0, 1.0]],
+            [180.0, 0.0],
+        )
+    };
     let geometry = GeometryInput::new(
-        vec![ImageDomainSpec::new(
-            ImageDomainRole::Main,
-            ImageShape::new(width, width),
-            direction,
-            FacetLayout::Single,
-            AxisOrder::new([
-                ImageAxis::DirectionLongitude,
-                ImageAxis::DirectionLatitude,
-                ImageAxis::Polarization,
-                ImageAxis::Spectral,
-            ]),
-        )],
+        (0..domains)
+            .map(|ordinal| {
+                ImageDomainSpec::new(
+                    if ordinal == 0 {
+                        ImageDomainRole::Main
+                    } else {
+                        ImageDomainRole::Outlier(format!("outlier-{ordinal}"))
+                    },
+                    ImageShape::new(width, width),
+                    direction(ordinal),
+                    FacetLayout::Single,
+                    AxisOrder::new([
+                        ImageAxis::DirectionLongitude,
+                        ImageAxis::DirectionLatitude,
+                        ImageAxis::Polarization,
+                        ImageAxis::Spectral,
+                    ]),
+                )
+            })
+            .collect(),
         CentreLaws::new(
-            PhaseCentreLaw::Fixed(direction.reference_direction()),
+            PhaseCentreLaw::Fixed(direction(0).reference_direction()),
             PointingCentreLaw::PhaseTrackingCentre,
         ),
         UvwCoordinateLaw::PhaseTrackingCentre,
@@ -192,16 +208,20 @@ pub fn reconstruction_problem(
     .expect("compile T20 reconciliation problem")
 }
 
-pub fn bind_lifecycle(
-    problem: &CompiledProblem,
-    attempt: ModelExecutionAttemptId,
-) -> ModelLifecycle {
-    ModelLifecycle::bind(
+/// The model lifecycle of `problem`, its generations resident in one window.
+pub fn model_lifecycle(problem: &CompiledProblem) -> ModelLifecycle {
+    ModelLifecycle::new(
         problem,
-        attempt,
-        7,
-        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
-            .expect("positive model window"),
+        ModelStoragePlan::resident(usize::MAX).expect("positive model window"),
     )
-    .expect("bind model lifecycle")
+}
+
+/// The empty model as the final model of an initial major cycle.
+pub fn empty_final_model(lifecycle: &ModelLifecycle) -> PreparedFinalModel {
+    lifecycle
+        .prepare_final_model(
+            lifecycle.initial_empty().expect("empty model generation"),
+            [],
+        )
+        .expect("prepare the empty final model")
 }

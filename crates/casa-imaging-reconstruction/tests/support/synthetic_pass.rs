@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! Synthetic major-cycle passes: the normal state a pass forms for a known
-//! sky, assembled through `PassNormalState` without visibilities.
+//! sky, appended to a `MajorCycle` without visibilities.
 //!
 //! The sky holds one model-space plane per data term: per Taylor
 //! coefficient for a constant or Taylor basis, per output channel for a
@@ -28,13 +28,12 @@
 
 use casa_imaging_model::{CompiledProblem, ModelSupport, ReconstructionBasis};
 use casa_imaging_reconstruction::{
-    FinalNormalState, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation,
-    ModelGeneration, ModelLifecycle, PassImages, PassNormalState,
-    runtime_adapter::{CompleteDataNormalState, NormalStoragePlan},
+    FinalNormalState, MajorCycle, MajorCycleCompletion, ModelGeneration, PassImages,
+    PreparedFinalModel, runtime_adapter::NormalStoragePlan,
 };
 
 /// Traversal counts the synthetic pass reports; any positive pair proves
-/// coverage to the major-cycle owner.
+/// coverage to the major cycle.
 pub const SAMPLES: u64 = 4;
 pub const BLOCKS: u64 = 1;
 
@@ -220,86 +219,76 @@ impl Scene {
         }
     }
 
-    /// The complete normal state of an initial pass over `preparation`'s
-    /// final model.
+    /// The completed initial major cycle of `model`.
     pub fn initial(
         &self,
         problem: &CompiledProblem,
-        preparation: &MajorCyclePreparation,
-    ) -> CompleteDataNormalState {
-        self.initial_with(problem, preparation, self.resident_storage())
+        model: PreparedFinalModel,
+    ) -> MajorCycleCompletion {
+        self.initial_with(problem, model, self.resident_storage())
     }
 
-    /// An initial pass written to `storage`.
+    /// The completed initial major cycle of `model`, its normal state
+    /// written to `storage`.
     pub fn initial_with(
         &self,
         problem: &CompiledProblem,
-        preparation: &MajorCyclePreparation,
+        model: PreparedFinalModel,
         storage: NormalStoragePlan,
-    ) -> CompleteDataNormalState {
-        let mut state =
-            PassNormalState::initial(problem, preparation.final_model_generation(), storage)
-                .expect("initial synthetic pass state");
-        state
-            .append(self.pass_images(preparation.final_model(), true))
-            .expect("append synthetic initial pass images");
-        state
+    ) -> MajorCycleCompletion {
+        self.initial_cycle(problem, model, storage)
             .finish(SAMPLES, BLOCKS)
-            .expect("complete synthetic initial pass")
+            .expect("complete the synthetic initial major cycle")
     }
 
-    /// A residual refresh of `previous` for `preparation`'s final model.
+    /// The initial major cycle of `model` with its pass's images appended,
+    /// not yet finished.
+    pub fn initial_cycle(
+        &self,
+        problem: &CompiledProblem,
+        model: PreparedFinalModel,
+        storage: NormalStoragePlan,
+    ) -> MajorCycle {
+        let mut cycle =
+            MajorCycle::initial(problem, model, storage).expect("initial synthetic major cycle");
+        let (model, state) = cycle.parts();
+        state
+            .append(self.pass_images(model, true))
+            .expect("append synthetic initial pass images");
+        cycle
+    }
+
+    /// The completed residual refresh of `previous` with `model`.
     pub fn refresh(
         &self,
         problem: &CompiledProblem,
         previous: FinalNormalState,
-        preparation: &MajorCyclePreparation,
-    ) -> CompleteDataNormalState {
-        let mut state = PassNormalState::refresh(
-            problem,
-            previous,
-            preparation.final_model_generation(),
-            self.resident_storage(),
-        )
-        .expect("refresh synthetic pass state");
-        state
-            .append(self.pass_images(preparation.final_model(), false))
-            .expect("append synthetic residual pass images");
-        state
+        model: PreparedFinalModel,
+    ) -> MajorCycleCompletion {
+        self.refresh_cycle(problem, previous, model)
             .finish(SAMPLES, BLOCKS)
-            .expect("complete synthetic residual pass")
+            .expect("complete the synthetic residual refresh")
     }
 
-    /// Run an initial pass and reconcile it with `preparation`.
-    pub fn reconcile(
+    /// The residual refresh of `previous` with `model`, its pass's residual
+    /// images appended, not yet finished.
+    pub fn refresh_cycle(
         &self,
         problem: &CompiledProblem,
-        lifecycle: &mut ModelLifecycle,
-        preparation: MajorCyclePreparation,
-    ) -> MajorCycleCompletion {
-        let complete = self.initial(problem, &preparation);
-        MajorCycleOwner::from_complete_data(complete, preparation)
-            .expect("major-cycle owner of the synthetic pass")
-            .reconcile(lifecycle)
-            .expect("reconcile the synthetic pass")
-    }
-
-    /// Refresh `previous` and reconcile it with `preparation`.
-    pub fn reconcile_refresh(
-        &self,
-        problem: &CompiledProblem,
-        lifecycle: &mut ModelLifecycle,
         previous: FinalNormalState,
-        preparation: MajorCyclePreparation,
-    ) -> MajorCycleCompletion {
-        let complete = self.refresh(problem, previous, &preparation);
-        MajorCycleOwner::from_complete_data(complete, preparation)
-            .expect("major-cycle owner of the synthetic refresh")
-            .reconcile(lifecycle)
-            .expect("reconcile the synthetic refresh")
+        model: PreparedFinalModel,
+    ) -> MajorCycle {
+        let mut cycle = MajorCycle::refresh(problem, previous, model, self.resident_storage())
+            .expect("synthetic residual refresh");
+        let (model, state) = cycle.parts();
+        state
+            .append(self.pass_images(model, false))
+            .expect("append synthetic residual pass images");
+        cycle
     }
 
-    fn resident_storage(&self) -> NormalStoragePlan {
+    /// Normal storage holding the whole state in one window.
+    pub fn resident_storage(&self) -> NormalStoragePlan {
         let channels = if self.channel_local {
             self.sky.len()
         } else {
