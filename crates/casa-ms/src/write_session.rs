@@ -14,8 +14,8 @@ use casa_tables::{
     STREAMING_TILED_COLUMN_BUFFER_BYTES, StreamedScalarType, StreamedTiledPrimitiveColumn,
     StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column, StreamedTiledShapeCubeLayout,
     StreamedTiledShapeValueType, StreamingScalarColumnWriter, StreamingTiledPrimitiveWriter,
-    StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter, Table, TableOptions,
-    install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
+    StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter, Table, TableError, TableOptions,
+    TableWriteLock, install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
     install_streamed_tiled_shape_column, install_streamed_tiled_shape_complex32_column,
     install_streamed_tiled_shape_primitive_column,
 };
@@ -996,7 +996,7 @@ pub struct MeasurementSetWriteTelemetry {
     pub producer_seconds: f64,
     /// Time producers spent blocked on the bounded creation queue.
     pub queue_wait_seconds: f64,
-    /// Flush, installation, marker removal, and other finalization time.
+    /// Flush, installation, lock release, and other finalization time.
     pub finalize_seconds: f64,
 }
 
@@ -1040,6 +1040,18 @@ pub enum MeasurementSetWriteError {
         path: String,
         /// Filesystem failure.
         reason: String,
+    },
+    /// casacore's write lock on MAIN could not be taken or released.
+    ///
+    /// [`TableError::LockFailed`] means another writer holds it: another
+    /// process, casacore's or casa-rs's, or another handle in this process.
+    #[error("casacore write lock on MeasurementSet {path}: {source}")]
+    WriteLock {
+        /// MeasurementSet (MAIN table) directory.
+        path: String,
+        /// Lock failure.
+        #[source]
+        source: TableError,
     },
 }
 
@@ -1149,6 +1161,9 @@ enum MeasurementSetWriteSessionState {
         started_at: Instant,
     },
     Mutation {
+        /// casacore's MAIN write lock, held until the session finishes or is
+        /// dropped.
+        write_lock: TableWriteLock,
         next_selected_row: usize,
         write_seconds: f64,
         bytes_written: usize,
@@ -1754,7 +1769,20 @@ impl MeasurementSetWriteSession {
         })
     }
 
-    /// Start a bounded selected-row mutation and its incomplete marker.
+    /// Start a bounded selected-row mutation of `measurement_set` in place.
+    ///
+    /// The session takes casacore's write lock on MAIN, once and without
+    /// waiting, before it changes anything, and holds it until
+    /// [`finish_mutation`](Self::finish_mutation) or until the session is
+    /// dropped. Another writer is therefore refused while the session lives:
+    /// a casacore or casa-rs process, or another handle in this process.
+    /// `measurement_set` must be opened without table locking
+    /// ([`MeasurementSet::open`]).
+    ///
+    /// # Errors
+    ///
+    /// [`MeasurementSetWriteError::WriteLock`] when the lock is held
+    /// elsewhere or cannot be taken.
     #[doc(hidden)]
     pub fn start_selected_row_mutation(
         measurement_set: &mut MeasurementSet,
@@ -1779,11 +1807,25 @@ impl MeasurementSetWriteSession {
                 "selected-row mapping contains a row outside MAIN".to_string(),
             ));
         }
-        if measurement_set.path().is_none() {
+        let Some(path) = measurement_set.path() else {
             return Err(MeasurementSetWriteError::InvalidPlan(
                 "selected-row mutation requires a disk-backed MeasurementSet".to_string(),
             ));
+        };
+        #[cfg(unix)]
+        if measurement_set.main_table().lock_options().is_some() {
+            return Err(MeasurementSetWriteError::InvalidPlan(
+                "selected-row mutation takes casacore's write lock itself and needs a \
+                 MeasurementSet opened without table locking"
+                    .to_string(),
+            ));
         }
+        let mut write_lock = TableWriteLock::acquire(path, 1).map_err(|source| {
+            MeasurementSetWriteError::WriteLock {
+                path: path.display().to_string(),
+                source,
+            }
+        })?;
         for column in &plan.columns {
             if column.mode == MeasurementSetColumnWriteMode::Create {
                 let already_persisted = measurement_set
@@ -1814,9 +1856,11 @@ impl MeasurementSetWriteSession {
                 }
             }
         }
+        write_lock.record_write(measurement_set.main_table());
         Ok(Self {
             plan,
             state: MeasurementSetWriteSessionState::Mutation {
+                write_lock,
                 next_selected_row: 0,
                 write_seconds: 0.0,
                 bytes_written: 0,
@@ -2006,11 +2050,13 @@ impl MeasurementSetWriteSession {
         Ok(&self.plan.selected_rows[*next_selected_row..end])
     }
 
-    /// Complete a selected-row session after every planned row was written.
+    /// Complete a selected-row session after every planned row was written,
+    /// and release casacore's MAIN write lock.
     #[doc(hidden)]
     pub fn finish_mutation(self) -> Result<MeasurementSetWriteTelemetry, MeasurementSetWriteError> {
         let MeasurementSetWriteSession { plan, state } = self;
         let MeasurementSetWriteSessionState::Mutation {
+            write_lock,
             next_selected_row,
             write_seconds,
             bytes_written,
@@ -2030,6 +2076,10 @@ impl MeasurementSetWriteSession {
         }
         let producer_window_seconds = started_at.elapsed().as_secs_f64();
         let finalize_started = Instant::now();
+        let path = write_lock.path().display().to_string();
+        write_lock
+            .release()
+            .map_err(|source| MeasurementSetWriteError::WriteLock { path, source })?;
         let columns = plan
             .columns
             .iter()

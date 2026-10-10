@@ -16,7 +16,9 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use casa_tables::{LockMode, LockOptions, LockType, Table, TableError, TableOptions};
+use casa_tables::{
+    LockMode, LockOptions, LockType, Table, TableError, TableOptions, TableWriteLock,
+};
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 /// Locate the test-built lock_helper binary.
@@ -267,4 +269,56 @@ fn sequential_writes_from_multiple_processes() {
     let mut table = Table::open_with_lock(opts, lock_opts).unwrap();
     table.lock(LockType::Read, 1).unwrap();
     assert_eq!(table.row_count(), 4);
+}
+
+/// The modify counter another process would see in the table's sync data.
+fn published_modify_counter(opts: &TableOptions) -> u32 {
+    let mut table =
+        Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+    assert!(table.lock(LockType::Read, 1).unwrap());
+    table.locked_modify_counter().unwrap()
+}
+
+/// fcntl locks belong to the process and closing any descriptor on a file
+/// drops them all. A write lock held through one handle must nevertheless
+/// survive other handles on the same table opening and closing in this
+/// process, refuse those handles, and exclude other processes until it is
+/// released; releasing it publishes the write in the sync data.
+#[test]
+fn table_write_lock_survives_other_handles_in_this_process() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let opts = create_test_table(tmp.path());
+    let helper = helper_binary();
+    let table_dir = opts.path().to_str().unwrap();
+    let another_process_takes_the_write_lock = || {
+        Command::new(&helper)
+            .args([table_dir, "try_write_lock"])
+            .output()
+            .expect("failed to spawn lock probe")
+            .status
+            .success()
+    };
+    let counter_before = published_modify_counter(&opts);
+
+    let mut lock = TableWriteLock::acquire(opts.path(), 1).expect("take the write lock");
+    assert!(matches!(
+        TableWriteLock::acquire(opts.path(), 1),
+        Err(TableError::LockFailed { .. })
+    ));
+    drop(Table::open(opts.clone()).unwrap());
+    let mut user_locked =
+        Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+    assert!(!user_locked.lock(LockType::Write, 1).unwrap());
+    assert!(user_locked.lock(LockType::Read, 1).unwrap());
+    drop(user_locked);
+    drop(Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::AutoLocking)).unwrap());
+    assert!(
+        !another_process_takes_the_write_lock(),
+        "another process took the write lock while this process held it"
+    );
+
+    lock.record_write(&Table::open(opts.clone()).unwrap());
+    lock.release().unwrap();
+    assert_eq!(published_modify_counter(&opts), counter_before + 1);
+    assert!(another_process_takes_the_write_lock());
 }
