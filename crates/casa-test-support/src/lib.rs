@@ -18,6 +18,7 @@ pub mod table_measures_interop;
 mod table_oracle;
 mod table_oracle_impl;
 pub mod table_quantum_interop;
+pub mod table_sync;
 pub mod taql_interop;
 mod test_data;
 

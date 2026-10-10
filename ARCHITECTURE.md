@@ -158,8 +158,12 @@ Additional constraints:
   memory ceiling includes every owned scalar and array sink. New tables publish
   from staging; in-place changes hold casacore's table write lock for the whole
   change and add nothing CASA would not write (no keywords, marker files,
-  generations or identities). A held lock is refused at once (one attempt,
-  where casacore by default waits); on a file system without lock support
+  generations or identities). A lock another process holds is waited for, as
+  casacore waits, blocked in the kernel so that a deadlocking wait is refused,
+  with the waiter in the lock file's request list so that a casacore
+  `AutoLocking` holder releases it at its next inspection; a conflicting
+  handle in the same process is refused at once, and casa-rs does not yet
+  release on request (#694). On a file system without lock support
   (`ENOLCK`, or `ENOTSUP` on macOS SMB) tables are used unlocked with a
   warning, as casacore does for `ENOLCK`. General rollback, snapshots,
   journaling, and copy-on-write generations are not part of the persistence

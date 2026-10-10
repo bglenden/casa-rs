@@ -45,6 +45,7 @@ impl Table {
                 column: column.to_string(),
             });
         }
+        self.inner.note_change();
         self.virtual_columns.insert(column.to_string());
         self.virtual_bindings.push(VirtualColumnBinding::Forward {
             col_name: column.to_string(),
@@ -81,6 +82,7 @@ impl Table {
                 });
             }
         }
+        self.inner.note_change();
         self.virtual_columns.insert(virtual_col.to_string());
         self.virtual_bindings
             .push(VirtualColumnBinding::ScaledArray {
@@ -124,6 +126,7 @@ impl Table {
                 });
             }
         }
+        self.inner.note_change();
         self.virtual_columns.insert(virtual_col.to_string());
         self.virtual_bindings
             .push(VirtualColumnBinding::ScaledComplexData {
@@ -163,6 +166,7 @@ impl Table {
                 });
             }
         }
+        self.inner.note_change();
         self.virtual_columns.insert(virtual_col.to_string());
         self.virtual_bindings.push(VirtualColumnBinding::BitFlags {
             virtual_col: virtual_col.to_string(),
@@ -201,6 +205,7 @@ impl Table {
                 });
             }
         }
+        self.inner.note_change();
         self.virtual_columns.insert(virtual_col.to_string());
         self.virtual_bindings
             .push(VirtualColumnBinding::CompressFloat {
@@ -240,6 +245,7 @@ impl Table {
                 });
             }
         }
+        self.inner.note_change();
         self.virtual_columns.insert(virtual_col.to_string());
         self.virtual_bindings
             .push(VirtualColumnBinding::CompressComplex {
@@ -274,6 +280,7 @@ impl Table {
                 column: column.to_string(),
             });
         }
+        self.inner.note_change();
         self.virtual_columns.insert(column.to_string());
         self.virtual_bindings
             .push(VirtualColumnBinding::ForwardIndexedRow {
@@ -305,6 +312,7 @@ impl Table {
                 column: column.to_string(),
             });
         }
+        self.inner.note_change();
         self.virtual_columns.insert(column.to_string());
         self.virtual_bindings
             .push(VirtualColumnBinding::TaQLColumn {

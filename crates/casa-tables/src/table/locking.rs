@@ -11,12 +11,20 @@ impl Table {
     /// - [`LockMode::PermanentLocking`]: acquires a write lock immediately;
     ///   fails if unavailable.
     /// - [`LockMode::PermanentLockingWait`]: acquires a write lock, waiting
-    ///   indefinitely.
-    /// - [`LockMode::AutoLocking`]: acquires a read lock immediately; write
-    ///   operations temporarily acquire/release a write lock.
+    ///   indefinitely for another process.
+    /// - [`LockMode::AutoLocking`]: acquires a read lock, waiting
+    ///   indefinitely, as casacore does, while another process holds the
+    ///   write lock; write operations temporarily acquire/release a write
+    ///   lock.
     /// - [`LockMode::UserLocking`]: no lock is acquired until
     ///   [`lock()`](Table::lock) is called.
     /// - [`LockMode::NoLocking`]: equivalent to [`open()`](Table::open).
+    ///
+    /// A wait adds this process to the request list in `table.lock`, so a
+    /// casacore holder using `AutoLocking` releases its lock at its next
+    /// inspection, and is logged when it starts, every ten seconds and when
+    /// it ends. A write lock held by another handle in this process is never
+    /// waited for. The table's metadata is read only once the lock is held.
     ///
     /// C++ equivalent: `Table(name, TableLock(...), Table::Old)`.
     #[cfg(unix)]
@@ -39,54 +47,33 @@ impl Table {
                     message: e.to_string(),
                 })?;
 
-        // Acquire initial lock based on mode.
-        match lock_opts.mode {
-            LockMode::PermanentLocking => {
-                if !lock_file
-                    .acquire(LockType::Write, 1)
+        // Acquire the initial lock the mode asks for, with casacore's number
+        // of attempts (`TableLockData::makeLock`, `PlainTable`).
+        let initial = match lock_opts.mode {
+            LockMode::PermanentLocking => Some((LockType::Write, 1)),
+            LockMode::PermanentLockingWait => Some((LockType::Write, 0)),
+            LockMode::AutoLocking | LockMode::DefaultLocking => Some((LockType::Read, 0)),
+            // AutoNoReadLocking skips the read lock on open; only write
+            // locks are acquired.
+            LockMode::AutoNoReadLocking
+            | LockMode::UserLocking
+            | LockMode::UserNoReadLocking
+            | LockMode::NoLocking => None,
+        };
+        if let Some((lock_type, nattempts)) = initial {
+            let outcome =
+                lock_file
+                    .acquire(lock_type, nattempts)
                     .map_err(|e| TableError::LockIo {
                         path: options.path.display().to_string(),
                         message: e.to_string(),
-                    })?
-                {
-                    return Err(TableError::LockFailed {
-                        path: options.path.display().to_string(),
-                        message: "table is locked by another process".into(),
-                    });
-                }
+                    })?;
+            if !outcome.is_acquired() {
+                return Err(TableError::LockFailed {
+                    path: options.path.display().to_string(),
+                    message: outcome.refusal(lock_type, nattempts),
+                });
             }
-            LockMode::PermanentLockingWait => {
-                if !lock_file
-                    .acquire(LockType::Write, 0)
-                    .map_err(|e| TableError::LockIo {
-                        path: options.path.display().to_string(),
-                        message: e.to_string(),
-                    })?
-                {
-                    return Err(TableError::LockFailed {
-                        path: options.path.display().to_string(),
-                        message: "could not acquire permanent lock".into(),
-                    });
-                }
-            }
-            LockMode::AutoLocking | LockMode::DefaultLocking => {
-                if !lock_file
-                    .acquire(LockType::Read, 1)
-                    .map_err(|e| TableError::LockIo {
-                        path: options.path.display().to_string(),
-                        message: e.to_string(),
-                    })?
-                {
-                    return Err(TableError::LockFailed {
-                        path: options.path.display().to_string(),
-                        message: "could not acquire retained read lock".into(),
-                    });
-                }
-            }
-            LockMode::AutoNoReadLocking => {
-                // Skip read lock on open — only write locks are acquired.
-            }
-            LockMode::UserLocking | LockMode::UserNoReadLocking | LockMode::NoLocking => {}
         }
 
         // Metadata must be read only after the initial lock is acquired. A
@@ -112,6 +99,7 @@ impl Table {
             options: lock_opts,
             data_manager: options.data_manager,
             endian_format: options.endian_format,
+            flushed_generation: table.inner.generation(),
         });
 
         Ok(table)
@@ -120,13 +108,19 @@ impl Table {
     /// Acquires a lock on the table.
     ///
     /// Re-reads the table data from disk if another process modified it
-    /// since the last lock was held.
+    /// since the last lock was held. A table that already holds a lock is not
+    /// re-read, and a read lock requested while the write lock is held keeps
+    /// the write lock, as in casacore.
     ///
-    /// `nattempts`: number of lock attempts. 0 means wait indefinitely,
-    /// 1 means try once without waiting.
+    /// `nattempts`: number of lock attempts. 0 means wait indefinitely for
+    /// another process, 1 means try once without waiting, and more retries
+    /// once a second. A wait adds this process to the request list in
+    /// `table.lock`, as casacore's does, and is logged. A write lock held by
+    /// another handle in this process is never waited for.
     ///
     /// Returns `true` if the lock was acquired, `false` if it could not
-    /// be acquired within the given attempts.
+    /// be acquired within the given attempts or another handle in this
+    /// process holds the write lock.
     ///
     /// C++ equivalent: `Table::lock(type, nattempts)`.
     #[cfg(unix)]
@@ -157,16 +151,21 @@ impl Table {
             return Ok(true);
         }
 
-        let acquired =
-            state
-                .lock_file
-                .acquire(lock_type, nattempts)
-                .map_err(|e| TableError::LockIo {
-                    path: state.path.display().to_string(),
-                    message: e.to_string(),
-                })?;
+        // A table already locked needs no synchronization: no other process
+        // can have written it (casacore's `PlainTable::lock`). Requesting a
+        // read lock while holding the write lock keeps the write lock and
+        // this handle's unflushed changes.
+        let already_locked = state.lock_file.has_lock(LockType::Read);
+        let acquired = state
+            .lock_file
+            .acquire(lock_type, nattempts)
+            .map_err(|e| TableError::LockIo {
+                path: state.path.display().to_string(),
+                message: e.to_string(),
+            })?
+            .is_acquired();
 
-        if acquired {
+        if acquired && !already_locked {
             // Read sync data and check if we need to reload.
             if let Some(new_sync) =
                 state
@@ -194,9 +193,11 @@ impl Table {
                     snapshot.column_keywords,
                     snapshot.schema,
                 );
-                // Update our stored sync data.
+                // Update our stored sync data. The reloaded table is what is
+                // on disk, so there is nothing to flush.
                 if let Some(s) = self.lock_state.as_mut() {
                     s.sync_data = new_sync;
+                    s.flushed_generation = self.inner.generation();
                 }
             }
         }
@@ -206,8 +207,12 @@ impl Table {
 
     /// Releases the current lock.
     ///
-    /// If a write lock was held, the table is flushed to disk first and
-    /// sync data is updated in the lock file.
+    /// If a write lock was held and the table changed since it was opened,
+    /// reloaded or last flushed, the table is flushed to disk first and the
+    /// change is published in the lock file's sync data, raising its modify
+    /// counter so other processes re-read the table. A write lock under
+    /// which nothing changed writes and publishes nothing, as casacore's
+    /// `PlainTable::putFile` writes only what changed.
     ///
     /// In permanent locking modes, this is a no-op (lock is held until close).
     ///
@@ -235,18 +240,19 @@ impl Table {
             return Ok(());
         }
         // Extract the info we need before borrowing self for save/schema.
-        let (is_write_locked, save_opts, mode) = {
+        let (flush, save_opts, mode) = {
             let state = self
                 .lock_state
                 .as_ref()
                 .ok_or_else(|| TableError::NotLocked {
                     operation: "unlock".into(),
                 })?;
-            let wl = state.lock_file.has_lock(LockType::Write);
+            let flush = state.lock_file.has_lock(LockType::Write)
+                && state.has_unflushed_changes(&self.inner);
             let opts = TableOptions::new(&state.path)
                 .with_data_manager(state.data_manager)
                 .with_endian_format(state.endian_format);
-            (wl, opts, state.options.mode)
+            (flush, opts, state.options.mode)
         };
 
         if matches!(
@@ -256,29 +262,25 @@ impl Table {
             return Ok(());
         }
 
-        // If write-locked, flush data to disk.
-        if is_write_locked {
+        // If write-locked with changes, flush them to disk and publish them.
+        if flush {
             if metadata_only {
                 self.save_metadata_only(save_opts)?;
             } else {
                 self.save(save_opts)?;
             }
 
-            // Gather sync info from immutable borrows.
-            let nrrow = self.row_count() as u64;
-            let nrcolumn = self.schema().map(|s| s.columns().len() as u32).unwrap_or(0);
-
-            // Now borrow lock_state mutably for sync data update.
+            // Publish the table as persisted, as casacore's putFile does.
+            let generation = self.inner.generation();
             let state = self.lock_state.as_mut().expect("lock_state present");
-            state.sync_data.record_write(nrrow, nrcolumn, true, &[true]);
-
-            state
-                .lock_file
-                .write_sync_data(&state.sync_data)
-                .map_err(|e| TableError::LockIo {
-                    path: state.path.display().to_string(),
-                    message: e.to_string(),
+            state.sync_data =
+                publish_persisted_write(&state.lock_file, &state.path).map_err(|e| {
+                    TableError::LockIo {
+                        path: state.path.display().to_string(),
+                        message: e.to_string(),
+                    }
                 })?;
+            state.flushed_generation = generation;
         }
 
         let state = self.lock_state.as_mut().expect("lock_state present");
@@ -364,7 +366,19 @@ impl Table {
         if self.kind == TableKind::Memory {
             return Ok(false);
         }
+        // Some write operations change only the data managers or the files
+        // on disk, which the change count of the rows does not see. An
+        // admitted operation counts even if it later fails, since it may have
+        // written part of its change; a refused one does not.
+        let admitted = self.admit_write_operation(operation);
+        if admitted.is_ok() {
+            self.inner.note_change();
+        }
+        admitted
+    }
 
+    #[cfg(unix)]
+    fn admit_write_operation(&mut self, operation: &str) -> Result<bool, TableError> {
         let Some(state) = self.lock_state.as_mut() else {
             return Ok(false);
         };
@@ -400,18 +414,21 @@ impl Table {
                     return Ok(false);
                 }
 
-                let acquired = state.lock_file.acquire(LockType::Write, 0).map_err(|e| {
+                let outcome = state.lock_file.acquire(LockType::Write, 0).map_err(|e| {
                     TableError::LockIo {
                         path: state.path.display().to_string(),
                         message: e.to_string(),
                     }
                 })?;
-                if acquired {
+                if outcome.is_acquired() {
                     Ok(true)
                 } else {
                     Err(TableError::LockFailed {
                         path: state.path.display().to_string(),
-                        message: format!("could not acquire temporary write lock for {operation}"),
+                        message: format!(
+                            "{operation} needs a temporary write lock: {}",
+                            outcome.refusal(LockType::Write, 0)
+                        ),
                     })
                 }
             }

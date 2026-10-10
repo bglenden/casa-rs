@@ -495,6 +495,25 @@ pub(crate) fn cpp_table_verify_unlocked(
     Ok(())
 }
 
+/// Open the table at `path` in C++ casacore with `UserLocking`, take, release
+/// and retake an explicit read lock, and return `(rows, columns)` as the
+/// locked table reports them.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_lock_read_relock(path: &std::path::Path) -> Result<(u64, u32), String> {
+    let c_path =
+        CasacoreOracleRuntime::c_path("table path", path).map_err(|error| error.to_string())?;
+    let mut rows: u64 = 0;
+    let mut columns: u32 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc =
+        unsafe { cpp_table_lock_read_relock(c_path.as_ptr(), &mut rows, &mut columns, &mut error) };
+    unsafe {
+        CasacoreOracleRuntime::cpp_status("table.lock_read_relock", rc, error, cpp_table_free_error)
+    }
+    .map_err(|error| error.to_string())?;
+    Ok((rows, columns))
+}
+
 /// Times `nqueries` exact `ColumnsIndex` lookups for `key_value` on the `"id"`
 /// column of the table at `path` using the C++ casacore implementation.
 ///
