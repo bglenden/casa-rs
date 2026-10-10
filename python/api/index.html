@@ -1172,17 +1172,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#casars.tasks.TaskCapabilityError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TaskCapabilityError
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#casars.tasks.TaskCompletion" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2061,17 +2050,6 @@
     <span class="md-ellipsis">
       
         CasarsBinaryNotFoundError
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#casars.tasks.TaskCapabilityError" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TaskCapabilityError
       
     </span>
   </a>
@@ -4512,82 +4490,11 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">27</span>
-<span class="normal">28</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">CasarsBinaryNotFoundError</span><span class="p">(</span><span class="ne">FileNotFoundError</span><span class="p">):</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">26</span>
+<span class="normal">27</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">CasarsBinaryNotFoundError</span><span class="p">(</span><span class="ne">FileNotFoundError</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">"""Raised when the canonical ``casars`` executable cannot be resolved."""</span>
 </code></pre></div></td></tr></table></div>
               </details>
-
-    </div>
-
-</div>
-
-<div class="doc doc-object doc-class">
-
-
-
-<h2 id="casars.tasks.TaskCapabilityError" class="doc doc-heading">
-            <code>TaskCapabilityError</code>
-
-
-<a href="#casars.tasks.TaskCapabilityError" class="headerlink" title="Permanent link">&para;</a></h2>
-
-
-    <div class="doc doc-contents ">
-            <p class="doc doc-class-bases">
-              Bases: <code><span title="RuntimeError">RuntimeError</span></code></p>
-
-
-
-        <p>Raised from exact canonical provider-owned infeasibility reasons.</p>
-
-
-
-
-
-
-
-
-              <details class="mkdocstrings-source">
-                <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">39</span>
-<span class="normal">40</span>
-<span class="normal">41</span>
-<span class="normal">42</span>
-<span class="normal">43</span>
-<span class="normal">44</span>
-<span class="normal">45</span>
-<span class="normal">46</span>
-<span class="normal">47</span>
-<span class="normal">48</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskCapabilityError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
-<span class="w">    </span><span class="sd">"""Raised from exact canonical provider-owned infeasibility reasons."""</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
-        <span class="bp">self</span><span class="p">,</span> <span class="n">task</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">reasons</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">ProviderUnsupportedReason</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
-    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">task</span> <span class="o">=</span> <span class="n">task</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">reasons</span> <span class="o">=</span> <span class="n">reasons</span>
-        <span class="n">detail</span> <span class="o">=</span> <span class="s2">", "</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">reason</span><span class="o">.</span><span class="n">kind</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">reason</span><span class="o">.</span><span class="n">id</span><span class="si">}</span><span class="s2">"</span> <span class="k">for</span> <span class="n">reason</span> <span class="ow">in</span> <span class="n">reasons</span><span class="p">)</span>
-        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">task</span><span class="si">}</span><span class="s2"> is unavailable in this installed build: </span><span class="si">{</span><span class="n">detail</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
-</code></pre></div></td></tr></table></div>
-              </details>
-
-
-
-<div class="doc doc-children">
-
-
-
-
-
-
-
-
-
-
-
-
-  </div>
 
     </div>
 
@@ -4623,7 +4530,20 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">62</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">49</span>
+<span class="normal">50</span>
+<span class="normal">51</span>
+<span class="normal">52</span>
+<span class="normal">53</span>
+<span class="normal">54</span>
+<span class="normal">55</span>
+<span class="normal">56</span>
+<span class="normal">57</span>
+<span class="normal">58</span>
+<span class="normal">59</span>
+<span class="normal">60</span>
+<span class="normal">61</span>
+<span class="normal">62</span>
 <span class="normal">63</span>
 <span class="normal">64</span>
 <span class="normal">65</span>
@@ -4643,20 +4563,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">79</span>
 <span class="normal">80</span>
 <span class="normal">81</span>
-<span class="normal">82</span>
-<span class="normal">83</span>
-<span class="normal">84</span>
-<span class="normal">85</span>
-<span class="normal">86</span>
-<span class="normal">87</span>
-<span class="normal">88</span>
-<span class="normal">89</span>
-<span class="normal">90</span>
-<span class="normal">91</span>
-<span class="normal">92</span>
-<span class="normal">93</span>
-<span class="normal">94</span>
-<span class="normal">95</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="normal">82</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">TaskCompletion</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""Completed generic task invocation, including exact captured output."""</span>
 
@@ -4766,12 +4673,12 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">90</span>
-<span class="normal">91</span>
-<span class="normal">92</span>
-<span class="normal">93</span>
-<span class="normal">94</span>
-<span class="normal">95</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">check_returncode</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TaskCompletion</span><span class="p">:</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">77</span>
+<span class="normal">78</span>
+<span class="normal">79</span>
+<span class="normal">80</span>
+<span class="normal">81</span>
+<span class="normal">82</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">check_returncode</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TaskCompletion</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""Raise :class:`TaskExecutionError` for a failed completion."""</span>
 
     <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">successful</span><span class="p">:</span>
@@ -4819,15 +4726,15 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">51</span>
-<span class="normal">52</span>
-<span class="normal">53</span>
-<span class="normal">54</span>
-<span class="normal">55</span>
-<span class="normal">56</span>
-<span class="normal">57</span>
-<span class="normal">58</span>
-<span class="normal">59</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskExecutionError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">38</span>
+<span class="normal">39</span>
+<span class="normal">40</span>
+<span class="normal">41</span>
+<span class="normal">42</span>
+<span class="normal">43</span>
+<span class="normal">44</span>
+<span class="normal">45</span>
+<span class="normal">46</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskExecutionError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">"""Raised for a non-zero task completion when ``check=True``."""</span>
 
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">completion</span><span class="p">:</span> <span class="n">TaskCompletion</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -4888,8 +4795,8 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">31</span>
-<span class="normal">32</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskInvocationError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">30</span>
+<span class="normal">31</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskInvocationError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">"""Raised when the canonical runner could not start."""</span>
 </code></pre></div></td></tr></table></div>
               </details>
@@ -4926,8 +4833,8 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
               <details class="mkdocstrings-source">
                 <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">35</span>
-<span class="normal">36</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskResultError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
+                <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">34</span>
+<span class="normal">35</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">class</span><span class="w"> </span><span class="nc">TaskResultError</span><span class="p">(</span><span class="ne">RuntimeError</span><span class="p">):</span>
 <span class="w">    </span><span class="sd">"""Raised when Rust rejects a successful provider result contract."""</span>
 </code></pre></div></td></tr></table></div>
               </details>
@@ -4953,7 +4860,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">724</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">709</span>
+<span class="normal">710</span>
+<span class="normal">711</span>
+<span class="normal">712</span>
+<span class="normal">713</span>
+<span class="normal">714</span>
+<span class="normal">715</span>
+<span class="normal">716</span>
+<span class="normal">717</span>
+<span class="normal">718</span>
+<span class="normal">719</span>
+<span class="normal">720</span>
+<span class="normal">721</span>
+<span class="normal">722</span>
+<span class="normal">723</span>
+<span class="normal">724</span>
 <span class="normal">725</span>
 <span class="normal">726</span>
 <span class="normal">727</span>
@@ -4993,22 +4915,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">761</span>
 <span class="normal">762</span>
 <span class="normal">763</span>
-<span class="normal">764</span>
-<span class="normal">765</span>
-<span class="normal">766</span>
-<span class="normal">767</span>
-<span class="normal">768</span>
-<span class="normal">769</span>
-<span class="normal">770</span>
-<span class="normal">771</span>
-<span class="normal">772</span>
-<span class="normal">773</span>
-<span class="normal">774</span>
-<span class="normal">775</span>
-<span class="normal">776</span>
-<span class="normal">777</span>
-<span class="normal">778</span>
-<span class="normal">779</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">applycal</span><span class="p">(</span>
+<span class="normal">764</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">applycal</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">gaintables</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -5086,7 +4993,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">845</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">830</span>
+<span class="normal">831</span>
+<span class="normal">832</span>
+<span class="normal">833</span>
+<span class="normal">834</span>
+<span class="normal">835</span>
+<span class="normal">836</span>
+<span class="normal">837</span>
+<span class="normal">838</span>
+<span class="normal">839</span>
+<span class="normal">840</span>
+<span class="normal">841</span>
+<span class="normal">842</span>
+<span class="normal">843</span>
+<span class="normal">844</span>
+<span class="normal">845</span>
 <span class="normal">846</span>
 <span class="normal">847</span>
 <span class="normal">848</span>
@@ -5130,22 +5052,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">886</span>
 <span class="normal">887</span>
 <span class="normal">888</span>
-<span class="normal">889</span>
-<span class="normal">890</span>
-<span class="normal">891</span>
-<span class="normal">892</span>
-<span class="normal">893</span>
-<span class="normal">894</span>
-<span class="normal">895</span>
-<span class="normal">896</span>
-<span class="normal">897</span>
-<span class="normal">898</span>
-<span class="normal">899</span>
-<span class="normal">900</span>
-<span class="normal">901</span>
-<span class="normal">902</span>
-<span class="normal">903</span>
-<span class="normal">904</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">bandpass</span><span class="p">(</span>
+<span class="normal">889</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">bandpass</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">gaintables</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -5416,7 +5323,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">590</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">575</span>
+<span class="normal">576</span>
+<span class="normal">577</span>
+<span class="normal">578</span>
+<span class="normal">579</span>
+<span class="normal">580</span>
+<span class="normal">581</span>
+<span class="normal">582</span>
+<span class="normal">583</span>
+<span class="normal">584</span>
+<span class="normal">585</span>
+<span class="normal">586</span>
+<span class="normal">587</span>
+<span class="normal">588</span>
+<span class="normal">589</span>
+<span class="normal">590</span>
 <span class="normal">591</span>
 <span class="normal">592</span>
 <span class="normal">593</span>
@@ -5439,22 +5361,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">610</span>
 <span class="normal">611</span>
 <span class="normal">612</span>
-<span class="normal">613</span>
-<span class="normal">614</span>
-<span class="normal">615</span>
-<span class="normal">616</span>
-<span class="normal">617</span>
-<span class="normal">618</span>
-<span class="normal">619</span>
-<span class="normal">620</span>
-<span class="normal">621</span>
-<span class="normal">622</span>
-<span class="normal">623</span>
-<span class="normal">624</span>
-<span class="normal">625</span>
-<span class="normal">626</span>
-<span class="normal">627</span>
-<span class="normal">628</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">exportfits</span><span class="p">(</span>
+<span class="normal">613</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">exportfits</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">fitsimage</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -5515,7 +5422,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1462</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1447</span>
+<span class="normal">1448</span>
+<span class="normal">1449</span>
+<span class="normal">1450</span>
+<span class="normal">1451</span>
+<span class="normal">1452</span>
+<span class="normal">1453</span>
+<span class="normal">1454</span>
+<span class="normal">1455</span>
+<span class="normal">1456</span>
+<span class="normal">1457</span>
+<span class="normal">1458</span>
+<span class="normal">1459</span>
+<span class="normal">1460</span>
+<span class="normal">1461</span>
+<span class="normal">1462</span>
 <span class="normal">1463</span>
 <span class="normal">1464</span>
 <span class="normal">1465</span>
@@ -5539,22 +5461,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">1483</span>
 <span class="normal">1484</span>
 <span class="normal">1485</span>
-<span class="normal">1486</span>
-<span class="normal">1487</span>
-<span class="normal">1488</span>
-<span class="normal">1489</span>
-<span class="normal">1490</span>
-<span class="normal">1491</span>
-<span class="normal">1492</span>
-<span class="normal">1493</span>
-<span class="normal">1494</span>
-<span class="normal">1495</span>
-<span class="normal">1496</span>
-<span class="normal">1497</span>
-<span class="normal">1498</span>
-<span class="normal">1499</span>
-<span class="normal">1500</span>
-<span class="normal">1501</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">feather</span><span class="p">(</span>
+<span class="normal">1486</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">feather</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">highres</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -5616,7 +5523,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1153</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1138</span>
+<span class="normal">1139</span>
+<span class="normal">1140</span>
+<span class="normal">1141</span>
+<span class="normal">1142</span>
+<span class="normal">1143</span>
+<span class="normal">1144</span>
+<span class="normal">1145</span>
+<span class="normal">1146</span>
+<span class="normal">1147</span>
+<span class="normal">1148</span>
+<span class="normal">1149</span>
+<span class="normal">1150</span>
+<span class="normal">1151</span>
+<span class="normal">1152</span>
+<span class="normal">1153</span>
 <span class="normal">1154</span>
 <span class="normal">1155</span>
 <span class="normal">1156</span>
@@ -5653,22 +5575,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">1187</span>
 <span class="normal">1188</span>
 <span class="normal">1189</span>
-<span class="normal">1190</span>
-<span class="normal">1191</span>
-<span class="normal">1192</span>
-<span class="normal">1193</span>
-<span class="normal">1194</span>
-<span class="normal">1195</span>
-<span class="normal">1196</span>
-<span class="normal">1197</span>
-<span class="normal">1198</span>
-<span class="normal">1199</span>
-<span class="normal">1200</span>
-<span class="normal">1201</span>
-<span class="normal">1202</span>
-<span class="normal">1203</span>
-<span class="normal">1204</span>
-<span class="normal">1205</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">flagdata</span><span class="p">(</span>
+<span class="normal">1190</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">flagdata</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">mode</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'clip'</span><span class="p">,</span> <span class="s1">'extend'</span><span class="p">,</span> <span class="s1">'manual'</span><span class="p">,</span> <span class="s1">'quack'</span><span class="p">,</span> <span class="s1">'rflag'</span><span class="p">,</span> <span class="s1">'summary'</span><span class="p">,</span> <span class="s1">'tfcrop'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -5743,7 +5650,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1207</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1192</span>
+<span class="normal">1193</span>
+<span class="normal">1194</span>
+<span class="normal">1195</span>
+<span class="normal">1196</span>
+<span class="normal">1197</span>
+<span class="normal">1198</span>
+<span class="normal">1199</span>
+<span class="normal">1200</span>
+<span class="normal">1201</span>
+<span class="normal">1202</span>
+<span class="normal">1203</span>
+<span class="normal">1204</span>
+<span class="normal">1205</span>
+<span class="normal">1206</span>
+<span class="normal">1207</span>
 <span class="normal">1208</span>
 <span class="normal">1209</span>
 <span class="normal">1210</span>
@@ -5768,22 +5690,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">1229</span>
 <span class="normal">1230</span>
 <span class="normal">1231</span>
-<span class="normal">1232</span>
-<span class="normal">1233</span>
-<span class="normal">1234</span>
-<span class="normal">1235</span>
-<span class="normal">1236</span>
-<span class="normal">1237</span>
-<span class="normal">1238</span>
-<span class="normal">1239</span>
-<span class="normal">1240</span>
-<span class="normal">1241</span>
-<span class="normal">1242</span>
-<span class="normal">1243</span>
-<span class="normal">1244</span>
-<span class="normal">1245</span>
-<span class="normal">1246</span>
-<span class="normal">1247</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">flagmanager</span><span class="p">(</span>
+<span class="normal">1232</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">flagmanager</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">mode</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'delete'</span><span class="p">,</span> <span class="s1">'list'</span><span class="p">,</span> <span class="s1">'rename'</span><span class="p">,</span> <span class="s1">'restore'</span><span class="p">,</span> <span class="s1">'save'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -5846,7 +5753,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">906</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">891</span>
+<span class="normal">892</span>
+<span class="normal">893</span>
+<span class="normal">894</span>
+<span class="normal">895</span>
+<span class="normal">896</span>
+<span class="normal">897</span>
+<span class="normal">898</span>
+<span class="normal">899</span>
+<span class="normal">900</span>
+<span class="normal">901</span>
+<span class="normal">902</span>
+<span class="normal">903</span>
+<span class="normal">904</span>
+<span class="normal">905</span>
+<span class="normal">906</span>
 <span class="normal">907</span>
 <span class="normal">908</span>
 <span class="normal">909</span>
@@ -5875,22 +5797,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">932</span>
 <span class="normal">933</span>
 <span class="normal">934</span>
-<span class="normal">935</span>
-<span class="normal">936</span>
-<span class="normal">937</span>
-<span class="normal">938</span>
-<span class="normal">939</span>
-<span class="normal">940</span>
-<span class="normal">941</span>
-<span class="normal">942</span>
-<span class="normal">943</span>
-<span class="normal">944</span>
-<span class="normal">945</span>
-<span class="normal">946</span>
-<span class="normal">947</span>
-<span class="normal">948</span>
-<span class="normal">949</span>
-<span class="normal">950</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">fluxscale</span><span class="p">(</span>
+<span class="normal">935</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">fluxscale</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">output</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">overwrite</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -5957,7 +5864,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">781</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">766</span>
+<span class="normal">767</span>
+<span class="normal">768</span>
+<span class="normal">769</span>
+<span class="normal">770</span>
+<span class="normal">771</span>
+<span class="normal">772</span>
+<span class="normal">773</span>
+<span class="normal">774</span>
+<span class="normal">775</span>
+<span class="normal">776</span>
+<span class="normal">777</span>
+<span class="normal">778</span>
+<span class="normal">779</span>
+<span class="normal">780</span>
+<span class="normal">781</span>
 <span class="normal">782</span>
 <span class="normal">783</span>
 <span class="normal">784</span>
@@ -6004,22 +5926,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">825</span>
 <span class="normal">826</span>
 <span class="normal">827</span>
-<span class="normal">828</span>
-<span class="normal">829</span>
-<span class="normal">830</span>
-<span class="normal">831</span>
-<span class="normal">832</span>
-<span class="normal">833</span>
-<span class="normal">834</span>
-<span class="normal">835</span>
-<span class="normal">836</span>
-<span class="normal">837</span>
-<span class="normal">838</span>
-<span class="normal">839</span>
-<span class="normal">840</span>
-<span class="normal">841</span>
-<span class="normal">842</span>
-<span class="normal">843</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">gaincal</span><span class="p">(</span>
+<span class="normal">828</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">gaincal</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">gaintables</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -6104,7 +6011,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">952</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">937</span>
+<span class="normal">938</span>
+<span class="normal">939</span>
+<span class="normal">940</span>
+<span class="normal">941</span>
+<span class="normal">942</span>
+<span class="normal">943</span>
+<span class="normal">944</span>
+<span class="normal">945</span>
+<span class="normal">946</span>
+<span class="normal">947</span>
+<span class="normal">948</span>
+<span class="normal">949</span>
+<span class="normal">950</span>
+<span class="normal">951</span>
+<span class="normal">952</span>
 <span class="normal">953</span>
 <span class="normal">954</span>
 <span class="normal">955</span>
@@ -6133,22 +6055,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">978</span>
 <span class="normal">979</span>
 <span class="normal">980</span>
-<span class="normal">981</span>
-<span class="normal">982</span>
-<span class="normal">983</span>
-<span class="normal">984</span>
-<span class="normal">985</span>
-<span class="normal">986</span>
-<span class="normal">987</span>
-<span class="normal">988</span>
-<span class="normal">989</span>
-<span class="normal">990</span>
-<span class="normal">991</span>
-<span class="normal">992</span>
-<span class="normal">993</span>
-<span class="normal">994</span>
-<span class="normal">995</span>
-<span class="normal">996</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">gencal</span><span class="p">(</span>
+<span class="normal">981</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">gencal</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">output</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -6203,7 +6110,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
 
 <h2 id="casars.tasks.imager" class="doc doc-heading">
-            <code class=" language-python"><span class="n">imager</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">vis</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">imagename</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">imsize</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">datacolumn</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">savemodel</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">startmodel</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">outlierfile</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">phasecenter_field</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">ddid</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">phasecenter</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">spw</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">channel_start</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">channel_count</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">stokes</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">specmode</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">width</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">outframe</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">veltype</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">interpolation</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">restfreq</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">restoringbeam</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">perchanweightdensity</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">dirty_only</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">niter</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">nmajor</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">gain</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">nsigma</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">psfcutoff</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">minor_cycle_length</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">cyclefactor</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">deconvolver</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">minpsffraction</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">maxpsffraction</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">nterms</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">hogbom_iteration_mode</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">scales</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">smallscalebias</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">usemask</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">sidelobethreshold</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">noisethreshold</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">lownoisethreshold</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">negativethreshold</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">minbeamfrac</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">growiterations</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">mask_box</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">weighting</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">mask_image</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">robust</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">wprojplanes</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">usepointing</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">uvtaper</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">write_pb</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">pbcor</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">pblimit</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">wterm</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">gridder</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">standard_mfs_acceleration</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">parallel</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">uvrange</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">intent</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">cfcache</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">cf_resident_mb</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">facets</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">psfphasecenter</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">vptable</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">aterm</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">psterm</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">wbawp</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">conjbeams</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">computepastep</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">rotatepastep</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">pointingoffsetsigdev</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">mosweight</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">normtype</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">imaging_memory_target_mb</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">projection</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">fitspw</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">fitorder</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">save_continuum_residual</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">aw_cf_source</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">native_cf_cache</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">evla_surface</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">native_cf_policy</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">native_cf_working_size</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">native_cf_oversampling</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">native_cf_cache_bytes</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">native_cf_maximum_cells</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">parameters</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">profile</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">base_source</span><span class="o">=</span><span class="s1">'defaults'</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">notebook</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">save_last</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">record_notebook</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">binary</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">check</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">env</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">confirm_overwrite</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">confirm_mutation</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></code>
+            <code class=" language-python"><span class="n">imager</span><span class="p">(</span><span class="o">*</span><span class="p">,</span> <span class="n">vis</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">imagename</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">imsize</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">cell</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">datacolumn</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">savemodel</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">outlierfile</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">field</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">phasecenter_field</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">ddid</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">phasecenter</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">spw</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">channel_start</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">channel_count</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">stokes</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">specmode</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">width</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">outframe</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">veltype</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">interpolation</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">restfreq</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">restoringbeam</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">perchanweightdensity</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">dirty_only</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">niter</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">nmajor</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">gain</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">nsigma</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">psfcutoff</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">minor_cycle_length</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">cyclefactor</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">deconvolver</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">minpsffraction</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">maxpsffraction</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">nterms</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">hogbom_iteration_mode</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">scales</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">smallscalebias</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">usemask</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">sidelobethreshold</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">noisethreshold</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">lownoisethreshold</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">negativethreshold</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">minbeamfrac</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">growiterations</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">mask_box</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">weighting</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">mask_image</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">robust</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">wprojplanes</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">usepointing</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">write_pb</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">pbcor</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">pblimit</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">gridder</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">parallel</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">uvrange</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">intent</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">cfcache</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">cf_resident_mb</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">pointingoffsetsigdev</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">normtype</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">fitspw</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">fitorder</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">save_continuum_residual</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">aw_cf_source</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">native_cf_cache</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">evla_surface</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">native_cf_policy</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">native_cf_working_size</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">native_cf_oversampling</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">native_cf_cache_bytes</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">native_cf_maximum_cells</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">backend</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">gridprecision</span><span class="o">=</span><span class="n">_UNSET</span><span class="p">,</span> <span class="n">parameters</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">profile</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">base_source</span><span class="o">=</span><span class="s1">'defaults'</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">notebook</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">save_last</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">record_notebook</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">binary</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">check</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">env</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">confirm_overwrite</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">confirm_mutation</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></code>
 
 <a href="#casars.tasks.imager" class="headerlink" title="Permanent link">&para;</a></h2>
 
@@ -6326,22 +6233,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">368</span>
 <span class="normal">369</span>
 <span class="normal">370</span>
-<span class="normal">371</span>
-<span class="normal">372</span>
-<span class="normal">373</span>
-<span class="normal">374</span>
-<span class="normal">375</span>
-<span class="normal">376</span>
-<span class="normal">377</span>
-<span class="normal">378</span>
-<span class="normal">379</span>
-<span class="normal">380</span>
-<span class="normal">381</span>
-<span class="normal">382</span>
-<span class="normal">383</span>
-<span class="normal">384</span>
-<span class="normal">385</span>
-<span class="normal">386</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">imager</span><span class="p">(</span>
+<span class="normal">371</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">imager</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -6349,7 +6241,6 @@ no rendered image or provider JSON protocol is read by Python.</p>
     <span class="n">cell</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">datacolumn</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">savemodel</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'modelcolumn'</span><span class="p">,</span> <span class="s1">'none'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">startmodel</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">outlierfile</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">field</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">phasecenter_field</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -6359,12 +6250,12 @@ no rendered image or provider JSON protocol is read by Python.</p>
     <span class="n">channel_start</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'none'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">channel_count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'none'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">stokes</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">specmode</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'cube'</span><span class="p">,</span> <span class="s1">'cubedata'</span><span class="p">,</span> <span class="s1">'cubesource'</span><span class="p">,</span> <span class="s1">'mvc'</span><span class="p">,</span> <span class="s1">'mfs'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">specmode</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'cube'</span><span class="p">,</span> <span class="s1">'cubedata'</span><span class="p">,</span> <span class="s1">'cubesource'</span><span class="p">,</span> <span class="s1">'mfs'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">start</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">width</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'none'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">outframe</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'BARY'</span><span class="p">,</span> <span class="s1">'CMB'</span><span class="p">,</span> <span class="s1">'GALACTO'</span><span class="p">,</span> <span class="s1">'GEO'</span><span class="p">,</span> <span class="s1">'LGROUP'</span><span class="p">,</span> <span class="s1">'LSRD'</span><span class="p">,</span> <span class="s1">'LSRK'</span><span class="p">,</span> <span class="s1">'REST'</span><span class="p">,</span> <span class="s1">'TOPO'</span><span class="p">,</span> <span class="s1">'none'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">veltype</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'BETA'</span><span class="p">,</span> <span class="s1">'GAMMA'</span><span class="p">,</span> <span class="s1">'OPTICAL'</span><span class="p">,</span> <span class="s1">'RADIO'</span><span class="p">,</span> <span class="s1">'TRUE'</span><span class="p">,</span> <span class="s1">'none'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">interpolation</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'cubic'</span><span class="p">,</span> <span class="s1">'linear'</span><span class="p">,</span> <span class="s1">'nearest'</span><span class="p">,</span> <span class="s1">'none'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">width</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">outframe</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'BARY'</span><span class="p">,</span> <span class="s1">'LSRK'</span><span class="p">,</span> <span class="s1">'REST'</span><span class="p">,</span> <span class="s1">'TOPO'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">veltype</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'BETA'</span><span class="p">,</span> <span class="s1">'OPTICAL'</span><span class="p">,</span> <span class="s1">'RADIO'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">interpolation</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'linear'</span><span class="p">,</span> <span class="s1">'nearest'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">restfreq</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">restoringbeam</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'common'</span><span class="p">,</span> <span class="s1">'none'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">perchanweightdensity</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -6397,32 +6288,17 @@ no rendered image or provider JSON protocol is read by Python.</p>
     <span class="n">robust</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">wprojplanes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'none'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">usepointing</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">uvtaper</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">write_pb</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">pbcor</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">pblimit</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">wterm</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'direct'</span><span class="p">,</span> <span class="s1">'none'</span><span class="p">,</span> <span class="s1">'wproject'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">gridder</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'awp2'</span><span class="p">,</span> <span class="s1">'awphpg'</span><span class="p">,</span> <span class="s1">'awproject'</span><span class="p">,</span> <span class="s1">'mosaic'</span><span class="p">,</span> <span class="s1">'standard'</span><span class="p">,</span> <span class="s1">'widefield'</span><span class="p">,</span> <span class="s1">'wproject'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">standard_mfs_acceleration</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'auto'</span><span class="p">,</span> <span class="s1">'cpu'</span><span class="p">,</span> <span class="s1">'multi-cpu'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">parallel</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'none'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">gridder</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'awproject'</span><span class="p">,</span> <span class="s1">'mosaic'</span><span class="p">,</span> <span class="s1">'standard'</span><span class="p">,</span> <span class="s1">'wproject'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">parallel</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">uvrange</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">intent</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">cfcache</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'none'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">cf_resident_mb</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">facets</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">psfphasecenter</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">vptable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'none'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">aterm</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">psterm</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">wbawp</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">conjbeams</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">computepastep</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">rotatepastep</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">pointingoffsetsigdev</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">mosweight</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">normtype</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'flatnoise'</span><span class="p">,</span> <span class="s1">'flatsky'</span><span class="p">,</span> <span class="s1">'pbsquare'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">imaging_memory_target_mb</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'none'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
-    <span class="n">projection</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'SIN'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">normtype</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'flatnoise'</span><span class="p">,</span> <span class="s1">'flatsky'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">fitspw</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">fitorder</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">save_continuum_residual</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -6435,6 +6311,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
     <span class="n">native_cf_cache_bytes</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'none'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">native_cf_maximum_cells</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'none'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">backend</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'cpu'</span><span class="p">,</span> <span class="s1">'metal'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
+    <span class="n">gridprecision</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'auto'</span><span class="p">,</span> <span class="s1">'f32'</span><span class="p">,</span> <span class="s1">'f64'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">parameters</span><span class="p">:</span> <span class="n">TaskParameters</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">profile</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="n">base_source</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">"defaults"</span><span class="p">,</span> <span class="s2">"last"</span><span class="p">,</span> <span class="s2">"last_successful"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"defaults"</span><span class="p">,</span>
@@ -6450,7 +6327,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
     <span class="n">confirm_mutation</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
 <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TaskCompletion</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">"""Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet"""</span>
-    <span class="n">overrides</span> <span class="o">=</span> <span class="n">_explicit</span><span class="p">(</span><span class="nb">locals</span><span class="p">(),</span> <span class="p">(</span><span class="s1">'vis'</span><span class="p">,</span> <span class="s1">'imagename'</span><span class="p">,</span> <span class="s1">'imsize'</span><span class="p">,</span> <span class="s1">'cell'</span><span class="p">,</span> <span class="s1">'datacolumn'</span><span class="p">,</span> <span class="s1">'savemodel'</span><span class="p">,</span> <span class="s1">'startmodel'</span><span class="p">,</span> <span class="s1">'outlierfile'</span><span class="p">,</span> <span class="s1">'field'</span><span class="p">,</span> <span class="s1">'phasecenter_field'</span><span class="p">,</span> <span class="s1">'ddid'</span><span class="p">,</span> <span class="s1">'phasecenter'</span><span class="p">,</span> <span class="s1">'spw'</span><span class="p">,</span> <span class="s1">'channel_start'</span><span class="p">,</span> <span class="s1">'channel_count'</span><span class="p">,</span> <span class="s1">'stokes'</span><span class="p">,</span> <span class="s1">'specmode'</span><span class="p">,</span> <span class="s1">'start'</span><span class="p">,</span> <span class="s1">'width'</span><span class="p">,</span> <span class="s1">'outframe'</span><span class="p">,</span> <span class="s1">'veltype'</span><span class="p">,</span> <span class="s1">'interpolation'</span><span class="p">,</span> <span class="s1">'restfreq'</span><span class="p">,</span> <span class="s1">'restoringbeam'</span><span class="p">,</span> <span class="s1">'perchanweightdensity'</span><span class="p">,</span> <span class="s1">'dirty_only'</span><span class="p">,</span> <span class="s1">'niter'</span><span class="p">,</span> <span class="s1">'threshold'</span><span class="p">,</span> <span class="s1">'nmajor'</span><span class="p">,</span> <span class="s1">'gain'</span><span class="p">,</span> <span class="s1">'nsigma'</span><span class="p">,</span> <span class="s1">'psfcutoff'</span><span class="p">,</span> <span class="s1">'minor_cycle_length'</span><span class="p">,</span> <span class="s1">'cyclefactor'</span><span class="p">,</span> <span class="s1">'deconvolver'</span><span class="p">,</span> <span class="s1">'minpsffraction'</span><span class="p">,</span> <span class="s1">'maxpsffraction'</span><span class="p">,</span> <span class="s1">'nterms'</span><span class="p">,</span> <span class="s1">'hogbom_iteration_mode'</span><span class="p">,</span> <span class="s1">'scales'</span><span class="p">,</span> <span class="s1">'smallscalebias'</span><span class="p">,</span> <span class="s1">'usemask'</span><span class="p">,</span> <span class="s1">'sidelobethreshold'</span><span class="p">,</span> <span class="s1">'noisethreshold'</span><span class="p">,</span> <span class="s1">'lownoisethreshold'</span><span class="p">,</span> <span class="s1">'negativethreshold'</span><span class="p">,</span> <span class="s1">'minbeamfrac'</span><span class="p">,</span> <span class="s1">'growiterations'</span><span class="p">,</span> <span class="s1">'mask_box'</span><span class="p">,</span> <span class="s1">'weighting'</span><span class="p">,</span> <span class="s1">'mask_image'</span><span class="p">,</span> <span class="s1">'robust'</span><span class="p">,</span> <span class="s1">'wprojplanes'</span><span class="p">,</span> <span class="s1">'usepointing'</span><span class="p">,</span> <span class="s1">'uvtaper'</span><span class="p">,</span> <span class="s1">'write_pb'</span><span class="p">,</span> <span class="s1">'pbcor'</span><span class="p">,</span> <span class="s1">'pblimit'</span><span class="p">,</span> <span class="s1">'wterm'</span><span class="p">,</span> <span class="s1">'gridder'</span><span class="p">,</span> <span class="s1">'standard_mfs_acceleration'</span><span class="p">,</span> <span class="s1">'parallel'</span><span class="p">,</span> <span class="s1">'uvrange'</span><span class="p">,</span> <span class="s1">'intent'</span><span class="p">,</span> <span class="s1">'cfcache'</span><span class="p">,</span> <span class="s1">'cf_resident_mb'</span><span class="p">,</span> <span class="s1">'facets'</span><span class="p">,</span> <span class="s1">'psfphasecenter'</span><span class="p">,</span> <span class="s1">'vptable'</span><span class="p">,</span> <span class="s1">'aterm'</span><span class="p">,</span> <span class="s1">'psterm'</span><span class="p">,</span> <span class="s1">'wbawp'</span><span class="p">,</span> <span class="s1">'conjbeams'</span><span class="p">,</span> <span class="s1">'computepastep'</span><span class="p">,</span> <span class="s1">'rotatepastep'</span><span class="p">,</span> <span class="s1">'pointingoffsetsigdev'</span><span class="p">,</span> <span class="s1">'mosweight'</span><span class="p">,</span> <span class="s1">'normtype'</span><span class="p">,</span> <span class="s1">'imaging_memory_target_mb'</span><span class="p">,</span> <span class="s1">'projection'</span><span class="p">,</span> <span class="s1">'fitspw'</span><span class="p">,</span> <span class="s1">'fitorder'</span><span class="p">,</span> <span class="s1">'save_continuum_residual'</span><span class="p">,</span> <span class="s1">'aw_cf_source'</span><span class="p">,</span> <span class="s1">'native_cf_cache'</span><span class="p">,</span> <span class="s1">'evla_surface'</span><span class="p">,</span> <span class="s1">'native_cf_policy'</span><span class="p">,</span> <span class="s1">'native_cf_working_size'</span><span class="p">,</span> <span class="s1">'native_cf_oversampling'</span><span class="p">,</span> <span class="s1">'native_cf_cache_bytes'</span><span class="p">,</span> <span class="s1">'native_cf_maximum_cells'</span><span class="p">,</span> <span class="s1">'backend'</span><span class="p">))</span>
+    <span class="n">overrides</span> <span class="o">=</span> <span class="n">_explicit</span><span class="p">(</span><span class="nb">locals</span><span class="p">(),</span> <span class="p">(</span><span class="s1">'vis'</span><span class="p">,</span> <span class="s1">'imagename'</span><span class="p">,</span> <span class="s1">'imsize'</span><span class="p">,</span> <span class="s1">'cell'</span><span class="p">,</span> <span class="s1">'datacolumn'</span><span class="p">,</span> <span class="s1">'savemodel'</span><span class="p">,</span> <span class="s1">'outlierfile'</span><span class="p">,</span> <span class="s1">'field'</span><span class="p">,</span> <span class="s1">'phasecenter_field'</span><span class="p">,</span> <span class="s1">'ddid'</span><span class="p">,</span> <span class="s1">'phasecenter'</span><span class="p">,</span> <span class="s1">'spw'</span><span class="p">,</span> <span class="s1">'channel_start'</span><span class="p">,</span> <span class="s1">'channel_count'</span><span class="p">,</span> <span class="s1">'stokes'</span><span class="p">,</span> <span class="s1">'specmode'</span><span class="p">,</span> <span class="s1">'start'</span><span class="p">,</span> <span class="s1">'width'</span><span class="p">,</span> <span class="s1">'outframe'</span><span class="p">,</span> <span class="s1">'veltype'</span><span class="p">,</span> <span class="s1">'interpolation'</span><span class="p">,</span> <span class="s1">'restfreq'</span><span class="p">,</span> <span class="s1">'restoringbeam'</span><span class="p">,</span> <span class="s1">'perchanweightdensity'</span><span class="p">,</span> <span class="s1">'dirty_only'</span><span class="p">,</span> <span class="s1">'niter'</span><span class="p">,</span> <span class="s1">'threshold'</span><span class="p">,</span> <span class="s1">'nmajor'</span><span class="p">,</span> <span class="s1">'gain'</span><span class="p">,</span> <span class="s1">'nsigma'</span><span class="p">,</span> <span class="s1">'psfcutoff'</span><span class="p">,</span> <span class="s1">'minor_cycle_length'</span><span class="p">,</span> <span class="s1">'cyclefactor'</span><span class="p">,</span> <span class="s1">'deconvolver'</span><span class="p">,</span> <span class="s1">'minpsffraction'</span><span class="p">,</span> <span class="s1">'maxpsffraction'</span><span class="p">,</span> <span class="s1">'nterms'</span><span class="p">,</span> <span class="s1">'hogbom_iteration_mode'</span><span class="p">,</span> <span class="s1">'scales'</span><span class="p">,</span> <span class="s1">'smallscalebias'</span><span class="p">,</span> <span class="s1">'usemask'</span><span class="p">,</span> <span class="s1">'sidelobethreshold'</span><span class="p">,</span> <span class="s1">'noisethreshold'</span><span class="p">,</span> <span class="s1">'lownoisethreshold'</span><span class="p">,</span> <span class="s1">'negativethreshold'</span><span class="p">,</span> <span class="s1">'minbeamfrac'</span><span class="p">,</span> <span class="s1">'growiterations'</span><span class="p">,</span> <span class="s1">'mask_box'</span><span class="p">,</span> <span class="s1">'weighting'</span><span class="p">,</span> <span class="s1">'mask_image'</span><span class="p">,</span> <span class="s1">'robust'</span><span class="p">,</span> <span class="s1">'wprojplanes'</span><span class="p">,</span> <span class="s1">'usepointing'</span><span class="p">,</span> <span class="s1">'write_pb'</span><span class="p">,</span> <span class="s1">'pbcor'</span><span class="p">,</span> <span class="s1">'pblimit'</span><span class="p">,</span> <span class="s1">'gridder'</span><span class="p">,</span> <span class="s1">'parallel'</span><span class="p">,</span> <span class="s1">'uvrange'</span><span class="p">,</span> <span class="s1">'intent'</span><span class="p">,</span> <span class="s1">'cfcache'</span><span class="p">,</span> <span class="s1">'cf_resident_mb'</span><span class="p">,</span> <span class="s1">'pointingoffsetsigdev'</span><span class="p">,</span> <span class="s1">'normtype'</span><span class="p">,</span> <span class="s1">'fitspw'</span><span class="p">,</span> <span class="s1">'fitorder'</span><span class="p">,</span> <span class="s1">'save_continuum_residual'</span><span class="p">,</span> <span class="s1">'aw_cf_source'</span><span class="p">,</span> <span class="s1">'native_cf_cache'</span><span class="p">,</span> <span class="s1">'evla_surface'</span><span class="p">,</span> <span class="s1">'native_cf_policy'</span><span class="p">,</span> <span class="s1">'native_cf_working_size'</span><span class="p">,</span> <span class="s1">'native_cf_oversampling'</span><span class="p">,</span> <span class="s1">'native_cf_cache_bytes'</span><span class="p">,</span> <span class="s1">'native_cf_maximum_cells'</span><span class="p">,</span> <span class="s1">'backend'</span><span class="p">,</span> <span class="s1">'gridprecision'</span><span class="p">))</span>
     <span class="k">return</span> <span class="n">_run</span><span class="p">(</span>
         <span class="s2">"imager"</span><span class="p">,</span>
         <span class="n">parameters</span><span class="o">=</span><span class="n">parameters</span><span class="p">,</span>
@@ -6490,7 +6367,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">467</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">452</span>
+<span class="normal">453</span>
+<span class="normal">454</span>
+<span class="normal">455</span>
+<span class="normal">456</span>
+<span class="normal">457</span>
+<span class="normal">458</span>
+<span class="normal">459</span>
+<span class="normal">460</span>
+<span class="normal">461</span>
+<span class="normal">462</span>
+<span class="normal">463</span>
+<span class="normal">464</span>
+<span class="normal">465</span>
+<span class="normal">466</span>
+<span class="normal">467</span>
 <span class="normal">468</span>
 <span class="normal">469</span>
 <span class="normal">470</span>
@@ -6513,22 +6405,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">487</span>
 <span class="normal">488</span>
 <span class="normal">489</span>
-<span class="normal">490</span>
-<span class="normal">491</span>
-<span class="normal">492</span>
-<span class="normal">493</span>
-<span class="normal">494</span>
-<span class="normal">495</span>
-<span class="normal">496</span>
-<span class="normal">497</span>
-<span class="normal">498</span>
-<span class="normal">499</span>
-<span class="normal">500</span>
-<span class="normal">501</span>
-<span class="normal">502</span>
-<span class="normal">503</span>
-<span class="normal">504</span>
-<span class="normal">505</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">imhead</span><span class="p">(</span>
+<span class="normal">490</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">imhead</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">mode</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'list'</span><span class="p">,</span> <span class="s1">'put'</span><span class="p">,</span> <span class="s1">'summary'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -6589,7 +6466,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1381</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1366</span>
+<span class="normal">1367</span>
+<span class="normal">1368</span>
+<span class="normal">1369</span>
+<span class="normal">1370</span>
+<span class="normal">1371</span>
+<span class="normal">1372</span>
+<span class="normal">1373</span>
+<span class="normal">1374</span>
+<span class="normal">1375</span>
+<span class="normal">1376</span>
+<span class="normal">1377</span>
+<span class="normal">1378</span>
+<span class="normal">1379</span>
+<span class="normal">1380</span>
+<span class="normal">1381</span>
 <span class="normal">1382</span>
 <span class="normal">1383</span>
 <span class="normal">1384</span>
@@ -6612,22 +6504,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">1401</span>
 <span class="normal">1402</span>
 <span class="normal">1403</span>
-<span class="normal">1404</span>
-<span class="normal">1405</span>
-<span class="normal">1406</span>
-<span class="normal">1407</span>
-<span class="normal">1408</span>
-<span class="normal">1409</span>
-<span class="normal">1410</span>
-<span class="normal">1411</span>
-<span class="normal">1412</span>
-<span class="normal">1413</span>
-<span class="normal">1414</span>
-<span class="normal">1415</span>
-<span class="normal">1416</span>
-<span class="normal">1417</span>
-<span class="normal">1418</span>
-<span class="normal">1419</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">immath</span><span class="p">(</span>
+<span class="normal">1404</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">immath</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">expr</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -6688,7 +6565,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">547</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">532</span>
+<span class="normal">533</span>
+<span class="normal">534</span>
+<span class="normal">535</span>
+<span class="normal">536</span>
+<span class="normal">537</span>
+<span class="normal">538</span>
+<span class="normal">539</span>
+<span class="normal">540</span>
+<span class="normal">541</span>
+<span class="normal">542</span>
+<span class="normal">543</span>
+<span class="normal">544</span>
+<span class="normal">545</span>
+<span class="normal">546</span>
+<span class="normal">547</span>
 <span class="normal">548</span>
 <span class="normal">549</span>
 <span class="normal">550</span>
@@ -6714,22 +6606,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">570</span>
 <span class="normal">571</span>
 <span class="normal">572</span>
-<span class="normal">573</span>
-<span class="normal">574</span>
-<span class="normal">575</span>
-<span class="normal">576</span>
-<span class="normal">577</span>
-<span class="normal">578</span>
-<span class="normal">579</span>
-<span class="normal">580</span>
-<span class="normal">581</span>
-<span class="normal">582</span>
-<span class="normal">583</span>
-<span class="normal">584</span>
-<span class="normal">585</span>
-<span class="normal">586</span>
-<span class="normal">587</span>
-<span class="normal">588</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">immoments</span><span class="p">(</span>
+<span class="normal">573</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">immoments</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">outfile</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -6793,7 +6670,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1249</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1234</span>
+<span class="normal">1235</span>
+<span class="normal">1236</span>
+<span class="normal">1237</span>
+<span class="normal">1238</span>
+<span class="normal">1239</span>
+<span class="normal">1240</span>
+<span class="normal">1241</span>
+<span class="normal">1242</span>
+<span class="normal">1243</span>
+<span class="normal">1244</span>
+<span class="normal">1245</span>
+<span class="normal">1246</span>
+<span class="normal">1247</span>
+<span class="normal">1248</span>
+<span class="normal">1249</span>
 <span class="normal">1250</span>
 <span class="normal">1251</span>
 <span class="normal">1252</span>
@@ -6824,22 +6716,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">1277</span>
 <span class="normal">1278</span>
 <span class="normal">1279</span>
-<span class="normal">1280</span>
-<span class="normal">1281</span>
-<span class="normal">1282</span>
-<span class="normal">1283</span>
-<span class="normal">1284</span>
-<span class="normal">1285</span>
-<span class="normal">1286</span>
-<span class="normal">1287</span>
-<span class="normal">1288</span>
-<span class="normal">1289</span>
-<span class="normal">1290</span>
-<span class="normal">1291</span>
-<span class="normal">1292</span>
-<span class="normal">1293</span>
-<span class="normal">1294</span>
-<span class="normal">1295</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">impbcor</span><span class="p">(</span>
+<span class="normal">1280</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">impbcor</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">pbimage</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -6908,7 +6785,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1503</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1488</span>
+<span class="normal">1489</span>
+<span class="normal">1490</span>
+<span class="normal">1491</span>
+<span class="normal">1492</span>
+<span class="normal">1493</span>
+<span class="normal">1494</span>
+<span class="normal">1495</span>
+<span class="normal">1496</span>
+<span class="normal">1497</span>
+<span class="normal">1498</span>
+<span class="normal">1499</span>
+<span class="normal">1500</span>
+<span class="normal">1501</span>
+<span class="normal">1502</span>
+<span class="normal">1503</span>
 <span class="normal">1504</span>
 <span class="normal">1505</span>
 <span class="normal">1506</span>
@@ -6930,22 +6822,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">1522</span>
 <span class="normal">1523</span>
 <span class="normal">1524</span>
-<span class="normal">1525</span>
-<span class="normal">1526</span>
-<span class="normal">1527</span>
-<span class="normal">1528</span>
-<span class="normal">1529</span>
-<span class="normal">1530</span>
-<span class="normal">1531</span>
-<span class="normal">1532</span>
-<span class="normal">1533</span>
-<span class="normal">1534</span>
-<span class="normal">1535</span>
-<span class="normal">1536</span>
-<span class="normal">1537</span>
-<span class="normal">1538</span>
-<span class="normal">1539</span>
-<span class="normal">1540</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">importfits</span><span class="p">(</span>
+<span class="normal">1525</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">importfits</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">fitsimage</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -7120,7 +6997,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1297</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1282</span>
+<span class="normal">1283</span>
+<span class="normal">1284</span>
+<span class="normal">1285</span>
+<span class="normal">1286</span>
+<span class="normal">1287</span>
+<span class="normal">1288</span>
+<span class="normal">1289</span>
+<span class="normal">1290</span>
+<span class="normal">1291</span>
+<span class="normal">1292</span>
+<span class="normal">1293</span>
+<span class="normal">1294</span>
+<span class="normal">1295</span>
+<span class="normal">1296</span>
+<span class="normal">1297</span>
 <span class="normal">1298</span>
 <span class="normal">1299</span>
 <span class="normal">1300</span>
@@ -7146,22 +7038,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">1320</span>
 <span class="normal">1321</span>
 <span class="normal">1322</span>
-<span class="normal">1323</span>
-<span class="normal">1324</span>
-<span class="normal">1325</span>
-<span class="normal">1326</span>
-<span class="normal">1327</span>
-<span class="normal">1328</span>
-<span class="normal">1329</span>
-<span class="normal">1330</span>
-<span class="normal">1331</span>
-<span class="normal">1332</span>
-<span class="normal">1333</span>
-<span class="normal">1334</span>
-<span class="normal">1335</span>
-<span class="normal">1336</span>
-<span class="normal">1337</span>
-<span class="normal">1338</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">impv</span><span class="p">(</span>
+<span class="normal">1323</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">impv</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">outfile</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -7225,7 +7102,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1421</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1406</span>
+<span class="normal">1407</span>
+<span class="normal">1408</span>
+<span class="normal">1409</span>
+<span class="normal">1410</span>
+<span class="normal">1411</span>
+<span class="normal">1412</span>
+<span class="normal">1413</span>
+<span class="normal">1414</span>
+<span class="normal">1415</span>
+<span class="normal">1416</span>
+<span class="normal">1417</span>
+<span class="normal">1418</span>
+<span class="normal">1419</span>
+<span class="normal">1420</span>
+<span class="normal">1421</span>
 <span class="normal">1422</span>
 <span class="normal">1423</span>
 <span class="normal">1424</span>
@@ -7249,22 +7141,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">1442</span>
 <span class="normal">1443</span>
 <span class="normal">1444</span>
-<span class="normal">1445</span>
-<span class="normal">1446</span>
-<span class="normal">1447</span>
-<span class="normal">1448</span>
-<span class="normal">1449</span>
-<span class="normal">1450</span>
-<span class="normal">1451</span>
-<span class="normal">1452</span>
-<span class="normal">1453</span>
-<span class="normal">1454</span>
-<span class="normal">1455</span>
-<span class="normal">1456</span>
-<span class="normal">1457</span>
-<span class="normal">1458</span>
-<span class="normal">1459</span>
-<span class="normal">1460</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">imregrid</span><span class="p">(</span>
+<span class="normal">1445</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">imregrid</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">template</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -7326,7 +7203,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">507</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">492</span>
+<span class="normal">493</span>
+<span class="normal">494</span>
+<span class="normal">495</span>
+<span class="normal">496</span>
+<span class="normal">497</span>
+<span class="normal">498</span>
+<span class="normal">499</span>
+<span class="normal">500</span>
+<span class="normal">501</span>
+<span class="normal">502</span>
+<span class="normal">503</span>
+<span class="normal">504</span>
+<span class="normal">505</span>
+<span class="normal">506</span>
+<span class="normal">507</span>
 <span class="normal">508</span>
 <span class="normal">509</span>
 <span class="normal">510</span>
@@ -7349,22 +7241,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">527</span>
 <span class="normal">528</span>
 <span class="normal">529</span>
-<span class="normal">530</span>
-<span class="normal">531</span>
-<span class="normal">532</span>
-<span class="normal">533</span>
-<span class="normal">534</span>
-<span class="normal">535</span>
-<span class="normal">536</span>
-<span class="normal">537</span>
-<span class="normal">538</span>
-<span class="normal">539</span>
-<span class="normal">540</span>
-<span class="normal">541</span>
-<span class="normal">542</span>
-<span class="normal">543</span>
-<span class="normal">544</span>
-<span class="normal">545</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">imstat</span><span class="p">(</span>
+<span class="normal">530</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">imstat</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">box</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -7425,7 +7302,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1340</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1325</span>
+<span class="normal">1326</span>
+<span class="normal">1327</span>
+<span class="normal">1328</span>
+<span class="normal">1329</span>
+<span class="normal">1330</span>
+<span class="normal">1331</span>
+<span class="normal">1332</span>
+<span class="normal">1333</span>
+<span class="normal">1334</span>
+<span class="normal">1335</span>
+<span class="normal">1336</span>
+<span class="normal">1337</span>
+<span class="normal">1338</span>
+<span class="normal">1339</span>
+<span class="normal">1340</span>
 <span class="normal">1341</span>
 <span class="normal">1342</span>
 <span class="normal">1343</span>
@@ -7449,22 +7341,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">1361</span>
 <span class="normal">1362</span>
 <span class="normal">1363</span>
-<span class="normal">1364</span>
-<span class="normal">1365</span>
-<span class="normal">1366</span>
-<span class="normal">1367</span>
-<span class="normal">1368</span>
-<span class="normal">1369</span>
-<span class="normal">1370</span>
-<span class="normal">1371</span>
-<span class="normal">1372</span>
-<span class="normal">1373</span>
-<span class="normal">1374</span>
-<span class="normal">1375</span>
-<span class="normal">1376</span>
-<span class="normal">1377</span>
-<span class="normal">1378</span>
-<span class="normal">1379</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">imsubimage</span><span class="p">(</span>
+<span class="normal">1364</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">imsubimage</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">imagename</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">outfile</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -7753,7 +7630,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">630</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">615</span>
+<span class="normal">616</span>
+<span class="normal">617</span>
+<span class="normal">618</span>
+<span class="normal">619</span>
+<span class="normal">620</span>
+<span class="normal">621</span>
+<span class="normal">622</span>
+<span class="normal">623</span>
+<span class="normal">624</span>
+<span class="normal">625</span>
+<span class="normal">626</span>
+<span class="normal">627</span>
+<span class="normal">628</span>
+<span class="normal">629</span>
+<span class="normal">630</span>
 <span class="normal">631</span>
 <span class="normal">632</span>
 <span class="normal">633</span>
@@ -7783,22 +7675,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">657</span>
 <span class="normal">658</span>
 <span class="normal">659</span>
-<span class="normal">660</span>
-<span class="normal">661</span>
-<span class="normal">662</span>
-<span class="normal">663</span>
-<span class="normal">664</span>
-<span class="normal">665</span>
-<span class="normal">666</span>
-<span class="normal">667</span>
-<span class="normal">668</span>
-<span class="normal">669</span>
-<span class="normal">670</span>
-<span class="normal">671</span>
-<span class="normal">672</span>
-<span class="normal">673</span>
-<span class="normal">674</span>
-<span class="normal">675</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">mstransform</span><span class="p">(</span>
+<span class="normal">660</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">mstransform</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">outputvis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -7866,7 +7743,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1102</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">1087</span>
+<span class="normal">1088</span>
+<span class="normal">1089</span>
+<span class="normal">1090</span>
+<span class="normal">1091</span>
+<span class="normal">1092</span>
+<span class="normal">1093</span>
+<span class="normal">1094</span>
+<span class="normal">1095</span>
+<span class="normal">1096</span>
+<span class="normal">1097</span>
+<span class="normal">1098</span>
+<span class="normal">1099</span>
+<span class="normal">1100</span>
+<span class="normal">1101</span>
+<span class="normal">1102</span>
 <span class="normal">1103</span>
 <span class="normal">1104</span>
 <span class="normal">1105</span>
@@ -7900,22 +7792,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">1133</span>
 <span class="normal">1134</span>
 <span class="normal">1135</span>
-<span class="normal">1136</span>
-<span class="normal">1137</span>
-<span class="normal">1138</span>
-<span class="normal">1139</span>
-<span class="normal">1140</span>
-<span class="normal">1141</span>
-<span class="normal">1142</span>
-<span class="normal">1143</span>
-<span class="normal">1144</span>
-<span class="normal">1145</span>
-<span class="normal">1146</span>
-<span class="normal">1147</span>
-<span class="normal">1148</span>
-<span class="normal">1149</span>
-<span class="normal">1150</span>
-<span class="normal">1151</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">plotcal</span><span class="p">(</span>
+<span class="normal">1136</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">plotcal</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">caltable</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -7987,7 +7864,22 @@ no rendered image or provider JSON protocol is read by Python.</p>
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 998</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 983</span>
+<span class="normal"> 984</span>
+<span class="normal"> 985</span>
+<span class="normal"> 986</span>
+<span class="normal"> 987</span>
+<span class="normal"> 988</span>
+<span class="normal"> 989</span>
+<span class="normal"> 990</span>
+<span class="normal"> 991</span>
+<span class="normal"> 992</span>
+<span class="normal"> 993</span>
+<span class="normal"> 994</span>
+<span class="normal"> 995</span>
+<span class="normal"> 996</span>
+<span class="normal"> 997</span>
+<span class="normal"> 998</span>
 <span class="normal"> 999</span>
 <span class="normal">1000</span>
 <span class="normal">1001</span>
@@ -8074,22 +7966,7 @@ no rendered image or provider JSON protocol is read by Python.</p>
 <span class="normal">1082</span>
 <span class="normal">1083</span>
 <span class="normal">1084</span>
-<span class="normal">1085</span>
-<span class="normal">1086</span>
-<span class="normal">1087</span>
-<span class="normal">1088</span>
-<span class="normal">1089</span>
-<span class="normal">1090</span>
-<span class="normal">1091</span>
-<span class="normal">1092</span>
-<span class="normal">1093</span>
-<span class="normal">1094</span>
-<span class="normal">1095</span>
-<span class="normal">1096</span>
-<span class="normal">1097</span>
-<span class="normal">1098</span>
-<span class="normal">1099</span>
-<span class="normal">1100</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">plotms</span><span class="p">(</span>
+<span class="normal">1085</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">plotms</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="nb">format</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'json'</span><span class="p">,</span> <span class="s1">'text'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -8227,7 +8104,20 @@ Captured stdout and stderr are retained on the returned completion and on
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_runner.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 98</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 85</span>
+<span class="normal"> 86</span>
+<span class="normal"> 87</span>
+<span class="normal"> 88</span>
+<span class="normal"> 89</span>
+<span class="normal"> 90</span>
+<span class="normal"> 91</span>
+<span class="normal"> 92</span>
+<span class="normal"> 93</span>
+<span class="normal"> 94</span>
+<span class="normal"> 95</span>
+<span class="normal"> 96</span>
+<span class="normal"> 97</span>
+<span class="normal"> 98</span>
 <span class="normal"> 99</span>
 <span class="normal">100</span>
 <span class="normal">101</span>
@@ -8343,22 +8233,7 @@ Captured stdout and stderr are retained on the returned completion and on
 <span class="normal">211</span>
 <span class="normal">212</span>
 <span class="normal">213</span>
-<span class="normal">214</span>
-<span class="normal">215</span>
-<span class="normal">216</span>
-<span class="normal">217</span>
-<span class="normal">218</span>
-<span class="normal">219</span>
-<span class="normal">220</span>
-<span class="normal">221</span>
-<span class="normal">222</span>
-<span class="normal">223</span>
-<span class="normal">224</span>
-<span class="normal">225</span>
-<span class="normal">226</span>
-<span class="normal">227</span>
-<span class="normal">228</span>
-<span class="normal">229</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span>
+<span class="normal">214</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span>
     <span class="n">task</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
     <span class="n">parameters</span><span class="p">:</span> <span class="n">SurfaceParameters</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
     <span class="o">*</span><span class="p">,</span>
@@ -8407,8 +8282,6 @@ Captured stdout and stderr are retained on the returned completion and on
     <span class="k">if</span> <span class="n">merged_overrides</span><span class="p">:</span>
         <span class="n">resolved</span><span class="o">.</span><span class="n">set_many</span><span class="p">(</span><span class="n">merged_overrides</span><span class="p">)</span>
     <span class="n">provider_invocation</span> <span class="o">=</span> <span class="n">resolved</span><span class="o">.</span><span class="n">provider_invocation</span><span class="p">()</span>
-    <span class="k">if</span> <span class="n">provider_invocation</span><span class="o">.</span><span class="n">unsupported_reasons</span><span class="p">:</span>
-        <span class="k">raise</span> <span class="n">TaskCapabilityError</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">provider_invocation</span><span class="o">.</span><span class="n">unsupported_reasons</span><span class="p">)</span>
 
     <span class="n">executable</span> <span class="o">=</span> <span class="n">_resolve_casars_binary</span><span class="p">(</span><span class="n">binary</span><span class="p">)</span>
     <span class="k">with</span> <span class="n">TemporaryDirectory</span><span class="p">(</span><span class="n">prefix</span><span class="o">=</span><span class="sa">f</span><span class="s2">"casars-</span><span class="si">{</span><span class="n">task</span><span class="si">}</span><span class="s2">-parameters-"</span><span class="p">)</span> <span class="k">as</span> <span class="n">temporary</span><span class="p">:</span>
@@ -8512,7 +8385,22 @@ Captured stdout and stderr are retained on the returned completion and on
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">388</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">373</span>
+<span class="normal">374</span>
+<span class="normal">375</span>
+<span class="normal">376</span>
+<span class="normal">377</span>
+<span class="normal">378</span>
+<span class="normal">379</span>
+<span class="normal">380</span>
+<span class="normal">381</span>
+<span class="normal">382</span>
+<span class="normal">383</span>
+<span class="normal">384</span>
+<span class="normal">385</span>
+<span class="normal">386</span>
+<span class="normal">387</span>
+<span class="normal">388</span>
 <span class="normal">389</span>
 <span class="normal">390</span>
 <span class="normal">391</span>
@@ -8574,22 +8462,7 @@ Captured stdout and stderr are retained on the returned completion and on
 <span class="normal">447</span>
 <span class="normal">448</span>
 <span class="normal">449</span>
-<span class="normal">450</span>
-<span class="normal">451</span>
-<span class="normal">452</span>
-<span class="normal">453</span>
-<span class="normal">454</span>
-<span class="normal">455</span>
-<span class="normal">456</span>
-<span class="normal">457</span>
-<span class="normal">458</span>
-<span class="normal">459</span>
-<span class="normal">460</span>
-<span class="normal">461</span>
-<span class="normal">462</span>
-<span class="normal">463</span>
-<span class="normal">464</span>
-<span class="normal">465</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">simobserve</span><span class="p">(</span>
+<span class="normal">450</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">simobserve</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">request_kind</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s1">'family'</span><span class="p">,</span> <span class="s1">'run'</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">model</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
@@ -8689,7 +8562,22 @@ Captured stdout and stderr are retained on the returned completion and on
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>crates/casars-python/python/casars/tasks/_catalog.py</code></summary>
-              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">677</span>
+              <div class="codehilite"><table class="codehilitetable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal">662</span>
+<span class="normal">663</span>
+<span class="normal">664</span>
+<span class="normal">665</span>
+<span class="normal">666</span>
+<span class="normal">667</span>
+<span class="normal">668</span>
+<span class="normal">669</span>
+<span class="normal">670</span>
+<span class="normal">671</span>
+<span class="normal">672</span>
+<span class="normal">673</span>
+<span class="normal">674</span>
+<span class="normal">675</span>
+<span class="normal">676</span>
+<span class="normal">677</span>
 <span class="normal">678</span>
 <span class="normal">679</span>
 <span class="normal">680</span>
@@ -8719,22 +8607,7 @@ Captured stdout and stderr are retained on the returned completion and on
 <span class="normal">704</span>
 <span class="normal">705</span>
 <span class="normal">706</span>
-<span class="normal">707</span>
-<span class="normal">708</span>
-<span class="normal">709</span>
-<span class="normal">710</span>
-<span class="normal">711</span>
-<span class="normal">712</span>
-<span class="normal">713</span>
-<span class="normal">714</span>
-<span class="normal">715</span>
-<span class="normal">716</span>
-<span class="normal">717</span>
-<span class="normal">718</span>
-<span class="normal">719</span>
-<span class="normal">720</span>
-<span class="normal">721</span>
-<span class="normal">722</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">split</span><span class="p">(</span>
+<span class="normal">707</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">split</span><span class="p">(</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">vis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">StrPath</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">StrPath</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>
     <span class="n">outputvis</span><span class="p">:</span> <span class="n">StrPath</span> <span class="o">|</span> <span class="nb">object</span> <span class="o">=</span> <span class="n">_UNSET</span><span class="p">,</span>

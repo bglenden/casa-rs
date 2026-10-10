@@ -1160,11 +1160,11 @@ confirmation remain outside the saved science parameters.</p>
 <code>parameters.last_successful(...)</code>, and <code>parameters.load(path, ...)</code>.
 <code>TaskParameters</code> supports mapping-style updates, <code>reset(name)</code>, <code>reload()</code>,
 <code>save(path)</code>, <code>provider_invocation()</code>, and <code>run()</code>. The invocation exposes the
-provider protocol name/version, exact canonical request stdin, and typed
-owner-defined unsupported reasons. <code>tasks.run()</code> accepts every catalog task and
-routes through the common runner; a known ineligible imager request raises
-<code>TaskCapabilityError</code> before launch without Python interpreting programme or
-backend state. Successful completions retain the same provider invocation while
+provider protocol name/version and the exact canonical request stdin.
+<code>tasks.run()</code> accepts every catalog task and routes through the common runner;
+a request the catalog refuses, such as a parameter its gridder does not read,
+raises <code>ValueError</code> before launch, and the provider reports what the installed
+build cannot run when it runs. Successful completions retain the same provider invocation while
 result and receipt projection remains Rust-owned. Catalog-generated CASA-named
 keyword wrappers and type stubs are available directly under <code>casars.tasks</code>
 without copying defaults into Python signatures; there is no second

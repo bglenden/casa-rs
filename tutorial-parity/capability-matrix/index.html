@@ -805,9 +805,10 @@ enforced by <code>scripts/check-no-casa-runtime.py</code> in <code>scripts/arch-
 <li><code>casa-imaging</code> and <code>casars-imager</code>: MFS/cube imaging task surface and CASA
   <code>tclean</code> parity harnesses for existing deterministic cases, including the
   first bounded single-MS mosaic MT-MFS slice (<code>nterms &lt;= 2</code>, no W term).</li>
-<li><code>casars-imager</code> task protocol v3: local <code>parallel</code>/<code>chanchunks</code>, shared
-  source-stream memory/row-block/worker/read-ahead controls, dirty-product FFT
-  precision/backend policy, and diagnostic memory/I/O/worker/backend telemetry.</li>
+<li><code>casars-imager</code> task protocol v12: the imager catalog parameters, including
+  the <code>parallel</code>, <code>backend</code> and <code>gridprecision</code> execution controls, and a run
+  summary of each phase's wall time and peak memory, the workers and the
+  backend.</li>
 <li><code>casa-images</code>, <code>casa-lattices</code>, <code>casa-coordinates</code>: image/lattice/coordinate
   storage and analysis substrate.</li>
 <li><code>casa-vla</code>: VLA archive import library and canonical <code>importvla</code> executable.</li>
@@ -863,7 +864,7 @@ enforced by <code>scripts/check-no-casa-runtime.py</code> in <code>scripts/arch-
 <td><code>tclean</code> MFS</td>
 <td>partial/available</td>
 <td><code>casa-imaging</code>, <code>casars-imager</code></td>
-<td><code>casars-imager</code>; Python projection includes automask, <code>savemodel=modelcolumn</code>, single-plane <code>startmodel</code>, supported MFS/Hogbom/multiscale <code>outlierfile</code> controls, and protocol-v3 local execution controls</td>
+<td><code>casars-imager</code>; every surface takes the imager catalog parameters (protocol v12), including automask, <code>savemodel=modelcolumn</code>, supported MFS/Hogbom/multiscale <code>outlierfile</code> controls, and the <code>parallel</code>, <code>backend</code> and <code>gridprecision</code> execution controls</td>
 <td>broader tutorial parameter mapping; mosaic MT-MFS beyond one MS, <code>nterms &lt;= 2</code>, no W term, user masks, and natural/uniform/Briggs weighting; wider outlier variants such as mask images and cubes</td>
 <td>CASA <code>tclean</code> image products plus MODEL_DATA comparisons; first-slice mosaic MT-MFS compares Taylor-term image/residual/PSF/model/sumwt/PB/pbcor/alpha products</td>
 <td>existing GLENDENNING medium/large workload manifests, performance ledger, imager parity scripts, and tutorial timings</td>
@@ -873,7 +874,7 @@ enforced by <code>scripts/check-no-casa-runtime.py</code> in <code>scripts/arch-
 <td><code>tclean</code> cube / spectral</td>
 <td>partial</td>
 <td><code>casa-imaging</code>, <code>casars-imager</code></td>
-<td><code>casars-imager</code>; Python projection includes automask plus protocol-v3 <code>parallel</code>, <code>chanchunks</code>, and shared source read-ahead controls</td>
+<td><code>casars-imager</code>; every surface takes the imager catalog parameters (protocol v12), including automask and <code>parallel</code>; memory is admitted from the host, and a cube that does not fit runs in waves</td>
 <td>cube seam coverage, spectral transform integration, and full-scale mosaic cube gridding for Antennae Band 7 line products</td>
 <td>CASA <code>tclean</code> cube outputs plus read-ahead/serial-vs-parallel product equivalence</td>
 <td>GLENDENNING medium/large cube/cubedata/mosaic workloads with source-read, overlap, bandwidth, and wall-time telemetry</td>
@@ -1311,10 +1312,9 @@ families are either implemented or deliberately split:</p>
   workload manifests and record accepted, guarded, neutral, and rejected runs
   in <code>tools/perf/imager/imaging_performance_ledger.json</code> rather than promoting
   one-off timings.</li>
-<li>Treat protocol-v3 source telemetry (<code>source_bytes</code>, read/route/consumer time,
-  producer/consumer blocked time, overlap, live-block high water, and effective
-  bandwidth) and backend telemetry as part of the performance oracle. A GPU
-  kernel-only win does not establish an end-to-end no-slowdown result.</li>
+<li>Treat the run summary's phase wall times and peak memory, and the backend,
+  as part of the performance oracle. A GPU kernel-only win does not establish
+  an end-to-end no-slowdown result.</li>
 <li>Severe regressions block a wave; non-severe gaps become shaped follow-ups
   unless the wave's acceptance says match/exceed is required.</li>
 </ul>

@@ -14,326 +14,326 @@
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casa_imaging_model::{
 <a href=#15 id=15 data-nosnippet>15</a>    CompiledProblem, ModelDeltaTerm, ModelInputCommitment, SpectralWcs, WeightingScheme,
 <a href=#16 id=16 data-nosnippet>16</a>};
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>casa_imaging_operator::{BandwidthTaper, Basis, ModeSet, PlaneRange, WeightingGeneration};
-<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>casa_imaging_products::VisibilityProductCompletion;
-<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan;
-<a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>casa_imaging_reconstruction::{
-<a href=#21 id=21 data-nosnippet>21</a>    ExecutableModelProblem, ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks,
-<a href=#22 id=22 data-nosnippet>22</a>    MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation, MinorCycleImageResponse,
-<a href=#23 id=23 data-nosnippet>23</a>    ModelGeneration, ModelLifecycle, ModelStoragePlan, PassNormalState, ReconstructionMaskPlan,
-<a href=#24 id=24 data-nosnippet>24</a>    ReconstructionMaskSet, WeightingGenerationId,
-<a href=#25 id=25 data-nosnippet>25</a>};
-<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span>casa_imaging_runtime::pass::{
-<a href=#27 id=27 data-nosnippet>27</a>    BackendChoice, Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain, PassError,
-<a href=#28 id=28 data-nosnippet>28</a>    PassSummary, Residency, VisibilitySink, WaveDemand, WorkerTeam, run_density_pass,
-<a href=#29 id=29 data-nosnippet>29</a>    run_major_cycle,
-<a href=#30 id=30 data-nosnippet>30</a>};
-<a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span>casa_imaging_runtime::{
-<a href=#32 id=32 data-nosnippet>32</a>    CubeState, Demand, HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache, Reservation,
-<a href=#33 id=33 data-nosnippet>33</a>    ResourcePolicy, RunSummary, admit, free_memory, prepare_minor_cycle, run_minor_cycle,
-<a href=#34 id=34 data-nosnippet>34</a>    run_phase,
-<a href=#35 id=35 data-nosnippet>35</a>};
-<a href=#36 id=36 data-nosnippet>36</a><span class="kw">use </span>casa_ms::ResolvedSelectedObservationAccess;
-<a href=#37 id=37 data-nosnippet>37</a>
-<a href=#38 id=38 data-nosnippet>38</a><span class="kw">use </span><span class="kw">super</span>::ImagingError;
-<a href=#39 id=39 data-nosnippet>39</a><span class="kw">use </span><span class="kw">super</span>::images::{pass_images, prepare_model};
-<a href=#40 id=40 data-nosnippet>40</a><span class="kw">use </span><span class="kw">super</span>::measurement::{
-<a href=#41 id=41 data-nosnippet>41</a>    DomainOperator, density_shape, domain_operator, native_spacing_hz, selected_correlations,
-<a href=#42 id=42 data-nosnippet>42</a>};
-<a href=#43 id=43 data-nosnippet>43</a><span class="kw">use </span><span class="kw">super</span>::source::{MeasurementSetSource, PlaneBounds};
-<a href=#44 id=44 data-nosnippet>44</a><span class="kw">use </span><span class="kw">super</span>::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
-<a href=#45 id=45 data-nosnippet>45</a><span class="kw">use crate</span>::{AwCatalogDeployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason};
-<a href=#46 id=46 data-nosnippet>46</a>
-<a href=#47 id=47 data-nosnippet>47</a><span class="doccomment">/// What one native imaging run needs besides the compiled problem.
-<a href=#48 id=48 data-nosnippet>48</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ImagingInputs&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#49 id=49 data-nosnippet>49</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) problem: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CompiledProblem,
-<a href=#50 id=50 data-nosnippet>50</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) access: ResolvedSelectedObservationAccess,
-<a href=#51 id=51 data-nosnippet>51</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) masks: ImageDomainReconstructionMaskPlans,
-<a href=#52 id=52 data-nosnippet>52</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) image_response: <span class="prelude-ty">Option</span>&lt;MinorCycleImageResponse&gt;,
-<a href=#53 id=53 data-nosnippet>53</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) visibility_write: <span class="prelude-ty">Option</span>&lt;VisibilityWriteTarget&gt;,
-<a href=#54 id=54 data-nosnippet>54</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) host: HostResources,
-<a href=#55 id=55 data-nosnippet>55</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) policy: ResourcePolicy,
-<a href=#56 id=56 data-nosnippet>56</a>    <span class="doccomment">/// The run's one worker team, which products reuse.
-<a href=#57 id=57 data-nosnippet>57</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) team: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>WorkerTeam,
-<a href=#58 id=58 data-nosnippet>58</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) cancel: Cancel,
-<a href=#59 id=59 data-nosnippet>59</a>    <span class="doccomment">/// Where the paged cube state of a channel-local run lives.
-<a href=#60 id=60 data-nosnippet>60</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) spill_directory: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Path,
-<a href=#61 id=61 data-nosnippet>61</a>    <span class="doccomment">/// The AW catalog of an A-projection run.
-<a href=#62 id=62 data-nosnippet>62</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) aw_catalog: <span class="prelude-ty">Option</span>&lt;AwCatalogDeployment&gt;,
-<a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) backend: BackendChoice,
-<a href=#64 id=64 data-nosnippet>64</a>}
-<a href=#65 id=65 data-nosnippet>65</a>
-<a href=#66 id=66 data-nosnippet>66</a><span class="doccomment">/// The final reconciliation and the record of the cycles that led to it.
-<a href=#67 id=67 data-nosnippet>67</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ImagingOutcome {
-<a href=#68 id=68 data-nosnippet>68</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) scientific: MajorCycleCompletion,
-<a href=#69 id=69 data-nosnippet>69</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) masks: <span class="prelude-ty">Option</span>&lt;ReconstructionMaskSet&gt;,
-<a href=#70 id=70 data-nosnippet>70</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) minor_cycles: Vec&lt;NativeMinorCycleOutcome&gt;,
-<a href=#71 id=71 data-nosnippet>71</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) stop: <span class="prelude-ty">Option</span>&lt;CleanStop&gt;,
-<a href=#72 id=72 data-nosnippet>72</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) major_cycle_count: usize,
-<a href=#73 id=73 data-nosnippet>73</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) total_minor_iterations: usize,
-<a href=#74 id=74 data-nosnippet>74</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) total_actual_minor_iterations: usize,
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) visibility_products: <span class="prelude-ty">Option</span>&lt;VisibilityProductCompletion&gt;,
-<a href=#76 id=76 data-nosnippet>76</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) planes_per_wave: <span class="prelude-ty">Option</span>&lt;u32&gt;,
-<a href=#77 id=77 data-nosnippet>77</a>}
-<a href=#78 id=78 data-nosnippet>78</a>
-<a href=#79 id=79 data-nosnippet>79</a><span class="doccomment">/// Fixed parts of one run shared by every pass.
-<a href=#80 id=80 data-nosnippet>80</a></span><span class="kw">struct </span>Run&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#81 id=81 data-nosnippet>81</a>    problem: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CompiledProblem,
-<a href=#82 id=82 data-nosnippet>82</a>    domains: Vec&lt;DomainOperator&gt;,
-<a href=#83 id=83 data-nosnippet>83</a>    source: MeasurementSetSource&lt;<span class="lifetime">'a</span>&gt;,
-<a href=#84 id=84 data-nosnippet>84</a>    weighting: WeightingGeneration,
-<a href=#85 id=85 data-nosnippet>85</a>    weighting_id: WeightingGenerationId,
-<a href=#86 id=86 data-nosnippet>86</a>    team: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>WorkerTeam,
-<a href=#87 id=87 data-nosnippet>87</a>    cancel: Cancel,
-<a href=#88 id=88 data-nosnippet>88</a>    host: HostResources,
-<a href=#89 id=89 data-nosnippet>89</a>    policy: ResourcePolicy,
-<a href=#90 id=90 data-nosnippet>90</a>    cube: <span class="prelude-ty">Option</span>&lt;CubeState&gt;,
-<a href=#91 id=91 data-nosnippet>91</a>    native_spacing_hz: f64,
-<a href=#92 id=92 data-nosnippet>92</a>    backend: BackendChoice,
-<a href=#93 id=93 data-nosnippet>93</a>    attempts: u64,
-<a href=#94 id=94 data-nosnippet>94</a>    visibility_write: <span class="prelude-ty">Option</span>&lt;VisibilityWriteTarget&gt;,
-<a href=#95 id=95 data-nosnippet>95</a>    <span class="doccomment">/// Planes per wave of the most finely waved pass so far.
-<a href=#96 id=96 data-nosnippet>96</a>    </span>planes_per_wave: <span class="prelude-ty">Option</span>&lt;u32&gt;,
-<a href=#97 id=97 data-nosnippet>97</a>    <span class="doccomment">/// Whether the initial pass also grids the sensitivity image
-<a href=#98 id=98 data-nosnippet>98</a>    /// (`Mode::Weight`): a kernel set with weight taps on any domain.
-<a href=#99 id=99 data-nosnippet>99</a>    </span>weight_image: bool,
-<a href=#100 id=100 data-nosnippet>100</a>}
-<a href=#101 id=101 data-nosnippet>101</a>
-<a href=#102 id=102 data-nosnippet>102</a><span class="doccomment">/// One reconciled major cycle.
-<a href=#103 id=103 data-nosnippet>103</a></span><span class="kw">struct </span>Major {
-<a href=#104 id=104 data-nosnippet>104</a>    completion: MajorCycleCompletion,
-<a href=#105 id=105 data-nosnippet>105</a>    visibility: <span class="prelude-ty">Option</span>&lt;VisibilityProductCompletion&gt;,
-<a href=#106 id=106 data-nosnippet>106</a>}
-<a href=#107 id=107 data-nosnippet>107</a>
-<a href=#108 id=108 data-nosnippet>108</a><span class="kw">impl </span>ImagingOutcome {
-<a href=#109 id=109 data-nosnippet>109</a>    <span class="doccomment">/// The outcome of a run that has done its initial major cycle `major`.
-<a href=#110 id=110 data-nosnippet>110</a>    </span><span class="kw">fn </span>initial(major: Major, run: <span class="kw-2">&amp;</span>Run&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="self">Self </span>{
-<a href=#111 id=111 data-nosnippet>111</a>        <span class="self">Self </span>{
-<a href=#112 id=112 data-nosnippet>112</a>            scientific: major.completion,
-<a href=#113 id=113 data-nosnippet>113</a>            masks: <span class="prelude-val">None</span>,
-<a href=#114 id=114 data-nosnippet>114</a>            minor_cycles: Vec::new(),
-<a href=#115 id=115 data-nosnippet>115</a>            stop: <span class="prelude-val">None</span>,
-<a href=#116 id=116 data-nosnippet>116</a>            major_cycle_count: <span class="number">1</span>,
-<a href=#117 id=117 data-nosnippet>117</a>            total_minor_iterations: <span class="number">0</span>,
-<a href=#118 id=118 data-nosnippet>118</a>            total_actual_minor_iterations: <span class="number">0</span>,
-<a href=#119 id=119 data-nosnippet>119</a>            visibility_products: major.visibility,
-<a href=#120 id=120 data-nosnippet>120</a>            planes_per_wave: run.planes_per_wave,
-<a href=#121 id=121 data-nosnippet>121</a>        }
-<a href=#122 id=122 data-nosnippet>122</a>    }
-<a href=#123 id=123 data-nosnippet>123</a>}
-<a href=#124 id=124 data-nosnippet>124</a>
-<a href=#125 id=125 data-nosnippet>125</a><span class="doccomment">/// Run every major and minor cycle of `inputs.problem`.
-<a href=#126 id=126 data-nosnippet>126</a>///
-<a href=#127 id=127 data-nosnippet>127</a>/// The loop is tclean's: after each major cycle the controller decides from
-<a href=#128 id=128 data-nosnippet>128</a>/// the fresh residual whether cleaning is complete (`cleanComplete`);
-<a href=#129 id=129 data-nosnippet>129</a>/// otherwise a minor cycle runs under its controls and a major cycle
-<a href=#130 id=130 data-nosnippet>130</a>/// refreshes the residual. A minor cycle that cleans nothing ends the run
-<a href=#131 id=131 data-nosnippet>131</a>/// without another major cycle. Each cycle is a phase of `summary`; a
-<a href=#132 id=132 data-nosnippet>132</a>/// cancelled run stops at the next block boundary of a pass or before the
-<a href=#133 id=133 data-nosnippet>133</a>/// next phase.
-<a href=#134 id=134 data-nosnippet>134</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(
-<a href=#135 id=135 data-nosnippet>135</a>    inputs: ImagingInputs&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#136 id=136 data-nosnippet>136</a>    summary: <span class="kw-2">&amp;mut </span>RunSummary,
-<a href=#137 id=137 data-nosnippet>137</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ImagingOutcome, ImagingError&gt; {
-<a href=#138 id=138 data-nosnippet>138</a>    <span class="kw">let </span>problem = inputs.problem;
-<a href=#139 id=139 data-nosnippet>139</a>    <span class="kw">let </span>controls = problem.reconstruction().controls();
-<a href=#140 id=140 data-nosnippet>140</a>    <span class="kw">let </span>cleaning = controls.max_minor_iterations() &gt; <span class="number">0</span>;
-<a href=#141 id=141 data-nosnippet>141</a>    <span class="kw">let </span>setup = minor_setup(problem, inputs.image_response, <span class="kw-2">&amp;</span>inputs.masks);
-<a href=#142 id=142 data-nosnippet>142</a>    <span class="kw">let </span><span class="kw-2">mut </span>mask_plans = inputs.masks.clone();
-<a href=#143 id=143 data-nosnippet>143</a>    <span class="kw">let </span>cancel = inputs.cancel.clone();
-<a href=#144 id=144 data-nosnippet>144</a>    <span class="comment">// Operators, the source, the imaging weights and the paged cube state.
-<a href=#145 id=145 data-nosnippet>145</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>run = run_phase(<span class="string">"setup"</span>, <span class="kw-2">&amp;</span>cancel, summary, || Run::open(inputs))<span class="question-mark">?</span>;
-<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">let </span>major = run_phase(<span class="string">"major cycle 1"</span>, <span class="kw-2">&amp;</span>cancel, summary, || run.initial(!cleaning))<span class="question-mark">?</span>;
-<a href=#147 id=147 data-nosnippet>147</a>    <span class="kw">let </span><span class="kw-2">mut </span>outcome = ImagingOutcome::initial(major, <span class="kw-2">&amp;</span>run);
-<a href=#148 id=148 data-nosnippet>148</a>    <span class="kw">if </span>!cleaning {
-<a href=#149 id=149 data-nosnippet>149</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(outcome);
-<a href=#150 id=150 data-nosnippet>150</a>    }
-<a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">let </span><span class="kw-2">mut </span>controller = Controller::new(<span class="kw-2">&amp;</span>controls);
-<a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">let </span><span class="kw-2">mut </span>cache = PsfCache::default();
-<a href=#153 id=153 data-nosnippet>153</a>    <span class="kw">loop </span>{
-<a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">let </span>prepared = prepare_minor_cycle(
-<a href=#155 id=155 data-nosnippet>155</a>            <span class="kw-2">&amp;</span>outcome.scientific,
-<a href=#156 id=156 data-nosnippet>156</a>            <span class="kw-2">&amp;</span>mask_plans,
-<a href=#157 id=157 data-nosnippet>157</a>            <span class="kw-2">&amp;</span>setup,
-<a href=#158 id=158 data-nosnippet>158</a>            <span class="kw-2">&amp;mut </span>cache,
-<a href=#159 id=159 data-nosnippet>159</a>            run.team,
-<a href=#160 id=160 data-nosnippet>160</a>        )<span class="question-mark">?</span>;
-<a href=#161 id=161 data-nosnippet>161</a>        <span class="kw">let </span>statistics = prepared.statistics;
-<a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(stop) = controller.clean_complete(<span class="kw-2">&amp;</span>statistics) {
-<a href=#163 id=163 data-nosnippet>163</a>            <span class="macro">tracing::info!</span>(<span class="string">"imaging stopped: {stop:?} (stopcode {})"</span>, stop.code());
-<a href=#164 id=164 data-nosnippet>164</a>            outcome.stop = <span class="prelude-val">Some</span>(stop);
-<a href=#165 id=165 data-nosnippet>165</a>            outcome
-<a href=#166 id=166 data-nosnippet>166</a>                .masks
-<a href=#167 id=167 data-nosnippet>167</a>                .get_or_insert_with(|| ReconstructionMaskSet::Domains(prepared.masks().clone()));
-<a href=#168 id=168 data-nosnippet>168</a>            <span class="kw">break</span>;
-<a href=#169 id=169 data-nosnippet>169</a>        }
-<a href=#170 id=170 data-nosnippet>170</a>        <span class="kw">let </span>cycle_controls = controller.cycle_controls(<span class="kw-2">&amp;</span>statistics);
-<a href=#171 id=171 data-nosnippet>171</a>        <span class="kw">let </span>started = Instant::now();
-<a href=#172 id=172 data-nosnippet>172</a>        <span class="kw">let </span>name = <span class="macro">format!</span>(<span class="string">"minor cycle {}"</span>, outcome.minor_cycles.len() + <span class="number">1</span>);
-<a href=#173 id=173 data-nosnippet>173</a>        <span class="kw">let </span>minor = run_phase(name, <span class="kw-2">&amp;</span>cancel, summary, || {
-<a href=#174 id=174 data-nosnippet>174</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;(run_minor_cycle(
-<a href=#175 id=175 data-nosnippet>175</a>                prepared,
-<a href=#176 id=176 data-nosnippet>176</a>                <span class="kw-2">&amp;</span>outcome.scientific,
-<a href=#177 id=177 data-nosnippet>177</a>                <span class="kw-2">&amp;</span>setup,
-<a href=#178 id=178 data-nosnippet>178</a>                <span class="kw-2">&amp;</span>cycle_controls,
-<a href=#179 id=179 data-nosnippet>179</a>                <span class="kw-2">&amp;mut </span>cache,
-<a href=#180 id=180 data-nosnippet>180</a>                run.team,
-<a href=#181 id=181 data-nosnippet>181</a>            )<span class="question-mark">?</span>)
-<a href=#182 id=182 data-nosnippet>182</a>        })<span class="question-mark">?</span>;
-<a href=#183 id=183 data-nosnippet>183</a>        <span class="kw">let </span>global_threshold = controls
-<a href=#184 id=184 data-nosnippet>184</a>            .threshold_jy_per_beam()
-<a href=#185 id=185 data-nosnippet>185</a>            .max(statistics.nsigma_threshold);
-<a href=#186 id=186 data-nosnippet>186</a>        <span class="kw">let </span>cycle = account_minor_cycle(
-<a href=#187 id=187 data-nosnippet>187</a>            <span class="kw-2">&amp;mut </span>outcome,
-<a href=#188 id=188 data-nosnippet>188</a>            <span class="kw-2">&amp;mut </span>controller,
-<a href=#189 id=189 data-nosnippet>189</a>            <span class="kw-2">&amp;</span>minor,
-<a href=#190 id=190 data-nosnippet>190</a>            <span class="kw-2">&amp;</span>cycle_controls,
-<a href=#191 id=191 data-nosnippet>191</a>            global_threshold,
-<a href=#192 id=192 data-nosnippet>192</a>            started,
-<a href=#193 id=193 data-nosnippet>193</a>        );
-<a href=#194 id=194 data-nosnippet>194</a>        <span class="kw">let </span>last = controller.budget_spent() || controller.last_cycle(<span class="kw-2">&amp;</span>statistics);
-<a href=#195 id=195 data-nosnippet>195</a>        mask_plans = next_masks(<span class="kw-2">&amp;</span>mask_plans, <span class="kw-2">&amp;</span>minor, cycle, cycle_controls.threshold_reached)<span class="question-mark">?</span>;
-<a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">if </span>minor.summary.iterations == <span class="number">0 </span>{
-<a href=#197 id=197 data-nosnippet>197</a>            <span class="comment">// tclean skips the major cycle, updates the mask and still asks
-<a href=#198 id=198 data-nosnippet>198</a>            // `hasConverged` for the stop it reports.
-<a href=#199 id=199 data-nosnippet>199</a>            </span><span class="kw">let </span>prepared = prepare_minor_cycle(
-<a href=#200 id=200 data-nosnippet>200</a>                <span class="kw-2">&amp;</span>outcome.scientific,
-<a href=#201 id=201 data-nosnippet>201</a>                <span class="kw-2">&amp;</span>mask_plans,
-<a href=#202 id=202 data-nosnippet>202</a>                <span class="kw-2">&amp;</span>setup,
-<a href=#203 id=203 data-nosnippet>203</a>                <span class="kw-2">&amp;mut </span>cache,
-<a href=#204 id=204 data-nosnippet>204</a>                run.team,
-<a href=#205 id=205 data-nosnippet>205</a>            )<span class="question-mark">?</span>;
-<a href=#206 id=206 data-nosnippet>206</a>            outcome.stop = controller.clean_complete(<span class="kw-2">&amp;</span>prepared.statistics);
-<a href=#207 id=207 data-nosnippet>207</a>            outcome.masks = <span class="prelude-val">Some</span>(ReconstructionMaskSet::Domains(prepared.masks().clone()));
-<a href=#208 id=208 data-nosnippet>208</a>            <span class="kw">break</span>;
-<a href=#209 id=209 data-nosnippet>209</a>        }
-<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">let </span>name = <span class="macro">format!</span>(<span class="string">"major cycle {}"</span>, outcome.major_cycle_count + <span class="number">1</span>);
-<a href=#211 id=211 data-nosnippet>211</a>        <span class="kw">let </span>scientific = outcome.scientific;
-<a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">let </span>major = run_phase(name, <span class="kw-2">&amp;</span>cancel, summary, || {
-<a href=#213 id=213 data-nosnippet>213</a>            run.refresh(scientific, minor.terms, <span class="kw-2">&amp;</span>minor.masks, last)
-<a href=#214 id=214 data-nosnippet>214</a>        })<span class="question-mark">?</span>;
-<a href=#215 id=215 data-nosnippet>215</a>        controller.end_major_cycle();
-<a href=#216 id=216 data-nosnippet>216</a>        outcome.scientific = major.completion;
-<a href=#217 id=217 data-nosnippet>217</a>        outcome.visibility_products = major.visibility;
-<a href=#218 id=218 data-nosnippet>218</a>        outcome.major_cycle_count += <span class="number">1</span>;
-<a href=#219 id=219 data-nosnippet>219</a>    }
-<a href=#220 id=220 data-nosnippet>220</a>    <span class="kw">if </span>run.visibility_write.is_some() &amp;&amp; outcome.visibility_products.is_none() {
-<a href=#221 id=221 data-nosnippet>221</a>        outcome = run_phase(<span class="string">"model prediction"</span>, <span class="kw-2">&amp;</span>cancel, summary, || {
-<a href=#222 id=222 data-nosnippet>222</a>            predict_final_model(<span class="kw-2">&amp;mut </span>run, outcome)
-<a href=#223 id=223 data-nosnippet>223</a>        })<span class="question-mark">?</span>;
-<a href=#224 id=224 data-nosnippet>224</a>    }
-<a href=#225 id=225 data-nosnippet>225</a>    outcome.planes_per_wave = run.planes_per_wave;
-<a href=#226 id=226 data-nosnippet>226</a>    <span class="prelude-val">Ok</span>(outcome)
-<a href=#227 id=227 data-nosnippet>227</a>}
-<a href=#228 id=228 data-nosnippet>228</a>
-<a href=#229 id=229 data-nosnippet>229</a><span class="doccomment">/// Fold one minor cycle into the run's totals and its controller
-<a href=#230 id=230 data-nosnippet>230</a>/// (`mergeMinorCycleSummary`), record and log it; returns its ordinal.
-<a href=#231 id=231 data-nosnippet>231</a></span><span class="kw">fn </span>account_minor_cycle(
-<a href=#232 id=232 data-nosnippet>232</a>    outcome: <span class="kw-2">&amp;mut </span>ImagingOutcome,
-<a href=#233 id=233 data-nosnippet>233</a>    controller: <span class="kw-2">&amp;mut </span>Controller,
-<a href=#234 id=234 data-nosnippet>234</a>    minor: <span class="kw-2">&amp;</span>MinorCycleOutcome,
-<a href=#235 id=235 data-nosnippet>235</a>    cycle_controls: <span class="kw-2">&amp;</span>CycleControls,
-<a href=#236 id=236 data-nosnippet>236</a>    global_threshold: f64,
-<a href=#237 id=237 data-nosnippet>237</a>    started: Instant,
-<a href=#238 id=238 data-nosnippet>238</a>) -&gt; usize {
-<a href=#239 id=239 data-nosnippet>239</a>    <span class="kw">let </span>entering = (
-<a href=#240 id=240 data-nosnippet>240</a>        outcome.total_minor_iterations,
-<a href=#241 id=241 data-nosnippet>241</a>        outcome.total_actual_minor_iterations,
-<a href=#242 id=242 data-nosnippet>242</a>    );
-<a href=#243 id=243 data-nosnippet>243</a>    controller.record_minor_cycle(minor.summary.iterations, minor.summary.peak);
-<a href=#244 id=244 data-nosnippet>244</a>    outcome.total_minor_iterations = controller.iterations();
-<a href=#245 id=245 data-nosnippet>245</a>    outcome.total_actual_minor_iterations += minor.summary.components;
-<a href=#246 id=246 data-nosnippet>246</a>    <span class="kw">let </span>cycle = outcome.minor_cycles.len() + <span class="number">1</span>;
-<a href=#247 id=247 data-nosnippet>247</a>    <span class="kw">let </span>record = minor_cycle_record(
-<a href=#248 id=248 data-nosnippet>248</a>        cycle,
-<a href=#249 id=249 data-nosnippet>249</a>        minor,
-<a href=#250 id=250 data-nosnippet>250</a>        cycle_controls,
-<a href=#251 id=251 data-nosnippet>251</a>        global_threshold,
-<a href=#252 id=252 data-nosnippet>252</a>        entering,
-<a href=#253 id=253 data-nosnippet>253</a>        (
-<a href=#254 id=254 data-nosnippet>254</a>            outcome.total_minor_iterations,
-<a href=#255 id=255 data-nosnippet>255</a>            outcome.total_actual_minor_iterations,
-<a href=#256 id=256 data-nosnippet>256</a>        ),
-<a href=#257 id=257 data-nosnippet>257</a>    );
-<a href=#258 id=258 data-nosnippet>258</a>    <span class="macro">tracing::info!</span>(
-<a href=#259 id=259 data-nosnippet>259</a>        <span class="string">"imaging minor cycle {cycle}: {} iterations ({} total), peak {:.6} -&gt; {:.6} Jy, \
-<a href=#260 id=260 data-nosnippet>260</a>         cycle threshold {:.6} Jy, stop {:?}, {:.2} s"</span>,
-<a href=#261 id=261 data-nosnippet>261</a>        record.iterations,
-<a href=#262 id=262 data-nosnippet>262</a>        record.total_iterations,
-<a href=#263 id=263 data-nosnippet>263</a>        record.initial_peak_flux,
-<a href=#264 id=264 data-nosnippet>264</a>        record.final_peak_flux,
-<a href=#265 id=265 data-nosnippet>265</a>        record.effective_threshold,
-<a href=#266 id=266 data-nosnippet>266</a>        record.stop_reason,
-<a href=#267 id=267 data-nosnippet>267</a>        started.elapsed().as_secs_f64(),
-<a href=#268 id=268 data-nosnippet>268</a>    );
-<a href=#269 id=269 data-nosnippet>269</a>    outcome.minor_cycles.push(record);
-<a href=#270 id=270 data-nosnippet>270</a>    outcome.masks = <span class="prelude-val">Some</span>(ReconstructionMaskSet::Domains(minor.masks.clone()));
-<a href=#271 id=271 data-nosnippet>271</a>    cycle
-<a href=#272 id=272 data-nosnippet>272</a>}
-<a href=#273 id=273 data-nosnippet>273</a>
-<a href=#274 id=274 data-nosnippet>274</a><span class="doccomment">/// Predict the final model once more to write the model column: the pass
-<a href=#275 id=275 data-nosnippet>275</a>/// that ended the run was not known to be the last when it ran.
-<a href=#276 id=276 data-nosnippet>276</a></span><span class="kw">fn </span>predict_final_model(
-<a href=#277 id=277 data-nosnippet>277</a>    run: <span class="kw-2">&amp;mut </span>Run&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#278 id=278 data-nosnippet>278</a>    <span class="kw-2">mut </span>outcome: ImagingOutcome,
-<a href=#279 id=279 data-nosnippet>279</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ImagingOutcome, ImagingError&gt; {
-<a href=#280 id=280 data-nosnippet>280</a>    <span class="kw">let </span>masks = <span class="kw">match </span><span class="kw-2">&amp;</span>outcome.masks {
-<a href=#281 id=281 data-nosnippet>281</a>        <span class="prelude-val">Some</span>(ReconstructionMaskSet::Domains(masks)) =&gt; masks.clone(),
-<a href=#282 id=282 data-nosnippet>282</a>        <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(<span class="string">"a cleaning run has formed its masks"</span>),
-<a href=#283 id=283 data-nosnippet>283</a>    };
-<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">let </span>major = run.refresh(outcome.scientific, Vec::new(), <span class="kw-2">&amp;</span>masks, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
-<a href=#285 id=285 data-nosnippet>285</a>    outcome.scientific = major.completion;
-<a href=#286 id=286 data-nosnippet>286</a>    outcome.visibility_products = major.visibility;
-<a href=#287 id=287 data-nosnippet>287</a>    outcome.major_cycle_count += <span class="number">1</span>;
-<a href=#288 id=288 data-nosnippet>288</a>    <span class="prelude-val">Ok</span>(outcome)
-<a href=#289 id=289 data-nosnippet>289</a>}
-<a href=#290 id=290 data-nosnippet>290</a>
-<a href=#291 id=291 data-nosnippet>291</a><span class="doccomment">/// The minor cycle's view of the run.
-<a href=#292 id=292 data-nosnippet>292</a></span><span class="kw">fn </span>minor_setup(
-<a href=#293 id=293 data-nosnippet>293</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#294 id=294 data-nosnippet>294</a>    response: <span class="prelude-ty">Option</span>&lt;MinorCycleImageResponse&gt;,
-<a href=#295 id=295 data-nosnippet>295</a>    masks: <span class="kw-2">&amp;</span>ImageDomainReconstructionMaskPlans,
-<a href=#296 id=296 data-nosnippet>296</a>) -&gt; MinorCycleSetup {
-<a href=#297 id=297 data-nosnippet>297</a>    <span class="kw">let </span>controls = problem.reconstruction().controls();
-<a href=#298 id=298 data-nosnippet>298</a>    MinorCycleSetup {
-<a href=#299 id=299 data-nosnippet>299</a>        algorithm: problem.reconstruction().algorithm().clone(),
-<a href=#300 id=300 data-nosnippet>300</a>        accounting: controls.hogbom_iteration_accounting(),
-<a href=#301 id=301 data-nosnippet>301</a>        response,
-<a href=#302 id=302 data-nosnippet>302</a>        nsigma: controls.noise_sigma().unwrap_or(<span class="number">0.0</span>),
-<a href=#303 id=303 data-nosnippet>303</a>        automask: <span class="macro">matches!</span>(
-<a href=#304 id=304 data-nosnippet>304</a>            masks.primary(),
-<a href=#305 id=305 data-nosnippet>305</a>            ReconstructionMaskPlan::AutoMultithresh { .. }
-<a href=#306 id=306 data-nosnippet>306</a>        ),
-<a href=#307 id=307 data-nosnippet>307</a>    }
-<a href=#308 id=308 data-nosnippet>308</a>}
-<a href=#309 id=309 data-nosnippet>309</a>
-<a href=#310 id=310 data-nosnippet>310</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; Run&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#311 id=311 data-nosnippet>311</a>    <span class="doccomment">/// The operators, worker team, source and imaging weights of a run.
-<a href=#312 id=312 data-nosnippet>312</a>    </span><span class="kw">fn </span>open(inputs: ImagingInputs&lt;<span class="lifetime">'a</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ImagingError&gt; {
-<a href=#313 id=313 data-nosnippet>313</a>        <span class="kw">let </span>problem = inputs.problem;
-<a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">let </span>backend = inputs.backend;
-<a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">if </span>backend == BackendChoice::Metal &amp;&amp; !inputs.host.metal {
-<a href=#316 id=316 data-nosnippet>316</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
-<a href=#317 id=317 data-nosnippet>317</a>                reason: <span class="string">"the Metal backend needs a unified-memory Metal 3 device"</span>,
-<a href=#318 id=318 data-nosnippet>318</a>            });
-<a href=#319 id=319 data-nosnippet>319</a>        }
-<a href=#320 id=320 data-nosnippet>320</a>        <span class="kw">let </span>correlations = selected_correlations(problem)<span class="question-mark">?</span>;
-<a href=#321 id=321 data-nosnippet>321</a>        <span class="kw">let </span>selected = inputs
-<a href=#322 id=322 data-nosnippet>322</a>            .access
-<a href=#323 id=323 data-nosnippet>323</a>            .into_deferred()
-<a href=#324 id=324 data-nosnippet>324</a>            .open(problem)
-<a href=#325 id=325 data-nosnippet>325</a>            .map_err(|error| ImagingError::Observation(Box::new(error)))<span class="question-mark">?</span>;
-<a href=#326 id=326 data-nosnippet>326</a>        <span class="kw">let </span>dish_classes = selected.antenna_response_classes();
-<a href=#327 id=327 data-nosnippet>327</a>        <span class="kw">let </span>domains = problem
-<a href=#328 id=328 data-nosnippet>328</a>            .geometry()
-<a href=#329 id=329 data-nosnippet>329</a>            .domains()
-<a href=#330 id=330 data-nosnippet>330</a>            .iter()
-<a href=#331 id=331 data-nosnippet>331</a>            .map(|domain| {
-<a href=#332 id=332 data-nosnippet>332</a>                domain_operator(
-<a href=#333 id=333 data-nosnippet>333</a>                    problem,
-<a href=#334 id=334 data-nosnippet>334</a>                    domain,
-<a href=#335 id=335 data-nosnippet>335</a>                    <span class="kw-2">&amp;</span>correlations,
-<a href=#336 id=336 data-nosnippet>336</a>                    backend,
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>casa_imaging_operator::{
+<a href=#18 id=18 data-nosnippet>18</a>    BandwidthTaper, Basis, GridPrecision, ModeSet, PlaneRange, WeightingGeneration,
+<a href=#19 id=19 data-nosnippet>19</a>};
+<a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>casa_imaging_products::VisibilityProductCompletion;
+<a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span>casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan;
+<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span>casa_imaging_reconstruction::{
+<a href=#23 id=23 data-nosnippet>23</a>    ExecutableModelProblem, ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks,
+<a href=#24 id=24 data-nosnippet>24</a>    MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation, MinorCycleImageResponse,
+<a href=#25 id=25 data-nosnippet>25</a>    ModelGeneration, ModelLifecycle, ModelStoragePlan, PassNormalState, ReconstructionMaskPlan,
+<a href=#26 id=26 data-nosnippet>26</a>    ReconstructionMaskSet, WeightingGenerationId,
+<a href=#27 id=27 data-nosnippet>27</a>};
+<a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>casa_imaging_runtime::pass::{
+<a href=#29 id=29 data-nosnippet>29</a>    BackendChoice, Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain, PassError,
+<a href=#30 id=30 data-nosnippet>30</a>    PassSummary, Residency, VisibilitySink, WaveDemand, WorkerTeam, run_density_pass,
+<a href=#31 id=31 data-nosnippet>31</a>    run_major_cycle,
+<a href=#32 id=32 data-nosnippet>32</a>};
+<a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span>casa_imaging_runtime::{
+<a href=#34 id=34 data-nosnippet>34</a>    CubeState, Demand, HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache, Reservation,
+<a href=#35 id=35 data-nosnippet>35</a>    ResourcePolicy, RunSummary, admit, free_memory, prepare_minor_cycle, run_minor_cycle,
+<a href=#36 id=36 data-nosnippet>36</a>    run_phase,
+<a href=#37 id=37 data-nosnippet>37</a>};
+<a href=#38 id=38 data-nosnippet>38</a><span class="kw">use </span>casa_ms::ResolvedSelectedObservationAccess;
+<a href=#39 id=39 data-nosnippet>39</a>
+<a href=#40 id=40 data-nosnippet>40</a><span class="kw">use </span><span class="kw">super</span>::ImagingError;
+<a href=#41 id=41 data-nosnippet>41</a><span class="kw">use </span><span class="kw">super</span>::images::{pass_images, prepare_model};
+<a href=#42 id=42 data-nosnippet>42</a><span class="kw">use </span><span class="kw">super</span>::measurement::{
+<a href=#43 id=43 data-nosnippet>43</a>    DomainOperator, density_shape, domain_operator, native_spacing_hz, selected_correlations,
+<a href=#44 id=44 data-nosnippet>44</a>};
+<a href=#45 id=45 data-nosnippet>45</a><span class="kw">use </span><span class="kw">super</span>::source::{MeasurementSetSource, PlaneBounds};
+<a href=#46 id=46 data-nosnippet>46</a><span class="kw">use </span><span class="kw">super</span>::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
+<a href=#47 id=47 data-nosnippet>47</a><span class="kw">use crate</span>::{AwCatalogDeployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason};
+<a href=#48 id=48 data-nosnippet>48</a>
+<a href=#49 id=49 data-nosnippet>49</a><span class="doccomment">/// What one native imaging run needs besides the compiled problem.
+<a href=#50 id=50 data-nosnippet>50</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ImagingInputs&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#51 id=51 data-nosnippet>51</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) problem: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CompiledProblem,
+<a href=#52 id=52 data-nosnippet>52</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) access: ResolvedSelectedObservationAccess,
+<a href=#53 id=53 data-nosnippet>53</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) masks: ImageDomainReconstructionMaskPlans,
+<a href=#54 id=54 data-nosnippet>54</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) image_response: <span class="prelude-ty">Option</span>&lt;MinorCycleImageResponse&gt;,
+<a href=#55 id=55 data-nosnippet>55</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) visibility_write: <span class="prelude-ty">Option</span>&lt;VisibilityWriteTarget&gt;,
+<a href=#56 id=56 data-nosnippet>56</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) host: HostResources,
+<a href=#57 id=57 data-nosnippet>57</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) policy: ResourcePolicy,
+<a href=#58 id=58 data-nosnippet>58</a>    <span class="doccomment">/// The run's one worker team, which products reuse.
+<a href=#59 id=59 data-nosnippet>59</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) team: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>WorkerTeam,
+<a href=#60 id=60 data-nosnippet>60</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) cancel: Cancel,
+<a href=#61 id=61 data-nosnippet>61</a>    <span class="doccomment">/// Where the paged cube state of a channel-local run lives.
+<a href=#62 id=62 data-nosnippet>62</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) spill_directory: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Path,
+<a href=#63 id=63 data-nosnippet>63</a>    <span class="doccomment">/// The AW catalog of an A-projection run.
+<a href=#64 id=64 data-nosnippet>64</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) aw_catalog: <span class="prelude-ty">Option</span>&lt;AwCatalogDeployment&gt;,
+<a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) backend: BackendChoice,
+<a href=#66 id=66 data-nosnippet>66</a>    <span class="doccomment">/// The requested grid precision; `None` is plan decision D2's rule.
+<a href=#67 id=67 data-nosnippet>67</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) grid_precision: <span class="prelude-ty">Option</span>&lt;GridPrecision&gt;,
+<a href=#68 id=68 data-nosnippet>68</a>}
+<a href=#69 id=69 data-nosnippet>69</a>
+<a href=#70 id=70 data-nosnippet>70</a><span class="doccomment">/// The final reconciliation and the record of the cycles that led to it.
+<a href=#71 id=71 data-nosnippet>71</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ImagingOutcome {
+<a href=#72 id=72 data-nosnippet>72</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) scientific: MajorCycleCompletion,
+<a href=#73 id=73 data-nosnippet>73</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) masks: <span class="prelude-ty">Option</span>&lt;ReconstructionMaskSet&gt;,
+<a href=#74 id=74 data-nosnippet>74</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) minor_cycles: Vec&lt;NativeMinorCycleOutcome&gt;,
+<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) stop: <span class="prelude-ty">Option</span>&lt;CleanStop&gt;,
+<a href=#76 id=76 data-nosnippet>76</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) major_cycle_count: usize,
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) total_minor_iterations: usize,
+<a href=#78 id=78 data-nosnippet>78</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) total_actual_minor_iterations: usize,
+<a href=#79 id=79 data-nosnippet>79</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) visibility_products: <span class="prelude-ty">Option</span>&lt;VisibilityProductCompletion&gt;,
+<a href=#80 id=80 data-nosnippet>80</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) planes_per_wave: <span class="prelude-ty">Option</span>&lt;u32&gt;,
+<a href=#81 id=81 data-nosnippet>81</a>}
+<a href=#82 id=82 data-nosnippet>82</a>
+<a href=#83 id=83 data-nosnippet>83</a><span class="doccomment">/// Fixed parts of one run shared by every pass.
+<a href=#84 id=84 data-nosnippet>84</a></span><span class="kw">struct </span>Run&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#85 id=85 data-nosnippet>85</a>    problem: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>CompiledProblem,
+<a href=#86 id=86 data-nosnippet>86</a>    domains: Vec&lt;DomainOperator&gt;,
+<a href=#87 id=87 data-nosnippet>87</a>    source: MeasurementSetSource&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#88 id=88 data-nosnippet>88</a>    weighting: WeightingGeneration,
+<a href=#89 id=89 data-nosnippet>89</a>    weighting_id: WeightingGenerationId,
+<a href=#90 id=90 data-nosnippet>90</a>    team: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>WorkerTeam,
+<a href=#91 id=91 data-nosnippet>91</a>    cancel: Cancel,
+<a href=#92 id=92 data-nosnippet>92</a>    host: HostResources,
+<a href=#93 id=93 data-nosnippet>93</a>    policy: ResourcePolicy,
+<a href=#94 id=94 data-nosnippet>94</a>    cube: <span class="prelude-ty">Option</span>&lt;CubeState&gt;,
+<a href=#95 id=95 data-nosnippet>95</a>    native_spacing_hz: f64,
+<a href=#96 id=96 data-nosnippet>96</a>    backend: BackendChoice,
+<a href=#97 id=97 data-nosnippet>97</a>    attempts: u64,
+<a href=#98 id=98 data-nosnippet>98</a>    visibility_write: <span class="prelude-ty">Option</span>&lt;VisibilityWriteTarget&gt;,
+<a href=#99 id=99 data-nosnippet>99</a>    <span class="doccomment">/// Planes per wave of the most finely waved pass so far.
+<a href=#100 id=100 data-nosnippet>100</a>    </span>planes_per_wave: <span class="prelude-ty">Option</span>&lt;u32&gt;,
+<a href=#101 id=101 data-nosnippet>101</a>    <span class="doccomment">/// Whether the initial pass also grids the sensitivity image
+<a href=#102 id=102 data-nosnippet>102</a>    /// (`Mode::Weight`): a kernel set with weight taps on any domain.
+<a href=#103 id=103 data-nosnippet>103</a>    </span>weight_image: bool,
+<a href=#104 id=104 data-nosnippet>104</a>}
+<a href=#105 id=105 data-nosnippet>105</a>
+<a href=#106 id=106 data-nosnippet>106</a><span class="doccomment">/// One reconciled major cycle.
+<a href=#107 id=107 data-nosnippet>107</a></span><span class="kw">struct </span>Major {
+<a href=#108 id=108 data-nosnippet>108</a>    completion: MajorCycleCompletion,
+<a href=#109 id=109 data-nosnippet>109</a>    visibility: <span class="prelude-ty">Option</span>&lt;VisibilityProductCompletion&gt;,
+<a href=#110 id=110 data-nosnippet>110</a>}
+<a href=#111 id=111 data-nosnippet>111</a>
+<a href=#112 id=112 data-nosnippet>112</a><span class="kw">impl </span>ImagingOutcome {
+<a href=#113 id=113 data-nosnippet>113</a>    <span class="doccomment">/// The outcome of a run that has done its initial major cycle `major`.
+<a href=#114 id=114 data-nosnippet>114</a>    </span><span class="kw">fn </span>initial(major: Major, run: <span class="kw-2">&amp;</span>Run&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="self">Self </span>{
+<a href=#115 id=115 data-nosnippet>115</a>        <span class="self">Self </span>{
+<a href=#116 id=116 data-nosnippet>116</a>            scientific: major.completion,
+<a href=#117 id=117 data-nosnippet>117</a>            masks: <span class="prelude-val">None</span>,
+<a href=#118 id=118 data-nosnippet>118</a>            minor_cycles: Vec::new(),
+<a href=#119 id=119 data-nosnippet>119</a>            stop: <span class="prelude-val">None</span>,
+<a href=#120 id=120 data-nosnippet>120</a>            major_cycle_count: <span class="number">1</span>,
+<a href=#121 id=121 data-nosnippet>121</a>            total_minor_iterations: <span class="number">0</span>,
+<a href=#122 id=122 data-nosnippet>122</a>            total_actual_minor_iterations: <span class="number">0</span>,
+<a href=#123 id=123 data-nosnippet>123</a>            visibility_products: major.visibility,
+<a href=#124 id=124 data-nosnippet>124</a>            planes_per_wave: run.planes_per_wave,
+<a href=#125 id=125 data-nosnippet>125</a>        }
+<a href=#126 id=126 data-nosnippet>126</a>    }
+<a href=#127 id=127 data-nosnippet>127</a>}
+<a href=#128 id=128 data-nosnippet>128</a>
+<a href=#129 id=129 data-nosnippet>129</a><span class="doccomment">/// Run every major and minor cycle of `inputs.problem`.
+<a href=#130 id=130 data-nosnippet>130</a>///
+<a href=#131 id=131 data-nosnippet>131</a>/// The loop is tclean's: after each major cycle the controller decides from
+<a href=#132 id=132 data-nosnippet>132</a>/// the fresh residual whether cleaning is complete (`cleanComplete`);
+<a href=#133 id=133 data-nosnippet>133</a>/// otherwise a minor cycle runs under its controls and a major cycle
+<a href=#134 id=134 data-nosnippet>134</a>/// refreshes the residual. A minor cycle that cleans nothing ends the run
+<a href=#135 id=135 data-nosnippet>135</a>/// without another major cycle. Each cycle is a phase of `summary`; a
+<a href=#136 id=136 data-nosnippet>136</a>/// cancelled run stops at the next block boundary of a pass or before the
+<a href=#137 id=137 data-nosnippet>137</a>/// next phase.
+<a href=#138 id=138 data-nosnippet>138</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(
+<a href=#139 id=139 data-nosnippet>139</a>    inputs: ImagingInputs&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#140 id=140 data-nosnippet>140</a>    summary: <span class="kw-2">&amp;mut </span>RunSummary,
+<a href=#141 id=141 data-nosnippet>141</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ImagingOutcome, ImagingError&gt; {
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="kw">let </span>problem = inputs.problem;
+<a href=#143 id=143 data-nosnippet>143</a>    <span class="kw">let </span>controls = problem.reconstruction().controls();
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="kw">let </span>cleaning = controls.max_minor_iterations() &gt; <span class="number">0</span>;
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">let </span>setup = minor_setup(problem, inputs.image_response, <span class="kw-2">&amp;</span>inputs.masks);
+<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">let </span><span class="kw-2">mut </span>mask_plans = inputs.masks.clone();
+<a href=#147 id=147 data-nosnippet>147</a>    <span class="kw">let </span>cancel = inputs.cancel.clone();
+<a href=#148 id=148 data-nosnippet>148</a>    <span class="comment">// Operators, the source, the imaging weights and the paged cube state.
+<a href=#149 id=149 data-nosnippet>149</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>run = run_phase(<span class="string">"setup"</span>, <span class="kw-2">&amp;</span>cancel, summary, || Run::open(inputs))<span class="question-mark">?</span>;
+<a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">let </span>major = run_phase(<span class="string">"major cycle 1"</span>, <span class="kw-2">&amp;</span>cancel, summary, || run.initial(!cleaning))<span class="question-mark">?</span>;
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">let </span><span class="kw-2">mut </span>outcome = ImagingOutcome::initial(major, <span class="kw-2">&amp;</span>run);
+<a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">if </span>!cleaning {
+<a href=#153 id=153 data-nosnippet>153</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(outcome);
+<a href=#154 id=154 data-nosnippet>154</a>    }
+<a href=#155 id=155 data-nosnippet>155</a>    <span class="kw">let </span><span class="kw-2">mut </span>controller = Controller::new(<span class="kw-2">&amp;</span>controls);
+<a href=#156 id=156 data-nosnippet>156</a>    <span class="kw">let </span><span class="kw-2">mut </span>cache = PsfCache::default();
+<a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">loop </span>{
+<a href=#158 id=158 data-nosnippet>158</a>        <span class="kw">let </span>prepared = prepare_minor_cycle(
+<a href=#159 id=159 data-nosnippet>159</a>            <span class="kw-2">&amp;</span>outcome.scientific,
+<a href=#160 id=160 data-nosnippet>160</a>            <span class="kw-2">&amp;</span>mask_plans,
+<a href=#161 id=161 data-nosnippet>161</a>            <span class="kw-2">&amp;</span>setup,
+<a href=#162 id=162 data-nosnippet>162</a>            <span class="kw-2">&amp;mut </span>cache,
+<a href=#163 id=163 data-nosnippet>163</a>            run.team,
+<a href=#164 id=164 data-nosnippet>164</a>        )<span class="question-mark">?</span>;
+<a href=#165 id=165 data-nosnippet>165</a>        <span class="kw">let </span>statistics = prepared.statistics;
+<a href=#166 id=166 data-nosnippet>166</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(stop) = controller.clean_complete(<span class="kw-2">&amp;</span>statistics) {
+<a href=#167 id=167 data-nosnippet>167</a>            <span class="macro">tracing::info!</span>(<span class="string">"imaging stopped: {stop:?} (stopcode {})"</span>, stop.code());
+<a href=#168 id=168 data-nosnippet>168</a>            outcome.stop = <span class="prelude-val">Some</span>(stop);
+<a href=#169 id=169 data-nosnippet>169</a>            outcome
+<a href=#170 id=170 data-nosnippet>170</a>                .masks
+<a href=#171 id=171 data-nosnippet>171</a>                .get_or_insert_with(|| ReconstructionMaskSet::Domains(prepared.masks().clone()));
+<a href=#172 id=172 data-nosnippet>172</a>            <span class="kw">break</span>;
+<a href=#173 id=173 data-nosnippet>173</a>        }
+<a href=#174 id=174 data-nosnippet>174</a>        <span class="kw">let </span>cycle_controls = controller.cycle_controls(<span class="kw-2">&amp;</span>statistics);
+<a href=#175 id=175 data-nosnippet>175</a>        <span class="kw">let </span>started = Instant::now();
+<a href=#176 id=176 data-nosnippet>176</a>        <span class="kw">let </span>name = <span class="macro">format!</span>(<span class="string">"minor cycle {}"</span>, outcome.minor_cycles.len() + <span class="number">1</span>);
+<a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">let </span>minor = run_phase(name, <span class="kw-2">&amp;</span>cancel, summary, || {
+<a href=#178 id=178 data-nosnippet>178</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ImagingError&gt;(run_minor_cycle(
+<a href=#179 id=179 data-nosnippet>179</a>                prepared,
+<a href=#180 id=180 data-nosnippet>180</a>                <span class="kw-2">&amp;</span>outcome.scientific,
+<a href=#181 id=181 data-nosnippet>181</a>                <span class="kw-2">&amp;</span>setup,
+<a href=#182 id=182 data-nosnippet>182</a>                <span class="kw-2">&amp;</span>cycle_controls,
+<a href=#183 id=183 data-nosnippet>183</a>                <span class="kw-2">&amp;mut </span>cache,
+<a href=#184 id=184 data-nosnippet>184</a>                run.team,
+<a href=#185 id=185 data-nosnippet>185</a>            )<span class="question-mark">?</span>)
+<a href=#186 id=186 data-nosnippet>186</a>        })<span class="question-mark">?</span>;
+<a href=#187 id=187 data-nosnippet>187</a>        <span class="kw">let </span>global_threshold = controls
+<a href=#188 id=188 data-nosnippet>188</a>            .threshold_jy_per_beam()
+<a href=#189 id=189 data-nosnippet>189</a>            .max(statistics.nsigma_threshold);
+<a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">let </span>cycle = account_minor_cycle(
+<a href=#191 id=191 data-nosnippet>191</a>            <span class="kw-2">&amp;mut </span>outcome,
+<a href=#192 id=192 data-nosnippet>192</a>            <span class="kw-2">&amp;mut </span>controller,
+<a href=#193 id=193 data-nosnippet>193</a>            <span class="kw-2">&amp;</span>minor,
+<a href=#194 id=194 data-nosnippet>194</a>            <span class="kw-2">&amp;</span>cycle_controls,
+<a href=#195 id=195 data-nosnippet>195</a>            global_threshold,
+<a href=#196 id=196 data-nosnippet>196</a>            started,
+<a href=#197 id=197 data-nosnippet>197</a>        );
+<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">let </span>last = controller.budget_spent() || controller.last_cycle(<span class="kw-2">&amp;</span>statistics);
+<a href=#199 id=199 data-nosnippet>199</a>        mask_plans = next_masks(<span class="kw-2">&amp;</span>mask_plans, <span class="kw-2">&amp;</span>minor, cycle, cycle_controls.threshold_reached)<span class="question-mark">?</span>;
+<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">if </span>minor.summary.iterations == <span class="number">0 </span>{
+<a href=#201 id=201 data-nosnippet>201</a>            <span class="comment">// tclean skips the major cycle, updates the mask and still asks
+<a href=#202 id=202 data-nosnippet>202</a>            // `hasConverged` for the stop it reports.
+<a href=#203 id=203 data-nosnippet>203</a>            </span><span class="kw">let </span>prepared = prepare_minor_cycle(
+<a href=#204 id=204 data-nosnippet>204</a>                <span class="kw-2">&amp;</span>outcome.scientific,
+<a href=#205 id=205 data-nosnippet>205</a>                <span class="kw-2">&amp;</span>mask_plans,
+<a href=#206 id=206 data-nosnippet>206</a>                <span class="kw-2">&amp;</span>setup,
+<a href=#207 id=207 data-nosnippet>207</a>                <span class="kw-2">&amp;mut </span>cache,
+<a href=#208 id=208 data-nosnippet>208</a>                run.team,
+<a href=#209 id=209 data-nosnippet>209</a>            )<span class="question-mark">?</span>;
+<a href=#210 id=210 data-nosnippet>210</a>            outcome.stop = controller.clean_complete(<span class="kw-2">&amp;</span>prepared.statistics);
+<a href=#211 id=211 data-nosnippet>211</a>            outcome.masks = <span class="prelude-val">Some</span>(ReconstructionMaskSet::Domains(prepared.masks().clone()));
+<a href=#212 id=212 data-nosnippet>212</a>            <span class="kw">break</span>;
+<a href=#213 id=213 data-nosnippet>213</a>        }
+<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">let </span>name = <span class="macro">format!</span>(<span class="string">"major cycle {}"</span>, outcome.major_cycle_count + <span class="number">1</span>);
+<a href=#215 id=215 data-nosnippet>215</a>        <span class="kw">let </span>scientific = outcome.scientific;
+<a href=#216 id=216 data-nosnippet>216</a>        <span class="kw">let </span>major = run_phase(name, <span class="kw-2">&amp;</span>cancel, summary, || {
+<a href=#217 id=217 data-nosnippet>217</a>            run.refresh(scientific, minor.terms, <span class="kw-2">&amp;</span>minor.masks, last)
+<a href=#218 id=218 data-nosnippet>218</a>        })<span class="question-mark">?</span>;
+<a href=#219 id=219 data-nosnippet>219</a>        controller.end_major_cycle();
+<a href=#220 id=220 data-nosnippet>220</a>        outcome.scientific = major.completion;
+<a href=#221 id=221 data-nosnippet>221</a>        outcome.visibility_products = major.visibility;
+<a href=#222 id=222 data-nosnippet>222</a>        outcome.major_cycle_count += <span class="number">1</span>;
+<a href=#223 id=223 data-nosnippet>223</a>    }
+<a href=#224 id=224 data-nosnippet>224</a>    <span class="kw">if </span>run.visibility_write.is_some() &amp;&amp; outcome.visibility_products.is_none() {
+<a href=#225 id=225 data-nosnippet>225</a>        outcome = run_phase(<span class="string">"model prediction"</span>, <span class="kw-2">&amp;</span>cancel, summary, || {
+<a href=#226 id=226 data-nosnippet>226</a>            predict_final_model(<span class="kw-2">&amp;mut </span>run, outcome)
+<a href=#227 id=227 data-nosnippet>227</a>        })<span class="question-mark">?</span>;
+<a href=#228 id=228 data-nosnippet>228</a>    }
+<a href=#229 id=229 data-nosnippet>229</a>    outcome.planes_per_wave = run.planes_per_wave;
+<a href=#230 id=230 data-nosnippet>230</a>    <span class="prelude-val">Ok</span>(outcome)
+<a href=#231 id=231 data-nosnippet>231</a>}
+<a href=#232 id=232 data-nosnippet>232</a>
+<a href=#233 id=233 data-nosnippet>233</a><span class="doccomment">/// Fold one minor cycle into the run's totals and its controller
+<a href=#234 id=234 data-nosnippet>234</a>/// (`mergeMinorCycleSummary`), record and log it; returns its ordinal.
+<a href=#235 id=235 data-nosnippet>235</a></span><span class="kw">fn </span>account_minor_cycle(
+<a href=#236 id=236 data-nosnippet>236</a>    outcome: <span class="kw-2">&amp;mut </span>ImagingOutcome,
+<a href=#237 id=237 data-nosnippet>237</a>    controller: <span class="kw-2">&amp;mut </span>Controller,
+<a href=#238 id=238 data-nosnippet>238</a>    minor: <span class="kw-2">&amp;</span>MinorCycleOutcome,
+<a href=#239 id=239 data-nosnippet>239</a>    cycle_controls: <span class="kw-2">&amp;</span>CycleControls,
+<a href=#240 id=240 data-nosnippet>240</a>    global_threshold: f64,
+<a href=#241 id=241 data-nosnippet>241</a>    started: Instant,
+<a href=#242 id=242 data-nosnippet>242</a>) -&gt; usize {
+<a href=#243 id=243 data-nosnippet>243</a>    <span class="kw">let </span>entering = (
+<a href=#244 id=244 data-nosnippet>244</a>        outcome.total_minor_iterations,
+<a href=#245 id=245 data-nosnippet>245</a>        outcome.total_actual_minor_iterations,
+<a href=#246 id=246 data-nosnippet>246</a>    );
+<a href=#247 id=247 data-nosnippet>247</a>    controller.record_minor_cycle(minor.summary.iterations, minor.summary.peak);
+<a href=#248 id=248 data-nosnippet>248</a>    outcome.total_minor_iterations = controller.iterations();
+<a href=#249 id=249 data-nosnippet>249</a>    outcome.total_actual_minor_iterations += minor.summary.components;
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">let </span>cycle = outcome.minor_cycles.len() + <span class="number">1</span>;
+<a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">let </span>record = minor_cycle_record(
+<a href=#252 id=252 data-nosnippet>252</a>        cycle,
+<a href=#253 id=253 data-nosnippet>253</a>        minor,
+<a href=#254 id=254 data-nosnippet>254</a>        cycle_controls,
+<a href=#255 id=255 data-nosnippet>255</a>        global_threshold,
+<a href=#256 id=256 data-nosnippet>256</a>        entering,
+<a href=#257 id=257 data-nosnippet>257</a>        (
+<a href=#258 id=258 data-nosnippet>258</a>            outcome.total_minor_iterations,
+<a href=#259 id=259 data-nosnippet>259</a>            outcome.total_actual_minor_iterations,
+<a href=#260 id=260 data-nosnippet>260</a>        ),
+<a href=#261 id=261 data-nosnippet>261</a>    );
+<a href=#262 id=262 data-nosnippet>262</a>    <span class="macro">tracing::info!</span>(
+<a href=#263 id=263 data-nosnippet>263</a>        <span class="string">"imaging minor cycle {cycle}: {} iterations ({} total), peak {:.6} -&gt; {:.6} Jy, \
+<a href=#264 id=264 data-nosnippet>264</a>         cycle threshold {:.6} Jy, stop {:?}, {:.2} s"</span>,
+<a href=#265 id=265 data-nosnippet>265</a>        record.iterations,
+<a href=#266 id=266 data-nosnippet>266</a>        record.total_iterations,
+<a href=#267 id=267 data-nosnippet>267</a>        record.initial_peak_flux,
+<a href=#268 id=268 data-nosnippet>268</a>        record.final_peak_flux,
+<a href=#269 id=269 data-nosnippet>269</a>        record.effective_threshold,
+<a href=#270 id=270 data-nosnippet>270</a>        record.stop_reason,
+<a href=#271 id=271 data-nosnippet>271</a>        started.elapsed().as_secs_f64(),
+<a href=#272 id=272 data-nosnippet>272</a>    );
+<a href=#273 id=273 data-nosnippet>273</a>    outcome.minor_cycles.push(record);
+<a href=#274 id=274 data-nosnippet>274</a>    outcome.masks = <span class="prelude-val">Some</span>(ReconstructionMaskSet::Domains(minor.masks.clone()));
+<a href=#275 id=275 data-nosnippet>275</a>    cycle
+<a href=#276 id=276 data-nosnippet>276</a>}
+<a href=#277 id=277 data-nosnippet>277</a>
+<a href=#278 id=278 data-nosnippet>278</a><span class="doccomment">/// Predict the final model once more to write the model column: the pass
+<a href=#279 id=279 data-nosnippet>279</a>/// that ended the run was not known to be the last when it ran.
+<a href=#280 id=280 data-nosnippet>280</a></span><span class="kw">fn </span>predict_final_model(
+<a href=#281 id=281 data-nosnippet>281</a>    run: <span class="kw-2">&amp;mut </span>Run&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#282 id=282 data-nosnippet>282</a>    <span class="kw-2">mut </span>outcome: ImagingOutcome,
+<a href=#283 id=283 data-nosnippet>283</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ImagingOutcome, ImagingError&gt; {
+<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">let </span>masks = <span class="kw">match </span><span class="kw-2">&amp;</span>outcome.masks {
+<a href=#285 id=285 data-nosnippet>285</a>        <span class="prelude-val">Some</span>(ReconstructionMaskSet::Domains(masks)) =&gt; masks.clone(),
+<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(<span class="string">"a cleaning run has formed its masks"</span>),
+<a href=#287 id=287 data-nosnippet>287</a>    };
+<a href=#288 id=288 data-nosnippet>288</a>    <span class="kw">let </span>major = run.refresh(outcome.scientific, Vec::new(), <span class="kw-2">&amp;</span>masks, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+<a href=#289 id=289 data-nosnippet>289</a>    outcome.scientific = major.completion;
+<a href=#290 id=290 data-nosnippet>290</a>    outcome.visibility_products = major.visibility;
+<a href=#291 id=291 data-nosnippet>291</a>    outcome.major_cycle_count += <span class="number">1</span>;
+<a href=#292 id=292 data-nosnippet>292</a>    <span class="prelude-val">Ok</span>(outcome)
+<a href=#293 id=293 data-nosnippet>293</a>}
+<a href=#294 id=294 data-nosnippet>294</a>
+<a href=#295 id=295 data-nosnippet>295</a><span class="doccomment">/// The minor cycle's view of the run.
+<a href=#296 id=296 data-nosnippet>296</a></span><span class="kw">fn </span>minor_setup(
+<a href=#297 id=297 data-nosnippet>297</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#298 id=298 data-nosnippet>298</a>    response: <span class="prelude-ty">Option</span>&lt;MinorCycleImageResponse&gt;,
+<a href=#299 id=299 data-nosnippet>299</a>    masks: <span class="kw-2">&amp;</span>ImageDomainReconstructionMaskPlans,
+<a href=#300 id=300 data-nosnippet>300</a>) -&gt; MinorCycleSetup {
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">let </span>controls = problem.reconstruction().controls();
+<a href=#302 id=302 data-nosnippet>302</a>    MinorCycleSetup {
+<a href=#303 id=303 data-nosnippet>303</a>        algorithm: problem.reconstruction().algorithm().clone(),
+<a href=#304 id=304 data-nosnippet>304</a>        accounting: controls.hogbom_iteration_accounting(),
+<a href=#305 id=305 data-nosnippet>305</a>        response,
+<a href=#306 id=306 data-nosnippet>306</a>        nsigma: controls.noise_sigma().unwrap_or(<span class="number">0.0</span>),
+<a href=#307 id=307 data-nosnippet>307</a>        automask: <span class="macro">matches!</span>(
+<a href=#308 id=308 data-nosnippet>308</a>            masks.primary(),
+<a href=#309 id=309 data-nosnippet>309</a>            ReconstructionMaskPlan::AutoMultithresh { .. }
+<a href=#310 id=310 data-nosnippet>310</a>        ),
+<a href=#311 id=311 data-nosnippet>311</a>    }
+<a href=#312 id=312 data-nosnippet>312</a>}
+<a href=#313 id=313 data-nosnippet>313</a>
+<a href=#314 id=314 data-nosnippet>314</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; Run&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#315 id=315 data-nosnippet>315</a>    <span class="doccomment">/// The operators, worker team, source and imaging weights of a run.
+<a href=#316 id=316 data-nosnippet>316</a>    </span><span class="kw">fn </span>open(inputs: ImagingInputs&lt;<span class="lifetime">'a</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ImagingError&gt; {
+<a href=#317 id=317 data-nosnippet>317</a>        <span class="kw">let </span>problem = inputs.problem;
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="kw">let </span>backend = inputs.backend;
+<a href=#319 id=319 data-nosnippet>319</a>        <span class="kw">let </span>correlations = selected_correlations(problem)<span class="question-mark">?</span>;
+<a href=#320 id=320 data-nosnippet>320</a>        <span class="kw">let </span>selected = inputs
+<a href=#321 id=321 data-nosnippet>321</a>            .access
+<a href=#322 id=322 data-nosnippet>322</a>            .into_deferred()
+<a href=#323 id=323 data-nosnippet>323</a>            .open(problem)
+<a href=#324 id=324 data-nosnippet>324</a>            .map_err(|error| ImagingError::Observation(Box::new(error)))<span class="question-mark">?</span>;
+<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">let </span>dish_classes = selected.antenna_response_classes();
+<a href=#326 id=326 data-nosnippet>326</a>        <span class="kw">let </span>domains = problem
+<a href=#327 id=327 data-nosnippet>327</a>            .geometry()
+<a href=#328 id=328 data-nosnippet>328</a>            .domains()
+<a href=#329 id=329 data-nosnippet>329</a>            .iter()
+<a href=#330 id=330 data-nosnippet>330</a>            .map(|domain| {
+<a href=#331 id=331 data-nosnippet>331</a>                domain_operator(
+<a href=#332 id=332 data-nosnippet>332</a>                    problem,
+<a href=#333 id=333 data-nosnippet>333</a>                    domain,
+<a href=#334 id=334 data-nosnippet>334</a>                    <span class="kw-2">&amp;</span>correlations,
+<a href=#335 id=335 data-nosnippet>335</a>                    backend,
+<a href=#336 id=336 data-nosnippet>336</a>                    inputs.grid_precision,
 <a href=#337 id=337 data-nosnippet>337</a>                    inputs.aw_catalog.as_ref(),
 <a href=#338 id=338 data-nosnippet>338</a>                    <span class="kw-2">&amp;</span>dish_classes,
 <a href=#339 id=339 data-nosnippet>339</a>                )

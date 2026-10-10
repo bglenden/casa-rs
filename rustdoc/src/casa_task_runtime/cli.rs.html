@@ -405,9 +405,9 @@
 <a href=#405 id=405 data-nosnippet>405</a>                <span class="string">"--cell-arcsec=0.0002777777777777778deg"</span>.into(),
 <a href=#406 id=406 data-nosnippet>406</a>                <span class="string">"--gridder"</span>.into(),
 <a href=#407 id=407 data-nosnippet>407</a>                <span class="string">"awproject"</span>.into(),
-<a href=#408 id=408 data-nosnippet>408</a>                <span class="string">"--no-psterm"</span>.into(),
-<a href=#409 id=409 data-nosnippet>409</a>                <span class="string">"--standard-mfs-acceleration"</span>.into(),
-<a href=#410 id=410 data-nosnippet>410</a>                <span class="string">"multi-cpu"</span>.into(),
+<a href=#408 id=408 data-nosnippet>408</a>                <span class="string">"--no-parallel"</span>.into(),
+<a href=#409 id=409 data-nosnippet>409</a>                <span class="string">"--gridprecision"</span>.into(),
+<a href=#410 id=410 data-nosnippet>410</a>                <span class="string">"f64"</span>.into(),
 <a href=#411 id=411 data-nosnippet>411</a>            ],
 <a href=#412 id=412 data-nosnippet>412</a>        )
 <a href=#413 id=413 data-nosnippet>413</a>        .unwrap();
@@ -424,10 +424,10 @@
 <a href=#424 id=424 data-nosnippet>424</a>            patch.values[<span class="string">"cell"</span>],
 <a href=#425 id=425 data-nosnippet>425</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::String(<span class="string">"1arcsec"</span>.into()); <span class="number">2</span>])
 <a href=#426 id=426 data-nosnippet>426</a>        );
-<a href=#427 id=427 data-nosnippet>427</a>        <span class="macro">assert_eq!</span>(patch.values[<span class="string">"psterm"</span>], ParameterValue::Bool(<span class="bool-val">false</span>));
+<a href=#427 id=427 data-nosnippet>427</a>        <span class="macro">assert_eq!</span>(patch.values[<span class="string">"parallel"</span>], ParameterValue::Bool(<span class="bool-val">false</span>));
 <a href=#428 id=428 data-nosnippet>428</a>        <span class="macro">assert_eq!</span>(
-<a href=#429 id=429 data-nosnippet>429</a>            patch.values[<span class="string">"standard_mfs_acceleration"</span>],
-<a href=#430 id=430 data-nosnippet>430</a>            ParameterValue::String(<span class="string">"multi-cpu"</span>.into())
+<a href=#429 id=429 data-nosnippet>429</a>            patch.values[<span class="string">"gridprecision"</span>],
+<a href=#430 id=430 data-nosnippet>430</a>            ParameterValue::String(<span class="string">"f64"</span>.into())
 <a href=#431 id=431 data-nosnippet>431</a>        );
 <a href=#432 id=432 data-nosnippet>432</a>
 <a href=#433 id=433 data-nosnippet>433</a>        <span class="kw">let </span>alias = parse_parameter_cli_overrides(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>[<span class="string">"--threshold"</span>.into(), <span class="string">"1Jy"</span>.into()])

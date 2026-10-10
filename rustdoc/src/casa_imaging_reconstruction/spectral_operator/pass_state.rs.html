@@ -482,8 +482,8 @@
 <a href=#482 id=482 data-nosnippet>482</a>
 <a href=#483 id=483 data-nosnippet>483</a><span class="doccomment">/// The coefficient basis of `problem`; a Taylor basis expands about the
 <a href=#484 id=484 data-nosnippet>484</a>/// image's reference frequency. Taylor terms via channel cubes (CASA `mvc`)
-<a href=#485 id=485 data-nosnippet>485</a>/// keep `Σ W² xᵗ` as their published weights, which no pass forms until the
-<a href=#486 id=486 data-nosnippet>486</a>/// primary-beam operators are installed (IF-3), so they are unsupported.
+<a href=#485 id=485 data-nosnippet>485</a>/// keep `Σ W² xᵗ` as their published weights, which no pass forms, so they
+<a href=#486 id=486 data-nosnippet>486</a>/// are unsupported; no request names them, and #656 removes the basis.
 <a href=#487 id=487 data-nosnippet>487</a></span><span class="kw">fn </span>basis_plan(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; <span class="prelude-ty">Result</span>&lt;SpectralBasisPlan, SpectralOperatorError&gt; {
 <a href=#488 id=488 data-nosnippet>488</a>    <span class="kw">let </span>reference_hz = || <span class="kw">match </span>problem.geometry().spectral().wcs() {
 <a href=#489 id=489 data-nosnippet>489</a>        SpectralWcs::Linear {

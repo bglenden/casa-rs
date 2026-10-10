@@ -1451,9 +1451,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 400</li>
+<li>Concepts: 385</li>
 <li>Surfaces: 29 (27 task, 2 session)</li>
-<li>Surface bindings: 571</li>
+<li>Surface bindings: 556</li>
 </ul>
 <table>
 <thead>
@@ -1494,9 +1494,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-imager">Imager</a><br><code>imager</code></td>
 <td>task</td>
-<td style="text-align: right;">19</td>
+<td style="text-align: right;">20</td>
 <td><code>imager</code></td>
-<td style="text-align: right;">92</td>
+<td style="text-align: right;">77</td>
 <td>Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</td>
 </tr>
 <tr>
@@ -2806,7 +2806,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="imager-imager">Imager (<code>imager</code>)<a class="headerlink" href="#imager-imager" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>19</code></li>
+<li>Contract version: <code>20</code></li>
 <li>Category: Imaging</li>
 <li>Provider family: <code>imager</code></li>
 <li>Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</li>
@@ -2870,14 +2870,6 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>"none"</code>; optional</td>
 <td>Products</td>
 <td>Write the predicted final model into the MeasurementSet</td>
-</tr>
-<tr>
-<td><code>startmodel</code></td>
-<td><code>parameter.startmodel@r1</code></td>
-<td><code>path (image)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Products</td>
-<td>CASA image used as the initial model for single-image MFS</td>
 </tr>
 <tr>
 <td><code>outlierfile</code></td>
@@ -2953,8 +2945,8 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>specmode</code></td>
-<td><code>parameter.specmode@r2</code></td>
-<td><code>choice (5 values)</code></td>
+<td><code>parameter.specmode@r3</code></td>
+<td><code>choice (4 values)</code></td>
 <td><code>"mfs"</code>; optional</td>
 <td>Stages</td>
 <td>MFS continuum imaging; cube with CASA Doppler/frame handling; cubedata in the native data frame; cubesource tracked in the source rest frame; or MVC MT-MFS via a channel cube</td>
@@ -2969,33 +2961,33 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>width</code></td>
-<td><code>imager.width@r1</code></td>
-<td><code>optional&lt;integer&gt; (states: none)</code></td>
+<td><code>imager.width@r2</code></td>
+<td><code>optional&lt;string&gt; (states: none)</code></td>
 <td><code>"none"</code>; optional</td>
 <td>Stages</td>
 <td>Cube-axis width as channels, frequency, or velocity</td>
 </tr>
 <tr>
 <td><code>outframe</code></td>
-<td><code>parameter.outframe@r1</code></td>
-<td><code>choice (10 values)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>parameter.outframe@r2</code></td>
+<td><code>choice (4 values)</code></td>
+<td><code>"LSRK"</code>; optional</td>
 <td>Stages</td>
-<td>Spectral frame used for cube output coordinates</td>
+<td>Spectral frame of a cube's output axis</td>
 </tr>
 <tr>
 <td><code>veltype</code></td>
-<td><code>parameter.veltype@r1</code></td>
-<td><code>choice (6 values)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>parameter.veltype@r2</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>"RADIO"</code>; optional</td>
 <td>Stages</td>
-<td>Velocity convention for Doppler-style cube axes</td>
+<td>Velocity convention of a cube's velocity start and axis</td>
 </tr>
 <tr>
 <td><code>interpolation</code></td>
 <td><code>parameter.interpolation@r1</code></td>
-<td><code>choice (4 values)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>choice (2 values; surface-narrowed)</code></td>
+<td><code>"linear"</code>; optional</td>
 <td>Stages</td>
 <td>Spectral interpolation mode for cube gridding</td>
 </tr>
@@ -3041,7 +3033,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>threshold</code></td>
-<td><code>image.deconvolution.threshold@r1</code></td>
+<td><code>image.deconvolution.threshold@r2</code></td>
 <td><code>quantity&lt;flux_density&gt; (canonical Jy); unit dimension: flux_density</code></td>
 <td><code>"0.0Jy"</code>; optional</td>
 <td>Stages</td>
@@ -3256,14 +3248,6 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Use POINTING-table directions instead of FIELD phase centers</td>
 </tr>
 <tr>
-<td><code>uvtaper</code></td>
-<td><code>parameter.uvtaper@r1</code></td>
-<td><code>string</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Stages</td>
-<td>Gaussian UV taper: MAJOR[,MINOR[,PA]]</td>
-</tr>
-<tr>
 <td><code>write_pb</code></td>
 <td><code>parameter.write_pb@r1</code></td>
 <td><code>bool</code></td>
@@ -3288,36 +3272,20 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Mosaic primary-beam cutoff for flat-noise normalization</td>
 </tr>
 <tr>
-<td><code>wterm</code></td>
-<td><code>parameter.wterm@r1</code></td>
-<td><code>choice (3 values)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Stages</td>
-<td>W-term correction mode</td>
-</tr>
-<tr>
 <td><code>gridder</code></td>
-<td><code>parameter.gridder@r1</code></td>
-<td><code>choice (7 values)</code></td>
+<td><code>parameter.gridder@r2</code></td>
+<td><code>choice (4 values)</code></td>
 <td><code>"standard"</code>; optional</td>
 <td>Stages</td>
 <td>CASA tclean gridder family</td>
 </tr>
 <tr>
-<td><code>standard_mfs_acceleration</code></td>
-<td><code>parameter.standard_mfs_acceleration@r2</code></td>
-<td><code>choice (3 values)</code></td>
-<td><code>"cpu"</code>; optional</td>
-<td>Stages</td>
-<td>CPU execution policy for standard/MFS-compatible gridding stages</td>
-</tr>
-<tr>
 <td><code>parallel</code></td>
-<td><code>parameter.parallel@r1</code></td>
-<td><code>optional&lt;bool&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
+<td><code>parameter.parallel@r2</code></td>
+<td><code>bool</code></td>
+<td><code>false</code>; optional</td>
 <td>Stages</td>
-<td>Permit planned local parallel or accelerated execution; false forces the serial CPU comparison surface</td>
+<td>Image on the host's workers (the balanced resource policy); false images on one worker</td>
 </tr>
 <tr>
 <td><code>uvrange</code></td>
@@ -3352,78 +3320,6 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>AW convolution-function working-memory ceiling in MiB<br><em>Surface:</em> Per-allocation full-cell LRU and compact source-order tap ceiling in MiB; the runtime charges both and rejects zero.</td>
 </tr>
 <tr>
-<td><code>facets</code></td>
-<td><code>parameter.facets@r2</code></td>
-<td><code>integer</code></td>
-<td><code>1</code>; optional</td>
-<td>Advanced Wide-Field</td>
-<td>Number of wide-field image facets<br><em>Surface:</em> Constant-basis MFS executes exact regular facets; unsupported basis combinations fail closed.</td>
-</tr>
-<tr>
-<td><code>psfphasecenter</code></td>
-<td><code>parameter.psfphasecenter@r1</code></td>
-<td><code>optional&lt;string&gt; (states: none); unit dimension: angle</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Advanced Wide-Field</td>
-<td>Optional distinct AWProject PSF phase center</td>
-</tr>
-<tr>
-<td><code>vptable</code></td>
-<td><code>parameter.vptable@r1</code></td>
-<td><code>optional&lt;path (table)&gt; (states: none)</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Advanced Wide-Field</td>
-<td>Optional CASA voltage-pattern table for AWProject</td>
-</tr>
-<tr>
-<td><code>aterm</code></td>
-<td><code>parameter.aterm@r1</code></td>
-<td><code>bool</code></td>
-<td><code>true</code>; optional</td>
-<td>Advanced Wide-Field</td>
-<td>Enable the aperture-illumination A term for AWProject</td>
-</tr>
-<tr>
-<td><code>psterm</code></td>
-<td><code>parameter.psterm@r1</code></td>
-<td><code>bool</code></td>
-<td><code>false</code>; optional</td>
-<td>Advanced Wide-Field</td>
-<td>Enable the prolate-spheroidal term inside AW convolution functions</td>
-</tr>
-<tr>
-<td><code>wbawp</code></td>
-<td><code>parameter.wbawp@r1</code></td>
-<td><code>bool</code></td>
-<td><code>true</code>; optional</td>
-<td>Advanced Wide-Field</td>
-<td>Enable wideband A-projection frequency behavior</td>
-</tr>
-<tr>
-<td><code>conjbeams</code></td>
-<td><code>parameter.conjbeams@r1</code></td>
-<td><code>bool</code></td>
-<td><code>true</code>; optional</td>
-<td>Advanced Wide-Field</td>
-<td>Enable conjugate-beam frequency mapping for wideband AWProject</td>
-</tr>
-<tr>
-<td><code>computepastep</code></td>
-<td><code>parameter.computepastep@r1</code></td>
-<td><code>float; unit dimension: angle</code></td>
-<td><code>360.0</code>; optional</td>
-<td>Advanced Wide-Field</td>
-<td>AW convolution-function parallactic-angle computation step in degrees</td>
-</tr>
-<tr>
-<td><code>rotatepastep</code></td>
-<td><code>parameter.rotatepastep@r1</code></td>
-<td><code>float; unit dimension: angle</code></td>
-<td><code>360.0</code>; optional</td>
-<td>Advanced Wide-Field</td>
-<td>AW convolution-function parallactic-angle rotation step in degrees</td>
-</tr>
-<tr>
 <td><code>pointingoffsetsigdev</code></td>
 <td><code>parameter.pointingoffsetsigdev@r1</code></td>
 <td><code>string</code></td>
@@ -3432,36 +3328,12 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>Comma-separated AW pointing grouping/refresh thresholds; non-pairs use CASA 600,600</td>
 </tr>
 <tr>
-<td><code>mosweight</code></td>
-<td><code>parameter.mosweight@r1</code></td>
-<td><code>bool</code></td>
-<td><code>false</code>; optional</td>
-<td>Advanced Wide-Field</td>
-<td>Use per-pointing mosaic weight-density handling</td>
-</tr>
-<tr>
 <td><code>normtype</code></td>
-<td><code>parameter.normtype@r1</code></td>
-<td><code>choice (3 values)</code></td>
+<td><code>parameter.normtype@r2</code></td>
+<td><code>choice (2 values)</code></td>
 <td><code>"flatnoise"</code>; optional</td>
 <td>Advanced Wide-Field</td>
 <td>Mosaic and AWProject sensitivity normalization policy</td>
-</tr>
-<tr>
-<td><code>imaging_memory_target_mb</code></td>
-<td><code>parameter.imaging_memory_target_mb@r2</code></td>
-<td><code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code></td>
-<td><code>"none"</code>; optional</td>
-<td>Execution Resources</td>
-<td>Optional shared imaging memory target in MiB<br><em>Surface:</em> none delegates to the resource-adaptive planner.</td>
-</tr>
-<tr>
-<td><code>projection</code></td>
-<td><code>parameter.projection@r1</code></td>
-<td><code>choice (1 values)</code></td>
-<td><code>"SIN"</code>; optional</td>
-<td>Stage Parameters</td>
-<td>Sky projection used for the image direction coordinate<br><em>Surface:</em> Unsupported projections fail before imaging; the value is never silently rewritten to SIN.</td>
 </tr>
 <tr>
 <td><code>fitspw</code></td>
@@ -3558,6 +3430,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>"cpu"</code>; optional</td>
 <td>Stages</td>
 <td>Gridding backend of the major-cycle passes: cpu, or metal on macOS</td>
+</tr>
+<tr>
+<td><code>gridprecision</code></td>
+<td><code>parameter.gridprecision@r1</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>"auto"</code>; optional</td>
+<td>Stages</td>
+<td>Grid arithmetic: auto, f32 or f64</td>
 </tr>
 </tbody>
 </table>
