@@ -69,9 +69,13 @@ pub enum PrepareError {
         /// The requested cutoff.
         psfcutoff: f64,
     },
-    /// Two image domains share an output name.
-    #[error("image domains must have distinct output names")]
-    DuplicateOutput,
+    /// Two image domains, the main image's or the outlier file's, write to
+    /// the same output.
+    #[error("image domains must have distinct output names; {} is named twice", path.display())]
+    DuplicateOutput {
+        /// The output both domains name.
+        path: PathBuf,
+    },
     /// The selection names no MAIN row.
     #[error("selection resolved to no rows")]
     NoSelectedRows,

@@ -256,6 +256,50 @@ fn image_observation_metadata_accepts_matching_labels_across_observations() {
     }
 }
 
+#[test]
+fn a_selection_of_no_rows_is_refused() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let imaging = request(
+        &tiny_measurement_set(root.path()),
+        &root.path().join("no-rows"),
+        json!({ "niter": 0, "uvrange": ">1000000km" }),
+    );
+    let error = execute(&imaging).err().expect("an empty selection");
+    assert!(
+        matches!(
+            error,
+            ApplicationDispatchError::Preparation(PrepareError::NoSelectedRows)
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn outlier_domains_naming_one_output_are_refused() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let outlier = root.path().join("outlier");
+    let outlier_file = root.path().join("twice.outlier");
+    let record = format!(
+        "imagename={}\nphasecenter=J2000 1.001rad 0.499rad\n",
+        outlier.display()
+    );
+    std::fs::write(&outlier_file, record.repeat(2)).expect("write the outlier file");
+    let mut imaging = request(
+        &tiny_measurement_set(root.path()),
+        &root.path().join("main"),
+        json!({ "niter": 0 }),
+    );
+    imaging.outlierfile = Some(outlier_file);
+    let error = execute(&imaging).err().expect("two domains, one output");
+    let ApplicationDispatchError::Preparation(PrepareError::DuplicateOutput { path }) = error
+    else {
+        panic!("expected a duplicate output, found {error}");
+    };
+    assert_eq!(path, outlier);
+}
+
 fn assert_standard_products(image_name: &Path, product_names: &[String]) {
     assert_products(image_name, product_names, &PRODUCT_SUFFIXES);
 }

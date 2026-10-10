@@ -3,6 +3,7 @@
 //! The image domains: the main image and the outlier file's, each with its
 //! direction coordinate, product coordinate system and clean mask.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{
@@ -79,7 +80,8 @@ impl PreparedImageDomain {
     }
 }
 
-/// The main domain and the outlier file's, ordered by role.
+/// The main domain and the outlier file's, ordered by role, each writing
+/// to its own output.
 pub(super) fn prepare_domains(
     request: &ImagingRequest,
     centre: &Centre,
@@ -124,6 +126,16 @@ pub(super) fn prepare_domains(
                     observation,
                 ),
                 mask: outlier.mask,
+            });
+        }
+    }
+    // Distinct outputs give distinct roles: an outlier's output is its name
+    // resolved beside the outlier file.
+    let mut outputs = BTreeSet::new();
+    for domain in &domains {
+        if !outputs.insert(domain.output.as_path()) {
+            return Err(PrepareError::DuplicateOutput {
+                path: domain.output.clone(),
             });
         }
     }
