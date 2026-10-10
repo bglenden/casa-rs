@@ -633,15 +633,11 @@ impl LockFile {
                 Ok(LockOutcome::Acquired)
             }
             LockType::Read => match self.held {
-                Some(LockType::Read) => Ok(LockOutcome::Acquired),
-                Some(LockType::Write) => {
-                    // casacore converts a held write lock to a read lock.
-                    shared.set_lock(libc::F_RDLCK as i32, 0, 1)?;
-                    state.writer = None;
-                    state.readers += 1;
-                    self.held = Some(LockType::Read);
-                    Ok(LockOutcome::Acquired)
-                }
+                // A held write lock covers reading and is kept, as casacore's
+                // `FileLocker::acquire(Read)` keeps it: dropping it would let
+                // other processes in before this handle's changes are flushed
+                // when it is released.
+                Some(LockType::Read | LockType::Write) => Ok(LockOutcome::Acquired),
                 None => {
                     // The process's lock already covers reading when another
                     // handle holds a read or write lock.
@@ -1230,6 +1226,25 @@ mod tests {
                 )))
                 .is_err()
         );
+    }
+
+    /// casacore's `FileLocker::acquire(Read)` keeps a held write lock.
+    #[test]
+    fn a_read_request_keeps_a_held_write_lock() {
+        let dir = TempDir::new().unwrap();
+        let mut writer = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
+        let mut other = LockFile::create_or_open(dir.path(), false, 5.0, false).unwrap();
+        assert!(writer.acquire(LockType::Write, 1).unwrap().is_acquired());
+        assert!(writer.acquire(LockType::Read, 1).unwrap().is_acquired());
+        assert!(writer.has_lock(LockType::Write));
+        assert_eq!(writer.shared.state().writer, Some(writer.id));
+        assert_eq!(writer.shared.state().readers, 0);
+        assert_eq!(
+            other.acquire(LockType::Write, 1).unwrap(),
+            LockOutcome::HeldInProcess
+        );
+        assert!(writer.release().unwrap());
+        assert!(other.acquire(LockType::Write, 1).unwrap().is_acquired());
     }
 
     #[test]

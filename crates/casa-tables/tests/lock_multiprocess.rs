@@ -380,6 +380,59 @@ fn competing_read_lock_upgrades_do_not_deadlock() {
     assert_eq!(table.row_count(), 2, "the winner's row is written");
 }
 
+/// Requesting a read lock while holding the write lock keeps the write lock,
+/// as casacore's `FileLocker` does: another process still cannot read-lock
+/// the table, and the change made under the write lock is written when the
+/// table is unlocked.
+#[test]
+fn a_read_request_keeps_the_write_lock_and_its_changes() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let opts = create_test_table(tmp.path());
+    let helper = helper_binary();
+    let table_dir = opts.path().to_str().unwrap();
+    let another_process_read_locks = || {
+        Command::new(&helper)
+            .args([table_dir, "try_read_lock"])
+            .status()
+            .expect("failed to spawn lock probe")
+            .success()
+    };
+
+    let mut table =
+        Table::open_with_lock(opts.clone(), LockOptions::new(LockMode::UserLocking)).unwrap();
+    assert!(table.lock(LockType::Write, 1).unwrap());
+    table
+        .row_accessor_mut()
+        .set_cell(
+            0,
+            "name",
+            Value::Scalar(ScalarValue::String("edited".into())),
+        )
+        .unwrap();
+    assert!(table.lock(LockType::Read, 1).unwrap());
+    assert!(
+        table.has_lock(LockType::Write),
+        "the write lock was dropped"
+    );
+    assert!(
+        !another_process_read_locks(),
+        "another process read-locked the table while it was write-locked"
+    );
+
+    table.unlock().unwrap();
+    drop(table);
+    assert!(another_process_read_locks());
+    let reopened = Table::open(opts).unwrap();
+    assert_eq!(
+        reopened
+            .cell_accessor(0, "name")
+            .and_then(|cell| cell.scalar())
+            .unwrap(),
+        &ScalarValue::String("edited".into()),
+        "the change made under the write lock was lost"
+    );
+}
+
 #[test]
 fn cross_process_write_then_read() {
     let tmp = tempfile::TempDir::new().unwrap();

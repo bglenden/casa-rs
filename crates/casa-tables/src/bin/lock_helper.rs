@@ -22,6 +22,9 @@
 //!   Opens the table with UserLocking, tries to acquire a write lock
 //!   (nattempts=1). Exits 0 if acquired, exits 1 if not.
 //!
+//! - `try_read_lock` —
+//!   Like `try_write_lock` with a read lock.
+//!
 //! - `write_row <id> <name>` —
 //!   Opens with UserLocking, acquires write lock, adds a row, unlocks.
 //!   Exits 0 on success.
@@ -100,12 +103,17 @@ fn main() {
             });
         }
 
-        "try_write_lock" => {
+        "try_write_lock" | "try_read_lock" => {
+            let lock_type = if command == "try_read_lock" {
+                LockType::Read
+            } else {
+                LockType::Write
+            };
             let mut table = Table::open_with_lock(opts, lock_opts).unwrap_or_else(|e| {
                 eprintln!("open_with_lock failed: {e}");
                 process::exit(3);
             });
-            let acquired = table.lock(LockType::Write, 1).unwrap_or_else(|e| {
+            let acquired = table.lock(lock_type, 1).unwrap_or_else(|e| {
                 eprintln!("lock failed: {e}");
                 process::exit(3);
             });

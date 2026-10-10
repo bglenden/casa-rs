@@ -107,7 +107,9 @@ impl Table {
     /// Acquires a lock on the table.
     ///
     /// Re-reads the table data from disk if another process modified it
-    /// since the last lock was held.
+    /// since the last lock was held. A table that already holds a lock is not
+    /// re-read, and a read lock requested while the write lock is held keeps
+    /// the write lock, as in casacore.
     ///
     /// `nattempts`: number of lock attempts. 0 means wait indefinitely for
     /// another process, 1 means try once without waiting, and more retries
@@ -148,6 +150,11 @@ impl Table {
             return Ok(true);
         }
 
+        // A table already locked needs no synchronization: no other process
+        // can have written it (casacore's `PlainTable::lock`). Requesting a
+        // read lock while holding the write lock keeps the write lock and
+        // this handle's unflushed changes.
+        let already_locked = state.lock_file.has_lock(LockType::Read);
         let acquired = state
             .lock_file
             .acquire(lock_type, nattempts)
@@ -157,7 +164,7 @@ impl Table {
             })?
             .is_acquired();
 
-        if acquired {
+        if acquired && !already_locked {
             // Read sync data and check if we need to reload.
             if let Some(new_sync) =
                 state
