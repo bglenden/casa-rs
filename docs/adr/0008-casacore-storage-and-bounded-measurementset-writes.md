@@ -57,6 +57,8 @@ in-place mutation waits for it, as casacore does by default: the waiter adds
 its process id to the request list in `table.lock`, so that a holder using
 casacore's `AutoLocking` releases its lock at its next inspection, and the
 wait is logged when it starts, periodically while it lasts, and when it ends.
+casacore throttles those inspections, so a holder that uses the table only
+lightly may keep its lock until it closes the table.
 The wait blocks in the kernel, as casacore's does, so the kernel refuses a
 wait that would deadlock, such as the second of two processes upgrading their
 read locks, and that writer fails. A writer whose table was opened without

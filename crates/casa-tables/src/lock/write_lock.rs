@@ -20,10 +20,13 @@ use crate::{Table, TableError};
 /// A lock another process holds, read or write, is waited for as casacore
 /// waits (see [`acquire`](Self::acquire)): the waiter adds its process id to
 /// the request list in `table.lock`, so a casacore process holding the table
-/// open with `AutoLocking` releases its lock at its next inspection, which
-/// casacore makes when the table is next used. A casa-rs process does not
-/// yet release a lock on request, so a waiter waits for it to finish
-/// ([#694](https://github.com/bglenden/casa-rs/issues/694)). A write lock
+/// open with `AutoLocking` releases its lock at its next inspection.
+/// casacore throttles inspections (`LockFile::inspect` looks at the request
+/// list only after 25 table accesses and the inspection interval), so a
+/// lightly used holder may keep its lock until it closes the table. A
+/// casa-rs process does not yet release a lock on request, so a waiter waits
+/// for it to finish ([#694](https://github.com/bglenden/casa-rs/issues/694)).
+/// A write lock
 /// held by another handle in this process is never waited for, because that
 /// handle may belong to the waiting thread: it is refused at once.
 ///
