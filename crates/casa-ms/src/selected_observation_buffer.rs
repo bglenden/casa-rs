@@ -137,6 +137,79 @@ pub(crate) struct SelectedObservationBufferResidency {
     pub(crate) fill_peak_bytes: usize,
 }
 
+/// Bytes the typed column reads of one buffer fill hold besides the buffer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct SelectedObservationReadStaging {
+    /// Held per selected row.
+    pub(crate) bytes_per_row: usize,
+    /// Held once per fill.
+    pub(crate) fixed_bytes: usize,
+}
+
+/// Project what the column reads of [`MeasurementSet::fill_selected_observation_buffer`]
+/// hold besides the buffer, for MAIN cells of `correlations` x
+/// `stored_channels` samples.
+///
+/// A column its data manager streams holds nothing per row. A column read
+/// cell by cell holds the whole stored cells of the selected rows, all
+/// channels, however narrow the selected channel range
+/// ([`casa_tables::SelectedReadFootprint`]). The fill reads one column at a
+/// time, so the staging is the largest any one read holds.
+pub(crate) fn selected_observation_read_staging(
+    main: &casa_tables::Table,
+    visibility: SelectedVisibilityColumn,
+    weight: SelectedWeightColumn,
+    correlations: usize,
+    stored_channels: usize,
+) -> Option<SelectedObservationReadStaging> {
+    let samples = correlations.checked_mul(stored_channels)?;
+    let visibility_bytes = match visibility {
+        SelectedVisibilityColumn::FloatData => size_of::<f32>(),
+        SelectedVisibilityColumn::Data | SelectedVisibilityColumn::CorrectedData => {
+            size_of::<num_complex::Complex32>()
+        }
+    };
+    let weight_read = match weight {
+        SelectedWeightColumn::Weight => (
+            main.selected_cell_read_footprint("WEIGHT"),
+            correlations.checked_mul(size_of::<f32>())?,
+        ),
+        SelectedWeightColumn::WeightSpectrum => (
+            main.selected_channel_read_footprint("WEIGHT_SPECTRUM"),
+            samples.checked_mul(size_of::<f32>())?,
+        ),
+    };
+    [
+        (
+            main.selected_channel_read_footprint(visibility.name()),
+            samples.checked_mul(visibility_bytes)?,
+        ),
+        (
+            main.selected_channel_read_footprint("FLAG"),
+            samples.checked_mul(size_of::<bool>())?,
+        ),
+        weight_read,
+        (
+            main.selected_cell_read_footprint("UVW"),
+            size_of::<[f64; 3]>(),
+        ),
+    ]
+    .into_iter()
+    .try_fold(
+        SelectedObservationReadStaging::default(),
+        |staging, (footprint, stored_cell_bytes)| {
+            Some(SelectedObservationReadStaging {
+                bytes_per_row: staging
+                    .bytes_per_row
+                    .max(footprint.staging_bytes_per_row(stored_cell_bytes)?),
+                fixed_bytes: staging
+                    .fixed_bytes
+                    .max(footprint.staging_fixed_bytes(stored_cell_bytes)?),
+            })
+        },
+    )
+}
+
 /// Project the allocations performed by [`MeasurementSet::fill_selected_observation_buffer`].
 pub(crate) fn selected_observation_buffer_residency(
     rows: usize,

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use casa_tables::{
     ColumnBinding, ColumnOverrides, DataManagerKind, RequiredScalarColumnDestination,
     RequiredScalarColumnValuesMut, SelectedArray1DCellsMut, Table, TableError, TableInfo,
-    TableOptions,
+    TableOptions, TableWriteLock,
 };
 #[cfg(unix)]
 use casa_tables::{LockMode, LockOptions};
@@ -473,6 +473,15 @@ impl MeasurementSet {
     ///
     /// The save step refreshes the main-table metadata and rewrites subtable
     /// keyword payloads using casacore's relative `././SUBTABLE` form.
+    ///
+    /// Every table rewritten in place is written under casacore's table write
+    /// lock, taken once without waiting before anything is written and
+    /// released after the save; see [`TableWriteLock`].
+    ///
+    /// # Errors
+    ///
+    /// [`MsError::Table`] with [`TableError::LockFailed`] when another writer
+    /// holds the write lock on MAIN or a subtable.
     pub fn save(&mut self) -> MsResult<()> {
         let path = self
             .path
@@ -488,19 +497,78 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
+        let locks = self.lock_tables_for_in_place_save(&path, true)?;
         save_main_table_with_policy(&mut self.main, &path)?;
 
         for (id, table) in &self.subtables {
-            let subtable_path = self
-                .subtable_paths
-                .get(id)
-                .cloned()
-                .unwrap_or_else(|| path.join(id.name()));
+            let subtable_path = self.subtable_path(&path, *id);
             table.save(measurement_set_table_options(&subtable_path))?;
         }
+        self.release_in_place_save_locks(locks)?;
 
         tracing::info!(path = %path.display(), rows = self.row_count(), "saved MeasurementSet");
         Ok(())
+    }
+
+    fn subtable_path(&self, path: &Path, id: SubtableId) -> PathBuf {
+        self.subtable_paths
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| path.join(id.name()))
+    }
+
+    /// Take casacore's write lock on MAIN and, with `subtables`, on every
+    /// subtable, in canonical order, for a save that rewrites them in place.
+    ///
+    /// A table whose directory holds no `table.dat` yet is being created, not
+    /// changed in place, and is not locked. Each write is recorded before
+    /// anything is written, so an interrupted save still tells other processes
+    /// to re-read the table.
+    fn lock_tables_for_in_place_save(
+        &self,
+        path: &Path,
+        subtables: bool,
+    ) -> MsResult<Vec<(Option<SubtableId>, TableWriteLock)>> {
+        let mut tables = vec![(None, path.to_path_buf())];
+        if subtables {
+            tables.extend(
+                SubtableId::ALL_REQUIRED
+                    .iter()
+                    .chain(SubtableId::ALL_OPTIONAL.iter())
+                    .filter(|id| self.subtables.contains_key(id))
+                    .map(|id| (Some(*id), self.subtable_path(path, *id))),
+            );
+        }
+        let mut locks = Vec::with_capacity(tables.len());
+        for (id, table_path) in tables {
+            if !table_path.join("table.dat").is_file() {
+                continue;
+            }
+            let mut lock = TableWriteLock::acquire(&table_path, 1)?;
+            lock.record_write(self.locked_table(id));
+            locks.push((id, lock));
+        }
+        Ok(locks)
+    }
+
+    /// Publish each saved table's shape in its sync data and release the
+    /// locks taken by [`lock_tables_for_in_place_save`](Self::lock_tables_for_in_place_save).
+    fn release_in_place_save_locks(
+        &self,
+        locks: Vec<(Option<SubtableId>, TableWriteLock)>,
+    ) -> MsResult<()> {
+        for (id, mut lock) in locks.into_iter().rev() {
+            lock.record_write(self.locked_table(id));
+            lock.release()?;
+        }
+        Ok(())
+    }
+
+    fn locked_table(&self, id: Option<SubtableId>) -> &Table {
+        match id {
+            None => &self.main,
+            Some(id) => &self.subtables[&id],
+        }
     }
 
     pub(crate) fn save_with_main_column_overrides(
@@ -515,18 +583,20 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
+        let locks = self.lock_tables_for_in_place_save(&path, true)?;
         save_main_table_with_policy_and_column_overrides(&mut self.main, &path, column_overrides)?;
 
+        let subtable_paths = self
+            .subtables
+            .keys()
+            .map(|id| (*id, self.subtable_path(&path, *id)))
+            .collect::<HashMap<_, _>>();
         for (id, table) in &mut self.subtables {
-            let subtable_path = self
-                .subtable_paths
-                .get(id)
-                .cloned()
-                .unwrap_or_else(|| path.join(id.name()));
             table
                 .prepare_write()
-                .save(measurement_set_table_options(&subtable_path))?;
+                .save(measurement_set_table_options(&subtable_paths[id]))?;
         }
+        self.release_in_place_save_locks(locks)?;
 
         Ok(())
     }
@@ -538,6 +608,9 @@ impl MeasurementSet {
     /// `applycal`-class calibration executor. The method still refreshes
     /// main-table metadata and subtable-link keywords before writing the
     /// main table, but it skips rewriting the individual subtable directories.
+    ///
+    /// MAIN is written under casacore's table write lock, as in
+    /// [`save`](Self::save).
     pub fn save_main_table_only(&mut self) -> MsResult<()> {
         let path = self
             .path
@@ -547,7 +620,9 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
+        let locks = self.lock_tables_for_in_place_save(&path, false)?;
         save_main_table_with_policy(&mut self.main, &path)?;
+        self.release_in_place_save_locks(locks)?;
         Ok(())
     }
 

@@ -1,21 +1,150 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Packing whole-cell reads into the typed selected-row layouts.
+//! Typed selected-row reads served cell by cell, packed into the typed
+//! layouts.
 //!
-//! The tiled and incremental managers stream selected rows straight into the
-//! packed layouts. Every other manager casacore writes (`StManAipsIO`, and
-//! `StandardStMan` array columns) is read cell by cell through the general
-//! reader and packed here, so a MeasurementSet reads the same whatever
-//! manager CASA chose for a column.
+//! `TiledShapeStMan` streams selected rows and channels straight into the
+//! 2-D packed layouts, and the tiled and incremental managers stream 1-D
+//! rows. Every other manager casacore writes (`StManAipsIO`, `StandardStMan`
+//! and the other tiled managers for 2-D cells) is read cell by cell through
+//! the general selected-row reader and packed here, so a MeasurementSet reads
+//! the same whatever manager CASA chose for a column.
+//!
+//! A read served here holds every selected row's whole stored cell until it
+//! is packed ([`SelectedReadFootprint::WholeCells`]); it never reads a whole
+//! column, so that footprint is a true bound for a memory planner. The
+//! classifiers [`channel_read_footprint`] and [`cell_read_footprint`] name
+//! the managers the typed readers stream, and the readers' dispatch uses the
+//! same lists.
+
+use std::path::Path;
 
 use casa_types::{ArrayValue, Complex32, Complex64};
 use ndarray::ArrayD;
 
-use super::StorageError;
+use super::{CompositeStorage, StorageError, table_control::TableDatContents};
 use crate::table::{
     SelectedArray1D, SelectedArray1DCells, SelectedArray1DCellsMut, SelectedArray1DShape,
     SelectedArray2D, SelectedArray2DCells, SelectedArray2DCellsMut, SelectedArray2DShape,
+    SelectedReadFootprint,
 };
+
+/// What the typed selected 2-D channel-range readers hold for a column
+/// stored by `data_manager`: only `TiledShapeStMan` streams the selected
+/// channels.
+pub(crate) fn channel_read_footprint(data_manager: &str) -> SelectedReadFootprint {
+    match data_manager {
+        "TiledShapeStMan" => SelectedReadFootprint::Streamed,
+        _ => SelectedReadFootprint::WholeCells,
+    }
+}
+
+/// What the typed selected 1-D readers hold for a column stored by
+/// `data_manager`: the tiled column managers and `IncrementalStMan` stream
+/// the selected rows.
+pub(crate) fn cell_read_footprint(data_manager: &str) -> SelectedReadFootprint {
+    match data_manager {
+        "IncrementalStMan" | "TiledColumnStMan" | "TiledShapeStMan" => {
+            SelectedReadFootprint::Streamed
+        }
+        _ => SelectedReadFootprint::WholeCells,
+    }
+}
+
+/// One typed selected read that its data manager serves cell by cell.
+pub(super) struct WholeCellRead<'a> {
+    storage: &'a CompositeStorage,
+    table_path: &'a Path,
+    table_dat: &'a TableDatContents,
+    column: &'a str,
+    selected_rows: &'a [usize],
+}
+
+impl CompositeStorage {
+    /// A typed selected read of `column` that its data manager serves cell by
+    /// cell.
+    pub(super) fn whole_cell_read<'a>(
+        &'a self,
+        table_path: &'a Path,
+        table_dat: &'a TableDatContents,
+        column: &'a str,
+        selected_rows: &'a [usize],
+    ) -> WholeCellRead<'a> {
+        WholeCellRead {
+            storage: self,
+            table_path,
+            table_dat,
+            column,
+            selected_rows,
+        }
+    }
+}
+
+impl WholeCellRead<'_> {
+    /// The whole stored cells of the selected rows, read row by row.
+    ///
+    /// A layout its data manager can only read as a whole column is refused:
+    /// a typed selected read holds at most the selected rows' cells.
+    fn cells(&self) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+        if self.selected_rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.storage
+            .load_selected_array_cells(
+                self.table_path,
+                self.table_dat,
+                self.column,
+                self.selected_rows,
+            )?
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "typed selected reads of column '{}' need its cells read row by row, but \
+                     its data manager can read this layout only as a whole column",
+                    self.column
+                ))
+            })
+    }
+
+    /// Load a 2-D channel range in the stored element type, packed
+    /// `[channel][row][axis0]`; `None` when a selected cell is undefined.
+    pub(super) fn load_2d(
+        &self,
+        channel_start: usize,
+        channel_count: usize,
+    ) -> Result<Option<SelectedArray2DCells>, StorageError> {
+        load_2d(self.column, &self.cells()?, channel_start, channel_count)
+    }
+
+    /// Fill a 2-D channel-range destination; `None` when a selected cell is
+    /// undefined.
+    pub(super) fn fill_2d(
+        &self,
+        channel_start: usize,
+        channel_count: usize,
+        destination: SelectedArray2DCellsMut<'_>,
+    ) -> Result<Option<SelectedArray2DShape>, StorageError> {
+        fill_2d(
+            self.column,
+            &self.cells()?,
+            channel_start,
+            channel_count,
+            destination,
+        )
+    }
+
+    /// Load 1-D cells in the stored element type.
+    pub(super) fn load_1d(&self) -> Result<SelectedArray1DCells, StorageError> {
+        load_1d(self.column, &self.cells()?)
+    }
+
+    /// Fill a 1-D destination.
+    pub(super) fn fill_1d(
+        &self,
+        destination: SelectedArray1DCellsMut<'_>,
+    ) -> Result<SelectedArray1DShape, StorageError> {
+        fill_1d(self.column, &self.cells()?, destination)
+    }
+}
 
 /// An element type the packed layouts carry.
 trait Element: Copy {
@@ -143,7 +272,7 @@ fn pack_2d<T: Element>(
 }
 
 /// Fill a 1-D destination from whole-cell reads.
-pub(super) fn fill_1d(
+fn fill_1d(
     column: &str,
     cells: &[Option<ArrayValue>],
     destination: SelectedArray1DCellsMut<'_>,
@@ -163,7 +292,7 @@ pub(super) fn fill_1d(
 }
 
 /// Load 1-D cells in the element type they are stored with.
-pub(super) fn load_1d(
+fn load_1d(
     column: &str,
     cells: &[Option<ArrayValue>],
 ) -> Result<SelectedArray1DCells, StorageError> {
@@ -193,7 +322,7 @@ pub(super) fn load_1d(
 
 /// Fill a 2-D channel-range destination from whole-cell reads; `None` when
 /// a selected cell is undefined.
-pub(super) fn fill_2d(
+fn fill_2d(
     column: &str,
     cells: &[Option<ArrayValue>],
     channel_start: usize,
@@ -232,7 +361,7 @@ pub(super) fn fill_2d(
 
 /// Load a 2-D channel range in the element type it is stored with, packed
 /// `[channel][row][axis0]`; `None` when a selected cell is undefined.
-pub(super) fn load_2d(
+fn load_2d(
     column: &str,
     cells: &[Option<ArrayValue>],
     channel_start: usize,

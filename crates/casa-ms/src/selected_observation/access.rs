@@ -2302,7 +2302,7 @@ fn require_fixed_j2000(
     Ok(direction)
 }
 
-const fn selected_visibility(visibility: VisibilityColumn) -> SelectedVisibilityColumn {
+pub(super) const fn selected_visibility(visibility: VisibilityColumn) -> SelectedVisibilityColumn {
     match visibility {
         VisibilityColumn::Data => SelectedVisibilityColumn::Data,
         VisibilityColumn::CorrectedData => SelectedVisibilityColumn::CorrectedData,
@@ -2310,7 +2310,7 @@ const fn selected_visibility(visibility: VisibilityColumn) -> SelectedVisibility
     }
 }
 
-const fn selected_weight(weight: WeightColumn) -> SelectedWeightColumn {
+pub(super) const fn selected_weight(weight: WeightColumn) -> SelectedWeightColumn {
     match weight {
         WeightColumn::Weight => SelectedWeightColumn::Weight,
         WeightColumn::WeightSpectrum => SelectedWeightColumn::WeightSpectrum,
