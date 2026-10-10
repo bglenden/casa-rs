@@ -583,6 +583,90 @@ fn finish_flag_row_mutation(
     session.finish_mutation().expect("finish mutation");
 }
 
+/// The modify counter MAIN's sync data publishes to other processes.
+fn published_modify_counter(ms_path: &std::path::Path) -> u32 {
+    let mut main = casa_tables::Table::open_with_lock(
+        casa_tables::TableOptions::new(ms_path),
+        casa_tables::LockOptions::new(casa_tables::LockMode::UserLocking),
+    )
+    .expect("open MAIN with locking");
+    assert!(
+        main.lock(casa_tables::LockType::Read, 1)
+            .expect("read-lock MAIN")
+    );
+    main.locked_modify_counter().expect("modify counter")
+}
+
+/// Columns a mutation session creates are persisted one by one. When a
+/// later installation fails, the columns installed before it stay on disk,
+/// and releasing the lock publishes the change, so other processes re-read
+/// MAIN.
+#[test]
+fn a_failed_column_installation_publishes_the_columns_installed_before_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let counter_before = published_modify_counter(&ms_path);
+    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open MeasurementSet");
+    for name in ["CLONE_A", "CLONE_B"] {
+        measurement_set
+            .main_table_mut()
+            .add_column(
+                casa_tables::ColumnSchema::array_variable(
+                    name,
+                    casa_types::PrimitiveType::Complex32,
+                    Some(2),
+                ),
+                None,
+            )
+            .expect("add the column to the schema");
+    }
+    let create = |name: &str, source: &str| MeasurementSetWriteColumnPlan {
+        name: name.to_string(),
+        bytes_per_row: 1,
+        mode: MeasurementSetColumnWriteMode::Create,
+        storage_manager: MeasurementSetColumnStorage::TiledShape,
+        tile_shape: None,
+        create_source_column: Some(source.to_string()),
+    };
+    let plan = MeasurementSetWritePlan::selected_row_mutation(
+        vec![0],
+        vec![
+            create("CLONE_A", "DATA"),
+            create("CLONE_B", "NO_SUCH_COLUMN"),
+        ],
+        MeasurementSetWriteResources {
+            available_bytes: 2,
+            maximum_live_batches: 1,
+            tiled_column_buffer_bytes: 0,
+        },
+    )
+    .expect("mutation plan");
+
+    let started =
+        MeasurementSetWriteSession::start_selected_row_mutation(&mut measurement_set, plan);
+    match started {
+        Err(casa_ms::MeasurementSetWriteError::Install { column, .. }) => {
+            assert_eq!(column, "CLONE_B");
+        }
+        other => panic!("the second installation must fail: {:?}", other.err()),
+    }
+    drop(measurement_set);
+
+    let reopened = MeasurementSet::open(&ms_path).expect("reopen MeasurementSet");
+    assert!(
+        reopened
+            .main_table()
+            .data_manager_info()
+            .iter()
+            .any(|manager| manager.columns.iter().any(|name| name == "CLONE_A")),
+        "the first installed column is on disk"
+    );
+    assert!(
+        published_modify_counter(&ms_path) > counter_before,
+        "the partial installation was not published"
+    );
+}
+
 /// A mutation session writes only the MeasurementSet it locked: a batch
 /// given another MeasurementSet is refused before anything is written, and
 /// the session can still complete on its own MeasurementSet.
