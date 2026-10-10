@@ -583,6 +583,39 @@ fn finish_flag_row_mutation(
     session.finish_mutation().expect("finish mutation");
 }
 
+/// The sync data `table` publishes describes it as persisted; `None` when it
+/// publishes none. Call only while this process holds no lock on `table`.
+#[track_caller]
+fn assert_published_as_persisted(table: &std::path::Path) {
+    if let Some(published) = casa_test_support::table_sync::published_table_sync(table) {
+        assert_eq!(
+            published.shape,
+            casa_test_support::table_sync::persisted_table_shape(table),
+            "published versus persisted shape of {}",
+            table.display()
+        );
+    }
+}
+
+/// An in-place MeasurementSet save publishes, for every table it rewrites,
+/// sync data describing the table as persisted. Under the mixed storage
+/// policy MAIN has many data managers, and casacore asserts one change
+/// counter per data manager when it locks the table.
+#[test]
+fn a_saved_measurement_set_publishes_its_persisted_layout() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    assert!(casa_test_support::table_sync::persisted_table_shape(&ms_path).data_managers > 1);
+    assert!(casa_test_support::table_sync::published_table_sync(&ms_path).is_some());
+    for table in [
+        ms_path.clone(),
+        ms_path.join("ANTENNA"),
+        ms_path.join("SPECTRAL_WINDOW"),
+    ] {
+        assert_published_as_persisted(&table);
+    }
+}
+
 /// The modify counter MAIN's sync data publishes to other processes.
 fn published_modify_counter(ms_path: &std::path::Path) -> u32 {
     let mut main = casa_tables::Table::open_with_lock(

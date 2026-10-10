@@ -1856,12 +1856,11 @@ impl MeasurementSetWriteSession {
                     .iter()
                     .any(|manager| manager.columns.iter().any(|name| name == &column.name));
                 if !already_persisted {
-                    // Each installation is persisted at once. Recording the
-                    // table before each one means that when an installation
+                    // Each installation is persisted at once. Recording a
+                    // write before each one means that when an installation
                     // fails, the lock still publishes the columns installed
-                    // before it, and any part of this one, to other
-                    // processes.
-                    write_lock.record_write(measurement_set.main_table());
+                    // before it, and any part of this one, as persisted.
+                    write_lock.record_write();
                     if let Some(source) = &column.create_source_column {
                         measurement_set
                             .main_table_mut()
@@ -1884,7 +1883,7 @@ impl MeasurementSetWriteSession {
                 }
             }
         }
-        write_lock.record_write(measurement_set.main_table());
+        write_lock.record_write();
         Ok(Self {
             plan,
             state: MeasurementSetWriteSessionState::Mutation {

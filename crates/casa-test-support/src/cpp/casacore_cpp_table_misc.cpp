@@ -104,6 +104,26 @@ void verify_with_lock_impl(const std::string& path) {
         throw std::runtime_error("row 0 name mismatch: got '" + name + "'");
 }
 
+// Open with UserLocking and take, release and retake an explicit read lock.
+// Each lock synchronizes the table with the sync data in table.lock
+// (PlainTable::lock, ColumnSet::resync), so it fails when that data does not
+// describe the table on disk: a different column count, or a number of
+// data-manager counters other than the table's data managers.
+void lock_read_relock_impl(const std::string& path, uint64_t* out_rows,
+                           uint32_t* out_columns) {
+    casacore::Table table(path,
+                          casacore::TableLock(casacore::TableLock::UserLocking),
+                          casacore::Table::Old);
+    if (!table.lock(casacore::FileLocker::Read, 1))
+        throw std::runtime_error("first read lock was not acquired");
+    table.unlock();
+    if (!table.lock(casacore::FileLocker::Read, 1))
+        throw std::runtime_error("second read lock was not acquired");
+    *out_rows = table.nrow();
+    *out_columns = table.tableDesc().ncolumn();
+    table.unlock();
+}
+
 // ===== RefTable =====
 
 void write_ref_table_impl(const std::string& dir) {
@@ -491,6 +511,12 @@ int32_t cpp_table_verify_mutation_added_column(const char* path, char** out_erro
 // Lock
 int32_t cpp_table_write_with_lock(const char* path, char** out_error) {
     try { write_with_lock_impl(path); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+int32_t cpp_table_lock_read_relock(const char* path, uint64_t* out_rows,
+                                   uint32_t* out_columns, char** out_error) {
+    try { lock_read_relock_impl(path, out_rows, out_columns); return 0;
     } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
     } catch (...) { *out_error = make_error("unknown exception"); return -1; }
 }

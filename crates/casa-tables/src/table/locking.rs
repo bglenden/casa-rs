@@ -270,21 +270,15 @@ impl Table {
                 self.save(save_opts)?;
             }
 
-            // Gather sync info from immutable borrows.
-            let nrrow = self.row_count() as u64;
-            let nrcolumn = self.schema().map(|s| s.columns().len() as u32).unwrap_or(0);
-
-            // Now borrow lock_state mutably for sync data update.
+            // Publish the table as persisted, as casacore's putFile does.
             let generation = self.inner.generation();
             let state = self.lock_state.as_mut().expect("lock_state present");
-            state.sync_data.record_write(nrrow, nrcolumn, true, &[true]);
-
-            state
-                .lock_file
-                .write_sync_data(&state.sync_data)
-                .map_err(|e| TableError::LockIo {
-                    path: state.path.display().to_string(),
-                    message: e.to_string(),
+            state.sync_data =
+                publish_persisted_write(&state.lock_file, &state.path).map_err(|e| {
+                    TableError::LockIo {
+                        path: state.path.display().to_string(),
+                        message: e.to_string(),
+                    }
                 })?;
             state.flushed_generation = generation;
         }

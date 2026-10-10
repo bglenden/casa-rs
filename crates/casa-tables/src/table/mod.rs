@@ -15,6 +15,8 @@ use thiserror::Error;
 #[cfg(unix)]
 use crate::lock::LockFile;
 use crate::lock::SyncData;
+#[cfg(unix)]
+use crate::lock::publish_persisted_write;
 use crate::lock::{LockMode, LockOptions, LockType};
 use crate::schema::{ArrayShapeContract, ColumnSchema, ColumnType, SchemaError, TableSchema};
 use crate::storage::virtual_engine::VirtualColumnBinding;
@@ -2451,14 +2453,12 @@ impl Drop for Table {
                             .with_endian_format(state.endian_format)
                     });
 
-                    if let Some(save_opts) = save_opts
-                        && self.save(save_opts).is_ok()
-                    {
-                        let nrrow = self.row_count() as u64;
-                        let nrcolumn = self.schema().map(|s| s.columns().len() as u32).unwrap_or(0);
-                        if let Some(state) = self.lock_state.as_mut() {
-                            state.sync_data.record_write(nrrow, nrcolumn, true, &[true]);
-                            let _ = state.lock_file.write_sync_data(&state.sync_data);
+                    if let Some(save_opts) = save_opts {
+                        // Whatever part of the save reached the disk is
+                        // published, describing the table as persisted.
+                        let _ = self.save(save_opts);
+                        if let Some(state) = self.lock_state.as_ref() {
+                            let _ = publish_persisted_write(&state.lock_file, &state.path);
                         }
                     }
                 }

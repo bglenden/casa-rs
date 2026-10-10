@@ -3126,7 +3126,7 @@ fn merge_flags_into_existing_version(
     }
     // Recorded before the save, so an interrupted save still tells other
     // processes to re-read the version.
-    lock.record_write(&table);
+    lock.record_write();
     table
         .save(TableOptions::new(version_path))
         .map_err(|source| FlaggingError::FlagVersion {

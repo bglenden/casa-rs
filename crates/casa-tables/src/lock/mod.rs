@@ -20,6 +20,8 @@ pub(crate) use lock_file::read_sync_data_from_table_dir;
 pub(crate) use lock_file::{LockFile, LockOutcome};
 pub(crate) use sync_data::SyncData;
 pub use write_lock::TableWriteLock;
+#[cfg(unix)]
+pub(crate) use write_lock::publish_persisted_write;
 
 /// Lock mode options for a table.
 ///

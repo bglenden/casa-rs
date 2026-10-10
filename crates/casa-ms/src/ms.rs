@@ -580,30 +580,22 @@ impl MeasurementSet {
             .zip(held)
             .map(|((id, _), lock)| {
                 let mut lock = lock.expect("every table is locked");
-                lock.record_write(self.locked_table(id));
+                lock.record_write();
                 (id, lock)
             })
             .collect())
     }
 
-    /// Publish each saved table's shape in its sync data and release the
-    /// locks taken by [`lock_tables_for_in_place_save`](Self::lock_tables_for_in_place_save).
+    /// Publish each saved table, as persisted, in its sync data and release
+    /// the locks taken by [`lock_tables_for_in_place_save`](Self::lock_tables_for_in_place_save).
     fn release_in_place_save_locks(
         &self,
         locks: Vec<(Option<SubtableId>, TableWriteLock)>,
     ) -> MsResult<()> {
-        for (id, mut lock) in locks.into_iter().rev() {
-            lock.record_write(self.locked_table(id));
+        for (_, lock) in locks.into_iter().rev() {
             lock.release()?;
         }
         Ok(())
-    }
-
-    fn locked_table(&self, id: Option<SubtableId>) -> &Table {
-        match id {
-            None => &self.main,
-            Some(id) => &self.subtables[&id],
-        }
     }
 
     pub(crate) fn save_with_main_column_overrides(

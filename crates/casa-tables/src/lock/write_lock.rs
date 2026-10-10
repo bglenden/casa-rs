@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
 use super::{LockFile, LockOptions, LockOutcome, LockType, SyncData};
-use crate::{Table, TableError};
+use crate::TableError;
 
 /// casacore's table write lock, held for one in-place change of a table on
 /// disk.
@@ -33,14 +33,17 @@ use crate::{Table, TableError};
 /// Releasing the lock after [`record_write`](Self::record_write) records the
 /// change in the lock file's sync data (`TableSyncData`), as casacore does
 /// when it releases a write lock, so a process holding the table open
-/// re-reads it when it next takes a lock. Dropping the guard releases it the
-/// same way: rows written before an interruption stay written, as after an
-/// interrupted casacore write.
+/// re-reads it when it next takes a lock. The sync data describes the table
+/// as persisted when the lock is released. Dropping the guard releases it
+/// the same way: rows written before an interruption stay written, as after
+/// an interrupted casacore write, and are announced.
 ///
-/// The guard works on the table directory, not on a [`Table`] handle, so it
-/// can be held across calls that each borrow the handle. It is meant for
-/// handles opened without locking ([`Table::open`]). A handle opened with
-/// [`Table::open_with_lock`] in auto-locking mode cannot write while another
+/// The guard works on the table directory, not on a [`Table`](crate::Table)
+/// handle, so it can be held across calls that each borrow the handle. It is
+/// meant for handles opened without locking
+/// ([`Table::open`](crate::Table::open)). A handle opened with
+/// [`Table::open_with_lock`](crate::Table::open_with_lock) in auto-locking
+/// mode cannot write while another
 /// handle holds this lock: its temporary write lock is refused rather than
 /// waited on, because the holder may be the same thread.
 ///
@@ -58,23 +61,15 @@ pub struct TableWriteLock {
     path: PathBuf,
     #[cfg(unix)]
     lock_file: Option<LockFile>,
+    /// Whether a write was recorded; releasing then publishes it.
     #[cfg_attr(not(unix), allow(dead_code))]
-    written: Option<WrittenTable>,
-}
-
-/// The table shape a released write publishes in the sync data.
-#[derive(Clone, Copy)]
-#[cfg_attr(not(unix), allow(dead_code))]
-struct WrittenTable {
-    rows: u64,
-    columns: u32,
-    data_managers: usize,
+    written: bool,
 }
 
 impl TableWriteLock {
     /// Take the write lock on the table at `table_dir`.
     ///
-    /// `nattempts` has the meaning of [`Table::lock`]: 1 tries once without
+    /// `nattempts` has the meaning of [`Table::lock`](crate::Table::lock): 1 tries once without
     /// waiting, more retries once a second, and 0 waits indefinitely for
     /// another process, as casacore's default `AutoLocking` does. While it
     /// waits, this process's id is in the lock file's request list, and the
@@ -137,7 +132,7 @@ impl TableWriteLock {
             Ok(Self {
                 path,
                 lock_file: Some(lock_file),
-                written: None,
+                written: false,
             })
         }
         #[cfg(not(unix))]
@@ -145,7 +140,7 @@ impl TableWriteLock {
             let _ = nattempts;
             Ok(Self {
                 path,
-                written: None,
+                written: false,
             })
         }
     }
@@ -156,27 +151,29 @@ impl TableWriteLock {
         &self.path
     }
 
-    /// Record that `table` is changed under this lock.
+    /// Record that the table is, or may be, changed on disk under this lock.
     ///
-    /// The row count, column count and data managers of `table` as passed
-    /// are published in the sync data when the lock is released. Call it
-    /// again if the shape changes before release.
-    pub fn record_write(&mut self, table: &Table) {
-        self.written = Some(WrittenTable {
-            rows: table.row_count() as u64,
-            columns: table
-                .schema()
-                .map_or(0, |schema| schema.columns().len() as u32),
-            data_managers: table.data_manager_info().len().max(1),
-        });
+    /// Call it before writing, so that a write interrupted part way is still
+    /// announced. Releasing the lock then publishes the change in the sync
+    /// data, describing the table as it is persisted when the lock is
+    /// released (see [`release`](Self::release)); a table this writer never
+    /// reached is left unrecorded and publishes nothing.
+    pub fn record_write(&mut self) {
+        self.written = true;
     }
 
     /// Release the lock, publishing any recorded write in the sync data.
     ///
+    /// The published row, column and data-manager counts are read from the
+    /// table's `table.dat` as persisted, not taken from an in-memory handle:
+    /// casacore takes a reopened table's row count from the sync data and
+    /// asserts that its per-data-manager counters match the table's data
+    /// managers.
+    ///
     /// # Errors
     ///
-    /// [`TableError::LockIo`] when the sync data cannot be written or the
-    /// lock cannot be released.
+    /// [`TableError::LockIo`] when the persisted table cannot be read, the
+    /// sync data cannot be written or the lock cannot be released.
     pub fn release(mut self) -> Result<(), TableError> {
         self.release_now()
     }
@@ -191,20 +188,10 @@ impl TableWriteLock {
                 path: self.path.display().to_string(),
                 message: error.to_string(),
             };
-            let published = match self.written {
-                Some(written) => lock_file
-                    .read_sync_data()
-                    .map(|sync| sync.unwrap_or_else(SyncData::new))
-                    .and_then(|mut sync| {
-                        sync.record_write(
-                            written.rows,
-                            written.columns,
-                            true,
-                            &vec![true; written.data_managers],
-                        );
-                        lock_file.write_sync_data(&sync)
-                    }),
-                None => Ok(()),
+            let published = if self.written {
+                publish_persisted_write(&lock_file, &self.path).map(|_| ())
+            } else {
+                Ok(())
             };
             let released = lock_file.release().map(|_| ());
             published.and(released).map_err(lock_io)
@@ -214,6 +201,56 @@ impl TableWriteLock {
             Ok(())
         }
     }
+}
+
+/// The shape of a table as persisted in its `table.dat`, which the sync data
+/// published for it must describe.
+#[cfg(unix)]
+struct PersistedShape {
+    rows: u64,
+    columns: u32,
+    data_managers: usize,
+}
+
+#[cfg(unix)]
+impl PersistedShape {
+    fn read(table_dir: &Path) -> std::io::Result<Self> {
+        let contents = crate::storage::table_control::read_table_dat(&table_dir.join("table.dat"))
+            .map_err(|error| {
+                std::io::Error::other(format!(
+                    "read the persisted table {} to publish its write: {error}",
+                    table_dir.display()
+                ))
+            })?;
+        Ok(Self {
+            rows: contents.nrrow,
+            columns: contents.table_desc.columns.len() as u32,
+            data_managers: contents.column_set.data_managers.len(),
+        })
+    }
+}
+
+/// Publish a write to the table at `table_dir` in its lock file's sync data,
+/// describing the table as persisted: its row and column counts and one
+/// change counter per data manager, as casacore's `PlainTable::putFile`
+/// publishes them. The counters continue from the sync data the lock file
+/// holds, and every data manager counts as changed. The caller holds the
+/// table's write lock. Returns the published sync data.
+#[cfg(unix)]
+pub(crate) fn publish_persisted_write(
+    lock_file: &LockFile,
+    table_dir: &Path,
+) -> std::io::Result<SyncData> {
+    let shape = PersistedShape::read(table_dir)?;
+    let mut sync = lock_file.read_sync_data()?.unwrap_or_else(SyncData::new);
+    sync.record_write(
+        shape.rows,
+        shape.columns,
+        true,
+        &vec![true; shape.data_managers],
+    );
+    lock_file.write_sync_data(&sync)?;
+    Ok(sync)
 }
 
 /// The modify counter the lock file's sync data publishes, `None` when it has

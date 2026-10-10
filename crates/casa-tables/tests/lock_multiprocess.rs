@@ -643,7 +643,7 @@ fn table_write_lock_survives_other_handles_in_this_process() {
         "another process took the write lock while this process held it"
     );
 
-    lock.record_write(&Table::open(opts.clone()).unwrap());
+    lock.record_write();
     lock.release().unwrap();
     assert_eq!(published_modify_counter(&opts), counter_before + 1);
     assert!(another_process_takes_the_write_lock());
