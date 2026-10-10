@@ -70,3 +70,31 @@ fn cpp_reads_an_unwritten_subtable_as_persisted_after_a_failed_save() {
     assert_eq!(persisted_table_shape(&antenna).rows, rows_before);
     assert_cpp_relocks(&antenna);
 }
+
+/// After a column installation refused before it wrote anything, and after
+/// one that installed a column before the next failed, C++ locks MAIN with
+/// the columns actually on disk: no column that never reached disk is
+/// published.
+#[test]
+fn cpp_relocks_main_after_failed_column_installations() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let columns = persisted_table_shape(&ms_path).columns;
+
+    assert!(
+        common::install_cloned_columns(&ms_path, &[("NEVER_INSTALLED", "MISSING_SOURCE")]).is_err()
+    );
+    assert_eq!(persisted_table_shape(&ms_path).columns, columns);
+    assert_cpp_relocks(&ms_path);
+
+    assert!(
+        common::install_cloned_columns(&ms_path, &[("CLONE_A", "DATA"), ("CLONE_B", "TIME")])
+            .is_err()
+    );
+    assert_eq!(persisted_table_shape(&ms_path).columns, columns + 1);
+    assert_cpp_relocks(&ms_path);
+}

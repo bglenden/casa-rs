@@ -1804,6 +1804,10 @@ impl MeasurementSetWriteSession {
     /// [`MeasurementSetWriteError::WriteLock`] when another handle in this
     /// process holds the lock, when another process wrote MAIN while the
     /// session waited for it, or when the lock cannot be taken.
+    /// [`MeasurementSetWriteError::Install`] when a column to create, or the
+    /// column it clones, is not in MAIN's schema, found before the lock is
+    /// taken so nothing is published, or when an installation fails; MAIN is
+    /// then published as persisted, with the columns installed before it.
     #[doc(hidden)]
     pub fn start_selected_row_mutation(
         measurement_set: &mut MeasurementSet,
@@ -1840,6 +1844,31 @@ impl MeasurementSetWriteSession {
                  MeasurementSet opened without table locking"
                     .to_string(),
             ));
+        }
+        // Check what can be checked before the lock is taken, so that a plan
+        // whose columns cannot be installed publishes nothing.
+        let main = measurement_set.main_table();
+        let in_schema = |name: &str| {
+            main.schema()
+                .is_some_and(|schema| schema.contains_column(name))
+        };
+        for column in &plan.columns {
+            let persisted = main
+                .data_manager_info()
+                .iter()
+                .any(|manager| manager.columns.iter().any(|name| name == &column.name));
+            if column.mode != MeasurementSetColumnWriteMode::Create || persisted {
+                continue;
+            }
+            let missing = std::iter::once(column.name.as_str())
+                .chain(column.create_source_column.as_deref())
+                .find(|name| !in_schema(name));
+            if let Some(missing) = missing {
+                return Err(MeasurementSetWriteError::Install {
+                    column: column.name.clone(),
+                    reason: format!("column \"{missing}\" does not exist in schema"),
+                });
+            }
         }
         let target = canonical_measurement_set_path(path)?;
         let mut write_lock = TableWriteLock::acquire(path, 0).map_err(|source| {

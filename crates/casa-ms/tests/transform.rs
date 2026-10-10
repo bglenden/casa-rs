@@ -668,74 +668,66 @@ fn a_save_that_fails_on_main_publishes_no_unwritten_subtable() {
     );
 }
 
+/// A column installation that cannot start, its clone source missing, is
+/// refused before the write lock is taken: MAIN is unchanged on disk and
+/// nothing is published, so a reader is not told about a column that never
+/// reached disk.
+#[test]
+fn an_installation_refused_before_writing_publishes_nothing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let counter_before = published_modify_counter(&ms_path);
+    let table_dat = std::fs::read(ms_path.join("table.dat")).expect("MAIN table.dat");
+
+    match common::install_cloned_columns(&ms_path, &[("NEVER_INSTALLED", "MISSING_SOURCE")]) {
+        Err(casa_ms::MeasurementSetWriteError::Install { column, reason }) => {
+            assert_eq!(column, "NEVER_INSTALLED");
+            assert!(reason.contains("MISSING_SOURCE"), "{reason}");
+        }
+        other => panic!("the installation must be refused: {other:?}"),
+    }
+
+    assert_eq!(
+        std::fs::read(ms_path.join("table.dat")).expect("MAIN table.dat"),
+        table_dat
+    );
+    assert_eq!(published_modify_counter(&ms_path), counter_before);
+    assert_published_as_persisted(&ms_path);
+}
+
 /// Columns a mutation session creates are persisted one by one. When a
-/// later installation fails, the columns installed before it stay on disk,
-/// and releasing the lock publishes the change, so other processes re-read
-/// MAIN.
+/// later installation fails, the column installed before it stays on disk,
+/// and releasing the lock publishes MAIN as persisted: with that column and
+/// its data manager, without the one that failed.
 #[test]
 fn a_failed_column_installation_publishes_the_columns_installed_before_it() {
     let dir = tempfile::tempdir().expect("tempdir");
     let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
     let counter_before = published_modify_counter(&ms_path);
-    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open MeasurementSet");
-    for name in ["CLONE_A", "CLONE_B"] {
-        measurement_set
-            .main_table_mut()
-            .add_column(
-                casa_tables::ColumnSchema::array_variable(
-                    name,
-                    casa_types::PrimitiveType::Complex32,
-                    Some(2),
-                ),
-                None,
-            )
-            .expect("add the column to the schema");
-    }
-    let create = |name: &str, source: &str| MeasurementSetWriteColumnPlan {
-        name: name.to_string(),
-        bytes_per_row: 1,
-        mode: MeasurementSetColumnWriteMode::Create,
-        storage_manager: MeasurementSetColumnStorage::TiledShape,
-        tile_shape: None,
-        create_source_column: Some(source.to_string()),
-    };
-    let plan = MeasurementSetWritePlan::selected_row_mutation(
-        vec![0],
-        vec![
-            create("CLONE_A", "DATA"),
-            create("CLONE_B", "NO_SUCH_COLUMN"),
-        ],
-        MeasurementSetWriteResources {
-            available_bytes: 2,
-            maximum_live_batches: 1,
-            tiled_column_buffer_bytes: 0,
-        },
-    )
-    .expect("mutation plan");
+    let before = casa_test_support::table_sync::persisted_table_shape(&ms_path);
 
-    let started =
-        MeasurementSetWriteSession::start_selected_row_mutation(&mut measurement_set, plan);
-    match started {
+    // TIME exists but is not in a tiled data manager, which only the
+    // installation itself finds out.
+    match common::install_cloned_columns(&ms_path, &[("CLONE_A", "DATA"), ("CLONE_B", "TIME")]) {
         Err(casa_ms::MeasurementSetWriteError::Install { column, .. }) => {
             assert_eq!(column, "CLONE_B");
         }
-        other => panic!("the second installation must fail: {:?}", other.err()),
+        other => panic!("the second installation must fail: {other:?}"),
     }
-    drop(measurement_set);
 
+    let after = casa_test_support::table_sync::persisted_table_shape(&ms_path);
+    assert_eq!(after.columns, before.columns + 1, "CLONE_A is on disk");
+    assert_eq!(after.data_managers, before.data_managers + 1);
     let reopened = MeasurementSet::open(&ms_path).expect("reopen MeasurementSet");
-    assert!(
-        reopened
-            .main_table()
-            .data_manager_info()
-            .iter()
-            .any(|manager| manager.columns.iter().any(|name| name == "CLONE_A")),
-        "the first installed column is on disk"
-    );
+    let schema = reopened.main_table().schema().expect("MAIN schema");
+    assert!(schema.contains_column("CLONE_A"));
+    assert!(!schema.contains_column("CLONE_B"));
+    drop(reopened);
     assert!(
         published_modify_counter(&ms_path) > counter_before,
         "the partial installation was not published"
     );
+    assert_published_as_persisted(&ms_path);
 }
 
 /// A mutation session writes only the MeasurementSet it locked: a batch
