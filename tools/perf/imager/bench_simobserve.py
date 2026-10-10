@@ -65,7 +65,7 @@ def main() -> None:
         "--casa-python",
         default=os.environ.get(
             "CASA_RS_CASA_PYTHON",
-            "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python",
+            "/Applications/CASA.app/Contents/MacOS/python3",
         ),
     )
     parser.add_argument("--repeats", type=int, default=1)

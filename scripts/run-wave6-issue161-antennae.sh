@@ -3,7 +3,7 @@ set -euo pipefail
 
 outdir="${1:-target/wave6-issue161-antennae}"
 tutorial_root="${CASA_RS_TUTORIAL_DATA_ROOT:-$HOME/SoftwareProjects/casa-tutorial-data}"
-casa_py="${CASA_RS_CASA_PYTHON:-$HOME/SoftwareProjects/casa-build/venv/bin/python}"
+casa_py="${CASA_RS_CASA_PYTHON:-/Applications/CASA.app/Contents/MacOS/python3}"
 fetch="${CASA_RS_FETCH_TUTORIAL_DATA:-0}"
 skip_casa="${CASA_RS_WAVE6_ISSUE161_SKIP_CASA:-0}"
 skip_imaging="${CASA_RS_WAVE6_ISSUE161_SKIP_IMAGING:-0}"

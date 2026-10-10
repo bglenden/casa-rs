@@ -3,7 +3,7 @@ set -euo pipefail
 
 outdir="${1:-target/wave6-issue53-mosaic-panels}"
 tutorial_root="${CASA_RS_TUTORIAL_DATA_ROOT:-$HOME/SoftwareProjects/casa-tutorial-data}"
-casa_py="${CASA_RS_CASA_PYTHON:-$HOME/SoftwareProjects/casa-build/venv/bin/python}"
+casa_py="${CASA_RS_CASA_PYTHON:-/Applications/CASA.app/Contents/MacOS/python3}"
 fetch="${CASA_RS_FETCH_TUTORIAL_DATA:-0}"
 dataset="${CASA_RS_WAVE6_DATASET:-all}"
 skip_casa="${CASA_RS_WAVE6_SKIP_CASA:-0}"
