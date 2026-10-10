@@ -96,17 +96,6 @@ mod tests {
         assert!(save_continuum_residual.help.contains("in place"));
         assert!(schema.render_help().contains("--save-continuum-residual"));
 
-        let startmodel = schema
-            .arguments
-            .iter()
-            .find(|argument| argument.id == "startmodel")
-            .expect("startmodel argument");
-        assert_eq!(startmodel.value_kind, UiValueKind::Path);
-        let UiArgumentParser::Option { flags, .. } = &startmodel.parser else {
-            panic!("startmodel should use an option parser");
-        };
-        assert!(flags.contains(&"--startmodel".to_string()));
-
         let outlierfile = schema
             .arguments
             .iter()
@@ -118,20 +107,6 @@ mod tests {
         };
         assert!(flags.contains(&"--outlierfile".to_string()));
 
-        let standard_mfs_acceleration = schema
-            .arguments
-            .iter()
-            .find(|argument| argument.id == "standard_mfs_acceleration")
-            .expect("standard_mfs_acceleration argument");
-        assert_eq!(standard_mfs_acceleration.default.as_deref(), Some("cpu"));
-        assert!(standard_mfs_acceleration.advanced);
-        let UiArgumentParser::Option { flags, choices, .. } = &standard_mfs_acceleration.parser
-        else {
-            panic!("standard_mfs_acceleration should use an option parser");
-        };
-        assert!(flags.contains(&"--standard-mfs-acceleration".to_string()));
-        assert!(!choices.contains(&"metal".to_string()));
-        assert!(choices.contains(&"multi-cpu".to_string()));
         let backend = schema
             .arguments
             .iter()
@@ -189,14 +164,9 @@ mod tests {
         assert_eq!(default_for("pblimit"), "0.2");
         assert_eq!(default_for("minor_cycle_length"), "1000");
         assert_eq!(default_for("minpsffraction"), "0.05");
-        assert_eq!(default_for("parallel"), "none");
-        assert_eq!(default_for("imaging_memory_target_mb"), "none");
-        assert_eq!(default_for("standard_mfs_acceleration"), "cpu");
-        for id in [
-            "parallel",
-            "imaging_memory_target_mb",
-            "standard_mfs_acceleration",
-        ] {
+        assert_eq!(default_for("parallel"), "false");
+        assert_eq!(default_for("gridprecision"), "auto");
+        for id in ["parallel", "gridprecision"] {
             let argument = schema
                 .arguments
                 .iter()
@@ -204,21 +174,17 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing {id}"));
             assert!(argument.advanced, "{id} should remain an advanced control");
         }
-        let acceleration = schema
+        let precision = schema
             .arguments
             .iter()
-            .find(|argument| argument.id == "standard_mfs_acceleration")
-            .expect("standard_mfs_acceleration");
-        let UiArgumentParser::Option { choices, .. } = &acceleration.parser else {
-            panic!("standard_mfs_acceleration should use an option parser");
+            .find(|argument| argument.id == "gridprecision")
+            .expect("gridprecision");
+        let UiArgumentParser::Option { choices, .. } = &precision.parser else {
+            panic!("gridprecision should use an option parser");
         };
         assert_eq!(
             choices,
-            &vec![
-                "auto".to_string(),
-                "cpu".to_string(),
-                "multi-cpu".to_string(),
-            ]
+            &vec!["auto".to_string(), "f32".to_string(), "f64".to_string()]
         );
         assert!(
             schema

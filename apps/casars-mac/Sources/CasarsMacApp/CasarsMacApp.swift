@@ -668,7 +668,6 @@ struct CasarsMacApp: App {
             "--deconvolver",
             "--weighting",
             "--gridder",
-            "--standard-mfs-acceleration",
             "--interpolation",
             "--cube-interp",
             "--perchanweightdensity",
@@ -801,13 +800,6 @@ struct CasarsMacApp: App {
         }
         if let gridder = argumentValue(after: "--gridder", in: arguments) {
             store.setGenericTaskValue(taskID: "imager", argumentID: "gridder", value: gridder)
-        }
-        if let standardMFSAcceleration = argumentValue(after: "--standard-mfs-acceleration", in: arguments) {
-            store.setGenericTaskValue(
-                taskID: "imager",
-                argumentID: "standard_mfs_acceleration",
-                value: standardMFSAcceleration
-            )
         }
         if let interpolation = argumentValue(after: "--interpolation", in: arguments)
             ?? argumentValue(after: "--cube-interp", in: arguments) {

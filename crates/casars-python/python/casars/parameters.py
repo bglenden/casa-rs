@@ -60,14 +60,6 @@ class ParameterDiagnostic:
 
 
 @dataclass(frozen=True, slots=True)
-class ProviderUnsupportedReason:
-    """Exact typed reason owned by the canonical task provider."""
-
-    kind: str
-    id: str
-
-
-@dataclass(frozen=True, slots=True)
 class ProviderInvocation:
     """Versioned canonical provider request projected by Rust."""
 
@@ -75,7 +67,6 @@ class ProviderInvocation:
     protocol_version: int | None
     args: tuple[str, ...]
     stdin: str | None
-    unsupported_reasons: tuple[ProviderUnsupportedReason, ...]
 
 
 def _frontend() -> Any:
@@ -501,10 +492,6 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
             protocol_version=projected.protocol_version,
             args=tuple(projected.args),
             stdin=projected.stdin,
-            unsupported_reasons=tuple(
-                ProviderUnsupportedReason(kind=reason.kind, id=reason.id)
-                for reason in projected.unsupported_reasons
-            ),
         )
 
     def _resolved_values(self) -> dict[str, Any]:

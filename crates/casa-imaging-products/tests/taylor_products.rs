@@ -13,20 +13,19 @@ use common::{GeneratedMember, GeneratedProducts, MemoryProductOutput, full_windo
 use casa_imaging_model::{
     AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
     DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
-    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
-    InstrumentResponse, MeasurementEquationContract, ModelBounds, ModelCell, ModelColumnWrite,
-    ModelDeltaTerm, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelStateIdentity, ModelValue, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, ProblemInputIdentities,
-    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, ProductRole,
-    ProductSchema, ProductTerm, ProductUnit, ProductValidityPolicies, ProductValidityRule,
-    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
-    ScientificContract, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw,
-    VisibilityInnerProduct, WeightDensityScope, WeightingContract, WeightingScheme, compile,
-    compile_observation,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
+    MeasurementEquationContract, ModelBounds, ModelCell, ModelColumnWrite, ModelDeltaTerm,
+    ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity,
+    ModelValue, NumericPrecision, NumericalStage, NumericsContract, ObservationSnapshotInput,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
+    PolarizationCoordinate, ProblemInput, ProblemInputIdentities, ProblemSpecification,
+    ProductKind, ProductNormalization, ProductRequirements, ProductRole, ProductSchema,
+    ProductTerm, ProductUnit, ProductValidityPolicies, ProductValidityRule, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_products::{
     AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
@@ -135,7 +134,7 @@ fn taylor_problem_with_fraction(
         ModelStateIdentity::Empty,
     ))
     .expect("observation snapshot");
-    compile(ImagingRequest::new(
+    compile(ProblemInput::new(
         ProblemSpecification::new(
             ScientificContract::new(
                 SpectralContract::new(

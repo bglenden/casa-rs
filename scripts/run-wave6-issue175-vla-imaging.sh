@@ -93,7 +93,7 @@ run_rust_smoke() {
     --nterms 2 \
     --scales 0,6,10,30,60 \
     --smallscalebias 0.9 \
-    --wterm wproject \
+    --gridder wproject \
     --niter 1 \
     --threshold-jy 0.00015 \
     --weighting briggs \
@@ -243,9 +243,9 @@ run_rust_official() {
   "$repo_root/target/release/casars-imager" --ms "$ms" --imagename "$outdir/rust/SNR_G55_10s.uniform" --imsize 540 --cell-arcsec 8 --pblimit -0.01 --niter 1000 --threshold-jy 0.00015 --weighting uniform --savemodel modelcolumn
   "$repo_root/target/release/casars-imager" --ms "$ms" --imagename "$outdir/rust/SNR_G55_10s.briggs" --imsize 540 --cell-arcsec 8 --pblimit -0.01 --niter 1000 --threshold-jy 0.00015 --weighting briggs --robust 0 --savemodel modelcolumn
   "$repo_root/target/release/casars-imager" --ms "$ms" --imagename "$outdir/rust/SNR_G55_10s.MultiScale" --imsize 1280 --cell-arcsec 8 --pblimit -0.01 --deconvolver multiscale --scales 0,6,10,30,60 --smallscalebias 0.9 --niter 1000 --threshold-jy 0.00012 --weighting briggs --robust 0 --savemodel modelcolumn --pbcor
-  "$repo_root/target/release/casars-imager" --ms "$ms" --imagename "$outdir/rust/SNR_G55_10s.wProj" --imsize 1280 --cell-arcsec 8 --pblimit -0.01 --wterm wproject --deconvolver multiscale --scales 0,6,10,30,60 --smallscalebias 0.9 --niter 1000 --threshold-jy 0.00015 --weighting briggs --robust 0 --savemodel modelcolumn
+  "$repo_root/target/release/casars-imager" --ms "$ms" --imagename "$outdir/rust/SNR_G55_10s.wProj" --imsize 1280 --cell-arcsec 8 --pblimit -0.01 --gridder wproject --deconvolver multiscale --scales 0,6,10,30,60 --smallscalebias 0.9 --niter 1000 --threshold-jy 0.00015 --weighting briggs --robust 0 --savemodel modelcolumn
   "$repo_root/target/release/casars-imager" --ms "$ms" --imagename "$outdir/rust/SNR_G55_10s.ms.MTMFS" --imsize 1280 --cell-arcsec 8 --pblimit -0.01 --deconvolver mtmfs --nterms 2 --scales 0,6,10,30,60 --smallscalebias 0.9 --niter 1000 --threshold-jy 0.00015 --weighting briggs --robust 0 --savemodel modelcolumn
-  "$repo_root/target/release/casars-imager" --ms "$ms" --imagename "$outdir/rust/SNR_G55_10s.ms.MTMFS.wProj" --imsize 1280 --cell-arcsec 8 --pblimit -0.01 --wterm wproject --deconvolver mtmfs --nterms 2 --scales 0,6,10,30,60 --smallscalebias 0.9 --niter 1000 --threshold-jy 0.00015 --weighting briggs --robust 0 --savemodel modelcolumn --pbcor
+  "$repo_root/target/release/casars-imager" --ms "$ms" --imagename "$outdir/rust/SNR_G55_10s.ms.MTMFS.wProj" --imsize 1280 --cell-arcsec 8 --pblimit -0.01 --gridder wproject --deconvolver mtmfs --nterms 2 --scales 0,6,10,30,60 --smallscalebias 0.9 --niter 1000 --threshold-jy 0.00015 --weighting briggs --robust 0 --savemodel modelcolumn --pbcor
   "$repo_root/target/release/casars-imager" --ms "$ms" --imagename "$outdir/rust/SNR.MS.MFS-Main" --outlierfile "$outdir/outliers.txt" --imsize 640 --cell-arcsec 8 --pblimit -0.01 --deconvolver multiscale --scales 0,6,10,30,60 --smallscalebias 0.9 --niter 1000 --threshold-jy 0.00015 --weighting briggs --robust 0 --savemodel modelcolumn
   "$repo_root/target/release/immath" --imagename "$outdir/rust/SNR_G55_10s.MultiScale.image" --imagename "$outdir/rust/SNR_G55_10s.MultiScale.pb" --expr "IM0 / IM1" --outfile "$outdir/rust/SNR_G55_10s.MS.pbcorr.image" --overwrite
   "$repo_root/target/release/immath" --imagename "$outdir/rust/SNR_G55_10s.ms.MTMFS.wProj.image.tt0" --expr "1.222e6*IM0/1.579^2/(29.30*29.03)" --outfile "$outdir/rust/SNR_G55_10s.ms.MTMFS.wProj.image.tt0-Tb" --overwrite

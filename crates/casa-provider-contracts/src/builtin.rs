@@ -355,8 +355,8 @@ mod tests {
     fn imager_wide_field_controls_share_one_catalog_owned_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 19);
-        assert_eq!(surface.bindings().len(), 92);
+        assert_eq!(surface.contract_version(), 20);
+        assert_eq!(surface.bindings().len(), 77);
         for binding in surface.bindings() {
             let concept = catalog
                 .catalog
@@ -380,32 +380,12 @@ mod tests {
                 binding.name
             );
         }
-        let memory_target = catalog
-            .catalog
-            .concepts
-            .iter()
-            .find(|concept| concept.id.as_str() == "parameter.imaging_memory_target_mb")
-            .expect("imaging memory target concept");
-        assert_eq!(memory_target.semantic_revision, SemanticRevision(2));
-
-        let awproject = Predicate::Equals {
+        let gridder = |name: &str| Predicate::Equals {
             parameter: "gridder".to_string(),
-            value: ParameterValue::String("awproject".to_string()),
+            value: ParameterValue::String(name.to_string()),
         };
-        for name in [
-            "aw_cf_source",
-            "cf_resident_mb",
-            "psfphasecenter",
-            "vptable",
-            "aterm",
-            "psterm",
-            "wbawp",
-            "conjbeams",
-            "computepastep",
-            "rotatepastep",
-            "pointingoffsetsigdev",
-            "mosweight",
-        ] {
+        let awproject = gridder("awproject");
+        for name in ["aw_cf_source", "cf_resident_mb", "pointingoffsetsigdev"] {
             let binding = surface
                 .bindings()
                 .iter()
@@ -421,74 +401,42 @@ mod tests {
             assert!(binding.projections.python.is_some(), "{name}");
         }
 
-        let normtype = surface
-            .bindings()
-            .iter()
-            .find(|binding| binding.name == "normtype")
-            .expect("missing imager normalization binding");
-        assert_eq!(
-            normtype.active_when,
-            Predicate::Any {
-                predicates: vec![
-                    awproject.clone(),
-                    Predicate::Equals {
-                        parameter: "gridder".to_string(),
-                        value: ParameterValue::String("mosaic".to_string()),
-                    },
-                ],
-            }
-        );
+        // Parameters read by some gridders only are active for those.
+        for (name, gridders) in [
+            ("normtype", ["awproject", "mosaic"]),
+            ("usepointing", ["awproject", "mosaic"]),
+            ("wprojplanes", ["awproject", "wproject"]),
+        ] {
+            let binding = surface
+                .bindings()
+                .iter()
+                .find(|binding| binding.name == name)
+                .unwrap_or_else(|| panic!("missing imager binding {name}"));
+            assert_eq!(
+                binding.active_when,
+                Predicate::Any {
+                    predicates: gridders.map(gridder).to_vec(),
+                },
+                "{name}"
+            );
+        }
 
-        let facet_concepts = catalog
-            .catalog
-            .concepts
-            .iter()
-            .filter(|concept| concept.id.as_str() == "parameter.facets")
-            .collect::<Vec<_>>();
-        assert_eq!(facet_concepts.len(), 1, "one canonical facets concept");
-        assert_eq!(facet_concepts[0].semantic_revision, SemanticRevision(2));
-        let facet_bindings = surface
+        let precision = surface
             .bindings()
             .iter()
-            .filter(|binding| binding.name == "facets")
-            .collect::<Vec<_>>();
-        assert_eq!(facet_bindings.len(), 1, "one canonical facets binding");
-        let facets = facet_bindings[0];
+            .find(|binding| binding.name == "gridprecision")
+            .expect("missing imager grid precision binding");
         assert_eq!(
-            facets.active_when,
-            Predicate::Any {
-                predicates: vec![
-                    Predicate::Equals {
-                        parameter: "gridder".to_string(),
-                        value: ParameterValue::String("widefield".to_string()),
-                    },
-                    awproject.clone(),
-                ],
-            }
-        );
-        assert_eq!(facets.concept.semantic_revision, SemanticRevision(2));
-        assert_eq!(
-            facets.default,
+            precision.default,
             crate::DefaultSpec::Literal {
-                value: ParameterValue::Integer(1),
+                value: ParameterValue::String("auto".to_string()),
             }
         );
-        assert_eq!(facets.projections.presentation.group, "Advanced Wide-Field");
-        assert!(facets.projections.presentation.advanced);
-        assert!(facets.projections.cli.is_some());
-        assert!(facets.projections.python.is_some());
-
-        let usepointing = surface
-            .bindings()
-            .iter()
-            .find(|binding| binding.name == "usepointing")
-            .expect("missing imager POINTING binding");
-        assert_eq!(usepointing.active_when, Predicate::Always);
-        assert_eq!(
-            usepointing.projections.presentation.group,
-            "Advanced Wide-Field"
-        );
-        assert!(usepointing.projections.presentation.advanced);
+        // A provider's request fields are its parameters' names.
+        for binding in surface.bindings() {
+            let provider = binding.projections.provider.as_ref().expect("provider");
+            assert_eq!(provider.field, binding.name);
+        }
 
         for name in ["uvrange", "intent", "stokes"] {
             assert!(
@@ -517,19 +465,6 @@ mod tests {
             surface.migrations().is_empty(),
             "current imager profiles retain no migration reader"
         );
-
-        let memory_target = surface
-            .bindings()
-            .iter()
-            .find(|binding| binding.name == "imaging_memory_target_mb")
-            .expect("imaging memory target binding");
-        assert_eq!(
-            memory_target.projections.presentation.group,
-            "Execution Resources"
-        );
-        assert!(memory_target.projections.presentation.advanced);
-        assert_eq!(memory_target.concept.semantic_revision, SemanticRevision(2));
-        assert_eq!(memory_target.required_when, Predicate::Never);
     }
 
     #[test]

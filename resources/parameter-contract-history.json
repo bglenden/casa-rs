@@ -97,6 +97,11 @@
       "fingerprint": "5f90dd0aaaba4e5a2505eb2ee8596a904a0b1dfe8151f56726136ab41257208f"
     },
     {
+      "id": "image.deconvolution.threshold",
+      "semantic_revision": 2,
+      "fingerprint": "6c22aaf02bcc74df3a0977cb0263b0df0a2cbdef1656afd3b5e8e32787cdfa20"
+    },
+    {
       "id": "image.geometry.cell",
       "semantic_revision": 1,
       "fingerprint": "56df2b0860599c0e9ef0bc63ef989af5478e3f6900a287d24f28fc855df8f06f"
@@ -140,6 +145,11 @@
       "id": "imager.width",
       "semantic_revision": 1,
       "fingerprint": "84676d8feacadaeb2c355171adf7bd93506ce07c4e4b00df507fbb0d72d1d14a"
+    },
+    {
+      "id": "imager.width",
+      "semantic_revision": 2,
+      "fingerprint": "b8c09cc8e914304eef1b8163c28a9b44a8ffcf3c234c21d4996e801c2f5689d3"
     },
     {
       "id": "imexplore.image",
@@ -912,6 +922,16 @@
       "fingerprint": "aaa955ce5ac0d0143b480c6a4ca0a5c243bc657f1fe1c9c74bda71cc667bec21"
     },
     {
+      "id": "parameter.gridder",
+      "semantic_revision": 2,
+      "fingerprint": "7194d8fefcbdfb893a08845833f1eb09ea3043d679a377f2b7793c65f359986b"
+    },
+    {
+      "id": "parameter.gridprecision",
+      "semantic_revision": 1,
+      "fingerprint": "e91ddb3dcba758afcaf3a4a01f53b28da15032b1639babe48df9af959964557f"
+    },
+    {
       "id": "parameter.gridrows",
       "semantic_revision": 1,
       "fingerprint": "43dde6a0bf80e27769c55098b14003e66e3369d7c1e3546042c32f58bfed22b5"
@@ -1317,6 +1337,11 @@
       "fingerprint": "ea4c3eecbbfea431f2b4f2656baaad347c73d2fd6e31970d6fe483bdcf0cfeb8"
     },
     {
+      "id": "parameter.normtype",
+      "semantic_revision": 2,
+      "fingerprint": "3b7915f0702bb2f2f59006ceb218b05d811ffdb183fad6915c22c076b50117ec"
+    },
+    {
       "id": "parameter.nrow",
       "semantic_revision": 1,
       "fingerprint": "558105d835b6806e9eb840fc92b1b681d34d167fac9d02bbb3df00bf21fcc7c0"
@@ -1377,6 +1402,11 @@
       "fingerprint": "d36a57fbcdbb0f60ed0fe3183d9b359f45bd139939877b25ce660648db0b9a46"
     },
     {
+      "id": "parameter.outframe",
+      "semantic_revision": 2,
+      "fingerprint": "839bc31994bc3c4739e05e62fb44f951c41c86cc8e6927f2428ca9de8d20a6ea"
+    },
+    {
       "id": "parameter.outlierfile",
       "semantic_revision": 1,
       "fingerprint": "8c1a9c55bf631063e377acfa2664986c494036255de62ddc7b3bc8030d0a7d52"
@@ -1400,6 +1430,11 @@
       "id": "parameter.parallel",
       "semantic_revision": 1,
       "fingerprint": "a0fa47a175aec2943e0fec7058716f4cc8254170791db06195a8ffeba0fb4d47"
+    },
+    {
+      "id": "parameter.parallel",
+      "semantic_revision": 2,
+      "fingerprint": "97959696e1bfeee2788beb741c758d61c99dd76ffe4d482bea459e3d1a4f96a2"
     },
     {
       "id": "parameter.parameter",
@@ -1792,6 +1827,11 @@
       "fingerprint": "69d3ba73a4a834ac3b12747623be9635076213a4cd8e0528b1d82919f078c977"
     },
     {
+      "id": "parameter.specmode",
+      "semantic_revision": 3,
+      "fingerprint": "04042fe20c248eb64097b759ae42cb95bcc98dd93b82a87dd9d4c2676c239fc4"
+    },
+    {
       "id": "parameter.spwlist",
       "semantic_revision": 1,
       "fingerprint": "833ef7236c8525d4eaecc4af0d90553add82c846f941e39477bc8bef7093d3be"
@@ -2000,6 +2040,11 @@
       "id": "parameter.veltype",
       "semantic_revision": 1,
       "fingerprint": "20d37c607245b229c3a0ea68e7aa97bd9c345ddb13da82124b94a701a7acc524"
+    },
+    {
+      "id": "parameter.veltype",
+      "semantic_revision": 2,
+      "fingerprint": "6ad2edc3393831d9d6956e33846c9b02c703d24a76c37cb3e1b44e61b5c87531"
     },
     {
       "id": "parameter.verbose",
@@ -2492,6 +2537,11 @@
       "id": "imager",
       "contract_version": 19,
       "fingerprint": "805c90031a278263549c5e3e1cf9b797b9e5f7d181270af4d4d314cbb820069c"
+    },
+    {
+      "id": "imager",
+      "contract_version": 20,
+      "fingerprint": "4c5a3474c43cc5510166f414460fc60d5cdd41b514fb8827b566a0c193da0d09"
     },
     {
       "id": "imcollapse",

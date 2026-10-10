@@ -82,6 +82,60 @@ pub enum ParameterValue {
     Table(BTreeMap<String, ParameterValue>),
 }
 
+impl ParameterValue {
+    /// The value as plain JSON, as requests and profiles spell it: `"none"`,
+    /// `512`, `["0.5arcsec", "0.5arcsec"]`. A non-finite float, which
+    /// normalization never admits, becomes `null`.
+    #[must_use]
+    pub fn to_plain_json(&self) -> serde_json::Value {
+        use serde_json::Value;
+        match self {
+            Self::Bool(value) => Value::Bool(*value),
+            Self::Integer(value) => Value::from(*value),
+            Self::Float(value) => {
+                serde_json::Number::from_f64(*value).map_or(Value::Null, Value::Number)
+            }
+            Self::String(value) => Value::String(value.clone()),
+            Self::Array(values) => Value::Array(values.iter().map(Self::to_plain_json).collect()),
+            Self::Table(values) => Value::Object(
+                values
+                    .iter()
+                    .map(|(name, value)| (name.clone(), value.to_plain_json()))
+                    .collect(),
+            ),
+        }
+    }
+
+    /// A plain JSON value as a typed one: integers stay integers, other
+    /// numbers become floats, objects tables. `null`, here or nested, has
+    /// no typed value.
+    #[must_use]
+    pub fn from_plain_json(value: &serde_json::Value) -> Option<Self> {
+        use serde_json::Value;
+        Some(match value {
+            Value::Null => return None,
+            Value::Bool(value) => Self::Bool(*value),
+            Value::Number(number) => match number.as_i64() {
+                Some(value) => Self::Integer(value),
+                None => Self::Float(number.as_f64()?),
+            },
+            Value::String(value) => Self::String(value.clone()),
+            Value::Array(values) => Self::Array(
+                values
+                    .iter()
+                    .map(Self::from_plain_json)
+                    .collect::<Option<_>>()?,
+            ),
+            Value::Object(values) => Self::Table(
+                values
+                    .iter()
+                    .map(|(name, value)| Some((name.clone(), Self::from_plain_json(value)?)))
+                    .collect::<Option<_>>()?,
+            ),
+        })
+    }
+}
+
 impl From<bool> for ParameterValue {
     fn from(value: bool) -> Self {
         Self::Bool(value)

@@ -58,8 +58,8 @@ pub(crate) fn selected_correlations(
 
 /// The grid basis of the compiled reconstruction basis. A Taylor basis
 /// expands about the image's reference frequency. Taylor-via-channel-major
-/// (CASA `mvc`) always carries a primary-beam response and waits for the
-/// primary-beam operators (IF-3).
+/// (CASA `mvc`) has no pass implementation and no request names it; #656
+/// removes the basis.
 pub(crate) fn basis(problem: &CompiledProblem) -> Result<Basis, ImagingError> {
     Ok(match problem.reconstruction().basis() {
         ReconstructionBasis::Constant => Basis::Constant,
@@ -72,7 +72,7 @@ pub(crate) fn basis(problem: &CompiledProblem) -> Result<Basis, ImagingError> {
         },
         ReconstructionBasis::TaylorViaChannelMajor { .. } => {
             return Err(ImagingError::Unsupported {
-                reason: "Taylor terms via channel cubes need the primary-beam operators",
+                reason: "Taylor terms via channel cubes have no pass implementation",
             });
         }
     })
@@ -91,16 +91,30 @@ pub(crate) fn reference_frequency_hz(problem: &CompiledProblem) -> Result<f64, I
     }
 }
 
-/// Grid precision of plan decision D2 (`gridprecision = auto`): f32 on
-/// Metal, which accumulates in `f32` for every basis; on the CPU f64 for
-/// the constant and Taylor bases and f32 for channel-local cubes.
-pub(crate) const fn precision(basis: Basis, backend: BackendChoice) -> GridPrecision {
+/// The grid precision: the requested one, else plan decision D2's rule
+/// (`gridprecision = auto`): f32 on Metal, which accumulates in `f32` for
+/// every basis; on the CPU f64 for the constant and Taylor bases and f32
+/// for channel-local cubes.
+pub(crate) const fn precision(
+    basis: Basis,
+    backend: BackendChoice,
+    requested: Option<GridPrecision>,
+) -> GridPrecision {
+    if let Some(precision) = requested {
+        return precision;
+    }
     match (backend, basis) {
         (BackendChoice::Cpu, Basis::Constant | Basis::Taylor { .. }) => GridPrecision::F64,
         (BackendChoice::Cpu, Basis::ChannelLocal { .. }) | (BackendChoice::Metal, _) => {
             GridPrecision::F32
         }
     }
+}
+
+/// Whether the problem grids with the standard kernel set, the one the
+/// Metal backend implements.
+pub(crate) fn standard_kernel_set(problem: &CompiledProblem) -> bool {
+    kernel_set_kind(problem) == KernelSetKind::Standard
 }
 
 /// Which kernel set the compiled problem's measurement equation names.
@@ -135,27 +149,21 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
 /// The operator of `domain` with the kernel set the problem names: the
 /// standard spheroidal set, W-projection planes sized by the W contract,
 /// the mosaic primary beams of the selected windows, or the AW catalog of
-/// `aw_catalog`, in the precision `backend` grids at. The mosaic set takes
-/// one dish per selected aperture class in `dish_classes`
-/// (`HetArrayConvFunc::findAntennaSizes`), the order the rows' antenna
-/// types index. Mosaic and AW grid without padding (CASA `MosaicFT`,
-/// `AWProjectFT`); the others on CASA's composite-padded grid. The Metal
-/// backend grids the standard set until its W, mosaic and AW rows land at
-/// gate R2 (#653).
+/// `aw_catalog`, in the requested precision or the one `backend` grids at.
+/// The mosaic set takes one dish per selected aperture class in
+/// `dish_classes` (`HetArrayConvFunc::findAntennaSizes`), the order the
+/// rows' antenna types index. Mosaic and AW grid without padding (CASA
+/// `MosaicFT`, `AWProjectFT`); the others on CASA's composite-padded grid.
 pub(crate) fn domain_operator(
     problem: &CompiledProblem,
     domain: &CompiledImageDomain,
     correlations: &[CorrelationType],
     backend: BackendChoice,
+    requested_precision: Option<GridPrecision>,
     aw_catalog: Option<&AwCatalogDeployment>,
     dish_classes: &[AntennaResponseClass],
 ) -> Result<DomainOperator, ImagingError> {
     let kind = kernel_set_kind(problem);
-    if backend == BackendChoice::Metal && kind != KernelSetKind::Standard {
-        return Err(ImagingError::Unsupported {
-            reason: "the Metal backend grids the standard kernel set; W, mosaic and AW wait for R2",
-        });
-    }
     let padding = match kind {
         KernelSetKind::Standard | KernelSetKind::WPlanes => GridPadding::CasaComposite,
         KernelSetKind::Mosaic | KernelSetKind::Aw => GridPadding::None,
@@ -245,7 +253,7 @@ pub(crate) fn domain_operator(
             basis,
             polarization,
             cf,
-            precision(basis, backend),
+            precision(basis, backend, requested_precision),
         ),
         resampler,
         weight_image: matches!(kind, KernelSetKind::Mosaic | KernelSetKind::Aw),

@@ -1,297 +1,119 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Installed imaging implementation availability at the application boundary.
+//! The one availability gate (plan section 5.8): what the installed
+//! implementation cannot run, checked once on the compiled problem, the
+//! run's backend and its host, before any phase.
 
 use std::{error::Error, fmt};
 
 use casa_imaging_model::{
-    CompiledProblem, ImageDomainRole, PolarizationCoordinate, ProductKind, ReconstructionBasis,
-    RequiredCapability, SpectralKernel,
+    CompiledProblem, PolarizationCoordinate, ProductKind, ReconstructionBasis, RequiredCapability,
 };
+use casa_imaging_operator::GridPrecision;
+use casa_imaging_runtime::HostResources;
+use casa_imaging_runtime::pass::BackendChoice;
 
-/// A task-surface requirement not represented by [`CompiledProblem`].
+/// One reason the installed implementation cannot run a problem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum TaskRequirement {
-    /// Spectral-cube task surface.
-    SpectralCube,
-    /// Cubedata task surface.
-    SpectralCubedata,
-    /// Moving-source REST-frame cube task surface.
-    SpectralCubeSource,
-    /// Multi-term continuum reconstruction through cube major cycles.
-    SpectralMtmfsViaCube,
-    /// Mosaic gridder request.
-    MosaicGridder,
-    /// W-projection gridder request.
-    WProjection,
-    /// A/W-projection gridder request.
-    AwProjection,
-    /// Auto-multithreshold masking request.
-    Automasking,
-    /// Standalone CLEAN-mask product request.
-    MaskProduct,
-    /// Initial model supplied by the caller.
-    StartModel,
-    /// `MODEL_DATA` persistence request.
-    ModelColumnWrite,
-    /// Serial CPU execution selected explicitly.
-    SerialCpu,
-    /// Automatic execution selection.
-    ExecutionAuto,
-    /// Fixed-tile CPU execution override.
-    FixedTileCpu,
-    /// Gridding on the Metal backend (`backend = metal`); macOS only.
-    MetalGridder,
-    /// Non-Stokes-I or raw-correlation selection.
-    PolarizationSelection,
-    /// UV tapering.
-    UvTaper,
-    /// Per-channel weighting-density control.
-    PerChannelWeightDensity,
-    /// Explicit W-projection plane budget.
-    WProjectionPlanes,
-    /// Explicit source-stream memory target.
-    MemoryTarget,
-}
-
-impl TaskRequirement {
-    /// Complete stable task-only capability catalog for the current application
-    /// contract.
-    pub const ALL: [Self; 20] = [
-        Self::SpectralCube,
-        Self::SpectralCubedata,
-        Self::SpectralCubeSource,
-        Self::SpectralMtmfsViaCube,
-        Self::MosaicGridder,
-        Self::WProjection,
-        Self::AwProjection,
-        Self::Automasking,
-        Self::MaskProduct,
-        Self::StartModel,
-        Self::ModelColumnWrite,
-        Self::SerialCpu,
-        Self::ExecutionAuto,
-        Self::FixedTileCpu,
-        Self::MetalGridder,
-        Self::PolarizationSelection,
-        Self::UvTaper,
-        Self::PerChannelWeightDensity,
-        Self::WProjectionPlanes,
-        Self::MemoryTarget,
-    ];
-
-    /// Return the stable application-catalog identity.
-    #[must_use]
-    pub const fn catalog_id(self) -> &'static str {
-        match self {
-            Self::SpectralCube => "spectral_cube",
-            Self::SpectralCubedata => "spectral_cubedata",
-            Self::SpectralCubeSource => "spectral_cubesource",
-            Self::SpectralMtmfsViaCube => "spectral_mtmfs_via_cube",
-            Self::MosaicGridder => "mosaic_gridder",
-            Self::WProjection => "w_projection",
-            Self::AwProjection => "aw_projection",
-            Self::Automasking => "automasking",
-            Self::MaskProduct => "mask_product",
-            Self::StartModel => "start_model",
-            Self::ModelColumnWrite => "model_column_write",
-            Self::SerialCpu => "serial_cpu",
-            Self::ExecutionAuto => "execution_auto",
-            Self::FixedTileCpu => "fixed_tile_cpu",
-            Self::MetalGridder => "metal_gridder",
-            Self::PolarizationSelection => "polarization_selection",
-            Self::UvTaper => "uv_taper",
-            Self::PerChannelWeightDensity => "per_channel_weight_density",
-            Self::WProjectionPlanes => "w_projection_planes",
-            Self::MemoryTarget => "memory_target",
-        }
-    }
-}
-
-/// One typed requirement not implemented by the installed imaging build.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum UnsupportedRequirement {
-    /// A compiler-derived capability has no installed implementation.
+pub enum Unsupported {
+    /// The major-cycle pass has no implementation of a capability the
+    /// problem requires.
     Capability(RequiredCapability),
-    /// A task-only requirement has no installed implementation.
-    Task(TaskRequirement),
-    /// Non-Stokes-I or multi-polarization execution requires an independent-plane basis.
-    IndependentBasisForPolarizationSelection,
-    /// The cube spectral kernel is neither nearest nor linear; cubic waits
-    /// for #42, after IF-4.
-    NearestOrLinearCubeInterpolation,
+    /// A Taylor basis reconstructs Stokes I only.
+    PolarizedTaylorBasis,
+    /// The Metal backend needs a Metal device, which the host lacks.
+    NoMetalDevice,
+    /// Metal accumulates its grids in `f32` (plan decision D2).
+    F64GridsOnMetal,
+    /// Metal grids the standard kernel set; W, mosaic and AW wait for gate
+    /// R2 (#653).
+    KernelSetOnMetal,
 }
 
-impl UnsupportedRequirement {
-    /// Return the stable reason family used by typed transport projections.
-    #[must_use]
-    pub const fn catalog_kind(self) -> &'static str {
+impl fmt::Display for Unsupported {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Capability(_) => "capability",
-            Self::Task(_) => "task",
-            Self::IndependentBasisForPolarizationSelection
-            | Self::NearestOrLinearCubeInterpolation => "constraint",
-        }
-    }
-
-    /// Return the exact stable reason identity exposed by provider projections.
-    #[must_use]
-    pub fn catalog_id(self) -> String {
-        match self {
-            Self::Capability(requirement) => {
-                format!("capability.{}", requirement.catalog_id())
+            Self::Capability(capability) => write!(
+                formatter,
+                "the major-cycle pass has no implementation of {capability:?}"
+            ),
+            Self::PolarizedTaylorBasis => {
+                formatter.write_str("a Taylor basis reconstructs Stokes I only")
             }
-            Self::Task(requirement) => format!("task.{}", requirement.catalog_id()),
-            Self::IndependentBasisForPolarizationSelection => {
-                "constraint.independent_basis_for_polarization_selection".to_string()
+            Self::NoMetalDevice => {
+                formatter.write_str("the Metal backend needs a unified-memory Metal 3 device")
             }
-            Self::NearestOrLinearCubeInterpolation => {
-                "constraint.nearest_or_linear_cube_interpolation".to_string()
-            }
+            Self::F64GridsOnMetal => formatter.write_str("the Metal backend grids in f32 only"),
+            Self::KernelSetOnMetal => formatter.write_str(
+                "the Metal backend grids the standard kernel set only; W projection, mosaic and \
+                 AW projection run on the CPU",
+            ),
         }
     }
 }
 
-/// Owner-typed scientific or task capability represented in the installed
-/// application catalog.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImagingCapabilityRequirement {
-    /// Compiler-derived backend-independent capability.
-    Scientific(RequiredCapability),
-    /// Task-only capability not represented by the compiled problem.
-    Task(TaskRequirement),
-}
-
-impl ImagingCapabilityRequirement {
-    /// Return the stable requirement identity.
-    #[must_use]
-    pub fn catalog_id(self) -> String {
-        match self {
-            Self::Scientific(requirement) => {
-                format!("capability.{}", requirement.catalog_id())
-            }
-            Self::Task(requirement) => format!("task.{}", requirement.catalog_id()),
-        }
-    }
-
-    /// Return the stable requirement kind used by transport projections.
-    #[must_use]
-    pub const fn catalog_kind(self) -> &'static str {
-        match self {
-            Self::Scientific(_) => "scientific",
-            Self::Task(_) => "task",
-        }
-    }
-}
-
-/// One application-owned capability and its exact installed-build status.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ImagingCapabilityCatalogEntry {
-    requirement: ImagingCapabilityRequirement,
-    unsupported: Option<UnsupportedRequirement>,
-}
-
-impl ImagingCapabilityCatalogEntry {
-    /// Return the typed requirement.
-    #[must_use]
-    pub const fn requirement(&self) -> ImagingCapabilityRequirement {
-        self.requirement
-    }
-
-    /// Return the exact typed unavailability reason, or `None` when supported.
-    #[must_use]
-    pub const fn unsupported(&self) -> Option<UnsupportedRequirement> {
-        self.unsupported
-    }
-}
-
-/// Return every stable scientific, product, and task capability understood by
-/// the current request/application contract with its exact installed status.
-#[must_use]
-pub fn installed_imaging_capability_catalog() -> Vec<ImagingCapabilityCatalogEntry> {
-    let mut catalog = RequiredCapability::catalog()
-        .into_iter()
-        .map(|requirement| ImagingCapabilityCatalogEntry {
-            requirement: ImagingCapabilityRequirement::Scientific(requirement),
-            unsupported: (!supports_capability(requirement))
-                .then_some(UnsupportedRequirement::Capability(requirement)),
-        })
-        .collect::<Vec<_>>();
-    catalog.extend(TaskRequirement::ALL.into_iter().map(|requirement| {
-        ImagingCapabilityCatalogEntry {
-            requirement: ImagingCapabilityRequirement::Task(requirement),
-            unsupported: (!supports_task(requirement))
-                .then_some(UnsupportedRequirement::Task(requirement)),
-        }
-    }));
-    catalog.sort_by_key(|entry| entry.requirement.catalog_id());
-    catalog
-}
-
-/// Typed fail-closed result returned before physical planning or execution.
+/// Why a compiled problem cannot run on this build and host; every reason
+/// in deterministic order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImplementationUnavailable {
-    unsupported: Vec<UnsupportedRequirement>,
+    unsupported: Vec<Unsupported>,
 }
 
 impl ImplementationUnavailable {
-    /// Return every unsupported requirement in deterministic order.
+    /// Every unsupported requirement.
     #[must_use]
-    pub fn unsupported(&self) -> &[UnsupportedRequirement] {
+    pub fn unsupported(&self) -> &[Unsupported] {
         &self.unsupported
     }
 }
 
 impl fmt::Display for ImplementationUnavailable {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "imaging request requires unsupported installed-implementation contract items: {:?}",
-            self.unsupported
-        )
+        formatter.write_str("the installed imaging implementation cannot run this request: ")?;
+        for (index, reason) in self.unsupported.iter().enumerate() {
+            if index > 0 {
+                formatter.write_str("; ")?;
+            }
+            write!(formatter, "{reason}")?;
+        }
+        Ok(())
     }
 }
 
 impl Error for ImplementationUnavailable {}
 
-/// Require the compiled problem and task-only constraints to be supported by
-/// the implementation installed in this build.
-pub fn validate_installed_implementation(
+/// Require the installed implementation to run `problem` on `backend` at
+/// `precision` (`None` for plan decision D2's rule) on `host`.
+pub fn check(
     problem: &CompiledProblem,
-    task_requirements: impl IntoIterator<Item = TaskRequirement>,
+    backend: BackendChoice,
+    precision: Option<GridPrecision>,
+    host: &HostResources,
 ) -> Result<(), ImplementationUnavailable> {
     let mut unsupported = problem
         .required_capabilities()
         .iter()
         .copied()
         .filter(|capability| !supports_capability(*capability))
-        .map(UnsupportedRequirement::Capability)
+        .map(Unsupported::Capability)
         .collect::<Vec<_>>();
-
-    unsupported.extend(
-        task_requirements
-            .into_iter()
-            .filter(|requirement| !supports_task(*requirement))
-            .map(UnsupportedRequirement::Task),
-    );
-
-    debug_assert_eq!(
-        problem.geometry().domains()[0].role(),
-        &ImageDomainRole::Main
-    );
-    if coupled_basis_requires_independent_polarization(
-        problem.reconstruction().basis(),
-        problem.reconstruction().polarization().coordinates(),
-    ) {
-        unsupported.push(UnsupportedRequirement::IndependentBasisForPolarizationSelection);
-    }
     if matches!(
         problem.reconstruction().basis(),
-        ReconstructionBasis::ChannelLocal { .. }
-    ) && !matches!(
-        problem.science().spectral().sampling().kernel(),
-        SpectralKernel::Identity | SpectralKernel::Nearest | SpectralKernel::Linear
-    ) {
-        unsupported.push(UnsupportedRequirement::NearestOrLinearCubeInterpolation);
+        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. }
+    ) && problem.reconstruction().polarization().coordinates()
+        != [PolarizationCoordinate::StokesI]
+    {
+        unsupported.push(Unsupported::PolarizedTaylorBasis);
+    }
+    if backend == BackendChoice::Metal {
+        if !host.metal {
+            unsupported.push(Unsupported::NoMetalDevice);
+        }
+        if precision == Some(GridPrecision::F64) {
+            unsupported.push(Unsupported::F64GridsOnMetal);
+        }
+        if !crate::imaging::standard_kernel_set(problem) {
+            unsupported.push(Unsupported::KernelSetOnMetal);
+        }
     }
     unsupported.sort_unstable();
     unsupported.dedup();
@@ -302,46 +124,9 @@ pub fn validate_installed_implementation(
     }
 }
 
-fn coupled_basis_requires_independent_polarization(
-    basis: ReconstructionBasis,
-    coordinates: &[PolarizationCoordinate],
-) -> bool {
-    matches!(
-        basis,
-        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. }
-    ) && coordinates != [PolarizationCoordinate::StokesI]
-}
-
-/// Task surfaces the major-cycle pass runs, with the standard, W-plane,
-/// mosaic and AW kernel sets. Multi-term continuum through cube major
-/// cycles (`mvc`) has no pass implementation; the Metal backend exists only
-/// on macOS.
-const fn supports_task(requirement: TaskRequirement) -> bool {
-    match requirement {
-        TaskRequirement::MetalGridder => cfg!(target_os = "macos"),
-        _ => matches!(
-            requirement,
-            TaskRequirement::SpectralCube
-                | TaskRequirement::SpectralCubedata
-                | TaskRequirement::SpectralCubeSource
-                | TaskRequirement::MosaicGridder
-                | TaskRequirement::WProjection
-                | TaskRequirement::WProjectionPlanes
-                | TaskRequirement::AwProjection
-                | TaskRequirement::PolarizationSelection
-                | TaskRequirement::Automasking
-                | TaskRequirement::MaskProduct
-                | TaskRequirement::ModelColumnWrite
-                | TaskRequirement::PerChannelWeightDensity
-                | TaskRequirement::SerialCpu
-                | TaskRequirement::FixedTileCpu
-        ),
-    }
-}
-
 /// Scientific capabilities of the major-cycle pass. Faceted geometry has no
-/// pass implementation until #664, after IF-4; the primary-beam-corrected
-/// spectral index has none.
+/// pass implementation (#664); the primary-beam-corrected spectral index
+/// has none.
 const fn supports_capability(capability: RequiredCapability) -> bool {
     matches!(
         capability,
@@ -369,192 +154,54 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::UnitResponseNormalization
             | RequiredCapability::FlatNoiseNormalization
             | RequiredCapability::FlatSkyNormalization
-            | RequiredCapability::Product(ProductKind::Psf)
-            | RequiredCapability::Product(ProductKind::Residual)
-            | RequiredCapability::Product(ProductKind::Model)
-            | RequiredCapability::Product(ProductKind::RestoredImage)
-            | RequiredCapability::Product(ProductKind::SumWeights)
-            | RequiredCapability::Product(ProductKind::Weight)
-            | RequiredCapability::Product(ProductKind::Sensitivity)
-            | RequiredCapability::Product(ProductKind::Mask)
-            | RequiredCapability::Product(ProductKind::Beam)
-            | RequiredCapability::Product(ProductKind::PrimaryBeam)
-            | RequiredCapability::Product(ProductKind::PbCorrectedImage)
-            | RequiredCapability::Product(ProductKind::TaylorTerms)
-            | RequiredCapability::Product(ProductKind::SpectralIndex)
-            | RequiredCapability::Product(ProductKind::SpectralIndexError)
+            | RequiredCapability::Product(
+                ProductKind::Psf
+                    | ProductKind::Residual
+                    | ProductKind::Model
+                    | ProductKind::RestoredImage
+                    | ProductKind::SumWeights
+                    | ProductKind::Weight
+                    | ProductKind::Sensitivity
+                    | ProductKind::Mask
+                    | ProductKind::Beam
+                    | ProductKind::PrimaryBeam
+                    | ProductKind::PbCorrectedImage
+                    | ProductKind::TaylorTerms
+                    | ProductKind::SpectralIndex
+                    | ProductKind::SpectralIndexError
+            )
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
-    use casa_imaging_model::PolarizationCoordinate;
-
     use super::*;
 
     #[test]
-    fn mtmfs_via_cube_and_facets_wait_and_metal_needs_macos() {
-        assert!(!supports_task(TaskRequirement::SpectralMtmfsViaCube));
-        assert_eq!(
-            supports_task(TaskRequirement::MetalGridder),
-            cfg!(target_os = "macos")
-        );
-        for capability in [
-            RequiredCapability::FacetedGeometry,
-            RequiredCapability::Product(ProductKind::PbCorrectedSpectralIndex),
-        ] {
-            assert!(!supports_capability(capability), "{capability:?}");
-        }
-    }
-
-    #[test]
-    fn the_pass_runs_every_convolution_function_set() {
-        for task in [
-            TaskRequirement::MosaicGridder,
-            TaskRequirement::WProjection,
-            TaskRequirement::WProjectionPlanes,
-            TaskRequirement::AwProjection,
-        ] {
-            assert!(supports_task(task), "{task:?}");
-        }
+    fn the_pass_runs_every_convolution_function_set_and_publication_beam() {
         for capability in [
             RequiredCapability::WProjection,
             RequiredCapability::AwProjection,
             RequiredCapability::PrimaryBeamResponse,
             RequiredCapability::Product(ProductKind::Weight),
             RequiredCapability::Product(ProductKind::Sensitivity),
+            RequiredCapability::Product(ProductKind::PrimaryBeam),
+            RequiredCapability::Product(ProductKind::PbCorrectedImage),
+            RequiredCapability::Polarization(PolarizationCoordinate::StokesQ),
+            RequiredCapability::Polarization(PolarizationCoordinate::CircularRl),
         ] {
             assert!(supports_capability(capability), "{capability:?}");
         }
     }
 
     #[test]
-    fn the_pass_runs_cubes_masks_writes_and_publication_beams() {
-        for task in [
-            TaskRequirement::SpectralCube,
-            TaskRequirement::SpectralCubedata,
-            TaskRequirement::SpectralCubeSource,
-            TaskRequirement::PerChannelWeightDensity,
-            TaskRequirement::Automasking,
-            TaskRequirement::ModelColumnWrite,
+    fn faceting_full_mueller_and_the_corrected_spectral_index_wait() {
+        for capability in [
+            RequiredCapability::FacetedGeometry,
+            RequiredCapability::FullMuellerResponse,
+            RequiredCapability::Product(ProductKind::PbCorrectedSpectralIndex),
         ] {
-            assert!(supports_task(task), "{task:?}");
+            assert!(!supports_capability(capability), "{capability:?}");
         }
-        for product in [ProductKind::PrimaryBeam, ProductKind::PbCorrectedImage] {
-            assert!(supports_capability(RequiredCapability::Product(product)));
-        }
-    }
-
-    #[test]
-    fn coupled_basis_polarization_constraint_covers_taylor() {
-        for basis in [
-            ReconstructionBasis::Taylor { terms: 2 },
-            ReconstructionBasis::TaylorViaChannelMajor {
-                terms: 2,
-                channels: 4,
-            },
-        ] {
-            assert!(!coupled_basis_requires_independent_polarization(
-                basis,
-                &[PolarizationCoordinate::StokesI]
-            ));
-            assert!(coupled_basis_requires_independent_polarization(
-                basis,
-                &[PolarizationCoordinate::StokesQ]
-            ));
-            assert!(coupled_basis_requires_independent_polarization(
-                basis,
-                &[PolarizationCoordinate::CircularRl]
-            ));
-            assert!(coupled_basis_requires_independent_polarization(
-                basis,
-                &[
-                    PolarizationCoordinate::StokesI,
-                    PolarizationCoordinate::StokesQ,
-                ]
-            ));
-        }
-    }
-
-    #[test]
-    fn t34_standard_polarization_routes_are_installed_without_full_mueller() {
-        for coordinate in [
-            PolarizationCoordinate::StokesQ,
-            PolarizationCoordinate::StokesU,
-            PolarizationCoordinate::StokesV,
-            PolarizationCoordinate::LinearXy,
-            PolarizationCoordinate::CircularRl,
-        ] {
-            assert!(supports_capability(RequiredCapability::Polarization(
-                coordinate
-            )));
-        }
-        assert!(!supports_capability(
-            RequiredCapability::FullMuellerResponse
-        ));
-
-        let catalog = installed_imaging_capability_catalog();
-        let stokes_q = RequiredCapability::Polarization(PolarizationCoordinate::StokesQ);
-        assert_eq!(
-            catalog
-                .iter()
-                .find(|entry| {
-                    entry.requirement() == ImagingCapabilityRequirement::Scientific(stokes_q)
-                })
-                .and_then(ImagingCapabilityCatalogEntry::unsupported),
-            None
-        );
-        let mueller = RequiredCapability::FullMuellerResponse;
-        assert_eq!(
-            catalog
-                .iter()
-                .find(|entry| {
-                    entry.requirement() == ImagingCapabilityRequirement::Scientific(mueller)
-                })
-                .and_then(ImagingCapabilityCatalogEntry::unsupported),
-            Some(UnsupportedRequirement::Capability(mueller))
-        );
-    }
-
-    #[test]
-    fn capability_catalog_is_complete_unique_and_exactly_typed() {
-        let catalog = installed_imaging_capability_catalog();
-        let ids = catalog
-            .iter()
-            .map(|entry| entry.requirement().catalog_id())
-            .collect::<BTreeSet<_>>();
-        assert_eq!(ids.len(), catalog.len());
-        assert_eq!(
-            catalog
-                .iter()
-                .find(|entry| {
-                    entry.requirement()
-                        == ImagingCapabilityRequirement::Task(TaskRequirement::SpectralMtmfsViaCube)
-                })
-                .and_then(ImagingCapabilityCatalogEntry::unsupported),
-            Some(UnsupportedRequirement::Task(
-                TaskRequirement::SpectralMtmfsViaCube
-            ))
-        );
-        assert!(
-            catalog
-                .iter()
-                .find(|entry| {
-                    entry.requirement()
-                        == ImagingCapabilityRequirement::Scientific(RequiredCapability::Product(
-                            ProductKind::PbCorrectedSpectralIndex,
-                        ))
-                })
-                .is_some_and(|entry| entry.unsupported().is_some())
-        );
-        assert!(catalog.iter().any(|entry| {
-            entry.requirement()
-                == ImagingCapabilityRequirement::Scientific(RequiredCapability::Product(
-                    ProductKind::RestoredImage,
-                ))
-                && entry.unsupported().is_none()
-        }));
     }
 }

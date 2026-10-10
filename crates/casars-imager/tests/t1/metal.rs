@@ -30,7 +30,7 @@ fn on_metal(mut controls: Value) -> Value {
 /// `true` (saying so) when the route refused Metal: off macOS, where
 /// availability rejects it (pinned in the application's availability tests),
 /// or for want of a device.
-fn no_device(outcome: &Result<(casars_imager::RunSummary, Products), String>) -> bool {
+fn no_device(outcome: &Result<(casars_imager::ImagerRunReport, Products), String>) -> bool {
     if !cfg!(target_os = "macos") {
         eprintln!("skipped: Metal is macOS only");
         return true;
@@ -71,10 +71,10 @@ fn assert_products_agree(metal: &Products, cpu: &Products, label: &str) {
 #[test]
 fn metal_standard_mfs_hogbom_recovers_the_analytic_sky_like_the_cpu() {
     let controls = json!({
-        "weighting": { "kind": "natural" },
+        "weighting": "natural",
         "deconvolver": "hogbom",
         "niter": 500,
-        "threshold_jy": 0.005,
+        "threshold": "0.005Jy",
     });
     let probe = Observation::synthesise(&[("point", POINT)]);
     if no_device(&probe.try_image("probe", on_metal(json!({ "niter": 0 })))) {
@@ -93,25 +93,26 @@ fn metal_cubes_with_native_and_coarse_output_channels_match_the_cpu() {
         (
             "native",
             json!({
-                "spectral_mode": "cube",
+                "specmode": "cube",
                 "channel_count": 16,
-                "weighting": { "kind": "briggs", "robust": 0.5 },
-                "per_channel_weight_density": true,
+                "weighting": "briggs",
+                "robust": 0.5,
+                "perchanweightdensity": true,
                 "deconvolver": "hogbom",
                 "niter": 200,
-                "threshold_jy": 0.01,
+                "threshold": "0.01Jy",
             }),
         ),
         (
             "coarse",
             json!({
-                "spectral_mode": "cube",
+                "specmode": "cube",
                 "channel_count": 8,
-                "cube_axis": { "width": { "kind": "channel", "channel": 2 } },
-                "weighting": { "kind": "natural" },
+                "width": "2",
+                "weighting": "natural",
                 "deconvolver": "hogbom",
                 "niter": 200,
-                "threshold_jy": 0.01,
+                "threshold": "0.01Jy",
             }),
         ),
     ] {

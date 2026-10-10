@@ -21,16 +21,16 @@ use casa_imaging_model::{
     DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
     DirectionFrame, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
     GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentModel, InstrumentResponse, IntentSelection, ItrfPosition,
-    LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration,
-    MetadataTableKind, MissingPointingPolicy, ModelBounds, ModelColumnState, ModelColumnWrite,
-    ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity,
-    MsColumnKind, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    InstrumentModel, InstrumentResponse, IntentSelection, ItrfPosition, LogicalIdentity,
+    MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
+    MissingPointingPolicy, ModelBounds, ModelColumnState, ModelColumnWrite, ModelInnerProduct,
+    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, MsColumnKind,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
     ObservationSelection, ObservationSnapshotInput, ObservationSource, ObservationSourceInput,
     ObservationSourceProvenance, ObservationSourceState, ObservationTransactionRequirements,
     PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
     PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput, ProblemInputIdentities,
     ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
     ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
     PsfPhaseCentreLaw, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
@@ -788,7 +788,7 @@ fn sparse_manifest_reads_only_selected_physical_rows() {
         ModelStateIdentity::Empty,
     ))
     .expect("compile sparse selected observation");
-    let problem = compile(ImagingRequest::new(
+    let problem = compile(ProblemInput::new(
         specification(),
         geometry(),
         ProblemInputIdentities::new(snapshot.clone()),
@@ -834,7 +834,7 @@ fn unconditional_sparse_manifest_is_rejected_without_scanning_intervening_rows()
         ModelStateIdentity::Empty,
     ))
     .expect("compile incomplete unconditional manifest");
-    let problem = compile(ImagingRequest::new(
+    let problem = compile(ProblemInput::new(
         specification(),
         geometry(),
         ProblemInputIdentities::new(snapshot.clone()),
@@ -1300,7 +1300,7 @@ fn selected_row_spectral_geometry_uses_exact_selected_centres_including_flagged_
             ModelStateIdentity::Empty,
         ))
         .expect("compile exact selected channels");
-        let problem = compile(ImagingRequest::new(
+        let problem = compile(ProblemInput::new(
             specification(),
             geometry(),
             ProblemInputIdentities::new(snapshot),
@@ -2732,7 +2732,7 @@ fn row_manifest_validation_occurs_in_the_sole_value_traversal() {
         ModelStateIdentity::Empty,
     ))
     .expect("compile stale one-row observation");
-    let problem = compile(ImagingRequest::new(
+    let problem = compile(ProblemInput::new(
         specification(),
         geometry(),
         ProblemInputIdentities::new(snapshot.clone()),
@@ -4145,7 +4145,7 @@ fn retained_observation_cannot_be_rebound_to_equivalent_cross_provenance_problem
             ModelStateIdentity::Empty,
         ))
         .expect("compile provenance-test snapshot");
-        compile(ImagingRequest::new(
+        compile(ProblemInput::new(
             specification(),
             geometry(),
             ProblemInputIdentities::new(snapshot.clone()),
@@ -4715,7 +4715,7 @@ fn selected_rows_pair_owner_derived_heterogeneous_apertures_with_antenna_pointin
         MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
     )
     .with_instrument_model(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
-    let problem = compile(ImagingRequest::new(
+    let problem = compile(ProblemInput::new(
         specification_with_science(
             science,
             ReconstructionBasis::Constant,
@@ -4765,7 +4765,7 @@ fn multi_spw_selection_is_block_invariant_across_prediction_and_residual_replays
         ModelStateIdentity::Empty,
     ))
     .expect("compile multi-SPW observation");
-    let problem = compile(ImagingRequest::new(
+    let problem = compile(ProblemInput::new(
         specification(),
         geometry(),
         ProblemInputIdentities::new(snapshot.clone()),
@@ -5121,7 +5121,7 @@ fn owner_problem_and_access(
         .expect("resolve selected owner")
         .into_parts();
     let snapshot = compile_observation(snapshot_input).expect("compile owner snapshot");
-    let problem = compile(ImagingRequest::new(
+    let problem = compile(ProblemInput::new(
         specification(),
         geometry(),
         ProblemInputIdentities::new(snapshot.clone()),
@@ -5392,7 +5392,7 @@ fn compiled_problem_with_polarization(
         ModelStateIdentity::Empty,
     ))
     .expect("compile polarized selected observation");
-    compile(ImagingRequest::new(
+    compile(ProblemInput::new(
         specification_with_sampling_basis_and_polarization(
             SpectralSamplingLaw::IDENTITY,
             ReconstructionBasis::Constant,
@@ -5423,7 +5423,7 @@ fn compiled_problem_with_sampling(
         ModelStateIdentity::Empty,
     ))
     .expect("compile spectral-contribution observation");
-    compile(ImagingRequest::new(
+    compile(ProblemInput::new(
         specification_with_sampling_and_basis(
             sampling,
             ReconstructionBasis::ChannelLocal { channels },
@@ -5463,7 +5463,7 @@ fn compiled_problem_with_transformed_sampling(
             direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
             observatory_position: ItrfPosition::new(-1_601_188.0, -5_041_977.0, 3_554_875.0),
         });
-    compile(ImagingRequest::new(
+    compile(ProblemInput::new(
         specification_with_sampling_and_basis(
             sampling,
             ReconstructionBasis::ChannelLocal { channels },
@@ -5490,7 +5490,7 @@ fn compiled_problem_with_centres(
         ModelStateIdentity::Empty,
     ))
     .expect("compile fixed-centre observation");
-    compile(ImagingRequest::new(
+    compile(ProblemInput::new(
         specification(),
         geometry_with_centres(centres),
         ProblemInputIdentities::new(snapshot.clone()),
@@ -5510,7 +5510,7 @@ fn compiled_problem_with_geometry(
         ModelStateIdentity::Empty,
     ))
     .expect("compile geometry fixture observation");
-    compile(ImagingRequest::new(
+    compile(ProblemInput::new(
         specification(),
         geometry,
         ProblemInputIdentities::new(snapshot.clone()),
@@ -5533,7 +5533,7 @@ fn compiled_problem_with_sources(
         ModelStateIdentity::Empty,
     ))
     .expect("compile selected observation");
-    compile(ImagingRequest::new(
+    compile(ProblemInput::new(
         specification(),
         geometry(),
         ProblemInputIdentities::new(snapshot.clone()),

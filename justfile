@@ -84,9 +84,9 @@ imaging-t41-moving-source:
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction t41_
     CARGO_INCREMENTAL=0 cargo test -p casars-imager task_contract
 
-# Representative #527 frozen-CASA cubesource and MVC geometry gate. The
-# multi-SPW MVC product comparison returns when IF-3 installs the primary-beam
-# response (mvc is unavailable until then).
+# Representative #527 frozen-CASA cubesource gate, with the selected spectral
+# range's Measures edge topology and the ALMA primary beam on the
+# representative MVC observation (`mvc` itself is not requestable).
 imaging-t41-moving-source-casa testdata_root cubesource_casa_prefix mvc_ms mvc_casa_prefix:
     #!/usr/bin/env bash
     set -euo pipefail

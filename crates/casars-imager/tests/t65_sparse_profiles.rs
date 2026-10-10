@@ -4,16 +4,18 @@
 
 use std::{collections::BTreeSet, error::Error, path::PathBuf};
 
+use casa_imaging_application::{
+    AwCfSource, AwProjection, Deconvolver, Gridder, ImagingRequest, PolarizationCoordinate,
+    RestoringBeamPolicy, SpecMode, Weighting,
+};
+use casa_ms::CubeInterpolation;
 use casa_provider_contracts::{ParameterValue, PersistenceClass, builtin_surface_bundle};
 use casa_task_runtime::{
     BaseSource, DiagnosticCode, ParameterSession, ProfileError, parse_profile,
     project_provider_invocation, render_sparse_profile, resolve_profile,
 };
-use casars_imager::{
-    ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver, ImagerPlaneSelection,
-    ImagerRestoringBeamMode, ImagerSpectralMode, ImagerTaskRequest, ImagerWeighting,
-    imager_provider_invocation,
-};
+use casa_types::measures::{doppler::DopplerRef, frequency::FrequencyRef};
+use casars_imager::{ImagerTaskRequest, imager_provider_invocation, resolve_request};
 
 const VLASS_SINGLE: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -100,70 +102,61 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
         }
 
         let request = request_from_profile(name, source)?;
-        assert_eq!(request.measurement_set, PathBuf::from(measurement_set));
+        request.validate()?;
+        assert_eq!(request.vis, PathBuf::from(measurement_set));
         match name {
             "vlass-single" => {
-                assert_eq!(request.field_ids.as_deref(), Some(&[1525][..]));
-                assert_eq!(request.spw_selector.as_deref(), Some("2~17"));
-                assert_eq!(request.w_project_planes, Some(32));
-                assert!(request.use_pointing);
-                assert_eq!(request.parallel, Some(false));
-                assert_eq!(
-                    request
-                        .aw_project
-                        .as_ref()
-                        .map(|config| config.source.clone()),
-                    Some(casars_imager::ImagerAwCfSource::CasaImport {
-                        cf_cache: PathBuf::from("cf-cache/vlass-spw2-17")
-                    })
-                );
+                assert_eq!(request.field.as_deref(), Some(&[1525][..]));
+                assert_eq!(request.spw.as_deref(), Some("2~17"));
+                assert!(!request.parallel);
+                let Gridder::Awproject(AwProjection {
+                    wprojplanes,
+                    usepointing,
+                    cf_source: AwCfSource::CasaImport { cfcache },
+                    ..
+                }) = &request.gridder
+                else {
+                    panic!("an imported-cache AW request: {request:?}");
+                };
+                assert_eq!(wprojplanes.map(usize::from), Some(32));
+                assert!(*usepointing);
+                assert_eq!(cfcache, &PathBuf::from("cf-cache/vlass-spw2-17"));
             }
             "vlass-all" => {
-                let fields = request.field_ids.as_deref().expect("expanded FIELD_IDs");
+                let fields = request.field.as_deref().expect("expanded FIELD_IDs");
                 assert_eq!(fields.len(), 63);
                 assert_eq!(fields.first(), Some(&1107));
                 assert_eq!(fields.last(), Some(&1562));
-                assert!(request.aw_project.is_some());
+                assert!(matches!(request.gridder, Gridder::Awproject(_)));
             }
             "standard-continuum" => {
-                assert_eq!(request.image_size, 1024);
-                assert_eq!(request.cell_arcsec, 0.25);
-                assert_eq!(request.field_ids.as_deref(), Some(&[0, 1, 2][..]));
-                assert_eq!(request.correlation, Some(ImagerPlaneSelection::StokesQ));
-                assert_eq!(request.deconvolver, ImagerDeconvolver::Multiscale);
-                assert_eq!(request.multiscale_scales, vec![0.0, 4.0, 12.0]);
-                assert_eq!(request.weighting, ImagerWeighting::Briggs { robust: -0.25 });
+                assert_eq!(request.imsize, 1024);
+                assert_eq!(request.cell, 0.25);
+                assert_eq!(request.field.as_deref(), Some(&[0, 1, 2][..]));
+                assert_eq!(request.stokes, [PolarizationCoordinate::StokesQ]);
+                assert_eq!(request.deconvolver, Deconvolver::Multiscale);
+                assert_eq!(request.scales, [0.0, 4.0, 12.0]);
+                assert_eq!(request.weighting, Weighting::Briggs);
+                assert_eq!(request.robust, -0.25);
                 assert!(request.write_pb);
                 assert!(request.pbcor);
-                assert_eq!(request.parallel, Some(true));
+                assert!(request.parallel);
             }
             "standard-cube" => {
-                assert_eq!(request.image_size, 768);
+                assert_eq!(request.imsize, 768);
                 assert_eq!(request.channel_start, Some(10));
                 assert_eq!(request.channel_count, Some(24));
-                assert_eq!(request.correlation, Some(ImagerPlaneSelection::CorrXX));
-                assert_eq!(request.spectral_mode, ImagerSpectralMode::Cube);
-                assert_eq!(request.cube_axis.outframe, "BARY");
-                assert_eq!(request.cube_axis.veltype, "Z");
-                assert_eq!(
-                    request.cube_axis.interpolation,
-                    ImagerCubeInterpolation::Nearest
-                );
-                assert_eq!(request.cube_axis.rest_frequency_hz, Some(1.42e9));
-                assert_eq!(
-                    request.cube_axis.start,
-                    Some(ImagerCubeAxisValue::FrequencyHz {
-                        hz: 1.1e9,
-                        frame: None,
-                    })
-                );
-                assert_eq!(
-                    request.cube_axis.width,
-                    Some(ImagerCubeAxisValue::Channel { channel: 1 })
-                );
-                assert_eq!(request.weighting, ImagerWeighting::Uniform);
-                assert_eq!(request.restoring_beam_mode, ImagerRestoringBeamMode::Common);
-                assert_eq!(request.parallel, Some(false));
+                assert_eq!(request.stokes, [PolarizationCoordinate::LinearXx]);
+                assert_eq!(request.specmode, SpecMode::Cube);
+                assert_eq!(request.outframe, FrequencyRef::BARY);
+                assert_eq!(request.veltype, DopplerRef::Z);
+                assert_eq!(request.interpolation, CubeInterpolation::Nearest);
+                assert_eq!(request.restfreq, Some(1.42e9));
+                assert_eq!(request.start.as_deref(), Some("1.1GHz"));
+                assert_eq!(request.width.as_deref(), Some("1"));
+                assert_eq!(request.weighting, Weighting::Uniform);
+                assert_eq!(request.restoringbeam, RestoringBeamPolicy::Common);
+                assert!(!request.parallel);
             }
             _ => unreachable!(),
         }
@@ -204,11 +197,11 @@ fn minimal_profile_adds_defaults_but_serializes_only_required_values() -> Result
     assert_eq!(render_sparse_profile(&bundle, &resolved.values)?, source);
 
     let request = request_from_profile("minimal", &source)?;
-    assert_eq!(request.image_size, 512);
-    assert_eq!(request.cell_arcsec, 1.0);
-    assert_eq!(request.correlation, Some(ImagerPlaneSelection::StokesI));
-    assert_eq!(request.spectral_mode, ImagerSpectralMode::Mfs);
-    assert_eq!(request.parallel, None);
+    assert_eq!(request.imsize, 512);
+    assert_eq!(request.cell, 1.0);
+    assert_eq!(request.stokes, [PolarizationCoordinate::StokesI]);
+    assert_eq!(request.specmode, SpecMode::Mfs);
+    assert!(!request.parallel);
     Ok(())
 }
 
@@ -233,10 +226,9 @@ fn imager_profiles_reject_stale_contract_aliases_and_non_profile_authority() {
     }
 }
 
-fn request_from_profile(
-    name: &str,
-    source: &str,
-) -> Result<casars_imager::ImagerRunTaskRequest, Box<dyn Error>> {
+/// The request the profile `source` projects through the provider
+/// invocation and the imager resolves.
+fn request_from_profile(name: &str, source: &str) -> Result<ImagingRequest, Box<dyn Error>> {
     let bundle = builtin_surface_bundle("imager")?;
     let profile = parse_profile(source)?;
     let session = ParameterSession::from_profile(
@@ -254,8 +246,8 @@ fn request_from_profile(
             .as_deref()
             .ok_or("missing canonical provider request")?,
     )?;
-    let ImagerTaskRequest::Run(request) = request;
-    Ok(request)
+    let ImagerTaskRequest::Run(parameters) = request;
+    Ok(resolve_request(&parameters)?.1)
 }
 
 fn profile_source(contract: u32, extra: &str) -> String {

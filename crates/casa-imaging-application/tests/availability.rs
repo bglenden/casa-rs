@@ -1,34 +1,52 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_application::{
-    ImplementationUnavailable, TaskRequirement, UnsupportedRequirement,
+    BackendChoice, GridPrecision, HostResources,
+    availability::{ImplementationUnavailable, Unsupported, check},
 };
 use casa_imaging_model::{
-    AwProjectionContract, AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw,
-    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
-    FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentModel, InstrumentResponse, LogicalIdentity,
-    MeasurementEquationContract, MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
-    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract,
-    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, SpectralWindowCoordinateCatalog, SpectralWindowSelection,
-    StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WProjectionContract,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    AwProjectionContract, AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts,
+    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout,
+    FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
+    ImageShape, InstrumentModel, InstrumentResponse, LogicalIdentity, MeasurementEquationContract,
+    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationPointingLaw, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    ProblemInput, ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
+    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
+    RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
+    WProjectionContract, WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 
 mod common;
 
-fn require_installed_implementation(
-    problem: &casa_imaging_model::CompiledProblem,
-    requirements: impl IntoIterator<Item = TaskRequirement>,
-) -> Result<(), ImplementationUnavailable> {
-    casa_imaging_application::validate_installed_implementation(problem, requirements)
+/// A host with one core, a gibibyte free and a Metal device or not.
+const fn host(metal: bool) -> HostResources {
+    HostResources {
+        threads: 1,
+        performance_cores: 1,
+        available_memory: 1 << 30,
+        metal,
+    }
+}
+
+/// The CPU backend at plan decision D2's precision.
+fn on_cpu(problem: &CompiledProblem) -> Result<(), ImplementationUnavailable> {
+    check(problem, BackendChoice::Cpu, None, &host(false))
+}
+
+fn assert_exactly_unsupported<const N: usize>(
+    outcome: Result<(), ImplementationUnavailable>,
+    expected: [Unsupported; N],
+) {
+    let error = outcome.expect_err("the installed implementation must refuse");
+    let mut expected = expected.to_vec();
+    expected.sort_unstable();
+    assert_eq!(error.unsupported(), expected);
 }
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -48,21 +66,10 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
         .expect("valid Taylor policy"),
     )
 }
-#[test]
-fn installed_major_cycle_pass_accepts_its_compiled_contract() {
-    let problem = ProblemFixture::standard().compile();
-    require_installed_implementation(&problem, [TaskRequirement::SerialCpu])
-        .expect("installed major-cycle pass contract");
-}
 
 #[test]
-fn installed_major_cycle_pass_accepts_planned_multi_cpu_execution() {
-    let problem = ProblemFixture::standard().compile();
-    require_installed_implementation(
-        &problem,
-        [TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu],
-    )
-    .expect("installed major-cycle pass supports planned multi-CPU execution");
+fn the_major_cycle_pass_accepts_its_compiled_contract() {
+    on_cpu(&ProblemFixture::standard().compile()).expect("installed major-cycle pass contract");
 }
 
 #[test]
@@ -76,7 +83,7 @@ fn moving_source_is_available_through_selected_observation_geometry() {
         ..ProblemFixture::standard()
     }
     .compile();
-    require_installed_implementation(&problem, [])
+    on_cpu(&problem)
         .expect("moving-source geometry is evaluated by selected observation traversal");
 }
 
@@ -96,45 +103,26 @@ fn coupled_taylor_basis_rejects_non_stokes_i_polarization() {
             ..ProblemFixture::standard()
         }
         .compile();
-        let error = require_installed_implementation(&problem, [])
-            .expect_err("coupled Taylor polarization must fail closed");
-        assert!(
-            error
-                .unsupported()
-                .contains(&UnsupportedRequirement::IndependentBasisForPolarizationSelection)
-        );
+        assert_exactly_unsupported(on_cpu(&problem), [Unsupported::PolarizedTaylorBasis]);
     }
 }
 
 #[test]
-fn unavailable_task_requirements_are_exact_and_typed() {
-    let problem = ProblemFixture::standard().compile();
-    let error = require_installed_implementation(&problem, [TaskRequirement::ExecutionAuto])
-        .expect_err("automatic backends have no installed implementation");
-    assert_eq!(
-        error.unsupported(),
-        [UnsupportedRequirement::Task(TaskRequirement::ExecutionAuto),]
-    );
-}
-
-#[test]
-fn w_projection_runs_on_the_installed_pass() {
+fn w_projection_runs_on_the_cpu_pass_only() {
     let mut fixture = ProblemFixture::standard();
     fixture.measurement_equation = fixture
         .measurement_equation
         .with_w_projection(WProjectionContract::new(100.0, None).expect("W contract"));
-    require_installed_implementation(
-        &fixture.compile(),
-        [
-            TaskRequirement::WProjection,
-            TaskRequirement::WProjectionPlanes,
-        ],
-    )
-    .expect("W projection runs with its W-planes set");
+    let problem = fixture.compile();
+    on_cpu(&problem).expect("W projection runs with its W-planes set");
+    assert_exactly_unsupported(
+        check(&problem, BackendChoice::Metal, None, &host(true)),
+        [Unsupported::KernelSetOnMetal],
+    );
 }
 
 #[test]
-fn aw_projection_runs_on_the_installed_pass() {
+fn aw_projection_runs_on_the_cpu_pass() {
     let mut fixture =
         ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1);
     fixture.measurement_equation = fixture.measurement_equation.with_aw_projection(
@@ -153,59 +141,53 @@ fn aw_projection_runs_on_the_installed_pass() {
         .expect("AW contract"),
     );
     fixture.products.push(ProductKind::Weight);
-    require_installed_implementation(&fixture.compile(), [TaskRequirement::AwProjection])
-        .expect("AW projection runs with its catalog and weight image");
+    on_cpu(&fixture.compile()).expect("AW projection runs with its catalog and weight image");
 }
 
 #[test]
-fn mosaic_runs_on_the_installed_pass() {
+fn mosaic_runs_on_the_cpu_pass() {
     let mut fixture = ProblemFixture::standard()
         .with_primary_beam(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
     fixture.uvw = UvwCoordinateLaw::MosaicPhaseTrackingCentre;
     fixture.products.push(ProductKind::Sensitivity);
-    require_installed_implementation(&fixture.compile(), [TaskRequirement::MosaicGridder])
+    on_cpu(&fixture.compile())
         .expect("mosaic runs with its primary-beam set and sensitivity image");
 }
 
+/// Metal runs the standard kernel set in `f32` on a host with a device;
+/// every other combination is refused, each reason named.
 #[test]
-fn mtmfs_via_cube_rejects_until_its_primary_beam_is_installed() {
-    let problem = ProblemFixture {
-        basis: ReconstructionBasis::TaylorViaChannelMajor {
-            terms: 2,
-            channels: 4,
-        },
-        algorithm: ReconstructionAlgorithm::Mtmfs {
-            scales_px: vec![0.0],
-            small_scale_bias: 0.0,
-        },
-        ..ProblemFixture::channel_local_cube(SpectralSamplingLaw::LINEAR)
-    }
-    .compile();
-    let error = require_installed_implementation(&problem, [TaskRequirement::SpectralMtmfsViaCube])
-        .expect_err("mvc must reject before physical planning");
+fn metal_needs_a_device_single_precision_and_the_standard_kernel_set() {
+    let problem = ProblemFixture::standard().compile();
+    check(&problem, BackendChoice::Metal, None, &host(true))
+        .expect("standard gridding on a Metal device");
+    check(
+        &problem,
+        BackendChoice::Metal,
+        Some(GridPrecision::F32),
+        &host(true),
+    )
+    .expect("explicit f32 grids on a Metal device");
     assert_exactly_unsupported(
-        &error,
-        [UnsupportedRequirement::Task(
-            TaskRequirement::SpectralMtmfsViaCube,
-        )],
+        check(&problem, BackendChoice::Metal, None, &host(false)),
+        [Unsupported::NoMetalDevice],
     );
-}
-
-#[test]
-fn metal_gridding_is_installed_on_macos_only() {
-    let outcome = require_installed_implementation(
-        &ProblemFixture::standard().compile(),
-        [TaskRequirement::MetalGridder],
+    assert_exactly_unsupported(
+        check(
+            &problem,
+            BackendChoice::Metal,
+            Some(GridPrecision::F64),
+            &host(false),
+        ),
+        [Unsupported::NoMetalDevice, Unsupported::F64GridsOnMetal],
     );
-    if cfg!(target_os = "macos") {
-        outcome.expect("the Metal backend is installed on macOS");
-    } else {
-        let error = outcome.expect_err("Metal gridding must reject before physical planning");
-        assert_exactly_unsupported(
-            &error,
-            [UnsupportedRequirement::Task(TaskRequirement::MetalGridder)],
-        );
-    }
+    check(
+        &problem,
+        BackendChoice::Cpu,
+        Some(GridPrecision::F64),
+        &host(true),
+    )
+    .expect("the CPU grids in either precision");
 }
 
 #[test]
@@ -218,67 +200,10 @@ fn faceted_geometry_rejects_without_a_pass_implementation() {
         ..ProblemFixture::standard()
     }
     .compile();
-    let error = require_installed_implementation(&problem, [])
-        .expect_err("faceted geometry must reject before physical planning");
     assert_exactly_unsupported(
-        &error,
-        [UnsupportedRequirement::Capability(
-            RequiredCapability::FacetedGeometry,
-        )],
+        on_cpu(&problem),
+        [Unsupported::Capability(RequiredCapability::FacetedGeometry)],
     );
-}
-
-#[test]
-fn cube_interpolation_other_than_nearest_or_linear_rejects() {
-    let error = require_installed_implementation(
-        &ProblemFixture::channel_local_cube(SpectralSamplingLaw::CUBIC).compile(),
-        [TaskRequirement::SpectralCube],
-    )
-    .expect_err("cubic cube interpolation must reject before physical planning");
-    assert_exactly_unsupported(
-        &error,
-        [UnsupportedRequirement::NearestOrLinearCubeInterpolation],
-    );
-    assert_eq!(
-        UnsupportedRequirement::NearestOrLinearCubeInterpolation.catalog_id(),
-        "constraint.nearest_or_linear_cube_interpolation"
-    );
-    for sampling in [SpectralSamplingLaw::NEAREST, SpectralSamplingLaw::LINEAR] {
-        require_installed_implementation(
-            &ProblemFixture::channel_local_cube(sampling).compile(),
-            [TaskRequirement::SpectralCube, TaskRequirement::SerialCpu],
-        )
-        .expect("the pass runs nearest and linear cube interpolation");
-    }
-}
-
-fn assert_exactly_unsupported<const N: usize>(
-    error: &ImplementationUnavailable,
-    expected: [UnsupportedRequirement; N],
-) {
-    let mut expected = expected.to_vec();
-    expected.sort_unstable();
-    assert_eq!(error.unsupported(), expected);
-}
-
-fn spectral_axis(
-    channels: usize,
-    reference_frequency_hz: f64,
-    increment_hz: f64,
-) -> SpectralCoordinateSpec {
-    SpectralCoordinateSpec::new(
-        FrequencyFrame::Topocentric,
-        FrequencyFrame::Topocentric,
-        SpectralFrameAnchor::NotApplicable,
-        SpectralWcs::Linear {
-            channels,
-            reference_pixel: 0.0,
-            reference_frequency_hz,
-            increment_hz,
-        },
-        RestFrequency::NotApplicable,
-        DopplerConvention::NotApplicable,
-    )
 }
 
 /// One compiled-problem fixture; [`ProblemFixture::standard`] is a dirty
@@ -293,8 +218,6 @@ struct ProblemFixture {
     facets: FacetLayout,
     measurement_equation: MeasurementEquationContract,
     instrument_model: Option<InstrumentModel>,
-    sampling: SpectralSamplingLaw,
-    spectral: SpectralCoordinateSpec,
     products: Vec<ProductKind>,
 }
 
@@ -317,26 +240,7 @@ impl ProblemFixture {
                 inner_products(),
             ),
             instrument_model: None,
-            sampling: SpectralSamplingLaw::IDENTITY,
-            spectral: spectral_axis(1, 1.4e9, 1.0e6),
             products: vec![ProductKind::Psf],
-        }
-    }
-
-    /// Four channel-local outputs at 2 MHz over twelve 1 MHz native channels
-    /// at 0.996-1.007 GHz.
-    fn channel_local_cube(sampling: SpectralSamplingLaw) -> Self {
-        let native_hz: Vec<f64> = (0..12).map(|ch| 0.996e9 + f64::from(ch) * 1.0e6).collect();
-        let spectral_window = SpectralWindowSelection::new(0, (0..12).collect())
-            .with_coordinate_catalog(
-                SpectralWindowCoordinateCatalog::new(native_hz, 1.0e6).expect("native catalog"),
-            );
-        Self {
-            inputs: common::problem_inputs_with_spectral_window(Vec::new(), spectral_window),
-            basis: ReconstructionBasis::ChannelLocal { channels: 4 },
-            sampling,
-            spectral: spectral_axis(4, 1.0e9, 2.0e6),
-            ..Self::standard()
         }
     }
 
@@ -353,11 +257,11 @@ impl ProblemFixture {
         self
     }
 
-    fn compile(self) -> casa_imaging_model::CompiledProblem {
+    fn compile(self) -> CompiledProblem {
         compile(self.request()).expect("compile availability fixture")
     }
 
-    fn request(self) -> ImagingRequest {
+    fn request(self) -> ProblemInput {
         let iteration_budget =
             usize::from(!matches!(self.algorithm, ReconstructionAlgorithm::Dirty));
         let direction = DirectionCoordinateSpec::new(
@@ -367,6 +271,19 @@ impl ProblemFixture {
             [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
             [[1.0, 0.0], [0.0, 1.0]],
             [180.0, 0.0],
+        );
+        let spectral = SpectralCoordinateSpec::new(
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Topocentric,
+            SpectralFrameAnchor::NotApplicable,
+            SpectralWcs::Linear {
+                channels: 1,
+                reference_pixel: 0.0,
+                reference_frequency_hz: 1.4e9,
+                increment_hz: 1.0e6,
+            },
+            RestFrequency::NotApplicable,
+            DopplerConvention::NotApplicable,
         );
         let geometry = GeometryInput::new(
             vec![ImageDomainSpec::new(
@@ -394,7 +311,7 @@ impl ProblemFixture {
                 )),
             ),
             self.uvw,
-            self.spectral,
+            spectral,
         );
         let numerics = NumericsContract::new(
             vec![NumericPrecision::F64],
@@ -406,14 +323,14 @@ impl ProblemFixture {
                 .collect(),
         );
         let science = ScientificContract::new(
-            SpectralContract::new(self.sampling, SpectralCoupling::Independent),
+            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
             self.measurement_equation,
         );
         let science = match self.instrument_model {
             Some(model) => science.with_instrument_model(model),
             None => science,
         };
-        ImagingRequest::new(
+        ProblemInput::new(
             ProblemSpecification::new(
                 science,
                 ReconstructionContract::new(

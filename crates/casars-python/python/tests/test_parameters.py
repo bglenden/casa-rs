@@ -164,20 +164,30 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
     if surface == "imager":
         invocation = loaded.provider_invocation()
         assert invocation.protocol_name == "casa_imager_task"
-        assert invocation.protocol_version == 11
+        assert invocation.protocol_version == IMAGER_TASK_PROTOCOL_VERSION
         assert json.loads(invocation.stdin or "null") == expected["request"]
-        unsupported = {reason.id for reason in invocation.unsupported_reasons}
-        # IF-3 installed the AW and W-projection sets (#652); only the
-        # unconsumed source-stream control remains.
-        assert unsupported == {"task.memory_target"}
 
 
-# Mosaic, W and AW projection run on the major-cycle pass since IF-3 (#652);
-# the requests round-trip with no unsupported requirement.
+IMAGER_TASK_PROTOCOL_VERSION = 12
+
+NATIVE_AW = {
+    "gridder": "awproject",
+    "aw_cf_source": "native-evla",
+    "native_cf_cache": "native-cache",
+    "evla_surface": "models/EVLA.surface",
+    "native_cf_policy": "generate-missing",
+    "native_cf_working_size": 256,
+    "native_cf_oversampling": 20,
+    "native_cf_cache_bytes": 2147483648,
+    "native_cf_maximum_cells": 1024,
+    "wprojplanes": 32,
+}
+
+
 @pytest.mark.parametrize(
-    ("name", "overrides", "expected_reasons"),
+    ("name", "overrides"),
     [
-        ("continuum", {}, []),
+        ("continuum", {}),
         (
             "cube",
             {
@@ -185,36 +195,15 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
                 "channel_count": 4,
                 "perchanweightdensity": False,
             },
-            [],
         ),
-        (
-            "mosaic",
-            {"gridder": "mosaic", "usepointing": True},
-            [],
-        ),
-        (
-            "native-aw",
-            {
-                "gridder": "awproject",
-                "aw_cf_source": "native-evla",
-                "native_cf_cache": "native-cache",
-                "evla_surface": "models/EVLA.surface",
-                "native_cf_policy": "generate-missing",
-                "native_cf_working_size": 256,
-                "native_cf_oversampling": 20,
-                "native_cf_cache_bytes": 2147483648,
-                "native_cf_maximum_cells": 1024,
-                "wprojplanes": 32,
-            },
-            [],
-        ),
+        ("mosaic", {"gridder": "mosaic", "usepointing": True}),
+        ("native-aw", NATIVE_AW),
     ],
 )
 def test_imager_python_profiles_round_trip_exact_provider_requests(
     tmp_path: Path,
     name: str,
     overrides: dict[str, object],
-    expected_reasons: list[str],
 ) -> None:
     values = TaskParameters.defaults("imager", workspace=tmp_path)
     values.set_many(
@@ -226,14 +215,8 @@ def test_imager_python_profiles_round_trip_exact_provider_requests(
 
     assert before == after
     assert before.protocol_name == "casa_imager_task"
-    assert before.protocol_version == 11
+    assert before.protocol_version == IMAGER_TASK_PROTOCOL_VERSION
     request = json.loads(before.stdin or "null")["request"]
-    assert request["measurement_set"] == f"{name}.ms"
-    if name == "native-aw":
-        assert request["aw_project"]["source"] == {
-            "kind": "native-evla", "root": "native-cache",
-            "surface": "models/EVLA.surface", "policy": "generate-missing",
-            "working_size": 256, "oversampling": 20,
-            "cache_bytes": 2147483648, "maximum_cells": 1024,
-        }
-    assert [reason.id for reason in before.unsupported_reasons] == expected_reasons
+    assert request["vis"] == [f"{name}.ms"]
+    for parameter, value in overrides.items():
+        assert request[parameter] == value, parameter

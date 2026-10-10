@@ -12,6 +12,7 @@ mod edit;
 mod invocation;
 mod normalize;
 mod profile;
+mod resolve;
 mod runtime;
 mod safety;
 mod session;
@@ -39,6 +40,7 @@ pub use profile::{
     PROFILE_FORMAT_VERSION, ParameterProfile, ProfileError, ProfileHeader, ResolvedProfile,
     parse_profile, render_documented_template, render_sparse_profile, resolve_profile,
 };
+pub use resolve::{ResolveError, resolve_active_values, resolve_plain_values};
 pub use runtime::{
     OpenSessionRequest, ParameterRuntime, ParameterRuntimeError, ParameterTextError,
     parse_parameter_text,

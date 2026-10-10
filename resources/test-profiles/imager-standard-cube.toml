@@ -2,7 +2,7 @@
 format = 1
 surface = "imager"
 kind = "task"
-contract = 19
+contract = 20
 
 [parameters]
 vis = ["representative-cube.ms"]
@@ -16,7 +16,7 @@ channel_count = 24
 stokes = "XX"
 specmode = "cube"
 start = "1.1GHz"
-width = 1
+width = "1"
 outframe = "BARY"
 veltype = "OPTICAL"
 interpolation = "nearest"
@@ -24,4 +24,3 @@ restfreq = "1.42GHz"
 restoringbeam = "common"
 niter = 200
 weighting = "uniform"
-parallel = false

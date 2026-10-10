@@ -39,7 +39,7 @@ const FAR: Component = Component {
 };
 const NOISE_JY: f32 = 0.65;
 /// About five times the thermal image noise of the 1-hour track.
-const THRESHOLD_JY: f32 = 0.01;
+const THRESHOLD: &str = "0.01Jy";
 
 fn setup() -> Setup {
     let mut antennas = tutorial_vla_a_antennas();
@@ -61,14 +61,13 @@ fn setup() -> Setup {
     }
 }
 
-fn controls(w_term_mode: &str) -> Value {
+fn controls(gridder: &str) -> Value {
     json!({
-        "weighting": { "kind": "natural" },
+        "weighting": "natural",
         "deconvolver": "hogbom",
         "niter": 3000,
-        "threshold_jy": THRESHOLD_JY,
-        "w_term_mode": w_term_mode,
-        "force_standard_gridder": w_term_mode == "none",
+        "threshold": THRESHOLD,
+        "gridder": gridder,
     })
 }
 
@@ -156,7 +155,7 @@ fn w_projection_recovers_the_far_point_the_standard_gridder_smears() {
         observation.row_channel_samples()
     );
     let projected = far_point(&observation, "w-projection", controls("wproject"));
-    let standard = far_point(&observation, "w-standard", controls("none"));
+    let standard = far_point(&observation, "w-standard", controls("standard"));
 
     let far_pixel = observation.geometry().pixel(FAR);
     assert_eq!(projected.pixel, far_pixel);

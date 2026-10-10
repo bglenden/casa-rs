@@ -9,16 +9,16 @@ use std::{
 
 use casa_coordinates::{CoordinateModel, StokesType};
 use casa_images::{ImageBeamSet, PagedImage};
-use casa_imaging_application::{
-    ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumMask,
-    ContinuumWeighting, HogbomIterationAccounting, PolarizationCoordinate, SpectralImagingMode,
-    TaskRequirement, execute_continuum,
-};
+use casa_imaging_application::{ImagingOutcome, ResourcePolicy, execute};
 use casa_ms::{
     MeasurementSet, MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow, VisibilityDataColumn,
 };
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 use casa_types::ArrayValue;
+use serde_json::json;
+
+#[path = "common/imaging.rs"]
+mod imaging;
 
 const DATASET: &str = "measurementset/vla/refim_point_stokes.ms";
 const CASA_PREFIX_ENV: &str = "CASA_RS_T34_CASA_PREFIX";
@@ -41,16 +41,11 @@ fn t34_full_stokes_hogbom_matches_casa_products() -> Result<(), Box<dyn Error>> 
     casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
     let rust_prefix = staging.path().join("rust-full-stokes");
 
-    let result = execute_continuum(request(measurement_set, rust_prefix.clone()))?;
-    assert_eq!(result.minor_iterations, 20);
-    assert!(result.outcome.output.major_cycle_count >= 2);
+    let result = run(&measurement_set, &rust_prefix, json!({}))?;
+    assert_eq!(result.total_minor_iterations, 20);
+    assert!(result.major_cycle_count >= 2);
     assert_eq!(
-        result
-            .outcome
-            .output
-            .scientific
-            .normal_state()
-            .sample_count(),
+        result.scientific.normal_state().sample_count(),
         selected.sample_count,
         "Rust selected exactly the CASA RR/RL/LR/LL cells",
     );
@@ -299,44 +294,33 @@ fn issue607_representative_full_stokes_matches_casa_products() -> Result<(), Box
     MeasurementSet::open(&source)?.save_as(&measurement_set)?;
     casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
     let rust_prefix = staging.path().join("rust-full-stokes-representative");
-    let mut imaging = request(measurement_set, rust_prefix.clone());
-    imaging.image_size = 512;
-    imaging.cell_arcsec = 1.0;
-    imaging.spectral_window = Some("0~3".to_string());
-    imaging.channel_count = Some(8);
-    imaging.iterations = 25;
-    imaging.cycle_iterations = 25;
-    imaging.write_primary_beam = true;
-
-    let result = execute_continuum(imaging)?;
-    assert_eq!(result.minor_iterations, 25);
-    assert!(result.outcome.output.major_cycle_count >= 2);
+    let representative = |iterations: usize| {
+        json!({
+            "imsize": 512,
+            "cell": "1arcsec",
+            "spw": "0~3",
+            "channel_count": 8,
+            "niter": iterations,
+            "minor_cycle_length": 25,
+            "write_pb": true,
+        })
+    };
+    let result = run(&measurement_set, &rust_prefix, representative(25))?;
+    assert_eq!(result.total_minor_iterations, 25);
+    assert!(result.major_cycle_count >= 2);
     assert_eq!(
-        result
-            .outcome
-            .output
-            .scientific
-            .normal_state()
-            .sample_count(),
+        result.scientific.normal_state().sample_count(),
         selected.sample_count,
     );
     compare_products(&rust_prefix, &casa_prefix, &selected)?;
 
     let dirty_rust_prefix = staging.path().join("rust-full-stokes-dirty-representative");
-    let mut dirty = request(
-        measurement_set_path(&source, staging.path())?,
-        dirty_rust_prefix.clone(),
-    );
-    dirty.image_size = 512;
-    dirty.cell_arcsec = 1.0;
-    dirty.spectral_window = Some("0~3".to_string());
-    dirty.channel_count = Some(8);
-    dirty.algorithm = ContinuumAlgorithm::Dirty;
-    dirty.iterations = 0;
-    dirty.cycle_iterations = 25;
-    dirty.write_primary_beam = true;
-    let dirty_result = execute_continuum(dirty)?;
-    assert_eq!(dirty_result.minor_iterations, 0);
+    let dirty_result = run(
+        &measurement_set_path(&source, staging.path())?,
+        &dirty_rust_prefix,
+        representative(0),
+    )?;
+    assert_eq!(dirty_result.total_minor_iterations, 0);
     let dirty_casa_prefix = casa_prefix.with_file_name("casa-dirty");
     compare_dirty_products(&dirty_rust_prefix, &dirty_casa_prefix)?;
     Ok(())
@@ -509,67 +493,40 @@ fn representative_selected_correlation_contract(
     })
 }
 
-fn request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagingRequest {
-    ContinuumImagingRequest {
-        measurement_set,
-        image_name,
-        image_size: 64,
-        facets: 1,
-        cell_arcsec: 8.0,
-        phase_center_field: Some(0),
-        phase_center: None,
-        outlier_file: None,
-        field_ids: Some(vec![0]),
-        uv_range: None,
-        intent: None,
-        data_description: None,
-        spectral_window: Some("0".to_string()),
-        channel_start: Some(0),
-        channel_count: Some(1),
-        spectral_mode: SpectralImagingMode::Continuum,
-        continuum_subtraction: None,
-        data_column: Some("DATA".to_string()),
-        polarizations: vec![
-            PolarizationCoordinate::StokesI,
-            PolarizationCoordinate::StokesQ,
-            PolarizationCoordinate::StokesU,
-            PolarizationCoordinate::StokesV,
-        ],
-        algorithm: ContinuumAlgorithm::Hogbom,
-        weighting: ContinuumWeighting::Natural,
-        iterations: 20,
-        cycle_iterations: 20,
-        hogbom_iteration_accounting: HogbomIterationAccounting::CasaInclusive,
-        maximum_major_cycles: None,
-        noise_sigma: None,
-        cycle_factor: 1.0,
-        minimum_psf_fraction: 0.1,
-        maximum_psf_fraction: 0.8,
-        gain: 0.1,
-        threshold_jy: 0.0,
-        psf_cutoff: 0.35,
-        primary_beam_limit: 0.2,
-        normalization: casa_imaging_model::ProductNormalization::UnitResponse,
-        beam_policy: ContinuumBeamPolicy::PerPlane,
-        mask: ContinuumMask::FullPlane,
-        save_model_column: false,
-        save_continuum_residual: false,
-        write_primary_beam: false,
-        pbcor: false,
-        mosaic_use_pointing: false,
-        w_projection_planes: None,
-        aw_projection: None,
-        task_requirements: vec![
-            TaskRequirement::PolarizationSelection,
-            TaskRequirement::SerialCpu,
-            TaskRequirement::FixedTileCpu,
-        ],
-        host: casa_imaging_application::HostResources::detect().expect("host"),
-        resource_policy: casa_imaging_application::ResourcePolicy::Balanced,
-        backend: casa_imaging_application::BackendChoice::Cpu,
-        cancel: casa_imaging_application::Cancel::new(),
-        summary: None,
-    }
+/// Image `measurement_set` to `image_name` in Stokes IQUV: 64 × 64 of
+/// 8 arcsec cells over channel 0 of field 0's `DATA` in spectral window 0,
+/// cleaned by 20 Högbom components in one minor cycle with CASA's inclusive
+/// iteration accounting; `overrides` replaces any of these.
+fn run(
+    measurement_set: &Path,
+    image_name: &Path,
+    overrides: serde_json::Value,
+) -> Result<ImagingOutcome, Box<dyn Error>> {
+    let mut values = json!({
+        "vis": measurement_set,
+        "imagename": image_name,
+        "imsize": 64,
+        "cell": "8arcsec",
+        "phasecenter_field": "0",
+        "field": "0",
+        "spw": "0",
+        "channel_start": 0,
+        "channel_count": 1,
+        "datacolumn": "DATA",
+        "stokes": "IQUV",
+        "niter": 20,
+        "minor_cycle_length": 20,
+        "hogbom_iteration_mode": "casa-inclusive",
+        "minpsffraction": 0.1,
+    });
+    values
+        .as_object_mut()
+        .expect("T34 controls")
+        .extend(overrides.as_object().expect("overrides").clone());
+    Ok(execute(
+        &imaging::request(values),
+        imaging::context(ResourcePolicy::Balanced),
+    )?)
 }
 
 struct Product {

@@ -18,23 +18,23 @@ const POINT: Component = Component {
     spectral_index: -2.0,
 };
 /// Five times the 2 mJy thermal noise of one channel.
-const THRESHOLD_JY: f32 = 0.01;
+const THRESHOLD: &str = "0.01Jy";
 
+/// The cube under `weighting`, the weighting parameters.
 fn image(observation: &Observation, name: &str, weighting: serde_json::Value) -> Products {
-    observation
-        .image(
-            name,
-            json!({
-                "spectral_mode": "cube",
-                "channel_count": CHANNELS,
-                "weighting": weighting,
-                "per_channel_weight_density": true,
-                "deconvolver": "hogbom",
-                "niter": 2000,
-                "threshold_jy": THRESHOLD_JY,
-            }),
-        )
-        .1
+    let mut controls = json!({
+        "specmode": "cube",
+        "channel_count": CHANNELS,
+        "perchanweightdensity": true,
+        "deconvolver": "hogbom",
+        "niter": 2000,
+        "threshold": THRESHOLD,
+    });
+    controls
+        .as_object_mut()
+        .expect("cube controls")
+        .extend(weighting.as_object().expect("weighting").clone());
+    observation.image(name, controls).1
 }
 
 /// Channels whose every row brackets the image frequency with two native
@@ -81,11 +81,15 @@ fn assert_follows_the_spectrum(observation: &Observation, products: &Products, l
 #[test]
 fn sixteen_channel_cube_follows_the_injected_spectrum_under_natural_and_briggs() {
     let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
-    let natural = image(&observation, "cube-natural", json!({ "kind": "natural" }));
+    let natural = image(
+        &observation,
+        "cube-natural",
+        json!({ "weighting": "natural" }),
+    );
     let briggs = image(
         &observation,
         "cube-briggs",
-        json!({ "kind": "briggs", "robust": 0.5 }),
+        json!({ "weighting": "briggs", "robust": 0.5 }),
     );
 
     // The LSRK axis keeps the native width to the Doppler factor and lies

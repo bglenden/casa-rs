@@ -288,15 +288,12 @@
     },
     {
       "id": "image.deconvolution.threshold",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "threshold",
       "value_domain": {
         "kind": "quantity",
         "dimension": "flux_density",
-        "canonical_unit": "Jy",
-        "special_values": [
-          "auto"
-        ]
+        "canonical_unit": "Jy"
       },
       "normalization": {
         "kind": "quantity",
@@ -313,9 +310,8 @@
         "summary": "Absolute CLEAN threshold in Jy/beam; ignored when Dirty Only is enabled",
         "details": null,
         "examples": [
-          "0.0",
-          "0.1mJy",
-          ""
+          "0.0Jy",
+          "0.1mJy"
         ]
       },
       "persistence_class": "profile"
@@ -570,19 +566,19 @@
     },
     {
       "id": "imager.width",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "width",
       "value_domain": {
         "kind": "optional",
         "value": {
-          "kind": "integer"
+          "kind": "string"
         },
         "states": [
           "none"
         ]
       },
       "normalization": {
-        "kind": "identity"
+        "kind": "trim"
       },
       "base_constraints": [],
       "unit_dimension": null,
@@ -590,7 +586,11 @@
       "documentation": {
         "summary": "Cube-axis width as channels, frequency, or velocity",
         "details": null,
-        "examples": []
+        "examples": [
+          "1",
+          "500kHz",
+          "-2km/s"
+        ]
       },
       "persistence_class": "profile"
     },
@@ -3889,17 +3889,14 @@
     },
     {
       "id": "parameter.gridder",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "gridder",
       "value_domain": {
         "kind": "choice",
         "values": [
-          "awp2",
-          "awphpg",
           "awproject",
           "mosaic",
           "standard",
-          "widefield",
           "wproject"
         ]
       },
@@ -3914,6 +3911,34 @@
         "details": "Unsupported family or control combinations fail with a capability diagnostic; they are never silently rewritten to a simpler gridder.",
         "examples": [
           "standard"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.gridprecision",
+      "semantic_revision": 1,
+      "casa_name": "gridprecision",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "auto",
+          "f32",
+          "f64"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Grid arithmetic: auto, f32 or f64",
+        "details": "auto grids in f64 on the CPU for continuum and Taylor imaging and in f32 for cubes and on Metal; f32 halves the memory of every grid. Metal accumulates in f32 only, so f64 is refused with backend = metal.",
+        "examples": [
+          "auto",
+          "f32"
         ]
       },
       "persistence_class": "profile"
@@ -5592,21 +5617,15 @@
     },
     {
       "id": "parameter.outframe",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "outframe",
       "value_domain": {
         "kind": "choice",
         "values": [
           "BARY",
-          "CMB",
-          "GALACTO",
-          "GEO",
-          "LGROUP",
-          "LSRD",
           "LSRK",
           "REST",
-          "TOPO",
-          "none"
+          "TOPO"
         ]
       },
       "normalization": {
@@ -5616,9 +5635,11 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Spectral frame used for cube output coordinates",
+        "summary": "Spectral frame of a cube's output axis",
         "details": null,
-        "examples": []
+        "examples": [
+          "LSRK"
+        ]
       },
       "persistence_class": "profile"
     },
@@ -5710,16 +5731,10 @@
     },
     {
       "id": "parameter.parallel",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "parallel",
       "value_domain": {
-        "kind": "optional",
-        "value": {
-          "kind": "bool"
-        },
-        "states": [
-          "none"
-        ]
+        "kind": "bool"
       },
       "normalization": {
         "kind": "identity"
@@ -5728,7 +5743,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Permit planned local parallel or accelerated execution; false forces the serial CPU comparison surface",
+        "summary": "Image on the host's workers (the balanced resource policy); false images on one worker",
         "details": null,
         "examples": [
           "true"
@@ -7378,7 +7393,7 @@
     },
     {
       "id": "parameter.specmode",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "specmode",
       "value_domain": {
         "kind": "choice",
@@ -7386,7 +7401,6 @@
           "cube",
           "cubedata",
           "cubesource",
-          "mvc",
           "mfs"
         ]
       },
@@ -7446,33 +7460,6 @@
         "summary": "Semicolon-separated SPW maps aligned to --gaintables; each MAP is a comma-separated integer list",
         "details": null,
         "examples": []
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.standard_mfs_acceleration",
-      "semantic_revision": 2,
-      "casa_name": "standard_mfs_acceleration",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "auto",
-          "cpu",
-          "multi-cpu"
-        ]
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "CPU execution policy for standard/MFS-compatible gridding stages",
-        "details": null,
-        "examples": [
-          "auto"
-        ]
       },
       "persistence_class": "profile"
     },
@@ -7566,27 +7553,6 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Optional observation start time in MJD seconds UTC.",
-        "details": null,
-        "examples": []
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.startmodel",
-      "semantic_revision": 1,
-      "casa_name": "startmodel",
-      "value_domain": {
-        "kind": "path",
-        "resource_kind": "image"
-      },
-      "normalization": {
-        "kind": "path"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "CASA image used as the initial model for single-image MFS",
         "details": null,
         "examples": []
       },
@@ -8251,26 +8217,6 @@
       "persistence_class": "profile"
     },
     {
-      "id": "parameter.uvtaper",
-      "semantic_revision": 1,
-      "casa_name": "uvtaper",
-      "value_domain": {
-        "kind": "string"
-      },
-      "normalization": {
-        "kind": "trim"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Gaussian UV taper: MAJOR[,MINOR[,PA]]",
-        "details": null,
-        "examples": []
-      },
-      "persistence_class": "profile"
-    },
-    {
       "id": "parameter.veldef",
       "semantic_revision": 1,
       "casa_name": "veldef",
@@ -8321,17 +8267,14 @@
     },
     {
       "id": "parameter.veltype",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "veltype",
       "value_domain": {
         "kind": "choice",
         "values": [
           "BETA",
-          "GAMMA",
           "OPTICAL",
-          "RADIO",
-          "TRUE",
-          "none"
+          "RADIO"
         ]
       },
       "normalization": {
@@ -8341,9 +8284,11 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Velocity convention for Doppler-style cube axes",
+        "summary": "Velocity convention of a cube's velocity start and axis",
         "details": null,
-        "examples": []
+        "examples": [
+          "RADIO"
+        ]
       },
       "persistence_class": "profile"
     },
@@ -8565,33 +8510,6 @@
         "details": null,
         "examples": [
           "false"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.wterm",
-      "semantic_revision": 1,
-      "casa_name": "wterm",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "direct",
-          "none",
-          "wproject"
-        ]
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "W-term correction mode",
-        "details": null,
-        "examples": [
-          "none"
         ]
       },
       "persistence_class": "profile"
@@ -8824,28 +8742,6 @@
         "details": null,
         "examples": [
           "-1.0"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.aterm",
-      "semantic_revision": 1,
-      "casa_name": "aterm",
-      "value_domain": {
-        "kind": "bool"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Enable the aperture-illumination A term for AWProject",
-        "details": "An explicit false value disables the aperture term; it is never silently rewritten to another gridder.",
-        "examples": [
-          "true"
         ]
       },
       "persistence_class": "profile"
@@ -9129,145 +9025,14 @@
       "persistence_class": "profile"
     },
     {
-      "id": "parameter.computepastep",
-      "semantic_revision": 1,
-      "casa_name": "computepastep",
-      "value_domain": {
-        "kind": "float"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [
-        {
-          "kind": "positive"
-        }
-      ],
-      "unit_dimension": "angle",
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "AW convolution-function parallactic-angle computation step in degrees",
-        "details": null,
-        "examples": [
-          "360.0"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.conjbeams",
-      "semantic_revision": 1,
-      "casa_name": "conjbeams",
-      "value_domain": {
-        "kind": "bool"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Enable conjugate-beam frequency mapping for wideband AWProject",
-        "details": null,
-        "examples": [
-          "true"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.facets",
-      "semantic_revision": 2,
-      "casa_name": "facets",
-      "value_domain": {
-        "kind": "integer"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [
-        {
-          "kind": "positive"
-        }
-      ],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Number of wide-field image facets",
-        "details": "Constant-basis MFS uses an exact regular facets-by-facets chart layout. Non-divisible geometry and unsupported spectral-basis combinations fail closed.",
-        "examples": [
-          "1",
-          "2"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.imaging_memory_target_mb",
-      "semantic_revision": 2,
-      "casa_name": "imaging_memory_target_mb",
-      "value_domain": {
-        "kind": "optional",
-        "value": {
-          "kind": "integer"
-        },
-        "states": [
-          "none"
-        ]
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [
-        {
-          "kind": "positive"
-        }
-      ],
-      "unit_dimension": "data_size",
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Optional shared imaging memory target in MiB",
-        "details": "none delegates the bounded choice to the immutable execution planner.",
-        "examples": [
-          "none",
-          "16384"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.mosweight",
-      "semantic_revision": 1,
-      "casa_name": "mosweight",
-      "value_domain": {
-        "kind": "bool"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Use per-pointing mosaic weight-density handling",
-        "details": null,
-        "examples": [
-          "false"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
       "id": "parameter.normtype",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "normtype",
       "value_domain": {
         "kind": "choice",
         "values": [
           "flatnoise",
-          "flatsky",
-          "pbsquare"
+          "flatsky"
         ]
       },
       "normalization": {
@@ -9303,158 +9068,6 @@
         "details": "The backend requires finite non-negative values and preserves the requested list. With usepointing=true, CASA uses the two values as the antenna-grouping and group-refresh thresholds in arcseconds; any request whose length is not exactly two, including the default 0, has the effective CASA value 600,600.",
         "examples": [
           "0"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.psfphasecenter",
-      "semantic_revision": 1,
-      "casa_name": "psfphasecenter",
-      "value_domain": {
-        "kind": "optional",
-        "value": {
-          "kind": "string"
-        },
-        "states": [
-          "none"
-        ]
-      },
-      "normalization": {
-        "kind": "trim"
-      },
-      "base_constraints": [],
-      "unit_dimension": "angle",
-      "semantic_role": "geometry",
-      "documentation": {
-        "summary": "Optional distinct AWProject PSF phase center",
-        "details": "none reuses the image phase center; unsupported distinct centers fail explicitly.",
-        "examples": [
-          "none"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.projection",
-      "semantic_revision": 1,
-      "casa_name": "projection",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "SIN"
-        ]
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "geometry",
-      "documentation": {
-        "summary": "Sky projection used for the image direction coordinate",
-        "details": "The current production imager supports SIN; other projections fail explicitly rather than being treated as SIN.",
-        "examples": [
-          "SIN"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.psterm",
-      "semantic_revision": 1,
-      "casa_name": "psterm",
-      "value_domain": {
-        "kind": "bool"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Enable the prolate-spheroidal term inside AW convolution functions",
-        "details": null,
-        "examples": [
-          "false"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.rotatepastep",
-      "semantic_revision": 1,
-      "casa_name": "rotatepastep",
-      "value_domain": {
-        "kind": "float"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [
-        {
-          "kind": "positive"
-        }
-      ],
-      "unit_dimension": "angle",
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "AW convolution-function parallactic-angle rotation step in degrees",
-        "details": null,
-        "examples": [
-          "360.0"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.vptable",
-      "semantic_revision": 1,
-      "casa_name": "vptable",
-      "value_domain": {
-        "kind": "optional",
-        "value": {
-          "kind": "path",
-          "resource_kind": "table"
-        },
-        "states": [
-          "none"
-        ]
-      },
-      "normalization": {
-        "kind": "path"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "input_data",
-      "documentation": {
-        "summary": "Optional CASA voltage-pattern table for AWProject",
-        "details": null,
-        "examples": [
-          "none"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.wbawp",
-      "semantic_revision": 1,
-      "casa_name": "wbawp",
-      "value_domain": {
-        "kind": "bool"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Enable wideband A-projection frequency behavior",
-        "details": null,
-        "examples": [
-          "true"
         ]
       },
       "persistence_class": "profile"

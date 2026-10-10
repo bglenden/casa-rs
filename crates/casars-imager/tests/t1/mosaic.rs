@@ -39,7 +39,7 @@ const EAST: Component = Component {
 };
 const NOISE_JY: f32 = 0.1;
 /// About five times the thermal image noise of the 1-hour track.
-const THRESHOLD_JY: f32 = 0.005;
+const THRESHOLD: &str = "0.005Jy";
 /// `HetArrayConvFunc::findAntennaSizes`: CASA evaluates every 12 m ALMA
 /// dish as a 10.7 m aperture with 0.75 m blockage, tabulated to 150″ at
 /// 100 GHz (`PBMath1DAiry`); the simulator applies the same aperture.
@@ -154,13 +154,13 @@ fn mosaic_recovers_the_sky_under_the_summed_beams() {
     let (summary, products) = observation.image(
         "mosaic",
         json!({
-            "weighting": { "kind": "natural" },
+            "weighting": "natural",
             "deconvolver": "hogbom",
             "niter": 3000,
-            "threshold_jy": THRESHOLD_JY,
-            "field_ids": [0, 1, 2],
-            "phasecenter_field": 1,
-            "mosaic_gridder": true,
+            "threshold": THRESHOLD,
+            "field": "0,1,2",
+            "phasecenter_field": "1",
+            "gridder": "mosaic",
             "pbcor": true,
             "write_pb": true,
         }),

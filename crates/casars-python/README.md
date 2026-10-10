@@ -17,9 +17,9 @@ runtime and delegate execution, safety controls, and Last persistence to
 `casars run`. They record project-aware attempts as Python-initiated receipts,
 accept an optional existing notebook filename or stable ID, and expose a
 one-run recording bypass. Every task draft also exposes the exact versioned
-Rust provider invocation; completions retain that projection, and unsupported
-imager requests raise `TaskCapabilityError` with the canonical owner's typed
-reason identities before process launch. Python does not own provider schemas,
+Rust provider invocation; completions retain that projection, and requests
+the catalog refuses raise `ValueError` before process launch. Python does not
+own provider schemas,
 parameter defaults, capability interpretation, task-result decoding, or a
 second provider subprocess engine.
 

@@ -131,7 +131,6 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     enforce_runtime_confirmations(&session, &options)?;
     let invocation = project_task_invocation(&session)?;
-    ensure_supported_invocation(&surface_id, &invocation)?;
 
     if let Some(path) = &options.save_params {
         save_explicit(
@@ -424,34 +423,6 @@ pub(crate) fn project_task_invocation(
     .map_err(|error| error.to_string())
 }
 
-pub(crate) fn ensure_supported_invocation(
-    surface_id: &str,
-    invocation: &ProviderInvocation,
-) -> Result<(), String> {
-    if surface_id != "imager" {
-        return Ok(());
-    }
-    let stdin = invocation
-        .stdin
-        .as_deref()
-        .ok_or_else(|| "imager provider projection omitted its canonical request".to_string())?;
-    let request: casars_imager::ImagerTaskRequest = serde_json::from_str(stdin)
-        .map_err(|error| format!("decode canonical imager request for preflight: {error}"))?;
-    let casars_imager::ImagerTaskRequest::Run(request) = request;
-    let reasons = request.unsupported_reasons()?;
-    if reasons.is_empty() {
-        return Ok(());
-    }
-    Err(format!(
-        "imager request is unavailable in this installed build: {}",
-        reasons
-            .iter()
-            .map(|reason| format!("{}/{}", reason.kind, reason.id))
-            .collect::<Vec<_>>()
-            .join(", ")
-    ))
-}
-
 fn enforce_runtime_confirmations(
     session: &ParameterSession,
     options: &SurfaceOptions,
@@ -721,8 +692,14 @@ mod tests {
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap();
         assert_eq!(request["kind"], "run");
-        assert_eq!(request["request"]["image_size"], 1024);
-        assert_eq!(request["request"]["cell_arcsec"], 0.2);
+        assert_eq!(
+            request["request"]["imsize"],
+            serde_json::json!([1024, 1024])
+        );
+        assert_eq!(
+            request["request"]["cell"],
+            serde_json::json!(["0.2arcsec", "0.2arcsec"])
+        );
     }
 
     #[test]
@@ -749,12 +726,6 @@ mod tests {
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap();
         assert_eq!(request, expected["request"]);
-        let error = ensure_supported_invocation("imager", &invocation)
-            .expect_err("unconsumed source-stream controls must fail closed");
-        assert!(
-            error.contains("task/task.memory_target"),
-            "missing task/task.memory_target in {error}"
-        );
     }
 
     #[test]

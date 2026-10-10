@@ -1,23 +1,25 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! T61 real-data gate for the catalog-to-request availability seam.
+//! T61 real-data gate for the catalog-to-request seam: the VLASS AW
+//! projection controls reach the typed request through the provider
+//! invocation, and a standard request reaches the real snapshot.
 
 use std::{collections::BTreeMap, error::Error, fs, path::Path};
 
+use casa_imaging_application::{AwCfSource, AwProjection, Gridder, ProductNormalization};
 use casa_provider_contracts::{ParameterValue, builtin_surface_bundle};
 use casa_task_runtime::{
     OpenSessionRequest, ParameterRuntime, ResolutionPatch, project_provider_invocation,
 };
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
-use casars_imager::{ImagerTaskRequest, imager_provider_invocation};
+use casars_imager::{ImagerTaskRequest, ImagerTaskResult, imager_provider_invocation};
 
 const DATASET: &str = "measurementset/vla/ref_vlass_wtsp_creation.ms";
 const FIXTURE_SPW_SELECTOR: &str = "0:0~15";
 
 #[test]
 #[ignore = "requires slow-parity casatestdata"]
-fn t61_vlass_controls_reach_the_real_snapshot_and_exact_typed_unavailability()
--> Result<(), Box<dyn Error>> {
+fn t61_vlass_controls_reach_the_request_and_the_real_snapshot() -> Result<(), Box<dyn Error>> {
     let measurement_set = casatestdata_path_for_tier(CasaTestDataTier::SlowParity, DATASET)
         .ok_or("slow-parity casatestdata root is unavailable")?;
     if !measurement_set.is_dir() {
@@ -70,17 +72,10 @@ fn t61_vlass_controls_reach_the_real_snapshot_and_exact_typed_unavailability()
             ParameterValue::String("cf-cache/vlass-spw2-17".into()),
         ),
         ("cf_resident_mb".into(), ParameterValue::Integer(384)),
-        ("aterm".into(), ParameterValue::Bool(true)),
-        ("psterm".into(), ParameterValue::Bool(false)),
-        ("wbawp".into(), ParameterValue::Bool(true)),
-        ("conjbeams".into(), ParameterValue::Bool(true)),
-        ("computepastep".into(), ParameterValue::Float(360.0)),
-        ("rotatepastep".into(), ParameterValue::Float(360.0)),
         (
             "pointingoffsetsigdev".into(),
             ParameterValue::String("0.0".into()),
         ),
-        ("mosweight".into(), ParameterValue::Bool(false)),
         (
             "normtype".into(),
             ParameterValue::String("flatnoise".into()),
@@ -97,31 +92,34 @@ fn t61_vlass_controls_reach_the_real_snapshot_and_exact_typed_unavailability()
     let invocation = project_provider_invocation(&session, |_family, values, direct| {
         imager_provider_invocation(values, direct.args)
     })?;
-    let ImagerTaskRequest::Run(request) = serde_json::from_str(
+    let ImagerTaskRequest::Run(parameters) = serde_json::from_str(
         invocation
             .stdin
             .as_deref()
-            .ok_or("missing typed provider request")?,
+            .ok_or("missing provider request")?,
     )?;
-    assert_eq!(request.image_size, 12_150);
-    assert_eq!(request.spw_selector.as_deref(), Some(FIXTURE_SPW_SELECTOR));
-    assert_eq!(request.parallel, Some(false));
-    assert!(request.use_pointing);
-    assert_eq!(request.w_project_planes, Some(32));
-    let aw = request.aw_project.as_ref().expect("AWProject controls");
-    assert_eq!(aw.cf_resident_mb, 384);
-    assert!(!aw.ps_term);
-    assert!(aw.wb_awp);
-    assert!(aw.conjugate_beams);
-
-    let error = request
-        .execute()
-        .expect_err("AWProject must fail at the typed installed-capability boundary");
-    assert_eq!(
-        error,
-        "imaging request requires unsupported installed-implementation contract items: \
-[Task(AwProjection), Task(WProjectionPlanes)]"
-    );
+    let (_, request) = casars_imager::resolve_request(&parameters)?;
+    request.validate()?;
+    assert_eq!(request.imsize, 12_150);
+    assert_eq!(request.spw.as_deref(), Some(FIXTURE_SPW_SELECTOR));
+    assert!(!request.parallel);
+    let Gridder::Awproject(AwProjection {
+        wprojplanes,
+        usepointing,
+        normtype,
+        cf_resident_mb,
+        pointingoffsetsigdev,
+        cf_source: AwCfSource::CasaImport { cfcache },
+    }) = &request.gridder
+    else {
+        panic!("the VLASS controls make an imported-cache AW request: {request:?}");
+    };
+    assert_eq!(wprojplanes.map(usize::from), Some(32));
+    assert!(*usepointing);
+    assert_eq!(*normtype, ProductNormalization::FlatNoise);
+    assert_eq!(*cf_resident_mb, 384);
+    assert_eq!(pointingoffsetsigdev, &[0.0]);
+    assert!(cfcache.ends_with("cf-cache/vlass-spw2-17"));
 
     let supported_image_name = output.path().join("vlass-t61-standard");
     let supported_overrides = BTreeMap::from([
@@ -169,19 +167,16 @@ fn t61_vlass_controls_reach_the_real_snapshot_and_exact_typed_unavailability()
         project_provider_invocation(&supported_session, |_family, values, direct| {
             imager_provider_invocation(values, direct.args)
         })?;
-    let ImagerTaskRequest::Run(supported_request) = serde_json::from_str(
+    let supported_request: ImagerTaskRequest = serde_json::from_str(
         supported_invocation
             .stdin
             .as_deref()
-            .ok_or("missing supported typed provider request")?,
+            .ok_or("missing supported provider request")?,
     )?;
-    let summary = supported_request.execute()?;
-    assert_eq!(summary.request.image_size, 1024);
-    assert_eq!(
-        summary.request.spw_selector.as_deref(),
-        Some(FIXTURE_SPW_SELECTOR)
-    );
-    assert!(summary.run.gridded_samples > 0);
+    let ImagerTaskResult::Run(result) = supported_request.execute()?;
+    assert_eq!(result.request.0["imsize"], serde_json::json!([1024, 1024]));
+    assert_eq!(result.request.0["spw"], FIXTURE_SPW_SELECTOR);
+    assert!(result.run.gridded_samples > 0);
     Ok(())
 }
 

@@ -1,75 +1,29 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Canonical imager task request/result contracts shared by CLI, shell, and Python.
+//! The imager's task contract over the shared provider envelope: the
+//! catalog-named parameters of one run in, its report and products out.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::str::FromStr;
+use std::time::Duration;
 
-use casa_imaging_application::{ImagingRequestVersion, installed_imaging_capability_catalog};
-use casa_ms::{
-    CubeAxisConfig, CubeAxisValue, CubeInterpolation,
-    parse_rest_frequency_hz as parse_ms_rest_frequency_hz,
+use casa_imaging_application::{
+    CleanStop, ImagingOutcome, ImagingRequest, NativeMinorCycleOutcome, NativeMinorCycleStopReason,
 };
 use casa_provider_contracts::{
-    ParameterValue, ProviderCliMachineActions, ProviderCliProjection, ProviderInvocation,
-    ProviderInvocationAdaptation, ProviderProjectionMetadata, ProviderProtocolDescriptor,
-    ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas,
-    TaskSemanticContract, builtin_surface_bundle, merged_components,
+    NoAdditionalProviderSchemas, ParameterValue, ProviderCliMachineActions, ProviderCliProjection,
+    ProviderInvocation, ProviderInvocationAdaptation, ProviderProjectionMetadata,
+    ProviderProtocolDescriptor, ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract,
+    TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle, merged_components,
 };
-use casa_types::measures::doppler::DopplerRef;
-use casa_types::measures::frequency::FrequencyRef;
-use schemars::{JsonSchema, schema::RootSchema, schema_for};
+use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
-
-use crate::{
-    AutoMultiThresholdConfig, AwProjectControls, AwProjectNormalization, CleanMaskMode,
-    CleanStopReason, CliConfig, Deconvolver, GaussianUvTaper, HogbomIterationMode,
-    ImagerAwCfSource, ImagingBackend, RestoringBeamMode, RunSummary, SaveModelMode, SpectralMode,
-    StandardMfsAccelerationPolicy, StandardMfsBackend, UvTaperSize, WTermMode, WeightingMode,
-    apply_parallel_runtime_control, run_from_request, validate_parallel_acceleration,
-};
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
 pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
-/// Stable protocol version advertised by `casars-imager --protocol-info`.
-pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 11;
-/// Version of the newline-delimited imager progress-event payload.
-pub const IMAGER_PROGRESS_EVENT_SCHEMA_VERSION: u32 = 1;
-/// Version of the authoritative observability snapshot embedded in progress events.
-pub const IMAGER_OBSERVABILITY_SCHEMA_VERSION: u32 = 2;
-/// Prefix used before each stderr progress-event JSON line.
-pub const IMAGER_PROGRESS_STDERR_PREFIX: &str = "CASARS_IMAGER_PROGRESS ";
+/// Protocol version advertised by `casars-imager --protocol-info`.
+pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 12;
 
-fn default_imager_progress_uv_point_weight() -> f32 {
-    1.0
-}
-
-/// Detail level for imager progress and observability events.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum ImagerProgressDetail {
-    /// Low-rate UI progress with cheap resource snapshots.
-    #[default]
-    Basic,
-    /// Structured performance diagnostics suitable for large-MS debugging.
-    Diagnostic,
-}
-
-impl FromStr for ImagerProgressDetail {
-    type Err = String;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        match text.trim().to_ascii_lowercase().as_str() {
-            "basic" => Ok(Self::Basic),
-            "diagnostic" => Ok(Self::Diagnostic),
-            other => Err(format!(
-                "invalid progress detail {other:?}; expected basic or diagnostic"
-            )),
-        }
-    }
-}
-
-/// Build the current shared imager protocol descriptor.
+/// The imager's protocol descriptor.
 pub fn imager_protocol_descriptor() -> ProviderProtocolDescriptor {
     ProviderProtocolDescriptor::new(
         IMAGER_TASK_PROTOCOL_NAME,
@@ -79,81 +33,11 @@ pub fn imager_protocol_descriptor() -> ProviderProtocolDescriptor {
     )
 }
 
-/// Typed imager-only schemas flattened into the shared provider envelope.
-#[derive(Debug, Clone, Serialize)]
-pub struct ImagerAdditionalSchemas {
-    /// Schema for newline-delimited progress events.
-    pub progress_event_schema: RootSchema,
-    /// Current canonical imaging-request contract version.
-    pub imaging_request_version: u32,
-    /// Typed installed-capability catalog projected from the application owner.
-    pub capability_catalog: ImagerCapabilityCatalog,
-    /// Schema for the typed installed-capability catalog.
-    pub capability_catalog_schema: RootSchema,
-}
-
-/// Typed provider-boundary projection of the installed imaging capabilities.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerCapabilityCatalog {
-    /// Version of this transport projection.
-    pub schema_version: u32,
-    /// Sole semantic owner of the projected entries.
-    pub owner: String,
-    /// Stable deterministic capability entries.
-    pub entries: Vec<ImagerCapabilityCatalogEntry>,
-}
-
-/// One typed installed-capability entry at the provider boundary.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerCapabilityCatalogEntry {
-    /// Scientific or task capability family.
-    pub kind: String,
-    /// Stable owner-defined requirement identity.
-    pub id: String,
-    /// Whether the current installed build supports the requirement.
-    pub supported: bool,
-    /// Exact owner-defined typed reason identity when unsupported.
-    pub unsupported_reason: Option<ImagerUnsupportedReason>,
-}
-
-/// Exact typed unsupported reason projected from the application owner.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerUnsupportedReason {
-    /// Capability, task, or request-constraint family.
-    pub kind: String,
-    /// Stable application-owned reason identity.
-    pub id: String,
-}
-
-fn imager_capability_catalog() -> ImagerCapabilityCatalog {
-    ImagerCapabilityCatalog {
-        schema_version: 1,
-        owner: "casa-imaging-application".to_string(),
-        entries: installed_imaging_capability_catalog()
-            .into_iter()
-            .map(|entry| {
-                let requirement = entry.requirement();
-                ImagerCapabilityCatalogEntry {
-                    kind: requirement.catalog_kind().to_string(),
-                    id: requirement.catalog_id(),
-                    supported: entry.unsupported().is_none(),
-                    unsupported_reason: entry.unsupported().map(|reason| ImagerUnsupportedReason {
-                        kind: reason.catalog_kind().to_string(),
-                        id: reason.catalog_id(),
-                    }),
-                }
-            })
-            .collect(),
-    }
-}
-
-/// Build the current imager schema bundle with the shared envelope.
-pub fn imager_task_schema_bundle() -> TaskProviderContract<ImagerAdditionalSchemas> {
+/// The imager's schema bundle in the shared envelope; the catalog's
+/// `imager` surface defines the request's parameters.
+pub fn imager_task_schema_bundle() -> TaskProviderContract {
     let request_schema = schema_for!(ImagerTaskRequest);
     let result_schema = schema_for!(ImagerTaskResult);
-    let progress_event_schema = schema_for!(ImagerProgressEvent);
-    let capability_catalog_schema = schema_for!(ImagerCapabilityCatalog);
-    let capability_catalog = imager_capability_catalog();
     TaskProviderContract {
         protocol: imager_protocol_descriptor(),
         semantic: TaskSemanticContract {
@@ -165,12 +49,7 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract<ImagerAdditionalSchem
                 result_kind: Some("run".to_string()),
             }],
         },
-        components: merged_components([
-            &request_schema,
-            &result_schema,
-            &progress_event_schema,
-            &capability_catalog_schema,
-        ]),
+        components: merged_components([&request_schema, &result_schema]),
         annotations: serde_json::json!({}),
         projections: ProviderProjectionMetadata {
             cli: Some(ProviderCliProjection {
@@ -190,154 +69,46 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract<ImagerAdditionalSchem
         domain_schemas: TaskProviderSchemas {
             request_schema,
             result_schema,
-            additional: ImagerAdditionalSchemas {
-                progress_event_schema,
-                imaging_request_version: ImagingRequestVersion::CURRENT.as_u32(),
-                capability_catalog,
-                capability_catalog_schema,
-            },
+            additional: NoAdditionalProviderSchemas {},
         },
     }
 }
 
-/// Project one fully resolved canonical parameter set into the typed imager
-/// task request transported by the provider bundle.
-///
-/// Parameter resolution, defaults, activation, and constraints remain owned by
-/// the shared parameter catalog. This provider-owned step maps those resolved
-/// values directly into the typed request used by every machine surface; CLI
-/// spellings are transport output only and are not reparsed here.
+/// Project one resolved parameter set into the imager's invocation: the
+/// parameters, as JSON on stdin, run with `--json-run -`.
 pub fn imager_provider_invocation(
     values: &BTreeMap<String, ParameterValue>,
     direct_args: Vec<String>,
 ) -> Result<ProviderInvocationAdaptation, String> {
-    let (managed_args, _task_args) = split_managed_output_args(direct_args)?;
-    let config = CliConfig::from_parameter_values(values)?;
-    let request = ImagerTaskRequest::Run(ImagerRunTaskRequest::from_cli_config(&config));
-    let mut stdin = serde_json::to_string(&request)
-        .map_err(|error| format!("serialize canonical imager task request: {error}"))?;
-    stdin.push('\n');
-
-    let mut args = managed_args;
+    let mut args = managed_output_args(direct_args)?;
     args.extend(["--json-run".to_string(), "-".to_string()]);
+    let request = ImagerTaskRequest::Run(ImagingParameters(
+        values
+            .iter()
+            .map(|(name, value)| (name.clone(), value.to_plain_json()))
+            .collect(),
+    ));
+    let mut stdin = serde_json::to_string(&request)
+        .map_err(|error| format!("serialize the imager request: {error}"))?;
+    stdin.push('\n');
     Ok(ProviderInvocationAdaptation {
         invocation: ProviderInvocation {
             args,
             stdin: Some(stdin),
         },
-        consumed_parameters: IMAGER_PROJECTED_PARAMETERS
-            .iter()
-            .filter(|name| values.contains_key(**name))
-            .map(|name| (*name).to_string())
-            .collect(),
+        consumed_parameters: values.keys().cloned().collect(),
     })
 }
 
-const IMAGER_PROJECTED_PARAMETERS: &[&str] = &[
-    "vis",
-    "imagename",
-    "imsize",
-    "cell",
-    "datacolumn",
-    "savemodel",
-    "startmodel",
-    "outlierfile",
-    "field",
-    "phasecenter_field",
-    "ddid",
-    "phasecenter",
-    "spw",
-    "channel_start",
-    "channel_count",
-    "stokes",
-    "specmode",
-    "start",
-    "width",
-    "outframe",
-    "veltype",
-    "interpolation",
-    "restfreq",
-    "restoringbeam",
-    "perchanweightdensity",
-    "dirty_only",
-    "niter",
-    "threshold",
-    "nmajor",
-    "gain",
-    "nsigma",
-    "psfcutoff",
-    "minor_cycle_length",
-    "cyclefactor",
-    "deconvolver",
-    "minpsffraction",
-    "maxpsffraction",
-    "nterms",
-    "hogbom_iteration_mode",
-    "scales",
-    "smallscalebias",
-    "usemask",
-    "sidelobethreshold",
-    "noisethreshold",
-    "lownoisethreshold",
-    "negativethreshold",
-    "minbeamfrac",
-    "growiterations",
-    "mask_box",
-    "weighting",
-    "mask_image",
-    "robust",
-    "wprojplanes",
-    "usepointing",
-    "uvtaper",
-    "write_pb",
-    "pbcor",
-    "pblimit",
-    "wterm",
-    "gridder",
-    "standard_mfs_acceleration",
-    "backend",
-    "parallel",
-    "uvrange",
-    "intent",
-    "cfcache",
-    "aw_cf_source",
-    "native_cf_cache",
-    "evla_surface",
-    "native_cf_policy",
-    "native_cf_working_size",
-    "native_cf_oversampling",
-    "native_cf_cache_bytes",
-    "native_cf_maximum_cells",
-    "cf_resident_mb",
-    "facets",
-    "psfphasecenter",
-    "vptable",
-    "aterm",
-    "psterm",
-    "wbawp",
-    "conjbeams",
-    "computepastep",
-    "rotatepastep",
-    "pointingoffsetsigdev",
-    "mosweight",
-    "normtype",
-    "imaging_memory_target_mb",
-    "projection",
-    "fitspw",
-    "fitorder",
-    "save_continuum_residual",
-];
-
-fn split_managed_output_args(args: Vec<String>) -> Result<(Vec<String>, Vec<String>), String> {
+/// The `--managed-output <bool>` pair of the direct arguments; the task's
+/// own parameters travel on stdin.
+fn managed_output_args(args: Vec<String>) -> Result<Vec<String>, String> {
     let mut managed = Vec::new();
-    let mut task = Vec::with_capacity(args.len());
     let mut args = args.into_iter();
     while let Some(argument) = args.next() {
         if argument != "--managed-output" {
-            task.push(argument);
             continue;
         }
-        managed.push(argument);
         let value = args
             .next()
             .ok_or_else(|| "--managed-output requires its projected boolean value".to_string())?;
@@ -346,2321 +117,189 @@ fn split_managed_output_args(args: Vec<String>) -> Result<(Vec<String>, Vec<Stri
                 "--managed-output expects true or false, found {value:?}"
             ));
         }
-        managed.push(value);
+        managed.extend([argument, value]);
     }
-    Ok((managed, task))
+    Ok(managed)
 }
 
-/// Opt-in controls for low-rate running imager progress telemetry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerProgressOptions {
-    /// Emit progress events while the task runs.
-    #[serde(default)]
-    pub enabled: bool,
-    /// Optional newline-delimited JSON telemetry path for structured progress events.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub telemetry_jsonl_path: Option<PathBuf>,
-    /// Maximum measured UV points retained for a progress snapshot.
-    #[serde(default = "default_progress_max_uv_points")]
-    pub max_uv_points: usize,
-    /// Minimum interval between non-forced progress events.
-    #[serde(default = "default_progress_min_interval_ms")]
-    pub min_interval_ms: u64,
-    /// Structured payload detail level.
-    #[serde(default)]
-    pub detail: ImagerProgressDetail,
+/// Catalog-named imager parameters as plain JSON: sparse in a request,
+/// every active parameter once resolved (the run's request echo).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct ImagingParameters(pub serde_json::Map<String, serde_json::Value>);
+
+/// The imager's request envelope.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", content = "request", rename_all = "snake_case")]
+pub enum ImagerTaskRequest {
+    /// Image one MeasurementSet; the parameters are resolved over the
+    /// catalog's defaults exactly as the command line's are.
+    Run(ImagingParameters),
 }
 
-impl Default for ImagerProgressOptions {
-    fn default() -> Self {
+impl ImagerTaskRequest {
+    /// Resolve and run the request.
+    pub fn execute(&self) -> Result<ImagerTaskResult, String> {
+        let Self::Run(parameters) = self;
+        let (parameters, request) = crate::resolve_request(parameters)?;
+        crate::run(parameters, &request).map(ImagerTaskResult::Run)
+    }
+}
+
+/// The imager's result envelope.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", content = "result", rename_all = "snake_case")]
+pub enum ImagerTaskResult {
+    /// A completed run.
+    Run(ImagerRunTaskResult),
+}
+
+/// The result of one run: the resolved parameters, the run's report and
+/// its products.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerRunTaskResult {
+    /// The resolved parameters the run imaged with.
+    pub request: ImagingParameters,
+    /// The run's report.
+    pub run: ImagerRunReport,
+    /// The products, each with whether it exists after the run.
+    pub artifacts: Vec<ImagerArtifact>,
+}
+
+impl ImagerRunTaskResult {
+    /// The result of a completed run of `request`, resolved from
+    /// `parameters`, that took `elapsed`.
+    pub fn from_outcome(
+        parameters: ImagingParameters,
+        request: &ImagingRequest,
+        outcome: &ImagingOutcome,
+        elapsed: Duration,
+    ) -> Self {
         Self {
-            enabled: false,
-            telemetry_jsonl_path: None,
-            max_uv_points: default_progress_max_uv_points(),
-            min_interval_ms: default_progress_min_interval_ms(),
-            detail: ImagerProgressDetail::Basic,
+            artifacts: artifacts(&request.imagename, &outcome.product_names()),
+            request: parameters,
+            run: ImagerRunReport {
+                gridded_samples: outcome.scientific.normal_state().sample_count(),
+                major_cycles: outcome.major_cycle_count,
+                minor_iterations: outcome.total_minor_iterations,
+                actual_minor_iterations: outcome.total_actual_minor_iterations,
+                clean_stop_reason: outcome.stop.map(ImagerCleanStopReason::from),
+                minor_cycles: outcome
+                    .minor_cycles
+                    .iter()
+                    .map(project_minor_cycle)
+                    .collect(),
+                visibility_products: outcome.visibility_products.as_ref().map(|completion| {
+                    ImagerVisibilityProductDiagnostic {
+                        final_model_generation: hex(completion.final_model().as_bytes()),
+                        sample_count: completion.sample_count(),
+                    }
+                }),
+                elapsed_ns: u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX),
+            },
         }
     }
 }
 
-/// Work-estimate fields for an imager progress event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerProgressWork {
-    /// Completed units in the chosen coarse estimate.
-    pub completed_units: u64,
-    /// Total units in the chosen coarse estimate.
-    pub total_units: u64,
-    /// Human-readable unit label.
-    pub unit_label: String,
-    /// Short description of how the estimate is calculated.
-    pub basis: String,
-    /// Qualitative precision label for UI display.
-    pub confidence: String,
-}
-
-/// MeasurementSet row/channel window currently being read or prepared.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerProgressMsWindow {
-    /// Total MAIN-table rows known for the selected MeasurementSet.
-    pub total_rows: usize,
-    /// Total channels in the selected source spectral window.
-    pub total_channels: usize,
-    /// First MAIN row represented by the current block.
-    pub row_start: usize,
-    /// Exclusive MAIN-row end represented by the current block.
-    pub row_end: usize,
-    /// First source channel represented by the current block.
-    pub channel_start: usize,
-    /// Exclusive source-channel end represented by the current block.
-    pub channel_end: usize,
-}
-
-/// Output cube geometry and active whole-plane range.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerProgressCube {
-    /// Output image width in pixels.
-    pub x_pixels: usize,
-    /// Output image height in pixels.
-    pub y_pixels: usize,
-    /// Number of output spectral/frequency planes.
-    pub z_planes: usize,
-    /// First active output Z/frequency plane.
-    pub active_plane_start: usize,
-    /// Exclusive active output Z/frequency plane end.
-    pub active_plane_end: usize,
-}
-
-/// One approximate UV coverage sample point.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerProgressUvPoint {
-    /// U coordinate in kilolambda.
-    pub u_klambda: f64,
-    /// V coordinate in kilolambda.
-    pub v_klambda: f64,
-    /// Natural or effective sample weight. Live progress displays use fixed
-    /// one-pixel points, so this remains an in-memory/back-compat field only.
-    #[serde(default = "default_imager_progress_uv_point_weight", skip_serializing)]
-    pub weight: f32,
-}
-
-/// Bounded approximate UV coverage payload.
+/// The report of one completed run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerProgressUvCoverage {
-    /// Maximum absolute U extent in kilolambda.
-    pub u_extent_klambda: f64,
-    /// Maximum absolute V extent in kilolambda.
-    pub v_extent_klambda: f64,
-    /// Measured UV points retained in the bounded sample.
-    pub measured: Vec<ImagerProgressUvPoint>,
-    /// Hermitian/conjugate points derived from the measured sample.
-    ///
-    /// Progress consumers may derive this client-side; live progress events omit
-    /// it to avoid sending the same point cloud twice.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub conjugate: Vec<ImagerProgressUvPoint>,
-    /// Accepted points not retained because the bounded sample was full.
-    pub dropped_points: u64,
-    /// Configured measured-point retention limit.
-    pub sample_limit: usize,
-}
-
-/// Deconvolution progress summary.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerProgressDeconvolution {
-    /// Current deconvolution subphase label.
-    pub phase: String,
-    /// Current or completed major-cycle count.
-    pub major_cycle: usize,
-    /// Planned or configured major-cycle limit when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub major_cycle_limit: Option<usize>,
-    /// Current or completed minor iterations.
+pub struct ImagerRunReport {
+    /// Selected samples gridded by each major cycle.
+    pub gridded_samples: u64,
+    /// Major cycles run, the initial one included.
+    pub major_cycles: usize,
+    /// Minor-cycle iterations charged to the `niter` budget.
     pub minor_iterations: usize,
-    /// Configured minor-iteration limit.
-    pub minor_iteration_limit: usize,
-    /// Current or completed cleaned component count.
-    pub components_cleaned: usize,
-    /// Peak remaining residual in mJy/beam when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub peak_residual_mjy_per_beam: Option<f32>,
-    /// Target residual in mJy/beam when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_residual_mjy_per_beam: Option<f32>,
-    /// Recent residual history in mJy/beam, oldest to newest.
-    #[serde(default)]
-    pub residual_history_mjy_per_beam: Vec<f32>,
-}
-
-/// Runtime resource state for an imager progress event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerProgressRuntime {
-    /// Active worker threads when known.
-    pub active_threads: usize,
-    /// Planned or available worker threads.
-    pub total_threads: usize,
-    /// Whether a GPU backend is currently being used.
-    pub gpu_active: bool,
-    /// Human-readable backend label.
-    pub backend: String,
-    /// Stable resource row ids that are actively owned or being worked.
-    #[serde(default)]
-    pub active_resources: Vec<String>,
-    /// Per-resource active worker counts keyed by `active_resources` id.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub active_resource_threads: BTreeMap<String, usize>,
-    /// Optional bounded-memory imaging plan snapshot.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory: Option<ImagerProgressMemory>,
-}
-
-/// Bounded-memory imaging plan fields useful for progress displays.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerProgressMemory {
-    /// Planner memory ceiling in bytes.
-    pub memory_target_bytes: usize,
-    /// Planned active resident bytes inside the memory ceiling.
-    pub planned_active_bytes: usize,
-    /// Planned source-stream buffer bytes.
-    pub source_stream_buffer_bytes: usize,
-    /// Planned product/executor scratch bytes.
-    pub product_scratch_bytes: usize,
-    /// Planned active output planes per slab.
-    pub active_planes: usize,
-    /// Planned source row-block size.
-    pub row_block_rows: usize,
-    /// Short source label for the memory target.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_target_source: Option<String>,
-    /// Optional directly attributed memory categories sampled by the backend.
-    ///
-    /// Planner fields above describe the intended memory shape. These rows are
-    /// for measured or otherwise specifically attributed bytes and must not be
-    /// fabricated from the planner totals.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub categories: Vec<ImagerProgressMemoryCategory>,
-}
-
-/// Stable resource rows reported by imager observability snapshots.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
-)]
-#[serde(rename_all = "kebab-case")]
-pub enum ImagerObservedResourceId {
-    /// MeasurementSet/source visibility stream.
-    SourceStream,
-    /// Visibility gridding, FFT, and related image-domain transforms.
-    VisibilityGrid,
-    /// Resident output-plane/model/residual state.
-    PlaneState,
-    /// Minor-cycle deconvolution state and scratch.
-    Deconvolver,
-    /// Product write and product scratch state.
-    ProductScratch,
-    /// Worker or producer/consumer queue storage.
-    WorkerQueue,
-    /// GPU staging or device-resident state.
-    GpuStaging,
-    /// Process/runtime memory outside explicit domain resources.
-    ProcessRuntime,
-}
-
-/// Stable resource state labels for imager observability snapshots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum ImagerObservedResourceState {
-    /// The resource is actively being read, written, or computed on.
-    Active,
-    /// The resource is resident and intentionally retained, but not active.
-    Retained,
-    /// Work is blocked waiting for this resource or for downstream capacity.
-    Blocked,
-    /// The resource is known idle.
-    Idle,
-    /// The backend cannot currently determine this resource state.
-    Unknown,
-    /// Last known state is retained only as history and should not look current.
-    Stale,
-}
-
-/// Stable high-level stage kinds for imager observability spans.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ImagerObservedStageKind {
-    /// Whole imager run lifecycle.
-    Run,
-    /// Source MeasurementSet stream or row/channel preparation.
-    SourceStream,
-    /// Visibility gridding work.
-    Gridding,
-    /// FFT/image-domain transform work.
-    Fft,
-    /// Residual refresh, including model prediction and regridding.
-    ResidualRefresh,
-    /// Clark/Cotton-Schwab minor-cycle work.
-    ClarkMinorCycle,
-    /// Generic deconvolution work.
-    Deconvolution,
-    /// Mosaic residual or mosaic image-domain combination.
-    MosaicResidual,
-    /// Weighted mosaic grouping or accumulation.
-    WeightedMosaic,
-    /// Product materialization or writes.
-    ProductWrite,
-    /// Memory planning or memory-ledger update.
-    MemoryPlanning,
-    /// Stage not yet classified.
-    Unknown,
-}
-
-/// Stable span state labels for imager observability snapshots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum ImagerObservabilitySpanState {
-    /// Span is currently executing.
-    Running,
-    /// Span completed successfully.
-    Complete,
-    /// Span failed.
-    Failed,
-    /// Span is blocked waiting for another resource or queue.
-    Blocked,
-    /// Span is retained as history and should not look current.
-    Stale,
-    /// Span state is unknown.
-    Unknown,
-}
-
-/// Active extent covered by a span when known.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerObservabilityExtent {
-    /// Inclusive start MAIN row.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub row_start: Option<usize>,
-    /// Exclusive end MAIN row.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub row_end: Option<usize>,
-    /// Inclusive start source channel.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub channel_start: Option<usize>,
-    /// Exclusive end source channel.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub channel_end: Option<usize>,
-    /// Inclusive start output plane.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plane_start: Option<usize>,
-    /// Exclusive end output plane.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plane_end: Option<usize>,
-}
-
-/// Per-resource memory facts for an imager observability snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerObservedResourceMemory {
-    /// Current resident bytes attributed to this resource, when measured.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resident_bytes: Option<usize>,
-    /// Planned or target bytes attributed to this resource, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub planned_bytes: Option<usize>,
-    /// Rolling source row-block size when this resource is a stream buffer.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub row_block_rows: Option<usize>,
-    /// Active output planes represented by this resource.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_planes: Option<usize>,
-}
-
-/// Coarse memory categories reported by the imager observability ledger.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum ImagerObservedMemoryKind {
-    /// MeasurementSet/source stream buffers.
-    SourceBuffer,
-    /// Prepared row or visibility group buffers.
-    RowVisibilityBuffer,
-    /// Visibility grid, FFT, and image-domain scratch.
-    GridFftScratch,
-    /// Resident output-plane/model/residual state.
-    PlaneState,
-    /// Deconvolver scratch and bookkeeping.
-    DeconvolverScratch,
-    /// Product writer and product scratch storage.
-    Products,
-    /// Worker queues, task queues, and producer/consumer staging.
-    WorkerQueue,
-    /// GPU host-side staging storage.
-    GpuStaging,
-    /// GPU device-resident storage.
-    GpuDevice,
-    /// Process RSS sample used as a separate runtime fact.
-    ProcessBaseline,
-    /// Allocator, cache, and runtime memory not yet attributed to imager resources.
-    AllocatorRuntime,
-    /// RSS not currently attributed to tracked domain allocations.
-    UntrackedResident,
-}
-
-/// Confidence class for an imager memory-ledger entry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum ImagerObservedMemoryConfidence {
-    /// Measured directly from the owning allocator, process, or device API.
-    Measured,
-    /// Planned by the imager memory planner, not sampled from an allocator.
-    Planned,
-    /// Derived from another observation such as RSS minus tracked bytes.
-    Estimated,
-    /// Category exists, but bytes are not yet attributable.
-    Unknown,
-}
-
-/// Backend-attributed memory facts attached to a runtime memory snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerProgressMemoryCategory {
-    /// Stable category id.
-    pub kind: ImagerObservedMemoryKind,
-    /// Resource row associated with this category, when there is one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resource_id: Option<ImagerObservedResourceId>,
-    /// Planned or target bytes for this category, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub planned_bytes: Option<usize>,
-    /// Currently tracked live bytes for this category, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tracked_live_bytes: Option<usize>,
-    /// High-water bytes for this category, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub high_water_bytes: Option<usize>,
-    /// Rolling source row-block size when this category is a stream buffer.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub row_block_rows: Option<usize>,
-    /// Active output planes represented by this category.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_planes: Option<usize>,
-    /// Confidence class for this category, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub confidence: Option<ImagerObservedMemoryConfidence>,
-    /// Short note explaining unknown or estimated entries.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-}
-
-/// One category entry in the imager memory ledger.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerObservedMemoryEntry {
-    /// Stable category id.
-    pub kind: ImagerObservedMemoryKind,
-    /// Short display label.
-    pub label: String,
-    /// Resource row associated with this category, when there is one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resource_id: Option<ImagerObservedResourceId>,
-    /// Planned or target bytes for this category, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub planned_bytes: Option<usize>,
-    /// Currently tracked live bytes for this category, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tracked_live_bytes: Option<usize>,
-    /// High-water bytes for this category, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub high_water_bytes: Option<usize>,
-    /// Current process RSS bytes for process-level entries.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub process_rss_bytes: Option<usize>,
-    /// Peak process RSS bytes for process-level entries.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub process_peak_rss_bytes: Option<usize>,
-    /// RSS bytes not currently explained by tracked live category bytes.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub untracked_bytes: Option<usize>,
-    /// Rolling source row-block size when this category is a stream buffer.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub row_block_rows: Option<usize>,
-    /// Active output planes represented by this category.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_planes: Option<usize>,
-    /// Confidence class for this entry.
-    pub confidence: ImagerObservedMemoryConfidence,
-    /// Short note explaining unknown or estimated entries.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-}
-
-/// Memory ledger attached to an imager observability snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerMemoryLedgerSnapshot {
-    /// Category entries. Unknown-byte categories are retained as explicit gaps.
-    pub entries: Vec<ImagerObservedMemoryEntry>,
-    /// Sum of planned bytes in entries that report planned bytes.
-    pub planned_total_bytes: usize,
-    /// Sum of tracked live bytes in entries that report live bytes.
-    pub tracked_live_total_bytes: usize,
-    /// Sum of high-water bytes in entries that report high-water bytes.
-    pub tracked_high_water_total_bytes: usize,
-    /// Current process RSS sample, when available.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub process_rss_bytes: Option<usize>,
-    /// Peak process RSS sample, when available.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub process_peak_rss_bytes: Option<usize>,
-    /// RSS bytes not currently explained by tracked live category bytes.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub untracked_resident_bytes: Option<usize>,
-}
-
-/// Aggregate worker state for imager observability snapshots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum ImagerObservedWorkerState {
-    /// CPU work is currently running.
-    RunningCpu,
-    /// I/O or source-stream work is currently running.
-    RunningIo,
-    /// GPU work has been submitted or is being driven by host workers.
-    GpuSubmit,
-    /// Work is blocked on a queue, resource, or downstream capacity.
-    Blocked,
-    /// Worker capacity is idle.
-    Idle,
-    /// Worker state is retained only as history and should not look current.
-    Stale,
-    /// Worker state cannot currently be determined.
-    Unknown,
-}
-
-/// Stable queue state labels for imager observability snapshots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum ImagerObservedQueueState {
-    /// Queue producers or consumers are currently active.
-    Active,
-    /// Queue producers or consumers are blocked.
-    Blocked,
-    /// Queue is known empty or inactive.
-    Idle,
-    /// Last known queue observation is retained only as history.
-    Stale,
-    /// Queue state cannot currently be determined.
-    Unknown,
-}
-
-/// Aggregate worker snapshot for an imager observability event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerObservedWorkerSnapshot {
-    /// Stable worker-row id.
-    pub id: String,
-    /// Short display label.
-    pub label: String,
-    /// Current aggregate state.
-    pub state: ImagerObservedWorkerState,
-    /// Resource most closely associated with this worker row.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resource_id: Option<ImagerObservedResourceId>,
-    /// Active span associated with this worker row when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub span_id: Option<String>,
-    /// Active workers in this row.
-    pub active_count: usize,
-    /// Planned or available workers in this row when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub capacity: Option<usize>,
-}
-
-/// Confidence class for queue telemetry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum ImagerObservedQueueConfidence {
-    /// Measured directly from the queue.
-    Measured,
-    /// Planned by an executor or memory planner.
-    Planned,
-    /// Derived from related runtime state.
-    Estimated,
-    /// Queue exists conceptually, but current depth or bytes are unknown.
-    Unknown,
-}
-
-/// Queue or producer/consumer snapshot for an imager observability event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerObservedQueueSnapshot {
-    /// Stable queue id.
-    pub id: String,
-    /// Short display label.
-    pub label: String,
-    /// Current queue state.
-    pub state: ImagerObservedQueueState,
-    /// Resource most closely associated with this queue.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resource_id: Option<ImagerObservedResourceId>,
-    /// Current queue length when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub len: Option<usize>,
-    /// Queue capacity when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub capacity: Option<usize>,
-    /// Current queued or reserved bytes when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bytes: Option<usize>,
-    /// Whether producers are active.
-    pub producers_active: bool,
-    /// Whether consumers are active.
-    pub consumers_active: bool,
-    /// Count of producers or consumers known to be blocked.
-    pub blocked_count: usize,
-    /// Current dominant blocked reason, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub blocked_reason: Option<String>,
-    /// Duration this queue has been idle, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub idle_duration_ms: Option<u64>,
-    /// Confidence class for this queue observation.
-    pub confidence: ImagerObservedQueueConfidence,
-    /// Short note explaining unknown or estimated rows.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub note: Option<String>,
-}
-
-/// Authoritative resource row in an imager observability snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerObservedResource {
-    /// Stable row id.
-    pub id: ImagerObservedResourceId,
-    /// Short display label.
-    pub label: String,
-    /// Stable state label.
-    pub state: ImagerObservedResourceState,
-    /// Number of outstanding backend leases on this resource.
-    pub lease_count: usize,
-    /// Worker threads currently attributed to this resource.
-    pub active_threads: usize,
-    /// Whether the resource is currently backed by GPU work.
-    pub gpu_active: bool,
-    /// Current owner or stage label when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub owner: Option<String>,
-    /// Memory facts for this resource when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory: Option<ImagerObservedResourceMemory>,
-}
-
-/// Active execution span in an imager observability snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerObservabilitySpan {
-    /// Stable span id for this coarse activity.
-    pub id: String,
-    /// Human-readable span name.
-    pub name: String,
-    /// Stable stage kind.
-    pub stage_kind: ImagerObservedStageKind,
-    /// Stable state label.
-    pub state: ImagerObservabilitySpanState,
-    /// Parent span id when this is a nested span.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent_id: Option<String>,
-    /// Worker id or lane label when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub worker_id: Option<String>,
-    /// Resource ids currently owned by this span.
-    #[serde(default)]
-    pub resource_ids: Vec<ImagerObservedResourceId>,
-    /// Resource ids this span expects to touch while active.
-    #[serde(default)]
-    pub expected_resource_ids: Vec<ImagerObservedResourceId>,
-    /// Active extent covered by this span when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extent: Option<ImagerObservabilityExtent>,
-    /// Aggregated span counters.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub counters: BTreeMap<String, u64>,
-    /// Milliseconds from task start to span start.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start_ms: Option<u64>,
-    /// Milliseconds from task start to span end.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub end_ms: Option<u64>,
-    /// Inclusive wall duration for this span.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub duration_ms: Option<u64>,
-    /// Duration excluding known child spans, when computed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exclusive_duration_ms: Option<u64>,
-    /// Elapsed milliseconds since the task started when the snapshot was built.
-    pub elapsed_ms: u64,
-}
-
-/// Structured MeasurementSet/source-read diagnostic payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerSourceReadDiagnostic {
-    /// Source-read pass label such as initial-dirty or weighting-density.
-    pub pass_kind: String,
-    /// Slab id when the read belongs to a spectral slab.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub slab_id: Option<usize>,
-    /// Inclusive output-plane start.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plane_start: Option<usize>,
-    /// Exclusive output-plane end.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plane_end: Option<usize>,
-    /// MAIN rows represented by this source read.
-    pub rows: usize,
-    /// Planned row block size used by the reader.
-    pub row_block_rows: usize,
-    /// Inclusive source-channel start, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub channel_start: Option<usize>,
-    /// Exclusive source-channel end, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub channel_end: Option<usize>,
-    /// Number of source channels represented.
-    pub source_channels: usize,
-    /// Logical output bytes generated by the read/prepare path.
-    pub logical_output_bytes: u64,
-    /// Modeled bytes physically read from MeasurementSet columns.
-    pub modeled_physical_read_bytes: u64,
-    /// Full source-acquisition wall time, including row/block setup and decode overhead.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wall_elapsed_ns: Option<u64>,
-    /// Logical output throughput over full source-acquisition wall time.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub logical_mb_per_s: Option<f64>,
-    /// Modeled physical read throughput over full source-acquisition wall time.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub modeled_physical_wall_mb_per_s: Option<f64>,
-    /// Bytes requested from source columns when measured.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bytes_requested: Option<u64>,
-    /// Bytes actually read from source columns when measured.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bytes_read: Option<u64>,
-    /// Source column ids or names touched by this read.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub column_ids: Vec<String>,
-    /// Data-column role, for example DATA or CORRECTED_DATA.
-    pub data_column: String,
-    /// Inner column/decode elapsed time in nanoseconds.
+    /// Minor-cycle components actually applied.
+    pub actual_minor_iterations: usize,
+    /// Why cleaning stopped, when it ran.
+    pub clean_stop_reason: Option<ImagerCleanStopReason>,
+    /// Each minor cycle, in order.
+    pub minor_cycles: Vec<ImagerMinorCycleDiagnostic>,
+    /// The final prediction of a run that writes visibilities.
+    pub visibility_products: Option<ImagerVisibilityProductDiagnostic>,
+    /// Wall time of the run.
     pub elapsed_ns: u64,
-    /// Inner modeled physical read rate in decimal MB/s.
-    pub mb_per_s: f64,
 }
 
-/// Structured product-write diagnostic payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerProductWriteDiagnostic {
-    /// Product or artifact family written.
-    pub artifact_kind: String,
-    /// Slab id when the write belongs to a spectral slab.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub slab_id: Option<usize>,
-    /// Inclusive output-plane start.
-    pub plane_start: usize,
-    /// Exclusive output-plane end.
-    pub plane_end: usize,
-    /// Number of output planes written.
-    pub planes: usize,
-    /// Estimated or measured written bytes.
-    pub bytes_written: u64,
-    /// Elapsed write wall time in nanoseconds.
-    pub elapsed_ns: u64,
-    /// Write rate in decimal MB/s.
-    pub mb_per_s: f64,
+/// The final model a run predicted written visibilities from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerVisibilityProductDiagnostic {
+    /// The final model generation.
+    pub final_model_generation: String,
+    /// Selected visibility samples predicted.
+    pub sample_count: u64,
 }
 
-/// Structured backend-selection diagnostic payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerBackendDiagnostic {
-    /// Stage that selected or rejected this backend.
-    pub stage_kind: ImagerObservedStageKind,
-    /// Requested acceleration policy or backend selector.
-    pub requested_backend: String,
-    /// Backend actually selected.
-    pub selected_backend: String,
-    /// Whether GPU execution was eligible for this stage.
-    pub gpu_eligible: bool,
-    /// Whether GPU execution was actually selected.
-    pub gpu_selected: bool,
-    /// Whether a GPU device was available.
-    pub gpu_device_available: bool,
-    /// GPU device name, when the backend exposes it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gpu_device_name: Option<String>,
-    /// Rejection or fallback reasons for backends not selected.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub rejection_reasons: Vec<String>,
-    /// CPU fallback reason, when different from the rejection list.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cpu_fallback_reason: Option<String>,
-    /// Host-side staging bytes, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host_bytes: Option<u64>,
-    /// Device-resident bytes, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub device_bytes: Option<u64>,
-    /// GPU command-buffer elapsed time when available.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub command_buffer_ns: Option<u64>,
-    /// GPU kernel elapsed time when available.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kernel_ns: Option<u64>,
+fn hex(bytes: [u8; 32]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// Structured per-stage diagnostic summary payload.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerStageDiagnosticSummary {
-    /// Stage kind being summarized.
-    pub stage_kind: ImagerObservedStageKind,
-    /// Short stage label.
-    pub label: String,
-    /// Slab id when applicable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub slab_id: Option<usize>,
-    /// Inclusive output-plane start when applicable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plane_start: Option<usize>,
-    /// Exclusive output-plane end when applicable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub plane_end: Option<usize>,
-    /// Backend label used by the stage.
-    pub backend: String,
-    /// Worker count attributed to the stage.
-    pub worker_count: usize,
-    /// Elapsed stage wall time in nanoseconds.
-    pub elapsed_ns: u64,
-    /// Exclusive stage time when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub exclusive_elapsed_ns: Option<u64>,
-    /// Rows touched by the stage, when applicable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rows: Option<usize>,
-    /// Planes touched by the stage, when applicable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub planes: Option<usize>,
-    /// Bytes read by the stage, when applicable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bytes_read: Option<u64>,
-    /// Bytes written by the stage, when applicable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bytes_written: Option<u64>,
-    /// Throughput rate in decimal MB/s, when meaningful.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mb_per_s: Option<f64>,
-}
-
-/// Final structured diagnostic run summary.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerRunDiagnosticSummary {
-    /// Total wall time in milliseconds.
-    pub total_wall_ms: u64,
-    /// Stage totals keyed by stage label.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub stage_totals_ms: BTreeMap<String, u64>,
-    /// Total modeled source-read bytes.
-    pub source_read_bytes: u64,
-    /// Aggregate modeled source-read MB/s.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_read_mb_per_s: Option<f64>,
-    /// Total product-write bytes.
-    pub product_write_bytes: u64,
-    /// Aggregate product-write MB/s.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub product_write_mb_per_s: Option<f64>,
-    /// Resource high-water bytes keyed by resource id.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub resource_high_water_bytes: BTreeMap<String, usize>,
-    /// Dominant stall/backpressure reasons observed by the run.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub top_stall_reasons: Vec<String>,
-}
-
-/// Additional diagnostic payloads emitted only when requested.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerProgressDiagnostics {
-    /// Recent real source-read diagnostics.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub source_reads: Vec<ImagerSourceReadDiagnostic>,
-    /// Recent real product-write diagnostics.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub product_writes: Vec<ImagerProductWriteDiagnostic>,
-    /// Backend selection or rejection decisions.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub backend_decisions: Vec<ImagerBackendDiagnostic>,
-    /// Recent stage summaries.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub stage_summaries: Vec<ImagerStageDiagnosticSummary>,
-    /// Final run summary, present on completion events.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_summary: Option<ImagerRunDiagnosticSummary>,
-}
-
-/// Authoritative execution-state snapshot emitted with imager progress events.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerObservabilitySnapshot {
-    /// Monotonic observability schema version.
-    pub schema_version: u32,
-    /// Fixed tracked resource rows.
-    pub resources: Vec<ImagerObservedResource>,
-    /// Active high-level spans.
-    #[serde(default)]
-    pub active_spans: Vec<ImagerObservabilitySpan>,
-    /// Recently completed or otherwise inactive spans retained for UI history.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub recent_spans: Vec<ImagerObservabilitySpan>,
-    /// Total memory target in bytes when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_target_bytes: Option<usize>,
-    /// Source label for the memory target when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_target_source: Option<String>,
-    /// Authoritative memory ledger for tracked and untracked runtime memory.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_ledger: Option<ImagerMemoryLedgerSnapshot>,
-    /// Aggregate worker-state rows.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub workers: Vec<ImagerObservedWorkerSnapshot>,
-    /// Queue and producer/consumer rows.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub queues: Vec<ImagerObservedQueueSnapshot>,
-    /// Diagnostic payloads emitted only when requested.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub diagnostics: Option<ImagerProgressDiagnostics>,
-}
-
-/// One coarse progress event emitted while an imager task is running.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerProgressEvent {
-    /// Progress-event schema version.
-    pub schema_version: u32,
-    /// Monotonic sequence number within this process run.
-    pub sequence: u64,
-    /// Elapsed time since the task run started, in milliseconds.
-    pub elapsed_ms: u64,
-    /// Stable phase label for the event.
-    pub phase: String,
-    /// Human-readable summary suitable for logs.
-    pub summary: String,
-    /// Coarse work estimate for progress bars.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub work: Option<ImagerProgressWork>,
-    /// Active MeasurementSet read/preparation window.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ms_read: Option<ImagerProgressMsWindow>,
-    /// Active output cube whole-plane range.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_cube: Option<ImagerProgressCube>,
-    /// Bounded approximate UV coverage.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub uv_coverage: Option<ImagerProgressUvCoverage>,
-    /// Deconvolution progress.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deconvolution: Option<ImagerProgressDeconvolution>,
-    /// Runtime resource state.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime: Option<ImagerProgressRuntime>,
-    /// Authoritative execution-state snapshot for progress/diagnostic UIs.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observability: Option<ImagerObservabilitySnapshot>,
-}
-
-/// Supported scalar imaging planes and explicit raw correlations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum ImagerPlaneSelection {
-    /// Stokes I.
-    #[serde(rename = "I")]
-    StokesI,
-    /// Stokes Q.
-    #[serde(rename = "Q")]
-    StokesQ,
-    /// Stokes U.
-    #[serde(rename = "U")]
-    StokesU,
-    /// Stokes V.
-    #[serde(rename = "V")]
-    StokesV,
-    /// Raw XX correlation.
-    #[serde(rename = "XX")]
-    CorrXX,
-    /// Raw YY correlation.
-    #[serde(rename = "YY")]
-    CorrYY,
-    /// Raw RR correlation.
-    #[serde(rename = "RR")]
-    CorrRR,
-    /// Raw LL correlation.
-    #[serde(rename = "LL")]
-    CorrLL,
-}
-
-impl ImagerPlaneSelection {
-    /// Return the CLI-compatible string form.
-    pub fn as_cli_text(self) -> &'static str {
-        match self {
-            Self::StokesI => "I",
-            Self::StokesQ => "Q",
-            Self::StokesU => "U",
-            Self::StokesV => "V",
-            Self::CorrXX => "XX",
-            Self::CorrYY => "YY",
-            Self::CorrRR => "RR",
-            Self::CorrLL => "LL",
-        }
-    }
-
-    fn from_cli_text(text: &str) -> Result<Self, String> {
-        match text {
-            "I" => Ok(Self::StokesI),
-            "Q" => Ok(Self::StokesQ),
-            "U" => Ok(Self::StokesU),
-            "V" => Ok(Self::StokesV),
-            "XX" => Ok(Self::CorrXX),
-            "YY" => Ok(Self::CorrYY),
-            "RR" => Ok(Self::CorrRR),
-            "LL" => Ok(Self::CorrLL),
-            other => Err(format!("unsupported scalar plane value {other:?}")),
-        }
-    }
-}
-
-/// Spectral imaging mode for the task protocol.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ImagerSpectralMode {
-    /// Collapse selected channels into one MFS plane.
-    #[default]
-    Mfs,
-    /// Produce a spectral cube in the requested frame.
-    Cube,
-    /// Produce a spectral cube in the native data frame.
-    Cubedata,
-    /// Produce a source-rest-frame cube for a moving target.
-    Cubesource,
-    /// Multi-term continuum reconstruction through cube major cycles.
-    Mvc,
-}
-
-impl From<SpectralMode> for ImagerSpectralMode {
-    fn from(value: SpectralMode) -> Self {
-        match value {
-            SpectralMode::Mfs => Self::Mfs,
-            SpectralMode::Cube => Self::Cube,
-            SpectralMode::Cubedata => Self::Cubedata,
-            SpectralMode::Cubesource => Self::Cubesource,
-            SpectralMode::Mvc => Self::Mvc,
-        }
-    }
-}
-
-impl From<ImagerSpectralMode> for SpectralMode {
-    fn from(value: ImagerSpectralMode) -> Self {
-        match value {
-            ImagerSpectralMode::Mfs => Self::Mfs,
-            ImagerSpectralMode::Cube => Self::Cube,
-            ImagerSpectralMode::Cubedata => Self::Cubedata,
-            ImagerSpectralMode::Cubesource => Self::Cubesource,
-            ImagerSpectralMode::Mvc => Self::Mvc,
-        }
-    }
-}
-
-/// CASA-style model persistence after imaging.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ImagerSaveModel {
-    /// Do not write a visibility model back to the MeasurementSet.
-    #[default]
-    None,
-    /// Predict the final MFS model image into MAIN.MODEL_DATA.
-    ModelColumn,
-}
-
-impl From<SaveModelMode> for ImagerSaveModel {
-    fn from(value: SaveModelMode) -> Self {
-        match value {
-            SaveModelMode::None => Self::None,
-            SaveModelMode::ModelColumn => Self::ModelColumn,
-        }
-    }
-}
-
-impl From<ImagerSaveModel> for SaveModelMode {
-    fn from(value: ImagerSaveModel) -> Self {
-        match value {
-            ImagerSaveModel::None => Self::None,
-            ImagerSaveModel::ModelColumn => Self::ModelColumn,
-        }
-    }
-}
-
-/// Weighting policy for imaging runs.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ImagerWeighting {
-    /// Natural weighting.
-    #[default]
-    Natural,
-    /// Uniform weighting.
-    Uniform,
-    /// Briggs robust weighting.
-    Briggs {
-        /// CASA-style robust parameter in `[-2, 2]`.
-        robust: f32,
-    },
-    /// CASA Briggs bandwidth taper weighting.
-    BriggsBwTaper {
-        /// CASA-style robust parameter in `[-2, 2]`.
-        robust: f32,
-    },
-}
-
-impl From<WeightingMode> for ImagerWeighting {
-    fn from(value: WeightingMode) -> Self {
-        match value {
-            WeightingMode::Natural => Self::Natural,
-            WeightingMode::Uniform => Self::Uniform,
-            WeightingMode::Briggs { robust } => Self::Briggs { robust },
-            WeightingMode::BriggsBwTaper { robust } => Self::BriggsBwTaper { robust },
-        }
-    }
-}
-
-impl From<ImagerWeighting> for WeightingMode {
-    fn from(value: ImagerWeighting) -> Self {
-        match value {
-            ImagerWeighting::Natural => Self::Natural,
-            ImagerWeighting::Uniform => Self::Uniform,
-            ImagerWeighting::Briggs { robust } => Self::Briggs { robust },
-            ImagerWeighting::BriggsBwTaper { robust } => Self::BriggsBwTaper { robust },
-        }
-    }
-}
-
-/// Restoring-beam policy for restored image products.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ImagerRestoringBeamMode {
-    /// Fit one beam per plane.
-    #[default]
-    PerPlane,
-    /// Fit one common beam for the full cube.
-    Common,
-}
-
-impl From<RestoringBeamMode> for ImagerRestoringBeamMode {
-    fn from(value: RestoringBeamMode) -> Self {
-        match value {
-            RestoringBeamMode::PerPlane => Self::PerPlane,
-            RestoringBeamMode::Common => Self::Common,
-        }
-    }
-}
-
-impl From<ImagerRestoringBeamMode> for RestoringBeamMode {
-    fn from(value: ImagerRestoringBeamMode) -> Self {
-        match value {
-            ImagerRestoringBeamMode::PerPlane => Self::PerPlane,
-            ImagerRestoringBeamMode::Common => Self::Common,
-        }
-    }
-}
-
-/// Minor-cycle deconvolver selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ImagerDeconvolver {
-    /// Hogbom clean.
-    #[default]
-    Hogbom,
-    /// Multi-term multi-frequency synthesis.
-    Mtmfs,
-    /// Clark clean.
-    Clark,
-    /// Multiscale clean.
-    Multiscale,
-}
-
-impl From<Deconvolver> for ImagerDeconvolver {
-    fn from(value: Deconvolver) -> Self {
-        match value {
-            Deconvolver::Hogbom => Self::Hogbom,
-            Deconvolver::Mtmfs => Self::Mtmfs,
-            Deconvolver::Clark => Self::Clark,
-            Deconvolver::Multiscale => Self::Multiscale,
-        }
-    }
-}
-
-impl From<ImagerDeconvolver> for Deconvolver {
-    fn from(value: ImagerDeconvolver) -> Self {
-        match value {
-            ImagerDeconvolver::Hogbom => Self::Hogbom,
-            ImagerDeconvolver::Mtmfs => Self::Mtmfs,
-            ImagerDeconvolver::Clark => Self::Clark,
-            ImagerDeconvolver::Multiscale => Self::Multiscale,
-        }
-    }
-}
-
-/// Hogbom minor-cycle iteration accounting policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ImagerHogbomIterationMode {
-    /// Treat `niter` and `cycleniter` as strict caps on committed components.
-    #[default]
-    Strict,
-    /// Mirror CASA's inclusive `hclean` iteration loop for parity checks.
-    CasaInclusive,
-}
-
-impl From<HogbomIterationMode> for ImagerHogbomIterationMode {
-    fn from(value: HogbomIterationMode) -> Self {
-        match value {
-            HogbomIterationMode::Strict => Self::Strict,
-            HogbomIterationMode::CasaInclusive => Self::CasaInclusive,
-        }
-    }
-}
-
-impl From<ImagerHogbomIterationMode> for HogbomIterationMode {
-    fn from(value: ImagerHogbomIterationMode) -> Self {
-        match value {
-            ImagerHogbomIterationMode::Strict => Self::Strict,
-            ImagerHogbomIterationMode::CasaInclusive => Self::CasaInclusive,
-        }
-    }
-}
-
-/// CASA-style clean-mask generation mode for the task protocol.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "kebab-case")]
-pub enum ImagerCleanMaskMode {
-    /// Use only explicit user mask boxes or a mask image.
-    #[default]
-    User,
-    /// Generate a mask using CASA's `auto-multithresh` control family.
-    AutoMultithresh,
-}
-
-impl From<CleanMaskMode> for ImagerCleanMaskMode {
-    fn from(value: CleanMaskMode) -> Self {
-        match value {
-            CleanMaskMode::User => Self::User,
-            CleanMaskMode::AutoMultiThreshold => Self::AutoMultithresh,
-        }
-    }
-}
-
-impl From<ImagerCleanMaskMode> for CleanMaskMode {
-    fn from(value: ImagerCleanMaskMode) -> Self {
-        match value {
-            ImagerCleanMaskMode::User => Self::User,
-            ImagerCleanMaskMode::AutoMultithresh => Self::AutoMultiThreshold,
-        }
-    }
-}
-
-/// CASA `auto-multithresh` controls for the task protocol.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerAutoMultiThresholdConfig {
-    /// Sidelobe threshold factor multiplied by the PSF sidelobe level.
-    #[serde(default = "default_auto_sidelobe_threshold")]
-    pub sidelobe_threshold: f32,
-    /// Noise threshold factor multiplied by the robust residual RMS.
-    #[serde(default = "default_auto_noise_threshold")]
-    pub noise_threshold: f32,
-    /// Lower noise threshold factor used when growing a mask.
-    #[serde(default = "default_auto_low_noise_threshold")]
-    pub low_noise_threshold: f32,
-    /// Negative-feature threshold factor; zero disables negative masks.
-    #[serde(default)]
-    pub negative_threshold: f32,
-    /// Smoothing factor for CASA's beam-scaled mask smoothing stage.
-    #[serde(default = "default_auto_smooth_factor")]
-    pub smooth_factor: f32,
-    /// Minimum region size as a fraction of the fitted beam area.
-    #[serde(default = "default_auto_min_beam_frac")]
-    pub min_beam_frac: f32,
-    /// Fraction of the smoothed mask peak used to cut mask edges.
-    #[serde(default = "default_auto_cut_threshold")]
-    pub cut_threshold: f32,
-    /// Maximum constrained binary-dilation iterations for mask growth.
-    #[serde(default = "default_auto_grow_iterations")]
-    pub grow_iterations: usize,
-    /// Whether grown masks are pruned after dilation.
-    #[serde(default = "default_true")]
-    pub do_grow_prune: bool,
-    /// CASA percent-change stop control for later automask updates.
-    #[serde(default = "default_auto_min_percent_change")]
-    pub min_percent_change: f32,
-    /// Use CASA's fast-noise statistics path.
-    #[serde(default = "default_true")]
-    pub fast_noise: bool,
-}
-
-impl Default for ImagerAutoMultiThresholdConfig {
-    fn default() -> Self {
-        AutoMultiThresholdConfig::default().into()
-    }
-}
-
-impl From<AutoMultiThresholdConfig> for ImagerAutoMultiThresholdConfig {
-    fn from(value: AutoMultiThresholdConfig) -> Self {
-        Self {
-            sidelobe_threshold: value.sidelobe_threshold,
-            noise_threshold: value.noise_threshold,
-            low_noise_threshold: value.low_noise_threshold,
-            negative_threshold: value.negative_threshold,
-            smooth_factor: value.smooth_factor,
-            min_beam_frac: value.min_beam_frac,
-            cut_threshold: value.cut_threshold,
-            grow_iterations: value.grow_iterations,
-            do_grow_prune: value.do_grow_prune,
-            min_percent_change: value.min_percent_change,
-            fast_noise: value.fast_noise,
-        }
-    }
-}
-
-impl From<ImagerAutoMultiThresholdConfig> for AutoMultiThresholdConfig {
-    fn from(value: ImagerAutoMultiThresholdConfig) -> Self {
-        Self {
-            sidelobe_threshold: value.sidelobe_threshold,
-            noise_threshold: value.noise_threshold,
-            low_noise_threshold: value.low_noise_threshold,
-            negative_threshold: value.negative_threshold,
-            smooth_factor: value.smooth_factor,
-            min_beam_frac: value.min_beam_frac,
-            cut_threshold: value.cut_threshold,
-            grow_iterations: value.grow_iterations,
-            do_grow_prune: value.do_grow_prune,
-            min_percent_change: value.min_percent_change,
-            fast_noise: value.fast_noise,
-        }
-    }
-}
-
-fn default_auto_sidelobe_threshold() -> f32 {
-    AutoMultiThresholdConfig::default().sidelobe_threshold
-}
-
-fn default_auto_noise_threshold() -> f32 {
-    AutoMultiThresholdConfig::default().noise_threshold
-}
-
-fn default_auto_low_noise_threshold() -> f32 {
-    AutoMultiThresholdConfig::default().low_noise_threshold
-}
-
-fn default_auto_smooth_factor() -> f32 {
-    AutoMultiThresholdConfig::default().smooth_factor
-}
-
-fn default_auto_min_beam_frac() -> f32 {
-    AutoMultiThresholdConfig::default().min_beam_frac
-}
-
-fn default_auto_cut_threshold() -> f32 {
-    AutoMultiThresholdConfig::default().cut_threshold
-}
-
-fn default_auto_grow_iterations() -> usize {
-    AutoMultiThresholdConfig::default().grow_iterations
-}
-
-fn default_auto_min_percent_change() -> f32 {
-    AutoMultiThresholdConfig::default().min_percent_change
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn default_one_usize() -> usize {
-    1
-}
-
-fn default_aw_cf_resident_mb() -> usize {
-    256
-}
-
-fn default_aw_pa_step() -> f64 {
-    360.0
-}
-
-fn default_aw_pointing_offset_sigdev() -> Vec<f64> {
-    vec![0.0]
-}
-
-fn default_aw_normalization() -> ImagerAwProjectNormalization {
-    ImagerAwProjectNormalization::Flatnoise
-}
-
-/// `w`-term handling mode for the imaging task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ImagerWTermMode {
-    /// Standard 2-D imaging.
-    #[default]
-    None,
-    /// Exact direct per-sample correction.
-    Direct,
-    /// `wproject` request.
-    Wproject,
-}
-
-impl From<WTermMode> for ImagerWTermMode {
-    fn from(value: WTermMode) -> Self {
-        match value {
-            WTermMode::None => Self::None,
-            WTermMode::Direct => Self::Direct,
-            WTermMode::WProject => Self::Wproject,
-        }
-    }
-}
-
-impl From<ImagerWTermMode> for WTermMode {
-    fn from(value: ImagerWTermMode) -> Self {
-        match value {
-            ImagerWTermMode::None => Self::None,
-            ImagerWTermMode::Direct => Self::Direct,
-            ImagerWTermMode::Wproject => Self::WProject,
-        }
-    }
-}
-
-/// Spectral interpolation policy for cube imaging.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ImagerCubeInterpolation {
-    /// Nearest-neighbour interpolation.
-    Nearest,
-    /// Linear interpolation.
-    #[default]
-    Linear,
-    /// Four-point cubic interpolation.
-    Cubic,
-}
-
-impl From<CubeInterpolation> for ImagerCubeInterpolation {
-    fn from(value: CubeInterpolation) -> Self {
-        match value {
-            CubeInterpolation::Nearest => Self::Nearest,
-            CubeInterpolation::Linear => Self::Linear,
-            CubeInterpolation::Cubic => Self::Cubic,
-        }
-    }
-}
-
-impl From<ImagerCubeInterpolation> for CubeInterpolation {
-    fn from(value: ImagerCubeInterpolation) -> Self {
-        match value {
-            ImagerCubeInterpolation::Nearest => Self::Nearest,
-            ImagerCubeInterpolation::Linear => Self::Linear,
-            ImagerCubeInterpolation::Cubic => Self::Cubic,
-        }
-    }
-}
-
-/// Typed cube-axis value corresponding to CASA `start` / `width`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ImagerCubeAxisValue {
-    /// Channel number in the source SPW.
-    Channel {
-        /// Zero-based source channel.
-        channel: i32,
-    },
-    /// Frequency-like quantity in Hz.
-    FrequencyHz {
-        /// Frequency value in Hz.
-        hz: f64,
-        /// Optional explicit frequency frame.
-        frame: Option<String>,
-    },
-    /// Velocity-like quantity in m/s.
-    VelocityMs {
-        /// Velocity value in m/s.
-        ms: f64,
-        /// Optional explicit frequency frame.
-        frame: Option<String>,
-    },
-    /// Dimensionless Doppler value.
-    Doppler {
-        /// Doppler value in the chosen convention.
-        value: f64,
-        /// Doppler convention name.
-        convention: String,
-    },
-}
-
-impl From<&CubeAxisValue> for ImagerCubeAxisValue {
-    fn from(value: &CubeAxisValue) -> Self {
-        match value {
-            CubeAxisValue::Channel(channel) => Self::Channel { channel: *channel },
-            CubeAxisValue::FrequencyHz { hz, frame } => Self::FrequencyHz {
-                hz: *hz,
-                frame: frame.map(|frame| frame.to_string()),
-            },
-            CubeAxisValue::VelocityMs { ms, frame } => Self::VelocityMs {
-                ms: *ms,
-                frame: frame.map(|frame| frame.to_string()),
-            },
-            CubeAxisValue::Doppler { value, convention } => Self::Doppler {
-                value: *value,
-                convention: convention.to_string(),
-            },
-        }
-    }
-}
-
-impl ImagerCubeAxisValue {
-    fn into_runtime(self) -> Result<CubeAxisValue, String> {
-        Ok(match self {
-            Self::Channel { channel } => CubeAxisValue::Channel(channel),
-            Self::FrequencyHz { hz, frame } => CubeAxisValue::FrequencyHz {
-                hz,
-                frame: frame.as_deref().map(parse_frequency_ref).transpose()?,
-            },
-            Self::VelocityMs { ms, frame } => CubeAxisValue::VelocityMs {
-                ms,
-                frame: frame.as_deref().map(parse_frequency_ref).transpose()?,
-            },
-            Self::Doppler { value, convention } => CubeAxisValue::Doppler {
-                value,
-                convention: parse_doppler_ref(&convention)?,
-            },
-        })
-    }
-}
-
-/// CASA-style cube-axis construction options.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerCubeAxisConfig {
-    /// Output frequency frame for the image spectral axis.
-    #[serde(default = "default_frequency_ref")]
-    pub outframe: String,
-    /// Velocity convention used by velocity-like start/width values.
-    #[serde(default = "default_doppler_ref")]
-    pub veltype: String,
-    /// Output-axis interpolation policy.
-    #[serde(default)]
-    pub interpolation: ImagerCubeInterpolation,
-    /// Rest frequency in Hz.
-    #[serde(default)]
-    pub rest_frequency_hz: Option<f64>,
-    /// Optional cube-axis start value.
-    #[serde(default)]
-    pub start: Option<ImagerCubeAxisValue>,
-    /// Optional cube-axis width value.
-    #[serde(default)]
-    pub width: Option<ImagerCubeAxisValue>,
-}
-
-impl Default for ImagerCubeAxisConfig {
-    fn default() -> Self {
-        Self {
-            outframe: default_frequency_ref(),
-            veltype: default_doppler_ref(),
-            interpolation: ImagerCubeInterpolation::Linear,
-            rest_frequency_hz: None,
-            start: None,
-            width: None,
-        }
-    }
-}
-
-impl From<&CubeAxisConfig> for ImagerCubeAxisConfig {
-    fn from(value: &CubeAxisConfig) -> Self {
-        Self {
-            outframe: value.outframe.to_string(),
-            veltype: value.veltype.to_string(),
-            interpolation: value.interpolation.into(),
-            rest_frequency_hz: value.rest_frequency_hz,
-            start: value.start.as_ref().map(ImagerCubeAxisValue::from),
-            width: value.width.as_ref().map(ImagerCubeAxisValue::from),
-        }
-    }
-}
-
-impl ImagerCubeAxisConfig {
-    fn into_runtime(self, spectral_mode: SpectralMode) -> Result<CubeAxisConfig, String> {
-        let veltype = parse_doppler_ref(&self.veltype)?;
-        if let Some(rest_frequency_hz) = self.rest_frequency_hz {
-            let text = format!("{rest_frequency_hz}Hz");
-            parse_ms_rest_frequency_hz(&text).map_err(|error| error.to_string())?;
-        }
-        Ok(CubeAxisConfig {
-            specmode: spectral_mode.cube_specmode(),
-            outframe: parse_frequency_ref(&self.outframe)?,
-            veltype,
-            interpolation: self.interpolation.into(),
-            rest_frequency_hz: self.rest_frequency_hz,
-            start: self.start.map(|value| value.into_runtime()).transpose()?,
-            width: self.width.map(|value| value.into_runtime()).transpose()?,
-        })
-    }
-}
-
-/// One axis length for a CASA-style Gaussian UV taper.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ImagerUvTaperSize {
-    /// Image-domain Gaussian FWHM in radians.
-    ImageFwhmRad {
-        /// Taper size in radians.
-        value: f64,
-    },
-    /// UV-domain Gaussian HWHM in wavelengths.
-    BaselineHwhmLambda {
-        /// Taper size in wavelengths.
-        value: f64,
-    },
-}
-
-impl From<UvTaperSize> for ImagerUvTaperSize {
-    fn from(value: UvTaperSize) -> Self {
-        match value {
-            UvTaperSize::ImageFwhmRad(value) => Self::ImageFwhmRad { value },
-            UvTaperSize::BaselineHwhmLambda(value) => Self::BaselineHwhmLambda { value },
-        }
-    }
-}
-
-impl From<ImagerUvTaperSize> for UvTaperSize {
-    fn from(value: ImagerUvTaperSize) -> Self {
-        match value {
-            ImagerUvTaperSize::ImageFwhmRad { value } => Self::ImageFwhmRad(value),
-            ImagerUvTaperSize::BaselineHwhmLambda { value } => Self::BaselineHwhmLambda(value),
-        }
-    }
-}
-
-/// CASA-style Gaussian UV taper applied after imaging-weight calculation.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerUvTaper {
-    /// Major-axis taper size.
-    pub major: ImagerUvTaperSize,
-    /// Minor-axis taper size.
-    pub minor: ImagerUvTaperSize,
-    /// Position angle in radians, zero along +y and increasing toward -x.
-    pub position_angle_rad: f64,
-}
-
-impl From<GaussianUvTaper> for ImagerUvTaper {
-    fn from(value: GaussianUvTaper) -> Self {
-        Self {
-            major: value.major.into(),
-            minor: value.minor.into(),
-            position_angle_rad: value.position_angle_rad,
-        }
-    }
-}
-
-impl From<ImagerUvTaper> for GaussianUvTaper {
-    fn from(value: ImagerUvTaper) -> Self {
-        Self {
-            major: value.major.into(),
-            minor: value.minor.into(),
-            position_angle_rad: value.position_angle_rad,
-        }
-    }
-}
-
-/// CASA AWProject sensitivity-normalization policy in the JSON task contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum ImagerAwProjectNormalization {
-    /// CASA `normtype='flatnoise'`.
-    Flatnoise,
-    /// CASA `normtype='flatsky'`.
-    Flatsky,
-    /// CASA `normtype='pbsquare'`.
-    Pbsquare,
-}
-
-impl From<AwProjectNormalization> for ImagerAwProjectNormalization {
-    fn from(value: AwProjectNormalization) -> Self {
-        match value {
-            AwProjectNormalization::FlatNoise => Self::Flatnoise,
-            AwProjectNormalization::FlatSky => Self::Flatsky,
-            AwProjectNormalization::PbSquare => Self::Pbsquare,
-        }
-    }
-}
-
-impl From<ImagerAwProjectNormalization> for AwProjectNormalization {
-    fn from(value: ImagerAwProjectNormalization) -> Self {
-        match value {
-            ImagerAwProjectNormalization::Flatnoise => Self::FlatNoise,
-            ImagerAwProjectNormalization::Flatsky => Self::FlatSky,
-            ImagerAwProjectNormalization::Pbsquare => Self::PbSquare,
-        }
-    }
-}
-
-/// Canonical CASA AWProject controls shared by saved profiles and task APIs.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ImagerAwProjectConfig {
-    /// Exactly one source of paired cells and its explicit cache lifecycle.
-    pub source: ImagerAwCfSource,
-    /// Per-allocation full-cell LRU and compact source-order tap ceiling in MiB.
-    #[serde(default = "default_aw_cf_resident_mb")]
-    pub cf_resident_mb: usize,
-    /// Optional distinct PSF phase center in radians.
-    #[serde(default)]
-    pub psf_phase_center_direction_rad: Option<[f64; 2]>,
-    /// Optional voltage-pattern table.
-    #[serde(default)]
-    pub vp_table: Option<PathBuf>,
-    /// Enable the EVLA aperture A term.
-    #[serde(default = "default_true")]
-    pub a_term: bool,
-    /// Enable the prolate-spheroidal CF term.
-    #[serde(default)]
-    pub ps_term: bool,
-    /// Enable wideband A projection.
-    #[serde(default = "default_true")]
-    pub wb_awp: bool,
-    /// Enable conjugate-beam frequency lookup.
-    #[serde(default = "default_true")]
-    pub conjugate_beams: bool,
-    /// CF computation PA step in degrees.
-    #[serde(default = "default_aw_pa_step")]
-    pub compute_pa_step_deg: f64,
-    /// CF rotation PA step in degrees.
-    #[serde(default = "default_aw_pa_step")]
-    pub rotate_pa_step_deg: f64,
-    /// Requested pointing-offset standard deviations. With `usepointing=true`,
-    /// CASA replaces a non-two-element list with the effective pair `[600, 600]`
-    /// arcsec before AWProject antenna grouping.
-    #[serde(default = "default_aw_pointing_offset_sigdev")]
-    pub pointing_offset_sigdev: Vec<f64>,
-    /// CASA mosaic weighting toggle.
-    #[serde(default)]
-    pub mosaic_weighting: bool,
-    /// Sensitivity normalization policy.
-    #[serde(default = "default_aw_normalization")]
-    pub normalization: ImagerAwProjectNormalization,
-}
-
-impl From<&AwProjectControls> for ImagerAwProjectConfig {
-    fn from(value: &AwProjectControls) -> Self {
-        Self {
-            source: (&value.source).into(),
-            cf_resident_mb: value.cf_resident_bytes.div_ceil(1024 * 1024),
-            psf_phase_center_direction_rad: value.psf_phase_center_direction_rad,
-            vp_table: value.vp_table.clone(),
-            a_term: value.a_term,
-            ps_term: value.ps_term,
-            wb_awp: value.wb_awp,
-            conjugate_beams: value.conjugate_beams,
-            compute_pa_step_deg: value.compute_pa_step_deg,
-            rotate_pa_step_deg: value.rotate_pa_step_deg,
-            pointing_offset_sigdev: value.pointing_offset_sigdev.clone(),
-            mosaic_weighting: value.mosaic_weighting,
-            normalization: value.normalization.into(),
-        }
-    }
-}
-
-impl ImagerAwProjectConfig {
-    fn into_runtime(
-        self,
-        w_plane_count: Option<usize>,
-        use_pointing: bool,
-    ) -> Result<AwProjectControls, String> {
-        let cf_resident_bytes = self
-            .cf_resident_mb
-            .checked_mul(1024 * 1024)
-            .ok_or_else(|| "aw_project.cf_resident_mb exceeds addressable memory".to_string())?;
-        Ok(AwProjectControls {
-            source: self.source.into_application()?,
-            cf_resident_bytes,
-            w_plane_count,
-            psf_phase_center_direction_rad: self.psf_phase_center_direction_rad,
-            vp_table: self.vp_table,
-            a_term: self.a_term,
-            ps_term: self.ps_term,
-            wb_awp: self.wb_awp,
-            conjugate_beams: self.conjugate_beams,
-            compute_pa_step_deg: self.compute_pa_step_deg,
-            rotate_pa_step_deg: self.rotate_pa_step_deg,
-            pointing_offset_sigdev: self.pointing_offset_sigdev,
-            use_pointing,
-            mosaic_weighting: self.mosaic_weighting,
-            normalization: self.normalization.into(),
-        })
-    }
-}
-
-/// Canonical imager task request for one end-to-end run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ImagerRunTaskRequest {
-    /// Input MeasurementSet path.
-    pub measurement_set: PathBuf,
-    /// Output image prefix.
-    pub image_name: PathBuf,
-    /// Square image size in pixels.
-    pub image_size: usize,
-    /// Number of regular image facets along each direction axis.
-    #[serde(default = "default_one_usize")]
-    pub facets: usize,
-    /// Cell size in arcseconds.
-    pub cell_arcsec: f64,
-    /// Image direction-coordinate projection.
-    #[serde(default)]
-    pub projection: ImagerProjection,
-    /// Optional selected `FIELD_ID`s.
-    #[serde(default)]
-    pub field_ids: Option<Vec<i32>>,
-    /// Optional CASA-style baseline-length selector.
-    #[serde(default)]
-    pub uvrange: Option<String>,
-    /// Optional CASA-style observing-intent selector.
-    #[serde(default)]
-    pub intent: Option<String>,
-    /// Optional `FIELD_ID` used as the image phase center.
-    #[serde(default)]
-    pub phasecenter_field: Option<i32>,
-    /// Optional explicit CASA-style phase center.
-    #[serde(default)]
-    pub phasecenter: Option<String>,
-    /// Optional `DATA_DESC_ID` restriction.
-    #[serde(default)]
-    pub ddid: Option<i32>,
-    /// Optional CASA-style SPW selector text.
-    #[serde(default)]
-    pub spw_selector: Option<String>,
-    /// Optional first selected input channel.
-    #[serde(default)]
-    pub channel_start: Option<usize>,
-    /// Optional selected-channel count.
-    #[serde(default)]
-    pub channel_count: Option<usize>,
-    /// Optional CASA-style line-free channel selector for visibility-domain continuum fitting.
-    #[serde(default)]
-    pub continuum_fit_spw: Option<String>,
-    /// Polynomial order used for visibility-domain continuum fitting.
-    #[serde(default)]
-    pub continuum_fit_order: usize,
-    /// Optional explicit data-column override.
-    #[serde(default)]
-    pub data_column: Option<String>,
-    /// Model persistence mode.
-    #[serde(default)]
-    pub save_model: ImagerSaveModel,
-    /// Persist continuum-subtracted output-role visibilities into existing CORRECTED_DATA.
-    #[serde(default)]
-    pub save_continuum_residual: bool,
-    /// Optional CASA image used to seed the initial model product.
-    #[serde(default)]
-    pub start_model: Option<PathBuf>,
-    /// Optional CASA outlier-field definition file.
-    #[serde(default)]
-    pub outlier_file: Option<PathBuf>,
-    /// Optional explicit scalar plane or raw correlation.
-    #[serde(default)]
-    pub correlation: Option<ImagerPlaneSelection>,
-    /// Spectral imaging mode.
-    #[serde(default)]
-    pub spectral_mode: ImagerSpectralMode,
-    /// CASA-style cube-axis configuration.
-    #[serde(default)]
-    pub cube_axis: ImagerCubeAxisConfig,
-    /// Visibility weighting policy.
-    #[serde(default)]
-    pub weighting: ImagerWeighting,
-    /// CASA-style `perchanweightdensity` toggle for spectral cubes.
-    ///
-    /// `None` means use the same mode-dependent default as the CLI: true for
-    /// `specmode='cube'` and false otherwise.
-    #[serde(default)]
-    pub per_channel_weight_density: Option<bool>,
-    /// CASA-style `usepointing` toggle for POINTING-table direction corrections.
-    #[serde(default)]
-    pub use_pointing: bool,
-    /// CASA-style `gridder='mosaic'` request: image the selected fields
-    /// through their primary beams. Absent in older requests, where
-    /// `use_pointing` alone selected the mosaic gridder.
-    #[serde(default)]
-    pub mosaic_gridder: bool,
-    /// Optional CASA-style Gaussian UV taper.
-    #[serde(default)]
-    pub uv_taper: Option<ImagerUvTaper>,
-    /// Restoring-beam policy for restored products.
-    #[serde(default)]
-    pub restoring_beam_mode: ImagerRestoringBeamMode,
-    /// Requested minor-cycle deconvolver.
-    #[serde(default)]
-    pub deconvolver: ImagerDeconvolver,
-    /// Requested MTMFS Taylor-term count.
-    #[serde(default = "default_nterms")]
-    pub nterms: usize,
-    /// Requested multiscale kernel sizes in pixels.
-    #[serde(default)]
-    pub multiscale_scales: Vec<f32>,
-    /// CASA-style multiscale selection bias.
-    #[serde(default)]
-    pub small_scale_bias: f32,
-    /// Minor-cycle iteration count.
-    #[serde(default)]
-    pub niter: usize,
-    /// CASA-style major-cycle limit. `None` corresponds to CASA `nmajor=-1`.
-    #[serde(default)]
-    pub nmajor: Option<usize>,
-    /// Minor-cycle loop gain.
-    #[serde(default = "default_gain")]
-    pub gain: f32,
-    /// Absolute CLEAN stopping threshold in `Jy/beam`.
-    #[serde(default)]
-    pub threshold_jy: f32,
-    /// CASA-style robust-RMS stopping multiplier.
-    #[serde(default)]
-    pub nsigma: f32,
-    /// Restoring-beam fit cutoff.
-    #[serde(default = "default_psf_cutoff")]
-    pub psf_cutoff: f32,
-    /// Mosaic primary-beam cutoff used for flat-noise normalization.
-    #[serde(default = "default_mosaic_pb_limit")]
-    pub mosaic_pb_limit: f32,
-    /// CASA `normtype` used by mosaic and A/W-projection product publication.
-    #[serde(default = "default_aw_normalization")]
-    pub normalization: ImagerAwProjectNormalization,
-    /// Write CASA-style PB-corrected mosaic image products.
-    #[serde(default)]
-    pub pbcor: bool,
-    /// Write the primary-beam image used for PB correction.
-    #[serde(default)]
-    pub write_pb: bool,
-    /// Residual-refresh cadence.
-    #[serde(default = "default_minor_cycle_length")]
-    pub minor_cycle_length: usize,
-    /// CASA-style cycle-threshold scale factor.
-    #[serde(default = "default_cyclefactor")]
-    pub cyclefactor: f32,
-    /// Lower clamp for the PSF fraction used to derive cycle thresholds.
-    #[serde(default = "default_min_psf_fraction")]
-    pub min_psf_fraction: f32,
-    /// Upper clamp for the PSF fraction used to derive cycle thresholds.
-    #[serde(default = "default_max_psf_fraction")]
-    pub max_psf_fraction: f32,
-    /// Hogbom minor-cycle iteration accounting policy.
-    #[serde(default)]
-    pub hogbom_iteration_mode: ImagerHogbomIterationMode,
-    /// CASA-style clean mask mode.
-    #[serde(default)]
-    pub use_mask: ImagerCleanMaskMode,
-    /// CASA-style `auto-multithresh` controls.
-    #[serde(default)]
-    pub auto_mask: ImagerAutoMultiThresholdConfig,
-    /// Optional inclusive pixel-space clean boxes `(x0, y0, x1, y1)`.
-    #[serde(default)]
-    pub mask_boxes: Vec<[usize; 4]>,
-    /// Optional CASA image mask whose non-zero pixels are cleanable.
-    #[serde(default)]
-    pub mask_image: Option<PathBuf>,
-    /// Requested `w`-term handling mode.
-    #[serde(default)]
-    pub w_term_mode: ImagerWTermMode,
-    /// Explicit CASA-style `gridder='standard'` request.
-    ///
-    /// The standard-MFS frontend can otherwise infer mosaic metadata from FIELD,
-    /// phase-center, and POINTING-table shape. This flag preserves the explicit
-    /// user request through the canonical JSON task contract.
-    #[serde(default)]
-    pub force_standard_gridder: bool,
-    /// Optional explicit `wproject` plane budget.
-    #[serde(default)]
-    pub w_project_planes: Option<usize>,
-    /// CASA AWProject controls; presence selects `gridder='awproject'`.
-    #[serde(default)]
-    pub aw_project: Option<ImagerAwProjectConfig>,
-    /// Skip CLEAN and only write dirty/residual products.
-    #[serde(default)]
-    pub dirty_only: bool,
-    /// CASA-like local parallel execution intent.
-    ///
-    /// `None` preserves the runtime default. `Some(false)` forces the local
-    /// serial CPU execution surface used for performance/correctness
-    /// comparisons.
-    #[serde(default)]
-    pub parallel: Option<bool>,
-    /// Runtime acceleration policy for single-plane standard-family imaging.
-    #[serde(default)]
-    pub standard_mfs_acceleration: StandardMfsAccelerationPolicy,
-    /// Optional explicit standard-MFS backend override.
-    #[serde(default)]
-    pub standard_mfs_backend: Option<StandardMfsBackend>,
-    /// Where the major-cycle passes grid: `cpu` or, on macOS, `metal`.
-    #[serde(default)]
-    pub backend: ImagingBackend,
-    /// Optional standard-MFS planner memory target in MiB.
-    #[serde(default)]
-    pub standard_mfs_memory_target_mb: Option<usize>,
-    /// Optional shared imaging source-stream memory target in MiB.
-    #[serde(default)]
-    pub imaging_memory_target_mb: Option<usize>,
-    /// Optional low-rate running progress telemetry settings.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub progress: Option<ImagerProgressOptions>,
-}
-
-impl ImagerRunTaskRequest {
-    /// Return exact application-owned reasons that make this request
-    /// unavailable in the installed build, without opening data or planning
-    /// execution.
-    pub fn unsupported_reasons(&self) -> Result<Vec<ImagerUnsupportedReason>, String> {
-        Ok(
-            crate::native_application::unsupported_requirements(&self.to_cli_config()?)
-                .into_iter()
-                .map(|reason| ImagerUnsupportedReason {
-                    kind: reason.catalog_kind().to_string(),
-                    id: reason.catalog_id(),
-                })
-                .collect(),
-        )
-    }
-
-    /// Build the canonical request from one parsed CLI config.
-    pub fn from_cli_config(config: &CliConfig) -> Self {
-        Self {
-            measurement_set: config.ms.clone(),
-            image_name: config.imagename.clone(),
-            image_size: config.imsize,
-            facets: config.facets,
-            cell_arcsec: config.cell_arcsec,
-            projection: ImagerProjection::Sin,
-            field_ids: config.field_ids.clone(),
-            uvrange: config.uvrange.clone(),
-            intent: config.intent.clone(),
-            phasecenter_field: config.phasecenter_field,
-            phasecenter: config.phasecenter.clone(),
-            ddid: config.ddid,
-            spw_selector: config
-                .spw_selector
-                .clone()
-                .or_else(|| config.spw.map(|spw| spw.to_string())),
-            channel_start: config.channel_start,
-            channel_count: config.channel_count,
-            continuum_fit_spw: config.continuum_fit_spw.clone(),
-            continuum_fit_order: config.continuum_fit_order,
-            data_column: config.datacolumn.clone(),
-            save_model: config.save_model.into(),
-            save_continuum_residual: config.save_continuum_residual,
-            start_model: config.start_model.clone(),
-            outlier_file: config.outlier_file.clone(),
-            correlation: config
-                .correlation
-                .as_deref()
-                .map(Self::plane_from_text)
-                .transpose()
-                .expect("CliConfig correlation should already be valid"),
-            spectral_mode: config.spectral_mode.into(),
-            cube_axis: (&config.cube_axis).into(),
-            weighting: config.weighting.into(),
-            per_channel_weight_density: Some(config.per_channel_weight_density),
-            use_pointing: config.use_pointing,
-            mosaic_gridder: config.mosaic_gridder,
-            uv_taper: config.uv_taper.map(Into::into),
-            restoring_beam_mode: config.restoring_beam_mode.into(),
-            deconvolver: config.deconvolver.into(),
-            nterms: config.nterms,
-            multiscale_scales: config.multiscale_scales.clone(),
-            small_scale_bias: config.small_scale_bias,
-            niter: config.niter,
-            nmajor: config.nmajor,
-            gain: config.gain,
-            threshold_jy: config.threshold_jy,
-            nsigma: config.nsigma,
-            psf_cutoff: config.psf_cutoff,
-            mosaic_pb_limit: config.mosaic_pb_limit,
-            normalization: config.normalization.into(),
-            pbcor: config.pbcor,
-            write_pb: config.write_pb,
-            minor_cycle_length: config.minor_cycle_length,
-            cyclefactor: config.cyclefactor,
-            min_psf_fraction: config.min_psf_fraction,
-            max_psf_fraction: config.max_psf_fraction,
-            hogbom_iteration_mode: config.hogbom_iteration_mode.into(),
-            use_mask: config.use_mask.into(),
-            auto_mask: config.auto_mask.into(),
-            mask_boxes: config.mask_boxes.clone(),
-            mask_image: config.mask_image.clone(),
-            w_term_mode: config.w_term_mode.into(),
-            force_standard_gridder: config.force_standard_gridder,
-            w_project_planes: config.w_project_planes,
-            aw_project: config.aw_project.as_ref().map(Into::into),
-            dirty_only: config.dirty_only,
-            parallel: config.parallel,
-            standard_mfs_acceleration: config.standard_mfs_acceleration,
-            standard_mfs_backend: config.standard_mfs_backend,
-            backend: config.backend,
-            standard_mfs_memory_target_mb: config.standard_mfs_memory_target_mb,
-            imaging_memory_target_mb: config.imaging_memory_target_mb,
-            progress: None,
-        }
-    }
-
-    /// Convert the canonical request back into the runtime CLI config.
-    pub fn to_cli_config(&self) -> Result<CliConfig, String> {
-        let spectral_mode: SpectralMode = self.spectral_mode.into();
-        let deconvolver: Deconvolver = self.deconvolver.into();
-        if self.phasecenter_field.is_some() && self.phasecenter.is_some() {
-            return Err("--phasecenter and --phasecenter-field are mutually exclusive".to_string());
-        }
-        if deconvolver == Deconvolver::Mtmfs
-            && !matches!(spectral_mode, SpectralMode::Mfs | SpectralMode::Mvc)
-        {
-            return Err("deconvolver='mtmfs' requires specmode='mfs' or 'mvc'".to_string());
-        }
-        if spectral_mode == SpectralMode::Mvc
-            && (deconvolver != Deconvolver::Mtmfs || self.nterms < 2)
-        {
-            return Err("specmode='mvc' requires deconvolver='mtmfs' and nterms > 1".to_string());
-        }
-        if deconvolver != Deconvolver::Mtmfs && self.nterms != 1 {
-            return Err("nterms > 1 requires deconvolver='mtmfs'".to_string());
-        }
-        if spectral_mode == SpectralMode::Mvc
-            && self
-                .channel_count
-                .is_some_and(|channels| channels < self.nterms)
-        {
-            return Err("mvc requires nchan >= nterms".to_string());
-        }
-        if self.nterms == 0 {
-            return Err("nterms must be at least 1".to_string());
-        }
-        validate_parallel_acceleration(self.parallel, self.standard_mfs_acceleration)?;
-        if self.imaging_memory_target_mb == Some(0) {
-            return Err("imaging_memory_target_mb must be positive".to_string());
-        }
-        if self.standard_mfs_memory_target_mb == Some(0) {
-            return Err("standard_mfs_memory_target_mb must be positive".to_string());
-        }
-        if self.start_model.is_some() {
-            if spectral_mode != SpectralMode::Mfs {
-                return Err("start_model currently supports only spectral_mode='mfs'".to_string());
-            }
-            if deconvolver == Deconvolver::Mtmfs {
-                return Err(
-                    "start_model currently supports only single-term deconvolvers".to_string(),
-                );
-            }
-        }
-        if !(self.mosaic_pb_limit.is_finite() && self.mosaic_pb_limit != 0.0) {
-            return Err("mosaic_pb_limit must be finite and non-zero".to_string());
-        }
-        for scale in &self.multiscale_scales {
-            if !(scale.is_finite() && *scale >= 0.0) {
-                return Err(format!(
-                    "invalid multiscale scale {scale}; expected finite value >= 0"
-                ));
-            }
-        }
-        if self.use_mask == ImagerCleanMaskMode::AutoMultithresh {
-            for (name, value) in [
-                ("sidelobe_threshold", self.auto_mask.sidelobe_threshold),
-                ("noise_threshold", self.auto_mask.noise_threshold),
-                ("low_noise_threshold", self.auto_mask.low_noise_threshold),
-                ("negative_threshold", self.auto_mask.negative_threshold),
-                ("smooth_factor", self.auto_mask.smooth_factor),
-                ("min_beam_frac", self.auto_mask.min_beam_frac),
-                ("cut_threshold", self.auto_mask.cut_threshold),
-                ("min_percent_change", self.auto_mask.min_percent_change),
-            ] {
-                if !value.is_finite() {
-                    return Err(format!("{name} must be finite"));
-                }
-            }
-        }
-        let mut aw_project = self
-            .aw_project
-            .clone()
-            .map(|aw_project| aw_project.into_runtime(self.w_project_planes, self.use_pointing))
-            .transpose()?;
-        if let Some(controls) = &mut aw_project {
-            controls.normalization = self.normalization.into();
-        }
-        let mut config = CliConfig {
-            ms: self.measurement_set.clone(),
-            imagename: self.image_name.clone(),
-            imsize: self.image_size,
-            facets: self.facets,
-            cell_arcsec: self.cell_arcsec,
-            field_ids: self.field_ids.clone(),
-            uvrange: self.uvrange.clone(),
-            intent: self.intent.clone(),
-            phasecenter_field: self.phasecenter_field,
-            phasecenter: self.phasecenter.clone(),
-            ddid: self.ddid,
-            spw: self
-                .spw_selector
-                .as_deref()
-                .and_then(|selector| selector.trim().parse::<i32>().ok()),
-            spw_selector: self.spw_selector.clone(),
-            channel_start: self.channel_start,
-            channel_count: self.channel_count,
-            continuum_fit_spw: self.continuum_fit_spw.clone(),
-            continuum_fit_order: self.continuum_fit_order,
-            datacolumn: self.data_column.clone(),
-            save_model: self.save_model.into(),
-            save_continuum_residual: self.save_continuum_residual,
-            start_model: self.start_model.clone(),
-            outlier_file: self.outlier_file.clone(),
-            correlation: self
-                .correlation
-                .map(|value| value.as_cli_text().to_string()),
-            spectral_mode,
-            cube_axis: self.cube_axis.clone().into_runtime(spectral_mode)?,
-            weighting: self.weighting.clone().into(),
-            per_channel_weight_density: self
-                .per_channel_weight_density
-                .unwrap_or_else(|| default_request_per_channel_weight_density(self.spectral_mode)),
-            use_pointing: self.use_pointing,
-            mosaic_gridder: self.mosaic_gridder,
-            uv_taper: self.uv_taper.map(Into::into),
-            restoring_beam_mode: self.restoring_beam_mode.into(),
-            deconvolver,
-            nterms: self.nterms,
-            multiscale_scales: self.multiscale_scales.clone(),
-            small_scale_bias: self.small_scale_bias,
-            niter: self.niter,
-            nmajor: self.nmajor,
-            gain: self.gain,
-            threshold_jy: self.threshold_jy,
-            nsigma: self.nsigma,
-            psf_cutoff: self.psf_cutoff,
-            mosaic_pb_limit: self.mosaic_pb_limit,
-            normalization: self.normalization.into(),
-            pbcor: self.pbcor,
-            write_pb: self.write_pb,
-            minor_cycle_length: self.minor_cycle_length,
-            cyclefactor: self.cyclefactor,
-            min_psf_fraction: self.min_psf_fraction,
-            max_psf_fraction: self.max_psf_fraction,
-            hogbom_iteration_mode: self.hogbom_iteration_mode.into(),
-            use_mask: self.use_mask.into(),
-            auto_mask: self.auto_mask.into(),
-            mask_boxes: self.mask_boxes.clone(),
-            mask_image: self.mask_image.clone(),
-            w_term_mode: self.w_term_mode.into(),
-            force_standard_gridder: self.force_standard_gridder,
-            w_project_planes: self.w_project_planes,
-            aw_project,
-            dirty_only: self.dirty_only,
-            parallel: self.parallel,
-            standard_mfs_acceleration: self.standard_mfs_acceleration,
-            standard_mfs_backend: self.standard_mfs_backend,
-            backend: self.backend,
-            standard_mfs_memory_target_mb: self.standard_mfs_memory_target_mb,
-            imaging_memory_target_mb: self.imaging_memory_target_mb,
-        };
-        apply_parallel_runtime_control(self.parallel, &mut config)?;
-        Ok(config)
-    }
-
-    /// Execute the imaging task and return the canonical run result.
-    pub fn execute(&self) -> Result<ImagerRunTaskResult, String> {
-        let summary = run_from_request(self)?;
-        Ok(ImagerRunTaskResult::from_run(self.clone(), &summary))
-    }
-
-    fn plane_from_text(text: &str) -> Result<ImagerPlaneSelection, String> {
-        ImagerPlaneSelection::from_cli_text(text)
-    }
-}
-
-/// Direction-coordinate projection supported by the production imager.
-///
-/// The enum is intentionally closed to implemented behavior: other CASA
-/// projection names fail schema deserialization or CLI validation rather than
-/// being silently rewritten to SIN.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum ImagerProjection {
-    /// CASA slant-orthographic `SIN` projection.
-    #[default]
-    #[serde(rename = "SIN")]
-    Sin,
-}
-
-impl ImagerProjection {
-    /// Canonical CASA/CLI spelling.
-    pub fn as_cli_text(self) -> &'static str {
-        match self {
-            Self::Sin => "SIN",
-        }
-    }
-}
-
-/// Stable stop reasons for CLEAN controller completion.
+/// Why cleaning stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ImagerCleanStopReason {
-    /// The requested global CLEAN threshold was already satisfied.
+    /// The absolute threshold was reached.
     GlobalThresholdReached,
-    /// The requested robust-RMS-derived `nsigma` threshold was satisfied.
+    /// The `nsigma` threshold was reached.
     NsigmaThresholdReached,
-    /// The current minor cycle hit its CASA-style `cyclethreshold`.
-    CycleThresholdReached,
-    /// The requested total iteration budget was exhausted.
+    /// The `niter` budget was spent.
     IterationLimitReached,
-    /// The requested major-cycle budget was exhausted.
+    /// The `nmajor` budget was spent.
     MajorCycleLimitReached,
-    /// No cleanable masked pixel was available.
+    /// No pixel could be cleaned.
     NoCleanablePixels,
-    /// The residual peak increased materially after prior progress.
+    /// The residual peak rose after earlier progress.
     DivergenceDetected,
 }
 
-impl From<CleanStopReason> for ImagerCleanStopReason {
-    fn from(value: CleanStopReason) -> Self {
-        match value {
-            CleanStopReason::GlobalThresholdReached => Self::GlobalThresholdReached,
-            CleanStopReason::NsigmaThresholdReached => Self::NsigmaThresholdReached,
-            CleanStopReason::CycleThresholdReached => Self::CycleThresholdReached,
-            CleanStopReason::IterationLimitReached => Self::IterationLimitReached,
-            CleanStopReason::MajorCycleLimitReached => Self::MajorCycleLimitReached,
-            CleanStopReason::NoCleanablePixels => Self::NoCleanablePixels,
-            CleanStopReason::DivergenceDetected => Self::DivergenceDetected,
+impl From<CleanStop> for ImagerCleanStopReason {
+    fn from(stop: CleanStop) -> Self {
+        match stop {
+            CleanStop::Iterations => Self::IterationLimitReached,
+            CleanStop::Threshold => Self::GlobalThresholdReached,
+            CleanStop::NSigma => Self::NsigmaThresholdReached,
+            CleanStop::ZeroMask => Self::NoCleanablePixels,
+            CleanStop::MajorCycles => Self::MajorCycleLimitReached,
+            CleanStop::NoChange
+            | CleanStop::DivergedFromPrevious
+            | CleanStop::DivergedFromMinimum => Self::DivergenceDetected,
         }
     }
 }
 
-/// Stable terminal reasons for one bounded owner minor cycle.
+/// Why one minor cycle ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ImagerMinorCycleStopReason {
-    /// The requested threshold was reached.
+    /// The cycle threshold was reached.
     ThresholdReached,
-    /// The minor-cycle iteration bound was reached.
+    /// The cycle's iteration bound was reached.
     IterationBound,
-    /// The frozen-approximation update envelope was reached.
-    StalenessBound,
-    /// The multiscale trajectory diverged after accepted progress.
-    MultiscaleDivergence,
+    /// A plane's peak residual rose more than 10% above its minimum.
+    Diverged,
 }
 
-/// One accepted component in machine-readable solver diagnostics.
+/// One component a minor cycle applied.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerMinorCycleComponent {
-    /// Image-domain ordinal.
+    /// Image domain.
     pub domain: usize,
-    /// Spectral-basis coefficient ordinal.
+    /// Spectral-basis coefficient.
     pub coefficient: usize,
-    /// Polarization-coordinate ordinal.
+    /// Polarization coordinate.
     pub polarization: usize,
-    /// X pixel coordinate.
+    /// Pixel x.
     pub x: usize,
-    /// Y pixel coordinate.
+    /// Pixel y.
     pub y: usize,
-    /// Signed component flux in model units.
+    /// Signed flux in model units.
     pub flux: f64,
-    /// Component scale in pixels (`0` for point CLEAN).
+    /// Scale in pixels; 0 for a point.
     pub scale_px: f64,
 }
 
-/// Machine-readable evidence from one auto-multithreshold update.
+/// One auto-multithresh update.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerAutoMaskDiagnostic {
     /// Robust residual median.
@@ -2671,64 +310,60 @@ pub struct ImagerAutoMaskDiagnostic {
     pub positive_threshold: f64,
     /// Low-noise growth threshold.
     pub low_noise_threshold: f64,
-    /// Optional negative detection threshold.
+    /// Negative detection threshold, when enabled.
     pub negative_threshold: Option<f64>,
-    /// Number of support pixels changed in this cycle.
+    /// Support pixels changed.
     pub changed_pixels: usize,
-    /// Whether subsequent cycles keep this support fixed.
+    /// Whether later cycles keep this support.
     pub channel_stopped: bool,
 }
 
-/// Owner-calculated evidence for one bounded minor cycle.
+/// One minor cycle.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerMinorCycleDiagnostic {
-    /// One-based cycle ordinal.
+    /// One-based cycle.
     pub cycle: usize,
-    /// Cumulative controller iterations before this cycle started.
+    /// Charged iterations before the cycle.
     pub iterations_entering: usize,
-    /// Component count charged to the reported controller budget.
+    /// Iterations charged to the cycle.
     pub iterations: usize,
-    /// Cumulative controller iterations after this cycle completed.
+    /// Charged iterations after the cycle.
     pub total_iterations: usize,
-    /// Cumulative actual component count before this cycle started.
+    /// Applied components before the cycle.
     pub actual_iterations_entering: usize,
-    /// Number of components actually applied in this cycle.
+    /// Components applied in the cycle.
     pub actual_iterations: usize,
-    /// Cumulative actual component count after this cycle completed.
+    /// Applied components after the cycle.
     pub total_actual_iterations: usize,
-    /// Cumulative absolute component flux accepted in this cycle.
+    /// Absolute component flux accepted in the cycle.
     pub total_flux: f64,
-    /// Normalized residual peak at cycle entry.
+    /// Normalized residual peak at the cycle's start.
     pub initial_peak_flux: f64,
-    /// Final normalized residual peak.
+    /// Normalized residual peak at its end.
     pub final_peak_flux: f64,
-    /// Robust RMS used for `nsigma` stopping, when enabled.
+    /// Robust RMS of `nsigma`, when enabled.
     pub noise_rms: Option<f64>,
-    /// Effective owner threshold.
+    /// The threshold the cycle cleaned to.
     pub effective_threshold: f64,
-    /// Global absolute/noise threshold before applying the cycle threshold.
+    /// The absolute or noise threshold before the cycle threshold.
     pub global_threshold: f64,
-    /// PSF-derived cycle threshold, when enabled.
+    /// The PSF-derived cycle threshold, when enabled.
     pub cycle_threshold: Option<f64>,
-    /// Scientific terminal reason.
+    /// Why the cycle ended.
     pub stop_reason: ImagerMinorCycleStopReason,
-    /// Exact Clark residual refresh count.
+    /// Clark's whole-plane residual refreshes.
     pub clark_refreshes: usize,
-    /// One-based major replay ordinal associated with this cycle.
+    /// One-based major cycle that followed the cycle.
     pub associated_replay_ordinal: usize,
-    /// Bounded leading component sequence.
+    /// The cycle's first components.
     pub components: Vec<ImagerMinorCycleComponent>,
-    /// Exact x-major reconstruction support.
+    /// The x-major support the components were placed in.
     pub mask_support: Vec<bool>,
-    /// Auto-mask evidence, when auto masking was active.
+    /// The auto-multithresh update, when it ran.
     pub auto_mask: Option<ImagerAutoMaskDiagnostic>,
 }
 
-fn project_minor_cycle(
-    cycle: &casa_imaging_application::NativeMinorCycleOutcome,
-) -> ImagerMinorCycleDiagnostic {
-    use casa_imaging_application::NativeMinorCycleStopReason as NativeStop;
-
+fn project_minor_cycle(cycle: &NativeMinorCycleOutcome) -> ImagerMinorCycleDiagnostic {
     ImagerMinorCycleDiagnostic {
         cycle: cycle.cycle,
         iterations_entering: cycle.iterations_entering,
@@ -2745,9 +380,13 @@ fn project_minor_cycle(
         global_threshold: cycle.global_threshold,
         cycle_threshold: cycle.cycle_threshold,
         stop_reason: match cycle.stop_reason {
-            NativeStop::ThresholdReached => ImagerMinorCycleStopReason::ThresholdReached,
-            NativeStop::IterationBound => ImagerMinorCycleStopReason::IterationBound,
-            NativeStop::Diverged => ImagerMinorCycleStopReason::MultiscaleDivergence,
+            NativeMinorCycleStopReason::ThresholdReached => {
+                ImagerMinorCycleStopReason::ThresholdReached
+            }
+            NativeMinorCycleStopReason::IterationBound => {
+                ImagerMinorCycleStopReason::IterationBound
+            }
+            NativeMinorCycleStopReason::Diverged => ImagerMinorCycleStopReason::Diverged,
         },
         clark_refreshes: cycle.clark_refreshes,
         associated_replay_ordinal: cycle.associated_replay_ordinal,
@@ -2781,370 +420,133 @@ fn project_minor_cycle(
     }
 }
 
-pub(crate) fn project_minor_cycles(
-    cycles: &[casa_imaging_application::NativeMinorCycleOutcome],
-) -> Vec<ImagerMinorCycleDiagnostic> {
-    cycles.iter().map(project_minor_cycle).collect()
-}
-
-/// Stable run metrics emitted after one successful imaging run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerRunReport {
-    /// Warnings emitted by the imaging run.
-    pub warnings: Vec<String>,
-    /// Number of scalar samples that reached the gridder.
-    pub gridded_samples: usize,
-    /// Total major-cycle count reported by the run.
-    pub major_cycles: usize,
-    /// Total minor-cycle count charged to the reported task/controller budget.
-    pub minor_iterations: usize,
-    /// Total minor-cycle components actually applied by the run.
-    pub actual_minor_iterations: usize,
-    /// CASA-compatible `iterdone` task-return value.
-    pub iterdone: usize,
-    /// CASA-compatible `nmajordone` task-return value.
-    pub nmajordone: usize,
-    /// CASA-compatible `stopcode` task-return value.
-    pub stopcode: i32,
-    /// Final CLEAN stop reason when deconvolution ran.
-    pub clean_stop_reason: Option<ImagerCleanStopReason>,
-    /// Ordered owner-calculated solver diagnostics.
-    pub minor_cycles: Vec<ImagerMinorCycleDiagnostic>,
-    /// Final paired-operator visibility identities and provenance, when produced.
-    pub visibility_products: Option<ImagerVisibilityProductDiagnostic>,
-    /// Measured end-to-end application wall time.
-    pub elapsed_ns: u64,
-}
-
-/// Final visibility stream's run association and completed sample count.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerVisibilityProductDiagnostic {
-    /// Compiled imaging-problem identity.
-    pub problem_id: String,
-    /// Exact final model generation used for prediction.
-    pub final_model_generation: String,
-    /// Number of canonically selected visibility samples.
-    pub sample_count: u64,
-}
-
-/// Stable artifact kind identifiers for written image products.
+/// Kind of a written product, spelled as its CASA suffix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum ImagerArtifactKind {
-    /// Point-spread function image.
+    /// `.psf`.
+    #[serde(rename = "psf")]
     Psf,
-    /// Residual image.
+    /// `.residual`.
+    #[serde(rename = "residual")]
     Residual,
-    /// Model image.
+    /// `.model`.
+    #[serde(rename = "model")]
     Model,
-    /// Restored image.
+    /// `.image`, the restored image.
+    #[serde(rename = "image")]
     Image,
-    /// Clean mask image.
+    /// `.mask`.
+    #[serde(rename = "mask")]
     Mask,
-    /// Mosaic weight/sensitivity image.
+    /// `.weight`.
+    #[serde(rename = "weight")]
     Weight,
-    /// Sum-of-imaging-weights product.
+    /// `.sumwt`.
+    #[serde(rename = "sumwt")]
     Sumwt,
-    /// Mosaic primary-beam image.
+    /// `.pb`.
+    #[serde(rename = "pb")]
     PrimaryBeam,
-    /// Primary-beam-corrected restored image.
+    /// `.image.pbcor`.
+    #[serde(rename = "image.pbcor")]
     ImagePbcor,
-    /// Spectral-index image.
+    /// `.alpha`.
+    #[serde(rename = "alpha")]
     Alpha,
-    /// Spectral-index uncertainty image.
+    /// `.alpha.error`.
+    #[serde(rename = "alpha.error")]
     AlphaError,
-    /// Primary-beam-corrected spectral-index image.
+    /// `.alpha.pbcor`.
+    #[serde(rename = "alpha.pbcor")]
     AlphaPbcor,
 }
 
 impl ImagerArtifactKind {
-    pub(crate) fn as_suffix(self) -> &'static str {
+    /// The kind of the product with CASA suffix `suffix` (`.image.tt0`).
+    fn of_suffix(suffix: &str) -> Self {
+        match suffix {
+            ".alpha.error" => Self::AlphaError,
+            ".alpha.pbcor" => Self::AlphaPbcor,
+            ".alpha" => Self::Alpha,
+            _ if suffix.starts_with(".psf") => Self::Psf,
+            _ if suffix.starts_with(".residual") => Self::Residual,
+            _ if suffix.starts_with(".model") => Self::Model,
+            _ if suffix.starts_with(".sumwt") => Self::Sumwt,
+            _ if suffix.starts_with(".weight") => Self::Weight,
+            _ if suffix.starts_with(".pb") => Self::PrimaryBeam,
+            _ if suffix.contains(".pbcor") => Self::ImagePbcor,
+            _ if suffix.starts_with(".mask") => Self::Mask,
+            _ => Self::Image,
+        }
+    }
+
+    const fn label(self) -> &'static str {
         match self {
-            Self::Psf => "psf",
-            Self::Residual => "residual",
-            Self::Model => "model",
-            Self::Image => "image",
-            Self::Mask => "mask",
-            Self::Weight => "weight",
-            Self::Sumwt => "sumwt",
-            Self::PrimaryBeam => "pb",
-            Self::ImagePbcor => "image.pbcor",
-            Self::Alpha => "alpha",
-            Self::AlphaError => "alpha.error",
-            Self::AlphaPbcor => "alpha.pbcor",
+            Self::Psf => "PSF",
+            Self::Residual => "Residual",
+            Self::Model => "Model",
+            Self::Image => "Restored Image",
+            Self::Mask => "Clean Mask",
+            Self::Weight => "Weight",
+            Self::Sumwt => "Sum of Weights",
+            Self::PrimaryBeam => "Primary Beam",
+            Self::ImagePbcor => "PB-corrected Image",
+            Self::Alpha => "Spectral Index",
+            Self::AlphaError => "Spectral Index Error",
+            Self::AlphaPbcor => "PB-corrected Spectral Index",
         }
     }
 }
 
-/// One expected output artifact written by the imaging run.
+/// One product of a run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerArtifact {
-    /// Stable artifact kind identifier.
+    /// The product's kind.
     pub kind: ImagerArtifactKind,
-    /// Human-readable artifact label.
+    /// Its label, with its Taylor term (`Restored Image tt0`).
     pub label: String,
-    /// On-disk path for the CASA image product.
+    /// Its path.
     pub path: String,
-    /// Whether that product exists after the run.
+    /// Whether it exists after the run.
     pub exists: bool,
 }
 
-/// Canonical imager task result for one end-to-end run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerRunTaskResult {
-    /// Request echo for result attribution.
-    pub request: ImagerRunTaskRequest,
-    /// Stable run report.
-    pub run: ImagerRunReport,
-    /// Expected written image products.
-    pub artifacts: Vec<ImagerArtifact>,
-}
-
-impl ImagerRunTaskResult {
-    /// Build the canonical run result from one completed run.
-    pub fn from_run(request: ImagerRunTaskRequest, summary: &RunSummary) -> Self {
-        Self {
-            request: request.clone(),
-            run: ImagerRunReport {
-                warnings: summary.warnings.clone(),
-                gridded_samples: summary.gridded_samples,
-                major_cycles: summary.major_cycles,
-                minor_iterations: summary.minor_iterations,
-                actual_minor_iterations: summary.actual_minor_iterations,
-                iterdone: summary.minor_iterations,
-                nmajordone: summary.major_cycles,
-                stopcode: casa_stop_code(summary.clean_stop_reason),
-                clean_stop_reason: summary.clean_stop_reason.map(Into::into),
-                minor_cycles: project_minor_cycles(&summary.minor_cycles),
-                visibility_products: summary.visibility_products.clone(),
-                elapsed_ns: summary.elapsed.as_nanos() as u64,
-            },
-            artifacts: build_artifacts_for_products(&request, &summary.output_products),
-        }
-    }
-}
-
-/// Canonical imager task request envelope.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", content = "request", rename_all = "snake_case")]
-pub enum ImagerTaskRequest {
-    /// Execute one end-to-end imaging run.
-    Run(ImagerRunTaskRequest),
-}
-
-impl ImagerTaskRequest {
-    /// Execute the request and return the canonical task result envelope.
-    pub fn execute(&self) -> Result<ImagerTaskResult, String> {
-        match self {
-            Self::Run(request) => Ok(ImagerTaskResult::Run(request.execute()?)),
-        }
-    }
-}
-
-/// Canonical imager task result envelope.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", content = "result", rename_all = "snake_case")]
-pub enum ImagerTaskResult {
-    /// Completed end-to-end imaging run.
-    Run(ImagerRunTaskResult),
-}
-
-fn parse_frequency_ref(value: &str) -> Result<FrequencyRef, String> {
-    value
-        .parse::<FrequencyRef>()
-        .map_err(|error| format!("parse frequency frame {value:?}: {error}"))
-}
-
-fn parse_doppler_ref(value: &str) -> Result<DopplerRef, String> {
-    value
-        .parse::<DopplerRef>()
-        .map_err(|error| format!("parse doppler convention {value:?}: {error}"))
-}
-
-fn default_frequency_ref() -> String {
-    FrequencyRef::LSRK.to_string()
-}
-
-fn default_doppler_ref() -> String {
-    DopplerRef::RADIO.to_string()
-}
-
-fn default_nterms() -> usize {
-    1
-}
-
-fn default_gain() -> f32 {
-    0.1
-}
-
-fn default_psf_cutoff() -> f32 {
-    0.35
-}
-
-fn default_mosaic_pb_limit() -> f32 {
-    0.2
-}
-
-fn default_minor_cycle_length() -> usize {
-    1000
-}
-
-fn default_cyclefactor() -> f32 {
-    1.0
-}
-
-fn default_min_psf_fraction() -> f32 {
-    0.05
-}
-
-fn default_max_psf_fraction() -> f32 {
-    0.8
-}
-
-fn default_progress_max_uv_points() -> usize {
-    64
-}
-
-fn default_progress_min_interval_ms() -> u64 {
-    250
-}
-
-fn default_request_per_channel_weight_density(spectral_mode: ImagerSpectralMode) -> bool {
-    matches!(spectral_mode, ImagerSpectralMode::Cube)
-}
-
-fn casa_stop_code(reason: Option<CleanStopReason>) -> i32 {
-    match reason {
-        Some(CleanStopReason::IterationLimitReached) => 1,
-        Some(CleanStopReason::GlobalThresholdReached) => 2,
-        Some(CleanStopReason::NsigmaThresholdReached) => 2,
-        Some(CleanStopReason::CycleThresholdReached) => 3,
-        Some(CleanStopReason::NoCleanablePixels) => 7,
-        Some(CleanStopReason::MajorCycleLimitReached) => 9,
-        Some(CleanStopReason::DivergenceDetected) => 10,
-        None => 0,
-    }
-}
-
-fn artifact(kind: ImagerArtifactKind, label: String, path: PathBuf) -> ImagerArtifact {
-    ImagerArtifact {
-        kind,
-        label,
-        exists: path.exists(),
-        path: path.display().to_string(),
-    }
-}
-
-pub(crate) fn build_artifacts_for_products(
-    request: &ImagerRunTaskRequest,
-    products: &[String],
-) -> Vec<ImagerArtifact> {
-    let base = request.image_name.to_string_lossy().to_string();
-    let mut output_products = products.to_vec();
-    if PathBuf::from(format!("{base}.mask")).exists()
-        && !output_products.iter().any(|suffix| suffix == ".mask")
-    {
-        output_products.push(".mask".to_string());
-    }
-    output_products
+/// The products of a run with prefix `imagename` and CASA suffixes
+/// `products`.
+fn artifacts(imagename: &std::path::Path, products: &[String]) -> Vec<ImagerArtifact> {
+    let base = imagename.to_string_lossy();
+    products
         .iter()
         .map(|suffix| {
-            artifact(
-                artifact_kind_for_product_suffix(suffix),
-                artifact_label_for_product_suffix(suffix),
-                PathBuf::from(format!("{base}{suffix}")),
-            )
+            let kind = ImagerArtifactKind::of_suffix(suffix);
+            let label = suffix
+                .split(".tt")
+                .nth(1)
+                .and_then(|term| term.split('.').next())
+                .filter(|term| !term.is_empty())
+                .map_or_else(
+                    || kind.label().to_string(),
+                    |term| format!("{} tt{term}", kind.label()),
+                );
+            let path = PathBuf::from(format!("{base}{suffix}"));
+            ImagerArtifact {
+                kind,
+                label,
+                exists: path.exists(),
+                path: path.display().to_string(),
+            }
         })
         .collect()
 }
 
-fn artifact_kind_for_product_suffix(suffix: &str) -> ImagerArtifactKind {
-    if suffix == ".alpha.error" {
-        ImagerArtifactKind::AlphaError
-    } else if suffix == ".alpha.pbcor" {
-        ImagerArtifactKind::AlphaPbcor
-    } else if suffix == ".alpha" {
-        ImagerArtifactKind::Alpha
-    } else if suffix.starts_with(".psf") {
-        ImagerArtifactKind::Psf
-    } else if suffix.starts_with(".residual") {
-        ImagerArtifactKind::Residual
-    } else if suffix.starts_with(".model") {
-        ImagerArtifactKind::Model
-    } else if suffix.starts_with(".sumwt") {
-        ImagerArtifactKind::Sumwt
-    } else if suffix.starts_with(".weight") {
-        ImagerArtifactKind::Weight
-    } else if suffix.starts_with(".pb") {
-        ImagerArtifactKind::PrimaryBeam
-    } else if suffix.contains(".pbcor") {
-        ImagerArtifactKind::ImagePbcor
-    } else if suffix.starts_with(".mask") {
-        ImagerArtifactKind::Mask
-    } else {
-        ImagerArtifactKind::Image
-    }
-}
-
-fn artifact_label_for_product_suffix(suffix: &str) -> String {
-    let kind = artifact_kind_for_product_suffix(suffix);
-    let base = match kind {
-        ImagerArtifactKind::Psf => "PSF",
-        ImagerArtifactKind::Residual => "Residual",
-        ImagerArtifactKind::Model => "Model",
-        ImagerArtifactKind::Image => "Restored Image",
-        ImagerArtifactKind::Mask => "Clean Mask",
-        ImagerArtifactKind::Weight => "Weight",
-        ImagerArtifactKind::Sumwt => "Sum of Weights",
-        ImagerArtifactKind::PrimaryBeam => "Primary Beam",
-        ImagerArtifactKind::ImagePbcor => "PB-corrected Image",
-        ImagerArtifactKind::Alpha => "Spectral Index",
-        ImagerArtifactKind::AlphaError => "Spectral Index Error",
-        ImagerArtifactKind::AlphaPbcor => "PB-corrected Spectral Index",
-    };
-    suffix
-        .split(".tt")
-        .nth(1)
-        .and_then(|value| value.split('.').next())
-        .filter(|value| !value.is_empty())
-        .map_or_else(|| base.to_string(), |term| format!("{base} tt{term}"))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{ImagerObservedMemoryConfidence, ImagerObservedMemoryKind};
-
-    use std::collections::{BTreeMap, BTreeSet};
-    use std::ffi::OsString;
-    use std::fs;
-    use std::path::{Path, PathBuf};
-
-    use casa_ms::{CubeAxisConfig, CubeAxisValue, CubeInterpolation};
     use casa_provider_contracts::ProviderSurfaceKind;
-    use casa_types::measures::doppler::DopplerRef;
-    use casa_types::measures::frequency::FrequencyRef;
-    use tempfile::tempdir;
 
-    use super::{
-        IMAGER_OBSERVABILITY_SCHEMA_VERSION, IMAGER_PROJECTED_PARAMETERS,
-        IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind,
-        ImagerAutoMultiThresholdConfig, ImagerAwProjectNormalization, ImagerCleanMaskMode,
-        ImagerCleanStopReason, ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation,
-        ImagerDeconvolver, ImagerHogbomIterationMode, ImagerObservedResourceId,
-        ImagerObservedResourceState, ImagerObservedStageKind, ImagerPlaneSelection,
-        ImagerProgressDetail, ImagerProgressEvent, ImagerProgressRuntime, ImagerProjection,
-        ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode,
-        ImagerTaskRequest, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
-        imager_task_schema_bundle,
-    };
-    use crate::{
-        AwProjectNormalization, CleanStopReason, CliConfig, Deconvolver, GaussianUvTaper,
-        RestoringBeamMode, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, UvTaperSize,
-        WTermMode, WeightingMode,
-    };
+    use super::*;
 
     #[test]
-    fn schema_bundle_uses_current_protocol_and_definitions() {
+    fn the_schema_bundle_carries_the_catalog_surface() {
         let bundle = imager_task_schema_bundle();
         bundle.validate().expect("shared provider envelope");
         assert_eq!(bundle.protocol.protocol_name, IMAGER_TASK_PROTOCOL_NAME);
@@ -3153,1615 +555,71 @@ mod tests {
             IMAGER_TASK_PROTOCOL_VERSION
         );
         assert_eq!(bundle.protocol.surface_kind, ProviderSurfaceKind::Task);
-        assert_eq!(bundle.semantic.operations.len(), 1);
         assert_eq!(bundle.semantic.operations[0].request_kind, "run");
-        assert!(bundle.components.contains_key("ImagerRunTaskRequest"));
-        assert_eq!(bundle.domain_schemas.additional.imaging_request_version, 3);
-        assert_eq!(bundle.annotations, serde_json::json!({}));
-        let capabilities = &bundle.domain_schemas.additional.capability_catalog.entries;
-        let awproject = capabilities
-            .iter()
-            .find(|entry| entry.id == "task.aw_projection")
-            .expect("AWProject capability");
-        assert_eq!(awproject.kind, "task");
-        // IF-3 installed the AW catalog in the major-cycle pass (#652);
-        // multi-term continuum through cube major cycles has no pass.
-        assert!(awproject.supported);
-        assert_eq!(awproject.unsupported_reason, None);
-        let mtmfs_via_cube = capabilities
-            .iter()
-            .find(|entry| entry.id == "task.spectral_mtmfs_via_cube")
-            .expect("mtmfs-via-cube capability");
-        assert!(!mtmfs_via_cube.supported);
-        assert_eq!(
-            mtmfs_via_cube.unsupported_reason,
-            Some(super::ImagerUnsupportedReason {
-                kind: "task".to_string(),
-                id: "task.spectral_mtmfs_via_cube".to_string(),
-            })
-        );
-        assert!(bundle.projections.cli.is_some());
         assert_eq!(bundle.parameter_surfaces.len(), 1);
-        assert_eq!(bundle.parameter_surfaces[0].surface.id(), "imager");
-        bundle.parameter_surfaces[0]
-            .validate()
-            .expect("embedded imager parameter surface");
-        assert_eq!(
-            bundle.parameter_surfaces[0]
-                .surface
-                .bindings()
-                .iter()
-                .map(|binding| binding.name.as_str())
-                .collect::<BTreeSet<_>>(),
-            IMAGER_PROJECTED_PARAMETERS.iter().copied().collect()
-        );
-        assert_eq!(
-            serde_json::to_value(&bundle).unwrap()["parameter_surfaces"]
-                .as_array()
-                .unwrap()
-                .len(),
-            1
-        );
-        let request_schema = serde_json::to_value(&bundle.domain_schemas.request_schema).unwrap();
-        let result_schema = serde_json::to_value(&bundle.domain_schemas.result_schema).unwrap();
-        let progress_event_schema =
-            serde_json::to_value(&bundle.domain_schemas.additional.progress_event_schema).unwrap();
-        assert!(request_schema.to_string().contains("ImagerTaskRequest"));
-        assert_eq!(
-            request_schema["definitions"]["ImagerRunTaskRequest"]["properties"]["save_continuum_residual"]
-                ["default"],
-            false
-        );
-        assert!(result_schema.to_string().contains("ImagerTaskResult"));
-        assert!(
-            progress_event_schema
-                .to_string()
-                .contains("ImagerProgressEvent")
-        );
-        let form = casa_provider_contracts::project_ui_form(&bundle.parameter_surfaces[0]);
-        assert_eq!(form["command_id"], "imager");
-        let arguments = form["arguments"].as_array().expect("UI arguments");
-        let save_continuum_residual = arguments
-            .iter()
-            .find(|argument| argument["id"] == "save_continuum_residual")
-            .expect("save_continuum_residual UI argument");
-        assert_eq!(save_continuum_residual["default"], "false");
     }
 
     #[test]
-    fn run_request_round_trips_cli_config() {
-        let config = CliConfig::parse([
-            OsString::from("--ms"),
-            OsString::from("demo.ms"),
-            OsString::from("--imagename"),
-            OsString::from("out/demo"),
-            OsString::from("--imsize"),
-            OsString::from("64"),
-            OsString::from("--cell-arcsec"),
-            OsString::from("1.5"),
-            OsString::from("--projection"),
-            OsString::from("SIN"),
-            OsString::from("--field"),
-            OsString::from("0,2~3"),
-            OsString::from("--uvrange"),
-            OsString::from("<12km"),
-            OsString::from("--intent"),
-            OsString::from("OBSERVE_TARGET#UNSPECIFIED"),
-            OsString::from("--phasecenter-field"),
-            OsString::from("2"),
-            OsString::from("--spw"),
-            OsString::from("5:10~19"),
-            OsString::from("--fitspw"),
-            OsString::from("5:0~9;20~29"),
-            OsString::from("--fitorder"),
-            OsString::from("1"),
-            OsString::from("--datacolumn"),
-            OsString::from("CORRECTED_DATA"),
-            OsString::from("--savemodel"),
-            OsString::from("modelcolumn"),
-            OsString::from("--save-continuum-residual"),
-            OsString::from("--corr"),
-            OsString::from("XX"),
-            OsString::from("--specmode"),
-            OsString::from("cube"),
-            OsString::from("--start"),
-            OsString::from("1.1GHz"),
-            OsString::from("--width"),
-            OsString::from("10MHz"),
-            OsString::from("--outframe"),
-            OsString::from("BARY"),
-            OsString::from("--veltype"),
-            OsString::from("optical"),
-            OsString::from("--interpolation"),
-            OsString::from("nearest"),
-            OsString::from("--restfreq"),
-            OsString::from("1.42GHz"),
-            OsString::from("--weighting"),
-            OsString::from("briggs"),
-            OsString::from("--robust"),
-            OsString::from("-1.0"),
-            OsString::from("--perchanweightdensity"),
-            OsString::from("--usepointing"),
-            OsString::from("--uvtaper"),
-            OsString::from("10arcsec,8arcsec,45deg"),
-            OsString::from("--restoringbeam"),
-            OsString::from("common"),
-            OsString::from("--deconvolver"),
-            OsString::from("multiscale"),
-            OsString::from("--scales"),
-            OsString::from("0,5,15"),
-            OsString::from("--smallscalebias"),
-            OsString::from("0.25"),
-            OsString::from("--niter"),
-            OsString::from("12"),
-            OsString::from("--gain"),
-            OsString::from("0.2"),
-            OsString::from("--threshold-jy"),
-            OsString::from("0.01"),
-            OsString::from("--nsigma"),
-            OsString::from("4.0"),
-            OsString::from("--psfcutoff"),
-            OsString::from("0.4"),
-            OsString::from("--minor-cycle-length"),
-            OsString::from("11"),
-            OsString::from("--cyclefactor"),
-            OsString::from("1.5"),
-            OsString::from("--minpsffraction"),
-            OsString::from("0.2"),
-            OsString::from("--maxpsffraction"),
-            OsString::from("0.7"),
-            OsString::from("--usemask"),
-            OsString::from("auto-multithresh"),
-            OsString::from("--sidelobethreshold"),
-            OsString::from("2.0"),
-            OsString::from("--noisethreshold"),
-            OsString::from("4.25"),
-            OsString::from("--mask-box"),
-            OsString::from("1,2,10,20"),
-            OsString::from("--mask-image"),
-            OsString::from("demo.mask"),
-            OsString::from("--gridder"),
-            OsString::from("standard"),
-            OsString::from("--wterm"),
-            OsString::from("wproject"),
-            OsString::from("--wprojplanes"),
-            OsString::from("8"),
-            OsString::from("--dirty-only"),
-        ])
-        .unwrap();
-
-        let request = ImagerRunTaskRequest::from_cli_config(&config);
-        assert_eq!(request.projection, ImagerProjection::Sin);
-        assert_eq!(
-            serde_json::to_value(&request).unwrap()["projection"],
-            serde_json::Value::String("SIN".to_string())
-        );
-        let restored = request.to_cli_config().unwrap();
-
-        assert_eq!(restored.ms, PathBuf::from("demo.ms"));
-        assert_eq!(restored.imagename, PathBuf::from("out/demo"));
-        assert_eq!(restored.field_ids, Some(vec![0, 2, 3]));
-        assert_eq!(restored.uvrange.as_deref(), Some("<12km"));
-        assert_eq!(
-            restored.intent.as_deref(),
-            Some("OBSERVE_TARGET#UNSPECIFIED")
-        );
-        assert_eq!(restored.phasecenter_field, Some(2));
-        assert_eq!(restored.spw_selector.as_deref(), Some("5:10~19"));
-        assert_eq!(restored.continuum_fit_spw.as_deref(), Some("5:0~9;20~29"));
-        assert_eq!(restored.continuum_fit_order, 1);
-        assert_eq!(restored.datacolumn.as_deref(), Some("CORRECTED_DATA"));
-        assert_eq!(restored.save_model, SaveModelMode::ModelColumn);
-        assert!(restored.save_continuum_residual);
-        assert_eq!(restored.correlation.as_deref(), Some("XX"));
-        assert_eq!(restored.spectral_mode, SpectralMode::Cube);
-        assert_eq!(restored.weighting, WeightingMode::Briggs { robust: -1.0 });
-        assert!(restored.per_channel_weight_density);
-        assert!(restored.use_pointing);
-        assert_eq!(restored.restoring_beam_mode, RestoringBeamMode::Common);
-        assert_eq!(restored.deconvolver, Deconvolver::Multiscale);
-        assert_eq!(restored.use_mask, crate::CleanMaskMode::AutoMultiThreshold);
-        assert_eq!(restored.auto_mask.sidelobe_threshold, 2.0);
-        assert_eq!(restored.auto_mask.noise_threshold, 4.25);
-        assert!(restored.force_standard_gridder);
-        assert_eq!(restored.w_term_mode, WTermMode::WProject);
-        assert_eq!(restored.w_project_planes, Some(8));
-        assert!(restored.dirty_only);
-    }
-
-    #[test]
-    fn widefield_facets_round_trip_without_selecting_aw_projection() {
-        let config = CliConfig::parse([
-            OsString::from("--ms"),
-            OsString::from("demo.ms"),
-            OsString::from("--imagename"),
-            OsString::from("out/faceted"),
-            OsString::from("--imsize"),
-            OsString::from("512"),
-            OsString::from("--cell-arcsec"),
-            OsString::from("0.35"),
-            OsString::from("--gridder"),
-            OsString::from("widefield"),
-            OsString::from("--facets"),
-            OsString::from("2"),
-            OsString::from("--wprojplanes"),
-            OsString::from("1"),
-        ])
-        .expect("parse faceted widefield request");
-
-        assert_eq!(config.facets, 2);
-        assert_eq!(config.w_term_mode, WTermMode::None);
-        assert_eq!(config.w_project_planes, Some(1));
-        assert!(config.aw_project.is_none());
-
-        let request = ImagerRunTaskRequest::from_cli_config(&config);
-        assert_eq!(request.facets, 2);
-        let restored = request.to_cli_config().expect("restore faceted request");
-        assert_eq!(restored.facets, 2);
-        assert_eq!(restored.w_term_mode, WTermMode::None);
-        assert_eq!(restored.w_project_planes, Some(1));
-        assert!(restored.aw_project.is_none());
-    }
-
-    #[test]
-    fn natural_weighting_ignores_the_casa_robust_parameter() {
-        let parse = |weighting_before_robust| {
-            let mut args = vec![
-                OsString::from("--ms"),
-                OsString::from("demo.ms"),
-                OsString::from("--imagename"),
-                OsString::from("out/natural"),
-                OsString::from("--imsize"),
-                OsString::from("512"),
-                OsString::from("--cell-arcsec"),
-                OsString::from("0.35"),
-            ];
-            let controls = if weighting_before_robust {
-                ["--weighting", "natural", "--robust", "0.5"]
-            } else {
-                ["--robust", "0.5", "--weighting", "natural"]
-            };
-            args.extend(controls.into_iter().map(OsString::from));
-            CliConfig::parse(args).expect("parse CASA natural weighting controls")
-        };
-
-        assert_eq!(parse(true).weighting, WeightingMode::Natural);
-        assert_eq!(parse(false).weighting, WeightingMode::Natural);
-    }
-
-    #[test]
-    fn run_request_preserves_numeric_spw_without_selector() {
-        let mut config = CliConfig::parse([
-            OsString::from("--ms"),
-            OsString::from("demo.ms"),
-            OsString::from("--imagename"),
-            OsString::from("out/demo"),
-            OsString::from("--imsize"),
-            OsString::from("64"),
-            OsString::from("--cell-arcsec"),
-            OsString::from("1.5"),
-        ])
-        .unwrap();
-        config.spw = Some(3);
-        config.spw_selector = None;
-
-        let request = ImagerRunTaskRequest::from_cli_config(&config);
-        assert_eq!(request.spw_selector.as_deref(), Some("3"));
-
-        let restored = request.to_cli_config().unwrap();
-        assert_eq!(restored.spw, Some(3));
-        assert_eq!(restored.spw_selector.as_deref(), Some("3"));
-    }
-
-    #[test]
-    fn run_request_validates_memory_targets() {
-        let config = CliConfig::parse([
-            OsString::from("--ms"),
-            OsString::from("demo.ms"),
-            OsString::from("--imagename"),
-            OsString::from("out/demo"),
-            OsString::from("--imsize"),
-            OsString::from("64"),
-            OsString::from("--cell-arcsec"),
-            OsString::from("1.5"),
-        ])
-        .unwrap();
-        let base = ImagerRunTaskRequest::from_cli_config(&config);
-
-        let mut request = base.clone();
-        request.imaging_memory_target_mb = Some(0);
-        assert_eq!(
-            request.to_cli_config().unwrap_err(),
-            "imaging_memory_target_mb must be positive"
-        );
-
-        let mut request = base.clone();
-        request.standard_mfs_memory_target_mb = Some(0);
-        assert_eq!(
-            request.to_cli_config().unwrap_err(),
-            "standard_mfs_memory_target_mb must be positive"
-        );
-
-        let mut request = base.clone();
-        request.imaging_memory_target_mb = Some(1024);
-        let restored = request.to_cli_config().expect("bounded memory target");
-        assert_eq!(restored.imaging_memory_target_mb, Some(1024));
-    }
-
-    #[test]
-    fn awproject_request_roundtrips_all_projection_cache_and_pointing_controls() {
-        let config = CliConfig::parse([
-            OsString::from("--ms"),
-            OsString::from("demo.ms"),
-            OsString::from("--imagename"),
-            OsString::from("out/demo"),
-            OsString::from("--imsize"),
-            OsString::from("12150"),
-            OsString::from("--cell-arcsec"),
-            OsString::from("1.0"),
-            OsString::from("--projection"),
-            OsString::from("SIN"),
-            OsString::from("--specmode"),
-            OsString::from("mfs"),
-            OsString::from("--deconvolver"),
-            OsString::from("mtmfs"),
-            OsString::from("--nterms"),
-            OsString::from("2"),
-            OsString::from("--gridder"),
-            OsString::from("awproject"),
-            OsString::from("--cfcache"),
-            OsString::from("cf-cache/vlass-spw2-17"),
-            OsString::from("--cf-resident-mb"),
-            OsString::from("384"),
-            OsString::from("--wprojplanes"),
-            OsString::from("32"),
-            OsString::from("--usepointing"),
-            OsString::from("--aterm"),
-            OsString::from("--no-psterm"),
-            OsString::from("--wbawp"),
-            OsString::from("--conjbeams"),
-            OsString::from("--computepastep"),
-            OsString::from("360"),
-            OsString::from("--rotatepastep"),
-            OsString::from("360"),
-            OsString::from("--pointingoffsetsigdev"),
-            OsString::from("0.0"),
-            OsString::from("--no-mosweight"),
-            OsString::from("--normtype"),
-            OsString::from("flatnoise"),
-        ])
-        .unwrap();
-
-        let request = ImagerRunTaskRequest::from_cli_config(&config);
-        let encoded = serde_json::to_string(&request).unwrap();
-        let decoded: ImagerRunTaskRequest = serde_json::from_str(&encoded).unwrap();
-        assert_eq!(decoded.projection, ImagerProjection::Sin);
-        assert!(decoded.use_pointing);
-        assert_eq!(decoded.w_project_planes, Some(32));
-        let aw = decoded.aw_project.as_ref().unwrap();
-        assert_eq!(
-            aw.source,
-            crate::ImagerAwCfSource::CasaImport {
-                cf_cache: PathBuf::from("cf-cache/vlass-spw2-17")
-            }
-        );
-        assert_eq!(aw.cf_resident_mb, 384);
-
-        let restored = decoded.to_cli_config().unwrap();
-        let controls = restored.aw_project.as_ref().unwrap();
-        assert_eq!(controls.w_plane_count, Some(32));
-        assert!(controls.use_pointing);
-        assert_eq!(controls.cf_resident_bytes, 384 * 1024 * 1024);
-        assert_eq!(
-            controls.source,
-            casa_imaging_application::ContinuumAwCfSource::CasaImport(PathBuf::from(
-                "cf-cache/vlass-spw2-17"
-            ))
-        );
-
-        let mut unsupported = serde_json::to_value(decoded).unwrap();
-        unsupported["projection"] = serde_json::Value::String("TAN".to_string());
-        assert!(serde_json::from_value::<ImagerRunTaskRequest>(unsupported).is_err());
-    }
-
-    #[test]
-    fn mosaic_flatsky_normalization_roundtrips_through_the_task_contract() {
-        let config = CliConfig::parse([
-            OsString::from("--ms"),
-            OsString::from("demo.ms"),
-            OsString::from("--imagename"),
-            OsString::from("out/demo"),
-            OsString::from("--imsize"),
-            OsString::from("256"),
-            OsString::from("--cell-arcsec"),
-            OsString::from("1.0"),
-            OsString::from("--gridder"),
-            OsString::from("mosaic"),
-            OsString::from("--usepointing"),
-            OsString::from("--normtype"),
-            OsString::from("flatsky"),
-        ])
-        .expect("mosaic flatsky CLI");
-
-        let request = ImagerRunTaskRequest::from_cli_config(&config);
-        assert_eq!(request.normalization, ImagerAwProjectNormalization::Flatsky);
-        let restored = request.to_cli_config().expect("task request roundtrip");
-        assert_eq!(restored.normalization, AwProjectNormalization::FlatSky);
-    }
-
-    #[test]
-    fn task_request_defaults_match_cli_defaults() {
-        let request = ImagerRunTaskRequest {
-            measurement_set: PathBuf::from("demo.ms"),
-            image_name: PathBuf::from("out/demo"),
-            image_size: 64,
-            facets: 1,
-            cell_arcsec: 1.5,
-            projection: ImagerProjection::Sin,
-            field_ids: None,
-            uvrange: None,
-            intent: None,
-            phasecenter_field: None,
-            phasecenter: None,
-            ddid: None,
-            spw_selector: None,
-            channel_start: None,
-            channel_count: None,
-            continuum_fit_spw: None,
-            continuum_fit_order: 0,
-            data_column: None,
-            save_model: ImagerSaveModel::None,
-            save_continuum_residual: false,
-            start_model: None,
-            outlier_file: None,
-            correlation: None,
-            spectral_mode: Default::default(),
-            cube_axis: Default::default(),
-            weighting: Default::default(),
-            per_channel_weight_density: None,
-            use_pointing: false,
-            mosaic_gridder: false,
-            uv_taper: None,
-            restoring_beam_mode: Default::default(),
-            deconvolver: Default::default(),
-            nterms: 1,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            niter: 0,
-            nmajor: None,
-            gain: 0.1,
-            threshold_jy: 0.0,
-            nsigma: 0.0,
-            psf_cutoff: 0.35,
-            mosaic_pb_limit: 0.2,
-            normalization: ImagerAwProjectNormalization::Flatnoise,
-            pbcor: false,
-            write_pb: false,
-            minor_cycle_length: 1000,
-            cyclefactor: 1.0,
-            min_psf_fraction: 0.05,
-            max_psf_fraction: 0.8,
-            hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
-            use_mask: ImagerCleanMaskMode::User,
-            auto_mask: ImagerAutoMultiThresholdConfig::default(),
-            mask_boxes: Vec::new(),
-            mask_image: None,
-            w_term_mode: Default::default(),
-            force_standard_gridder: false,
-            w_project_planes: None,
-            aw_project: None,
-            dirty_only: false,
-            parallel: None,
-            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
-            standard_mfs_backend: None,
-            backend: crate::ImagingBackend::Cpu,
-            standard_mfs_memory_target_mb: None,
-            imaging_memory_target_mb: None,
-            progress: None,
-        };
-        let config = request.to_cli_config().unwrap();
-        assert_eq!(config.weighting, WeightingMode::Natural);
-        assert_eq!(config.deconvolver, Deconvolver::Hogbom);
-        assert_eq!(config.spectral_mode, SpectralMode::Mfs);
-        assert!(!config.per_channel_weight_density);
-        assert!(!config.use_pointing);
-
-        let mut parallel = request.clone();
-        parallel.parallel = Some(true);
-        assert_eq!(
-            parallel.to_cli_config().unwrap().standard_mfs_acceleration,
-            StandardMfsAccelerationPolicy::Cpu
-        );
-        let mut serial = request.clone();
-        serial.parallel = Some(false);
-        serial.standard_mfs_acceleration = StandardMfsAccelerationPolicy::MultiCpu;
-        assert!(
-            serial
-                .to_cli_config()
-                .unwrap_err()
-                .contains("parallel=false conflicts")
-        );
-
-        let cube = ImagerRunTaskRequest {
-            spectral_mode: ImagerSpectralMode::Cube,
-            ..request
-        };
-        assert!(cube.to_cli_config().unwrap().per_channel_weight_density);
-    }
-
-    #[test]
-    fn briggs_weighting_round_trips() {
-        let request = ImagerRunTaskRequest {
-            measurement_set: PathBuf::from("demo.ms"),
-            image_name: PathBuf::from("out/demo"),
-            image_size: 64,
-            facets: 1,
-            cell_arcsec: 1.5,
-            projection: ImagerProjection::Sin,
-            field_ids: None,
-            uvrange: None,
-            intent: None,
-            phasecenter_field: None,
-            phasecenter: None,
-            ddid: None,
-            spw_selector: None,
-            channel_start: None,
-            channel_count: None,
-            continuum_fit_spw: None,
-            continuum_fit_order: 0,
-            data_column: None,
-            save_model: ImagerSaveModel::None,
-            save_continuum_residual: false,
-            start_model: None,
-            outlier_file: None,
-            correlation: None,
-            spectral_mode: Default::default(),
-            cube_axis: Default::default(),
-            weighting: ImagerWeighting::Briggs { robust: 0.5 },
-            per_channel_weight_density: Some(false),
-            use_pointing: false,
-            mosaic_gridder: false,
-            uv_taper: None,
-            restoring_beam_mode: Default::default(),
-            deconvolver: Default::default(),
-            nterms: 1,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            niter: 0,
-            nmajor: None,
-            gain: 0.1,
-            threshold_jy: 0.0,
-            nsigma: 0.0,
-            psf_cutoff: 0.35,
-            mosaic_pb_limit: 0.1,
-            normalization: ImagerAwProjectNormalization::Flatnoise,
-            pbcor: false,
-            write_pb: false,
-            minor_cycle_length: 1000,
-            cyclefactor: 1.0,
-            min_psf_fraction: 0.05,
-            max_psf_fraction: 0.8,
-            hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
-            use_mask: ImagerCleanMaskMode::User,
-            auto_mask: ImagerAutoMultiThresholdConfig::default(),
-            mask_boxes: Vec::new(),
-            mask_image: None,
-            w_term_mode: Default::default(),
-            force_standard_gridder: false,
-            w_project_planes: None,
-            aw_project: None,
-            dirty_only: false,
-            parallel: None,
-            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
-            standard_mfs_backend: None,
-            backend: crate::ImagingBackend::Cpu,
-            standard_mfs_memory_target_mb: None,
-            imaging_memory_target_mb: None,
-            progress: None,
-        };
-        let config = request.to_cli_config().unwrap();
-        assert_eq!(config.weighting, WeightingMode::Briggs { robust: 0.5 });
-    }
-
-    #[test]
-    fn briggs_bandwidth_taper_weighting_round_trips() {
-        assert_eq!(
-            ImagerWeighting::from(WeightingMode::BriggsBwTaper { robust: 0.25 }),
-            ImagerWeighting::BriggsBwTaper { robust: 0.25 }
-        );
-        assert_eq!(
-            WeightingMode::from(ImagerWeighting::BriggsBwTaper { robust: 0.25 }),
-            WeightingMode::BriggsBwTaper { robust: 0.25 }
-        );
-    }
-
-    #[test]
-    fn plane_selection_and_enum_conversions_cover_public_variants() {
-        for (text, plane) in [
-            ("I", ImagerPlaneSelection::StokesI),
-            ("Q", ImagerPlaneSelection::StokesQ),
-            ("U", ImagerPlaneSelection::StokesU),
-            ("V", ImagerPlaneSelection::StokesV),
-            ("XX", ImagerPlaneSelection::CorrXX),
-            ("YY", ImagerPlaneSelection::CorrYY),
-            ("RR", ImagerPlaneSelection::CorrRR),
-            ("LL", ImagerPlaneSelection::CorrLL),
-        ] {
-            assert_eq!(ImagerRunTaskRequest::plane_from_text(text).unwrap(), plane);
-            assert_eq!(plane.as_cli_text(), text);
-        }
-        assert!(ImagerRunTaskRequest::plane_from_text("XY").is_err());
-
-        assert_eq!(
-            ImagerSpectralMode::from(SpectralMode::Cubedata),
-            ImagerSpectralMode::Cubedata
-        );
-        assert_eq!(
-            SpectralMode::from(ImagerSpectralMode::Cube),
-            SpectralMode::Cube
-        );
-        assert_eq!(
-            ImagerWeighting::from(WeightingMode::Uniform),
-            ImagerWeighting::Uniform
-        );
-        assert_eq!(
-            WeightingMode::from(ImagerWeighting::Briggs { robust: 1.0 }),
-            WeightingMode::Briggs { robust: 1.0 }
-        );
-        assert_eq!(
-            WeightingMode::from(ImagerWeighting::BriggsBwTaper { robust: 1.0 }),
-            WeightingMode::BriggsBwTaper { robust: 1.0 }
-        );
-        assert_eq!(
-            ImagerRestoringBeamMode::from(RestoringBeamMode::Common),
-            ImagerRestoringBeamMode::Common
-        );
-        assert_eq!(
-            RestoringBeamMode::from(ImagerRestoringBeamMode::PerPlane),
-            RestoringBeamMode::PerPlane
-        );
-        assert_eq!(
-            ImagerDeconvolver::from(Deconvolver::Clark),
-            ImagerDeconvolver::Clark
-        );
-        assert_eq!(
-            Deconvolver::from(ImagerDeconvolver::Multiscale),
-            Deconvolver::Multiscale
-        );
-        assert_eq!(
-            ImagerWTermMode::from(WTermMode::WProject),
-            ImagerWTermMode::Wproject
-        );
-        assert_eq!(WTermMode::from(ImagerWTermMode::Direct), WTermMode::Direct);
-        assert_eq!(
-            ImagerCubeInterpolation::from(CubeInterpolation::Cubic),
-            ImagerCubeInterpolation::Cubic
-        );
-        assert_eq!(
-            CubeInterpolation::from(ImagerCubeInterpolation::Nearest),
-            CubeInterpolation::Nearest
-        );
-        assert_eq!(
-            ImagerUvTaperSize::from(UvTaperSize::ImageFwhmRad(1.5)),
-            ImagerUvTaperSize::ImageFwhmRad { value: 1.5 }
-        );
-        assert_eq!(
-            UvTaperSize::from(ImagerUvTaperSize::BaselineHwhmLambda { value: 3.0 }),
-            UvTaperSize::BaselineHwhmLambda(3.0)
-        );
-        assert_eq!(
-            ImagerUvTaper::from(GaussianUvTaper {
-                major: UvTaperSize::ImageFwhmRad(2.0),
-                minor: UvTaperSize::BaselineHwhmLambda(4.0),
-                position_angle_rad: 0.25,
-            }),
-            ImagerUvTaper {
-                major: ImagerUvTaperSize::ImageFwhmRad { value: 2.0 },
-                minor: ImagerUvTaperSize::BaselineHwhmLambda { value: 4.0 },
-                position_angle_rad: 0.25,
-            }
-        );
-        assert_eq!(
-            ImagerCleanStopReason::from(CleanStopReason::DivergenceDetected),
-            ImagerCleanStopReason::DivergenceDetected
-        );
-    }
-
-    #[test]
-    fn cube_axis_values_and_config_validate_runtime_inputs() {
-        assert_eq!(
-            ImagerCubeAxisValue::from(&CubeAxisValue::Channel(7))
-                .into_runtime()
-                .unwrap(),
-            CubeAxisValue::Channel(7)
-        );
-        assert_eq!(
-            ImagerCubeAxisValue::from(&CubeAxisValue::FrequencyHz {
-                hz: 1.4e9,
-                frame: Some(FrequencyRef::BARY),
-            })
-            .into_runtime()
-            .unwrap(),
-            CubeAxisValue::FrequencyHz {
-                hz: 1.4e9,
-                frame: Some(FrequencyRef::BARY),
-            }
-        );
-        assert_eq!(
-            ImagerCubeAxisValue::from(&CubeAxisValue::VelocityMs {
-                ms: 12.0,
-                frame: Some(FrequencyRef::LSRK),
-            })
-            .into_runtime()
-            .unwrap(),
-            CubeAxisValue::VelocityMs {
-                ms: 12.0,
-                frame: Some(FrequencyRef::LSRK),
-            }
-        );
-        assert_eq!(
-            ImagerCubeAxisValue::from(&CubeAxisValue::Doppler {
-                value: 0.25,
-                convention: DopplerRef::Z,
-            })
-            .into_runtime()
-            .unwrap(),
-            CubeAxisValue::Doppler {
-                value: 0.25,
-                convention: DopplerRef::Z,
-            }
-        );
-
-        let config = ImagerCubeAxisConfig::from(&CubeAxisConfig {
-            specmode: SpectralMode::Cube.cube_specmode(),
-            outframe: FrequencyRef::BARY,
-            veltype: DopplerRef::Z,
-            interpolation: CubeInterpolation::Nearest,
-            rest_frequency_hz: Some(1.42e9),
-            start: Some(CubeAxisValue::Channel(3)),
-            width: Some(CubeAxisValue::FrequencyHz {
-                hz: 1.0e6,
-                frame: Some(FrequencyRef::LSRK),
-            }),
-        });
-        let runtime = config.clone().into_runtime(SpectralMode::Cube).unwrap();
-        assert_eq!(runtime.outframe, FrequencyRef::BARY);
-        assert_eq!(runtime.veltype, DopplerRef::Z);
-        assert_eq!(runtime.interpolation, CubeInterpolation::Nearest);
-        assert_eq!(runtime.rest_frequency_hz, Some(1.42e9));
-
-        let invalid_frame = ImagerCubeAxisConfig {
-            outframe: "bad-frame".to_string(),
-            ..config.clone()
-        };
-        assert!(invalid_frame.into_runtime(SpectralMode::Cube).is_err());
-
-        let invalid_veltype = ImagerCubeAxisConfig {
-            veltype: "bad-doppler".to_string(),
-            ..config.clone()
-        };
-        assert!(invalid_veltype.into_runtime(SpectralMode::Cube).is_err());
-
-        let invalid_restfreq = ImagerCubeAxisConfig {
-            rest_frequency_hz: Some(f64::NAN),
-            ..config
-        };
-        assert!(invalid_restfreq.into_runtime(SpectralMode::Cube).is_err());
-    }
-
-    #[test]
-    fn to_cli_config_rejects_invalid_request_combinations() {
-        let base = ImagerRunTaskRequest {
-            measurement_set: PathBuf::from("demo.ms"),
-            image_name: PathBuf::from("out/demo"),
-            image_size: 64,
-            facets: 1,
-            cell_arcsec: 1.5,
-            projection: ImagerProjection::Sin,
-            field_ids: None,
-            uvrange: None,
-            intent: None,
-            phasecenter_field: None,
-            phasecenter: None,
-            ddid: None,
-            spw_selector: None,
-            channel_start: None,
-            channel_count: None,
-            continuum_fit_spw: None,
-            continuum_fit_order: 0,
-            data_column: None,
-            save_model: ImagerSaveModel::None,
-            save_continuum_residual: false,
-            start_model: None,
-            outlier_file: None,
-            correlation: None,
-            spectral_mode: ImagerSpectralMode::Mfs,
-            cube_axis: Default::default(),
-            weighting: Default::default(),
-            per_channel_weight_density: Some(false),
-            use_pointing: false,
-            mosaic_gridder: false,
-            uv_taper: None,
-            restoring_beam_mode: Default::default(),
-            deconvolver: Default::default(),
-            nterms: 1,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            niter: 0,
-            nmajor: None,
-            gain: 0.1,
-            threshold_jy: 0.0,
-            nsigma: 0.0,
-            psf_cutoff: 0.35,
-            mosaic_pb_limit: 0.1,
-            normalization: ImagerAwProjectNormalization::Flatnoise,
-            pbcor: false,
-            write_pb: false,
-            minor_cycle_length: 1000,
-            cyclefactor: 1.0,
-            min_psf_fraction: 0.05,
-            max_psf_fraction: 0.8,
-            hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
-            use_mask: ImagerCleanMaskMode::User,
-            auto_mask: ImagerAutoMultiThresholdConfig::default(),
-            mask_boxes: Vec::new(),
-            mask_image: None,
-            w_term_mode: Default::default(),
-            force_standard_gridder: false,
-            w_project_planes: None,
-            aw_project: None,
-            dirty_only: false,
-            parallel: None,
-            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
-            standard_mfs_backend: None,
-            backend: crate::ImagingBackend::Cpu,
-            standard_mfs_memory_target_mb: None,
-            imaging_memory_target_mb: None,
-            progress: None,
-        };
-
-        assert!(base.clone().to_cli_config().is_ok());
-        assert!(
-            base.clone()
-                .to_cli_config()
-                .expect("valid config")
-                .correlation
-                .is_none()
-        );
-
-        let conflict = ImagerRunTaskRequest {
-            phasecenter_field: Some(1),
-            phasecenter: Some("J2000 1rad 2rad".to_string()),
-            ..base.clone()
-        };
-        assert!(
-            conflict
-                .to_cli_config()
-                .unwrap_err()
-                .contains("mutually exclusive")
-        );
-
-        let mtmfs_cube = ImagerRunTaskRequest {
-            spectral_mode: ImagerSpectralMode::Cube,
-            deconvolver: ImagerDeconvolver::Mtmfs,
-            ..base.clone()
-        };
-        assert!(
-            mtmfs_cube
-                .to_cli_config()
-                .unwrap_err()
-                .contains("requires specmode='mfs'")
-        );
-
-        let non_mtmfs_nterms = ImagerRunTaskRequest {
-            deconvolver: ImagerDeconvolver::Clark,
-            nterms: 2,
-            ..base.clone()
-        };
-        assert!(
-            non_mtmfs_nterms
-                .to_cli_config()
-                .unwrap_err()
-                .contains("nterms > 1")
-        );
-
-        let zero_nterms = ImagerRunTaskRequest {
-            deconvolver: ImagerDeconvolver::Mtmfs,
-            nterms: 0,
-            ..base.clone()
-        };
-        assert!(
-            zero_nterms
-                .to_cli_config()
-                .unwrap_err()
-                .contains("at least 1")
-        );
-
-        let invalid_scales = ImagerRunTaskRequest {
-            multiscale_scales: vec![1.0, -1.0],
-            ..base
-        };
-        assert!(
-            invalid_scales
-                .to_cli_config()
-                .unwrap_err()
-                .contains("invalid multiscale scale")
-        );
-    }
-
-    #[test]
-    fn artifact_generation_uses_the_application_member_inventory() {
-        let temp = tempdir().expect("artifact dir");
-        let image_name = temp.path().join("artifact/demo");
-        fs::create_dir_all(image_name.parent().unwrap()).expect("artifact parent");
-        fs::write(image_name.with_extension("psf"), b"psf").expect("write psf");
-        let standard = ImagerRunTaskRequest {
-            measurement_set: PathBuf::from("demo.ms"),
-            image_name: image_name.clone(),
-            image_size: 64,
-            facets: 1,
-            cell_arcsec: 1.5,
-            projection: ImagerProjection::Sin,
-            field_ids: None,
-            uvrange: None,
-            intent: None,
-            phasecenter_field: None,
-            phasecenter: None,
-            ddid: None,
-            spw_selector: Some("7".to_string()),
-            channel_start: None,
-            channel_count: None,
-            continuum_fit_spw: None,
-            continuum_fit_order: 0,
-            data_column: None,
-            save_model: ImagerSaveModel::None,
-            save_continuum_residual: false,
-            start_model: None,
-            outlier_file: None,
-            correlation: Some(ImagerPlaneSelection::CorrXX),
-            spectral_mode: ImagerSpectralMode::Mfs,
-            cube_axis: Default::default(),
-            weighting: Default::default(),
-            per_channel_weight_density: Some(false),
-            use_pointing: false,
-            mosaic_gridder: false,
-            uv_taper: None,
-            restoring_beam_mode: Default::default(),
-            deconvolver: Default::default(),
-            nterms: 1,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            niter: 1,
-            nmajor: None,
-            gain: 0.1,
-            threshold_jy: 0.0,
-            nsigma: 0.0,
-            psf_cutoff: 0.35,
-            mosaic_pb_limit: 0.1,
-            normalization: ImagerAwProjectNormalization::Flatnoise,
-            pbcor: false,
-            write_pb: false,
-            minor_cycle_length: 1000,
-            cyclefactor: 1.0,
-            min_psf_fraction: 0.05,
-            max_psf_fraction: 0.8,
-            hogbom_iteration_mode: ImagerHogbomIterationMode::Strict,
-            use_mask: ImagerCleanMaskMode::User,
-            auto_mask: ImagerAutoMultiThresholdConfig::default(),
-            mask_boxes: Vec::new(),
-            mask_image: None,
-            w_term_mode: Default::default(),
-            force_standard_gridder: false,
-            w_project_planes: None,
-            aw_project: None,
-            dirty_only: false,
-            parallel: None,
-            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
-            standard_mfs_backend: None,
-            backend: crate::ImagingBackend::Cpu,
-            standard_mfs_memory_target_mb: None,
-            imaging_memory_target_mb: None,
-            progress: None,
-        };
-        let standard_config = standard.to_cli_config().unwrap();
-        assert_eq!(standard_config.spw, Some(7));
-        assert_eq!(standard_config.correlation.as_deref(), Some("XX"));
-
-        let standard_artifacts = super::build_artifacts_for_products(
-            &standard,
-            &[
-                ".psf".to_string(),
-                ".residual".to_string(),
-                ".model".to_string(),
-                ".image".to_string(),
-                ".sumwt".to_string(),
-            ],
-        );
-        assert_eq!(standard_artifacts.len(), 5);
-        let standard_psf = standard_artifacts
-            .iter()
-            .find(|artifact| artifact.kind == ImagerArtifactKind::Psf)
-            .unwrap();
-        assert!(standard_psf.exists);
-        assert!(
-            standard_artifacts
-                .iter()
-                .any(|artifact| artifact.kind == ImagerArtifactKind::Sumwt
-                    && artifact.label == "Sum of Weights")
-        );
-
-        assert_eq!(
-            standard_artifacts
-                .iter()
-                .map(|artifact| artifact.kind)
-                .collect::<Vec<_>>(),
-            vec![
-                ImagerArtifactKind::Psf,
-                ImagerArtifactKind::Residual,
-                ImagerArtifactKind::Model,
-                ImagerArtifactKind::Image,
-                ImagerArtifactKind::Sumwt,
-            ]
-        );
-    }
-
-    #[test]
-    fn dirty_imaging_json_request_accepts_gui_selection_fields() {
-        let payload = r#"{
-          "kind": "run",
-          "request": {
-            "measurement_set": "/data/probed.ms",
-            "image_name": "/data/casa-rs-runs/probed-dirty",
-            "image_size": 256,
-            "cell_arcsec": 0.25,
-            "field_ids": [0],
-            "phasecenter_field": 0,
-            "spw_selector": "0",
-            "channel_start": 2,
-            "channel_count": 4,
-            "data_column": "DATA",
-            "weighting": {
-              "kind": "briggs",
-              "robust": 0.5
-            },
-            "niter": 0,
-            "dirty_only": true
-          }
-        }"#;
-        let request: ImagerTaskRequest =
-            serde_json::from_str(payload).expect("parse GUI dirty-imaging request");
-        let ImagerTaskRequest::Run(request) = request;
-        assert_eq!(request.measurement_set, PathBuf::from("/data/probed.ms"));
-        assert_eq!(
-            request.image_name,
-            PathBuf::from("/data/casa-rs-runs/probed-dirty")
-        );
-        assert_eq!(request.field_ids, Some(vec![0]));
-        assert_eq!(request.phasecenter_field, Some(0));
-        assert_eq!(request.spw_selector.as_deref(), Some("0"));
-        assert_eq!(request.channel_start, Some(2));
-        assert_eq!(request.channel_count, Some(4));
-        assert_eq!(request.data_column.as_deref(), Some("DATA"));
-        assert_eq!(request.weighting, ImagerWeighting::Briggs { robust: 0.5 });
-        assert_eq!(request.niter, 0);
-        assert!(request.dirty_only);
-
-        let config = request.to_cli_config().expect("restore CLI config");
-        assert_eq!(config.field_ids, Some(vec![0]));
-        assert_eq!(config.phasecenter_field, Some(0));
-        assert_eq!(config.spw_selector.as_deref(), Some("0"));
-        assert_eq!(config.channel_start, Some(2));
-        assert_eq!(config.channel_count, Some(4));
-        assert_eq!(config.datacolumn.as_deref(), Some("DATA"));
-        assert_eq!(config.weighting, WeightingMode::Briggs { robust: 0.5 });
-        assert!(config.dirty_only);
-    }
-
-    #[test]
-    fn dirty_imaging_json_request_accepts_progress_options_without_requiring_them() {
-        let payload = r#"{
-          "kind": "run",
-          "request": {
-            "measurement_set": "/data/probed.ms",
-            "image_name": "/data/casa-rs-runs/probed-dirty",
-            "image_size": 256,
-            "cell_arcsec": 0.25,
-            "progress": {
-              "enabled": true,
-              "telemetry_jsonl_path": "/tmp/imager-progress.jsonl",
-              "max_uv_points": 128,
-              "min_interval_ms": 400,
-              "detail": "diagnostic"
-            }
-          }
-        }"#;
-        let request: ImagerTaskRequest =
-            serde_json::from_str(payload).expect("parse progress-enabled request");
-        let ImagerTaskRequest::Run(request) = request;
-        let progress = request.progress.expect("progress options");
-        assert!(progress.enabled);
-        assert_eq!(
-            progress.telemetry_jsonl_path.as_deref(),
-            Some(Path::new("/tmp/imager-progress.jsonl"))
-        );
-        assert_eq!(progress.max_uv_points, 128);
-        assert_eq!(progress.min_interval_ms, 400);
-        assert_eq!(progress.detail, ImagerProgressDetail::Diagnostic);
-
-        let payload_without_progress = r#"{
-          "kind": "run",
-          "request": {
-            "measurement_set": "/data/probed.ms",
-            "image_name": "/data/casa-rs-runs/probed-dirty",
-            "image_size": 256,
-            "cell_arcsec": 0.25
-          }
-        }"#;
-        let request: ImagerTaskRequest =
-            serde_json::from_str(payload_without_progress).expect("parse request");
-        let ImagerTaskRequest::Run(request) = request;
-        assert!(request.progress.is_none());
-
-        let payload_without_detail = r#"{
-          "kind": "run",
-          "request": {
-            "measurement_set": "/data/probed.ms",
-            "image_name": "/data/casa-rs-runs/probed-dirty",
-            "image_size": 256,
-            "cell_arcsec": 0.25,
-            "progress": {"enabled": true}
-          }
-        }"#;
-        let request: ImagerTaskRequest =
-            serde_json::from_str(payload_without_detail).expect("parse request");
-        let ImagerTaskRequest::Run(request) = request;
-        assert_eq!(
-            request.progress.expect("progress").detail,
-            ImagerProgressDetail::Basic
-        );
-    }
-
-    #[test]
-    fn progress_event_contract_round_trips_optional_sections() {
-        let payload = r#"{
-          "schema_version": 1,
-          "sequence": 7,
-          "elapsed_ms": 1250,
-          "phase": "reading_ms",
-          "summary": "reading rows",
-          "ms_read": {
-            "total_rows": 1000,
-            "total_channels": 64,
-            "row_start": 128,
-            "row_end": 256,
-            "channel_start": 8,
-            "channel_end": 16
-          },
-          "output_cube": {
-            "x_pixels": 2048,
-            "y_pixels": 2048,
-            "z_planes": 512,
-            "active_plane_start": 32,
-            "active_plane_end": 64
-          },
-          "uv_coverage": {
-            "u_extent_klambda": 12.0,
-            "v_extent_klambda": 10.0,
-            "measured": [{"u_klambda": 1.0, "v_klambda": -2.0, "weight": 0.5}],
-            "conjugate": [{"u_klambda": -1.0, "v_klambda": 2.0, "weight": 0.5}],
-            "dropped_points": 4,
-            "sample_limit": 1
-          },
-          "runtime": {
-            "active_threads": 2,
-            "total_threads": 8,
-            "gpu_active": false,
-            "backend": "auto",
-            "active_resources": ["source-stream", "visibility-grid"],
-            "active_resource_threads": {"source-stream": 1, "visibility-grid": 4},
-            "memory": {
-              "memory_target_bytes": 17179869184,
-              "planned_active_bytes": 17179863154,
-              "source_stream_buffer_bytes": 3804104045,
-              "product_scratch_bytes": 10945390173,
-              "active_planes": 47,
-              "row_block_rows": 128704,
-              "memory_target_source": "system_half",
-              "categories": [
-                {
-                  "kind": "grid-fft-scratch",
-                  "resource_id": "visibility-grid",
-                  "planned_bytes": 7340032,
-                  "tracked_live_bytes": 6291456,
-                  "high_water_bytes": 8388608,
-                  "confidence": "measured",
-                  "note": "sampled FFT scratch"
-                }
-              ]
-            }
-          },
-          "observability": {
-            "schema_version": 2,
-            "resources": [
-              {
-                "id": "source-stream",
-                "label": "Source Stream",
-                "state": "active",
-                "lease_count": 1,
-                "active_threads": 1,
-                "gpu_active": false,
-                "owner": "reading_ms",
-                "memory": {
-                  "planned_bytes": 3804104045,
-                  "row_block_rows": 128704
-                }
-              },
-              {
-                "id": "visibility-grid",
-                "label": "Grid/FFT",
-                "state": "active",
-                "lease_count": 1,
-                "active_threads": 4,
-                "gpu_active": true
-              }
-            ],
-            "active_spans": [
-              {
-                "id": "reading_ms",
-                "name": "reading rows",
-                "stage_kind": "source_stream",
-                "state": "running",
-                "resource_ids": ["source-stream", "visibility-grid"],
-                "elapsed_ms": 1250
-              }
-            ],
-            "memory_target_bytes": 17179869184,
-            "memory_target_source": "system_half",
-            "diagnostics": {
-              "source_reads": [
-                {
-                  "pass_kind": "initial_dirty",
-                  "slab_id": 2,
-                  "plane_start": 32,
-                  "plane_end": 64,
-                  "rows": 292000,
-                  "row_block_rows": 292000,
-                  "channel_start": 8,
-                  "channel_end": 16,
-                  "source_channels": 8,
-                  "logical_output_bytes": 1073741824,
-                  "modeled_physical_read_bytes": 2147483648,
-                  "wall_elapsed_ns": 4000000000,
-                  "logical_mb_per_s": 268.435456,
-                  "modeled_physical_wall_mb_per_s": 536.870912,
-                  "bytes_requested": 2147483648,
-                  "bytes_read": 2147483648,
-                  "column_ids": ["DATA", "FLAG", "WEIGHT", "UVW"],
-                  "data_column": "DATA",
-                  "elapsed_ns": 2000000000,
-                  "mb_per_s": 1073.741824
-                }
-              ],
-              "product_writes": [
-                {
-                  "artifact_kind": "mosaic_cube_plane",
-                  "slab_id": 2,
-                  "plane_start": 32,
-                  "plane_end": 33,
-                  "planes": 1,
-                  "bytes_written": 16777216,
-                  "elapsed_ns": 100000000,
-                  "mb_per_s": 167.77216
-                }
-              ],
-              "backend_decisions": [
-                {
-                  "stage_kind": "gridding",
-                  "requested_backend": "auto",
-                  "selected_backend": "wave3_metal_grouped",
-                  "gpu_eligible": true,
-                  "gpu_selected": true,
-                  "gpu_device_available": true,
-                  "gpu_device_name": "Apple GPU",
-                  "host_bytes": 1024,
-                  "device_bytes": 2048
-                }
-              ],
-              "stage_summaries": [
-                {
-                  "stage_kind": "source_stream",
-                  "label": "source_read_for/initial_dirty",
-                  "slab_id": 2,
-                  "plane_start": 32,
-                  "plane_end": 64,
-                  "backend": "source_stream",
-                  "worker_count": 1,
-                  "elapsed_ns": 2000000000,
-                  "exclusive_elapsed_ns": 2000000000,
-                  "rows": 292000,
-                  "planes": 32,
-                  "bytes_read": 2147483648,
-                  "mb_per_s": 1073.741824
-                }
-              ],
-              "run_summary": {
-                "total_wall_ms": 9000,
-                "stage_totals_ms": {"source_read_for/initial_dirty": 2000, "product_write/mosaic_cube_plane": 100},
-                "source_read_bytes": 2147483648,
-                "source_read_mb_per_s": 1073.741824,
-                "product_write_bytes": 16777216,
-                "product_write_mb_per_s": 167.77216,
-                "resource_high_water_bytes": {"source-stream": 3804104045},
-                "top_stall_reasons": ["gpu_eligible_not_selected:0"]
-              }
-            }
-          }
-        }"#;
-        let event: ImagerProgressEvent =
-            serde_json::from_str(payload).expect("parse progress event");
-        assert_eq!(event.sequence, 7);
-        assert_eq!(event.ms_read.as_ref().unwrap().row_start, 128);
-        assert_eq!(event.output_cube.as_ref().unwrap().active_plane_start, 32);
-        assert_eq!(
-            event.uv_coverage.as_ref().unwrap().conjugate[0].u_klambda,
-            -1.0
-        );
-        assert_eq!(event.runtime.as_ref().unwrap().total_threads, 8);
-        assert_eq!(
-            event.runtime.as_ref().unwrap().active_resources,
-            vec!["source-stream".to_string(), "visibility-grid".to_string()]
-        );
-        assert_eq!(
-            event
-                .runtime
-                .as_ref()
-                .unwrap()
-                .active_resource_threads
-                .get("visibility-grid"),
-            Some(&4)
-        );
-        assert_eq!(
-            event
-                .runtime
-                .as_ref()
-                .unwrap()
-                .memory
-                .as_ref()
-                .unwrap()
-                .active_planes,
-            47
-        );
-        let category = &event
-            .runtime
-            .as_ref()
-            .unwrap()
-            .memory
-            .as_ref()
-            .unwrap()
-            .categories[0];
-        assert_eq!(category.kind, ImagerObservedMemoryKind::GridFftScratch);
-        assert_eq!(
-            category.resource_id,
-            Some(ImagerObservedResourceId::VisibilityGrid)
-        );
-        assert_eq!(category.tracked_live_bytes, Some(6_291_456));
-        assert_eq!(category.high_water_bytes, Some(8_388_608));
-        assert_eq!(
-            category.confidence,
-            Some(ImagerObservedMemoryConfidence::Measured)
-        );
-        let observability = event.observability.as_ref().unwrap();
-        assert_eq!(
-            observability.schema_version,
-            IMAGER_OBSERVABILITY_SCHEMA_VERSION
-        );
-        assert_eq!(observability.resources.len(), 2);
-        assert_eq!(
-            observability.resources[0].id,
-            ImagerObservedResourceId::SourceStream
-        );
-        assert_eq!(
-            observability.resources[0].state,
-            ImagerObservedResourceState::Active
-        );
-        assert_eq!(
-            observability.resources[0]
-                .memory
-                .as_ref()
-                .unwrap()
-                .planned_bytes,
-            Some(3_804_104_045)
-        );
-        assert!(observability.resources[1].gpu_active);
-        assert_eq!(
-            observability.active_spans[0].stage_kind,
-            ImagerObservedStageKind::SourceStream
-        );
-        assert_eq!(observability.active_spans[0].resource_ids.len(), 2);
-        let diagnostics = observability.diagnostics.as_ref().expect("diagnostics");
-        assert_eq!(diagnostics.source_reads[0].rows, 292_000);
-        assert_eq!(diagnostics.source_reads[0].mb_per_s, 1073.741824);
-        assert_eq!(
-            diagnostics.source_reads[0].wall_elapsed_ns,
-            Some(4_000_000_000)
-        );
-        assert_eq!(
-            diagnostics.source_reads[0].logical_mb_per_s,
-            Some(268.435456)
-        );
-        assert_eq!(
-            diagnostics.source_reads[0].modeled_physical_wall_mb_per_s,
-            Some(536.870912)
-        );
-        assert_eq!(
-            diagnostics.source_reads[0].column_ids,
-            vec![
-                "DATA".to_string(),
-                "FLAG".to_string(),
-                "WEIGHT".to_string(),
-                "UVW".to_string()
-            ]
-        );
-        assert_eq!(
-            diagnostics.backend_decisions[0].selected_backend,
-            "wave3_metal_grouped"
-        );
-        assert!(diagnostics.backend_decisions[0].gpu_selected);
-        assert_eq!(
-            diagnostics.stage_summaries[0].stage_kind,
-            ImagerObservedStageKind::SourceStream
-        );
-        assert_eq!(diagnostics.product_writes[0].bytes_written, 16_777_216);
-        assert_eq!(
-            diagnostics
-                .run_summary
-                .as_ref()
-                .unwrap()
-                .stage_totals_ms
-                .get("source_read_for/initial_dirty"),
-            Some(&2000)
-        );
-
-        let minimal: ImagerProgressEvent = serde_json::from_str(
-            r#"{"schema_version":1,"sequence":1,"elapsed_ms":0,"phase":"starting","summary":"start"}"#,
+    fn the_invocation_carries_every_resolved_parameter_on_stdin() {
+        let values = BTreeMap::from([
+            (
+                "vis".to_string(),
+                ParameterValue::Array(vec![ParameterValue::String("in.ms".to_string())]),
+            ),
+            ("niter".to_string(), ParameterValue::Integer(100)),
+            ("gain".to_string(), ParameterValue::Float(0.1)),
+        ]);
+        let adaptation = imager_provider_invocation(
+            &values,
+            vec!["--managed-output".to_string(), "true".to_string()],
         )
-        .expect("parse minimal progress event");
-        assert!(minimal.ms_read.is_none());
-        assert!(minimal.uv_coverage.is_none());
-
-        let idle_runtime = ImagerProgressEvent {
-            schema_version: 1,
-            sequence: 8,
-            elapsed_ms: 1300,
-            phase: "idle".to_string(),
-            summary: "idle".to_string(),
-            work: None,
-            ms_read: None,
-            output_cube: None,
-            uv_coverage: None,
-            deconvolution: None,
-            runtime: Some(ImagerProgressRuntime {
-                active_threads: 0,
-                total_threads: 8,
-                gpu_active: false,
-                backend: "idle".to_string(),
-                active_resources: Vec::new(),
-                active_resource_threads: BTreeMap::new(),
-                memory: None,
-            }),
-            observability: None,
-        };
-        let serialized = serde_json::to_string(&idle_runtime).expect("serialize idle runtime");
-        assert!(serialized.contains(r#""active_resources":[]"#));
-    }
-
-    #[test]
-    fn task_request_roundtrips_start_model_path() {
-        let request = ImagerRunTaskRequest {
-            measurement_set: PathBuf::from("demo.ms"),
-            image_name: PathBuf::from("out/demo"),
-            image_size: 64,
-            facets: 1,
-            cell_arcsec: 1.5,
-            projection: ImagerProjection::Sin,
-            field_ids: None,
-            uvrange: None,
-            intent: None,
-            phasecenter_field: None,
-            phasecenter: None,
-            ddid: None,
-            spw_selector: None,
-            channel_start: None,
-            channel_count: None,
-            continuum_fit_spw: None,
-            continuum_fit_order: 0,
-            data_column: None,
-            save_model: ImagerSaveModel::None,
-            save_continuum_residual: false,
-            start_model: Some(PathBuf::from("seed.model")),
-            outlier_file: Some(PathBuf::from("outliers.txt")),
-            correlation: None,
-            spectral_mode: ImagerSpectralMode::Mfs,
-            cube_axis: Default::default(),
-            weighting: Default::default(),
-            per_channel_weight_density: Some(false),
-            use_pointing: false,
-            mosaic_gridder: false,
-            uv_taper: None,
-            restoring_beam_mode: Default::default(),
-            deconvolver: ImagerDeconvolver::Hogbom,
-            nterms: 1,
-            multiscale_scales: Vec::new(),
-            small_scale_bias: 0.0,
-            niter: 0,
-            nmajor: None,
-            gain: 0.1,
-            threshold_jy: 0.0,
-            nsigma: 0.0,
-            psf_cutoff: 0.35,
-            mosaic_pb_limit: 0.2,
-            normalization: ImagerAwProjectNormalization::Flatnoise,
-            pbcor: false,
-            write_pb: false,
-            minor_cycle_length: 1000,
-            cyclefactor: 1.0,
-            min_psf_fraction: 0.05,
-            max_psf_fraction: 0.8,
-            hogbom_iteration_mode: Default::default(),
-            use_mask: Default::default(),
-            auto_mask: Default::default(),
-            mask_boxes: Vec::new(),
-            mask_image: None,
-            w_term_mode: Default::default(),
-            force_standard_gridder: false,
-            w_project_planes: None,
-            aw_project: None,
-            dirty_only: false,
-            parallel: None,
-            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
-            standard_mfs_backend: None,
-            backend: crate::ImagingBackend::Cpu,
-            standard_mfs_memory_target_mb: None,
-            imaging_memory_target_mb: None,
-            progress: None,
-        };
-
-        let config = request.to_cli_config().expect("restore CLI config");
-        assert_eq!(config.start_model.as_deref(), Some(Path::new("seed.model")));
+        .expect("invocation");
         assert_eq!(
-            config.outlier_file.as_deref(),
-            Some(Path::new("outliers.txt"))
+            adaptation.invocation.args,
+            ["--managed-output", "true", "--json-run", "-"]
         );
-        let restored = ImagerRunTaskRequest::from_cli_config(&config);
+        let request: ImagerTaskRequest =
+            serde_json::from_str(adaptation.invocation.stdin.as_deref().expect("stdin"))
+                .expect("request");
+        let ImagerTaskRequest::Run(parameters) = request;
         assert_eq!(
-            restored.start_model.as_deref(),
-            Some(Path::new("seed.model"))
+            serde_json::Value::Object(parameters.0),
+            serde_json::json!({ "vis": ["in.ms"], "niter": 100, "gain": 0.1 })
         );
         assert_eq!(
-            restored.outlier_file.as_deref(),
-            Some(Path::new("outliers.txt"))
+            adaptation.consumed_parameters,
+            values.keys().cloned().collect()
         );
     }
 
     #[test]
-    fn json_request_rejects_unsupported_tclean_controls_instead_of_ignoring_them() {
-        let payload = r#"{
-          "kind": "run",
-          "request": {
-            "measurement_set": "/data/probed.ms",
-            "image_name": "/data/casa-rs-runs/probed-dirty",
-            "image_size": 256,
-            "cell_arcsec": 0.25,
-            "startmodel": "/data/seed.model",
-            "outlierfile": "/data/outliers.txt"
-          }
-        }"#;
-        let error = serde_json::from_str::<ImagerTaskRequest>(payload)
-            .expect_err("unsupported CASA tclean controls must not be silently ignored");
-        let message = error.to_string();
-        assert!(
-            message.contains("unknown field"),
-            "expected unknown-field rejection, got {message}"
+    fn products_are_labelled_by_kind_and_taylor_term() {
+        let artifacts = artifacts(
+            std::path::Path::new("/nowhere/run"),
+            &[
+                ".image.tt0".to_string(),
+                ".alpha.error".to_string(),
+                ".pb.tt0".to_string(),
+                ".image.tt0.pbcor".to_string(),
+            ],
         );
+        let kinds = artifacts
+            .iter()
+            .map(|artifact| (artifact.kind, artifact.label.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            [
+                (ImagerArtifactKind::Image, "Restored Image tt0"),
+                (ImagerArtifactKind::AlphaError, "Spectral Index Error"),
+                (ImagerArtifactKind::PrimaryBeam, "Primary Beam tt0"),
+                (ImagerArtifactKind::ImagePbcor, "PB-corrected Image tt0"),
+            ]
+        );
+        assert_eq!(
+            serde_json::to_value(ImagerArtifactKind::ImagePbcor).expect("kind"),
+            "image.pbcor"
+        );
+        assert!(artifacts.iter().all(|artifact| !artifact.exists));
     }
 }

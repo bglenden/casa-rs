@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Focused T41 moving-source gate against a frozen CASA Uranus cube.
-//!
-//! The `mvc` (MT-MFS via cube) oracle gates were removed with the old route in
-//! IF-2 (#651); `mvc` always carries a primary beam and returns with the
-//! convolution-function sets of IF-3 (#652).
+//! Focused T41 moving-source gate against a frozen CASA Uranus cube, and the
+//! casa-ms Measures edge topology of the selected spectral range on the
+//! representative T41 observation.
 
 use std::{
     error::Error,
@@ -14,18 +12,18 @@ use std::{
 
 use casa_coordinates::CoordinateModel;
 use casa_images::PagedImage;
-use casa_imaging_application::{
-    ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumMask,
-    ContinuumWeighting, HogbomIterationAccounting, PolarizationCoordinate, SpectralImagingMode,
-    TaskRequirement, execute_continuum,
-};
+use casa_imaging_application::execute;
 use casa_imaging_model::SpectralWindowSelection;
 use casa_ms::{
-    CubeAxisConfig, CubeAxisValue, MeasurementSet, MsSelectionIoBudget,
-    SelectedObservationContentBudget, SelectedObservationEphemeris, SelectedObservationRow,
+    MeasurementSet, MsSelectionIoBudget, SelectedObservationContentBudget,
+    SelectedObservationEphemeris, SelectedObservationRow,
 };
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 use casa_types::measures::frequency::FrequencyRef;
+use serde_json::json;
+
+#[path = "common/imaging.rs"]
+mod imaging;
 
 const DATASET: &str = "measurementset/alma/alma_ephemobj_icrs.ms";
 const CASA_PREFIX_ENV: &str = "CASA_RS_T41_CASA_PREFIX";
@@ -115,14 +113,28 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
     set_mmap_io_environment();
     let rust_prefix = staging.path().join("rust-uranus-cubesource");
 
-    let result = execute_continuum(request(measurement_set, rust_prefix.clone()))?;
+    // A dirty 16-channel source-frame cube of field 1 tracking its
+    // ephemeris, each output channel 64 native channels wide.
+    let request = imaging::request(json!({
+        "vis": measurement_set,
+        "imagename": rust_prefix,
+        "imsize": 512,
+        "cell": "0.1arcsec",
+        "phasecenter": "TRACKFIELD",
+        "field": "1",
+        "spw": "0",
+        "datacolumn": "DATA",
+        "specmode": "cubesource",
+        "outframe": "REST",
+        "start": "0",
+        "width": "64",
+        "channel_count": 16,
+        "minpsffraction": 0.1,
+        "pblimit": 0.1,
+    }));
+    let result = execute(&request, imaging::context(request.resource_policy()))?;
     assert_eq!(
-        result
-            .outcome
-            .output
-            .scientific
-            .normal_state()
-            .sample_count(),
+        result.scientific.normal_state().sample_count(),
         SELECTED_SAMPLE_COUNT,
         "production traversal must retain all 1,024 channels and both parallel hands",
     );
@@ -181,74 +193,6 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     Ok(())
-}
-
-fn request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagingRequest {
-    ContinuumImagingRequest {
-        measurement_set,
-        image_name,
-        image_size: 512,
-        facets: 1,
-        cell_arcsec: 0.1,
-        phase_center_field: None,
-        phase_center: Some("TRACKFIELD".to_string()),
-        outlier_file: None,
-        field_ids: Some(vec![1]),
-        uv_range: None,
-        intent: None,
-        data_description: None,
-        spectral_window: Some("0".to_string()),
-        channel_start: None,
-        channel_count: None,
-        spectral_mode: SpectralImagingMode::CubeSource {
-            axis: CubeAxisConfig {
-                outframe: FrequencyRef::REST,
-                start: Some(CubeAxisValue::Channel(0)),
-                width: Some(CubeAxisValue::Channel(64)),
-                ..CubeAxisConfig::default()
-            },
-            output_channels: Some(16),
-        },
-        continuum_subtraction: None,
-        data_column: Some("DATA".to_string()),
-        polarizations: vec![PolarizationCoordinate::StokesI],
-        algorithm: ContinuumAlgorithm::Dirty,
-        weighting: ContinuumWeighting::Natural,
-        iterations: 0,
-        cycle_iterations: 1,
-        hogbom_iteration_accounting: HogbomIterationAccounting::Strict,
-        maximum_major_cycles: None,
-        noise_sigma: None,
-        cycle_factor: 1.0,
-        minimum_psf_fraction: 0.1,
-        maximum_psf_fraction: 0.8,
-        gain: 0.1,
-        threshold_jy: 0.0,
-        psf_cutoff: casa_imaging_products::DEFAULT_PSF_CUTOFF,
-        primary_beam_limit: 0.1,
-        normalization: casa_imaging_model::ProductNormalization::UnitResponse,
-        beam_policy: ContinuumBeamPolicy::PerPlane,
-        mask: ContinuumMask::FullPlane,
-        save_model_column: false,
-        save_continuum_residual: false,
-        write_primary_beam: false,
-        pbcor: false,
-        mosaic_use_pointing: false,
-        w_projection_planes: None,
-        aw_projection: None,
-        task_requirements: vec![
-            TaskRequirement::SpectralCubeSource,
-            TaskRequirement::SerialCpu,
-        ],
-        host: casa_imaging_application::HostResources::detect().expect("host"),
-        resource_policy: casa_imaging_application::ResourcePolicy::Explicit {
-            workers: 1,
-            memory: u64::MAX,
-        },
-        backend: casa_imaging_application::BackendChoice::Cpu,
-        cancel: casa_imaging_application::Cancel::new(),
-        summary: None,
-    }
 }
 
 struct Statistics {

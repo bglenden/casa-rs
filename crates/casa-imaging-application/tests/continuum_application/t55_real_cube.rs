@@ -89,37 +89,30 @@ fn run_q_band_cube(expected_rows: usize, image_size: usize, full_input: bool) {
     let root = required_path("CASA_RS_T55_ARTIFACT_ROOT");
     fs::create_dir(&root).expect("fresh retained artifact directory");
     let image_name = root.join("image");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Clark,
+    let imaging = request(
+        &measurement_set,
+        &image_name,
+        json!({
+            "deconvolver": "clark",
+            "imsize": image_size,
+            "cell": "0.35arcsec",
+            "ddid": null,
+            "spw": "0",
+            "channel_count": 512,
+            "specmode": "cube",
+            "outframe": "LSRK",
+            "start": "0",
+            "width": "1",
+            "niter": 9,
+            "minor_cycle_length": 1,
+            "nmajor": 3,
+            "gain": 0.1,
+            "psfcutoff": f64::from(casa_imaging_products::DEFAULT_PSF_CUTOFF),
+            "pblimit": -0.2,
+            "write_pb": true,
+            "perchanweightdensity": true,
+        }),
     );
-    imaging.image_size = image_size;
-    imaging.cell_arcsec = 0.35;
-    imaging.data_description = None;
-    imaging.spectral_window = Some("0".into());
-    imaging.channel_count = Some(512);
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::LSRK,
-            start: Some(CubeAxisValue::Channel(0)),
-            width: Some(CubeAxisValue::Channel(1)),
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(512),
-    };
-    imaging.iterations = 9;
-    imaging.cycle_iterations = 1;
-    imaging.maximum_major_cycles = Some(3);
-    imaging.gain = 0.1;
-    imaging.psf_cutoff = casa_imaging_products::DEFAULT_PSF_CUTOFF;
-    imaging.primary_beam_limit = -0.2;
-    imaging.write_primary_beam = true;
-    imaging.task_requirements = vec![TaskRequirement::PerChannelWeightDensity];
-    imaging.resource_policy = ResourcePolicy::Explicit {
-        workers,
-        memory: memory_bytes,
-    };
     fs::write(root.join("request.txt"), format!("{imaging:#?}\n")).unwrap();
     if std::env::var_os("CASA_RS_PROFILE_CUBE").is_some() {
         eprintln!(
@@ -131,13 +124,20 @@ fn run_q_band_cube(expected_rows: usize, image_size: usize, full_input: bool) {
         );
     }
     let started = std::time::Instant::now();
-    let result = execute_continuum(imaging).unwrap_or_else(|error| {
+    let result = casa_imaging_application::execute(
+        &imaging,
+        context_with(ResourcePolicy::Explicit {
+            workers,
+            memory: memory_bytes,
+        }),
+    )
+    .unwrap_or_else(|error| {
         fs::write(root.join("failure.txt"), format!("{error:#?}\n")).unwrap();
         panic!("Q-band preflight failed: {error}");
     });
     let task_wall_seconds = started.elapsed().as_secs_f64();
-    assert!(result.outcome.output.major_cycle_count > 1);
-    assert!(result.actual_minor_iterations > 0);
+    assert!(result.major_cycle_count > 1);
+    assert!(result.total_actual_minor_iterations > 0);
     if std::env::var_os("CASA_RS_PROFILE_CUBE").is_some() {
         eprintln!(
             "cube_profile_application end_unix_nanos={}",
@@ -147,14 +147,12 @@ fn run_q_band_cube(expected_rows: usize, image_size: usize, full_input: bool) {
                 .as_nanos()
         );
     }
-    let pass_workers = result.outcome.output.workers;
+    let pass_workers = result.workers;
     assert_eq!(pass_workers, workers);
-    assert_products(&image_name, &result.product_names, &REAL_PRODUCTS);
+    assert_products(&image_name, &result.product_names(), &REAL_PRODUCTS);
     let pb = PagedImage::<f32>::open(root.join("image.pb")).expect("published PB");
     assert_eq!(pb.shape(), &[image_size, image_size, 1, 512]);
     let publication_seconds = result
-        .outcome
-        .output
         .summary
         .phases
         .iter()
@@ -180,10 +178,10 @@ fn run_q_band_cube(expected_rows: usize, image_size: usize, full_input: bool) {
             "task_wall_seconds": task_wall_seconds,
             "publication_seconds": publication_seconds,
             "product_fingerprints": fingerprints,
-            "major_cycles": result.outcome.output.major_cycle_count,
-            "minor_iterations": result.minor_iterations,
-            "actual_minor_iterations": result.actual_minor_iterations,
-            "products": result.product_names,
+            "major_cycles": result.major_cycle_count,
+            "minor_iterations": result.total_minor_iterations,
+            "actual_minor_iterations": result.total_actual_minor_iterations,
+            "products": result.product_names(),
         }))
         .unwrap(),
     )
@@ -248,10 +246,7 @@ fn t55_real_clark_cube_products_are_exact_for_one_two_three_workers() {
         8,
         4,
         9,
-        &[
-            ("natural", ContinuumWeighting::Natural),
-            ("briggs-0.5", ContinuumWeighting::Briggs(0.5)),
-        ],
+        &[("natural", "natural"), ("briggs-0.5", "briggs")],
     );
 }
 
@@ -265,7 +260,7 @@ fn t55_intermediate_clark_cube_worker_scaling() {
         2,
         16,
         9,
-        &[("natural", ContinuumWeighting::Natural)],
+        &[("natural", "natural")],
     );
 }
 
@@ -284,10 +279,11 @@ fn t55_synthetic_clark_cube_worker_scaling() {
         2,
         channels,
         64,
-        &[("natural", ContinuumWeighting::Natural)],
+        &[("natural", "natural")],
     );
 }
 
+/// `weightings`: label and catalog `weighting` (Briggs at robust 0.5).
 fn real_clark_worker_cases(
     workload: &str,
     expected_filename: &str,
@@ -295,7 +291,7 @@ fn real_clark_worker_cases(
     first_channel: usize,
     channels: usize,
     iterations: usize,
-    weightings: &[(&str, ContinuumWeighting)],
+    weightings: &[(&str, &str)],
 ) {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let measurement_set = required_path("CASA_RS_T55_REAL_MS")
@@ -336,7 +332,7 @@ fn real_clark_worker_cases(
             "native_memory_bytes": memory_bytes,
             "workers": worker_counts, "repetitions": repetitions,
             "weightings": weightings.iter().map(|(label, _)| *label).collect::<Vec<_>>(),
-            "timing_boundary": "execute_continuum: selection and preparation through final product publication; excludes fixture staging and post-run comparison",
+            "timing_boundary": "execute: selection and preparation through final product publication; excludes fixture staging and post-run comparison",
             "measures": "production casa_ms::open_measures_runtime",
             "imsize": image_size, "cell_arcsec": 8, "field": "0",
             "spw": format!("0:{first_channel}~{}", first_channel + channels - 1),
@@ -370,53 +366,46 @@ fn real_clark_worker_cases(
                 let directory = root.join(format!("{label}-w{workers}"));
                 fs::create_dir(&directory).unwrap();
                 let image_name = directory.join("image");
-                let mut imaging = request(
-                    measurement_set.clone(),
-                    image_name.clone(),
-                    ContinuumAlgorithm::Clark,
+                let imaging = request(
+                    &measurement_set,
+                    &image_name,
+                    json!({
+                        "deconvolver": "clark",
+                        "imsize": image_size,
+                        "cell": "8arcsec",
+                        "ddid": null,
+                        "weighting": weighting,
+                        "robust": 0.5,
+                        "spw": format!("0:{first_channel}~{}", first_channel + channels - 1),
+                        "channel_count": channels,
+                        "specmode": "cube",
+                        "outframe": "LSRK",
+                        "start": first_channel.to_string(),
+                        "width": "1",
+                        "niter": iterations,
+                        "minor_cycle_length": 1,
+                        "nmajor": 3,
+                        "gain": 0.1,
+                        "threshold": "0Jy",
+                        "psfcutoff": f64::from(casa_imaging_products::DEFAULT_PSF_CUTOFF),
+                        "pblimit": -0.2,
+                        "write_pb": true,
+                        "perchanweightdensity": true,
+                    }),
                 );
-                imaging.image_size = image_size;
-                imaging.cell_arcsec = 8.0;
-                imaging.data_description = None;
-                imaging.weighting = weighting;
-                imaging.spectral_window = Some(format!(
-                    "0:{first_channel}~{}",
-                    first_channel + channels - 1
-                ));
-                imaging.channel_count = Some(channels);
-                imaging.spectral_mode = SpectralImagingMode::Cube {
-                    axis: CubeAxisConfig {
-                        outframe: FrequencyRef::LSRK,
-                        start: Some(CubeAxisValue::Channel(
-                            i32::try_from(first_channel).unwrap(),
-                        )),
-                        width: Some(CubeAxisValue::Channel(1)),
-                        ..CubeAxisConfig::default()
-                    },
-                    output_channels: Some(channels),
-                };
-                imaging.iterations = iterations;
-                imaging.cycle_iterations = 1;
-                imaging.maximum_major_cycles = Some(3);
-                imaging.gain = 0.1;
-                imaging.threshold_jy = 0.0;
-                imaging.psf_cutoff = casa_imaging_products::DEFAULT_PSF_CUTOFF;
-                imaging.primary_beam_limit = -0.2;
-                imaging.write_primary_beam = true;
-                imaging.pbcor = false;
-                imaging.task_requirements =
-                    vec![casa_imaging_application::TaskRequirement::PerChannelWeightDensity];
-                imaging.resource_policy = ResourcePolicy::Explicit {
-                    workers,
-                    memory: memory_bytes,
-                };
                 eprintln!(
                     "T55 real cube start: {label} workers={workers} artifacts={}",
                     directory.display()
                 );
                 let task_started = std::time::Instant::now();
-                let result = match execute_continuum(imaging) {
-                    Ok(result) => result,
+                let output = match casa_imaging_application::execute(
+                    &imaging,
+                    context_with(ResourcePolicy::Explicit {
+                        workers,
+                        memory: memory_bytes,
+                    }),
+                ) {
+                    Ok(output) => output,
                     Err(error) => {
                         fs::write(directory.join("failure.txt"), format!("{error:#?}\n")).unwrap();
                         panic!(
@@ -426,11 +415,11 @@ fn real_clark_worker_cases(
                     }
                 };
                 let task_wall_seconds = task_started.elapsed().as_secs_f64();
-                let output = &result.outcome.output;
                 let contract = output.problem.weighting();
+                let natural = weighting == "natural";
                 assert_eq!(
                     contract.density_scope(),
-                    if weighting == ContinuumWeighting::Natural {
+                    if natural {
                         WeightDensityScope::NotApplicable
                     } else {
                         WeightDensityScope::PerOutputChannel
@@ -439,21 +428,23 @@ fn real_clark_worker_cases(
                 );
                 assert_eq!(
                     contract.casa_cube_density_padding(),
-                    (weighting != ContinuumWeighting::Natural).then_some(1),
+                    (!natural).then_some(1),
                     "the single-field LSRK cube binds CASA nominal density padding"
                 );
+                let product_names = output.product_names();
                 fs::write(directory.join("summary.json"), serde_json::to_vec_pretty(&serde_json::json!({
                 "weighting": label, "requested_workers": workers, "pass_workers": output.workers,
                 "task_wall_seconds": task_wall_seconds, "repetition": repetition,
                 "native_memory_bytes": memory_bytes, "major_cycles": output.major_cycle_count,
-                "minor_cycles": output.minor_cycles.len(), "minor_iterations": result.minor_iterations,
-                "actual_minor_iterations": result.actual_minor_iterations,
-                "products": result.product_names, "phases": output.summary.phases,
+                "minor_cycles": output.minor_cycles.len(),
+                "minor_iterations": output.total_minor_iterations,
+                "actual_minor_iterations": output.total_actual_minor_iterations,
+                "products": product_names, "phases": output.summary.phases,
             })).unwrap()).unwrap();
                 assert_eq!(output.workers, workers);
                 assert!(output.major_cycle_count > 1 && output.minor_cycles.len() > 1);
-                assert!(result.actual_minor_iterations > 0);
-                assert_products(&image_name, &result.product_names, &REAL_PRODUCTS);
+                assert!(output.total_actual_minor_iterations > 0);
+                assert_products(&image_name, &product_names, &REAL_PRODUCTS);
                 let actual_products = fs::read_dir(&directory)
                     .unwrap()
                     .map(|entry| entry.unwrap().file_name().into_string().unwrap())
@@ -555,8 +546,8 @@ fn real_clark_worker_cases(
                     normal.published_sum_weights().to_vec(),
                     output.minor_cycles.clone(),
                     output.major_cycle_count,
-                    result.minor_iterations,
-                    result.actual_minor_iterations,
+                    output.total_minor_iterations,
+                    output.total_actual_minor_iterations,
                 );
                 match &baseline {
                     None => baseline = Some((products, evidence)),

@@ -17,7 +17,7 @@ use casa_ms::{
     tutorial_vla_a_antennas,
 };
 use casa_types::{ArrayValue, Complex32};
-use casars_imager::{ImagerRunTaskRequest, RunSummary, run_from_request};
+use casars_imager::{ImagerArtifact, ImagerRunReport, ImagingParameters, resolve_request, run};
 use ndarray::{Array2, Axis};
 use serde_json::{Value, json};
 
@@ -314,31 +314,38 @@ impl Observation {
         f64::from(self.noise_jy) / (self.stokes_i_samples_per_channel() as f64).sqrt()
     }
 
-    /// Run the production route with `controls` merged over the T1 geometry
-    /// and read back every product it reports.
-    pub fn image(&self, name: &str, controls: Value) -> (RunSummary, Products) {
+    /// Run the production route with `controls`, imager parameters by
+    /// catalog name, merged over the T1 geometry and read back every
+    /// product it reports.
+    pub fn image(&self, name: &str, controls: Value) -> (ImagerRunReport, Products) {
         self.try_image(name, controls)
             .expect("production imaging route")
     }
 
     /// [`Observation::image`], or the route's refusal.
-    pub fn try_image(&self, name: &str, controls: Value) -> Result<(RunSummary, Products), String> {
+    pub fn try_image(
+        &self,
+        name: &str,
+        controls: Value,
+    ) -> Result<(ImagerRunReport, Products), String> {
         let image_name = self.root.path().join(name);
-        let mut request = json!({
-            "measurement_set": self.measurement_set,
-            "image_name": image_name,
-            "image_size": self.geometry.image_size,
-            "cell_arcsec": self.geometry.cell_arcsec,
+        let mut parameters = json!({
+            "vis": self.measurement_set,
+            "imagename": image_name,
+            "imsize": self.geometry.image_size,
+            "cell": format!("{}arcsec", self.geometry.cell_arcsec),
         });
-        let fields = request.as_object_mut().expect("request object");
+        let fields = parameters.as_object_mut().expect("parameters object");
         for (key, value) in controls.as_object().expect("controls object") {
             fields.insert(key.clone(), value.clone());
         }
-        let request: ImagerRunTaskRequest =
-            serde_json::from_value(request).expect("typed T1 imager request");
-        let summary = run_from_request(&request)?;
-        let products = Products::read(&image_name, &summary.output_products);
-        Ok((summary, products))
+        let Value::Object(parameters) = parameters else {
+            unreachable!("parameters are an object");
+        };
+        let (parameters, request) = resolve_request(&ImagingParameters(parameters))?;
+        let result = run(parameters, &request)?;
+        let products = Products::read(&image_name, &result.artifacts);
+        Ok((result.run, products))
     }
 
     /// `(DATA, MODEL_DATA)` of every unflagged parallel-hand sample.
@@ -513,13 +520,17 @@ pub struct Products {
 }
 
 impl Products {
-    fn read(image_name: &Path, reported: &[String]) -> Self {
+    fn read(image_name: &Path, reported: &[ImagerArtifact]) -> Self {
+        let prefix = image_name.display().to_string();
         Self {
             opened: reported
                 .iter()
-                .map(|suffix| {
-                    let path = PathBuf::from(format!("{}{suffix}", image_name.display()));
-                    (suffix.clone(), Product::open(&path))
+                .map(|artifact| {
+                    let suffix = artifact
+                        .path
+                        .strip_prefix(&prefix)
+                        .unwrap_or_else(|| panic!("{} outside {prefix}", artifact.path));
+                    (suffix.to_string(), Product::open(Path::new(&artifact.path)))
                 })
                 .collect(),
         }

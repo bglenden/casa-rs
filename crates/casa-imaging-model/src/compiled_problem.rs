@@ -35,26 +35,6 @@ const COMPILED_PROBLEM_BASIS_VERSION: u32 = 4;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
 const NUMERICS_CONTRACT_IDENTITY_VERSION: u32 = 1;
 
-/// Version of the sole native imaging request contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ImagingRequestVersion {
-    /// Contract with compiler-owned immutable geometry and exact product validity.
-    V3,
-}
-
-impl ImagingRequestVersion {
-    /// Current request version accepted by [`compile`].
-    pub const CURRENT: Self = Self::V3;
-
-    /// Return the stable integer representation used at transport boundaries.
-    #[must_use]
-    pub const fn as_u32(self) -> u32 {
-        match self {
-            Self::V3 => 3,
-        }
-    }
-}
-
 /// An identity supplied by an owner outside the problem compiler.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LogicalIdentity([u8; 32]);
@@ -1796,18 +1776,18 @@ pub struct ProblemSpecification {
     visibility_transform: Option<crate::SequentialContinuumTransform>,
 }
 
-/// One versioned, backend-independent native imaging request.
+/// Everything [`compile`] needs: the logical specification, the geometry,
+/// the input identities and the model lifecycle.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ImagingRequest {
-    version: ImagingRequestVersion,
+pub struct ProblemInput {
     specification: ProblemSpecification,
     geometry: GeometryInput,
     inputs: ProblemInputIdentities,
     model_lifecycle: ModelLifecycleRequirements,
 }
 
-impl ImagingRequest {
-    /// Construct a request in the current native contract version.
+impl ProblemInput {
+    /// Gather the inputs of one compile.
     #[must_use]
     pub const fn new(
         specification: ProblemSpecification,
@@ -1816,18 +1796,11 @@ impl ImagingRequest {
         model_lifecycle: ModelLifecycleRequirements,
     ) -> Self {
         Self {
-            version: ImagingRequestVersion::CURRENT,
             specification,
             geometry,
             inputs,
             model_lifecycle,
         }
-    }
-
-    /// Return the exact request contract version.
-    #[must_use]
-    pub const fn version(&self) -> ImagingRequestVersion {
-        self.version
     }
 }
 
@@ -2295,15 +2268,14 @@ pub enum CompileProblemError {
     },
 }
 
-/// Compile and validate one immutable backend-independent imaging request.
-pub fn compile(request: ImagingRequest) -> Result<CompiledProblem, CompileProblemError> {
-    let ImagingRequest {
-        version: ImagingRequestVersion::V3,
+/// Compile and validate one immutable backend-independent problem.
+pub fn compile(input: ProblemInput) -> Result<CompiledProblem, CompileProblemError> {
+    let ProblemInput {
         specification,
         geometry,
         inputs,
         model_lifecycle,
-    } = request;
+    } = input;
     let geometry = compile_geometry(geometry, &inputs)?;
     let visibility_transform = specification.visibility_transform;
     let science = specification.science;

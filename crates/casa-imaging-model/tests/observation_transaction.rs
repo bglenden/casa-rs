@@ -8,14 +8,14 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, ContinuumChannelRole, ContinuumChannelUse, ContinuumFitRule,
     CorrectedDataWrite, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
     DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
-    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
-    InstrumentResponse, MeasurementEquationContract, MissingPointingPolicy,
-    ModelColumnInitialization, ModelColumnState, ModelColumnWrite, ModelInnerProduct,
-    ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationPointingLaw, ObservationSnapshot, ObservationSnapshotInput,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
-    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, ProblemInputIdentities, ProblemSpecification,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
+    MeasurementEquationContract, MissingPointingPolicy, ModelColumnInitialization,
+    ModelColumnState, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity, MsColumnKind,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationSnapshot, ObservationSnapshotInput, ObservationTransactionRequirements,
+    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
+    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
+    PolarizationCoordinate, ProblemInput, ProblemInputIdentities, ProblemSpecification,
     ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
     ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
     RestFrequency, RestoringBeamPolicy, ScientificContract, SelectedVisibilityColumnPrecondition,
@@ -146,7 +146,7 @@ fn compile_transaction_with_transform(
     let specification = transform.map_or(specification.clone(), |transform| {
         specification.with_visibility_transform(transform)
     });
-    compile(ImagingRequest::new(
+    compile(ProblemInput::new(
         specification,
         geometry,
         ProblemInputIdentities::new(snapshot),

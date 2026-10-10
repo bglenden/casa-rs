@@ -245,11 +245,11 @@ Companion constructors are `parameters.last(...)`,
 `parameters.last_successful(...)`, and `parameters.load(path, ...)`.
 `TaskParameters` supports mapping-style updates, `reset(name)`, `reload()`,
 `save(path)`, `provider_invocation()`, and `run()`. The invocation exposes the
-provider protocol name/version, exact canonical request stdin, and typed
-owner-defined unsupported reasons. `tasks.run()` accepts every catalog task and
-routes through the common runner; a known ineligible imager request raises
-`TaskCapabilityError` before launch without Python interpreting programme or
-backend state. Successful completions retain the same provider invocation while
+provider protocol name/version and the exact canonical request stdin.
+`tasks.run()` accepts every catalog task and routes through the common runner;
+a request the catalog refuses, such as a parameter its gridder does not read,
+raises `ValueError` before launch, and the provider reports what the installed
+build cannot run when it runs. Successful completions retain the same provider invocation while
 result and receipt projection remains Rust-owned. Catalog-generated CASA-named
 keyword wrappers and type stubs are available directly under `casars.tasks`
 without copying defaults into Python signatures; there is no second

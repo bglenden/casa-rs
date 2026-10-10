@@ -214,18 +214,14 @@ def test_successful_process_with_malformed_managed_result_is_rejected(
         )
 
 
-def test_imager_ineligibility_raises_exact_typed_owner_reason_before_process(
+def test_a_parameter_its_gridder_does_not_read_is_refused_before_process(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(tasks.TaskCapabilityError) as failure:
+    with pytest.raises(ValueError, match="wprojplanes"):
         tasks.imager(
             vis="input.ms",
             imagename="products/image",
-            imaging_memory_target_mb=32768,
+            wprojplanes=4,
             workspace=tmp_path,
             binary=tmp_path / "missing-casars",
         )
-
-    assert [(reason.kind, reason.id) for reason in failure.value.reasons] == [
-        ("task", "task.memory_target")
-    ]

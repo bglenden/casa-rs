@@ -6654,10 +6654,9 @@ public final class WorkbenchStore: ObservableObject {
                 values: session.values
             )
             return TaskLaunchReadiness(
-                status: invocation.unsupportedReasons.isEmpty ? .ready : .infeasible,
+                status: .ready,
                 protocolName: invocation.protocolName,
-                protocolVersion: invocation.protocolVersion,
-                unsupportedReasons: invocation.unsupportedReasons
+                protocolVersion: invocation.protocolVersion
             )
         } catch {
             return TaskLaunchReadiness(
@@ -6827,41 +6826,6 @@ public final class WorkbenchStore: ObservableObject {
                 diagnostics: ["Project provider invocation: \(error)"]
             )
             state.lastErrors.append("Project provider invocation for \(taskID): \(error)")
-            return
-        }
-        if !providerInvocation.unsupportedReasons.isEmpty {
-            let diagnostics = providerInvocation.unsupportedReasons.map {
-                "Unsupported \($0.kind): \($0.id)"
-            }
-            beginNotebookTaskRecording(
-                runID: runID,
-                tabID: tabID,
-                taskID: taskID,
-                session: parameterSession,
-                runSafety: runSafety
-            )
-            finalizeNotebookTaskRecording(
-                runID: runID,
-                status: "failed",
-                diagnostics: diagnostics
-            )
-            state.taskRun = TaskRun(
-                runID: runID,
-                state: .failed,
-                progress: 1.0,
-                logLines: [],
-                warnings: [],
-                products: [],
-                diagnostics: diagnostics,
-                requestSummary: genericTaskRequestSummary(taskID: taskID, instanceID: instanceID),
-                imagerProgress: imagerProgressSnapshot(
-                    taskID: taskID,
-                    runID: runID,
-                    taskState: .failed,
-                    progress: 1.0
-                )
-            )
-            state.lastErrors.append("The installed build cannot run this \(task.displayName) request.")
             return
         }
         let summary = genericTaskRequestSummary(taskID: taskID, instanceID: instanceID)

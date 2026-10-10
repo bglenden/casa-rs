@@ -4669,18 +4669,11 @@ impl From<RunSafetyClass> for SurfaceRunSafetyClass {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
-pub struct SurfaceProviderUnsupportedReason {
-    pub kind: String,
-    pub id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
 pub struct SurfaceProviderInvocation {
     pub protocol_name: Option<String>,
     pub protocol_version: Option<u32>,
     pub args: Vec<String>,
     pub stdin: Option<String>,
-    pub unsupported_reasons: Vec<SurfaceProviderUnsupportedReason>,
 }
 
 fn snake_case_debug(value: impl std::fmt::Debug) -> String {
@@ -5699,49 +5692,22 @@ pub fn parameter_provider_invocation(
         _ => Ok(ProviderInvocationAdaptation::direct(direct)),
     })
     .map_err(|error| parameter_error("project provider invocation", error))?;
-    let (protocol_name, protocol_version, unsupported_reasons) = match provider_family.as_str() {
-        "imager" => {
-            let descriptor = casars_imager::imager_protocol_descriptor();
-            let stdin = invocation.stdin.as_deref().ok_or_else(|| {
-                parameter_error(
-                    "project provider invocation",
-                    "imager provider omitted its canonical request",
-                )
-            })?;
-            let request: casars_imager::ImagerTaskRequest = serde_json::from_str(stdin)
-                .map_err(|error| parameter_error("decode canonical imager request", error))?;
-            let casars_imager::ImagerTaskRequest::Run(request) = request;
-            let reasons = request
-                .unsupported_reasons()
-                .map_err(|error| parameter_error("evaluate imager capabilities", error))?
-                .into_iter()
-                .map(|reason| SurfaceProviderUnsupportedReason {
-                    kind: reason.kind,
-                    id: reason.id,
-                })
-                .collect();
-            (
-                Some(descriptor.protocol_name),
-                Some(descriptor.protocol_version),
-                reasons,
-            )
-        }
-        "simobserve" => {
-            let descriptor = casa_ms::simulation_task::simobserve_protocol_descriptor();
-            (
-                Some(descriptor.protocol_name),
-                Some(descriptor.protocol_version),
-                Vec::new(),
-            )
-        }
-        _ => (None, None, Vec::new()),
+    let descriptor = match provider_family.as_str() {
+        "imager" => Some(casars_imager::imager_protocol_descriptor()),
+        "simobserve" => Some(casa_ms::simulation_task::simobserve_protocol_descriptor()),
+        _ => None,
     };
+    let (protocol_name, protocol_version) = descriptor.map_or((None, None), |descriptor| {
+        (
+            Some(descriptor.protocol_name),
+            Some(descriptor.protocol_version),
+        )
+    });
     Ok(SurfaceProviderInvocation {
         protocol_name,
         protocol_version,
         args: invocation.args,
         stdin: invocation.stdin,
-        unsupported_reasons,
     })
 }
 
@@ -10041,7 +10007,7 @@ mod tests {
     }
 
     #[test]
-    fn parameter_provider_invocation_uses_the_imager_typed_request() {
+    fn parameter_provider_invocation_carries_the_imager_parameters() {
         let values = HashMap::from([
             (
                 "vis".to_string(),
@@ -10060,8 +10026,8 @@ mod tests {
                 SurfaceParameterValue::Bool { value: false },
             ),
         ]);
-        let invocation = parameter_provider_invocation("imager".to_string(), values)
-            .expect("typed imager invocation");
+        let invocation =
+            parameter_provider_invocation("imager".to_string(), values).expect("imager invocation");
         assert_eq!(
             invocation.args,
             ["--managed-output", "true", "--json-run", "-"]
@@ -10070,13 +10036,15 @@ mod tests {
             invocation.protocol_name.as_deref(),
             Some("casa_imager_task")
         );
-        assert_eq!(invocation.protocol_version, Some(11));
-        assert!(invocation.unsupported_reasons.is_empty());
+        assert_eq!(
+            invocation.protocol_version,
+            Some(casars_imager::IMAGER_TASK_PROTOCOL_VERSION)
+        );
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().expect("stdin JSON")).unwrap();
         assert_eq!(request["kind"], "run");
-        assert_eq!(request["request"]["measurement_set"], "input.ms");
-        assert_eq!(request["request"]["image_name"], "products/image");
+        assert_eq!(request["request"]["vis"], serde_json::json!(["input.ms"]));
+        assert_eq!(request["request"]["imagename"], "products/image");
         assert_eq!(request["request"]["parallel"], false);
     }
 
@@ -10160,18 +10128,9 @@ mod tests {
             invocation.protocol_name.as_deref(),
             Some("casa_imager_task")
         );
-        assert_eq!(invocation.protocol_version, Some(11));
-        let reasons = invocation
-            .unsupported_reasons
-            .iter()
-            .map(|reason| reason.id.as_str())
-            .collect::<Vec<_>>();
-        // IF-3 installed the AW and W-projection sets (#652); only the
-        // unconsumed source-stream control remains.
         assert_eq!(
-            reasons,
-            ["task.memory_target"],
-            "the installed imager must report the exact unsupported requirements and unconsumed source-stream controls"
+            invocation.protocol_version,
+            Some(casars_imager::IMAGER_TASK_PROTOCOL_VERSION)
         );
         let canonical_profile = uniffi_snapshot
             .profile_toml
@@ -10185,13 +10144,7 @@ mod tests {
         for binding in bundle.surface.bindings().iter().filter(|binding| {
             matches!(
                 binding.name.as_str(),
-                "vis"
-                    | "imagename"
-                    | "imsize"
-                    | "cell"
-                    | "niter"
-                    | "imaging_memory_target_mb"
-                    | "standard_mfs_acceleration"
+                "vis" | "imagename" | "imsize" | "cell" | "niter" | "gridprecision"
             )
         }) {
             let argument = arguments
@@ -10207,24 +10160,18 @@ mod tests {
                 Some(u64::from(binding.concept.semantic_revision.0))
             );
         }
-        let memory_target = arguments
+        let precision = arguments
             .iter()
-            .find(|argument| argument.id == "imaging_memory_target_mb")
-            .expect("memory target UI argument");
-        assert_eq!(memory_target.default.as_deref(), Some("none"));
-        assert_eq!(memory_target.concept_revision, Some(2));
-        let acceleration = arguments
-            .iter()
-            .find(|argument| argument.id == "standard_mfs_acceleration")
-            .expect("acceleration UI argument");
-        assert_eq!(acceleration.default.as_deref(), Some("cpu"));
+            .find(|argument| argument.id == "gridprecision")
+            .expect("grid precision UI argument");
+        assert_eq!(precision.default.as_deref(), Some("auto"));
         assert_eq!(
-            acceleration
+            precision
                 .parser
                 .choices
                 .as_ref()
                 .map(|choices| { choices.iter().map(String::as_str).collect::<Vec<_>>() }),
-            Some(vec!["auto", "cpu", "multi-cpu"])
+            Some(vec!["auto", "f32", "f64"])
         );
         let backend = arguments
             .iter()

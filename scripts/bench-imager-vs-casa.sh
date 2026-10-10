@@ -107,7 +107,7 @@ fitorder="${IMAGER_BENCH_FITORDER:-0}"
 save_continuum_residual="${IMAGER_BENCH_SAVE_CONTINUUM_RESIDUAL:-0}"
 sidelobethreshold="${IMAGER_BENCH_SIDELOBETHRESHOLD:-3.0}"
 noisethreshold="${IMAGER_BENCH_NOISETHRESHOLD:-5.0}"
-standard_mfs_acceleration="${IMAGER_BENCH_STANDARD_MFS_ACCELERATION:-auto}"
+standard_mfs_acceleration="${IMAGER_BENCH_STANDARD_MFS_ACCELERATION:-cpu}"
 hogbom_iteration_mode="${IMAGER_BENCH_HOGBOM_ITERATION_MODE:-strict}"
 nterms="${IMAGER_BENCH_NTERMS:-1}"
 scales="${IMAGER_BENCH_SCALES:-}"
@@ -197,6 +197,41 @@ if [[ -n "$imaging_memory_target_mb" && ! "$imaging_memory_target_mb" =~ ^[0-9]+
 fi
 if [[ ! "$facets" =~ ^[1-9][0-9]*$ ]]; then
   echo "error: IMAGER_BENCH_FACETS must be an integer >= 1" >&2
+  exit 2
+fi
+
+# casars-imager's request (IF-7) has no facet, memory-target or AW-term
+# controls: faceted geometry has no pass implementation (#664), admission
+# budgets memory from the host, and the AW terms are CASA's defaults.
+if [[ "$facets" != "1" ]]; then
+  echo "error: IMAGER_BENCH_FACETS=$facets: casars-imager has no faceted geometry (#664)" >&2
+  exit 2
+fi
+if [[ -n "$imaging_memory_target_mb" ]]; then
+  echo "error: IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB: casars-imager budgets memory from the host" >&2
+  exit 2
+fi
+case "$gridder" in
+  standard|mosaic|wproject|awproject)
+    rust_gridder="$gridder"
+    ;;
+  widefield)
+    rust_gridder="wproject"
+    ;;
+  *)
+    echo "error: casars-imager has no gridder $gridder" >&2
+    exit 2
+    ;;
+esac
+is_true() {
+  [[ "$1" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]
+}
+if [[ -n "$prepared_aw_casa_cache" ]] && {
+  ! is_true "$aterm" || is_true "$psterm" || ! is_true "$wbawp" || ! is_true "$conjbeams" ||
+    is_true "$mosweight" || [[ ! "$computepastep" =~ ^360(\.0*)?$ || ! "$rotatepastep" =~ ^360(\.0*)?$ ]] ||
+    [[ -n "$psfphasecenter" || -n "$vptable" ]]
+}; then
+  echo "error: casars-imager runs CASA's default AW terms: aterm, wbawp and conjbeams on, psterm and mosweight off, 360-degree PA steps, no psfphasecenter or vptable" >&2
   exit 2
 fi
 
@@ -301,6 +336,23 @@ case "$pbcor" in
     ;;
 esac
 
+rust_backend_flags=()
+case "$standard_mfs_acceleration" in
+  cpu)
+    ;;
+  multi-cpu)
+    if [[ -z "$parallel" ]]; then
+      rust_backend_flags+=(--parallel)
+    fi
+    ;;
+  metal)
+    rust_backend_flags+=(--backend metal)
+    ;;
+  *)
+    echo "error: IMAGER_BENCH_STANDARD_MFS_ACCELERATION=$standard_mfs_acceleration: casars-imager runs cpu, multi-cpu or metal" >&2
+    exit 2
+    ;;
+esac
 rust_parallel_flags=()
 case "$parallel" in
   1|true|TRUE|yes|YES|on|ON)
@@ -514,19 +566,7 @@ fi
 rust_aw_flags=()
 if [[ -n "$prepared_aw_casa_cache" ]]; then
   rust_aw_flags+=(--cfcache "$prepared_aw_casa_cache" --cf-resident-mb "$aw_cf_resident_mb")
-  rust_aw_flags+=(--computepastep "$computepastep" --rotatepastep "$rotatepastep")
   rust_aw_flags+=(--pointingoffsetsigdev "$pointingoffsetsigdev" --normtype "$normtype")
-  if [[ -n "$psfphasecenter" ]]; then
-    rust_aw_flags+=(--psfphasecenter "$psfphasecenter")
-  fi
-  if [[ -n "$vptable" ]]; then
-    rust_aw_flags+=(--vptable "$vptable")
-  fi
-  case "$aterm" in 1|true|TRUE|yes|YES|on|ON) rust_aw_flags+=(--aterm);; *) rust_aw_flags+=(--no-aterm);; esac
-  case "$psterm" in 1|true|TRUE|yes|YES|on|ON) rust_aw_flags+=(--psterm);; *) rust_aw_flags+=(--no-psterm);; esac
-  case "$wbawp" in 1|true|TRUE|yes|YES|on|ON) rust_aw_flags+=(--wbawp);; *) rust_aw_flags+=(--no-wbawp);; esac
-  case "$conjbeams" in 1|true|TRUE|yes|YES|on|ON) rust_aw_flags+=(--conjbeams);; *) rust_aw_flags+=(--no-conjbeams);; esac
-  case "$mosweight" in 1|true|TRUE|yes|YES|on|ON) rust_aw_flags+=(--mosweight);; *) rust_aw_flags+=(--no-mosweight);; esac
 fi
 rust_continuum_flags=()
 if [[ -n "$fitspw" ]]; then
@@ -534,10 +574,6 @@ if [[ -n "$fitspw" ]]; then
 fi
 if [[ "$save_continuum_residual" == "1" || "$save_continuum_residual" == "true" || "$save_continuum_residual" == "yes" || "$save_continuum_residual" == "on" ]]; then
   rust_continuum_flags+=(--save-continuum-residual)
-fi
-rust_source_stream_flags=()
-if [[ -n "$imaging_memory_target_mb" ]]; then
-  rust_source_stream_flags+=(--imaging-memory-target-mb "$imaging_memory_target_mb")
 fi
 rust_mask_flags=(--usemask "$usemask")
 if [[ -n "$mask_box" ]]; then
@@ -569,12 +605,9 @@ build_rust_cli_args() {
     --channel-start "$channel_start"
     --channel-count "$channel_count"
     --specmode "$specmode"
-    --gridder "$gridder"
+    --gridder "$rust_gridder"
     --interpolation "$interpolation"
   )
-  if [[ "$gridder" == "widefield" || "$gridder" == "awproject" || "$facets" != "1" ]]; then
-    rust_cli_args+=(--facets "$facets")
-  fi
   rust_cli_args+=(${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"})
   rust_cli_args+=(
     --datacolumn DATA
@@ -590,11 +623,8 @@ build_rust_cli_args() {
   )
   rust_cli_args+=(${rust_continuum_flags[@]+"${rust_continuum_flags[@]}"})
   rust_cli_args+=(${rust_mask_flags[@]+"${rust_mask_flags[@]}"})
-  rust_cli_args+=(
-    --standard-mfs-acceleration "$standard_mfs_acceleration"
-  )
+  rust_cli_args+=(${rust_backend_flags[@]+"${rust_backend_flags[@]}"})
   rust_cli_args+=(${rust_parallel_flags[@]+"${rust_parallel_flags[@]}"})
-  rust_cli_args+=(${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"})
   rust_cli_args+=(
     --hogbom-iteration-mode "$hogbom_iteration_mode"
     --nterms "$nterms"
@@ -618,7 +648,6 @@ build_rust_cli_args() {
     --cyclefactor "$cyclefactor"
     --minpsffraction "$min_psf_fraction"
     --maxpsffraction "$max_psf_fraction"
-    --wterm "$wterm"
   )
   rust_cli_args+=(${rust_wproject_flags[@]+"${rust_wproject_flags[@]}"})
   if [[ -n "$phasecenter_field" ]]; then
@@ -654,13 +683,6 @@ fi
 
 echo "Rust release CLI timings (seconds):"
 rust_cli_file="$tmpdir/rust-cli.txt"
-run_with_optional_phasecenter() {
-  if [[ -n "$phasecenter_field" ]]; then
-    "$@" --phasecenter-field "$phasecenter_field"
-  else
-    "$@"
-  fi
-}
 if [[ "$skip_rust_enabled" == "1" ]]; then
   echo "  skipped; IMAGER_BENCH_SKIP_RUST=$skip_rust"
   if [[ -n "$reuse_rust_prefix" ]]; then
@@ -693,97 +715,10 @@ fi
 fi
 echo
 
+# The per-stage profiling example went with the native cutover (fff9c2d553);
+# each run's phase timings are in its <imagename>.summary.json.
 echo "Rust stage medians (milliseconds):"
-if [[ "$skip_rust_enabled" == "1" ]]; then
-  echo "  skipped=1"
-elif [[ "$skip_profile_enabled" == "1" ]]; then
-  echo "  skipped=1"
-elif [[ -n "$scales" ]]; then
-  run_with_optional_phasecenter target/release/examples/profile_imager \
-    "$rust_ms_path" \
-    --field "$field" \
-    --stokes "$stokes" \
-    --spw "$spw" \
-    --channel-start "$channel_start" \
-    --channel-count "$channel_count" \
-    --specmode "$specmode" \
-    --gridder "$gridder" \
-    --facets "$facets" \
-    --interpolation "$interpolation" \
-    ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
-    --datacolumn DATA \
-    --weighting "$weighting" \
-    --robust "$robust" \
-    ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
-    ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
-    --deconvolver "$deconvolver" \
-    --standard-mfs-acceleration "$standard_mfs_acceleration" \
-    ${rust_parallel_flags[@]+"${rust_parallel_flags[@]}"} \
-    ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
-    --hogbom-iteration-mode "$hogbom_iteration_mode" \
-    --nterms "$nterms" \
-    --scales "$scales" \
-    --imsize "$imsize" \
-    --cell-arcsec "$cell_arcsec" \
-    --niter "$niter" \
-    --gain "$gain" \
-    --threshold-jy "$threshold_jy" \
-    --nsigma "$nsigma" \
-    --psfcutoff "$psfcutoff" \
-    ${rust_pb_flags[@]+"${rust_pb_flags[@]}"} \
-    --minor-cycle-length "$minor_cycle_length" \
-    --cyclefactor "$cyclefactor" \
-    --minpsffraction "$min_psf_fraction" \
-    --maxpsffraction "$max_psf_fraction" \
-    --wterm "$wterm" \
-    ${rust_wproject_flags[@]+"${rust_wproject_flags[@]}"} \
-    $dirty_flag \
-    --repeats "$profile_repeats" \
-    --warmups "$profile_warmups" \
-    | sed 's/^/  /'
-else
-  run_with_optional_phasecenter target/release/examples/profile_imager \
-    "$rust_ms_path" \
-    --field "$field" \
-    --stokes "$stokes" \
-    --spw "$spw" \
-    --channel-start "$channel_start" \
-    --channel-count "$channel_count" \
-    --specmode "$specmode" \
-    --gridder "$gridder" \
-    --facets "$facets" \
-    --interpolation "$interpolation" \
-    ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
-    --datacolumn DATA \
-    --weighting "$weighting" \
-    --robust "$robust" \
-    ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
-    ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
-    --deconvolver "$deconvolver" \
-    --standard-mfs-acceleration "$standard_mfs_acceleration" \
-    ${rust_parallel_flags[@]+"${rust_parallel_flags[@]}"} \
-    ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
-    --hogbom-iteration-mode "$hogbom_iteration_mode" \
-    --nterms "$nterms" \
-    --imsize "$imsize" \
-    --cell-arcsec "$cell_arcsec" \
-    --niter "$niter" \
-    --gain "$gain" \
-    --threshold-jy "$threshold_jy" \
-    --nsigma "$nsigma" \
-    --psfcutoff "$psfcutoff" \
-    ${rust_pb_flags[@]+"${rust_pb_flags[@]}"} \
-    --minor-cycle-length "$minor_cycle_length" \
-    --cyclefactor "$cyclefactor" \
-    --minpsffraction "$min_psf_fraction" \
-    --maxpsffraction "$max_psf_fraction" \
-    --wterm "$wterm" \
-    ${rust_wproject_flags[@]+"${rust_wproject_flags[@]}"} \
-    $dirty_flag \
-    --repeats "$profile_repeats" \
-    --warmups "$profile_warmups" \
-    | sed 's/^/  /'
-fi
+echo "  skipped=1"
 echo
 
 cat >"$tmpdir/casa-imager-bench.py" <<'PY'

@@ -160,7 +160,7 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
         RestFrequency::NotApplicable,
         casa_imaging_model::DopplerConvention::NotApplicable,
     ));
-    let problem = compile(ImagingRequest::new(
+    let problem = compile(ProblemInput::new(
         specification(),
         geometry,
         ProblemInputIdentities::new(snapshot.clone()),

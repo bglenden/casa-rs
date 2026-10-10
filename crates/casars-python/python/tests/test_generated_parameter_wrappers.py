@@ -86,28 +86,18 @@ def test_generated_imager_wrapper_preserves_vlass_awproject_controls(monkeypatch
         uvrange="<12km",
         intent="OBSERVE_TARGET#UNSPECIFIED",
         stokes="I",
-        projection="SIN",
         gridder="awproject",
         wprojplanes=32,
         cfcache="cf-cache/vlass",
         cf_resident_mb=256,
-        facets=1,
-        aterm=True,
-        psterm=False,
-        wbawp=True,
-        conjbeams=True,
         usepointing=True,
-        computepastep=360.0,
-        rotatepastep=360.0,
         pointingoffsetsigdev="0",
-        mosweight=False,
         normtype="flatnoise",
         deconvolver="mtmfs",
         nterms=2,
         scales="0,5,12",
         parallel=False,
-        imaging_memory_target_mb=16384,
-        standard_mfs_acceleration="multi-cpu",
+        gridprecision="f64",
     )
 
     assert captured["task"] == "imager"
@@ -116,10 +106,9 @@ def test_generated_imager_wrapper_preserves_vlass_awproject_controls(monkeypatch
     assert overrides["stokes"] == "I"
     assert overrides["gridder"] == "awproject"
     assert overrides["cfcache"] == "cf-cache/vlass"
-    assert overrides["psterm"] is False
+    assert overrides["usepointing"] is True
     assert overrides["parallel"] is False
-    assert overrides["imaging_memory_target_mb"] == 16384
-    assert overrides["standard_mfs_acceleration"] == "multi-cpu"
+    assert overrides["gridprecision"] == "f64"
 
 
 def test_generated_imager_wrapper_preserves_explicit_native_evla_source(monkeypatch) -> None:

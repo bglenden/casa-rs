@@ -10,26 +10,23 @@ use casa_coordinates::{
 };
 use casa_images::PagedImage;
 use casa_imaging_application::{
-    CleanStop, ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy,
-    ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox, ContinuumWeighting, HostResources,
-    ResourcePolicy, SpectralImagingMode, TaskRequirement, VisibilityContinuumSubtraction,
-    execute_continuum, resource_policy_for_task_requirements,
+    ApplicationDispatchError, Cancel, CleanStop, HostResources, ImagingOutcome, ImagingRequest,
+    ResourcePolicy, RunContext,
 };
 use casa_imaging_model::{
     ImageDomainRole, ProductBeamRule, ProductRole, ProductTerm, ProductUnit, ProductValidityRule,
     WeightDensityScope,
 };
 use casa_ms::{
-    CubeAxisConfig, CubeAxisValue, MeasurementSet, MeasurementSetBuilder, OptionalMainColumn,
-    SubtableId, VisibilityDataColumn,
+    MeasurementSet, MeasurementSetBuilder, OptionalMainColumn, SubtableId, VisibilityDataColumn,
     column_def::{ColumnDef, ColumnKind},
     initialize_measurement_set_owner_manifest, schema,
 };
 use casa_types::{
     ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
-    measures::frequency::FrequencyRef,
 };
 use ndarray::ArrayD;
+use serde_json::json;
 
 const PRODUCT_SUFFIXES: [&str; 6] = [".psf", ".residual", ".model", ".image", ".sumwt", ".mask"];
 const DIRTY_PRODUCT_SUFFIXES: [&str; 5] = [".psf", ".residual", ".model", ".image", ".sumwt"];
@@ -115,6 +112,9 @@ fn fixture_model_samples(
 
 static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
+#[path = "common/imaging.rs"]
+mod imaging;
+
 #[path = "common/continuum_fixture.rs"]
 mod continuum_fixture;
 use continuum_fixture::*;
@@ -154,12 +154,13 @@ fn unsupported_primary_beam_frequency_rejects_before_any_phase() {
     // model represents only L/S/C, unlike the separate legacy-VLA Q model.
     let measurement_set = vla_aw_measurement_set(root.path());
     let image_name = root.path().join("unsupported-beam");
-    let mut imaging = request(measurement_set, image_name, ContinuumAlgorithm::Dirty);
-    imaging.write_primary_beam = true;
-    let error = execute_continuum(imaging)
-        .err()
-        .expect("unsupported beam frequency");
-    let casa_imaging_application::ApplicationDispatchError::Native(error) = error else {
+    let imaging = request(
+        &measurement_set,
+        &image_name,
+        json!({ "niter": 0, "write_pb": true }),
+    );
+    let error = execute(&imaging).err().expect("unsupported beam frequency");
+    let ApplicationDispatchError::Native(error) = error else {
         panic!("expected native coverage validation, found {error:?}");
     };
     let Some(casa_imaging_products::ProductsError::UnsupportedPrimaryBeamFrequency {
@@ -187,13 +188,12 @@ fn image_pointing_center_preserves_casa_positive_pi_longitude() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let image_name = root.path().join("antimeridian");
-    let mut imaging = request(
-        tiny_measurement_set(root.path()),
-        image_name.clone(),
-        ContinuumAlgorithm::Dirty,
+    let imaging = request(
+        &tiny_measurement_set(root.path()),
+        &image_name,
+        json!({ "niter": 0, "phasecenter": "J2000 12h00m00s +34d04m43.5s" }),
     );
-    imaging.phase_center = Some("J2000 12h00m00s +34d04m43.5s".to_string());
-    execute_continuum(imaging).unwrap_or_else(|error| panic!("dirty image: {error}"));
+    execute(&imaging).unwrap_or_else(|error| panic!("dirty image: {error}"));
     let image = PagedImage::<f32>::open(root.path().join("antimeridian.image")).expect("image");
     assert_eq!(
         image.coordinates().obs_info().pointing_center_rad[0],
@@ -232,10 +232,10 @@ fn image_observation_metadata_accepts_matching_labels_across_observations() {
         ms.save().unwrap();
         drop(ms);
         let prefix = root.path().join("joint-observation");
-        let result = execute_continuum(request(path, prefix.clone(), ContinuumAlgorithm::Dirty));
+        let result = execute(&request(&path, &prefix, json!({ "niter": 0 })));
         if accepted {
             let result = result.unwrap_or_else(|error| panic!("joint observation: {error}"));
-            assert_dirty_products(&prefix, &result.product_names);
+            assert_dirty_products(&prefix, &result.product_names());
             let image =
                 PagedImage::<f32>::open(root.path().join("joint-observation.image")).unwrap();
             assert_eq!(image.coordinates().obs_info().telescope, "EVLA");
@@ -338,16 +338,16 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
     let measurement_set = tiny_measurement_set(root.path());
     let image_name = root.path().join("dirty");
 
-    let result = execute_continuum(request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Dirty,
+    let result = execute(&request(
+        &measurement_set,
+        &image_name,
+        json!({ "niter": 0 }),
     ))
     .expect("native dirty application execution");
 
-    assert_eq!(result.minor_iterations, 0);
+    assert_eq!(result.total_minor_iterations, 0);
     assert_eq!(result.stop, None);
-    assert_dirty_products(&image_name, &result.product_names);
+    assert_dirty_products(&image_name, &result.product_names());
     for suffix in [".residual", ".image"] {
         let product =
             PagedImage::<f32>::open(PathBuf::from(format!("{}{}", image_name.display(), suffix)))
@@ -392,25 +392,22 @@ fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contra
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = alma_primary_beam_measurement_set(root.path());
     let image_name = root.path().join("taylor-metadata");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Mtmfs {
-            terms: 2,
-            scales_px: vec![0.0],
-            small_scale_bias: 0.0,
-        },
+    let imaging = request(
+        &measurement_set,
+        &image_name,
+        json!({
+            "deconvolver": "mtmfs",
+            "nterms": 2,
+            "ddid": null,
+            "imsize": 8,
+            "niter": 0,
+            "write_pb": true,
+        }),
     );
-    imaging.data_description = None;
-    imaging.image_size = 8;
-    imaging.channel_count = Some(1);
-    imaging.iterations = 0;
-    imaging.write_primary_beam = true;
-    imaging.task_requirements = vec![TaskRequirement::SerialCpu];
 
-    let result = execute_continuum(imaging).expect("native Taylor metadata execution");
-    let planned = &result.outcome.output.planned_products;
-    let published = &result.outcome.output.products;
+    let result = execute(&imaging).expect("native Taylor metadata execution");
+    let planned = &result.planned_products;
+    let published = &result.products;
     assert_eq!(planned.graph_id(), published.graph_id());
     assert_eq!(planned.members().len(), published.members().len());
     for (planned, published) in planned.members().iter().zip(published.members()) {
@@ -570,32 +567,6 @@ fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contra
 }
 
 #[test]
-fn t49_plane_count_does_not_infer_w_projection() {
-    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = tiny_measurement_set(root.path());
-    let image_name = root.path().join("w-planes-without-capability");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Dirty,
-    );
-    imaging.w_projection_planes = Some(5);
-
-    let error = match execute_continuum(imaging) {
-        Ok(_) => panic!("plane count inferred W projection"),
-        Err(error) => error,
-    };
-    assert!(
-        error
-            .to_string()
-            .contains("requires the explicit W- or AW-projection task capability"),
-        "wrong explicit-W error: {error}"
-    );
-    assert!(!PathBuf::from(format!("{}.psf", image_name.display())).exists());
-}
-
-#[test]
 fn stokes_i_uses_one_shared_imaging_weight_for_each_linear_parallel_hand() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
@@ -604,10 +575,10 @@ fn stokes_i_uses_one_shared_imaging_weight_for_each_linear_parallel_hand() {
         let measurement_set =
             unequal_linear_parallel_hand_measurement_set(root.path(), name, weights);
         let image_name = root.path().join(format!("{name}-dirty"));
-        execute_continuum(request(
-            measurement_set,
-            image_name.clone(),
-            ContinuumAlgorithm::Dirty,
+        execute(&request(
+            &measurement_set,
+            &image_name,
+            json!({ "niter": 0 }),
         ))
         .expect("native unequal-XX/YY dirty execution");
         let psf = product_plane(&image_name, ".psf");
@@ -651,29 +622,21 @@ fn application_executes_full_stokes_mfs_clean_with_complete_products_and_axes() 
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = full_stokes_measurement_set(root.path());
     let image_name = root.path().join("full-stokes-dirty");
-    let mut imaging = request(
-        measurement_set.clone(),
-        image_name.clone(),
-        ContinuumAlgorithm::Hogbom,
+    let imaging = request(
+        &measurement_set,
+        &image_name,
+        json!({
+            "stokes": "IQUV",
+            "imsize": 64,
+            "niter": 4,
+            "minor_cycle_length": 4,
+            "savemodel": "modelcolumn",
+        }),
     );
-    imaging.polarizations = vec![
-        casa_imaging_application::PolarizationCoordinate::StokesI,
-        casa_imaging_application::PolarizationCoordinate::StokesQ,
-        casa_imaging_application::PolarizationCoordinate::StokesU,
-        casa_imaging_application::PolarizationCoordinate::StokesV,
-    ];
-    imaging.image_size = 64;
-    imaging.iterations = 4;
-    imaging.cycle_iterations = 4;
-    imaging.save_model_column = true;
-    imaging.task_requirements = vec![
-        TaskRequirement::PolarizationSelection,
-        TaskRequirement::ModelColumnWrite,
-    ];
 
-    let result = execute_continuum(imaging).expect("native full-Stokes Högbom execution");
-    assert_eq!(result.minor_iterations, 1);
-    assert_eq!(result.actual_minor_iterations, 1);
+    let result = execute(&imaging).expect("native full-Stokes Högbom execution");
+    assert_eq!(result.total_minor_iterations, 1);
+    assert_eq!(result.total_actual_minor_iterations, 1);
     // The fixture allows one major cycle after the initial one (nmajor).
     assert_eq!(result.stop, Some(CleanStop::MajorCycles));
     assert_eq!(
@@ -683,15 +646,13 @@ fn application_executes_full_stokes_mfs_clean_with_complete_products_and_axes() 
     );
     assert_eq!(
         result
-            .outcome
-            .output
             .visibility_products
             .as_ref()
             .expect("full-Stokes visibility completion")
             .sample_count(),
         2_808
     );
-    assert_standard_products(&image_name, &result.product_names);
+    assert_standard_products(&image_name, &result.product_names());
     for suffix in [".psf", ".residual", ".model", ".image"] {
         let product =
             PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", image_name.display())))
@@ -749,25 +710,16 @@ fn application_executes_raw_linear_correlation_products_with_exact_axis() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let image_name = root.path().join("linear-correlations");
-    let linear_request = |measurement_set| {
-        let mut imaging = request(
-            measurement_set,
-            image_name.clone(),
-            ContinuumAlgorithm::Dirty,
-        );
-        imaging.polarizations = vec![
-            casa_imaging_application::PolarizationCoordinate::LinearXx,
-            casa_imaging_application::PolarizationCoordinate::LinearXy,
-            casa_imaging_application::PolarizationCoordinate::LinearYx,
-            casa_imaging_application::PolarizationCoordinate::LinearYy,
-        ];
-        imaging.image_size = 64;
-        imaging.task_requirements = vec![TaskRequirement::PolarizationSelection];
-        imaging
+    let linear_request = |measurement_set: PathBuf| {
+        request(
+            &measurement_set,
+            &image_name,
+            json!({ "niter": 0, "stokes": "XXXYYXYY", "imsize": 64 }),
+        )
     };
 
     // Circular feeds hold no linear correlation to image.
-    let circular = execute_continuum(linear_request(full_stokes_measurement_set(root.path())));
+    let circular = execute(&linear_request(full_stokes_measurement_set(root.path())));
     assert!(
         circular.err().is_some_and(|error| error
             .to_string()
@@ -776,11 +728,11 @@ fn application_executes_raw_linear_correlation_products_with_exact_axis() {
     );
     assert!(!PathBuf::from(format!("{}.residual", image_name.display())).exists());
 
-    let result = execute_continuum(linear_request(full_polarization_linear_measurement_set(
+    let result = execute(&linear_request(full_polarization_linear_measurement_set(
         root.path(),
     )))
     .expect("native raw-correlation dirty execution");
-    assert_dirty_products(&image_name, &result.product_names);
+    assert_dirty_products(&image_name, &result.product_names());
     let product =
         PagedImage::<f32>::open(PathBuf::from(format!("{}.residual", image_name.display())))
             .expect("reopen raw-correlation residual");
@@ -807,14 +759,14 @@ fn application_uses_weight_when_selected_weight_spectrum_cells_are_undefined() {
     let measurement_set = undefined_weight_spectrum_measurement_set(root.path());
     let image_name = root.path().join("undefined-weight-spectrum-dirty");
 
-    let result = execute_continuum(request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Dirty,
+    let result = execute(&request(
+        &measurement_set,
+        &image_name,
+        json!({ "niter": 0 }),
     ))
     .expect("undefined WEIGHT_SPECTRUM cells select scalar WEIGHT before traversal");
 
-    assert_dirty_products(&image_name, &result.product_names);
+    assert_dirty_products(&image_name, &result.product_names());
 }
 
 /// The compiled `FiniteValuePolicy::FlagInputRejectGenerated`: a non-finite
@@ -858,10 +810,9 @@ fn nonfinite_visibilities_image_as_flagged_samples() {
         ms.save().expect("save fixture");
         drop(ms);
         let image_name = root.path().join("finite");
-        let result =
-            execute_continuum(request(path, image_name.clone(), ContinuumAlgorithm::Dirty))
-                .unwrap_or_else(|error| panic!("nonfinite={nonfinite}: {error}"));
-        assert_dirty_products(&image_name, &result.product_names);
+        let result = execute(&request(&path, &image_name, json!({ "niter": 0 })))
+            .unwrap_or_else(|error| panic!("nonfinite={nonfinite}: {error}"));
+        assert_dirty_products(&image_name, &result.product_names());
         images.push([".residual", ".psf", ".sumwt"].map(|suffix| {
             product_plane_with_size(&image_name, suffix, if suffix == ".sumwt" { 1 } else { 16 })
         }));
@@ -876,11 +827,8 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
 
-    for (label, algorithm) in [
-        ("dirty", ContinuumAlgorithm::Dirty),
-        ("hogbom", ContinuumAlgorithm::Hogbom),
-    ] {
-        let product_suffixes = if algorithm == ContinuumAlgorithm::Dirty {
+    for (label, niter) in [("dirty", 0), ("hogbom", 1)] {
+        let product_suffixes = if niter == 0 {
             DIRTY_PRODUCT_SUFFIXES.as_slice()
         } else {
             PRODUCT_SUFFIXES.as_slice()
@@ -896,28 +844,20 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
             ),
         )
         .expect("write CASA outlier fixture");
-        let mut imaging = request(measurement_set.clone(), image_name.clone(), algorithm);
-        imaging.outlier_file = Some(outlier_file);
-        imaging.task_requirements = vec![TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu];
-
-        let result = execute_continuum(imaging).expect("execute T31 multi-domain application");
-        assert_eq!(
-            result
-                .outcome
-                .output
-                .scientific
-                .normal_state()
-                .domain_count(),
-            2
+        let imaging = request(
+            &measurement_set,
+            &image_name,
+            json!({ "niter": niter, "outlierfile": outlier_file }),
         );
+
+        let result = execute(&imaging).expect("execute T31 multi-domain application");
+        assert_eq!(result.scientific.normal_state().domain_count(), 2);
         assert_eq!(
-            result.outcome.output.planned_products.members().len(),
+            result.planned_products.members().len(),
             2 * product_suffixes.len()
         );
         assert_eq!(
             result
-                .outcome
-                .output
                 .planned_products
                 .members()
                 .iter()
@@ -927,8 +867,6 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
         );
         assert_eq!(
             result
-                .outcome
-                .output
                 .planned_products
                 .members()
                 .iter()
@@ -966,7 +904,7 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
             }
         }
 
-        let model_nonzero = fixture_model_samples(result.outcome.output.scientific.final_model())
+        let model_nonzero = fixture_model_samples(result.scientific.final_model())
             .iter()
             .filter(|sample| sample.value().value() != 0.0)
             .count();
@@ -987,25 +925,21 @@ fn outlier_cube_domains_image_independently_of_the_main_cube() {
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
     let cube = |image_name: &Path, outlier_file: Option<PathBuf>| {
-        let mut imaging = request(
-            measurement_set.clone(),
-            image_name.to_path_buf(),
-            ContinuumAlgorithm::Dirty,
+        let imaging = request(
+            &measurement_set,
+            image_name,
+            json!({
+                "niter": 0,
+                "imsize": 32,
+                "field": "0,1",
+                "outlierfile": outlier_file,
+                "spw": "0:0~31",
+                "channel_count": 32,
+                "specmode": "cube",
+                "outframe": "TOPO",
+            }),
         );
-        imaging.image_size = 32;
-        imaging.field_ids = Some(vec![0, 1]);
-        imaging.outlier_file = outlier_file;
-        imaging.spectral_window = Some("0:0~31".to_string());
-        imaging.channel_count = Some(32);
-        imaging.spectral_mode = SpectralImagingMode::Cube {
-            axis: CubeAxisConfig {
-                outframe: FrequencyRef::TOPO,
-                ..CubeAxisConfig::default()
-            },
-            output_channels: Some(32),
-        };
-        imaging.task_requirements = vec![TaskRequirement::SpectralCube];
-        execute_continuum(imaging).expect("dirty cube execution")
+        execute(&imaging).expect("dirty cube execution")
     };
     let alone = root.path().join("cube-alone");
     cube(&alone, None);
@@ -1021,15 +955,7 @@ fn outlier_cube_domains_image_independently_of_the_main_cube() {
     )
     .expect("write recentred outlier cube");
     let result = cube(&main, Some(outlier_file));
-    assert_eq!(
-        result
-            .outcome
-            .output
-            .scientific
-            .normal_state()
-            .domain_count(),
-        2
-    );
+    assert_eq!(result.scientific.normal_state().domain_count(), 2);
     let read = |base: &Path, suffix: &str| {
         let image = PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", base.display())))
             .expect("open cube product");
@@ -1076,11 +1002,13 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
          imagename=alpha\nimsize=[12,12]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 0.998rad 0.502rad\nusemask=user\nmask=circle[[3pix,3pix],1pix]\n",
     )
     .expect("write reversed CASA outlier fixture");
-    let mut imaging = request(measurement_set, main.clone(), ContinuumAlgorithm::Hogbom);
-    imaging.outlier_file = Some(outlier_file);
-    imaging.task_requirements = vec![TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu];
+    let imaging = request(
+        &measurement_set,
+        &main,
+        json!({ "outlierfile": outlier_file }),
+    );
 
-    let result = execute_continuum(imaging).expect("execute canonical multi-domain application");
+    let result = execute(&imaging).expect("execute canonical multi-domain application");
     let expected = [
         (ImageDomainRole::Main, main.as_path(), 16, [1.0, 0.5], 256),
         (
@@ -1100,8 +1028,6 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
     ];
 
     let normal_roles = result
-        .outcome
-        .output
         .scientific
         .normal_state()
         .read_window(0..1)
@@ -1117,17 +1043,15 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
             .collect::<Vec<_>>()
     );
     assert_eq!(
-        result.outcome.output.planned_products.graph_id(),
-        result.outcome.output.products.graph_id(),
+        result.planned_products.graph_id(),
+        result.products.graph_id(),
         "publication must retain the canonical domain inventory"
     );
     for (planned, published) in result
-        .outcome
-        .output
         .planned_products
         .members()
         .iter()
-        .zip(result.outcome.output.products.members())
+        .zip(result.products.members())
     {
         assert_eq!(planned.node(), published.node());
         assert_eq!(
@@ -1138,8 +1062,6 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
 
     for (role, base, image_size, direction, expected_mask_pixels) in expected {
         let members = result
-            .outcome
-            .output
             .planned_products
             .members()
             .iter()
@@ -1180,13 +1102,13 @@ fn application_executes_a_multi_row_dirty_image() {
     let measurement_set = multi_row_measurement_set(root.path());
     let image_name = root.path().join("multi-row-dirty");
 
-    let result = execute_continuum(request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Dirty,
+    let result = execute(&request(
+        &measurement_set,
+        &image_name,
+        json!({ "niter": 0 }),
     ))
     .expect("native multi-row dirty execution");
-    assert_dirty_products(&image_name, &result.product_names);
+    assert_dirty_products(&image_name, &result.product_names());
 }
 
 #[test]
@@ -1195,15 +1117,14 @@ fn application_compiles_common_beam_requests_with_common_spectral_coupling() {
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = tiny_measurement_set(root.path());
     let image_name = root.path().join("common-beam");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Dirty,
+    let imaging = request(
+        &measurement_set,
+        &image_name,
+        json!({ "niter": 0, "restoringbeam": "common" }),
     );
-    imaging.beam_policy = ContinuumBeamPolicy::Common;
 
-    let result = execute_continuum(imaging).expect("native common-beam application execution");
-    assert_dirty_products(&image_name, &result.product_names);
+    let result = execute(&imaging).expect("native common-beam application execution");
+    assert_dirty_products(&image_name, &result.product_names());
     let restored =
         PagedImage::<f32>::open(PathBuf::from(format!("{}.image", image_name.display())))
             .expect("reopen common-beam restored image");
@@ -1222,26 +1143,23 @@ fn cube_common_beam_products_preserve_blank_pixels_and_casa_metadata_without_pb(
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
     let image_name = root.path().join("common-beam-cube");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Dirty,
+    let imaging = request(
+        &measurement_set,
+        &image_name,
+        json!({
+            "niter": 0,
+            "spw": "0:0~3",
+            "channel_count": 4,
+            "specmode": "cube",
+            "outframe": "TOPO",
+            "start": "3",
+            "width": "-1",
+            "restoringbeam": "common",
+        }),
     );
-    imaging.spectral_window = Some("0:0~3".to_string());
-    imaging.channel_count = Some(4);
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::TOPO,
-            start: Some(CubeAxisValue::Channel(3)),
-            width: Some(CubeAxisValue::Channel(-1)),
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(4),
-    };
-    imaging.beam_policy = ContinuumBeamPolicy::Common;
 
-    let result = execute_continuum(imaging).expect("native common-beam cube execution");
-    assert_dirty_products(&image_name, &result.product_names);
+    let result = execute(&imaging).expect("native common-beam cube execution");
+    assert_dirty_products(&image_name, &result.product_names());
     let open = |suffix: &str| {
         PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", image_name.display())))
             .expect("reopen cube product")
@@ -1308,25 +1226,22 @@ fn t607_application_preserves_channel_topology_and_wcs_through_cube_planning() {
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_measurement_set(root.path());
     let image_name = root.path().join("t607-channel-local-cube");
-    let mut imaging = request(
-        measurement_set,
-        image_name.clone(),
-        ContinuumAlgorithm::Dirty,
+    let imaging = request(
+        &measurement_set,
+        &image_name,
+        json!({
+            "niter": 0,
+            "spw": "0:0~31",
+            "channel_count": 32,
+            "specmode": "cube",
+            "outframe": "TOPO",
+        }),
     );
-    imaging.spectral_window = Some("0:0~31".to_string());
-    imaging.channel_count = Some(32);
-    imaging.spectral_mode = SpectralImagingMode::Cube {
-        axis: CubeAxisConfig {
-            outframe: FrequencyRef::TOPO,
-            ..CubeAxisConfig::default()
-        },
-        output_channels: Some(32),
-    };
 
-    let result = execute_continuum(imaging).expect("native 32-channel cube execution");
-    assert_dirty_products(&image_name, &result.product_names);
+    let result = execute(&imaging).expect("native 32-channel cube execution");
+    assert_dirty_products(&image_name, &result.product_names());
     assert_eq!(
-        result.outcome.output.scientific.normal_state().catalog(),
+        result.scientific.normal_state().catalog(),
         casa_imaging_reconstruction::NormalStateCatalog::UnnormalizedChannelSlabV1
     );
     let residual =
