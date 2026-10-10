@@ -31,7 +31,7 @@ use casa_imaging_model::{
 use casa_imaging_reconstruction::{
     FinalNormalState, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation,
     ModelGeneration, ModelLifecycle, ModelStoragePlan, PassImages, PassNormalState,
-    ReconstructionMaskSet, WeightingGenerationId, runtime_adapter::NormalStoragePlan,
+    WeightingGenerationId, runtime_adapter::NormalStoragePlan,
 };
 
 /// Traversal counts every synthetic pass reports; any positive pair proves
@@ -252,15 +252,13 @@ impl Scene {
     }
 
     /// Refresh `previous` with the residual of `preparation`'s final model
-    /// under `previous`'s weighting generation, bind `masks` when given, and
-    /// reconcile.
+    /// under `previous`'s weighting generation, and reconcile.
     pub fn reconcile_refresh(
         &self,
         problem: &CompiledProblem,
         lifecycle: &mut ModelLifecycle,
         previous: FinalNormalState,
         preparation: MajorCyclePreparation,
-        masks: Option<&ReconstructionMaskSet>,
     ) -> MajorCycleCompletion {
         let mut state = PassNormalState::refresh(
             problem,
@@ -277,14 +275,8 @@ impl Scene {
         let normal = state
             .finish(SAMPLES, BLOCKS)
             .expect("complete synthetic residual pass");
-        let mut owner = MajorCycleOwner::from_complete_data(normal, preparation)
-            .expect("major-cycle owner of the synthetic refresh");
-        if let Some(masks) = masks {
-            owner = owner
-                .bind_reconstruction_masks(masks)
-                .expect("bind exact reconstruction masks");
-        }
-        owner
+        MajorCycleOwner::from_complete_data(normal, preparation)
+            .expect("major-cycle owner of the synthetic refresh")
             .reconcile(lifecycle)
             .expect("reconcile the synthetic refresh")
     }
@@ -327,18 +319,17 @@ pub fn two_cycle_round(
         .expect("nonzero model delta");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, named, Some(delta)).expect("final preparation");
-    scene.reconcile_refresh(problem, &mut lifecycle, normal, preparation, None)
+    scene.reconcile_refresh(problem, &mut lifecycle, normal, preparation)
 }
 
 /// One more major cycle continuing `prior` under `attempt` at `epoch`, with
-/// the model unchanged and `masks` bound to the reconciliation.
+/// the model unchanged.
 pub fn continue_round(
     problem: &CompiledProblem,
     scene: &Scene,
     attempt: ModelExecutionAttemptId,
     epoch: u64,
     prior: MajorCycleCompletion,
-    masks: Option<&ReconstructionMaskSet>,
 ) -> MajorCycleCompletion {
     let (normal, continuation) = prior.into_continuation();
     let (mut lifecycle, named) =
@@ -346,7 +337,7 @@ pub fn continue_round(
             .expect("continue model lifecycle");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, named, None).expect("prepare continuation");
-    scene.reconcile_refresh(problem, &mut lifecycle, normal, preparation, masks)
+    scene.reconcile_refresh(problem, &mut lifecycle, normal, preparation)
 }
 
 fn model_storage() -> ModelStoragePlan {

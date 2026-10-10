@@ -189,8 +189,6 @@ fn mask_plan(
             );
             ReconstructionMaskPlan::Reprojected {
                 coordinate,
-                source_coordinate: coordinate,
-                source_shape: [image_size, image_size],
                 support,
             }
         }
@@ -266,8 +264,6 @@ fn reproject_image_mask(
     )?;
     Ok(ReconstructionMaskPlan::Reprojected {
         coordinate: target_spec,
-        source_coordinate: source_spec,
-        source_shape: [source_shape[0], source_shape[1]],
         support,
     })
 }

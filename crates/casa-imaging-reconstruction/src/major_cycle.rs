@@ -94,8 +94,6 @@ pub struct FinalNormalState {
     block_count: u64,
     input_model_generation: ModelGenerationId,
     final_model_generation: ModelGenerationId,
-
-    image_domain_mask_generation: Option<crate::ReconstructionMaskGenerationId>,
     primitives: NormalStatePrimitives,
 }
 
@@ -210,14 +208,6 @@ impl FinalNormalState {
     #[must_use]
     pub const fn final_model_generation(&self) -> ModelGenerationId {
         self.final_model_generation
-    }
-
-    /// Return the immutable image-domain support collection bound to this state.
-    #[must_use]
-    pub const fn image_domain_mask_generation(
-        &self,
-    ) -> Option<crate::ReconstructionMaskGenerationId> {
-        self.image_domain_mask_generation
     }
 
     /// Return the exact unnormalized plane shape of every primitive.
@@ -933,8 +923,6 @@ pub struct MajorCycleOwner {
     replay: WeightingReplayId,
 
     catalog: SpectralPrimitiveCatalog,
-
-    image_domain_mask_generation: Option<crate::ReconstructionMaskGenerationId>,
     sample_count: u64,
     block_count: u64,
     primitives: NormalStatePrimitives,
@@ -969,8 +957,6 @@ impl MajorCycleOwner {
             replay: completion.replay_id(),
 
             catalog: completion.primitive_catalog(),
-
-            image_domain_mask_generation: None,
             sample_count: completion.sample_count(),
             block_count: completion.block_count(),
             primitives,
@@ -988,20 +974,6 @@ impl MajorCycleOwner {
     #[must_use]
     pub const fn sample_count(&self) -> u64 {
         self.sample_count
-    }
-
-    /// Bind the exact reconstruction supports consumed before this final reconciliation.
-    pub fn bind_reconstruction_masks(
-        mut self,
-        masks: &crate::ReconstructionMaskSet,
-    ) -> Result<Self, MajorCycleError> {
-        if let crate::ReconstructionMaskSet::Domains(masks) = masks {
-            if masks.len() != self.primitives.len() {
-                return Err(MajorCycleError::InvalidReconstructionMaskLineage);
-            }
-            self.image_domain_mask_generation = Some(masks.generation_id());
-        }
-        Ok(self)
     }
 
     /// Perform the one atomic Major-Cycle reconciliation.
@@ -1038,7 +1010,6 @@ impl MajorCycleOwner {
                 self.replay,
                 input_model_generation,
                 final_model_generation,
-                self.image_domain_mask_generation,
             ),
             weighting_generation: self.weighting_generation,
             replay: self.replay,
@@ -1058,8 +1029,6 @@ impl MajorCycleOwner {
             block_count: self.block_count,
             input_model_generation,
             final_model_generation,
-
-            image_domain_mask_generation: self.image_domain_mask_generation,
             primitives: self.primitives,
         };
         let completion_id = major_cycle_completion_id(
@@ -1092,8 +1061,6 @@ fn final_normal_state_id(
 
     input_model_generation: ModelGenerationId,
     final_model_generation: ModelGenerationId,
-
-    image_domain_mask_generation: Option<crate::ReconstructionMaskGenerationId>,
 ) -> FinalNormalStateCompletionId {
     let mut encoder = Encoder::new(FINAL_NORMAL_STATE_DOMAIN, FINAL_NORMAL_STATE_VERSION);
     encoder.identity(authority.as_bytes());
@@ -1104,14 +1071,6 @@ fn final_normal_state_id(
 
     encoder.identity(input_model_generation.as_bytes());
     encoder.identity(final_model_generation.as_bytes());
-
-    match image_domain_mask_generation {
-        Some(generation) => {
-            encoder.u8(1);
-            encoder.identity(generation.as_bytes());
-        }
-        None => encoder.u8(0),
-    }
     FinalNormalStateCompletionId(LogicalIdentity::from_bytes(encoder.finish()))
 }
 
@@ -1140,8 +1099,6 @@ pub enum MajorCycleError {
     Model(ModelLifecycleError),
     /// Reconciling the final model produced or consumed invalid numbers.
     Residual(SpectralOperatorError),
-    /// Image-domain mask generations do not match the Normal State domains.
-    InvalidReconstructionMaskLineage,
 }
 
 impl fmt::Display for MajorCycleError {
@@ -1152,8 +1109,6 @@ impl fmt::Display for MajorCycleError {
             }
             Self::Model(error) => error.fmt(formatter),
             Self::Residual(error) => error.fmt(formatter),
-            Self::InvalidReconstructionMaskLineage => formatter
-                .write_str("reconstruction masks do not match the normal-state image domains"),
         }
     }
 }

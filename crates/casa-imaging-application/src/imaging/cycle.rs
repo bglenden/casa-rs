@@ -503,10 +503,7 @@ impl<'a> Run<'a> {
                 VisibilityProductCompletion::new(final_model, self.weighting_id, samples)
             });
         let normal = state.finish(summary.samples, summary.blocks)?;
-        let mut owner = MajorCycleOwner::from_complete_data(normal, preparation)?;
-        if let Some(masks) = masks {
-            owner = owner.bind_reconstruction_masks(masks)?;
-        }
+        let owner = MajorCycleOwner::from_complete_data(normal, preparation)?;
         let completion = owner.reconcile(&mut lifecycle)?;
         tracing::info!(
             "imaging major cycle: {} samples, pass {pass_seconds:.2} s, total {:.2} s",
@@ -809,9 +806,6 @@ fn minor_cycle_record(
         associated_replay_ordinal: cycle,
         recorded_components: summary.trace.clone(),
         mask_support: mask.support().to_vec(),
-        mask_generation: mask.generation_id(),
-        mask_model_generation: mask.model_generation(),
-        mask_normal_state: mask.normal_state_completion(),
         auto_mask: outcome.auto_masks[0],
     }
 }

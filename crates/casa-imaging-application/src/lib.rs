@@ -188,12 +188,6 @@ pub struct NativeMinorCycleOutcome {
     pub recorded_components: Vec<casa_imaging_runtime::TracedComponent>,
     /// Exact x-major reconstruction support used for component placement.
     pub mask_support: Vec<bool>,
-    /// Immutable mask generation used for this cycle.
-    pub mask_generation: casa_imaging_reconstruction::ReconstructionMaskGenerationId,
-    /// Exact model generation constrained by this mask.
-    pub mask_model_generation: casa_imaging_reconstruction::ModelGenerationId,
-    /// Current Normal State consumed to generate an automatic mask.
-    pub mask_normal_state: Option<casa_imaging_reconstruction::FinalNormalStateCompletionId>,
     /// Auto-multithreshold diagnostics, when that mask mode generated support.
     pub auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
 }

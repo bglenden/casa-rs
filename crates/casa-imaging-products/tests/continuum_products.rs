@@ -12,8 +12,7 @@ mod common;
 use common::continuum::{
     SHAPE, TWO_DOMAIN_PRODUCTS, axes, continuum_problem,
     continuum_problem_with_domains_and_reconstruction, continuum_problem_with_policy,
-    continuum_problem_with_reconstruction, two_domain_main_direction, two_domain_outlier_direction,
-    two_domain_problem,
+    continuum_problem_with_reconstruction, two_domain_problem,
 };
 use common::observation::attempt;
 use common::synthetic_pass::{Scene, continue_round, two_cycle_round};
@@ -30,8 +29,8 @@ use casa_imaging_products::{
     produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
-    ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MajorCycleCompletion,
-    MaskBox, ReconstructionMask, ReconstructionMaskPlan, ReconstructionMaskSet,
+    ImageDomainReconstructionMaskPlans, MajorCycleCompletion, MaskBox, ReconstructionMask,
+    ReconstructionMaskPlan,
 };
 
 /// One fixture round: two major cycles, the initial one over the empty model
@@ -93,13 +92,12 @@ fn run_two_domain_round(problem: &CompiledProblem, attempt_byte: u8) -> Continuu
 }
 
 /// One more major cycle of `prior`'s model under attempt `attempt_byte` at
-/// `epoch`, reconciled with the exact domain `masks`.
-fn rerun_two_domain_with_masks(
+/// `epoch`.
+fn rerun_two_domain(
     problem: &CompiledProblem,
     attempt_byte: u8,
     epoch: u64,
     prior: ContinuumRound,
-    masks: &ImageDomainReconstructionMasks,
 ) -> ContinuumRound {
     ContinuumRound {
         join: continue_round(
@@ -108,7 +106,6 @@ fn rerun_two_domain_with_masks(
             attempt(attempt_byte),
             epoch,
             prior.join,
-            Some(&ReconstructionMaskSet::Domains(masks.clone())),
         ),
     }
 }
@@ -257,8 +254,6 @@ fn direct_generation_writes_the_exact_member_set_once() {
 
 #[test]
 fn two_domain_members_consume_their_matching_normal_and_model_chart() {
-    let main_direction = two_domain_main_direction();
-    let outlier_direction = two_domain_outlier_direction();
     let products = TWO_DOMAIN_PRODUCTS;
     let problem = two_domain_problem(141);
     let first_round = run_two_domain_round(&problem, 142);
@@ -278,36 +273,8 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
         )
         .expect("domain masks")
         .into_parts();
-    let alternate_plans = ImageDomainReconstructionMaskPlans::new([
-        ReconstructionMaskPlan::FullPlane {
-            coordinate: main_direction,
-        },
-        ReconstructionMaskPlan::Boxes {
-            coordinate: outlier_direction,
-            boxes: vec![MaskBox::new([0, 0], [1, 1]).expect("alternate outlier box")],
-        },
-    ])
-    .expect("alternate mask plans");
-    let (alternate_masks, _) = alternate_plans
-        .materialize(
-            first_round.join.final_model(),
-            first_round.join.normal_state(),
-            None,
-        )
-        .expect("alternate domain masks")
-        .into_parts();
-    assert_ne!(masks.generation_id(), alternate_masks.generation_id());
-    let round = rerun_two_domain_with_masks(&problem, 143, 8, first_round, &masks);
+    let round = rerun_two_domain(&problem, 143, 8, first_round);
     let normal = round.join.normal_state();
-    assert_eq!(
-        normal.image_domain_mask_generation(),
-        Some(masks.generation_id())
-    );
-    assert!(matches!(
-        ContinuumProductInputs::from_major_cycle(&problem, &round.join)
-            .with_domain_reconstruction_masks(&alternate_masks),
-        Err(ProductsError::SourceLineageMismatch)
-    ));
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join)
         .with_domain_reconstruction_masks(&masks)
         .expect("domain-mask inputs");
@@ -1000,31 +967,17 @@ fn standard_cube_products_publish_analytic_primary_beams_per_output_channel() {
 fn clean_mask_product_is_the_committed_reconstruction_support() {
     let problem = continuum_problem(117, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem, 118);
-    let normal = round.join.normal_state();
     let direction = problem.geometry().domains()[0].direction();
     let mask = ReconstructionMask::from_boxes(
-        normal.input_model_generation(),
         direction,
         SHAPE,
         [MaskBox::new([2, 3], [4, 5]).expect("mask box")],
     )
     .expect("reconstruction mask");
-    let unbound_inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join)
         .with_reconstruction_mask(&mask)
         .expect("mask-bound inputs");
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
-    let unbound_output = MemoryProductOutput::default();
-    assert!(matches!(
-        produce_continuum_members(
-            &planned,
-            &unbound_inputs,
-            full_window(&planned),
-            &(),
-            &unbound_output
-        ),
-        Err(ProductsError::SourceLineageMismatch)
-    ));
     let generated = generate_for(&planned, &inputs);
     let published_mask = generated
         .members()

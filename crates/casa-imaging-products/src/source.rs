@@ -8,7 +8,7 @@
 use casa_imaging_model::{CompiledProblem, ImageDomainRole};
 use casa_imaging_reconstruction::{
     FinalNormalState, ImageDomainReconstructionMasks, MajorCycleCompletion, ModelGeneration,
-    ReconstructionMask, ReconstructionMaskGenerationId,
+    ReconstructionMask,
 };
 
 use crate::error::ProductsError;
@@ -62,7 +62,6 @@ impl<'a> ContinuumProductInputs<'a> {
     ) -> Result<Self, ProductsError> {
         if masks.len() != self.normal_state.domain_count()
             || masks.len() != self.problem.geometry().domains().len()
-            || self.normal_state.image_domain_mask_generation() != Some(masks.generation_id())
             || masks
                 .iter()
                 .zip(self.problem.geometry().domains())
@@ -148,16 +147,5 @@ impl<'a> ContinuumProductInputs<'a> {
     #[must_use]
     pub const fn domain_reconstruction_masks(&self) -> Option<&ImageDomainReconstructionMasks> {
         self.domain_reconstruction_masks
-    }
-
-    /// Return the one mask or per-domain mask-set generation bound to the inputs.
-    #[must_use]
-    pub fn reconstruction_mask_generation(&self) -> Option<ReconstructionMaskGenerationId> {
-        self.domain_reconstruction_masks
-            .map(ImageDomainReconstructionMasks::generation_id)
-            .or_else(|| {
-                self.reconstruction_mask
-                    .map(ReconstructionMask::generation_id)
-            })
     }
 }

@@ -356,22 +356,28 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
     .expect("auto-mask solve");
     let cycles = &auto_result.minor_cycles;
     assert_eq!(cycles.len(), 2);
+    // The first automatic mask has no prior mask, so every support pixel is a
+    // change; the second changes exactly the pixels where it differs from
+    // the first, which it consumed as its prior mask.
     let first_evidence = cycles[0].auto_mask.expect("first auto-mask evidence");
-    assert_eq!(first_evidence.previous_mask_generation, None);
+    assert_eq!(
+        first_evidence.changed_pixels,
+        cycles[0]
+            .mask_support
+            .iter()
+            .filter(|value| **value)
+            .count()
+    );
     let evidence = cycles[1].auto_mask.expect("second auto-mask evidence");
     assert_eq!(
-        evidence.previous_mask_generation,
-        Some(cycles[0].mask_generation),
-        "the next automatic mask must retain the exact prior generation"
-    );
-    assert!(cycles.iter().all(|cycle| cycle.mask_normal_state.is_some()));
-    assert_ne!(
-        cycles[0].mask_normal_state, cycles[1].mask_normal_state,
-        "each automatic-mask generation must consume the current reconciled Normal State"
-    );
-    assert_ne!(
-        cycles[0].mask_model_generation, cycles[1].mask_model_generation,
-        "each automatic mask must constrain the current model generation"
+        evidence.changed_pixels,
+        cycles[0]
+            .mask_support
+            .iter()
+            .zip(&cycles[1].mask_support)
+            .filter(|(first, second)| first != second)
+            .count(),
+        "the next automatic mask must evolve from the prior mask"
     );
     assert!(evidence.robust_rms.is_finite());
     assert!(evidence.positive_threshold.is_finite());

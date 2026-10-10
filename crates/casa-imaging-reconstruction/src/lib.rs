@@ -50,7 +50,7 @@ pub use continuum_transform::{
 };
 pub(crate) use identity::{
     Encoder, FINAL_NORMAL_STATE_DOMAIN, FINAL_NORMAL_STATE_VERSION, MAJOR_CYCLE_DOMAIN,
-    MAJOR_CYCLE_VERSION, canonical_f64_bits, write_hex,
+    MAJOR_CYCLE_VERSION, canonical_f64_bits,
 };
 pub use identity::{
     FinalModelCompletionId, FinalNormalStateCompletionId, MajorCycleCompletionId, ModelDeltaId,
@@ -65,8 +65,8 @@ pub use major_cycle::{
 pub use mask::{
     AutoMaskBeam, AutoMultithreshControls, AutoMultithreshEvidence, ImageDomainMaskMaterialization,
     ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MaskBox, MaskError,
-    ReconstructionMask, ReconstructionMaskGenerationId, ReconstructionMaskPlan,
-    ReconstructionMaskSet, auto_multithresh, direction_world_to_pixel, reproject_mask_support,
+    ReconstructionMask, ReconstructionMaskPlan, ReconstructionMaskSet, auto_multithresh,
+    direction_world_to_pixel, reproject_mask_support,
 };
 pub(crate) use model_lifecycle::validate_model_value;
 pub use model_lifecycle::{

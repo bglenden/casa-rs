@@ -185,8 +185,6 @@ pub struct PlannedContinuumGeneration {
     psf_cutoff: f32,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     members: Box<[PlannedMember]>,
-    reconstruction_mask_generation:
-        Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId>,
 }
 
 impl PlannedContinuumGeneration {
@@ -242,7 +240,6 @@ impl PlannedContinuumGeneration {
             psf_cutoff: controls.psf_cutoff(),
             primary_beam_model: controls.primary_beam_model(),
             members: members.into_boxed_slice(),
-            reconstruction_mask_generation: inputs.reconstruction_mask_generation(),
         })
     }
 
@@ -366,9 +363,6 @@ pub fn produce_continuum_members(
     execution: &impl crate::ProductWindowExecutor,
     output: &dyn ProductOutput,
 ) -> Result<PublishedContinuumGeneration, ProductsError> {
-    if inputs.reconstruction_mask_generation() != planned.reconstruction_mask_generation {
-        return Err(ProductsError::SourceLineageMismatch);
-    }
     if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
         return produce_taylor_members(planned, inputs, storage_plan, output);
     }
