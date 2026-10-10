@@ -9,9 +9,9 @@
 
 use casa_imaging_model::{
     AxisOrder, CompiledProblem, ImageAxis, ImageDomainRole, ProductAxes, ProductBeamRule,
-    ProductNodeId, ProductNormalization, ProductPixelMask, ProductRole, ProductSchema,
-    ProductStorageContract, ProductSupportComparison, ProductUnit, ProductValidityRule,
-    ReconstructionBasis, RestoringBeamPolicy,
+    ProductNodeId, ProductNormalization, ProductPixelMask, ProductRole, ProductStorageContract,
+    ProductSupportComparison, ProductUnit, ProductValidityRule, ReconstructionBasis,
+    RestoringBeamPolicy,
 };
 use casa_imaging_reconstruction::{
     FinalNormalPlaneReader, ModelGeneration, NormalStateCatalog, SpectralChannelValidity,
@@ -234,13 +234,11 @@ impl PlannedContinuumGeneration {
                 shape,
                 payload_values,
                 unit: node.unit(),
-                schema: node.schema(),
                 axes: axes.clone(),
                 normalization: node.normalization(),
                 beam_rule: node.beam(),
                 validity: node.validity(),
                 storage: node.storage(),
-                dependencies: node.dependencies().to_vec().into_boxed_slice(),
             });
         }
         Ok(Self {
@@ -293,12 +291,6 @@ impl PlannedContinuumGeneration {
     pub const fn primary_beam_model(&self) -> Option<AnalyticPrimaryBeamModel> {
         self.primary_beam_model
     }
-
-    pub(crate) const fn reconstruction_mask_generation(
-        &self,
-    ) -> Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId> {
-        self.reconstruction_mask_generation
-    }
 }
 
 /// One planned publication member in exact graph order.
@@ -310,13 +302,11 @@ pub struct PlannedMember {
     shape: [usize; 4],
     payload_values: usize,
     unit: ProductUnit,
-    schema: ProductSchema,
     axes: ProductAxes,
     normalization: Option<ProductNormalization>,
     beam_rule: ProductBeamRule,
     validity: ProductValidityRule,
     storage: ProductStorageContract,
-    dependencies: Box<[ProductNodeId]>,
 }
 
 impl PlannedMember {
@@ -350,12 +340,6 @@ impl PlannedMember {
         self.unit
     }
 
-    /// Return the backend-independent logical payload schema.
-    #[must_use]
-    pub const fn schema(&self) -> ProductSchema {
-        self.schema
-    }
-
     /// Return the exact WCS and storage-axis binding.
     #[must_use]
     pub const fn axes(&self) -> &ProductAxes {
@@ -380,12 +364,6 @@ impl PlannedMember {
         self.storage
     }
 
-    /// Return graph-node dependencies, all of which precede this node.
-    #[must_use]
-    pub const fn dependencies(&self) -> &[ProductNodeId] {
-        &self.dependencies
-    }
-
     /// Return the planned payload value count.
     #[must_use]
     pub const fn payload_values(&self) -> usize {
@@ -396,82 +374,6 @@ impl PlannedMember {
     #[must_use]
     pub const fn normalization(&self) -> Option<ProductNormalization> {
         self.normalization
-    }
-}
-
-/// Complete compiled contract carried by one generated member.
-#[derive(Debug, Clone)]
-pub struct ProductMemberContract {
-    role: ProductRole,
-    unit: ProductUnit,
-    schema: ProductSchema,
-    axes: ProductAxes,
-    beam_rule: ProductBeamRule,
-    validity: ProductValidityRule,
-    storage: ProductStorageContract,
-    dependencies: Box<[ProductNodeId]>,
-}
-
-impl ProductMemberContract {
-    fn from_planned(member: &PlannedMember) -> Self {
-        Self {
-            role: member.role,
-            unit: member.unit,
-            schema: member.schema,
-            axes: member.axes.clone(),
-            beam_rule: member.beam_rule,
-            validity: member.validity,
-            storage: member.storage,
-            dependencies: member.dependencies.clone(),
-        }
-    }
-
-    /// Return the exact logical product meaning.
-    #[must_use]
-    pub const fn role(&self) -> ProductRole {
-        self.role
-    }
-
-    /// Return the required physical unit.
-    #[must_use]
-    pub const fn unit(&self) -> ProductUnit {
-        self.unit
-    }
-
-    /// Return the backend-independent logical payload schema.
-    #[must_use]
-    pub const fn schema(&self) -> ProductSchema {
-        self.schema
-    }
-
-    /// Return the exact WCS and storage-axis binding.
-    #[must_use]
-    pub const fn axes(&self) -> &ProductAxes {
-        &self.axes
-    }
-
-    /// Return fitted, restoring, inherited, or absent beam semantics.
-    #[must_use]
-    pub const fn beam_rule(&self) -> ProductBeamRule {
-        self.beam_rule
-    }
-
-    /// Return the numerical-support rule, independently of the stored mask.
-    #[must_use]
-    pub const fn validity(&self) -> ProductValidityRule {
-        self.validity
-    }
-
-    /// Return the exact stored-mask and metadata contract.
-    #[must_use]
-    pub const fn storage(&self) -> ProductStorageContract {
-        self.storage
-    }
-
-    /// Return graph-node dependencies, all of which precede this node.
-    #[must_use]
-    pub const fn dependencies(&self) -> &[ProductNodeId] {
-        &self.dependencies
     }
 }
 
@@ -1453,7 +1355,6 @@ fn published_generation(
         members.push(PublishedMember {
             node: member.node,
             name: member.name.clone(),
-            contract: ProductMemberContract::from_planned(member),
             resolved_beams: beams_for_member(
                 member,
                 &planned.members,
@@ -1477,7 +1378,6 @@ fn published_generation(
 pub struct PublishedMember {
     node: ProductNodeId,
     name: String,
-    contract: ProductMemberContract,
     resolved_beams: Box<[Option<RestoringBeam>]>,
 }
 
@@ -1492,12 +1392,6 @@ impl PublishedMember {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
-    }
-
-    /// Return the complete compiled member contract.
-    #[must_use]
-    pub const fn contract(&self) -> &ProductMemberContract {
-        &self.contract
     }
 
     /// Return resolved beam metadata in output-channel order.

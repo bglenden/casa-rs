@@ -12,15 +12,14 @@ use casa_imaging_model::{
     PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
     PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput,
     ProblemSpecification, ProductAxisKind, ProductBeamRule, ProductBlankingPolicy, ProductKind,
-    ProductNormalization, ProductRequirements, ProductRole, ProductSchema,
-    ProductSupportComparison, ProductTerm, ProductUnit, ProductValidityPolicies,
-    ProductValidityRule, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, RequiredCapability,
-    RestFrequency, RestoringBeamPolicy, ScientificContract, SequentialContinuumTransform,
-    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeScale, UvTaper, UvwCoordinateLaw, VisibilityInnerProduct,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    ProductNormalization, ProductRequirements, ProductRole, ProductSupportComparison, ProductTerm,
+    ProductUnit, ProductValidityPolicies, ProductValidityRule, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    SequentialContinuumTransform, SkyDirection, SpectralContract, SpectralCoordinateSpec,
+    SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, UvTaper, UvwCoordinateLaw,
+    VisibilityInnerProduct, WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 
 mod common;
@@ -380,7 +379,7 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
         ProductBeamRule::Restoring(RestoringBeamPolicy::PerPlane)
     );
     assert_eq!(restored.validity(), ProductValidityRule::FinalNormalState);
-    assert_eq!(restored.schema(), ProductSchema::ImageF32V1);
+    assert!(graph.publication().members().contains(&restored.node_id()));
 
     let spectral_index = graph
         .nodes()
@@ -392,51 +391,15 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
         spectral_index.validity(),
         ProductValidityRule::Taylor(product_validity().taylor())
     );
-    let mut alpha_sources = [0, 1]
-        .into_iter()
-        .flat_map(|term| {
-            [
-                graph
-                    .node(ProductRole::Residual(ProductTerm::Taylor(term)))
-                    .expect("principal-residual Taylor node")
-                    .node_id(),
-                graph
-                    .node(ProductRole::RestoredImage(ProductTerm::Taylor(term)))
-                    .expect("restored-image Taylor node")
-                    .node_id(),
-            ]
-        })
-        .collect::<Vec<_>>();
-    alpha_sources.sort_unstable();
-    assert_eq!(spectral_index.dependencies(), alpha_sources);
-    assert!(spectral_index.dependencies().iter().all(|dependency| {
-        !matches!(
-            graph.nodes()[dependency.ordinal()].role(),
-            ProductRole::Model(_)
-        )
-    }));
 
     assert_eq!(
         graph.publication().members(),
         graph
             .nodes()
             .iter()
-            .filter(|node| node.schema() == ProductSchema::ImageF32V1)
+            .filter(|node| node.name().is_some())
             .map(|node| node.node_id())
             .collect::<Vec<_>>()
-    );
-    assert!(graph.publication().protocol().requires_durable_prepare());
-    assert!(
-        graph
-            .publication()
-            .protocol()
-            .has_one_visibility_operation_per_member()
-    );
-    assert!(
-        graph
-            .publication()
-            .protocol()
-            .preserves_promoted_members_on_later_failure()
     );
 }
 
@@ -716,26 +679,21 @@ fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
     let alpha = graph
         .node(ProductRole::SpectralIndex)
         .expect("spectral-index product");
-    let mut alpha_sources = alpha.dependencies().to_vec();
     let alpha_error = graph
         .node(ProductRole::SpectralIndexError)
         .expect("spectral-index-error product");
-    alpha_sources.push(alpha.node_id());
-    alpha_sources.sort_unstable();
-    assert_eq!(alpha_error.dependencies(), alpha_sources);
+    assert!(graph.publication().members().contains(&alpha.node_id()));
+    assert!(
+        graph
+            .publication()
+            .members()
+            .contains(&alpha_error.node_id())
+    );
 
     let pb_alpha = graph
         .node(ProductRole::PrimaryBeamSpectralIndex)
         .expect("internal primary-beam spectral index");
     assert_eq!(pb_alpha.name(), None);
-    assert_eq!(pb_alpha.schema(), ProductSchema::InternalImageF32V1);
-    assert_eq!(
-        pb_alpha.dependencies(),
-        [graph
-            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
-            .expect("primary-beam Taylor-zero product")
-            .node_id()]
-    );
     assert!(!graph.publication().members().contains(&pb_alpha.node_id()));
     assert_eq!(
         graph
@@ -761,7 +719,10 @@ fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
     let corrected_alpha = graph
         .node(ProductRole::PbCorrectedSpectralIndex)
         .expect("PB-corrected spectral index");
-    assert!(corrected_alpha.dependencies().contains(&pb_alpha.node_id()));
+    assert_eq!(
+        corrected_alpha.beam(),
+        ProductBeamRule::Inherit(alpha.node_id())
+    );
     assert!(
         graph
             .publication()
@@ -1162,13 +1123,13 @@ fn taylor_collection_accepts_an_explicit_taylor_image_source() {
         .node(ProductRole::TaylorCoefficientSet)
         .expect("Taylor collection");
 
-    assert!(!collection.dependencies().is_empty());
-    assert!(collection.dependencies().iter().all(|dependency| {
-        matches!(
-            graph.nodes()[dependency.ordinal()].role(),
-            ProductRole::Psf(ProductTerm::Taylor(_))
-        )
-    }));
+    assert_eq!(collection.name(), None);
+    assert!(
+        !graph
+            .publication()
+            .members()
+            .contains(&collection.node_id())
+    );
 }
 
 #[test]

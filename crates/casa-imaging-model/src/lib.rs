@@ -80,9 +80,9 @@ pub use selected_observation_sample::{
 };
 
 pub use product_graph::{
-    IndependentProductStoreProtocol, ProductAxes, ProductAxisKind, ProductBeamRule, ProductGraph,
-    ProductNode, ProductNodeId, ProductPixelMask, ProductPublication, ProductRole, ProductSchema,
-    ProductStorageContract, ProductTerm, ProductUnit, ProductValidityRule,
+    ProductAxes, ProductAxisKind, ProductBeamRule, ProductGraph, ProductNode, ProductNodeId,
+    ProductPixelMask, ProductPublication, ProductRole, ProductStorageContract, ProductTerm,
+    ProductUnit, ProductValidityRule,
 };
 
 pub use transaction::{

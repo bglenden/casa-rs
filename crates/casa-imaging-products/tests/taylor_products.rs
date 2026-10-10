@@ -18,8 +18,8 @@ use casa_imaging_model::{
     ModelInnerProduct, ModelLifecycleRequirements, ModelValue, NumericPrecision, NumericalStage,
     NumericsContract, ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
     PointingCentreLaw, PolarizationContract, PolarizationCoordinate, ProblemInput,
-    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, ProductRole,
-    ProductSchema, ProductTerm, ProductUnit, ProductValidityPolicies, ProductValidityRule,
+    ProblemSpecification, ProductBeamRule, ProductKind, ProductNormalization, ProductRequirements,
+    ProductRole, ProductTerm, ProductUnit, ProductValidityPolicies, ProductValidityRule,
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
     ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy,
     ScientificContract, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
@@ -245,7 +245,7 @@ fn generate_with_controls(
     let produced =
         produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &output)
             .expect("T44 Taylor product family");
-    GeneratedProducts::from_output(&produced, &output)
+    GeneratedProducts::from_output(&planned, &produced, &output)
 }
 
 fn member<'a>(generated: &'a GeneratedProducts, name: &str) -> &'a GeneratedMember {
@@ -469,7 +469,6 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
     let names = graph
         .nodes()
         .iter()
-        .filter(|node| node.schema() == ProductSchema::ImageF32V1)
         .filter_map(|node| node.name())
         .collect::<Vec<_>>();
     assert!(names.contains(&".pb.tt0"));
@@ -508,9 +507,9 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
             ProductValidityRule::PrimaryBeam(validity().primary_beam())
         );
         assert_eq!(
-            corrected.dependencies(),
-            [restored.node_id(), pb0.node_id()],
-            "every Taylor image correction uses PB tt0"
+            corrected.beam(),
+            ProductBeamRule::Inherit(restored.node_id()),
+            "every Taylor image correction keeps its restored term's beam"
         );
     }
 
@@ -669,7 +668,6 @@ fn t51_weight_derived_mtmfs_plan_matches_casa_eighteen_member_inventory() {
         .product_graph()
         .nodes()
         .iter()
-        .filter(|node| node.schema() == ProductSchema::ImageF32V1)
         .filter_map(|node| node.name())
         .collect::<std::collections::BTreeSet<_>>();
 

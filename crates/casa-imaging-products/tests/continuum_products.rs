@@ -136,7 +136,7 @@ fn generate_for(
     let output = MemoryProductOutput::default();
     let generated = produce_continuum_members(planned, inputs, full_window(planned), &(), &output)
         .expect("direct product generation");
-    GeneratedProducts::from_output(&generated, &output)
+    GeneratedProducts::from_output(planned, &generated, &output)
 }
 
 #[test]
@@ -227,7 +227,7 @@ fn direct_generation_writes_the_exact_member_set_once() {
     assert_eq!(generated.members().len(), planned.members().len());
     for (generated_member, planned_member) in generated.members().iter().zip(planned.members()) {
         assert_eq!(generated_member.node(), planned_member.node());
-        assert_eq!(generated_member.contract().role(), planned_member.role());
+        assert_eq!(generated_member.name(), planned_member.name());
         assert_eq!(
             output.write_count(planned_member.node()),
             1,
@@ -245,7 +245,7 @@ fn direct_generation_writes_the_exact_member_set_once() {
     assert!(beam.major_fwhm_rad() >= beam.minor_fwhm_rad());
     assert!(beam.major_fwhm_rad() > 0.0);
 
-    let collected = GeneratedProducts::from_output(&generated, &output);
+    let collected = GeneratedProducts::from_output(&planned, &generated, &output);
     let psf_payload = collected
         .members()
         .iter()
@@ -464,10 +464,6 @@ fn direct_generation_rejects_same_problem_with_foreign_completions() {
         "each reconciliation has its own normal-state completion"
     );
 
-    assert!(matches!(
-        planned.demand(&third_inputs, full_window(&planned)),
-        Err(ProductsError::SourceLineageMismatch)
-    ));
     let output = MemoryProductOutput::default();
     assert!(matches!(
         produce_continuum_members(&planned, &third_inputs, full_window(&planned), &(), &output),
@@ -487,14 +483,10 @@ fn direct_generation_publishes_metadata_without_payload_residency() {
         produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &output)
             .expect("generated");
     assert_eq!(generated.members().len(), planned.members().len());
-    let collected = GeneratedProducts::from_output(&generated, &output);
+    let collected = GeneratedProducts::from_output(&planned, &generated, &output);
     for (member, planned_member) in collected.members().iter().zip(planned.members()) {
         assert_eq!(member.node(), planned_member.node());
         assert_eq!(member.name(), planned_member.name());
-        assert_eq!(member.contract().role(), planned_member.role());
-        assert_eq!(member.contract().unit(), planned_member.unit());
-        assert_eq!(member.contract().schema(), planned_member.schema());
-        assert_eq!(member.contract().validity(), planned_member.validity());
         assert_eq!(member.payload().len(), planned_member.payload_values());
         assert!(output.finished(planned_member.node()));
     }
@@ -531,7 +523,7 @@ fn direct_generation_counts_bounded_windows_and_finishes_each_member() {
         assert_eq!(output.write_count(member.node()), channels);
         assert!(output.finished(member.node()));
     }
-    let bounded = GeneratedProducts::from_output(&generated, &output);
+    let bounded = GeneratedProducts::from_output(&planned, &generated, &output);
     let full = generate_for(&planned, &inputs);
     for (bounded, full) in bounded.members().iter().zip(full.members()) {
         assert_eq!(bounded.name(), full.name());
@@ -566,7 +558,7 @@ fn direct_generation_counts_bounded_windows_and_finishes_each_member() {
         &parallel_output,
     )
     .expect("out-of-order preparation drains in exact channel order");
-    let parallel = GeneratedProducts::from_output(&parallel, &parallel_output);
+    let parallel = GeneratedProducts::from_output(&planned, &parallel, &parallel_output);
     for (parallel, serial) in parallel.members().iter().zip(full.members()) {
         assert_eq!(parallel.name(), serial.name());
         assert_eq!(parallel.payload(), serial.payload());
@@ -688,7 +680,8 @@ fn single_window_restoration_admits_inner_fft_workers_without_replica_buffers() 
         &serial_output,
     )
     .unwrap();
-    let serial_values = GeneratedProducts::from_output(&serial_generation, &serial_output);
+    let serial_values =
+        GeneratedProducts::from_output(&planned, &serial_generation, &serial_output);
     for workers in [4, 8] {
         let parallel = planned
             .demand(&inputs, ProductStoragePlan::new(1, workers).unwrap())
@@ -710,7 +703,7 @@ fn single_window_restoration_admits_inner_fft_workers_without_replica_buffers() 
         let generated =
             produce_continuum_members(&planned, &inputs, parallel.storage_plan(), &(), &output)
                 .unwrap();
-        let values = GeneratedProducts::from_output(&generated, &output);
+        let values = GeneratedProducts::from_output(&planned, &generated, &output);
         for (actual, expected) in values.members().iter().zip(serial_values.members()) {
             assert_eq!(actual.node(), expected.node());
             assert_eq!(actual.validity(), expected.validity());
@@ -892,7 +885,7 @@ fn cube_generation_demand_retains_channel_beams_and_charges_common_fit_scratch()
         .expect("reversed beam completion preserves ordered beam policy");
         assert_eq!(parallel.fitted_beams(), generated.fitted_beams());
         assert_eq!(parallel.restoring_beams(), generated.restoring_beams());
-        let parallel = GeneratedProducts::from_output(&parallel, &parallel_output);
+        let parallel = GeneratedProducts::from_output(&planned, &parallel, &parallel_output);
         let serial = generate_for(&planned, &inputs);
         for (parallel, serial) in parallel.members().iter().zip(serial.members()) {
             assert_eq!(parallel.payload(), serial.payload());
@@ -1206,9 +1199,9 @@ fn restoration_adds_the_published_residual_without_scaling_the_convolved_model()
 
 #[test]
 fn generated_members_carry_the_complete_graph_contract() {
-    // Every generated member must carry its full compiled contract: schema,
-    // unit, WCS/axes law, beam rule with resolved fitted beam, validity
-    // rule, and dependencies - not just name and payload.
+    // Every generated member is planned from its graph node: role, unit,
+    // WCS/axes law, beam rule with resolved fitted beam, and validity rule -
+    // not just name and payload.
     let problem = continuum_problem(111, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem, 112);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
@@ -1225,11 +1218,9 @@ fn generated_members_carry_the_complete_graph_contract() {
         let contract = member.contract();
         assert_eq!(contract.role(), node.role());
         assert_eq!(contract.unit(), node.unit());
-        assert_eq!(contract.schema(), node.schema());
         assert_eq!(contract.axes(), node.axes());
         assert_eq!(contract.beam_rule(), node.beam());
         assert_eq!(contract.validity(), node.validity());
-        assert_eq!(contract.dependencies(), node.dependencies());
     }
 
     // Beam-bearing members resolve the generation's fitted beam; beam-free

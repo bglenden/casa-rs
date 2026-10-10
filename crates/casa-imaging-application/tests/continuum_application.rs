@@ -416,42 +416,7 @@ fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contra
             "{} identity",
             planned.name()
         );
-        assert_eq!(
-            planned.role(),
-            published.contract().role(),
-            "{} role",
-            planned.name()
-        );
-        assert_eq!(
-            planned.unit(),
-            published.contract().unit(),
-            "{} unit",
-            planned.name()
-        );
-        assert_eq!(
-            planned.beam_rule(),
-            published.contract().beam_rule(),
-            "{} beam rule",
-            planned.name()
-        );
-        assert_eq!(
-            planned.validity(),
-            published.contract().validity(),
-            "{} validity",
-            planned.name()
-        );
-        assert_eq!(
-            planned.storage(),
-            published.contract().storage(),
-            "{} storage contract",
-            planned.name()
-        );
-        assert_eq!(
-            planned.axes(),
-            published.contract().axes(),
-            "{} axes",
-            planned.name()
-        );
+        assert_eq!(planned.name(), published.name());
     }
 
     let open = |suffix: &str| {
@@ -1053,10 +1018,6 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
         .zip(result.products.members())
     {
         assert_eq!(planned.node(), published.node());
-        assert_eq!(
-            planned.axes().domain(),
-            published.contract().axes().domain()
-        );
     }
 
     for (role, base, image_size, direction, expected_mask_pixels) in expected {

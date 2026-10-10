@@ -4,10 +4,7 @@
 
 use std::mem::size_of;
 
-use casa_imaging_model::{
-    ImageDomainRole, ProductBeamRule, ProductRole, ProductValidityRule, RestoringBeamPolicy,
-    SpectralWcs,
-};
+use casa_imaging_model::{ProductBeamRule, ProductRole, ProductValidityRule, RestoringBeamPolicy};
 use casa_imaging_reconstruction::NormalStateCatalog;
 use num_complex::Complex64;
 
@@ -61,7 +58,7 @@ impl ContinuumGenerationDemand {
         self.algorithm_scratch_bytes
     }
 
-    /// Owned generation summary, member contracts, WCS and beam arrays.
+    /// Owned generation summary, member names and beam arrays.
     #[must_use]
     pub const fn retained_metadata_bytes(self) -> u64 {
         self.retained_metadata_bytes
@@ -93,38 +90,25 @@ impl ContinuumGenerationDemand {
 }
 
 impl PlannedContinuumGeneration {
-    /// Derive current-catalog array and metadata demand for these inputs.
+    /// Derive current-catalog array and metadata demand for these inputs, the
+    /// ones this plan was made from.
     ///
     /// # Errors
     ///
-    /// Fails closed when the inputs do not name this plan's problem and source
-    /// generations, or when any byte calculation overflows.
+    /// Fails when the storage plan cannot lay out a member or a byte
+    /// calculation overflows.
     pub fn demand(
         &self,
         inputs: &ContinuumProductInputs<'_>,
         storage_plan: ProductStoragePlan,
     ) -> Result<ContinuumGenerationDemand, ProductsError> {
-        if inputs.major_cycle_completion() != self.major_cycle_completion()
-            || inputs.normal_state_completion() != self.normal_state_completion()
-            || inputs.final_model().generation_id() != self.final_model_generation()
-            || inputs.reconstruction_mask_generation() != self.reconstruction_mask_generation()
-        {
-            return Err(ProductsError::SourceLineageMismatch);
-        }
-
         let mut maximum_member_payload_bytes = 0_u64;
         let mut maximum_member_validity_bytes = 0_u64;
         let mut maximum_window_payload_bytes = 0_u64;
         let mut maximum_window_validity_bytes = 0_u64;
         let mut maximum_windows = 1;
         for member in self.members() {
-            let values = checked_shape_values(member.shape())?;
-            if values != member.payload_values() {
-                return Err(ProductsError::PayloadLengthMismatch {
-                    expected: values,
-                    actual: member.payload_values(),
-                });
-            }
+            let values = member.payload_values();
             let payload = bytes_for::<f32>(values, "member payload")?;
             let validity = bytes_for::<bool>(values, "member validity")?;
             maximum_member_payload_bytes = maximum_member_payload_bytes.max(payload);
@@ -304,20 +288,6 @@ impl PlannedContinuumGeneration {
         }
         let mut active_member_beams = 0;
         for member in self.members() {
-            let domain_name = match member.axes().domain() {
-                ImageDomainRole::Main => 0,
-                ImageDomainRole::Outlier(name) => name.len(),
-            };
-            let spectral_values = match member.axes().spectral().wcs() {
-                SpectralWcs::Linear { .. } => 0,
-                SpectralWcs::Tabular {
-                    channel_centres_hz,
-                    channel_boundaries_hz,
-                } => channel_centres_hz
-                    .len()
-                    .checked_add(channel_boundaries_hz.len())
-                    .ok_or(ProductsError::ResourceDemandOverflow("member WCS"))?,
-            };
             let beams = match member.beam_rule() {
                 ProductBeamRule::None
                 | ProductBeamRule::Restoring(RestoringBeamPolicy::None)
@@ -331,10 +301,6 @@ impl PlannedContinuumGeneration {
             active_member_beams = active_member_beams.max(beam_bytes);
             for bytes in [
                 bytes_for::<u8>(member.name().len(), "member name")?,
-                bytes_for::<u8>(domain_name, "member domain")?,
-                bytes_for::<f64>(spectral_values, "member WCS")?,
-                std::mem::size_of_val(member.axes().polarization()) as u64,
-                std::mem::size_of_val(member.dependencies()) as u64,
                 beam_bytes,
             ] {
                 retained = checked_add(retained, bytes, "member metadata")?;

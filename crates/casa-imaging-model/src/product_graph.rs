@@ -228,20 +228,7 @@ impl ProductStorageContract {
     }
 }
 
-/// Backend-independent logical schema of a product payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProductSchema {
-    /// Version-one four-axis image carrying binary32 pixels and typed metadata.
-    ImageF32V1,
-    /// Version-one logical collection of nodes already named in this graph.
-    LogicalCollectionV1,
-    /// Version-one metadata embedded in image members rather than separately published.
-    EmbeddedImageMetadataV1,
-    /// Version-one internal image input that participates in topology but is not published.
-    InternalImageF32V1,
-}
-
-/// One immutable product node in topological and publication order.
+/// One immutable product node in publication order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductNode {
     node_id: ProductNodeId,
@@ -253,8 +240,6 @@ pub struct ProductNode {
     beam: ProductBeamRule,
     validity: ProductValidityRule,
     storage: ProductStorageContract,
-    schema: ProductSchema,
-    dependencies: Box<[ProductNodeId]>,
 }
 
 impl ProductNode {
@@ -311,65 +296,20 @@ impl ProductNode {
     pub const fn storage(&self) -> ProductStorageContract {
         self.storage
     }
-
-    /// Return the backend-independent logical payload schema.
-    #[must_use]
-    pub const fn schema(&self) -> ProductSchema {
-        self.schema
-    }
-
-    /// Return graph-node dependencies, all of which precede this node.
-    #[must_use]
-    pub const fn dependencies(&self) -> &[ProductNodeId] {
-        &self.dependencies
-    }
 }
 
-/// The fixed independently atomic product-store protocol.
+/// The published image members, in publication order.
 ///
 /// CASA image products have conventional sibling names and independent
-/// lifetimes: users may retain or delete one product without the others.  A
-/// generation therefore authorizes one private prepare and one atomic
-/// replacement per member, rather than claiming one atomic visibility change
-/// for the whole product set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IndependentProductStoreProtocol;
-
-impl IndependentProductStoreProtocol {
-    /// Exact staged evidence is durable before any member replacement.
-    #[must_use]
-    pub const fn requires_durable_prepare(self) -> bool {
-        true
-    }
-
-    /// Every member has exactly one independently atomic visibility operation.
-    #[must_use]
-    pub const fn has_one_visibility_operation_per_member(self) -> bool {
-        true
-    }
-
-    /// A promoted member remains valid even if a later member fails.
-    #[must_use]
-    pub const fn preserves_promoted_members_on_later_failure(self) -> bool {
-        true
-    }
-}
-
-/// One independently atomic publication sequence for all materialized members.
+/// lifetimes: each member is staged and replaced on its own, and a member
+/// already replaced stays valid if a later one fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductPublication {
-    protocol: IndependentProductStoreProtocol,
     members: Box<[ProductNodeId]>,
 }
 
 impl ProductPublication {
-    /// Return the fixed atomic-store choreography.
-    #[must_use]
-    pub const fn protocol(&self) -> IndependentProductStoreProtocol {
-        self.protocol
-    }
-
-    /// Return every product that must activate together.
+    /// Return every published member.
     #[must_use]
     pub const fn members(&self) -> &[ProductNodeId] {
         &self.members
@@ -420,7 +360,9 @@ struct NodeProjection {
     normalization: Option<ProductNormalization>,
     beam: ProductBeamRule,
     validity: ProductValidityRule,
-    schema: ProductSchema,
+    /// Whether the node is a published image member rather than an internal
+    /// image or metadata.
+    published: bool,
 }
 
 struct GraphBuilder<'a> {
@@ -429,6 +371,7 @@ struct GraphBuilder<'a> {
     products: &'a ProductRequirements,
     nodes: Vec<ProductNode>,
     node_ids: BTreeMap<(usize, ProductRole), ProductNodeId>,
+    members: Vec<ProductNodeId>,
 }
 
 impl<'a> GraphBuilder<'a> {
@@ -438,20 +381,12 @@ impl<'a> GraphBuilder<'a> {
                 self.compile_product(domain_index, domain, *product);
             }
         }
-        let publication_members = self
-            .nodes
-            .iter()
-            .filter(|node| node.schema == ProductSchema::ImageF32V1)
-            .map(|node| node.node_id)
-            .collect::<Box<[_]>>();
-        let publication = ProductPublication {
-            protocol: IndependentProductStoreProtocol,
-            members: publication_members,
-        };
         ProductGraph {
             normalization_boundary: self.products.normalization_boundary().clone(),
             nodes: self.nodes.into_boxed_slice(),
-            publication,
+            publication: ProductPublication {
+                members: self.members.into_boxed_slice(),
+            },
         }
     }
 
@@ -478,7 +413,6 @@ impl<'a> GraphBuilder<'a> {
                             ProductBeamRule::None
                         },
                         ProductValidityRule::All,
-                        [],
                     );
                 }
             }
@@ -494,7 +428,6 @@ impl<'a> GraphBuilder<'a> {
                         Some(self.products.normalization()),
                         ProductBeamRule::Fitted,
                         ProductValidityRule::FinalNormalState,
-                        [],
                     );
                 }
             }
@@ -510,16 +443,11 @@ impl<'a> GraphBuilder<'a> {
                         None,
                         ProductBeamRule::None,
                         ProductValidityRule::All,
-                        [],
                     );
                 }
             }
             ProductKind::RestoredImage => {
                 for term in self.image_terms() {
-                    let dependencies = self.required_nodes_for(
-                        domain_index,
-                        [ProductRole::Residual(term), ProductRole::Model(term)],
-                    );
                     self.add_image(
                         domain_index,
                         domain,
@@ -530,7 +458,6 @@ impl<'a> GraphBuilder<'a> {
                         Some(self.products.normalization()),
                         ProductBeamRule::Restoring(self.products.restoring_beam()),
                         ProductValidityRule::FinalNormalState,
-                        dependencies,
                     );
                 }
             }
@@ -546,7 +473,6 @@ impl<'a> GraphBuilder<'a> {
                         None,
                         ProductBeamRule::None,
                         ProductValidityRule::All,
-                        [],
                     );
                 }
             }
@@ -561,7 +487,6 @@ impl<'a> GraphBuilder<'a> {
                     None,
                     ProductBeamRule::None,
                     ProductValidityRule::All,
-                    [],
                 );
             }
             ProductKind::Weight => {
@@ -576,19 +501,17 @@ impl<'a> GraphBuilder<'a> {
                         None,
                         ProductBeamRule::None,
                         ProductValidityRule::All,
-                        [],
                     );
                 }
             }
             ProductKind::PrimaryBeam => {
-                let mut primary_beam = None;
                 for term in self.primary_beam_terms() {
                     let validity = if term == self.primary_beam_term() {
                         ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam())
                     } else {
                         ProductValidityRule::All
                     };
-                    let node = self.add_image(
+                    self.add_image(
                         domain_index,
                         domain,
                         ProductRole::PrimaryBeam(term),
@@ -598,11 +521,7 @@ impl<'a> GraphBuilder<'a> {
                         None,
                         ProductBeamRule::None,
                         validity,
-                        [],
                     );
-                    if term == self.primary_beam_term() {
-                        primary_beam = Some(node);
-                    }
                 }
                 if matches!(
                     self.reconstruction.basis(),
@@ -618,7 +537,6 @@ impl<'a> GraphBuilder<'a> {
                         ProductUnit::Dimensionless,
                         ProductBeamRule::None,
                         ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam()),
-                        [primary_beam.expect("primary-beam Taylor zero is compiled")],
                     );
                 }
             }
@@ -633,14 +551,9 @@ impl<'a> GraphBuilder<'a> {
                     None,
                     ProductBeamRule::None,
                     ProductValidityRule::All,
-                    [],
                 );
             }
             ProductKind::PbCorrectedImage => {
-                let primary_beam = self.node_id(
-                    domain_index,
-                    ProductRole::PrimaryBeam(self.primary_beam_term()),
-                );
                 for term in self.image_terms() {
                     let restored = self.node_id(domain_index, ProductRole::RestoredImage(term));
                     self.add_image(
@@ -653,51 +566,18 @@ impl<'a> GraphBuilder<'a> {
                         Some(self.products.normalization()),
                         ProductBeamRule::Inherit(restored),
                         ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam()),
-                        [restored, primary_beam],
                     );
                 }
             }
             ProductKind::TaylorTerms => {
-                let dependencies = self
-                    .nodes
-                    .iter()
-                    .filter(|node| {
-                        node.axes.domain == *domain.role()
-                            && matches!(
-                                node.role,
-                                ProductRole::Psf(ProductTerm::Taylor(_))
-                                    | ProductRole::Residual(ProductTerm::Taylor(_))
-                                    | ProductRole::Model(ProductTerm::Taylor(_))
-                                    | ProductRole::RestoredImage(ProductTerm::Taylor(_))
-                                    | ProductRole::SumWeights(ProductTerm::Taylor(_))
-                                    | ProductRole::Weight(ProductTerm::Taylor(_))
-                                    | ProductRole::PrimaryBeam(ProductTerm::Taylor(_))
-                                    | ProductRole::PrimaryBeamSpectralIndex
-                                    | ProductRole::PbCorrectedImage(ProductTerm::Taylor(_))
-                            )
-                    })
-                    .map(|node| node.node_id)
-                    .collect::<Vec<_>>();
                 self.add_metadata(
                     domain_index,
                     domain,
                     ProductRole::TaylorCoefficientSet,
-                    ProductSchema::LogicalCollectionV1,
                     ProductBeamRule::None,
-                    dependencies,
                 );
             }
             ProductKind::SpectralIndex => {
-                let terms = [ProductTerm::Taylor(0), ProductTerm::Taylor(1)];
-                let dependencies = terms
-                    .into_iter()
-                    .flat_map(|term| {
-                        [
-                            self.node_id(domain_index, ProductRole::Residual(term)),
-                            self.node_id(domain_index, ProductRole::RestoredImage(term)),
-                        ]
-                    })
-                    .collect::<Vec<_>>();
                 self.add_image(
                     domain_index,
                     domain,
@@ -708,20 +588,9 @@ impl<'a> GraphBuilder<'a> {
                     None,
                     self.derived_beam(domain_index),
                     ProductValidityRule::Taylor(self.products.validity().taylor()),
-                    dependencies,
                 );
             }
             ProductKind::SpectralIndexError => {
-                let alpha = self.node_id(domain_index, ProductRole::SpectralIndex);
-                let terms = [ProductTerm::Taylor(0), ProductTerm::Taylor(1)];
-                let dependencies = std::iter::once(alpha)
-                    .chain(terms.into_iter().flat_map(|term| {
-                        [
-                            self.node_id(domain_index, ProductRole::Residual(term)),
-                            self.node_id(domain_index, ProductRole::RestoredImage(term)),
-                        ]
-                    }))
-                    .collect::<Vec<_>>();
                 self.add_image(
                     domain_index,
                     domain,
@@ -732,17 +601,10 @@ impl<'a> GraphBuilder<'a> {
                     None,
                     self.derived_beam(domain_index),
                     ProductValidityRule::Taylor(self.products.validity().taylor()),
-                    dependencies,
                 );
             }
             ProductKind::PbCorrectedSpectralIndex => {
                 let alpha = self.node_id(domain_index, ProductRole::SpectralIndex);
-                let primary_beam = self.node_id(
-                    domain_index,
-                    ProductRole::PrimaryBeam(self.primary_beam_term()),
-                );
-                let primary_beam_alpha =
-                    self.node_id(domain_index, ProductRole::PrimaryBeamSpectralIndex);
                 self.add_image(
                     domain_index,
                     domain,
@@ -756,26 +618,14 @@ impl<'a> GraphBuilder<'a> {
                         taylor: self.products.validity().taylor(),
                         primary_beam: self.products.validity().primary_beam(),
                     },
-                    [alpha, primary_beam, primary_beam_alpha],
                 );
             }
             ProductKind::Beam => {
-                let dependencies = self
-                    .nodes
-                    .iter()
-                    .filter(|node| {
-                        node.axes.domain == *domain.role()
-                            && !matches!(node.beam, ProductBeamRule::None)
-                    })
-                    .map(|node| node.node_id)
-                    .collect::<Vec<_>>();
                 self.add_metadata(
                     domain_index,
                     domain,
                     ProductRole::BeamMetadata,
-                    ProductSchema::EmbeddedImageMetadataV1,
                     ProductBeamRule::Metadata(self.products.restoring_beam()),
-                    dependencies,
                 );
             }
         }
@@ -827,8 +677,7 @@ impl<'a> GraphBuilder<'a> {
         normalization: Option<ProductNormalization>,
         beam: ProductBeamRule,
         validity: ProductValidityRule,
-        dependencies: impl IntoIterator<Item = ProductNodeId>,
-    ) -> ProductNodeId {
+    ) {
         self.add_node(
             domain_index,
             domain,
@@ -840,10 +689,9 @@ impl<'a> GraphBuilder<'a> {
                 normalization,
                 beam,
                 validity,
-                schema: ProductSchema::ImageF32V1,
+                published: true,
             },
-            dependencies,
-        )
+        );
     }
 
     fn add_metadata(
@@ -851,10 +699,8 @@ impl<'a> GraphBuilder<'a> {
         domain_index: usize,
         domain: &CompiledImageDomain,
         role: ProductRole,
-        schema: ProductSchema,
         beam: ProductBeamRule,
-        dependencies: impl IntoIterator<Item = ProductNodeId>,
-    ) -> ProductNodeId {
+    ) {
         self.add_node(
             domain_index,
             domain,
@@ -866,13 +712,11 @@ impl<'a> GraphBuilder<'a> {
                 normalization: None,
                 beam,
                 validity: ProductValidityRule::All,
-                schema,
+                published: false,
             },
-            dependencies,
-        )
+        );
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn add_internal_image(
         &mut self,
         domain_index: usize,
@@ -881,8 +725,7 @@ impl<'a> GraphBuilder<'a> {
         unit: ProductUnit,
         beam: ProductBeamRule,
         validity: ProductValidityRule,
-        dependencies: impl IntoIterator<Item = ProductNodeId>,
-    ) -> ProductNodeId {
+    ) {
         self.add_node(
             domain_index,
             domain,
@@ -894,10 +737,9 @@ impl<'a> GraphBuilder<'a> {
                 normalization: None,
                 beam,
                 validity,
-                schema: ProductSchema::InternalImageF32V1,
+                published: false,
             },
-            dependencies,
-        )
+        );
     }
 
     fn add_node(
@@ -905,19 +747,15 @@ impl<'a> GraphBuilder<'a> {
         domain_index: usize,
         domain: &CompiledImageDomain,
         projection: NodeProjection,
-        dependencies: impl IntoIterator<Item = ProductNodeId>,
-    ) -> ProductNodeId {
+    ) {
         let node_id = ProductNodeId(self.nodes.len());
-        let dependencies = canonical_ids(dependencies);
-        debug_assert!(
-            dependencies
-                .iter()
-                .all(|dependency| dependency.0 < node_id.0)
-        );
         let previous = self
             .node_ids
             .insert((domain_index, projection.role), node_id);
         debug_assert!(previous.is_none());
+        if projection.published {
+            self.members.push(node_id);
+        }
         let storage = self.storage_contract(&projection);
         self.nodes.push(ProductNode {
             node_id,
@@ -934,25 +772,11 @@ impl<'a> GraphBuilder<'a> {
             beam: projection.beam,
             validity: projection.validity,
             storage,
-            schema: projection.schema,
-            dependencies,
         });
-        node_id
     }
 
     fn node_id(&self, domain: usize, role: ProductRole) -> ProductNodeId {
         self.node_ids[&(domain, role)]
-    }
-
-    fn required_nodes_for<const N: usize>(
-        &self,
-        domain: usize,
-        roles: [ProductRole; N],
-    ) -> Vec<ProductNodeId> {
-        roles
-            .into_iter()
-            .map(|role| self.node_id(domain, role))
-            .collect()
     }
 
     fn derived_beam(&self, domain: usize) -> ProductBeamRule {
@@ -1014,6 +838,7 @@ pub(crate) fn compile_product_graph(
         products,
         nodes: Vec::new(),
         node_ids: BTreeMap::new(),
+        members: Vec::new(),
     }
     .compile()
 }
@@ -1068,11 +893,4 @@ fn product_name(stem: &str, term: ProductTerm, pb_corrected: bool) -> String {
 
 fn is_zeroth(term: ProductTerm) -> bool {
     matches!(term, ProductTerm::Single | ProductTerm::Taylor(0))
-}
-
-fn canonical_ids<T: Ord>(values: impl IntoIterator<Item = T>) -> Box<[T]> {
-    let mut values = values.into_iter().collect::<Vec<_>>();
-    values.sort_unstable();
-    values.dedup();
-    values.into_boxed_slice()
 }
