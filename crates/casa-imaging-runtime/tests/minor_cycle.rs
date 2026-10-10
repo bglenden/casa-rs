@@ -239,9 +239,11 @@ fn a_cube_cleans_the_same_on_any_number_of_workers() {
 }
 
 /// Flat-noise response weights of a two-channel cube whose channels have
-/// sum weights `weights` and hold the same 1 Jy point.
+/// sum weights `weights` and hold the same 1 Jy point, its pass images
+/// edited by `edit`.
 fn cube_with_response(
     weights: Vec<f64>,
+    edit: impl FnOnce(&mut PassImages),
 ) -> (CompiledProblem, MajorCycleCompletion, MinorCycleSetup) {
     let problem = problem(
         16,
@@ -251,7 +253,7 @@ fn cube_with_response(
     let scene = Scene::new(&problem)
         .with_weights(weights)
         .with_point([8, 8], &[1.0, 1.0]);
-    let completion = completion(&problem, &scene, |_| {});
+    let completion = completion(&problem, &scene, edit);
     let response =
         MinorCycleImageResponse::new(ProductNormalization::FlatNoise, validity().primary_beam())
             .expect("response");
@@ -274,7 +276,7 @@ fn increments(outcome: &MinorCycleOutcome) -> Vec<(usize, f64)> {
 /// and 4 cleans as 1 Jy in both channels.
 #[test]
 fn a_cube_normalises_each_channel_by_its_own_weights() {
-    let (problem, completion, setup) = cube_with_response(vec![1.0, 4.0]);
+    let (problem, completion, setup) = cube_with_response(vec![1.0, 4.0], |_| {});
     let (_, outcome) = minor_cycle(&problem, &completion, &setup, &controls(1, 1.0), 1);
     let increments = increments(&outcome);
     assert_eq!(increments.len(), 2, "{increments:?}");
@@ -283,11 +285,35 @@ fn a_cube_normalises_each_channel_by_its_own_weights() {
     }
 }
 
+/// Each channel's residual is divided by that channel's published `.sumwt`
+/// and its weight image by that channel's PSF sum. A cube's sensitivity is
+/// its plane's PSF sum, so the weight image normalises to one only when a
+/// plane reads its own sensitivity and sum: under sum weights 1 and 4
+/// published as 2 and 5, the same 1 Jy point cleans as 1/2 and 4/5 Jy.
+#[test]
+fn a_cube_channel_divides_by_its_own_published_sum_of_weights() {
+    let weights = [1.0, 4.0];
+    let published = [2.0, 5.0];
+    let (problem, completion, setup) = cube_with_response(weights.to_vec(), |images| {
+        images.published_sum_weights = published.to_vec();
+    });
+    let (_, outcome) = minor_cycle(&problem, &completion, &setup, &controls(1, 1.0), 1);
+    let increments = increments(&outcome);
+    assert_eq!(increments.len(), 2, "{increments:?}");
+    for (channel, value) in increments {
+        let expected = weights[channel] / published[channel];
+        assert!(
+            (value - expected).abs() < 1e-6,
+            "channel {channel}: {value}, expected {expected}"
+        );
+    }
+}
+
 /// A channel no sample reached (CASA's `test_cube_flagged_mosaic_hogbom`)
 /// is skipped; the other channels still clean with their own weights.
 #[test]
 fn a_cube_with_an_empty_first_channel_cleans_the_others() {
-    let (problem, completion, setup) = cube_with_response(vec![0.0, 1.0]);
+    let (problem, completion, setup) = cube_with_response(vec![0.0, 1.0], |_| {});
     let (_, outcome) = minor_cycle(&problem, &completion, &setup, &controls(1, 1.0), 1);
     let increments = increments(&outcome);
     assert_eq!(increments.len(), 1, "{increments:?}");
