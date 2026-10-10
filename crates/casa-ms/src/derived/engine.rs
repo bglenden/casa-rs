@@ -159,8 +159,24 @@ impl MsCalEngine {
     /// Reads ANTENNA positions, FIELD phase directions, and resolves the
     /// observatory position from `OBSERVATION::TELESCOPE_NAME` when possible,
     /// falling back to antenna 0 only when no catalog entry is available.
+    ///
+    /// The engine opens the production Measures provider
+    /// ([`crate::open_measures_runtime`]); [`Self::with_measures`] takes one
+    /// the caller already holds.
     pub fn new(ms: &MeasurementSet) -> MsResult<Self> {
-        let measures: Arc<dyn MeasuresProvider> = crate::open_measures_runtime()?;
+        Self::with_measures(ms, crate::open_measures_runtime()?)
+    }
+
+    /// Create an engine over `ms`, as [`Self::new`] does, that evaluates
+    /// every frame conversion with `measures`.
+    ///
+    /// An operation that opens one provider at its boundary builds its
+    /// engine with this, so the engine and everything else the operation
+    /// hands the provider to share one set of reference data.
+    pub fn with_measures(
+        ms: &MeasurementSet,
+        measures: Arc<dyn MeasuresProvider>,
+    ) -> MsResult<Self> {
         let ant = ms.antenna()?;
         let n_ant = ant.row_count();
         let mut antenna_positions = Vec::with_capacity(n_ant);
@@ -638,7 +654,12 @@ impl MsCalEngine {
             })
     }
 
-    /// Returns the cached FIELD phase direction in J2000 for `field_id`.
+    /// Returns the constant term of `FIELD.PHASE_DIR` at `field_id` in J2000.
+    ///
+    /// The engine resolves it once, at construction, for fixed and
+    /// row-varying direction references, using the field row's own `TIME`
+    /// origin and the observatory position when a dynamic reference frame
+    /// needs a conversion context.
     pub fn field_direction_j2000(&self, field_id: usize) -> MsResult<&MDirection> {
         self.field_dir(field_id)
     }
@@ -1538,32 +1559,6 @@ fn axis_rotation(angle: f64, axis: Axis) -> [[f64; 3]; 3] {
     }
 }
 
-/// Resolve the constant term of `FIELD.PHASE_DIR` at `field_id` into J2000.
-///
-/// This handles fixed and row-varying direction references, using the field
-/// row's own `TIME` origin and the array observatory position when a dynamic
-/// reference frame requires a conversion context.
-pub fn resolve_field_phase_direction_j2000(
-    ms: &MeasurementSet,
-    field_id: usize,
-) -> MsResult<MDirection> {
-    let ant = ms.antenna()?;
-    let mut antenna_positions = Vec::with_capacity(ant.row_count());
-    for row in 0..ant.row_count() {
-        let pos = ant.position(row)?;
-        antenna_positions.push(MPosition::new_itrf(pos[0], pos[1], pos[2]));
-    }
-    let measures: Arc<dyn MeasuresProvider> = crate::open_measures_runtime()?;
-    let observatory_position =
-        resolve_observatory_position(ms, &antenna_positions, measures.as_ref());
-    resolve_field_phase_direction_j2000_with_observatory(
-        ms,
-        field_id,
-        &observatory_position,
-        measures,
-    )
-}
-
 /// Return the stored FIELD phase-direction measure without changing its frame.
 ///
 /// Storage-owned spectral-range evaluation needs the original measure reference
@@ -2221,7 +2216,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_field_phase_direction_converts_fixed_dynamic_reference_to_j2000() {
+    fn field_direction_converts_fixed_dynamic_reference_to_j2000() {
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
         add_vla_antenna(&mut ms);
 
@@ -2238,14 +2233,15 @@ mod tests {
             .write(ms.subtable_mut(schema::SubtableId::Field).unwrap())
             .unwrap();
 
-        let recovered = resolve_field_phase_direction_j2000(&ms, 0).unwrap();
+        let engine = MsCalEngine::new(&ms).unwrap();
+        let recovered = engine.field_direction_j2000(0).unwrap();
         let (ra, dec) = recovered.as_angles();
         assert!((ra - 1.0).abs() < 1e-9, "ra={ra}");
         assert!((dec - 0.5).abs() < 1e-9, "dec={dec}");
     }
 
     #[test]
-    fn resolve_field_phase_direction_supports_variable_int_references() {
+    fn field_direction_supports_variable_int_references() {
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
         add_vla_antenna(&mut ms);
 
@@ -2280,7 +2276,8 @@ mod tests {
         .write(field)
         .unwrap();
 
-        let recovered = resolve_field_phase_direction_j2000(&ms, 0).unwrap();
+        let engine = MsCalEngine::new(&ms).unwrap();
+        let recovered = engine.field_direction_j2000(0).unwrap();
         let (ra, dec) = recovered.as_angles();
         assert!((ra - 1.0).abs() < 1e-9, "ra={ra}");
         assert!((dec - 0.5).abs() < 1e-9, "dec={dec}");

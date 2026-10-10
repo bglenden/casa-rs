@@ -5,7 +5,6 @@
 //! coordinate system the products are written in.
 
 use std::path::Path;
-use std::sync::Arc;
 
 use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, ObsInfo, Projection as CoordinateProjection,
@@ -17,7 +16,6 @@ use casa_imaging_model::{
 };
 use casa_ms::{MeasurementSet, SelectedObservationContentBudget, SelectedObservationEphemeris};
 use casa_types::measures::{
-    MeasuresProvider,
     direction::{DirectionRef, MDirection},
     epoch::MEpoch,
     frequency::FrequencyRef,
@@ -38,7 +36,6 @@ pub(super) struct Centre {
     pub(super) direction: DirectionCoordinateSpec,
     /// The `FIELD_ID` whose phase centre anchors the image.
     pub(super) field_id: usize,
-    pub(super) measures: Arc<dyn MeasuresProvider>,
 }
 
 /// Resolve the request's image centre over the surveyed fields.
@@ -61,14 +58,9 @@ pub(super) fn resolve_centre(
     let field_id =
         usize::try_from(selected_field).map_err(|_| boxed("selected FIELD_ID is negative"))?;
     let stored_phase = casa_ms::derived::engine::raw_field_phase_direction(ms, field_id)?;
-    let field_phase = casa_ms::derived::engine::resolve_field_phase_direction_j2000(ms, field_id)?;
-    let field_direction = SkyDirection::new(
-        DirectionFrame::J2000,
-        field_phase.as_angles().0,
-        field_phase.as_angles().1,
-    );
+    let (field_longitude, field_latitude) = engine.field_direction_j2000(field_id)?.as_angles();
+    let field_direction = SkyDirection::new(DirectionFrame::J2000, field_longitude, field_latitude);
     let anchor_time = survey.first_time_mjd_seconds;
-    let measures = casa_ms::open_measures_runtime()?;
     let ephemeris_direction = |name: &str, ephemeris: &SelectedObservationEphemeris| {
         let direction = engine.ephemeris_direction_j2000(anchor_time, field_id, name, ephemeris)?;
         let (longitude, latitude) = direction.as_angles();
@@ -135,7 +127,6 @@ pub(super) fn resolve_centre(
         direction: direction_spec(request.imsize, request.cell, frame, longitude, latitude),
         image_centre,
         field_id,
-        measures,
     })
 }
 
