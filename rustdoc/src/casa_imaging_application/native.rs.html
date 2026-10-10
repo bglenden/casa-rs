@@ -155,125 +155,124 @@
 <a href=#155 id=155 data-nosnippet>155</a>        .then(|| {
 <a href=#156 id=156 data-nosnippet>156</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ApplicationError&gt;(imaging::VisibilityWriteTarget {
 <a href=#157 id=157 data-nosnippet>157</a>                path: PathBuf::from(input.observation.locator()),
-<a href=#158 id=158 data-nosnippet>158</a>                expected: input.initial_access.source_state().clone(),
-<a href=#159 id=159 data-nosnippet>159</a>                selection: visibility_write_selection(problem, input.observation.selection())<span class="question-mark">?</span>,
-<a href=#160 id=160 data-nosnippet>160</a>                model_data: input.write_model_column,
-<a href=#161 id=161 data-nosnippet>161</a>                corrected_data: input.write_corrected_data,
-<a href=#162 id=162 data-nosnippet>162</a>            })
-<a href=#163 id=163 data-nosnippet>163</a>        })
-<a href=#164 id=164 data-nosnippet>164</a>        .transpose()<span class="question-mark">?</span>;
-<a href=#165 id=165 data-nosnippet>165</a>    <span class="kw">let </span>(access, source) = finalize_source_access(
-<a href=#166 id=166 data-nosnippet>166</a>        problem,
-<a href=#167 id=167 data-nosnippet>167</a>        input.initial_access,
-<a href=#168 id=168 data-nosnippet>168</a>        <span class="kw-2">&amp;</span>runtime.host,
-<a href=#169 id=169 data-nosnippet>169</a>        <span class="kw-2">&amp;</span>runtime.resource_policy,
-<a href=#170 id=170 data-nosnippet>170</a>    )<span class="question-mark">?</span>;
-<a href=#171 id=171 data-nosnippet>171</a>    <span class="kw">let </span>team = WorkerTeam::new(runtime.resource_policy.workers(<span class="kw-2">&amp;</span>runtime.host))<span class="question-mark">?</span>;
-<a href=#172 id=172 data-nosnippet>172</a>    summary.workers = team.workers();
-<a href=#173 id=173 data-nosnippet>173</a>    <span class="kw">let </span>outcome = imaging::run(
-<a href=#174 id=174 data-nosnippet>174</a>        imaging::ImagingInputs {
-<a href=#175 id=175 data-nosnippet>175</a>            problem,
-<a href=#176 id=176 data-nosnippet>176</a>            access,
-<a href=#177 id=177 data-nosnippet>177</a>            masks: input.masks,
-<a href=#178 id=178 data-nosnippet>178</a>            image_response: input.minor_cycle_image_response,
-<a href=#179 id=179 data-nosnippet>179</a>            visibility_write,
-<a href=#180 id=180 data-nosnippet>180</a>            host: runtime.host,
-<a href=#181 id=181 data-nosnippet>181</a>            policy: runtime.resource_policy,
-<a href=#182 id=182 data-nosnippet>182</a>            team: <span class="kw-2">&amp;</span>team,
-<a href=#183 id=183 data-nosnippet>183</a>            cancel: runtime.cancel.clone(),
-<a href=#184 id=184 data-nosnippet>184</a>            spill_directory: <span class="kw-2">&amp;</span>runtime.spill_directory,
-<a href=#185 id=185 data-nosnippet>185</a>            aw_catalog,
-<a href=#186 id=186 data-nosnippet>186</a>            backend: runtime.backend,
-<a href=#187 id=187 data-nosnippet>187</a>            grid_precision: runtime.grid_precision,
-<a href=#188 id=188 data-nosnippet>188</a>        },
-<a href=#189 id=189 data-nosnippet>189</a>        summary,
-<a href=#190 id=190 data-nosnippet>190</a>    )<span class="question-mark">?</span>;
-<a href=#191 id=191 data-nosnippet>191</a>    drop(source);
-<a href=#192 id=192 data-nosnippet>192</a>    summary.minor_cycles = outcome.minor_cycles.len();
-<a href=#193 id=193 data-nosnippet>193</a>    summary.minor_iterations = outcome.total_minor_iterations;
-<a href=#194 id=194 data-nosnippet>194</a>    <span class="kw">let </span>products = run_phase(<span class="string">"products"</span>, <span class="kw-2">&amp;</span>runtime.cancel, summary, || {
-<a href=#195 id=195 data-nosnippet>195</a>        publish_products(
-<a href=#196 id=196 data-nosnippet>196</a>            problem,
-<a href=#197 id=197 data-nosnippet>197</a>            outcome.scientific,
-<a href=#198 id=198 data-nosnippet>198</a>            outcome.masks,
-<a href=#199 id=199 data-nosnippet>199</a>            <span class="kw-2">&amp;</span>runtime,
-<a href=#200 id=200 data-nosnippet>200</a>            publication,
-<a href=#201 id=201 data-nosnippet>201</a>            <span class="kw-2">&amp;</span>team,
-<a href=#202 id=202 data-nosnippet>202</a>        )
-<a href=#203 id=203 data-nosnippet>203</a>    })<span class="question-mark">?</span>;
-<a href=#204 id=204 data-nosnippet>204</a>    summary.products = products
-<a href=#205 id=205 data-nosnippet>205</a>        .planned
-<a href=#206 id=206 data-nosnippet>206</a>        .members()
-<a href=#207 id=207 data-nosnippet>207</a>        .iter()
-<a href=#208 id=208 data-nosnippet>208</a>        .map(|member| member.name().to_string())
-<a href=#209 id=209 data-nosnippet>209</a>        .collect();
-<a href=#210 id=210 data-nosnippet>210</a>    <span class="prelude-val">Ok</span>(ImagingOutcome {
-<a href=#211 id=211 data-nosnippet>211</a>        problem: problem.clone(),
-<a href=#212 id=212 data-nosnippet>212</a>        minor_cycles: outcome.minor_cycles,
-<a href=#213 id=213 data-nosnippet>213</a>        stop: outcome.stop,
-<a href=#214 id=214 data-nosnippet>214</a>        major_cycle_count: outcome.major_cycle_count,
-<a href=#215 id=215 data-nosnippet>215</a>        total_minor_iterations: outcome.total_minor_iterations,
-<a href=#216 id=216 data-nosnippet>216</a>        total_actual_minor_iterations: outcome.total_actual_minor_iterations,
-<a href=#217 id=217 data-nosnippet>217</a>        workers: team.workers(),
-<a href=#218 id=218 data-nosnippet>218</a>        planes_per_wave: outcome.planes_per_wave,
-<a href=#219 id=219 data-nosnippet>219</a>        visibility_products: outcome.visibility_products,
-<a href=#220 id=220 data-nosnippet>220</a>        summary: std::mem::take(summary),
-<a href=#221 id=221 data-nosnippet>221</a>        scientific: products.scientific,
-<a href=#222 id=222 data-nosnippet>222</a>        planned_products: products.planned,
-<a href=#223 id=223 data-nosnippet>223</a>        products: products.published,
-<a href=#224 id=224 data-nosnippet>224</a>    })
-<a href=#225 id=225 data-nosnippet>225</a>}
-<a href=#226 id=226 data-nosnippet>226</a>
-<a href=#227 id=227 data-nosnippet>227</a><span class="doccomment">/// The products of a run and the state they were generated from.
-<a href=#228 id=228 data-nosnippet>228</a></span><span class="kw">struct </span>Products {
-<a href=#229 id=229 data-nosnippet>229</a>    planned: PlannedContinuumGeneration,
-<a href=#230 id=230 data-nosnippet>230</a>    scientific: MajorCycleCompletion,
-<a href=#231 id=231 data-nosnippet>231</a>    published: PublishedContinuumGeneration,
-<a href=#232 id=232 data-nosnippet>232</a>}
-<a href=#233 id=233 data-nosnippet>233</a>
-<a href=#234 id=234 data-nosnippet>234</a><span class="doccomment">/// Generate every planned product member into the sink's private staging,
-<a href=#235 id=235 data-nosnippet>235</a>/// one output channel per window on the run's team, and publish them; a
-<a href=#236 id=236 data-nosnippet>236</a>/// cancelled run publishes nothing.
-<a href=#237 id=237 data-nosnippet>237</a></span><span class="kw">fn </span>publish_products(
-<a href=#238 id=238 data-nosnippet>238</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#239 id=239 data-nosnippet>239</a>    scientific: MajorCycleCompletion,
-<a href=#240 id=240 data-nosnippet>240</a>    reconstruction_masks: <span class="prelude-ty">Option</span>&lt;ReconstructionMaskSet&gt;,
-<a href=#241 id=241 data-nosnippet>241</a>    runtime: <span class="kw-2">&amp;</span>ApplicationRuntime,
-<a href=#242 id=242 data-nosnippet>242</a>    publication: ApplicationPublication,
-<a href=#243 id=243 data-nosnippet>243</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#244 id=244 data-nosnippet>244</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Products, NativeError&gt; {
-<a href=#245 id=245 data-nosnippet>245</a>    <span class="kw">let </span><span class="kw-2">mut </span>inputs = ContinuumProductInputs::from_major_cycle(problem, <span class="kw-2">&amp;</span>scientific)<span class="question-mark">?</span>;
-<a href=#246 id=246 data-nosnippet>246</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(masks) = reconstruction_masks.as_ref() {
-<a href=#247 id=247 data-nosnippet>247</a>        inputs = <span class="kw">match </span>masks {
-<a href=#248 id=248 data-nosnippet>248</a>            ReconstructionMaskSet::Shared(mask) =&gt; inputs.with_reconstruction_mask(mask)<span class="question-mark">?</span>,
-<a href=#249 id=249 data-nosnippet>249</a>            ReconstructionMaskSet::Domains(masks) =&gt; {
-<a href=#250 id=250 data-nosnippet>250</a>                inputs.with_domain_reconstruction_masks(masks)<span class="question-mark">?
-<a href=#251 id=251 data-nosnippet>251</a>            </span>}
-<a href=#252 id=252 data-nosnippet>252</a>        };
-<a href=#253 id=253 data-nosnippet>253</a>    }
-<a href=#254 id=254 data-nosnippet>254</a>    <span class="kw">let </span>planned = PlannedContinuumGeneration::new(<span class="kw-2">&amp;</span>inputs, <span class="kw-2">&amp;</span>publication.controls)<span class="question-mark">?</span>;
-<a href=#255 id=255 data-nosnippet>255</a>    <span class="kw">let </span>window = ProductStoragePlan::new(<span class="number">1</span>, team.workers())<span class="question-mark">?</span>;
-<a href=#256 id=256 data-nosnippet>256</a>    <span class="kw">let </span>demand = planned.demand(<span class="kw-2">&amp;</span>inputs, window)<span class="question-mark">?</span>;
-<a href=#257 id=257 data-nosnippet>257</a>    <span class="kw">let </span>held = admit(
-<a href=#258 id=258 data-nosnippet>258</a>        <span class="kw-2">&amp;</span>runtime.host,
-<a href=#259 id=259 data-nosnippet>259</a>        <span class="kw-2">&amp;</span>runtime.resource_policy,
-<a href=#260 id=260 data-nosnippet>260</a>        <span class="kw-2">&amp;</span>Demand {
-<a href=#261 id=261 data-nosnippet>261</a>            phase: <span class="string">"products"</span>,
-<a href=#262 id=262 data-nosnippet>262</a>            memory: demand.peak_residency_bytes()
-<a href=#263 id=263 data-nosnippet>263</a>                + publication.sink.residency(<span class="kw-2">&amp;</span>planned, <span class="kw-2">&amp;</span>demand)<span class="question-mark">?</span>,
-<a href=#264 id=264 data-nosnippet>264</a>        },
-<a href=#265 id=265 data-nosnippet>265</a>    )<span class="question-mark">?</span>;
-<a href=#266 id=266 data-nosnippet>266</a>    <span class="kw">let </span>published = produce_continuum_members(<span class="kw-2">&amp;</span>planned, <span class="kw-2">&amp;</span>inputs, window, team, <span class="kw-2">&amp;</span>publication.sink)<span class="question-mark">?</span>;
-<a href=#267 id=267 data-nosnippet>267</a>    drop(held);
-<a href=#268 id=268 data-nosnippet>268</a>    <span class="kw">if </span>runtime.cancel.is_cancelled() {
-<a href=#269 id=269 data-nosnippet>269</a>        <span class="comment">// The staged members are removed when the sink drops.
-<a href=#270 id=270 data-nosnippet>270</a>        </span><span class="kw">return </span><span class="prelude-val">Err</span>(Cancelled.into());
-<a href=#271 id=271 data-nosnippet>271</a>    }
-<a href=#272 id=272 data-nosnippet>272</a>    publication.sink.publish()<span class="question-mark">?</span>;
-<a href=#273 id=273 data-nosnippet>273</a>    <span class="prelude-val">Ok</span>(Products {
-<a href=#274 id=274 data-nosnippet>274</a>        planned,
-<a href=#275 id=275 data-nosnippet>275</a>        scientific,
-<a href=#276 id=276 data-nosnippet>276</a>        published,
-<a href=#277 id=277 data-nosnippet>277</a>    })
-<a href=#278 id=278 data-nosnippet>278</a>}
+<a href=#158 id=158 data-nosnippet>158</a>                selection: visibility_write_selection(problem, input.observation.selection())<span class="question-mark">?</span>,
+<a href=#159 id=159 data-nosnippet>159</a>                model_data: input.write_model_column,
+<a href=#160 id=160 data-nosnippet>160</a>                corrected_data: input.write_corrected_data,
+<a href=#161 id=161 data-nosnippet>161</a>            })
+<a href=#162 id=162 data-nosnippet>162</a>        })
+<a href=#163 id=163 data-nosnippet>163</a>        .transpose()<span class="question-mark">?</span>;
+<a href=#164 id=164 data-nosnippet>164</a>    <span class="kw">let </span>(access, source) = finalize_source_access(
+<a href=#165 id=165 data-nosnippet>165</a>        problem,
+<a href=#166 id=166 data-nosnippet>166</a>        input.initial_access,
+<a href=#167 id=167 data-nosnippet>167</a>        <span class="kw-2">&amp;</span>runtime.host,
+<a href=#168 id=168 data-nosnippet>168</a>        <span class="kw-2">&amp;</span>runtime.resource_policy,
+<a href=#169 id=169 data-nosnippet>169</a>    )<span class="question-mark">?</span>;
+<a href=#170 id=170 data-nosnippet>170</a>    <span class="kw">let </span>team = WorkerTeam::new(runtime.resource_policy.workers(<span class="kw-2">&amp;</span>runtime.host))<span class="question-mark">?</span>;
+<a href=#171 id=171 data-nosnippet>171</a>    summary.workers = team.workers();
+<a href=#172 id=172 data-nosnippet>172</a>    <span class="kw">let </span>outcome = imaging::run(
+<a href=#173 id=173 data-nosnippet>173</a>        imaging::ImagingInputs {
+<a href=#174 id=174 data-nosnippet>174</a>            problem,
+<a href=#175 id=175 data-nosnippet>175</a>            access,
+<a href=#176 id=176 data-nosnippet>176</a>            masks: input.masks,
+<a href=#177 id=177 data-nosnippet>177</a>            image_response: input.minor_cycle_image_response,
+<a href=#178 id=178 data-nosnippet>178</a>            visibility_write,
+<a href=#179 id=179 data-nosnippet>179</a>            host: runtime.host,
+<a href=#180 id=180 data-nosnippet>180</a>            policy: runtime.resource_policy,
+<a href=#181 id=181 data-nosnippet>181</a>            team: <span class="kw-2">&amp;</span>team,
+<a href=#182 id=182 data-nosnippet>182</a>            cancel: runtime.cancel.clone(),
+<a href=#183 id=183 data-nosnippet>183</a>            spill_directory: <span class="kw-2">&amp;</span>runtime.spill_directory,
+<a href=#184 id=184 data-nosnippet>184</a>            aw_catalog,
+<a href=#185 id=185 data-nosnippet>185</a>            backend: runtime.backend,
+<a href=#186 id=186 data-nosnippet>186</a>            grid_precision: runtime.grid_precision,
+<a href=#187 id=187 data-nosnippet>187</a>        },
+<a href=#188 id=188 data-nosnippet>188</a>        summary,
+<a href=#189 id=189 data-nosnippet>189</a>    )<span class="question-mark">?</span>;
+<a href=#190 id=190 data-nosnippet>190</a>    drop(source);
+<a href=#191 id=191 data-nosnippet>191</a>    summary.minor_cycles = outcome.minor_cycles.len();
+<a href=#192 id=192 data-nosnippet>192</a>    summary.minor_iterations = outcome.total_minor_iterations;
+<a href=#193 id=193 data-nosnippet>193</a>    <span class="kw">let </span>products = run_phase(<span class="string">"products"</span>, <span class="kw-2">&amp;</span>runtime.cancel, summary, || {
+<a href=#194 id=194 data-nosnippet>194</a>        publish_products(
+<a href=#195 id=195 data-nosnippet>195</a>            problem,
+<a href=#196 id=196 data-nosnippet>196</a>            outcome.scientific,
+<a href=#197 id=197 data-nosnippet>197</a>            outcome.masks,
+<a href=#198 id=198 data-nosnippet>198</a>            <span class="kw-2">&amp;</span>runtime,
+<a href=#199 id=199 data-nosnippet>199</a>            publication,
+<a href=#200 id=200 data-nosnippet>200</a>            <span class="kw-2">&amp;</span>team,
+<a href=#201 id=201 data-nosnippet>201</a>        )
+<a href=#202 id=202 data-nosnippet>202</a>    })<span class="question-mark">?</span>;
+<a href=#203 id=203 data-nosnippet>203</a>    summary.products = products
+<a href=#204 id=204 data-nosnippet>204</a>        .planned
+<a href=#205 id=205 data-nosnippet>205</a>        .members()
+<a href=#206 id=206 data-nosnippet>206</a>        .iter()
+<a href=#207 id=207 data-nosnippet>207</a>        .map(|member| member.name().to_string())
+<a href=#208 id=208 data-nosnippet>208</a>        .collect();
+<a href=#209 id=209 data-nosnippet>209</a>    <span class="prelude-val">Ok</span>(ImagingOutcome {
+<a href=#210 id=210 data-nosnippet>210</a>        problem: problem.clone(),
+<a href=#211 id=211 data-nosnippet>211</a>        minor_cycles: outcome.minor_cycles,
+<a href=#212 id=212 data-nosnippet>212</a>        stop: outcome.stop,
+<a href=#213 id=213 data-nosnippet>213</a>        major_cycle_count: outcome.major_cycle_count,
+<a href=#214 id=214 data-nosnippet>214</a>        total_minor_iterations: outcome.total_minor_iterations,
+<a href=#215 id=215 data-nosnippet>215</a>        total_actual_minor_iterations: outcome.total_actual_minor_iterations,
+<a href=#216 id=216 data-nosnippet>216</a>        workers: team.workers(),
+<a href=#217 id=217 data-nosnippet>217</a>        planes_per_wave: outcome.planes_per_wave,
+<a href=#218 id=218 data-nosnippet>218</a>        visibility_products: outcome.visibility_products,
+<a href=#219 id=219 data-nosnippet>219</a>        summary: std::mem::take(summary),
+<a href=#220 id=220 data-nosnippet>220</a>        scientific: products.scientific,
+<a href=#221 id=221 data-nosnippet>221</a>        planned_products: products.planned,
+<a href=#222 id=222 data-nosnippet>222</a>        products: products.published,
+<a href=#223 id=223 data-nosnippet>223</a>    })
+<a href=#224 id=224 data-nosnippet>224</a>}
+<a href=#225 id=225 data-nosnippet>225</a>
+<a href=#226 id=226 data-nosnippet>226</a><span class="doccomment">/// The products of a run and the state they were generated from.
+<a href=#227 id=227 data-nosnippet>227</a></span><span class="kw">struct </span>Products {
+<a href=#228 id=228 data-nosnippet>228</a>    planned: PlannedContinuumGeneration,
+<a href=#229 id=229 data-nosnippet>229</a>    scientific: MajorCycleCompletion,
+<a href=#230 id=230 data-nosnippet>230</a>    published: PublishedContinuumGeneration,
+<a href=#231 id=231 data-nosnippet>231</a>}
+<a href=#232 id=232 data-nosnippet>232</a>
+<a href=#233 id=233 data-nosnippet>233</a><span class="doccomment">/// Generate every planned product member into the sink's private staging,
+<a href=#234 id=234 data-nosnippet>234</a>/// one output channel per window on the run's team, and publish them; a
+<a href=#235 id=235 data-nosnippet>235</a>/// cancelled run publishes nothing.
+<a href=#236 id=236 data-nosnippet>236</a></span><span class="kw">fn </span>publish_products(
+<a href=#237 id=237 data-nosnippet>237</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#238 id=238 data-nosnippet>238</a>    scientific: MajorCycleCompletion,
+<a href=#239 id=239 data-nosnippet>239</a>    reconstruction_masks: <span class="prelude-ty">Option</span>&lt;ReconstructionMaskSet&gt;,
+<a href=#240 id=240 data-nosnippet>240</a>    runtime: <span class="kw-2">&amp;</span>ApplicationRuntime,
+<a href=#241 id=241 data-nosnippet>241</a>    publication: ApplicationPublication,
+<a href=#242 id=242 data-nosnippet>242</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#243 id=243 data-nosnippet>243</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Products, NativeError&gt; {
+<a href=#244 id=244 data-nosnippet>244</a>    <span class="kw">let </span><span class="kw-2">mut </span>inputs = ContinuumProductInputs::from_major_cycle(problem, <span class="kw-2">&amp;</span>scientific)<span class="question-mark">?</span>;
+<a href=#245 id=245 data-nosnippet>245</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(masks) = reconstruction_masks.as_ref() {
+<a href=#246 id=246 data-nosnippet>246</a>        inputs = <span class="kw">match </span>masks {
+<a href=#247 id=247 data-nosnippet>247</a>            ReconstructionMaskSet::Shared(mask) =&gt; inputs.with_reconstruction_mask(mask)<span class="question-mark">?</span>,
+<a href=#248 id=248 data-nosnippet>248</a>            ReconstructionMaskSet::Domains(masks) =&gt; {
+<a href=#249 id=249 data-nosnippet>249</a>                inputs.with_domain_reconstruction_masks(masks)<span class="question-mark">?
+<a href=#250 id=250 data-nosnippet>250</a>            </span>}
+<a href=#251 id=251 data-nosnippet>251</a>        };
+<a href=#252 id=252 data-nosnippet>252</a>    }
+<a href=#253 id=253 data-nosnippet>253</a>    <span class="kw">let </span>planned = PlannedContinuumGeneration::new(<span class="kw-2">&amp;</span>inputs, <span class="kw-2">&amp;</span>publication.controls)<span class="question-mark">?</span>;
+<a href=#254 id=254 data-nosnippet>254</a>    <span class="kw">let </span>window = ProductStoragePlan::new(<span class="number">1</span>, team.workers())<span class="question-mark">?</span>;
+<a href=#255 id=255 data-nosnippet>255</a>    <span class="kw">let </span>demand = planned.demand(<span class="kw-2">&amp;</span>inputs, window)<span class="question-mark">?</span>;
+<a href=#256 id=256 data-nosnippet>256</a>    <span class="kw">let </span>held = admit(
+<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw-2">&amp;</span>runtime.host,
+<a href=#258 id=258 data-nosnippet>258</a>        <span class="kw-2">&amp;</span>runtime.resource_policy,
+<a href=#259 id=259 data-nosnippet>259</a>        <span class="kw-2">&amp;</span>Demand {
+<a href=#260 id=260 data-nosnippet>260</a>            phase: <span class="string">"products"</span>,
+<a href=#261 id=261 data-nosnippet>261</a>            memory: demand.peak_residency_bytes()
+<a href=#262 id=262 data-nosnippet>262</a>                + publication.sink.residency(<span class="kw-2">&amp;</span>planned, <span class="kw-2">&amp;</span>demand)<span class="question-mark">?</span>,
+<a href=#263 id=263 data-nosnippet>263</a>        },
+<a href=#264 id=264 data-nosnippet>264</a>    )<span class="question-mark">?</span>;
+<a href=#265 id=265 data-nosnippet>265</a>    <span class="kw">let </span>published = produce_continuum_members(<span class="kw-2">&amp;</span>planned, <span class="kw-2">&amp;</span>inputs, window, team, <span class="kw-2">&amp;</span>publication.sink)<span class="question-mark">?</span>;
+<a href=#266 id=266 data-nosnippet>266</a>    drop(held);
+<a href=#267 id=267 data-nosnippet>267</a>    <span class="kw">if </span>runtime.cancel.is_cancelled() {
+<a href=#268 id=268 data-nosnippet>268</a>        <span class="comment">// The staged members are removed when the sink drops.
+<a href=#269 id=269 data-nosnippet>269</a>        </span><span class="kw">return </span><span class="prelude-val">Err</span>(Cancelled.into());
+<a href=#270 id=270 data-nosnippet>270</a>    }
+<a href=#271 id=271 data-nosnippet>271</a>    publication.sink.publish()<span class="question-mark">?</span>;
+<a href=#272 id=272 data-nosnippet>272</a>    <span class="prelude-val">Ok</span>(Products {
+<a href=#273 id=273 data-nosnippet>273</a>        planned,
+<a href=#274 id=274 data-nosnippet>274</a>        scientific,
+<a href=#275 id=275 data-nosnippet>275</a>        published,
+<a href=#276 id=276 data-nosnippet>276</a>    })
+<a href=#277 id=277 data-nosnippet>277</a>}
 </code></pre></div></section></main></body></html>

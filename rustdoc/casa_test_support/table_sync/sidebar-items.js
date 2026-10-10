@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["persisted_table_shape","published_table_sync"],"struct":["PublishedSync","TableShape"]};

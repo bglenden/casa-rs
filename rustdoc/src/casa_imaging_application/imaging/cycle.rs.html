@@ -509,7 +509,7 @@
 <a href=#509 id=509 data-nosnippet>509</a>        <span class="kw">let </span>pass_seconds = started.elapsed().as_secs_f64();
 <a href=#510 id=510 data-nosnippet>510</a>        <span class="kw">let </span>final_model = preparation.final_model_generation();
 <a href=#511 id=511 data-nosnippet>511</a>        <span class="kw">let </span>visibility = writer
-<a href=#512 id=512 data-nosnippet>512</a>            .map(|writer| writer.complete(final_model))
+<a href=#512 id=512 data-nosnippet>512</a>            .map(VisibilityWriter::complete)
 <a href=#513 id=513 data-nosnippet>513</a>            .transpose()
 <a href=#514 id=514 data-nosnippet>514</a>            .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))<span class="question-mark">?
 <a href=#515 id=515 data-nosnippet>515</a>            </span>.map(|samples| {

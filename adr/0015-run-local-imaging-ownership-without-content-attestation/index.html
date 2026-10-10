@@ -768,7 +768,9 @@ Supersedes: ADR-0013; content-attestation exemptions in ADR-0014</p>
 <h2 id="decision">Decision<a class="headerlink" href="#decision" title="Permanent link">&para;</a></h2>
 <p>Trusted imaging data within one process is associated by ownership, compiled
 selection and shape, row/channel ordering, actual completion counts, and live
-source-state/lifecycle checks. Do not hash visibilities, generated models,
+lifecycle checks. Nothing is stored in the source MeasurementSet to support
+them: holding the open MeasurementSet is the ownership (amended 2026-10-09 on
+owner direction; see ADR-0008). Do not hash visibilities, generated models,
 reprojection targets, weighting arrays or replay contributions to mint or verify
 within-run identities. A live owner/event token is not a content fingerprint and
 must not be described as one. It is not a portable identity for reuse in another

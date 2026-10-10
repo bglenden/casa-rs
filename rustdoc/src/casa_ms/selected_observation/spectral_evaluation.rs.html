@@ -924,7 +924,7 @@
 <a href=#924 id=924 data-nosnippet>924</a>
 <a href=#925 id=925 data-nosnippet>925</a><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 <a href=#926 id=926 data-nosnippet>926</a></span><span class="kw">struct </span>SpectralProjectionKey {
-<a href=#927 id=927 data-nosnippet>927</a>    measurement_set: casa_imaging_model::MeasurementSetIdentity,
+<a href=#927 id=927 data-nosnippet>927</a>    measurement_set: usize,
 <a href=#928 id=928 data-nosnippet>928</a>    spectral_window_id: u32,
 <a href=#929 id=929 data-nosnippet>929</a>    channel_index: u32,
 <a href=#930 id=930 data-nosnippet>930</a>    frequency_centre_bits: u64,
@@ -958,7 +958,7 @@
 <a href=#958 id=958 data-nosnippet>958</a>
 <a href=#959 id=959 data-nosnippet>959</a><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 <a href=#960 id=960 data-nosnippet>960</a></span><span class="kw">struct </span>SpectralTransformKey {
-<a href=#961 id=961 data-nosnippet>961</a>    measurement_set: casa_imaging_model::MeasurementSetIdentity,
+<a href=#961 id=961 data-nosnippet>961</a>    measurement_set: usize,
 <a href=#962 id=962 data-nosnippet>962</a>    field_id: i32,
 <a href=#963 id=963 data-nosnippet>963</a>    time_mjd_seconds_bits: u64,
 <a href=#964 id=964 data-nosnippet>964</a>    source_ref: FrequencyRef,
@@ -973,7 +973,7 @@
 <a href=#973 id=973 data-nosnippet>973</a>/// change forces a fresh owner evaluation.
 <a href=#974 id=974 data-nosnippet>974</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>SpectralEvaluationProjector {
 <a href=#975 id=975 data-nosnippet>975</a>    last_row_geometry: <span class="prelude-ty">Option</span>&lt;(SelectedRowSpectralSelection, SelectedRowSpectralGeometry)&gt;,
-<a href=#976 id=976 data-nosnippet>976</a>    last_source: <span class="prelude-ty">Option</span>&lt;casa_imaging_model::MeasurementSetIdentity&gt;,
+<a href=#976 id=976 data-nosnippet>976</a>    last_source: <span class="prelude-ty">Option</span>&lt;usize&gt;,
 <a href=#977 id=977 data-nosnippet>977</a>    source_frame: <span class="prelude-ty">Option</span>&lt;(i32, u64, MeasFrame)&gt;,
 <a href=#978 id=978 data-nosnippet>978</a>    last_transform: <span class="prelude-ty">Option</span>&lt;(SpectralTransformKey, PreparedFrequencyFrameConversion)&gt;,
 <a href=#979 id=979 data-nosnippet>979</a>    last_projection: <span class="prelude-ty">Option</span>&lt;(

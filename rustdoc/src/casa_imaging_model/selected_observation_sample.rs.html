@@ -8,7 +8,7 @@
 <a href=#8 id=8 data-nosnippet>8</a>
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use crate</span>::{
 <a href=#10 id=10 data-nosnippet>10</a>    geometry::{Epoch, FrequencyFrame, SkyDirection, UvwCoordinateLaw},
-<a href=#11 id=11 data-nosnippet>11</a>    observation::{CorrelationType, MeasurementSetIdentity},
+<a href=#11 id=11 data-nosnippet>11</a>    observation::CorrelationType,
 <a href=#12 id=12 data-nosnippet>12</a>};
 <a href=#13 id=13 data-nosnippet>13</a>
 <a href=#14 id=14 data-nosnippet>14</a><span class="doccomment">/// Reported source position and spectral/polarization coordinate of one sample.
@@ -18,8 +18,8 @@
 <a href=#18 id=18 data-nosnippet>18</a>/// validation.
 <a href=#19 id=19 data-nosnippet>19</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq)]
 <a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">pub struct </span>SelectedSampleAddress {
-<a href=#21 id=21 data-nosnippet>21</a>    <span class="doccomment">/// Logical MeasurementSet identity from the compiled observation commitment.
-<a href=#22 id=22 data-nosnippet>22</a>    </span><span class="kw">pub </span>measurement_set: MeasurementSetIdentity,
+<a href=#21 id=21 data-nosnippet>21</a>    <span class="doccomment">/// The MeasurementSet's position in the compiled observation snapshot.
+<a href=#22 id=22 data-nosnippet>22</a>    </span><span class="kw">pub </span>measurement_set: usize,
 <a href=#23 id=23 data-nosnippet>23</a>    <span class="doccomment">/// Physical MAIN row number.
 <a href=#24 id=24 data-nosnippet>24</a>    </span><span class="kw">pub </span>physical_row: u64,
 <a href=#25 id=25 data-nosnippet>25</a>    <span class="doccomment">/// MAIN `DATA_DESC_ID`.
@@ -436,8 +436,8 @@
 <a href=#436 id=436 data-nosnippet>436</a>/// every scalar sample.
 <a href=#437 id=437 data-nosnippet>437</a></span><span class="attr">#[derive(Debug, Clone, PartialEq)]
 <a href=#438 id=438 data-nosnippet>438</a></span><span class="kw">pub struct </span>SelectedObservationRunRow {
-<a href=#439 id=439 data-nosnippet>439</a>    <span class="doccomment">/// Logical MeasurementSet identity from the compiled observation commitment.
-<a href=#440 id=440 data-nosnippet>440</a>    </span><span class="kw">pub </span>measurement_set: MeasurementSetIdentity,
+<a href=#439 id=439 data-nosnippet>439</a>    <span class="doccomment">/// The MeasurementSet's position in the compiled observation snapshot.
+<a href=#440 id=440 data-nosnippet>440</a>    </span><span class="kw">pub </span>measurement_set: usize,
 <a href=#441 id=441 data-nosnippet>441</a>    <span class="doccomment">/// Physical MAIN row number.
 <a href=#442 id=442 data-nosnippet>442</a>    </span><span class="kw">pub </span>physical_row: u64,
 <a href=#443 id=443 data-nosnippet>443</a>    <span class="doccomment">/// MAIN `DATA_DESC_ID`.
@@ -662,7 +662,7 @@
 <a href=#662 id=662 data-nosnippet>662</a>/// traversal owns its provenance.
 <a href=#663 id=663 data-nosnippet>663</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq)]
 <a href=#664 id=664 data-nosnippet>664</a></span><span class="kw">pub struct </span>SelectedRowSpectralGeometry {
-<a href=#665 id=665 data-nosnippet>665</a>    measurement_set: MeasurementSetIdentity,
+<a href=#665 id=665 data-nosnippet>665</a>    measurement_set: usize,
 <a href=#666 id=666 data-nosnippet>666</a>    physical_row: u64,
 <a href=#667 id=667 data-nosnippet>667</a>    data_description_id: i32,
 <a href=#668 id=668 data-nosnippet>668</a>    spectral_window_id: u32,

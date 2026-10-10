@@ -830,9 +830,13 @@ normative design; this ADR records the decisions that supersede earlier ADRs.</p
    or plan identities. The only runtime record is an O(1)-per-phase run
    summary. ADR-0010 is superseded in full.</li>
 <li><strong>No identity hashing.</strong> Compiled problems, plans, products and selections
-   are compared directly or by ownership. The only persistent identity is the
-   AW convolution-function cache key. ADR-0014 and ADR-0015 remain in force
-   and are extended to plans and receipts.</li>
+   are compared directly or by ownership. No identity is persisted; an AW
+   convolution-function cache is reused by its cell layout (decision 7).
+   ADR-0014 and ADR-0015 remain in force
+   and are extended to plans and receipts. Nothing of casa-rs's is persisted
+   in a MeasurementSet: no keywords, generations, identities or marker files.
+   Imaging opens a MeasurementSet as CASA writes it (owner direction
+   2026-10-09, which amends ADR-0008).</li>
 <li><strong>Grid precision.</strong> Metal accumulates in f32; CPU defaults to f64 and
    offers f32 as a user-selectable request field. Acceptance is the 1e-3
    normalised tolerance of the owner's 2026-09-24 direction, not bitwise

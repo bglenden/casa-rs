@@ -12,9 +12,9 @@
 <a href=#12 id=12 data-nosnippet>12</a>    geometry::CompiledGeometryId,
 <a href=#13 id=13 data-nosnippet>13</a>    measurement_equation::VisibilityInnerProduct,
 <a href=#14 id=14 data-nosnippet>14</a>    observation::{
-<a href=#15 id=15 data-nosnippet>15</a>        CorrelationSelection, CorrelationType, DataDescriptionSelection, MeasurementSetIdentity,
-<a href=#16 id=16 data-nosnippet>16</a>        ObservationSnapshotId, SelectedMainRow, SelectedRowSequenceAccumulator,
-<a href=#17 id=17 data-nosnippet>17</a>        SelectedRowSequenceError, SpectralWindowSelection, VisibilityColumn, WeightColumn,
+<a href=#15 id=15 data-nosnippet>15</a>        CorrelationSelection, CorrelationType, DataDescriptionSelection, ObservationSnapshotId,
+<a href=#16 id=16 data-nosnippet>16</a>        SelectedMainRow, SelectedRowSequenceAccumulator, SelectedRowSequenceError,
+<a href=#17 id=17 data-nosnippet>17</a>        SpectralWindowSelection, VisibilityColumn, WeightColumn,
 <a href=#18 id=18 data-nosnippet>18</a>    },
 <a href=#19 id=19 data-nosnippet>19</a>    selected_observation_sample::{
 <a href=#20 id=20 data-nosnippet>20</a>        SelectedObservationRunChannel, SelectedObservationRunCorrelation,
@@ -163,13 +163,13 @@
 <a href=#163 id=163 data-nosnippet>163</a>    </span><span class="attr">#[error(<span class="string">"selected physical MAIN rows do not match source {measurement_set}"</span>)]
 <a href=#164 id=164 data-nosnippet>164</a>    </span>SelectedRowSequenceMismatch {
 <a href=#165 id=165 data-nosnippet>165</a>        <span class="doccomment">/// Source whose physical row sequence differed.
-<a href=#166 id=166 data-nosnippet>166</a>        </span>measurement_set: MeasurementSetIdentity,
+<a href=#166 id=166 data-nosnippet>166</a>        </span>measurement_set: usize,
 <a href=#167 id=167 data-nosnippet>167</a>    },
 <a href=#168 id=168 data-nosnippet>168</a>    <span class="doccomment">/// A reported DDID/SPW/polarization tuple contradicted the compiled catalog.
 <a href=#169 id=169 data-nosnippet>169</a>    </span><span class="attr">#[error(<span class="string">"selected DATA_DESCRIPTION coordinate does not match source {measurement_set}"</span>)]
 <a href=#170 id=170 data-nosnippet>170</a>    </span>DataDescriptionCoordinateMismatch {
 <a href=#171 id=171 data-nosnippet>171</a>        <span class="doccomment">/// Source containing the inconsistent coordinate.
-<a href=#172 id=172 data-nosnippet>172</a>        </span>measurement_set: MeasurementSetIdentity,
+<a href=#172 id=172 data-nosnippet>172</a>        </span>measurement_set: usize,
 <a href=#173 id=173 data-nosnippet>173</a>        <span class="doccomment">/// Reported physical MAIN row.
 <a href=#174 id=174 data-nosnippet>174</a>        </span>physical_row: u64,
 <a href=#175 id=175 data-nosnippet>175</a>    },
@@ -177,7 +177,7 @@
 <a href=#177 id=177 data-nosnippet>177</a>    </span><span class="attr">#[error(<span class="string">"selected sample is missing from source {measurement_set} row {physical_row}"</span>)]
 <a href=#178 id=178 data-nosnippet>178</a>    </span>MissingSample {
 <a href=#179 id=179 data-nosnippet>179</a>        <span class="doccomment">/// Source with incomplete sample coverage.
-<a href=#180 id=180 data-nosnippet>180</a>        </span>measurement_set: MeasurementSetIdentity,
+<a href=#180 id=180 data-nosnippet>180</a>        </span>measurement_set: usize,
 <a href=#181 id=181 data-nosnippet>181</a>        <span class="doccomment">/// Incomplete physical MAIN row.
 <a href=#182 id=182 data-nosnippet>182</a>        </span>physical_row: u64,
 <a href=#183 id=183 data-nosnippet>183</a>    },
@@ -185,7 +185,7 @@
 <a href=#185 id=185 data-nosnippet>185</a>    </span><span class="attr">#[error(<span class="string">"unexpected selected sample in source {measurement_set} row {physical_row}"</span>)]
 <a href=#186 id=186 data-nosnippet>186</a>    </span>UnexpectedSample {
 <a href=#187 id=187 data-nosnippet>187</a>        <span class="doccomment">/// Source containing the unexpected member.
-<a href=#188 id=188 data-nosnippet>188</a>        </span>measurement_set: MeasurementSetIdentity,
+<a href=#188 id=188 data-nosnippet>188</a>        </span>measurement_set: usize,
 <a href=#189 id=189 data-nosnippet>189</a>        <span class="doccomment">/// Reported physical MAIN row.
 <a href=#190 id=190 data-nosnippet>190</a>        </span>physical_row: u64,
 <a href=#191 id=191 data-nosnippet>191</a>    },
@@ -193,7 +193,7 @@
 <a href=#193 id=193 data-nosnippet>193</a>    </span><span class="attr">#[error(<span class="string">"duplicate selected sample in source {measurement_set} row {physical_row}"</span>)]
 <a href=#194 id=194 data-nosnippet>194</a>    </span>DuplicateSample {
 <a href=#195 id=195 data-nosnippet>195</a>        <span class="doccomment">/// Source containing the duplicated member.
-<a href=#196 id=196 data-nosnippet>196</a>        </span>measurement_set: MeasurementSetIdentity,
+<a href=#196 id=196 data-nosnippet>196</a>        </span>measurement_set: usize,
 <a href=#197 id=197 data-nosnippet>197</a>        <span class="doccomment">/// Reported physical MAIN row.
 <a href=#198 id=198 data-nosnippet>198</a>        </span>physical_row: u64,
 <a href=#199 id=199 data-nosnippet>199</a>    },
@@ -203,7 +203,7 @@
 <a href=#203 id=203 data-nosnippet>203</a>    </span>)]
 <a href=#204 id=204 data-nosnippet>204</a>    </span>NonCanonicalSampleOrder {
 <a href=#205 id=205 data-nosnippet>205</a>        <span class="doccomment">/// Source observed out of order.
-<a href=#206 id=206 data-nosnippet>206</a>        </span>measurement_set: MeasurementSetIdentity,
+<a href=#206 id=206 data-nosnippet>206</a>        </span>measurement_set: usize,
 <a href=#207 id=207 data-nosnippet>207</a>        <span class="doccomment">/// Physical row observed out of order.
 <a href=#208 id=208 data-nosnippet>208</a>        </span>physical_row: u64,
 <a href=#209 id=209 data-nosnippet>209</a>    },
@@ -211,7 +211,7 @@
 <a href=#211 id=211 data-nosnippet>211</a>    </span><span class="attr">#[error(<span class="string">"prediction target does not match source {measurement_set} row {physical_row}"</span>)]
 <a href=#212 id=212 data-nosnippet>212</a>    </span>PredictionTargetMismatch {
 <a href=#213 id=213 data-nosnippet>213</a>        <span class="doccomment">/// Source containing the wrong prediction target.
-<a href=#214 id=214 data-nosnippet>214</a>        </span>measurement_set: MeasurementSetIdentity,
+<a href=#214 id=214 data-nosnippet>214</a>        </span>measurement_set: usize,
 <a href=#215 id=215 data-nosnippet>215</a>        <span class="doccomment">/// Physical row containing the wrong prediction target.
 <a href=#216 id=216 data-nosnippet>216</a>        </span>physical_row: u64,
 <a href=#217 id=217 data-nosnippet>217</a>    },
@@ -219,7 +219,7 @@
 <a href=#219 id=219 data-nosnippet>219</a>    </span><span class="attr">#[error(<span class="string">"visibility storage does not match source {measurement_set} row {physical_row}"</span>)]
 <a href=#220 id=220 data-nosnippet>220</a>    </span>VisibilityStorageMismatch {
 <a href=#221 id=221 data-nosnippet>221</a>        <span class="doccomment">/// Source containing the wrong visibility representation.
-<a href=#222 id=222 data-nosnippet>222</a>        </span>measurement_set: MeasurementSetIdentity,
+<a href=#222 id=222 data-nosnippet>222</a>        </span>measurement_set: usize,
 <a href=#223 id=223 data-nosnippet>223</a>        <span class="doccomment">/// Physical MAIN row containing the wrong representation.
 <a href=#224 id=224 data-nosnippet>224</a>        </span>physical_row: u64,
 <a href=#225 id=225 data-nosnippet>225</a>    },
@@ -229,7 +229,7 @@
 <a href=#229 id=229 data-nosnippet>229</a>    </span>)]
 <a href=#230 id=230 data-nosnippet>230</a>    </span>WeightBroadcastMismatch {
 <a href=#231 id=231 data-nosnippet>231</a>        <span class="doccomment">/// Source containing inconsistent broadcast weights.
-<a href=#232 id=232 data-nosnippet>232</a>        </span>measurement_set: MeasurementSetIdentity,
+<a href=#232 id=232 data-nosnippet>232</a>        </span>measurement_set: usize,
 <a href=#233 id=233 data-nosnippet>233</a>        <span class="doccomment">/// Physical MAIN row containing inconsistent weights.
 <a href=#234 id=234 data-nosnippet>234</a>        </span>physical_row: u64,
 <a href=#235 id=235 data-nosnippet>235</a>    },
@@ -419,7 +419,7 @@
 <a href=#419 id=419 data-nosnippet>419</a>
 <a href=#420 id=420 data-nosnippet>420</a>    <span class="kw">fn </span>advance_to_source(
 <a href=#421 id=421 data-nosnippet>421</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#422 id=422 data-nosnippet>422</a>        measurement_set: MeasurementSetIdentity,
+<a href=#422 id=422 data-nosnippet>422</a>        measurement_set: usize,
 <a href=#423 id=423 data-nosnippet>423</a>        physical_row: u64,
 <a href=#424 id=424 data-nosnippet>424</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), SelectedObservationInspectionError&gt; {
 <a href=#425 id=425 data-nosnippet>425</a>        <span class="kw">while </span>measurement_set != <span class="self">self</span>.source.expected.measurement_set() {
@@ -471,7 +471,7 @@
 <a href=#471 id=471 data-nosnippet>471</a>
 <a href=#472 id=472 data-nosnippet>472</a><span class="kw">fn </span>prediction_target(
 <a href=#473 id=473 data-nosnippet>473</a>    write_set: <span class="kw-2">&amp;</span>ObservationWriteSet,
-<a href=#474 id=474 data-nosnippet>474</a>    measurement_set: MeasurementSetIdentity,
+<a href=#474 id=474 data-nosnippet>474</a>    measurement_set: usize,
 <a href=#475 id=475 data-nosnippet>475</a>) -&gt; SelectedPredictionTarget {
 <a href=#476 id=476 data-nosnippet>476</a>    <span class="kw">if </span>write_set.visibility_columns().iter().any(|write| {
 <a href=#477 id=477 data-nosnippet>477</a>        write.column() == MsColumnKind::ModelData &amp;&amp; write.measurement_set() == measurement_set
@@ -491,7 +491,7 @@
 <a href=#491 id=491 data-nosnippet>491</a>
 <a href=#492 id=492 data-nosnippet>492</a><span class="attr">#[derive(Clone, Copy)]
 <a href=#493 id=493 data-nosnippet>493</a></span><span class="kw">struct </span>InspectionRow {
-<a href=#494 id=494 data-nosnippet>494</a>    measurement_set: MeasurementSetIdentity,
+<a href=#494 id=494 data-nosnippet>494</a>    measurement_set: usize,
 <a href=#495 id=495 data-nosnippet>495</a>    physical_row: u64,
 <a href=#496 id=496 data-nosnippet>496</a>    data_description_id: i32,
 <a href=#497 id=497 data-nosnippet>497</a>    spectral_window_id: u32,
@@ -676,7 +676,7 @@
 <a href=#676 id=676 data-nosnippet>676</a>}
 <a href=#677 id=677 data-nosnippet>677</a>
 <a href=#678 id=678 data-nosnippet>678</a><span class="kw">struct </span>RowInspection&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#679 id=679 data-nosnippet>679</a>    measurement_set: MeasurementSetIdentity,
+<a href=#679 id=679 data-nosnippet>679</a>    measurement_set: usize,
 <a href=#680 id=680 data-nosnippet>680</a>    physical_row: u64,
 <a href=#681 id=681 data-nosnippet>681</a>    data_description: DataDescriptionSelection,
 <a href=#682 id=682 data-nosnippet>682</a>    spectral_window: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>SpectralWindowSelection,

@@ -840,8 +840,8 @@ same cache root and exercises the warm boundary. The runner is forced to skip
 CASA and to execute casa-rs, so an unavailable or aliased Rust AW route cannot
 produce a passing receipt.</p>
 <h2 id="required-external-inputs">Required external inputs<a class="headerlink" href="#required-external-inputs" title="Permanent link">&para;</a></h2>
-<div class="codehilite"><pre><span></span><code>Explicitly owner-initialized dataset root used for the retained T51 evidence
-(the immutable source MS remains unchanged):
+<div class="codehilite"><pre><span></span><code>Dataset root used for the retained T51 evidence (the immutable source MS
+remains unchanged):
 /Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-ticket-537-20260903.thHAWF/data
 
 Frozen dirty CASA prefix:
@@ -887,9 +887,9 @@ residency receipt. The shared parent must not exist before an actual gate run.
 The gate rejects a preexisting private store, requires the dirty run to
 materialize exactly 1,024 private manifests, and requires the clean run to
 reuse the exact unchanged manifest set.</p>
-<p>The direct MeasurementSet must already contain a valid
-<code>CASA_RS_IMAGING_OWNER_MANIFEST</code>; the gate never mutates or silently migrates
-the source dataset. The output directory, artifact root, CASA-oracle cache root,
+<p>The gate never mutates the source dataset. (Its earlier requirement of a
+<code>CASA_RS_IMAGING_OWNER_MANIFEST</code> keyword was removed on 2026-10-09; casa-rs
+reads a MeasurementSet as CASA wrote it.) The output directory, artifact root, CASA-oracle cache root,
 and shared native prepared-store parent must all be fresh safe paths on
 <code>/Volumes/GLENDENNING</code>. Native production storage validation requires the
 MeasurementSet and outputs to share one filesystem; do not make an unrecorded
