@@ -5,12 +5,12 @@
 //! natural weighting and unit-response normalization.
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts, DelayCentreLaw,
-    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
-    FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    InstrumentResponse, MeasurementEquationContract, ModelBounds, ModelColumnWrite,
-    ModelInnerProduct, ModelLifecycleRequirements, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
+    AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
+    MeasurementEquationContract, ModelBounds, ModelColumnWrite, ModelInnerProduct,
+    ModelLifecycleRequirements, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
     PointingCentreLaw, PolarizationContract, PolarizationCoordinate, ProblemInput,
     ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
     ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
@@ -125,7 +125,6 @@ pub fn continuum_problem_with_domains_and_reconstruction(
         domains,
         CentreLaws::new(
             PhaseCentreLaw::Fixed(phase_centre),
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::PhaseTrackingCentre,
         ),
         UvwCoordinateLaw::PhaseTrackingCentre,

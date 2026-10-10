@@ -6,12 +6,12 @@ use casa_imaging_application::{
 };
 use casa_imaging_model::{
     AwProjectionContract, AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts,
-    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout,
-    FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, InstrumentModel, InstrumentResponse, MeasurementEquationContract,
-    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationPointingLaw, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
+    FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
+    InstrumentModel, InstrumentResponse, MeasurementEquationContract, MissingPointingPolicy,
+    ModelColumnWrite, ModelInnerProduct, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationPointingLaw, ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw,
+    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
     ProblemInput, ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements,
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
@@ -290,7 +290,6 @@ impl ProblemFixture {
             )],
             CentreLaws::new(
                 self.phase_centre,
-                DelayCentreLaw::PhaseTrackingCentre,
                 PointingCentreLaw::Observation(ObservationPointingLaw::new(
                     PointingDirectionColumn::Direction,
                     PointingDirectionSemantic::AntennaBoresight,

@@ -112,7 +112,6 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
     let snapshot = compile_observation(snapshot_input)?;
     let geometry = geometry_with_centres(CentreLaws::new(
         PhaseCentreLaw::Ephemeris("TRACKFIELD".to_string()),
-        DelayCentreLaw::PhaseTrackingCentre,
         PointingCentreLaw::PhaseTrackingCentre,
     ))
     .with_spectral(SpectralCoordinateSpec::new(

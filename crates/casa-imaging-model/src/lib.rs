@@ -31,10 +31,10 @@ pub use compiled_problem::{
 
 pub use geometry::{
     AxisOrder, CentreLaws, CompileGeometryError, CompiledGeometry, CompiledImageDomain,
-    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
-    FacetWindow, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, ItrfPosition, MissingPointingPolicy, ObservationPointingLaw, PhaseCentreLaw,
-    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout, FacetWindow,
+    FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
+    ItrfPosition, MissingPointingPolicy, ObservationPointingLaw, PhaseCentreLaw, PointingCentreLaw,
+    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, Projection, PsfPhaseCentreLaw, RestFrequency,
     SkyDirection, SpectralCoordinateSpec, SpectralFrameAnchor, SpectralWcs, TimeScale, UvwAxes,
     UvwCoordinateLaw, UvwUnit, VisibilityPhaseConvention,

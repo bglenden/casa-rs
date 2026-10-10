@@ -6,22 +6,21 @@ mod model_lifecycle_fixture;
 
 use casa_imaging_model::{
     AxisOrder, CentreLaws, CompileProblemError, ContinuumChannelRole, ContinuumChannelUse,
-    ContinuumFitRule, CorrectedDataWrite, DeclaredInnerProducts, DelayCentreLaw,
-    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
-    FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    InstrumentResponse, MeasurementEquationContract, MissingPointingPolicy, ModelColumnWrite,
-    ModelInnerProduct, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationPointingLaw, ObservationSnapshot, ObservationSnapshotInput,
-    ObservationTransactionCompileError, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
-    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
-    ProblemInput, ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements,
-    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy,
-    ScientificContract, SequentialContinuumTransform, SkyDirection, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, compile_observation,
+    ContinuumFitRule, CorrectedDataWrite, DeclaredInnerProducts, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
+    MeasurementEquationContract, MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct,
+    MsColumnKind, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationSnapshot, ObservationSnapshotInput, ObservationTransactionCompileError,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
+    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
+    PolarizationContract, PolarizationCoordinate, ProblemInput, ProblemSpecification, ProductKind,
+    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    RestFrequency, RestoringBeamPolicy, ScientificContract, SequentialContinuumTransform,
+    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -87,7 +86,6 @@ fn try_compile_transaction(
         )],
         CentreLaws::new(
             PhaseCentreLaw::Fixed(direction.reference_direction()),
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::Observation(ObservationPointingLaw::new(
                 PointingDirectionColumn::Direction,
                 PointingDirectionSemantic::AntennaBoresight,

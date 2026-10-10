@@ -12,12 +12,12 @@
 use std::collections::BTreeSet;
 
 use casa_imaging_model::{
-    AwProjectionContract, AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw,
-    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FiniteValuePolicy, FlagPolicy,
-    FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    InstrumentModel, InstrumentResponse, MeasurementEquationContract, ModelColumnWrite,
-    ModelInnerProduct, NormalEquationForm, NormalStateNormalization, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationPointingLaw, ObservationTransactionRequirements,
+    AwProjectionContract, AxisOrder, CentreLaws, DeclaredInnerProducts, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentModel,
+    InstrumentResponse, MeasurementEquationContract, ModelColumnWrite, ModelInnerProduct,
+    NormalEquationForm, NormalStateNormalization, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationPointingLaw, ObservationTransactionRequirements,
     PairedMeasurementTransform, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
     PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
     PolarizationContract, PolarizationCoordinate, ProblemInput, ProblemSpecification,
@@ -201,7 +201,6 @@ fn geometry() -> GeometryInput {
         )],
         CentreLaws::new(
             PhaseCentreLaw::Fixed(direction.reference_direction()),
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::Observation(ObservationPointingLaw::new(
                 PointingDirectionColumn::Direction,
                 PointingDirectionSemantic::AntennaBoresight,

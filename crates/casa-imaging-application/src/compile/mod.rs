@@ -22,8 +22,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_imaging_model::{
-    CentreLaws, DelayCentreLaw, GeometryInput, ModelBounds, ModelLifecycleRequirements,
-    NativeAwRequestInput, NumericPrecision, ProblemSpecification, SequentialContinuumTransform,
+    CentreLaws, GeometryInput, ModelBounds, ModelLifecycleRequirements, NativeAwRequestInput,
+    NumericPrecision, ProblemSpecification, SequentialContinuumTransform,
     UncorrectedImageMaskPolicy, UvwCoordinateLaw, WeightColumn as OwnerWeightColumn,
 };
 use casa_imaging_operator::{AwCatalog, AwIndexing};
@@ -291,7 +291,6 @@ fn geometry(
         domains.iter().map(PreparedImageDomain::spec).collect(),
         CentreLaws::new(
             centre.law.clone(),
-            DelayCentreLaw::PhaseTrackingCentre,
             instrument::pointing_centre_law(&request.gridder),
         ),
         if direction_dependent {

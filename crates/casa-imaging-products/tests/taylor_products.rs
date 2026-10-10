@@ -11,12 +11,12 @@ use common::synthetic_pass::{Scene, two_cycle_round};
 use common::{GeneratedMember, GeneratedProducts, MemoryProductOutput, full_window};
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
-    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
-    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
-    MeasurementEquationContract, ModelBounds, ModelCell, ModelColumnWrite, ModelDeltaTerm,
-    ModelInnerProduct, ModelLifecycleRequirements, ModelValue, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
+    AxisOrder, CentreLaws, DeclaredInnerProducts, DirectionCoordinateSpec, DirectionFrame,
+    DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis,
+    ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse, MeasurementEquationContract,
+    ModelBounds, ModelCell, ModelColumnWrite, ModelDeltaTerm, ModelInnerProduct,
+    ModelLifecycleRequirements, ModelValue, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
     PointingCentreLaw, PolarizationContract, PolarizationCoordinate, ProblemInput,
     ProblemSpecification, ProductBeamRule, ProductKind, ProductNormalization, ProductRequirements,
     ProductRole, ProductTerm, ProductUnit, ProductValidityPolicies, ProductValidityRule,
@@ -105,7 +105,6 @@ fn taylor_problem_with_fraction(
         )],
         CentreLaws::new(
             PhaseCentreLaw::Fixed(direction.reference_direction()),
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::PhaseTrackingCentre,
         ),
         UvwCoordinateLaw::PhaseTrackingCentre,

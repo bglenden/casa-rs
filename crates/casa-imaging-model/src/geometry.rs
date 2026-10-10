@@ -569,17 +569,6 @@ pub enum PhaseCentreLaw {
     Ephemeris(String),
 }
 
-/// Law selecting the delay centre.
-#[derive(Debug, Clone, PartialEq)]
-pub enum DelayCentreLaw {
-    /// Use the compiled phase-tracking centre.
-    PhaseTrackingCentre,
-    /// Use the observation delay centre.
-    Observation,
-    /// Use one fixed framed direction.
-    Fixed(SkyDirection),
-}
-
 /// Law selecting antenna pointing directions.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PointingCentreLaw {
@@ -595,25 +584,19 @@ pub enum PointingCentreLaw {
     Fixed(SkyDirection),
 }
 
-/// Phase, delay, and pointing centre laws, without evaluated sample arrays.
+/// Phase-tracking and pointing centre laws, without evaluated sample arrays.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CentreLaws {
     phase_tracking: PhaseCentreLaw,
-    delay: DelayCentreLaw,
     pointing: PointingCentreLaw,
 }
 
 impl CentreLaws {
     /// Construct all centre-selection laws explicitly.
     #[must_use]
-    pub const fn new(
-        phase_tracking: PhaseCentreLaw,
-        delay: DelayCentreLaw,
-        pointing: PointingCentreLaw,
-    ) -> Self {
+    pub const fn new(phase_tracking: PhaseCentreLaw, pointing: PointingCentreLaw) -> Self {
         Self {
             phase_tracking,
-            delay,
             pointing,
         }
     }
@@ -622,12 +605,6 @@ impl CentreLaws {
     #[must_use]
     pub const fn phase_tracking(&self) -> &PhaseCentreLaw {
         &self.phase_tracking
-    }
-
-    /// Return the delay-centre law.
-    #[must_use]
-    pub const fn delay(&self) -> &DelayCentreLaw {
-        &self.delay
     }
 
     /// Return the pointing-centre law.
@@ -1422,9 +1399,6 @@ fn canonicalize_centres(centres: &mut CentreLaws) -> Result<(), CompileGeometryE
             return Err(CompileGeometryError::InvalidCentreLaw);
         }
         PhaseCentreLaw::Ephemeris(_) => {}
-    }
-    if let DelayCentreLaw::Fixed(direction) = &mut centres.delay {
-        *direction = direction.canonicalize()?;
     }
     match &mut centres.pointing {
         PointingCentreLaw::PhaseTrackingCentre | PointingCentreLaw::FieldCentre => {}

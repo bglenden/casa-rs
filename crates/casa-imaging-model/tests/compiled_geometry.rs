@@ -2,7 +2,7 @@
 
 use casa_imaging_model::{
     AxisOrder, CentreLaws, CompileGeometryError, CompileProblemError, DeclaredInnerProducts,
-    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
+    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
     ImageShape, InstrumentResponse, ItrfPosition, MeasurementEquationContract,
     MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, NumericPrecision, NumericalStage,
@@ -83,7 +83,6 @@ fn geometry() -> GeometryInput {
         )],
         CentreLaws::new(
             PhaseCentreLaw::Fixed(direction.reference_direction()),
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::Observation(observation_pointing()),
         ),
         UvwCoordinateLaw::PhaseTrackingCentre,
@@ -248,7 +247,6 @@ fn every_observation_pointing_semantic_is_retained() {
     let compiled = variants.map(|law| {
         let input = geometry().with_centres(CentreLaws::new(
             geometry().centres().phase_tracking().clone(),
-            geometry().centres().delay().clone(),
             PointingCentreLaw::Observation(law),
         ));
         compile(request(input)).expect("compile pointing law")
@@ -265,7 +263,6 @@ fn every_observation_pointing_semantic_is_retained() {
 fn pointing_column_and_semantic_must_match() {
     let inconsistent = geometry().with_centres(CentreLaws::new(
         geometry().centres().phase_tracking().clone(),
-        geometry().centres().delay().clone(),
         PointingCentreLaw::Observation(observation_pointing().with_direction(
             PointingDirectionColumn::Direction,
             PointingDirectionSemantic::TrackingTarget,

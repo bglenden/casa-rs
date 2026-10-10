@@ -15,10 +15,10 @@ use crate::{
 };
 use casa_imaging_model::{
     AntennaResponseClass, AxisOrder, CentreLaws, CorrelationProduct, CorrelationSelection,
-    CorrelationType, DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw,
-    DirectionCoordinateSpec, DirectionFrame, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy,
-    FrequencyFrame, GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, InstrumentModel, InstrumentResponse, IntentSelection, ItrfPosition,
+    CorrelationType, DataDescriptionSelection, DeclaredInnerProducts, DirectionCoordinateSpec,
+    DirectionFrame, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
+    GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
+    InstrumentModel, InstrumentResponse, IntentSelection, ItrfPosition,
     MeasurementEquationContract, MissingPointingPolicy, ModelBounds, ModelColumnWrite,
     ModelInnerProduct, ModelLifecycleRequirements, NumericPrecision, NumericalStage,
     NumericsContract, ObservationPointingLaw, ObservationSelection, ObservationSnapshotInput,
@@ -636,7 +636,6 @@ fn selected_observation_accepts_exact_ephemeris_within_its_budget() {
         2,
         CentreLaws::new(
             PhaseCentreLaw::Ephemeris("Mars".to_string()),
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::PhaseTrackingCentre,
         ),
     );
@@ -950,7 +949,6 @@ fn retained_opened_table_metadata_is_charged_once_for_oversized_variable_referen
     generate_fixture(&path);
     let centres = CentreLaws::new(
         PhaseCentreLaw::Observation,
-        DelayCentreLaw::PhaseTrackingCentre,
         PointingCentreLaw::Observation(ObservationPointingLaw::new(
             PointingDirectionColumn::Direction,
             PointingDirectionSemantic::AntennaBoresight,
@@ -1100,7 +1098,6 @@ fn variable_pointing_string_references_are_read_without_retaining_table_state() 
         2,
         CentreLaws::new(
             PhaseCentreLaw::Observation,
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::Observation(ObservationPointingLaw::new(
                 PointingDirectionColumn::Direction,
                 PointingDirectionSemantic::AntennaBoresight,
@@ -1658,14 +1655,12 @@ fn retained_selected_samples_evaluate_fixed_pointing_centres() {
     let path = directory.path().join("fixed.ms");
     generate_fixture(&path);
     let phase = SkyDirection::new(DirectionFrame::J2000, 0.7, -0.2);
-    let delay = SkyDirection::new(DirectionFrame::J2000, 0.8, -0.25);
     let pointing = SkyDirection::new(DirectionFrame::J2000, 0.9, -0.3);
     let problem = compiled_problem_with_centres(
         &path,
         2,
         CentreLaws::new(
             PhaseCentreLaw::Fixed(phase),
-            DelayCentreLaw::Fixed(delay),
             PointingCentreLaw::Fixed(pointing),
         ),
     );
@@ -1687,7 +1682,6 @@ fn retained_mosaic_projection_uses_girar_uvw_with_adjoint_phase_sign() {
     let phase = SkyDirection::new(DirectionFrame::J2000, 0.7, -0.2);
     let centres = CentreLaws::new(
         PhaseCentreLaw::Fixed(phase),
-        DelayCentreLaw::PhaseTrackingCentre,
         PointingCentreLaw::PhaseTrackingCentre,
     );
     let problem = compiled_problem_with_geometry(
@@ -1741,7 +1735,6 @@ fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
         2,
         CentreLaws::new(
             PhaseCentreLaw::Ephemeris("Mars".to_string()),
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::PhaseTrackingCentre,
         ),
     );
@@ -1814,7 +1807,6 @@ fn retained_selected_samples_preserve_bounded_per_antenna_pointing_directions() 
         2,
         CentreLaws::new(
             PhaseCentreLaw::Observation,
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::Observation(ObservationPointingLaw::new(
                 PointingDirectionColumn::Direction,
                 PointingDirectionSemantic::AntennaBoresight,
@@ -1890,7 +1882,6 @@ fn observation_pointing_missing_policy_is_explicit_and_fail_closed() {
         2,
         CentreLaws::new(
             PhaseCentreLaw::Observation,
-            DelayCentreLaw::PhaseTrackingCentre,
             observation_pointing(MissingPointingPolicy::UsePhaseTrackingCentre),
         ),
     );
@@ -1899,11 +1890,7 @@ fn observation_pointing_missing_policy_is_explicit_and_fail_closed() {
     let field_centre_problem = compiled_problem_with_centres(
         &path,
         2,
-        CentreLaws::new(
-            PhaseCentreLaw::Observation,
-            DelayCentreLaw::PhaseTrackingCentre,
-            PointingCentreLaw::FieldCentre,
-        ),
+        CentreLaws::new(PhaseCentreLaw::Observation, PointingCentreLaw::FieldCentre),
     );
     let field_centre = stream_rows(&field_centre_problem, 2);
     let fallback = stream_rows(&fallback_problem, 2);
@@ -1920,7 +1907,6 @@ fn observation_pointing_missing_policy_is_explicit_and_fail_closed() {
         2,
         CentreLaws::new(
             PhaseCentreLaw::Observation,
-            DelayCentreLaw::PhaseTrackingCentre,
             observation_pointing(MissingPointingPolicy::Reject),
         ),
     );
@@ -2007,7 +1993,6 @@ fn observation_pointing_interpolates_each_antenna_on_the_shortest_arc() {
         2,
         CentreLaws::new(
             PhaseCentreLaw::Observation,
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::Observation(ObservationPointingLaw::new(
                 PointingDirectionColumn::Direction,
                 PointingDirectionSemantic::AntennaBoresight,
@@ -2064,7 +2049,6 @@ fn selected_rows_pair_owner_derived_heterogeneous_apertures_with_antenna_pointin
 
     let centres = CentreLaws::new(
         PhaseCentreLaw::Observation,
-        DelayCentreLaw::PhaseTrackingCentre,
         observation_pointing(MissingPointingPolicy::Reject),
     );
     let snapshot = compile_observation(ObservationSnapshotInput::new(vec![source_input(&path, 2)]))
@@ -2956,7 +2940,6 @@ fn specification_with_science(
 fn geometry() -> GeometryInput {
     geometry_with_centres(CentreLaws::new(
         PhaseCentreLaw::Observation,
-        DelayCentreLaw::PhaseTrackingCentre,
         PointingCentreLaw::PhaseTrackingCentre,
     ))
 }
@@ -3069,7 +3052,6 @@ fn multidomain_geometry() -> GeometryInput {
         ],
         CentreLaws::new(
             PhaseCentreLaw::Observation,
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::PhaseTrackingCentre,
         ),
         UvwCoordinateLaw::PhaseTrackingCentre,
