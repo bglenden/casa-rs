@@ -1043,8 +1043,9 @@ pub enum MeasurementSetWriteError {
     },
     /// casacore's write lock on MAIN could not be taken or released.
     ///
-    /// [`TableError::LockFailed`] means another writer holds it: another
-    /// process, casacore's or casa-rs's, or another handle in this process.
+    /// [`TableError::LockFailed`] means another handle in this process holds
+    /// it, another process wrote MAIN while this writer waited for it, or
+    /// waiting would deadlock; a lock another process holds is waited for.
     #[error("casacore write lock on MeasurementSet {path}: {source}")]
     WriteLock {
         /// MeasurementSet (MAIN table) directory.
@@ -1052,6 +1053,18 @@ pub enum MeasurementSetWriteError {
         /// Lock failure.
         #[source]
         source: TableError,
+    },
+    /// A mutation batch was given a MeasurementSet other than the one the
+    /// session locked and was started on.
+    #[error(
+        "selected-row mutation of MeasurementSet {session} was given MeasurementSet {batch}; \
+         a session writes only the MeasurementSet it locked"
+    )]
+    ForeignMeasurementSet {
+        /// MeasurementSet directory the session locked.
+        session: String,
+        /// MeasurementSet directory the batch was given.
+        batch: String,
     },
 }
 
@@ -1164,6 +1177,9 @@ enum MeasurementSetWriteSessionState {
         /// casacore's MAIN write lock, held until the session finishes or is
         /// dropped.
         write_lock: TableWriteLock,
+        /// Canonical path of the locked MeasurementSet; every batch must
+        /// write this one.
+        target: PathBuf,
         next_selected_row: usize,
         write_seconds: f64,
         bytes_written: usize,
@@ -1771,19 +1787,27 @@ impl MeasurementSetWriteSession {
 
     /// Start a bounded selected-row mutation of `measurement_set` in place.
     ///
-    /// The session takes casacore's write lock on MAIN, once and without
-    /// waiting, before it changes anything, and holds it until
-    /// [`finish_mutation`](Self::finish_mutation) or until the session is
-    /// dropped. Another writer is therefore refused while the session lives:
-    /// a casacore or casa-rs process, another handle in this process, and a
-    /// [`MeasurementSet::save`] of any handle, this one included; the session
-    /// persists its own batches. `measurement_set` must be opened without
-    /// table locking ([`MeasurementSet::open`]).
+    /// The session takes casacore's write lock on MAIN before it changes
+    /// anything, and holds it until [`finish_mutation`](Self::finish_mutation)
+    /// or until the session is dropped. When another process holds a lock on
+    /// MAIN, read or write, the session waits for it as casacore does,
+    /// registered in the lock file's request list so that a casacore holder
+    /// using `AutoLocking` releases it at its next inspection; the wait is
+    /// logged. Another writer is excluded while the session lives: a casacore
+    /// or casa-rs process waits, and another handle in this process and a
+    /// [`MeasurementSet::save`] of any handle, this one included, are refused
+    /// at once; the session persists its own batches. `measurement_set` must
+    /// be opened without table locking ([`MeasurementSet::open`]).
     ///
     /// # Errors
     ///
-    /// [`MeasurementSetWriteError::WriteLock`] when the lock is held
-    /// elsewhere or cannot be taken.
+    /// [`MeasurementSetWriteError::WriteLock`] when another handle in this
+    /// process holds the lock, when another process wrote MAIN while the
+    /// session waited for it, or when the lock cannot be taken.
+    /// [`MeasurementSetWriteError::Install`] when a column to create, or the
+    /// column it clones, is not in MAIN's schema, found before the lock is
+    /// taken so nothing is published, or when an installation fails; MAIN is
+    /// then published as persisted, with the columns installed before it.
     #[doc(hidden)]
     pub fn start_selected_row_mutation(
         measurement_set: &mut MeasurementSet,
@@ -1821,7 +1845,33 @@ impl MeasurementSetWriteSession {
                     .to_string(),
             ));
         }
-        let mut write_lock = TableWriteLock::acquire(path, 1).map_err(|source| {
+        // Check what can be checked before the lock is taken, so that a plan
+        // whose columns cannot be installed publishes nothing.
+        let main = measurement_set.main_table();
+        let in_schema = |name: &str| {
+            main.schema()
+                .is_some_and(|schema| schema.contains_column(name))
+        };
+        for column in &plan.columns {
+            let persisted = main
+                .data_manager_info()
+                .iter()
+                .any(|manager| manager.columns.iter().any(|name| name == &column.name));
+            if column.mode != MeasurementSetColumnWriteMode::Create || persisted {
+                continue;
+            }
+            let missing = std::iter::once(column.name.as_str())
+                .chain(column.create_source_column.as_deref())
+                .find(|name| !in_schema(name));
+            if let Some(missing) = missing {
+                return Err(MeasurementSetWriteError::Install {
+                    column: column.name.clone(),
+                    reason: format!("column \"{missing}\" does not exist in schema"),
+                });
+            }
+        }
+        let target = canonical_measurement_set_path(path)?;
+        let mut write_lock = TableWriteLock::acquire(path, 0).map_err(|source| {
             MeasurementSetWriteError::WriteLock {
                 path: path.display().to_string(),
                 source,
@@ -1835,6 +1885,11 @@ impl MeasurementSetWriteSession {
                     .iter()
                     .any(|manager| manager.columns.iter().any(|name| name == &column.name));
                 if !already_persisted {
+                    // Each installation is persisted at once. Recording a
+                    // write before each one means that when an installation
+                    // fails, the lock still publishes the columns installed
+                    // before it, and any part of this one, as persisted.
+                    write_lock.record_write();
                     if let Some(source) = &column.create_source_column {
                         measurement_set
                             .main_table_mut()
@@ -1857,11 +1912,12 @@ impl MeasurementSetWriteSession {
                 }
             }
         }
-        write_lock.record_write(measurement_set.main_table());
+        write_lock.record_write();
         Ok(Self {
             plan,
             state: MeasurementSetWriteSessionState::Mutation {
                 write_lock,
+                target,
                 next_selected_row: 0,
                 write_seconds: 0.0,
                 bytes_written: 0,
@@ -1872,6 +1928,12 @@ impl MeasurementSetWriteSession {
     }
 
     /// Persist one typed mutation batch and release it from the table cache.
+    ///
+    /// `measurement_set` must be the MeasurementSet the session was started
+    /// on, the one whose write lock it holds: a handle on another
+    /// MeasurementSet is refused with
+    /// [`MeasurementSetWriteError::ForeignMeasurementSet`] before anything is
+    /// written.
     #[doc(hidden)]
     pub fn write_mutation_batch(
         &mut self,
@@ -1879,6 +1941,7 @@ impl MeasurementSetWriteSession {
         batch: MeasurementSetMutationBatch,
     ) -> Result<(), MeasurementSetWriteError> {
         let MeasurementSetWriteSessionState::Mutation {
+            target,
             next_selected_row,
             write_seconds,
             bytes_written,
@@ -1890,6 +1953,19 @@ impl MeasurementSetWriteSession {
                 "mutation batches require a selected-row session".to_string(),
             ));
         };
+        let given = measurement_set
+            .path()
+            .map(canonical_measurement_set_path)
+            .transpose()?;
+        if given.as_ref() != Some(target) {
+            return Err(MeasurementSetWriteError::ForeignMeasurementSet {
+                session: target.display().to_string(),
+                batch: given.map_or_else(
+                    || "without a path".to_string(),
+                    |path| path.display().to_string(),
+                ),
+            });
+        }
         if batch.row_indices.is_empty() {
             return Err(MeasurementSetWriteError::InvalidPlan(
                 "mutation batch must contain at least one row".to_string(),
@@ -2058,6 +2134,7 @@ impl MeasurementSetWriteSession {
         let MeasurementSetWriteSession { plan, state } = self;
         let MeasurementSetWriteSessionState::Mutation {
             write_lock,
+            target: _,
             next_selected_row,
             write_seconds,
             bytes_written,
@@ -2155,6 +2232,17 @@ fn complete_scalar_finalization(
     }
     telemetry.finalize_seconds += cleanup_started.elapsed().as_secs_f64();
     Ok(telemetry)
+}
+
+/// The canonical path of a MeasurementSet directory, which identifies the
+/// MeasurementSet a mutation session writes.
+fn canonical_measurement_set_path(path: &Path) -> Result<PathBuf, MeasurementSetWriteError> {
+    std::fs::canonicalize(path).map_err(|error| {
+        MeasurementSetWriteError::InvalidPlan(format!(
+            "resolve MeasurementSet {}: {error}",
+            path.display()
+        ))
+    })
 }
 
 fn primitive_value_bytes(primitive_type: PrimitiveType) -> Option<usize> {

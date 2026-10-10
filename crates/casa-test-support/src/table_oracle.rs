@@ -44,6 +44,22 @@ impl TableOracle {
         })
     }
 
+    /// Open the table at `path` in C++ casacore with `UserLocking`, take,
+    /// release and retake an explicit read lock, and return `(rows,
+    /// columns)` as the locked table reports them.
+    ///
+    /// Each lock synchronizes the open table with the sync data in
+    /// `table.lock`, so this fails when that data does not describe the
+    /// table on disk (column count, or one counter per data manager).
+    pub fn lock_read_relock(path: &std::path::Path) -> Result<(u64, u32), OracleError> {
+        table_operation!("table.lock_read_relock", {
+            cpp_lock_read_relock(path).map_err(|message| OracleError::CppFailure {
+                operation: "table.lock_read_relock",
+                message,
+            })
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn columns_index_time_lookups(
         path: &std::path::Path,

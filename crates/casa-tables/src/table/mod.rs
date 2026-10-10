@@ -15,6 +15,8 @@ use thiserror::Error;
 #[cfg(unix)]
 use crate::lock::LockFile;
 use crate::lock::SyncData;
+#[cfg(unix)]
+use crate::lock::publish_persisted_write;
 use crate::lock::{LockMode, LockOptions, LockType};
 use crate::schema::{ArrayShapeContract, ColumnSchema, ColumnType, SchemaError, TableSchema};
 use crate::storage::virtual_engine::VirtualColumnBinding;
@@ -1976,6 +1978,19 @@ struct LockState {
     options: LockOptions,
     data_manager: DataManagerKind,
     endian_format: EndianFormat,
+    /// The table's change count when its state last matched the disk (open,
+    /// reload or flush). Releasing a write lock writes and publishes the
+    /// table only when the count has moved since, as casacore's
+    /// `PlainTable::putFile` writes only what changed.
+    flushed_generation: u64,
+}
+
+#[cfg(unix)]
+impl LockState {
+    /// Whether the table changed since its state last matched the disk.
+    fn has_unflushed_changes(&self, table: &TableImpl) -> bool {
+        table.generation() != self.flushed_generation
+    }
 }
 
 #[cfg(unix)]
@@ -2424,26 +2439,26 @@ impl Drop for Table {
         #[cfg(unix)]
         {
             if self.kind != TableKind::Memory {
-                let had_write_lock = self
-                    .lock_state
-                    .as_ref()
-                    .is_some_and(|state| state.lock_file.has_lock(LockType::Write));
+                // A write lock that changed nothing writes and publishes
+                // nothing, as in casacore.
+                let has_changes_to_flush = self.lock_state.as_ref().is_some_and(|state| {
+                    state.lock_file.has_lock(LockType::Write)
+                        && state.has_unflushed_changes(&self.inner)
+                });
 
-                if had_write_lock {
+                if has_changes_to_flush {
                     let save_opts = self.lock_state.as_ref().map(|state| {
                         TableOptions::new(&state.path)
                             .with_data_manager(state.data_manager)
                             .with_endian_format(state.endian_format)
                     });
 
-                    if let Some(save_opts) = save_opts
-                        && self.save(save_opts).is_ok()
-                    {
-                        let nrrow = self.row_count() as u64;
-                        let nrcolumn = self.schema().map(|s| s.columns().len() as u32).unwrap_or(0);
-                        if let Some(state) = self.lock_state.as_mut() {
-                            state.sync_data.record_write(nrrow, nrcolumn, true, &[true]);
-                            let _ = state.lock_file.write_sync_data(&state.sync_data);
+                    if let Some(save_opts) = save_opts {
+                        // Whatever part of the save reached the disk is
+                        // published, describing the table as persisted.
+                        let _ = self.save(save_opts);
+                        if let Some(state) = self.lock_state.as_ref() {
+                            let _ = publish_persisted_write(&state.lock_file, &state.path);
                         }
                     }
                 }

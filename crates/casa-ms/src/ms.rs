@@ -462,13 +462,21 @@ impl MeasurementSet {
     /// keyword payloads using casacore's relative `././SUBTABLE` form.
     ///
     /// Every table rewritten in place is written under casacore's table write
-    /// lock, taken once without waiting before anything is written and
-    /// released after the save; see [`TableWriteLock`].
+    /// lock, taken before anything is written and released after the save;
+    /// see [`TableWriteLock`]. A lock another process holds is waited for,
+    /// as casacore waits, but never while this save holds the lock of
+    /// another table of the MeasurementSet: the save releases those, waits
+    /// for the held one alone and then takes the others again, so it cannot
+    /// deadlock with a process that holds one table while it waits for
+    /// another.
     ///
     /// # Errors
     ///
-    /// [`MsError::Table`] with [`TableError::LockFailed`] when another writer
-    /// holds the write lock on MAIN or a subtable.
+    /// [`MsError::Table`] with [`TableError::LockFailed`] when another handle
+    /// in this process holds the write lock on MAIN or a subtable, when
+    /// another process wrote such a table while the save waited for it or
+    /// for another table, or when the wait would deadlock. A refused save
+    /// writes nothing.
     pub fn save(&mut self) -> MsResult<()> {
         let path = self
             .path
@@ -484,14 +492,16 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
-        let locks = self.lock_tables_for_in_place_save(&path, true)?;
+        let mut locks = self.lock_tables_for_in_place_save(&path, true)?;
+        locks.record(None);
         save_main_table_with_policy(&mut self.main, &path)?;
 
         for (id, table) in &self.subtables {
             let subtable_path = self.subtable_path(&path, *id);
+            locks.record(Some(*id));
             table.save(measurement_set_table_options(&subtable_path))?;
         }
-        self.release_in_place_save_locks(locks)?;
+        locks.release()?;
 
         tracing::info!(path = %path.display(), rows = self.row_count(), "saved MeasurementSet");
         Ok(())
@@ -508,14 +518,26 @@ impl MeasurementSet {
     /// subtable, in canonical order, for a save that rewrites them in place.
     ///
     /// A table whose directory holds no `table.dat` yet is being created, not
-    /// changed in place, and is not locked. Each write is recorded before
-    /// anything is written, so an interrupted save still tells other processes
-    /// to re-read the table.
+    /// changed in place, and is not locked. No write is recorded here: the
+    /// save records each table just before it writes it (see
+    /// [`InPlaceSaveLocks`]).
+    ///
+    /// A lock another process holds is waited for, but never while this save
+    /// holds another table's lock: a process waiting for a lock the save holds
+    /// may hold the one the save waits for. The kernel would refuse that wait
+    /// as a deadlock and fail the save; releasing first lets the save complete
+    /// once the other process is done. On the first table that is held, every
+    /// lock taken so far is released, unrecorded, the save waits for that
+    /// table alone and keeps it, and then tries the rest again. A released
+    /// table's modify counter is read before its lock is released and
+    /// compared once every lock is held again: if another process wrote the
+    /// table meanwhile, the save would overwrite that write with its stale
+    /// in-memory table, so it is refused before anything is written.
     fn lock_tables_for_in_place_save(
         &self,
         path: &Path,
         subtables: bool,
-    ) -> MsResult<Vec<(Option<SubtableId>, TableWriteLock)>> {
+    ) -> MsResult<InPlaceSaveLocks> {
         let mut tables = vec![(None, path.to_path_buf())];
         if subtables {
             tables.extend(
@@ -526,36 +548,63 @@ impl MeasurementSet {
                     .map(|id| (Some(*id), self.subtable_path(path, *id))),
             );
         }
-        let mut locks = Vec::with_capacity(tables.len());
-        for (id, table_path) in tables {
-            if !table_path.join("table.dat").is_file() {
-                continue;
+        tables.retain(|(_, table_path)| table_path.join("table.dat").is_file());
+        let mut held: Vec<Option<TableWriteLock>> = tables.iter().map(|_| None).collect();
+        // The modify counter of each table whose lock was released to wait
+        // for another, read while it was still held.
+        let mut released_at: Vec<Option<Option<u32>>> = tables.iter().map(|_| None).collect();
+        'acquire: loop {
+            for (index, (_, table_path)) in tables.iter().enumerate() {
+                if held[index].is_some() {
+                    continue;
+                }
+                match TableWriteLock::acquire(table_path, 1) {
+                    Ok(lock) => held[index] = Some(lock),
+                    Err(TableError::LockFailed { .. }) => {
+                        // Release before waiting; a holder in this process is
+                        // refused again at once by the waiting request.
+                        for (lock, baseline) in held.iter_mut().zip(released_at.iter_mut()) {
+                            if let Some(lock) = lock.take()
+                                && baseline.is_none()
+                            {
+                                *baseline = Some(lock.modify_counter()?);
+                            }
+                        }
+                        held[index] = Some(TableWriteLock::acquire(table_path, 0)?);
+                        continue 'acquire;
+                    }
+                    Err(error) => return Err(error.into()),
+                }
             }
-            let mut lock = TableWriteLock::acquire(&table_path, 1)?;
-            lock.record_write(self.locked_table(id));
-            locks.push((id, lock));
+            break;
         }
-        Ok(locks)
-    }
-
-    /// Publish each saved table's shape in its sync data and release the
-    /// locks taken by [`lock_tables_for_in_place_save`](Self::lock_tables_for_in_place_save).
-    fn release_in_place_save_locks(
-        &self,
-        locks: Vec<(Option<SubtableId>, TableWriteLock)>,
-    ) -> MsResult<()> {
-        for (id, mut lock) in locks.into_iter().rev() {
-            lock.record_write(self.locked_table(id));
-            lock.release()?;
+        // A table released while the save waited for another may have been
+        // written by another process meanwhile; the in-memory tables would
+        // then overwrite that write, so the save is refused before anything
+        // is written.
+        for (index, (_, table_path)) in tables.iter().enumerate() {
+            let Some(baseline) = released_at[index] else {
+                continue;
+            };
+            let lock = held[index].as_ref().expect("every table is locked");
+            if lock.modify_counter()? != baseline {
+                return Err(TableError::LockFailed {
+                    path: table_path.display().to_string(),
+                    message: "another process wrote this table while the save waited for \
+                              another table of the MeasurementSet; reopen the MeasurementSet \
+                              and retry"
+                        .to_string(),
+                }
+                .into());
+            }
         }
-        Ok(())
-    }
-
-    fn locked_table(&self, id: Option<SubtableId>) -> &Table {
-        match id {
-            None => &self.main,
-            Some(id) => &self.subtables[&id],
-        }
+        Ok(InPlaceSaveLocks {
+            locks: tables
+                .into_iter()
+                .zip(held)
+                .map(|((id, _), lock)| (id, lock.expect("every table is locked")))
+                .collect(),
+        })
     }
 
     pub(crate) fn save_with_main_column_overrides(
@@ -570,7 +619,8 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
-        let locks = self.lock_tables_for_in_place_save(&path, true)?;
+        let mut locks = self.lock_tables_for_in_place_save(&path, true)?;
+        locks.record(None);
         save_main_table_with_policy_and_column_overrides(&mut self.main, &path, column_overrides)?;
 
         let subtable_paths = self
@@ -579,11 +629,12 @@ impl MeasurementSet {
             .map(|id| (*id, self.subtable_path(&path, *id)))
             .collect::<HashMap<_, _>>();
         for (id, table) in &mut self.subtables {
+            locks.record(Some(*id));
             table
                 .prepare_write()
                 .save(measurement_set_table_options(&subtable_paths[id]))?;
         }
-        self.release_in_place_save_locks(locks)?;
+        locks.release()?;
 
         Ok(())
     }
@@ -607,9 +658,10 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
-        let locks = self.lock_tables_for_in_place_save(&path, false)?;
+        let mut locks = self.lock_tables_for_in_place_save(&path, false)?;
+        locks.record(None);
         save_main_table_with_policy(&mut self.main, &path)?;
-        self.release_in_place_save_locks(locks)?;
+        locks.release()?;
         Ok(())
     }
 
@@ -1328,6 +1380,34 @@ fn measurement_set_save_policy() -> MeasurementSetSavePolicy {
     }
 }
 
+/// casacore's write locks on the tables of a MeasurementSet that a save
+/// rewrites in place, taken by `MeasurementSet::lock_tables_for_in_place_save`.
+///
+/// A table's write is recorded only when the save starts writing that table.
+/// If the save fails, a table it never reached publishes nothing, and one it
+/// reached publishes what was persisted (see [`TableWriteLock::release`]).
+struct InPlaceSaveLocks {
+    locks: Vec<(Option<SubtableId>, TableWriteLock)>,
+}
+
+impl InPlaceSaveLocks {
+    /// Record that the save starts writing table `id`, MAIN for `None`. A
+    /// table being created holds no lock and records nothing.
+    fn record(&mut self, id: Option<SubtableId>) {
+        if let Some((_, lock)) = self.locks.iter_mut().find(|(locked, _)| *locked == id) {
+            lock.record_write();
+        }
+    }
+
+    /// Release the locks, publishing every recorded table as persisted.
+    fn release(self) -> MsResult<()> {
+        for (_, lock) in self.locks.into_iter().rev() {
+            lock.release()?;
+        }
+        Ok(())
+    }
+}
+
 fn save_main_table_with_policy(main: &mut Table, path: &Path) -> MsResult<()> {
     let options = measurement_set_table_options(path);
     match measurement_set_save_policy() {
@@ -1974,6 +2054,69 @@ mod tests {
         assert!(
             entries.iter().all(|name| !name.contains("casa-rs")),
             "an in-place save left casa-rs files: {entries:?}"
+        );
+    }
+
+    /// The save with MAIN column overrides records each table only when it
+    /// starts writing it: when writing MAIN fails, ANTENNA, with a row
+    /// pending in memory, publishes nothing and reopens with its persisted
+    /// rows.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_main_save_with_column_overrides_publishes_no_unwritten_subtable() {
+        let dir = tempfile::tempdir().unwrap();
+        let ms_path = dir.path().join("overrides.ms");
+        {
+            let mut ms = MeasurementSet::create(&ms_path, MeasurementSetBuilder::new()).unwrap();
+            for name in ["ALMA01", "ALMA02"] {
+                ms.antenna_mut()
+                    .unwrap()
+                    .add_antenna(
+                        name,
+                        "A001",
+                        "GROUND-BASED",
+                        "ALT-AZ",
+                        [2.0; 3],
+                        [0.0; 3],
+                        12.0,
+                    )
+                    .unwrap();
+            }
+            ms.save().unwrap();
+        }
+        let antenna = ms_path.join("ANTENNA");
+        let published_counter = |table: &Path| {
+            let mut table = Table::open_with_lock(
+                TableOptions::new(table),
+                LockOptions::new(LockMode::UserLocking),
+            )
+            .unwrap();
+            assert!(table.lock(casa_tables::LockType::Read, 1).unwrap());
+            table.locked_modify_counter().unwrap()
+        };
+        let counter_before = published_counter(&antenna);
+
+        let mut ms = MeasurementSet::open(&ms_path).unwrap();
+        let antenna_table = ms.subtable_mut(SubtableId::Antenna).unwrap();
+        let row = antenna_table.row_accessor().row(0).unwrap().clone();
+        antenna_table.add_row(row).unwrap();
+        // MAIN's table.dat becomes a directory, which the save cannot write.
+        let main_table_dat = ms_path.join("table.dat");
+        fs::remove_file(&main_table_dat).unwrap();
+        fs::create_dir(&main_table_dat).unwrap();
+        fs::write(main_table_dat.join("blocker"), b"").unwrap();
+        assert!(
+            ms.save_with_main_column_overrides(&ColumnOverrides::default())
+                .is_err()
+        );
+        drop(ms);
+
+        assert_eq!(published_counter(&antenna), counter_before);
+        assert_eq!(
+            Table::open(TableOptions::new(&antenna))
+                .unwrap()
+                .row_count(),
+            2
         );
     }
 

@@ -15,11 +15,13 @@ mod sync_data;
 mod write_lock;
 
 #[cfg(unix)]
-pub(crate) use lock_file::LockFile;
-#[cfg(unix)]
 pub(crate) use lock_file::read_sync_data_from_table_dir;
+#[cfg(unix)]
+pub(crate) use lock_file::{LockFile, LockOutcome};
 pub(crate) use sync_data::SyncData;
 pub use write_lock::TableWriteLock;
+#[cfg(unix)]
+pub(crate) use write_lock::publish_persisted_write;
 
 /// Lock mode options for a table.
 ///
@@ -42,7 +44,10 @@ pub enum LockMode {
     /// The system manages lock acquisition for read/write operations.
     ///
     /// The table is opened with a read lock; mutating operations acquire a
-    /// temporary write lock as needed and release it on completion.
+    /// temporary write lock as needed and release it on completion. Both
+    /// wait, as casacore's do, for a conflicting lock another process holds;
+    /// a write lock held by another handle in this process is refused at
+    /// once.
     ///
     /// C++ equivalent: `TableLock::AutoLocking`.
     AutoLocking,

@@ -1049,3 +1049,84 @@ fn default_value_for_def(c: &ColumnDef) -> Value {
         }
     }
 }
+
+/// Make every save of MAIN fail: each storage-manager file (`table.f*`)
+/// becomes a directory, which the save can neither read nor rewrite. This
+/// fails for root too, unlike a read-only file.
+pub fn make_main_unwritable(ms_path: &Path) {
+    for entry in std::fs::read_dir(ms_path).expect("list MAIN") {
+        let path = entry.expect("MAIN entry").path();
+        let is_storage_file = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("table.f"));
+        if is_storage_file && path.is_file() {
+            std::fs::remove_file(&path).expect("remove a MAIN storage file");
+            std::fs::create_dir(&path).expect("replace it with a directory");
+            std::fs::write(path.join("blocker"), b"").expect("keep the directory non-empty");
+        }
+    }
+}
+
+/// Open the MeasurementSet at `ms_path`, add each `(column, clone source)`
+/// to MAIN's schema as a two-dimensional Complex32 column, and start a
+/// selected-row mutation of row 0 that installs them in order by cloning
+/// their sources. Returns how the start went; the session, if any, is
+/// completed with nothing written.
+pub fn install_cloned_columns(
+    ms_path: &Path,
+    columns: &[(&str, &str)],
+) -> Result<(), casa_ms::MeasurementSetWriteError> {
+    use casa_ms::{
+        MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetWriteColumnPlan,
+        MeasurementSetWritePlan, MeasurementSetWriteResources, MeasurementSetWriteSession,
+    };
+    let mut measurement_set = MeasurementSet::open(ms_path).expect("open MeasurementSet");
+    for (name, _) in columns {
+        measurement_set
+            .main_table_mut()
+            .add_column(
+                casa_tables::ColumnSchema::array_variable(
+                    *name,
+                    casa_types::PrimitiveType::Complex32,
+                    Some(2),
+                ),
+                None,
+            )
+            .expect("add the column to the schema");
+    }
+    let plan = MeasurementSetWritePlan::selected_row_mutation(
+        vec![0],
+        columns
+            .iter()
+            .map(|(name, source)| MeasurementSetWriteColumnPlan {
+                name: name.to_string(),
+                bytes_per_row: 512,
+                mode: MeasurementSetColumnWriteMode::Create,
+                storage_manager: MeasurementSetColumnStorage::TiledShape,
+                tile_shape: None,
+                create_source_column: Some(source.to_string()),
+            })
+            .collect(),
+        MeasurementSetWriteResources {
+            available_bytes: 512 * columns.len().max(1),
+            maximum_live_batches: 1,
+            tiled_column_buffer_bytes: 0,
+        },
+    )
+    .expect("mutation plan");
+    MeasurementSetWriteSession::start_selected_row_mutation(&mut measurement_set, plan).map(drop)
+}
+
+/// Stage one more ANTENNA row in memory by cloning row 0.
+pub fn stage_an_antenna_row(measurement_set: &mut MeasurementSet) {
+    let antenna = measurement_set
+        .subtable_mut(SubtableId::Antenna)
+        .expect("ANTENNA");
+    let row = antenna
+        .row_accessor()
+        .row(0)
+        .expect("ANTENNA row 0")
+        .clone();
+    antenna.add_row(row).expect("stage an ANTENNA row");
+}
