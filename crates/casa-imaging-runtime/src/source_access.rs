@@ -65,6 +65,13 @@ pub fn finalize_source_access(
         requirements.maximum_pointing_polynomial_terms(),
     );
     let planned = requirements.plan(budget)?;
+    tracing::info!(
+        "selected-observation source plan: rows_per_block={} envelope_bytes={} minimum_bytes={} live_blocks={}",
+        planned.rows_per_block(),
+        planned.maximum_resident_bytes(),
+        minimum,
+        maximum_live_blocks,
+    );
     let reservation = admit(
         host,
         policy,
