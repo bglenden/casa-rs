@@ -11,7 +11,7 @@ use casa_coordinates::{
 use casa_images::PagedImage;
 use casa_imaging_application::{
     ApplicationDispatchError, Cancel, CleanStop, HostResources, ImagingOutcome, ImagingRequest,
-    ResourcePolicy, RunContext,
+    PrepareError, ResourcePolicy, RunContext,
 };
 use casa_imaging_model::{
     ImageDomainRole, ProductBeamRule, ProductRole, ProductTerm, ProductUnit, ProductValidityRule,
@@ -245,9 +245,11 @@ fn image_observation_metadata_accepts_matching_labels_across_observations() {
                 .err()
                 .expect("conflicting image metadata must reject");
             assert!(
-                error
-                    .to_string()
-                    .contains("consistent telescope and observer")
+                matches!(
+                    error,
+                    ApplicationDispatchError::Preparation(PrepareError::ObservationLabels { .. })
+                ),
+                "{error}"
             );
             assert!(!root.path().join("joint-observation.image").exists());
         }

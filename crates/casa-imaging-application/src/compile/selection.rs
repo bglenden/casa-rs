@@ -19,8 +19,8 @@ use casa_ms::{
 };
 use casa_types::measures::frequency::FrequencyRef;
 
-use super::boxed;
-use crate::{ApplicationError, DataColumn, ImagingRequest, SpecMode};
+use super::PrepareError;
+use crate::{DataColumn, ImagingRequest, SpecMode};
 
 /// One selected spectral window's frequency axis.
 pub(super) struct SourceSpectralWindow {
@@ -80,10 +80,10 @@ struct RowFacts {
 impl RowFacts {
     /// Nothing observed yet, over `row_count` MAIN rows and `ddids`
     /// candidate data descriptions.
-    fn new(row_count: usize, ddids: usize) -> Result<Self, ApplicationError> {
-        Ok(Self {
+    fn new(row_count: usize, ddids: usize) -> Self {
+        Self {
             rows: SelectedRowsBuilder::with_data_description_capacity(
-                u64::try_from(row_count).map_err(|_| boxed("MS row count exceeds u64"))?,
+                u64::try_from(row_count).expect("a MAIN row count fits u64"),
                 ddids,
             ),
             rows_error: None,
@@ -99,7 +99,7 @@ impl RowFacts {
                 sum_squares_m2: 0.0,
                 rows: 0,
             },
-        })
+        }
     }
 
     fn observe(&mut self, row: SelectedObservationRow) {
@@ -138,7 +138,7 @@ pub(super) fn survey(
     ms: &MeasurementSet,
     budget: SelectedObservationContentBudget,
     frame_engine: &casa_ms::derived::engine::MsCalEngine,
-) -> Result<Survey, ApplicationError> {
+) -> Result<Survey, PrepareError> {
     let data_description = ms.data_description()?;
     let ddids = selected_data_descriptions(request, &data_description)?;
     let row_selection = ms.selected_observation_row_selection(
@@ -164,8 +164,8 @@ pub(super) fn survey(
                 .as_ref()
                 .map_or(0, |(_, reducer)| reducer.retained_bytes()),
         )
-        .ok_or_else(|| boxed("selected spectral envelope exhausts the row traversal budget"))?;
-    let mut facts = RowFacts::new(ms.row_count(), ddids.len())?;
+        .ok_or(PrepareError::SpectralEnvelopeBudget)?;
+    let mut facts = RowFacts::new(ms.row_count(), ddids.len());
     let main_table = ms.main_table();
     let mut weight_spectrum_complete = main_table.column_accessor("WEIGHT_SPECTRUM").is_ok();
     let mut row_error = None;
@@ -173,10 +173,7 @@ pub(super) fn survey(
         if row_error.is_none()
             && let Some((_, reducer)) = continuum.as_mut()
         {
-            row_error = reducer
-                .observe(row)
-                .err()
-                .map(|error| Box::new(error) as ApplicationError);
+            row_error = reducer.observe(row).err();
         }
         if weight_spectrum_complete {
             match main_table
@@ -184,20 +181,20 @@ pub(super) fn survey(
                 .and_then(|column| column.array_cell_is_defined_uncached(row.physical_row()))
             {
                 Ok(defined) => weight_spectrum_complete = defined,
-                Err(error) => row_error = Some(Box::new(error)),
+                Err(error) => row_error = Some(error.into()),
             }
         }
         facts.observe(row);
     })?;
     if let Some(error) = facts.rows_error {
-        return Err(Box::new(error));
+        return Err(error.into());
     }
     if let Some(error) = row_error {
-        return Err(error);
+        return Err(error.into());
     }
     let rows = facts.rows.finish();
     if rows.selected_row_count() == 0 {
-        return Err(boxed("selection resolved to no rows"));
+        return Err(PrepareError::NoSelectedRows);
     }
     let bindings = facts
         .ddids
@@ -250,7 +247,7 @@ fn continuum_envelope<'a>(
         WindowChannels,
         SelectedObservationSpectralEnvelopeReducer<'a>,
     )>,
-    ApplicationError,
+    PrepareError,
 > {
     if request.specmode != SpecMode::Mfs {
         return Ok(None);
@@ -263,7 +260,7 @@ fn continuum_envelope<'a>(
                 selected_channels(request, window.spw_id, &window.frequencies_hz)?,
             ))
         })
-        .collect::<Result<BTreeMap<_, _>, ApplicationError>>()?;
+        .collect::<Result<BTreeMap<_, _>, PrepareError>>()?;
     let reducer = ms.selected_observation_spectral_envelope_reducer(
         row_selection,
         spectral_windows.iter().map(|window| {
@@ -289,7 +286,7 @@ fn candidate_windows(
     ms: &MeasurementSet,
     data_description: &casa_ms::MsDataDescription<'_>,
     ddids: &[i32],
-) -> Result<Vec<SourceSpectralWindow>, ApplicationError> {
+) -> Result<Vec<SourceSpectralWindow>, PrepareError> {
     let spectral_window = ms.spectral_window()?;
     let spw_ids = ddids
         .iter()
@@ -298,12 +295,11 @@ fn candidate_windows(
     spw_ids
         .into_iter()
         .map(|spw_id| {
+            let code = spectral_window.meas_freq_ref(spw_id)?;
             Ok(SourceSpectralWindow {
                 spw_id,
-                frequency_reference: FrequencyRef::from_casacore_code(
-                    spectral_window.meas_freq_ref(spw_id)?,
-                )
-                .ok_or_else(|| boxed("selected SPW has an unsupported frequency frame"))?,
+                frequency_reference: FrequencyRef::from_casacore_code(code)
+                    .ok_or(PrepareError::UnknownSourceFrame { spw_id, code })?,
                 frequencies_hz: spectral_window.chan_freq(spw_id)?,
                 channel_widths_hz: spectral_window.chan_width(spw_id)?,
             })
@@ -312,15 +308,13 @@ fn candidate_windows(
 }
 
 /// The one source frame every selected window shares.
-fn one_source_frame(windows: &[SourceSpectralWindow]) -> Result<FrequencyRef, ApplicationError> {
+fn one_source_frame(windows: &[SourceSpectralWindow]) -> Result<FrequencyRef, PrepareError> {
     let mut frames = windows.iter().map(|window| window.frequency_reference);
     let first = frames
         .next()
-        .ok_or_else(|| boxed("selection holds no spectral window"))?;
+        .expect("the selected rows' data descriptions bind a candidate spectral window");
     if frames.any(|frame| frame != first) {
-        return Err(boxed(
-            "selected spectral windows use different source frequency frames",
-        ));
+        return Err(PrepareError::MixedSourceFrames);
     }
     Ok(first)
 }
@@ -329,20 +323,21 @@ fn one_source_frame(windows: &[SourceSpectralWindow]) -> Result<FrequencyRef, Ap
 /// names it in the error.
 pub(super) fn one_window<'a>(
     windows: &'a [SourceSpectralWindow],
-    stage: &str,
-) -> Result<&'a SourceSpectralWindow, ApplicationError> {
+    stage: &'static str,
+) -> Result<&'a SourceSpectralWindow, PrepareError> {
     match windows {
         [window] => Ok(window),
-        _ => Err(boxed(format!(
-            "{stage} requires exactly one selected spectral window"
-        ))),
+        _ => Err(PrepareError::OneSpectralWindow {
+            stage,
+            selected: windows.len(),
+        }),
     }
 }
 
 fn selected_data_descriptions(
     request: &ImagingRequest,
     table: &casa_ms::MsDataDescription<'_>,
-) -> Result<Vec<i32>, ApplicationError> {
+) -> Result<Vec<i32>, PrepareError> {
     if let Some(ddid) = request.ddid {
         return Ok(vec![ddid]);
     }
@@ -363,11 +358,11 @@ fn selected_data_descriptions(
             && polarization >= 0
             && (selected_spws.is_empty() || selected_spws.contains(&spw))
         {
-            ddids.push(i32::try_from(row).map_err(|_| boxed("DDID exceeds i32"))?);
+            ddids.push(i32::try_from(row).expect("DATA_DESCRIPTION rows are addressed by i32 ids"));
         }
     }
     if ddids.is_empty() {
-        return Err(boxed("selection resolved to no data descriptions"));
+        return Err(PrepareError::NoSelectedDataDescriptions);
     }
     Ok(ddids)
 }
@@ -375,15 +370,14 @@ fn selected_data_descriptions(
 fn data_description_binding(
     table: &casa_ms::MsDataDescription<'_>,
     ddid: i32,
-) -> Result<(usize, usize), ApplicationError> {
-    let ddid = usize::try_from(ddid).map_err(|_| boxed("selected DATA_DESC_ID is negative"))?;
-    let spw = table.spectral_window_id(ddid)?;
-    let polarization = table.polarization_id(ddid)?;
-    Ok((
-        usize::try_from(spw).map_err(|_| boxed("selected DDID has a negative SPW id"))?,
-        usize::try_from(polarization)
-            .map_err(|_| boxed("selected DDID has a negative polarization id"))?,
-    ))
+) -> Result<(usize, usize), PrepareError> {
+    let row = usize::try_from(ddid).map_err(|_| PrepareError::InvalidDataDescription { ddid })?;
+    let spw = table.spectral_window_id(row)?;
+    let polarization = table.polarization_id(row)?;
+    match (usize::try_from(spw), usize::try_from(polarization)) {
+        (Ok(spw), Ok(polarization)) => Ok((spw, polarization)),
+        _ => Err(PrepareError::InvalidDataDescription { ddid }),
+    }
 }
 
 /// The channels of `spw_id` the request selects: those its `spw`
@@ -392,7 +386,7 @@ pub(super) fn selected_channels(
     request: &ImagingRequest,
     spw_id: usize,
     frequencies: &[f64],
-) -> Result<Vec<usize>, ApplicationError> {
+) -> Result<Vec<usize>, PrepareError> {
     if let Some(channels) = explicit_spw_channels(request, spw_id, frequencies)? {
         return Ok(channels);
     }
@@ -400,13 +394,15 @@ pub(super) fn selected_channels(
     let count = request
         .channel_count
         .unwrap_or_else(|| frequencies.len().saturating_sub(start));
-    let end = start
-        .checked_add(count)
-        .ok_or_else(|| boxed("channel range overflows usize"))?;
-    if count == 0 || end > frequencies.len() {
-        return Err(boxed("selected channel range is empty or out of bounds"));
+    match start.checked_add(count) {
+        Some(end) if count > 0 && end <= frequencies.len() => Ok((start..end).collect()),
+        _ => Err(PrepareError::ChannelRange {
+            spw_id,
+            start,
+            count,
+            channels: frequencies.len(),
+        }),
     }
-    Ok((start..end).collect())
 }
 
 /// The channels of `spw_id` the request's `spw` selector names, if it
@@ -415,7 +411,7 @@ pub(super) fn explicit_spw_channels(
     request: &ImagingRequest,
     spw_id: usize,
     frequencies: &[f64],
-) -> Result<Option<Vec<usize>>, ApplicationError> {
+) -> Result<Option<Vec<usize>>, PrepareError> {
     let Some(text) = request.spw.as_deref() else {
         return Ok(None);
     };
@@ -437,22 +433,20 @@ pub(super) fn observation_selection(
     ms: &MeasurementSet,
     survey: Survey,
     channels: &WindowChannels,
-) -> Result<ObservationSelection, ApplicationError> {
+) -> Result<ObservationSelection, PrepareError> {
     let polarization = ms.polarization()?;
     let spectral_windows = channels
         .iter()
         .map(|(spw_id, channels)| {
-            Ok(SpectralWindowSelection::new(
-                u32::try_from(*spw_id).map_err(|_| boxed("SPW id exceeds u32"))?,
+            SpectralWindowSelection::new(
+                u32::try_from(*spw_id).expect("SPW ids are nonnegative stored i32 values"),
                 channels
                     .iter()
-                    .map(|channel| {
-                        u32::try_from(*channel).map_err(|_| boxed("channel exceeds u32"))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            ))
+                    .map(|channel| u32::try_from(*channel).expect("a CHAN_FREQ index fits u32"))
+                    .collect(),
+            )
         })
-        .collect::<Result<Vec<_>, ApplicationError>>()?;
+        .collect::<Vec<_>>();
     let correlations = survey
         .bindings
         .iter()
@@ -466,17 +460,18 @@ pub(super) fn observation_selection(
                 .enumerate()
                 .map(|(index, code)| {
                     Ok(CorrelationProduct::new(
-                        u32::try_from(index).map_err(|_| boxed("correlation index exceeds u32"))?,
+                        u32::try_from(index).expect("a CORR_TYPE index fits u32"),
                         correlation_type(*code)?,
                     ))
                 })
-                .collect::<Result<Vec<_>, ApplicationError>>()?;
+                .collect::<Result<Vec<_>, PrepareError>>()?;
             Ok(CorrelationSelection::new(
-                u32::try_from(polarization_id).map_err(|_| boxed("polarization id exceeds u32"))?,
+                u32::try_from(polarization_id)
+                    .expect("polarization ids are nonnegative stored i32 values"),
                 correlations,
             ))
         })
-        .collect::<Result<Vec<_>, ApplicationError>>()?;
+        .collect::<Result<Vec<_>, PrepareError>>()?;
     Ok(ObservationSelection::new(
         survey.rows,
         survey.row_selection.rows().clone(),
@@ -491,7 +486,7 @@ pub(super) fn observation_selection(
 pub(super) fn visibility_column(
     ms: &MeasurementSet,
     requested: Option<DataColumn>,
-) -> Result<OwnerVisibilityColumn, ApplicationError> {
+) -> Result<OwnerVisibilityColumn, PrepareError> {
     Ok(match requested {
         Some(DataColumn::Data) => OwnerVisibilityColumn::Data,
         Some(DataColumn::Corrected) => OwnerVisibilityColumn::CorrectedData,
@@ -499,11 +494,11 @@ pub(super) fn visibility_column(
             OwnerVisibilityColumn::CorrectedData
         }
         None if ms.data_column(VisibilityDataColumn::Data).is_ok() => OwnerVisibilityColumn::Data,
-        None => return Err(boxed("MS has neither CORRECTED_DATA nor DATA")),
+        None => return Err(PrepareError::NoVisibilityColumn),
     })
 }
 
-fn correlation_type(code: i32) -> Result<CorrelationType, ApplicationError> {
+fn correlation_type(code: i32) -> Result<CorrelationType, PrepareError> {
     use CorrelationType::*;
     Ok(match code {
         1 => StokesI,
@@ -538,6 +533,6 @@ fn correlation_type(code: i32) -> Result<CorrelationType, ApplicationError> {
         30 => FractionalPolarizedIntensity,
         31 => FractionalLinearPolarizedIntensity,
         32 => PolarizationAngle,
-        _ => return Err(boxed(format!("unsupported correlation code {code}"))),
+        _ => return Err(PrepareError::UnsupportedCorrelation { code }),
     })
 }

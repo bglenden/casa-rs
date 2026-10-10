@@ -15,10 +15,10 @@ use casa_imaging_model::{
 use casa_imaging_products::AnalyticPrimaryBeamModel;
 use casa_ms::MeasurementSet;
 
-use super::boxed;
-use crate::{ApplicationError, Gridder};
+use super::PrepareError;
+use crate::Gridder;
 
-fn telescopes(ms: &MeasurementSet) -> Result<BTreeSet<String>, ApplicationError> {
+fn telescopes(ms: &MeasurementSet) -> Result<BTreeSet<String>, PrepareError> {
     let observation = ms.observation()?;
     (0..observation.row_count())
         .map(|row| {
@@ -34,7 +34,7 @@ fn telescopes(ms: &MeasurementSet) -> Result<BTreeSet<String>, ApplicationError>
 /// `.image.pbcor` with.
 pub(super) fn standard_primary_beam_model(
     ms: &MeasurementSet,
-) -> Result<AnalyticPrimaryBeamModel, ApplicationError> {
+) -> Result<AnalyticPrimaryBeamModel, PrepareError> {
     let telescopes = telescopes(ms)?;
     match telescopes
         .iter()
@@ -52,20 +52,15 @@ fn homogeneous_dishes(
     ms: &MeasurementSet,
     diameter_range_m: Range<f64>,
     model: AnalyticPrimaryBeamModel,
-) -> Result<AnalyticPrimaryBeamModel, ApplicationError> {
+) -> Result<AnalyticPrimaryBeamModel, PrepareError> {
     let antenna = ms.antenna()?;
     if antenna.row_count() == 0 {
-        return Err(boxed(
-            "ALMA primary-beam publication requires ANTENNA dish metadata",
-        ));
+        return Err(PrepareError::NoAntennaDishes);
     }
     for row in 0..antenna.row_count() {
-        let diameter = antenna.dish_diameter(row)?;
-        if !diameter.is_finite() || !diameter_range_m.contains(&diameter) {
-            return Err(boxed(format!(
-                "ALMA primary-beam publication requires one homogeneous dish class; row {row} has \
-                 diameter {diameter} m"
-            )));
+        let diameter_m = antenna.dish_diameter(row)?;
+        if !diameter_m.is_finite() || !diameter_range_m.contains(&diameter_m) {
+            return Err(PrepareError::MixedAlmaDishes { row, diameter_m });
         }
     }
     Ok(model)
@@ -73,7 +68,7 @@ fn homogeneous_dishes(
 
 fn analytic_primary_beam_model_for_telescopes(
     telescopes: &BTreeSet<String>,
-) -> Result<AnalyticPrimaryBeamModel, ApplicationError> {
+) -> Result<AnalyticPrimaryBeamModel, PrepareError> {
     match telescopes
         .iter()
         .map(String::as_str)
@@ -82,13 +77,10 @@ fn analytic_primary_beam_model_for_telescopes(
     {
         ["EVLA"] => Ok(AnalyticPrimaryBeamModel::CasaEvlaCommon),
         ["VLA"] => Ok(AnalyticPrimaryBeamModel::CasaVlaBand),
-        [] => Err(boxed(
-            "standard primary-beam publication requires OBSERVATION telescope metadata",
-        )),
-        names => Err(boxed(format!(
-            "standard primary-beam publication has no installed analytic model for telescope set \
-             {names:?}"
-        ))),
+        [] => Err(PrepareError::NoTelescope),
+        _ => Err(PrepareError::NoAnalyticPrimaryBeam {
+            telescopes: telescopes.iter().cloned().collect(),
+        }),
     }
 }
 
@@ -97,7 +89,7 @@ fn analytic_primary_beam_model_for_telescopes(
 pub(super) fn scientific_instrument_model(
     gridder: &Gridder,
     ms: &MeasurementSet,
-) -> Result<Option<InstrumentModel>, ApplicationError> {
+) -> Result<Option<InstrumentModel>, PrepareError> {
     let (model, dishes): (_, fn(f64) -> bool) = match gridder {
         Gridder::Awproject(_) => (InstrumentModel::CasaEvlaWidebandAwV1, |diameter| {
             (diameter - 25.0).abs() < 1.0
@@ -115,22 +107,22 @@ pub(super) fn scientific_instrument_model(
             _ => matches!(name.as_str(), "ALMA" | "ACA"),
         });
     if !supported {
-        return Err(boxed(format!(
-            "requested instrument response is unsupported for observation metadata {telescopes:?}"
-        )));
+        return Err(PrepareError::UnsupportedInstrument {
+            telescopes: telescopes.into_iter().collect(),
+        });
     }
     let antenna = ms.antenna()?;
     if antenna.row_count() == 0 {
-        return Err(boxed(
-            "a primary-beam response requires ANTENNA dish metadata",
-        ));
+        return Err(PrepareError::NoAntennaDishes);
     }
     for row in 0..antenna.row_count() {
-        let diameter = antenna.dish_diameter(row)?;
-        if !(diameter.is_finite() && dishes(diameter)) {
-            return Err(boxed(format!(
-                "the {model:?} response does not cover ANTENNA row {row}'s {diameter} m dish"
-            )));
+        let diameter_m = antenna.dish_diameter(row)?;
+        if !(diameter_m.is_finite() && dishes(diameter_m)) {
+            return Err(PrepareError::DishOutsideResponse {
+                model,
+                row,
+                diameter_m,
+            });
         }
     }
     Ok(Some(model))

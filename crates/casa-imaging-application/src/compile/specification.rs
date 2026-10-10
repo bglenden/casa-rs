@@ -24,12 +24,10 @@ use casa_imaging_model::{
 };
 use casa_ms::{parse_spw_selector, resolve_channel_selector_selection};
 
-use super::boxed;
+use super::PrepareError;
 use super::selection::{SourceSpectralWindow, WRange};
 use super::spectral::PreparedSpectralAxis;
-use crate::{
-    ApplicationError, AwProjection, Deconvolver, Gridder, ImagingRequest, SpecMode, Weighting,
-};
+use crate::{AwProjection, Deconvolver, Gridder, ImagingRequest, SpecMode, Weighting};
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 
@@ -79,7 +77,7 @@ pub(super) fn normalization(request: &ImagingRequest) -> ProductNormalization {
 /// The primary-beam support of products and residual units.
 pub(super) fn primary_beam_validity(
     request: &ImagingRequest,
-) -> Result<PrimaryBeamValidityPolicy, ApplicationError> {
+) -> Result<PrimaryBeamValidityPolicy, PrepareError> {
     Ok(PrimaryBeamValidityPolicy::new(
         request.pblimit.abs() as f32,
         ProductSupportComparison::StrictlyGreater,
@@ -92,7 +90,7 @@ pub(super) fn specification(
     request: &ImagingRequest,
     spectral: &PreparedSpectralAxis,
     inputs: SpecificationInputs,
-) -> Result<ProblemSpecification, ApplicationError> {
+) -> Result<ProblemSpecification, PrepareError> {
     let direction_dependent = !matches!(
         request.gridder,
         Gridder::Standard | Gridder::Wproject { .. }
@@ -331,7 +329,7 @@ pub(super) fn w_projection(
     planes: Option<NonZeroUsize>,
     windows: &[SourceSpectralWindow],
     w: WRange,
-) -> Result<WProjectionContract, ApplicationError> {
+) -> Result<WProjectionContract, PrepareError> {
     let [lowest_hz, highest_hz] = frequency_range_hz(windows);
     let contract = WProjectionContract::new(
         w.maximum_abs_m * highest_hz / SPEED_OF_LIGHT_M_PER_S,
@@ -357,11 +355,11 @@ pub(super) fn aw_projection(
     aw: &AwProjection,
     windows: &[SourceSpectralWindow],
     w: WRange,
-) -> Result<AwProjectionContract, ApplicationError> {
+) -> Result<AwProjectionContract, PrepareError> {
     let [_, highest_hz] = frequency_range_hz(windows);
     let planes = aw
         .wprojplanes
-        .ok_or_else(|| boxed("AW projection requires an explicit W-plane count"))?;
+        .expect("a validated AW request names its W planes");
     Ok(AwProjectionContract::new(
         w.maximum_abs_m * highest_hz / SPEED_OF_LIGHT_M_PER_S,
         planes,
@@ -395,14 +393,12 @@ pub(super) fn continuum_transform(
     field_id: i32,
     window: &SourceSpectralWindow,
     output_channels: &[usize],
-) -> Result<(SequentialContinuumTransform, Vec<usize>), ApplicationError> {
-    let order = u8::try_from(fitorder)
-        .map_err(|_| boxed("continuum fit order exceeds the supported contract range"))?;
+) -> Result<(SequentialContinuumTransform, Vec<usize>), PrepareError> {
+    let order =
+        u8::try_from(fitorder).map_err(|_| PrepareError::ContinuumFitOrder { order: fitorder })?;
     let selectors = parse_spw_selector(fitspw)?;
     if selectors.len() != 1 || usize::try_from(selectors[0].spw_id).ok() != Some(window.spw_id) {
-        return Err(boxed(
-            "continuum fit selector must name exactly the selected spectral window",
-        ));
+        return Err(PrepareError::ContinuumFitWindow);
     }
     let fit_channels = match selectors.into_iter().next().expect("one selector").channels {
         Some(selector) => {
@@ -422,15 +418,15 @@ pub(super) fn continuum_transform(
                 (true, true) => ContinuumChannelUse::FitAndApply,
                 (false, false) => unreachable!("a member of the union is in fit or output"),
             };
-            Ok(ContinuumChannelRole::new(
-                u32::try_from(channel).map_err(|_| boxed("channel index exceeds u32"))?,
+            ContinuumChannelRole::new(
+                u32::try_from(channel).expect("a CHAN_FREQ index fits u32"),
                 use_role,
-            ))
+            )
         })
-        .collect::<Result<Vec<_>, ApplicationError>>()?;
+        .collect::<Vec<_>>();
     let rule = ContinuumFitRule::new(
         field_id,
-        u32::try_from(window.spw_id).map_err(|_| boxed("SPW id exceeds u32"))?,
+        u32::try_from(window.spw_id).expect("SPW ids are nonnegative stored i32 values"),
         order,
         roles,
     )?;

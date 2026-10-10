@@ -18,13 +18,13 @@ use casa_imaging_reconstruction::{
 };
 use casa_types::measures::direction::DirectionRef;
 
-use super::boxed;
+use super::PrepareError;
 use super::direction::{
     Centre, ImageSpectralCoordinate, direction_spec, image_coordinates,
     parse_phase_center_direction,
 };
 use super::outliers::read_outlier_domains;
-use crate::{ApplicationError, CasaImageDomainOutput, ImagingRequest, UseMask};
+use crate::{CasaImageDomainOutput, ImagingRequest, UseMask};
 
 /// The pixels a domain's minor cycle may update.
 #[derive(Clone, Debug, PartialEq)]
@@ -85,7 +85,7 @@ pub(super) fn prepare_domains(
     centre: &Centre,
     spectral: ImageSpectralCoordinate,
     observation: &ObsInfo,
-) -> Result<Vec<PreparedImageDomain>, ApplicationError> {
+) -> Result<Vec<PreparedImageDomain>, PrepareError> {
     let polarizations = &request.stokes;
     let mut domains = vec![PreparedImageDomain {
         role: ImageDomainRole::Main,
@@ -157,7 +157,7 @@ fn request_mask(request: &ImagingRequest) -> DomainMask {
 /// Each domain's mask plan, bound to its direction coordinate.
 pub(super) fn mask_plans(
     domains: &[PreparedImageDomain],
-) -> Result<ImageDomainReconstructionMaskPlans, ApplicationError> {
+) -> Result<ImageDomainReconstructionMaskPlans, PrepareError> {
     Ok(ImageDomainReconstructionMaskPlans::new(
         domains
             .iter()
@@ -170,7 +170,7 @@ fn mask_plan(
     mask: DomainMask,
     coordinate: DirectionCoordinateSpec,
     image_size: usize,
-) -> Result<ReconstructionMaskPlan, ApplicationError> {
+) -> Result<ReconstructionMaskPlan, PrepareError> {
     Ok(match mask {
         DomainMask::FullPlane => ReconstructionMaskPlan::FullPlane { coordinate },
         DomainMask::Boxes(boxes) => ReconstructionMaskPlan::Boxes {
@@ -182,12 +182,11 @@ fn mask_plan(
         },
         DomainMask::Image(path) => reproject_image_mask(&path, coordinate, image_size)?,
         DomainMask::PixelSupport(support) => {
-            if image_size
-                .checked_mul(image_size)
-                .is_none_or(|expected| support.len() != expected)
-            {
-                return Err(boxed("pixel mask support does not match its image domain"));
-            }
+            assert_eq!(
+                image_size.checked_mul(image_size),
+                Some(support.len()),
+                "an outlier circle mask covers exactly its image domain"
+            );
             ReconstructionMaskPlan::Reprojected {
                 coordinate,
                 source_coordinate: coordinate,
@@ -212,7 +211,7 @@ fn reproject_image_mask(
     path: &Path,
     target_spec: DirectionCoordinateSpec,
     target_size: usize,
-) -> Result<ReconstructionMaskPlan, ApplicationError> {
+) -> Result<ReconstructionMaskPlan, PrepareError> {
     let (source_shape, source_coordinates, source_support) = match AnyPagedImage::open(path)? {
         AnyPagedImage::Float32(image) => {
             let mask = image.get_mask()?;
@@ -243,20 +242,20 @@ fn reproject_image_mask(
             (image.shape().to_vec(), image.coordinates().clone(), support)
         }
         AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
-            return Err(boxed("reconstruction masks require a real CASA image"));
+            return Err(PrepareError::ComplexMaskImage);
         }
     };
     if source_shape.len() < 2
         || source_shape[2..].iter().any(|extent| *extent != 1)
         || source_support.len() != source_shape[0] * source_shape[1]
     {
-        return Err(boxed(
-            "reconstruction mask must contain one two-dimensional direction plane",
-        ));
+        return Err(PrepareError::MaskImageShape {
+            shape: source_shape,
+        });
     }
     let index = source_coordinates
         .find_coordinate(CoordinateType::Direction)
-        .ok_or_else(|| boxed("mask image has no direction coordinate"))?;
+        .ok_or(PrepareError::MaskImageDirection)?;
     let source_spec = direction_model_spec(source_coordinates.coordinate(index))?;
     let support = casa_imaging_reconstruction::reproject_mask_support(
         source_spec,
@@ -275,25 +274,20 @@ fn reproject_image_mask(
 
 fn direction_model_spec(
     coordinate: &CoordinateModel,
-) -> Result<DirectionCoordinateSpec, ApplicationError> {
+) -> Result<DirectionCoordinateSpec, PrepareError> {
     let CoordinateModel::Direction(direction) = coordinate else {
-        return Err(boxed("mask direction-coordinate lookup was inconsistent"));
+        unreachable!("find_coordinate(Direction) names a direction coordinate");
     };
-    if direction.projection().projection_type() != ProjectionType::SIN {
-        return Err(boxed(
-            "native mask reprojection currently requires SIN coordinates",
-        ));
+    let projection = direction.projection().projection_type();
+    if projection != ProjectionType::SIN {
+        return Err(PrepareError::MaskImageProjection { projection });
     }
     let frame = match direction.direction_ref() {
         DirectionRef::J2000 => DirectionFrame::J2000,
         DirectionRef::B1950 => DirectionFrame::B1950,
         DirectionRef::GALACTIC => DirectionFrame::Galactic,
         DirectionRef::ICRS => DirectionFrame::Icrs,
-        _ => {
-            return Err(boxed(
-                "mask direction frame is not supported by native imaging",
-            ));
-        }
+        frame => return Err(PrepareError::MaskImageFrame { frame }),
     };
     let reference = coordinate.reference_value();
     let pixel = coordinate.reference_pixel();
@@ -318,7 +312,7 @@ pub(super) fn model_samples(
     domains: &[PreparedImageDomain],
     planes: usize,
     polarizations: &[PolarizationCoordinate],
-) -> Result<usize, ApplicationError> {
+) -> Result<usize, PrepareError> {
     domains
         .iter()
         .try_fold(0_usize, |total, domain| {
@@ -329,5 +323,5 @@ pub(super) fn model_samples(
         })
         .and_then(|samples| samples.checked_mul(planes))
         .and_then(|samples| samples.checked_mul(polarizations.len()))
-        .ok_or_else(|| boxed("reconstruction model sample count overflowed"))
+        .ok_or(PrepareError::ImageSize)
 }

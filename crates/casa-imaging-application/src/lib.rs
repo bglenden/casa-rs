@@ -25,6 +25,7 @@ pub use casa_imaging_runtime::{
     Admission, HostResources, Phase, ResourcePolicy, RunSummary, SummaryTarget, TracedComponent,
 };
 pub use casa_product_sink::{CasaImageDomainOutput, CasaImageProductSink};
+pub use compile::{OutlierProblem, PrepareError};
 pub use request::{
     AwCfSource, AwProjection, DataColumn, Deconvolver, Gridder, ImagingRequest, InvalidRequest,
     NativeAwCachePolicy, SpecMode, UseMask, Weighting,
@@ -242,10 +243,10 @@ pub fn execute(
     let prepared =
         compile::prepare(request, &context).map_err(ApplicationDispatchError::Preparation)?;
     let resolved = resolve_selected_observation(prepared.observation.clone())
-        .map_err(|error| ApplicationDispatchError::Preparation(Box::new(error)))?;
+        .map_err(|error| ApplicationDispatchError::Preparation(error.into()))?;
     let (snapshot, access) = resolved.into_parts();
     let observation = compile_observation(snapshot)
-        .map_err(|error| ApplicationDispatchError::Preparation(Box::new(error)))?;
+        .map_err(|error| ApplicationDispatchError::Preparation(error.into()))?;
     let problem = compile(ProblemInput::new(
         prepared.specification,
         prepared.geometry,
@@ -263,7 +264,7 @@ pub fn execute(
     let native = prepared
         .deployment
         .deploy()
-        .map_err(ApplicationDispatchError::Native)?;
+        .map_err(ApplicationDispatchError::Preparation)?;
     let input = NativeInput {
         observation: prepared.observation,
         initial_access: access,
@@ -328,8 +329,9 @@ pub(crate) fn visibility_write_selection(
 pub enum ApplicationDispatchError {
     /// The request's parameters contradict each other.
     Request(InvalidRequest),
-    /// MeasurementSet resolution or request preparation failed before availability checking.
-    Preparation(ApplicationError),
+    /// The request could not be compiled against its MeasurementSet, or
+    /// the compiled run could not be deployed; nothing ran.
+    Preparation(PrepareError),
     /// Backend-independent request compilation failed.
     Compile(CompileProblemError),
     /// The installed implementation cannot run the compiled problem.

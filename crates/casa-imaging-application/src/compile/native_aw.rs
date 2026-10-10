@@ -13,7 +13,7 @@ use casa_types::ArrayValue;
 
 use super::selection::Survey;
 use super::spectral::PreparedSpectralAxis;
-use super::{Surveyed, boxed};
+use super::{PrepareError, Surveyed};
 use crate::{AwCfSource, AwProjection, ImagingRequest};
 
 /// Bounded metadata acquisition; pixel generation remains in the admitted phase.
@@ -22,7 +22,7 @@ pub(super) fn resolve(
     aw: &AwProjection,
     surveyed: &Surveyed<'_>,
     first_row: SelectedObservationRow,
-) -> Result<NativeAwRequestInput, crate::ApplicationError> {
+) -> Result<NativeAwRequestInput, PrepareError> {
     let AwCfSource::NativeEvla {
         evla_surface,
         native_cf_working_size,
@@ -34,14 +34,14 @@ pub(super) fn resolve(
         unreachable!("native AW resolves only a native cache");
     };
     let surface = evla_dish(surveyed.ms, first_row, evla_surface)?;
-    let frequencies = frequency_groups(surveyed.survey, surveyed.spectral)?;
+    let frequencies = frequency_groups(surveyed.survey, surveyed.spectral);
     let sky_cell = request.cell.to_radians() / 3600.0;
     let (w_values, w_increment) = w_grid(
         aw.wprojplanes
             .expect("a validated AW request names its W planes")
             .get(),
         sky_cell,
-    )?;
+    );
     let working_cell = sky_cell * *native_cf_oversampling as f64 * request.imsize as f64
         / *native_cf_working_size as f64;
     let pa = surveyed.engine.parallactic_angle(
@@ -86,119 +86,97 @@ fn evla_dish(
     ms: &MeasurementSet,
     first_row: SelectedObservationRow,
     evla_surface: &std::path::Path,
-) -> Result<EvlaDishSurface, crate::ApplicationError> {
+) -> Result<EvlaDishSurface, PrepareError> {
     let observation = ms.observation()?;
     if observation
         .string(first_row.observation_id() as usize, "TELESCOPE_NAME")?
         .trim()
         != "EVLA"
     {
-        return Err(boxed(
-            "native aperture generation requires an EVLA observation",
-        ));
+        return Err(PrepareError::NativeAwTelescope);
     }
     let antenna = ms.antenna()?;
     for row in 0..antenna.row_count() {
         if antenna.dish_diameter(row)? != 25.0 {
-            return Err(boxed(
-                "native EVLA generation requires the explicit homogeneous 25 m dish model",
-            ));
+            return Err(PrepareError::NativeAwDishes);
         }
     }
     // The reference data is an explicit input with bounded acquisition, never
     // discovered through a CASA installation or downloaded during execution.
     let mut bytes = Vec::new();
-    std::fs::File::open(evla_surface)?
-        .take(1_048_577)
-        .read_to_end(&mut bytes)?;
+    std::fs::File::open(evla_surface)
+        .and_then(|file| file.take(1_048_577).read_to_end(&mut bytes))
+        .map_err(|source| PrepareError::EvlaSurface {
+            path: evla_surface.to_path_buf(),
+            source,
+        })?;
     if bytes.len() > 1_048_576 {
-        return Err(boxed(
-            "native EVLA surface exceeds the 1 MiB reference-data bound",
-        ));
+        return Err(PrepareError::NativeAwSurfaceSize);
     }
-    Ok(EvlaDishSurface::from_surface_text(std::str::from_utf8(
-        &bytes,
-    )?)?)
+    let text = std::str::from_utf8(&bytes).map_err(|_| PrepareError::EvlaSurfaceText {
+        path: evla_surface.to_path_buf(),
+    })?;
+    Ok(EvlaDishSurface::from_surface_text(text)?)
 }
 
 /// One frequency group per selected SPW, in increasing CF frequency.
 fn frequency_groups(
     survey: &Survey,
     spectral: &PreparedSpectralAxis,
-) -> Result<Vec<NativeAwFrequencyGroup>, crate::ApplicationError> {
+) -> Vec<NativeAwFrequencyGroup> {
     let mut frequencies = survey
         .spectral_windows
         .iter()
         .map(|window| {
-            let selected = spectral
-                .selected_source_channels
-                .get(&window.spw_id)
-                .ok_or_else(|| boxed("native AW selected SPW is absent from the spectral owner"))?;
+            let selected = &spectral.selected_source_channels[&window.spw_id];
             let channel_frequencies_hz = selected
                 .iter()
-                .map(|index| {
-                    window
-                        .frequencies_hz
-                        .get(*index)
-                        .copied()
-                        .ok_or_else(|| boxed("native AW selected channel is outside its SPW"))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+                .map(|index| window.frequencies_hz[*index])
+                .collect::<Vec<_>>();
             // TransformMachines2::makeFreqValList selects each SPW's high endpoint.
             let cf_frequency_hz = channel_frequencies_hz
                 .iter()
                 .copied()
                 .reduce(f64::max)
-                .ok_or_else(|| boxed("native AW SPW has no selected frequencies"))?;
-            Ok(NativeAwFrequencyGroup {
-                spectral_window: u32::try_from(window.spw_id)?,
+                .expect("the spectral axis selects at least one channel of every window");
+            NativeAwFrequencyGroup {
+                spectral_window: u32::try_from(window.spw_id)
+                    .expect("SPW ids are nonnegative stored i32 values"),
                 channel_frequencies_hz,
                 cf_frequency_hz,
-            })
+            }
         })
-        .collect::<Result<Vec<_>, crate::ApplicationError>>()?;
+        .collect::<Vec<_>>();
     frequencies.sort_by(|left, right| left.cf_frequency_hz.total_cmp(&right.cf_frequency_hz));
-    Ok(frequencies)
+    frequencies
 }
 
 /// The W values of `planes` planes and their increment. CASA AWConvFunc
 /// derives its W grid from the requested field of view, not the observed W
 /// envelope: maxUVW=1/(4*sky_increment), w=i²/wScale.
-fn w_grid(planes: usize, sky_cell: f64) -> Result<(Vec<f64>, f64), crate::ApplicationError> {
+fn w_grid(planes: usize, sky_cell: f64) -> (Vec<f64>, f64) {
     let max_w = 1.0 / (sky_cell * 4.0);
-    let w_increment = ((planes - 1)
-        .checked_mul(planes - 1)
-        .ok_or_else(|| boxed("native AW W-grid size overflowed"))? as f32)
-        as f64
-        / max_w;
+    let w_increment = ((planes - 1) * (planes - 1)) as f32 as f64 / max_w;
     let w_values = (0..planes)
         .map(|index| (index * index) as f64 / w_increment)
         .collect();
-    Ok((w_values, w_increment))
+    (w_values, w_increment)
 }
 
 /// The Mueller elements of the imaged polarization. The catalog routes
 /// each hand through its own element and, for the conjugate baseline, the
 /// opposite hand (`makeConjPolMap`), so a single-hand image still needs
 /// both diagonal elements.
-fn mueller_elements(
-    stokes: &[PolarizationCoordinate],
-) -> Result<Vec<usize>, crate::ApplicationError> {
+fn mueller_elements(stokes: &[PolarizationCoordinate]) -> Result<Vec<usize>, PrepareError> {
     match stokes {
         [PolarizationCoordinate::CircularRr]
         | [PolarizationCoordinate::CircularLl]
         | [PolarizationCoordinate::StokesI] => Ok(vec![0, 15]),
-        _ => Err(boxed(
-            "native EVLA AW currently supports Stokes I or one circular parallel hand",
-        )),
+        _ => Err(PrepareError::NativeAwPolarization),
     }
 }
 
-fn receptor_zero_angle(
-    ms: &MeasurementSet,
-    time: f64,
-    spw: u32,
-) -> Result<f64, crate::ApplicationError> {
+fn receptor_zero_angle(ms: &MeasurementSet, time: f64, spw: u32) -> Result<f64, PrepareError> {
     let feed = ms.feed()?;
     let mut angle = None;
     for row in 0..feed.row_count() {
@@ -215,22 +193,18 @@ fn receptor_zero_angle(
             continue;
         }
         let ArrayValue::Float64(values) = feed.array(row, "RECEPTOR_ANGLE")? else {
-            return Err(boxed(
-                "native EVLA feed receptor angles require Float64 metadata",
-            ));
+            return Err(PrepareError::FeedAngleType);
         };
         let value = values
             .iter()
             .next()
             .copied()
             .filter(|value| value.is_finite())
-            .ok_or_else(|| boxed("native EVLA feed has no finite receptor-zero angle"))?;
+            .ok_or(PrepareError::FeedAngleNotFinite)?;
         if angle.is_some_and(|previous: f64| previous.to_bits() != value.to_bits()) {
-            return Err(boxed(
-                "native EVLA receptor-zero angle is ambiguous for the selected epoch/SPW",
-            ));
+            return Err(PrepareError::FeedAngleAmbiguous);
         }
         angle = Some(value);
     }
-    angle.ok_or_else(|| boxed("native EVLA request has no applicable antenna-zero feed metadata"))
+    angle.ok_or(PrepareError::NoApplicableFeed)
 }

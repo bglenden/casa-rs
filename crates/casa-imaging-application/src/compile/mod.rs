@@ -11,6 +11,7 @@
 
 mod direction;
 mod domains;
+mod error;
 mod instrument;
 mod native_aw;
 mod outliers;
@@ -37,12 +38,13 @@ use casa_ms::{
 use casa_types::measures::frame::MeasFrame;
 
 use crate::{
-    ApplicationError, ApplicationNative, ApplicationPublication, ApplicationRuntime,
-    AwCatalogDeployment, AwCfSource, AwProjection, CasaImageProductSink, Deconvolver, Gridder,
-    ImagingRequest, NativeAwCachePolicy, RunContext, SpecMode,
+    ApplicationNative, ApplicationPublication, ApplicationRuntime, AwCatalogDeployment, AwCfSource,
+    AwProjection, CasaImageProductSink, Deconvolver, Gridder, ImagingRequest, NativeAwCachePolicy,
+    RunContext, SpecMode,
 };
 use direction::{Centre, ImageSpectralCoordinate};
 use domains::PreparedImageDomain;
+pub use error::{OutlierProblem, PrepareError};
 use selection::{Survey, WindowChannels};
 use specification::SpecificationInputs;
 use spectral::{FrameContext, PreparedSpectralAxis};
@@ -78,7 +80,7 @@ struct Surveyed<'a> {
 pub(crate) fn prepare(
     request: &ImagingRequest,
     context: &RunContext,
-) -> Result<Prepared, ApplicationError> {
+) -> Result<Prepared, PrepareError> {
     let ms = MeasurementSet::open(&request.vis)?;
     let budget = casa_imaging_runtime::bootstrap_source_budget();
     let engine = MsCalEngine::new(&ms)?;
@@ -164,14 +166,14 @@ fn moving_rest_frame(
     request: &ImagingRequest,
     centre: &Centre,
     frame: &FrameContext<'_>,
-) -> Result<Option<MeasFrame>, ApplicationError> {
+) -> Result<Option<MeasFrame>, PrepareError> {
     if request.specmode != SpecMode::Cubesource {
         return Ok(None);
     }
     let ephemeris = centre
         .ephemeris
         .as_ref()
-        .ok_or_else(|| boxed("source-frame cube imaging requires a moving phase centre"))?;
+        .ok_or(PrepareError::MovingPhaseCentre)?;
     let velocity = frame.engine.ephemeris_radial_velocity(
         frame.anchor_time_mjd_seconds,
         frame.field_id,
@@ -195,7 +197,7 @@ fn continuum_selection(
     request: &ImagingRequest,
     surveyed: &Surveyed<'_>,
     centre: &Centre,
-) -> Result<(Option<SequentialContinuumTransform>, WindowChannels), ApplicationError> {
+) -> Result<(Option<SequentialContinuumTransform>, WindowChannels), PrepareError> {
     let Some(fitspw) = &request.fitspw else {
         return Ok((None, surveyed.spectral.selected_source_channels.clone()));
     };
@@ -203,7 +205,7 @@ fn continuum_selection(
     let (transform, selected) = specification::continuum_transform(
         fitspw,
         request.fitorder,
-        i32::try_from(centre.field_id).map_err(|_| boxed("FIELD_ID exceeds i32"))?,
+        i32::try_from(centre.field_id).expect("the centre's field id is a stored i32 FIELD_ID"),
         window,
         &surveyed.spectral.selected_source_channels[&window.spw_id],
     )?;
@@ -219,7 +221,7 @@ fn specification_inputs(
     instrument: Option<casa_imaging_model::InstrumentModel>,
     primary_beam: bool,
     continuum_transform: Option<SequentialContinuumTransform>,
-) -> Result<SpecificationInputs, ApplicationError> {
+) -> Result<SpecificationInputs, PrepareError> {
     let windows = &surveyed.survey.spectral_windows;
     Ok(SpecificationInputs {
         instrument,
@@ -259,7 +261,7 @@ fn observation_request(
     channels: &WindowChannels,
     centre: Centre,
     budget: SelectedObservationContentBudget,
-) -> Result<SelectedObservationResolutionRequest, ApplicationError> {
+) -> Result<SelectedObservationResolutionRequest, PrepareError> {
     let weight_column = if survey.weight_spectrum_complete {
         OwnerWeightColumn::WeightSpectrum
     } else {
@@ -308,7 +310,7 @@ fn geometry(
 fn primary_beam_model(
     request: &ImagingRequest,
     ms: &MeasurementSet,
-) -> Result<Option<AnalyticPrimaryBeamModel>, ApplicationError> {
+) -> Result<Option<AnalyticPrimaryBeamModel>, PrepareError> {
     Ok(match request.gridder {
         Gridder::Mosaic { .. } | Gridder::Awproject(_) => {
             Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
@@ -325,7 +327,7 @@ fn primary_beam_model(
 fn cube_density_padding(
     request: &ImagingRequest,
     surveyed: &Surveyed<'_>,
-) -> Result<Option<usize>, ApplicationError> {
+) -> Result<Option<usize>, PrepareError> {
     let (survey, spectral) = (surveyed.survey, surveyed.spectral);
     if !specification::cube_density_padded(request, spectral) {
         return Ok(None);
@@ -335,7 +337,7 @@ fn cube_density_padding(
         surveyed.ms.selected_observation_cube_density_padding(
             &survey.row_selection,
             SelectedObservationSpectralWindow::borrow_selected(
-                u32::try_from(window.spw_id).map_err(|_| boxed("SPW id exceeds u32"))?,
+                u32::try_from(window.spw_id).expect("SPW ids are nonnegative stored i32 values"),
                 window.frequency_reference,
                 &window.frequencies_hz,
                 &window.channel_widths_hz,
@@ -380,12 +382,20 @@ impl Deployment {
     /// Create every domain's output directory, settle the spill directory
     /// beside the main image and bring a native AW cache to the request's
     /// policy.
-    pub(crate) fn deploy(self) -> Result<ApplicationNative, ApplicationError> {
+    pub(crate) fn deploy(self) -> Result<ApplicationNative, PrepareError> {
         for directory in &self.output_directories {
-            std::fs::create_dir_all(directory)?;
+            std::fs::create_dir_all(directory).map_err(|source| PrepareError::OutputDirectory {
+                path: directory.clone(),
+                source,
+            })?;
         }
         let mut runtime = self.runtime;
-        runtime.spill_directory = runtime.spill_directory.canonicalize()?;
+        runtime.spill_directory = runtime.spill_directory.canonicalize().map_err(|source| {
+            PrepareError::OutputDirectory {
+                path: runtime.spill_directory.clone(),
+                source,
+            }
+        })?;
         Ok(ApplicationNative {
             runtime,
             publication: self.publication,
@@ -399,15 +409,12 @@ impl AwPlan {
     /// directory: reuse needs every one, generation fills in the absent
     /// ones, regeneration clears the cache first; the loader then checks
     /// each cell's sky increment against the image (plan section 5.6).
-    fn deploy(self) -> Result<AwCatalogDeployment, ApplicationError> {
+    fn deploy(self) -> Result<AwCatalogDeployment, PrepareError> {
         if let Some((policy, input)) = &self.native {
             let (present, expected) = AwCatalog::native_cells_present(&self.root, input);
             match policy {
                 NativeAwCachePolicy::ReuseOnly if present != expected => {
-                    return Err(boxed(format!(
-                        "native AW cache reuse found {present} of the {expected} cells the \
-                         request names"
-                    )));
+                    return Err(PrepareError::AwCacheIncomplete { present, expected });
                 }
                 NativeAwCachePolicy::ReuseOnly => {}
                 NativeAwCachePolicy::GenerateMissing => {
@@ -437,13 +444,17 @@ fn deployment(
     surveyed: &Surveyed<'_>,
     domains: &[PreparedImageDomain],
     primary_beam: Option<AnalyticPrimaryBeamModel>,
-) -> Result<Deployment, ApplicationError> {
+) -> Result<Deployment, PrepareError> {
     let parent = |path: &Path| {
         path.parent()
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf()
     };
-    let mut controls = ContinuumProductControls::new(request.psfcutoff as f32)?;
+    let mut controls = ContinuumProductControls::new(request.psfcutoff as f32).map_err(|_| {
+        PrepareError::PsfCutoff {
+            psfcutoff: request.psfcutoff,
+        }
+    })?;
     if let Some(model) = primary_beam {
         controls = controls.with_primary_beam_model(model);
     }
@@ -461,7 +472,8 @@ fn deployment(
             controls,
             sink: CasaImageProductSink::for_domains(
                 domains.iter().map(PreparedImageDomain::output),
-            )?,
+            )
+            .map_err(|_| PrepareError::DuplicateOutput)?,
         },
         output_directories: domains
             .iter()
@@ -480,7 +492,7 @@ fn aw_plan(
     request: &ImagingRequest,
     aw: &AwProjection,
     surveyed: &Surveyed<'_>,
-) -> Result<AwPlan, ApplicationError> {
+) -> Result<AwPlan, PrepareError> {
     let (root, native) = match &aw.cf_source {
         AwCfSource::CasaImport { cfcache } => (cfcache.clone(), None),
         AwCfSource::NativeEvla {
@@ -491,7 +503,7 @@ fn aw_plan(
             let first_row = surveyed
                 .survey
                 .first_cross_row
-                .ok_or_else(|| boxed("native AW has no unflagged cross-correlation row"))?;
+                .ok_or(PrepareError::NoCrossCorrelationRow)?;
             let input = native_aw::resolve(request, aw, surveyed, first_row)?;
             input.validate()?;
             (native_cf_cache.clone(), Some((*native_cf_policy, input)))
@@ -504,13 +516,10 @@ fn aw_plan(
             conjugate_beams: true,
             image_reference_hz: surveyed.spectral.reference_frequency_hz,
         },
-        resident_bytes: aw
-            .cf_resident_mb
-            .checked_mul(1 << 20)
-            .ok_or_else(|| boxed("cf_resident_mb exceeds addressable memory"))?,
+        resident_bytes: aw.cf_resident_mb.checked_mul(1 << 20).ok_or(
+            PrepareError::CfResidentSize {
+                megabytes: aw.cf_resident_mb,
+            },
+        )?,
     })
-}
-
-fn boxed(message: impl Into<String>) -> ApplicationError {
-    Box::new(std::io::Error::other(message.into()))
 }

@@ -23,9 +23,9 @@ use casa_types::measures::{
     frequency::FrequencyRef,
 };
 
-use super::boxed;
+use super::PrepareError;
 use super::selection::Survey;
-use crate::{ApplicationError, ImagingRequest};
+use crate::ImagingRequest;
 
 /// The resolved image centre.
 pub(super) struct Centre {
@@ -48,18 +48,20 @@ pub(super) fn resolve_centre(
     survey: &Survey,
     engine: &casa_ms::derived::engine::MsCalEngine,
     budget: SelectedObservationContentBudget,
-) -> Result<Centre, ApplicationError> {
+) -> Result<Centre, PrepareError> {
     let selected_field = request
         .phasecenter_field
         .unwrap_or_else(|| *survey.fields.first().expect("nonempty selection"));
     if !survey.fields.contains(&selected_field) {
-        return Err(boxed(format!(
-            "phase-center FIELD_ID {selected_field} is not part of selected fields {:?}",
-            survey.fields
-        )));
+        return Err(PrepareError::PhaseCentreField {
+            field: selected_field,
+            selected: survey.fields.clone(),
+        });
     }
-    let field_id =
-        usize::try_from(selected_field).map_err(|_| boxed("selected FIELD_ID is negative"))?;
+    let field_id = usize::try_from(selected_field).map_err(|_| PrepareError::NegativeMainId {
+        column: "FIELD_ID",
+        value: selected_field,
+    })?;
     let stored_phase = casa_ms::derived::engine::raw_field_phase_direction(ms, field_id)?;
     let field_phase = casa_ms::derived::engine::resolve_field_phase_direction_j2000(ms, field_id)?;
     let field_direction = SkyDirection::new(
@@ -72,7 +74,7 @@ pub(super) fn resolve_centre(
     let ephemeris_direction = |name: &str, ephemeris: &SelectedObservationEphemeris| {
         let direction = engine.ephemeris_direction_j2000(anchor_time, field_id, name, ephemeris)?;
         let (longitude, latitude) = direction.as_angles();
-        Ok::<_, ApplicationError>(SkyDirection::new(
+        Ok::<_, PrepareError>(SkyDirection::new(
             DirectionFrame::J2000,
             longitude,
             latitude,
@@ -150,7 +152,7 @@ fn image_centre(
     phase: &MDirection,
     stored_phase: MDirection,
     moving: bool,
-) -> Result<(MDirection, DirectionFrame), ApplicationError> {
+) -> Result<(MDirection, DirectionFrame), PrepareError> {
     if moving {
         let frame = engine.spectral_frame_observatory_direction(anchor_time, phase.clone())?;
         return Ok((
@@ -183,7 +185,7 @@ fn named_ephemeris(
     ms: &MeasurementSet,
     survey: &Survey,
     budget: SelectedObservationContentBudget,
-) -> Result<SelectedObservationEphemeris, ApplicationError> {
+) -> Result<SelectedObservationEphemeris, PrepareError> {
     let budget = budget.reference_data_budget();
     let mut ephemeris = if Path::new(text).is_dir() {
         SelectedObservationEphemeris::external(text, budget)?
@@ -193,7 +195,10 @@ fn named_ephemeris(
     let field = ms.field()?;
     let mut attached = Vec::new();
     for field_id in &survey.fields {
-        let field_id = usize::try_from(*field_id)?;
+        let field_id = usize::try_from(*field_id).map_err(|_| PrepareError::NegativeMainId {
+            column: "FIELD_ID",
+            value: *field_id,
+        })?;
         if field
             .ephemeris_id(field_id)?
             .is_some_and(|value| value >= 0)
@@ -205,9 +210,7 @@ fn named_ephemeris(
         return Ok(ephemeris);
     }
     if attached.len() != survey.fields.len() {
-        return Err(boxed(
-            "moving-source selection mixes FIELD rows with and without attached ephemerides",
-        ));
+        return Err(PrepareError::MixedEphemerisFields);
     }
     ephemeris = ephemeris.with_attached_fields(
         SelectedObservationEphemeris::tracked_fields(ms, attached, budget)?,
@@ -224,11 +227,14 @@ pub(super) fn observation_info(
     survey: &Survey,
     centre: &Centre,
     engine: &casa_ms::derived::engine::MsCalEngine,
-) -> Result<ObsInfo, ApplicationError> {
+) -> Result<ObsInfo, PrepareError> {
     let observation = ms.observation()?;
     let mut labels = std::collections::BTreeSet::new();
     for id in &survey.observation_ids {
-        let id = usize::try_from(*id).map_err(|_| boxed("selected OBSERVATION_ID is negative"))?;
+        let id = usize::try_from(*id).map_err(|_| PrepareError::NegativeMainId {
+            column: "OBSERVATION_ID",
+            value: *id,
+        })?;
         labels.insert(if id < observation.row_count() {
             (
                 observation.string(id, "TELESCOPE_NAME")?,
@@ -239,11 +245,10 @@ pub(super) fn observation_info(
         });
     }
     if labels.len() != 1 {
-        return Err(boxed(format!(
-            "image observation metadata requires consistent telescope and observer labels for \
-             selected OBSERVATION_IDs {:?}; found {labels:?}",
-            survey.observation_ids
-        )));
+        return Err(PrepareError::ObservationLabels {
+            observation_ids: survey.observation_ids.clone(),
+            labels,
+        });
     }
     let (telescope_name, observer) = labels.pop_first().expect("one label pair");
     // ObsInfo::toRecord uses MVDirection::get, preserving the signed atan2
@@ -359,12 +364,12 @@ const fn stokes_type(coordinate: PolarizationCoordinate) -> StokesType {
 
 /// A CASA phase-centre literal `J2000 <lon> <lat>`, with sexagesimal,
 /// degree or radian angles.
-pub(super) fn parse_phase_center_direction(text: &str) -> Result<SkyDirection, ApplicationError> {
+pub(super) fn parse_phase_center_direction(text: &str) -> Result<SkyDirection, PrepareError> {
     let parts = text.split_whitespace().collect::<Vec<_>>();
     if parts.len() != 3 || !parts[0].eq_ignore_ascii_case("J2000") {
-        return Err(boxed(
-            "phasecenter must be 'J2000 lon lat', for example 'J2000 19:59:28.500 +40.44.01.50'",
-        ));
+        return Err(PrepareError::PhaseCentreSyntax {
+            text: text.to_string(),
+        });
     }
     Ok(SkyDirection::new(
         DirectionFrame::J2000,
@@ -373,22 +378,20 @@ pub(super) fn parse_phase_center_direction(text: &str) -> Result<SkyDirection, A
     ))
 }
 
-fn parse_phase_center_angle(text: &str, longitude: bool) -> Result<f64, ApplicationError> {
+fn parse_phase_center_angle(text: &str, longitude: bool) -> Result<f64, PrepareError> {
     let lower = text.to_ascii_lowercase();
-    if let Some(radians) = lower.strip_suffix("rad") {
-        return Ok(radians.trim().parse::<f64>()?);
-    }
-    if let Some(degrees) = lower.strip_suffix("deg") {
-        return Ok(degrees.trim().parse::<f64>()?.to_radians());
-    }
-    if longitude {
-        if let Some(hours) = parse_sexagesimal(text, true) {
-            return Ok(hours * std::f64::consts::PI / 12.0);
-        }
-    } else if let Some(degrees) = parse_sexagesimal(text, false) {
-        return Ok(degrees.to_radians());
-    }
-    Err(boxed(format!("unsupported phasecenter angle {text:?}")))
+    let angle = if let Some(radians) = lower.strip_suffix("rad") {
+        radians.trim().parse::<f64>().ok()
+    } else if let Some(degrees) = lower.strip_suffix("deg") {
+        degrees.trim().parse::<f64>().ok().map(f64::to_radians)
+    } else if longitude {
+        parse_sexagesimal(text, true).map(|hours| hours * std::f64::consts::PI / 12.0)
+    } else {
+        parse_sexagesimal(text, false).map(f64::to_radians)
+    };
+    angle.ok_or_else(|| PrepareError::PhaseCentreAngle {
+        angle: text.to_string(),
+    })
 }
 
 fn parse_sexagesimal(text: &str, hours: bool) -> Option<f64> {

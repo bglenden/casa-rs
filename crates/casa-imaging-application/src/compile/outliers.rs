@@ -9,7 +9,7 @@ use std::{
 };
 
 use super::domains::DomainMask;
-use crate::ApplicationError;
+use super::{OutlierProblem, PrepareError};
 
 /// One outlier image domain as the outlier file defines it.
 pub(super) struct OutlierDomain {
@@ -25,16 +25,24 @@ pub(super) fn read_outlier_domains(
     path: &Path,
     default_size: usize,
     default_cell_arcsec: f64,
-) -> Result<Vec<OutlierDomain>, ApplicationError> {
-    let text = fs::read_to_string(path).map_err(|error| {
-        boxed(format!(
-            "cannot read outlier file {}: {error}",
-            path.display()
-        ))
-    })?;
-    let records = parse_records(path, &text)?;
+) -> Result<Vec<OutlierDomain>, PrepareError> {
+    outlier_domains(path, default_size, default_cell_arcsec).map_err(|problem| {
+        PrepareError::OutlierFile {
+            path: path.to_path_buf(),
+            problem,
+        }
+    })
+}
+
+fn outlier_domains(
+    path: &Path,
+    default_size: usize,
+    default_cell_arcsec: f64,
+) -> Result<Vec<OutlierDomain>, OutlierProblem> {
+    let text = fs::read_to_string(path).map_err(OutlierProblem::Read)?;
+    let records = parse_records(&text)?;
     if records.is_empty() {
-        return Err(boxed("outlier file did not define any image domains"));
+        return Err(OutlierProblem::Empty);
     }
     records
         .into_iter()
@@ -45,10 +53,7 @@ pub(super) fn read_outlier_domains(
         .collect()
 }
 
-fn parse_records(
-    path: &Path,
-    text: &str,
-) -> Result<Vec<BTreeMap<String, String>>, ApplicationError> {
+fn parse_records(text: &str) -> Result<Vec<BTreeMap<String, String>>, OutlierProblem> {
     let mut records = Vec::new();
     let mut current = BTreeMap::new();
     for (line_index, raw) in text.lines().enumerate() {
@@ -57,18 +62,14 @@ fn parse_records(
             continue;
         }
         let Some((key, value)) = line.split_once('=') else {
-            return Err(boxed(format!(
-                "outlier file {} line {} must contain one parameter=value pair",
-                path.display(),
-                line_index + 1
-            )));
+            return Err(OutlierProblem::NotAPair {
+                line: line_index + 1,
+            });
         };
         if value.contains('=') {
-            return Err(boxed(format!(
-                "outlier file {} line {} contains more than one '='",
-                path.display(),
-                line_index + 1
-            )));
+            return Err(OutlierProblem::SeveralEquals {
+                line: line_index + 1,
+            });
         }
         let key = key.trim().to_ascii_lowercase();
         if key == "imagename" && !current.is_empty() {
@@ -79,11 +80,10 @@ fn parse_records(
             .insert(key.clone(), trim_string(value).to_owned())
             .is_some()
         {
-            return Err(boxed(format!(
-                "outlier file {} line {} repeats field {key:?}",
-                path.display(),
-                line_index + 1
-            )));
+            return Err(OutlierProblem::RepeatedField {
+                line: line_index + 1,
+                key,
+            });
         }
     }
     if !current.is_empty() {
@@ -98,7 +98,7 @@ fn compile_record(
     mut fields: BTreeMap<String, String>,
     default_size: usize,
     default_cell_arcsec: f64,
-) -> Result<OutlierDomain, ApplicationError> {
+) -> Result<OutlierDomain, OutlierProblem> {
     let name = take_required(&mut fields, "imagename", ordinal)?;
     let output = resolve_output(path, &name);
     let image_size = fields
@@ -126,21 +126,20 @@ fn compile_record(
     admit_default(&mut fields, "gridder", &["", "standard", "gridft", "ft"])?;
     admit_default(&mut fields, "deconvolver", &["", "hogbom"])?;
     admit_default(&mut fields, "wprojplanes", &["", "1"])?;
+    // CASA lets these be empty; a value is a feature the slice lacks.
     for unsupported in ["startmodel", "start", "width", "reffreq"] {
         if fields
-            .remove(unsupported)
-            .is_some_and(|value| !value.is_empty())
+            .get(unsupported)
+            .is_some_and(|value| value.is_empty())
         {
-            return Err(boxed(format!(
-                "outlier image {ordinal} sets unsupported field {unsupported:?}"
-            )));
+            fields.remove(unsupported);
         }
     }
     if !fields.is_empty() {
-        return Err(boxed(format!(
-            "outlier image {ordinal} contains unsupported field(s): {}",
-            fields.keys().cloned().collect::<Vec<_>>().join(", ")
-        )));
+        return Err(OutlierProblem::UnsupportedFields {
+            ordinal,
+            fields: fields.into_keys().collect(),
+        });
     }
     Ok(OutlierDomain {
         name,
@@ -154,20 +153,20 @@ fn compile_record(
 
 fn take_required(
     fields: &mut BTreeMap<String, String>,
-    key: &str,
+    key: &'static str,
     ordinal: usize,
-) -> Result<String, ApplicationError> {
+) -> Result<String, OutlierProblem> {
     fields
         .remove(key)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| boxed(format!("outlier image {ordinal} is missing required {key}")))
+        .ok_or(OutlierProblem::MissingField { ordinal, key })
 }
 
 fn admit_default(
     fields: &mut BTreeMap<String, String>,
-    key: &str,
+    key: &'static str,
     admitted: &[&str],
-) -> Result<(), ApplicationError> {
+) -> Result<(), OutlierProblem> {
     let Some(value) = fields.remove(key) else {
         return Ok(());
     };
@@ -177,27 +176,24 @@ fn admit_default(
     {
         Ok(())
     } else {
-        Err(boxed(format!(
-            "outlier field {key}={value:?} is outside the installed multi-domain slice"
-        )))
+        Err(OutlierProblem::OutsideSlice { key, value })
     }
 }
 
-fn parse_square_size(text: &str) -> Result<usize, ApplicationError> {
+fn parse_square_size(text: &str) -> Result<usize, OutlierProblem> {
     let values = parse_list(text)
         .into_iter()
         .map(|value| value.parse::<usize>())
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| OutlierProblem::ImageSize)?;
     match values.as_slice() {
         [size] if *size > 0 => Ok(*size),
         [width, height] if *width > 0 && width == height => Ok(*width),
-        _ => Err(boxed(
-            "outlier imsize must be a positive square scalar or pair",
-        )),
+        _ => Err(OutlierProblem::ImageSize),
     }
 }
 
-fn parse_square_cell(text: &str) -> Result<f64, ApplicationError> {
+fn parse_square_cell(text: &str) -> Result<f64, OutlierProblem> {
     let values = parse_list(text)
         .into_iter()
         .map(|value| parse_arcsec(&value))
@@ -205,38 +201,34 @@ fn parse_square_cell(text: &str) -> Result<f64, ApplicationError> {
     match values.as_slice() {
         [cell] if cell.is_finite() && *cell > 0.0 => Ok(*cell),
         [x, y] if x.is_finite() && *x > 0.0 && (*x - *y).abs() <= f64::EPSILON => Ok(*x),
-        _ => Err(boxed(
-            "outlier cell must be one positive arcsec value or an equal pair",
-        )),
+        _ => Err(OutlierProblem::Cell),
     }
 }
 
-fn parse_arcsec(text: &str) -> Result<f64, ApplicationError> {
+fn parse_arcsec(text: &str) -> Result<f64, OutlierProblem> {
     let lower = trim_string(text).to_ascii_lowercase();
     lower
         .strip_suffix("arcsec")
         .unwrap_or(&lower)
         .trim()
         .parse::<f64>()
-        .map_err(|error| boxed(format!("invalid outlier cell {text:?}: {error}")))
+        .map_err(|_| OutlierProblem::CellValue {
+            text: text.to_string(),
+        })
 }
 
-fn circle_mask(text: &str, image_size: usize) -> Result<DomainMask, ApplicationError> {
+fn circle_mask(text: &str, image_size: usize) -> Result<DomainMask, OutlierProblem> {
     let compact = trim_string(text)
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect::<String>()
         .to_ascii_lowercase();
-    let body = compact
+    let (centre, radius) = compact
         .strip_prefix("circle[[")
         .and_then(|value| value.strip_suffix(']'))
-        .ok_or_else(|| boxed("outlier mask must use circle[[xpix,ypix],rpix]"))?;
-    let (centre, radius) = body
-        .split_once("],")
-        .ok_or_else(|| boxed("outlier mask must use circle[[xpix,ypix],rpix]"))?;
-    let (x, y) = centre
-        .split_once(',')
-        .ok_or_else(|| boxed("outlier mask must use circle[[xpix,ypix],rpix]"))?;
+        .and_then(|body| body.split_once("],"))
+        .ok_or(OutlierProblem::MaskSyntax)?;
+    let (x, y) = centre.split_once(',').ok_or(OutlierProblem::MaskSyntax)?;
     let centre = [parse_pixels(x)?, parse_pixels(y)?];
     let radius = parse_pixels(radius)?;
     if radius < 0.0
@@ -244,12 +236,12 @@ fn circle_mask(text: &str, image_size: usize) -> Result<DomainMask, ApplicationE
             .iter()
             .any(|value| *value < 0.0 || *value >= image_size as f64)
     {
-        return Err(boxed("outlier circle mask exceeds its image domain"));
+        return Err(OutlierProblem::MaskOutside);
     }
     let radius_squared = radius * radius;
     let support_len = image_size
         .checked_mul(image_size)
-        .ok_or_else(|| boxed("outlier mask support size overflowed"))?;
+        .ok_or(OutlierProblem::ImageSize)?;
     let mut support = Vec::with_capacity(support_len);
     for x in 0..image_size {
         for y in 0..image_size {
@@ -261,16 +253,11 @@ fn circle_mask(text: &str, image_size: usize) -> Result<DomainMask, ApplicationE
     Ok(DomainMask::PixelSupport(support.into_boxed_slice()))
 }
 
-fn parse_pixels(text: &str) -> Result<f64, ApplicationError> {
-    let value = text
-        .strip_suffix("pix")
-        .ok_or_else(|| boxed("outlier circle coordinates must use pix units"))?
-        .parse::<f64>()?;
-    if value.is_finite() {
-        Ok(value)
-    } else {
-        Err(boxed("outlier circle coordinates must be finite"))
-    }
+fn parse_pixels(text: &str) -> Result<f64, OutlierProblem> {
+    text.strip_suffix("pix")
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| value.is_finite())
+        .ok_or(OutlierProblem::MaskSyntax)
 }
 
 fn parse_list(text: &str) -> Vec<String> {
@@ -303,13 +290,6 @@ fn resolve_output(outlier_file: &Path, name: &str) -> PathBuf {
             .filter(|parent| !parent.as_os_str().is_empty())
             .map_or(output.clone(), |parent| parent.join(output))
     }
-}
-
-fn boxed(message: impl Into<String>) -> ApplicationError {
-    Box::new(std::io::Error::new(
-        std::io::ErrorKind::InvalidInput,
-        message.into(),
-    ))
 }
 
 #[cfg(test)]
