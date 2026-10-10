@@ -470,12 +470,15 @@ impl LockFile {
         let table = self.path.parent().unwrap_or(&self.path).to_path_buf();
         let lock = lock_name(lock_type);
         let started = Instant::now();
+        // The fields are repeated in the message, which is all a plain-text
+        // log shows.
         let outcome = if nattempts == 0 {
             tracing::warn!(
                 table = %table.display(),
                 lock,
-                "the table is locked by another process; waiting until it is released, \
-                 as casacore does"
+                "table {} is locked by another process; waiting for the {lock} lock until it \
+                 is released, as casacore does",
+                table.display()
             );
             let (stop, stopped) = std::sync::mpsc::channel::<()>();
             std::thread::scope(|scope| {
@@ -484,11 +487,13 @@ impl LockFile {
                     while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
                         stopped.recv_timeout(WAIT_REPORT_INTERVAL)
                     {
+                        let waited_s = started.elapsed().as_secs_f64();
                         tracing::info!(
                             table = %table.display(),
                             lock,
-                            waited_s = started.elapsed().as_secs_f64(),
-                            "still waiting for the table lock another process holds"
+                            waited_s,
+                            "still waiting for the {lock} lock on table {} after {waited_s:.0} s",
+                            table.display()
                         );
                     }
                 });
@@ -501,23 +506,28 @@ impl LockFile {
                 table = %table.display(),
                 lock,
                 attempts = nattempts,
-                "the table is locked by another process; retrying once a second"
+                "table {} is locked by another process; retrying the {lock} lock once a \
+                 second, {nattempts} attempts in all",
+                table.display()
             );
             self.retry_once_a_second(lock_type, nattempts - 1)?
         };
+        let waited_s = started.elapsed().as_secs_f64();
         match outcome {
             LockOutcome::Acquired => tracing::info!(
                 table = %table.display(),
                 lock,
-                waited_s = started.elapsed().as_secs_f64(),
-                "acquired the table lock another process held"
+                waited_s,
+                "acquired the {lock} lock on table {} after waiting {waited_s:.1} s",
+                table.display()
             ),
             LockOutcome::Deadlock => tracing::warn!(
                 table = %table.display(),
                 lock,
-                waited_s = started.elapsed().as_secs_f64(),
-                "gave up waiting for the table lock: waiting would deadlock with another \
-                 process that waits for a lock this process holds (EDEADLK)"
+                waited_s,
+                "gave up waiting for the {lock} lock on table {}: waiting would deadlock with \
+                 another process that waits for a lock this process holds (EDEADLK)",
+                table.display()
             ),
             LockOutcome::HeldInProcess | LockOutcome::HeldByAnotherProcess => {}
         }
