@@ -28,8 +28,8 @@ use casa_imaging_model::{
     PointingTimeSampling, Projection as ModelProjection, SelectedAntennaResponses,
     SelectedImageDomainProjection, SelectedImageDomainProjections, SelectedObservationRunChannel,
     SelectedObservationRunRow, SelectedPhaseCentreProjection, SelectedPointingDirections,
-    SelectedPredictionTarget, SelectedSampleCoordinates, SelectedSampleMetadata, SkyDirection,
-    TimeScale, VisibilityColumn, WeightColumn,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SkyDirection, TimeScale, VisibilityColumn,
+    WeightColumn,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use ndarray::arr2;
@@ -811,26 +811,12 @@ fn project_stored_run_row(
     };
     let physical_row = u64::try_from(stored.physical_row())
         .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?;
-    let prediction_target = if problem
-        .observation_transaction()
-        .write_set()
-        .visibility_columns()
-        .iter()
-        .any(|write| {
-            write.column() == casa_imaging_model::MsColumnKind::ModelData
-                && write.measurement_set() == logical_source.measurement_set()
-        }) {
-        SelectedPredictionTarget::ModelData
-    } else {
-        SelectedPredictionTarget::NotRequested
-    };
     Ok(SelectedObservationRunRow {
         measurement_set: logical_source.measurement_set(),
         physical_row,
         data_description_id: stored.data_description_id(),
         spectral_window_id: coordinates.data_description.spectral_window_id(),
         polarization_id: coordinates.data_description.polarization_id(),
-        prediction_target,
         row_flag: stored.row_flag(),
         coordinates: SelectedSampleCoordinates {
             raw_uvw_m: stored.uvw_m(),
