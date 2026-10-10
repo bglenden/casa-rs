@@ -165,7 +165,10 @@
 //! [`TableWriteLock`] for the duration of its change. Locks are arbitrated
 //! per process as casacore's table cache does: handles on one table share
 //! one `table.lock` descriptor, and a second handle is refused the write lock
-//! exactly as another process is.
+//! at once. A lock another process holds is waited for when the request
+//! allows it (`nattempts == 0`, an `AutoLocking` open or write), as casacore
+//! waits, with this process's id in the lock file's request list so that a
+//! casacore `AutoLocking` holder releases it at its next inspection.
 //!
 //! # Memory tables
 //!

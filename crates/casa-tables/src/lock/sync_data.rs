@@ -142,6 +142,12 @@ impl SyncData {
     /// Increments `modify_counter` if anything changed. Increments
     /// `table_change_counter` if the table structure changed. Increments
     /// per-DM counters for each DM that changed.
+    ///
+    /// `dm_changed` has one entry per data manager of the table as written,
+    /// and the per-DM counters are resized to it, shrinking as well as
+    /// growing, as casacore's `TableSyncData::write` does: a casacore reader
+    /// asserts that their number equals its table's data managers
+    /// (`ColumnSet::resync`).
     pub fn record_write(
         &mut self,
         nrrow: u64,
@@ -158,12 +164,8 @@ impl SyncData {
             changed = true;
         }
 
-        // Resize DM counters if needed, initializing new entries to 0.
-        let old_len = self.data_man_change_counters.len();
-        let new_len = dm_changed.len();
-        if new_len > old_len {
-            self.data_man_change_counters.resize(new_len, 0);
-        }
+        // Resize the DM counters to the written layout, new entries at 0.
+        self.data_man_change_counters.resize(dm_changed.len(), 0);
         for (i, &dm_did_change) in dm_changed.iter().enumerate() {
             if dm_did_change {
                 self.data_man_change_counters[i] = self.data_man_change_counters[i].wrapping_add(1);
@@ -290,6 +292,13 @@ mod tests {
         // Write with no changes.
         sync.record_write(10, 2, false, &[false, false]);
         assert_eq!(sync.modify_counter, 2); // unchanged
+
+        // The counters follow the written layout, shrinking as well as
+        // growing, as casacore's TableSyncData::write resizes them.
+        sync.record_write(10, 2, false, &[true]);
+        assert_eq!(sync.data_man_change_counters, vec![2]);
+        sync.record_write(10, 3, true, &[false, true, true]);
+        assert_eq!(sync.data_man_change_counters, vec![2, 1, 1]);
     }
 
     #[test]

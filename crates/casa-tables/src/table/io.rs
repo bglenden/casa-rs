@@ -1338,6 +1338,7 @@ impl Table {
     ///
     /// `Table::tableInfo()` (mutable overload) followed by `Table::flushTableInfo()`.
     pub fn set_info(&mut self, info: TableInfo) {
+        self.inner.note_change();
         self.table_info = info;
     }
 
@@ -1554,7 +1555,12 @@ impl Table {
         self.virtual_columns = std::mem::take(&mut reloaded.virtual_columns);
         self.virtual_bindings = std::mem::take(&mut reloaded.virtual_bindings);
         self.table_info = std::mem::take(&mut reloaded.table_info);
-        // Preserve source_path, kind, marked_for_delete, and lock_state.
+        // Preserve source_path, kind, marked_for_delete, and lock_state. The
+        // reloaded state is what is on disk, so a lock has nothing to flush.
+        #[cfg(unix)]
+        if let Some(state) = self.lock_state.as_mut() {
+            state.flushed_generation = self.inner.generation();
+        }
         Ok(())
     }
 

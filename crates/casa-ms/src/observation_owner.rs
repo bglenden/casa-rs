@@ -152,6 +152,14 @@ struct PendingVisibilityCells {
 impl SelectedVisibilityWrite {
     /// Take the MAIN write lock and start an in-place write. `MODEL_DATA` is
     /// created, zero-filled, when MAIN lacks it, as CASA does.
+    ///
+    /// The MeasurementSet is opened with retained read locks, and MAIN's is
+    /// then upgraded to the write lock. Both wait, as casacore's do, for a
+    /// conflicting lock another process holds. When another process holding
+    /// a read lock waits to upgrade it too, the kernel refuses one of the
+    /// two waits; if it is this one, the write fails with
+    /// [`ObservationOwnerError::WriteLockUnavailable`] and releases its read
+    /// locks.
     pub fn begin(
         path: impl AsRef<Path>,
         targets: SelectedVisibilityWriteTargets,
@@ -160,7 +168,7 @@ impl SelectedVisibilityWrite {
             return Err(ObservationOwnerError::EmptyWriteTargets);
         }
         let mut measurement_set = MeasurementSet::open_retained_read(path.as_ref())?;
-        if !measurement_set.main_table_mut().lock(LockType::Write, 1)? {
+        if !measurement_set.main_table_mut().lock(LockType::Write, 0)? {
             return Err(ObservationOwnerError::WriteLockUnavailable);
         }
         let has_model = {
@@ -613,8 +621,13 @@ pub enum ObservationOwnerError {
         /// Total source content budget.
         available_bytes: usize,
     },
-    /// The MAIN write lock could not be acquired.
-    #[error("could not acquire the MeasurementSet MAIN write lock")]
+    /// The MAIN write lock could not be acquired: another handle in this
+    /// process holds it, or waiting for it would deadlock with another
+    /// process.
+    #[error(
+        "could not acquire the MeasurementSet MAIN write lock: another handle in this process \
+         holds it, or waiting would deadlock with another process"
+    )]
     WriteLockUnavailable,
     /// A selected visibility addressed a cell outside its destination.
     #[error("selected visibility address is outside its destination column")]

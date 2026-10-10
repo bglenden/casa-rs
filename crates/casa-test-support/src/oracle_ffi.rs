@@ -148,6 +148,12 @@ unsafe extern "C" {
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    pub(crate) fn cpp_table_lock_read_relock(
+        path: *const std::ffi::c_char,
+        out_rows: *mut u64,
+        out_columns: *mut u32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     #[link_name = "cpp_columns_index_time_lookups"]
     pub(crate) fn ffi_columns_index_time_lookups(
         path: *const std::ffi::c_char,
