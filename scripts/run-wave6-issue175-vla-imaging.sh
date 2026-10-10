@@ -8,7 +8,7 @@ else
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-casa_python="${CASA_RS_CASA_PYTHON:-$HOME/SoftwareProjects/casa-build/venv/bin/python}"
+casa_python="${CASA_RS_CASA_PYTHON:-/Applications/CASA.app/Contents/MacOS/python3}"
 tutorial_root="${CASA_RS_TUTORIAL_DATA_ROOT:-$HOME/SoftwareProjects/casa-tutorial-data}"
 archive="$tutorial_root/tutorial-parity/vla/imaging/SNR_G55_10s.calib.tar.gz"
 cases="${CASA_RS_WAVE6_ISSUE175_CASES:-smoke}"

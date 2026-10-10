@@ -1,7 +1,7 @@
 # Agent Reference
 
 Truth class: normative
-Last reality check: 2026-10-06
+Last reality check: 2026-10-10
 Verification: just docs-check
 
 This is situational guidance for agents. Read only the section relevant to the
@@ -9,9 +9,9 @@ task; root `AGENTS.md` remains the short always-loaded contract.
 
 ## CASA And C++ Oracles
 
-- Local CASA/C++ task runs use
-  `/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python`, which
-  has the locally built `casatasks` and `casatools` wheels installed.
+- Local CASA task runs use the CASA 6.7.6 release's Python,
+  `/Applications/CASA.app/Contents/MacOS/python3`, which has `casatasks` and
+  `casatools`. Scripts take `CASA_RS_CASA_PYTHON` to use another one.
 - Before implementing CASA/casacore behavior, inspect the corresponding
   upstream source path. Use targeted instrumentation on both implementations
   for parity investigations.

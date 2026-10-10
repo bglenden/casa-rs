@@ -8,8 +8,8 @@ if [[ -z "${CASA_RS_TESTDATA_ROOT:-}" && -d "$HOME/SoftwareProjects/casatestdata
   export CASA_RS_TESTDATA_ROOT="$HOME/SoftwareProjects/casatestdata"
 fi
 
-if [[ -z "${CASA_RS_CASA_PYTHON:-}" && -x "$HOME/SoftwareProjects/casa-build/venv/bin/python" ]]; then
-  export CASA_RS_CASA_PYTHON="$HOME/SoftwareProjects/casa-build/venv/bin/python"
+if [[ -z "${CASA_RS_CASA_PYTHON:-}" && -x "/Applications/CASA.app/Contents/MacOS/python3" ]]; then
+  export CASA_RS_CASA_PYTHON="/Applications/CASA.app/Contents/MacOS/python3"
 fi
 
 echo "CASA_RS_TESTDATA_ROOT=${CASA_RS_TESTDATA_ROOT:-<unset>}"

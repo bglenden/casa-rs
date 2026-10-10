@@ -4398,8 +4398,7 @@ mod tests {
 
     #[test]
     fn crtf_region_files_interoperate_with_casa_regionmanager_when_available() {
-        const CASA_PYTHON: &str =
-            "/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python";
+        const CASA_PYTHON: &str = "/Applications/CASA.app/Contents/MacOS/python3";
         if !Path::new(CASA_PYTHON).exists() {
             eprintln!("skipping CASA CRTF interop test: {CASA_PYTHON} is not available");
             return;

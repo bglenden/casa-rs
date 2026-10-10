@@ -14,7 +14,8 @@ It fails when:
 - an application's executable is not a Rust bin target of its declared cargo
   package (so every launched program is covered by the source scan below);
 - shipped code mentions `casatasks`, `casatools`, `mpicasa`, or a hard-coded
-  CASA build environment on a code line: non-test Rust and scripts under
+  CASA install (`CASA.app` or a local CASA build environment) on a code line:
+  non-test Rust and scripts under
   `crates/*/src`, the `casars` Python package, and `apps/*/Sources` Swift.
 
 Test code is exempt: `tests/` directories, `tests.rs` / `*_tests.rs` files,
@@ -42,7 +43,7 @@ TEST_ONLY_CRATES = {"casa-test-support"}
 BRIDGE_NAME = re.compile(r"casa[-_]task(?![-_]runtime)", re.IGNORECASE)
 RETIRED_PROVIDER_FAMILIES = {"casa_task_adapter"}
 CASA_RUNTIME_CODE = re.compile(r"\b(casatasks|casatools|mpicasa)\b")
-CASA_INSTALL_PATH = re.compile(r"casa-build/venv")
+CASA_INSTALL_PATH = re.compile(r"casa-build/venv|CASA\.app")
 TEST_MODULE_START = re.compile(r"^\s*mod\s+\w+\s*\{")
 
 

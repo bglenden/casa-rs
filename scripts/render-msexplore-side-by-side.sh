@@ -107,8 +107,8 @@ if [[ -z "$ms_path" || -z "$output_path" || -z "$casa_xaxis" || -z "$casa_yaxis"
   exit 1
 fi
 
-if [[ -z "${CASA_RS_CASA_PYTHON:-}" && -x "$HOME/SoftwareProjects/casa-build/venv/bin/python" ]]; then
-  export CASA_RS_CASA_PYTHON="$HOME/SoftwareProjects/casa-build/venv/bin/python"
+if [[ -z "${CASA_RS_CASA_PYTHON:-}" && -x "/Applications/CASA.app/Contents/MacOS/python3" ]]; then
+  export CASA_RS_CASA_PYTHON="/Applications/CASA.app/Contents/MacOS/python3"
 fi
 
 if [[ -z "${CASA_RS_CASA_PYTHON:-}" ]]; then
