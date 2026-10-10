@@ -60,6 +60,13 @@ impl PreparedSpectralAxis {
             self.doppler,
         )
     }
+
+    /// The source channels the axis reads from surveyed window `spw_id`.
+    pub(super) fn window_channels(&self, spw_id: usize) -> &[usize] {
+        self.selected_source_channels
+            .get(&spw_id)
+            .expect("the spectral axis selects channels of every surveyed window")
+    }
 }
 
 /// Where and when a frame conversion is evaluated.

@@ -54,7 +54,7 @@ impl ProductStoragePlan {
             .positions()
             .iter()
             .position(|axis| *axis == ImageAxis::Spectral)
-            .ok_or(ProductsError::SourceLineageMismatch)?;
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
         let shape = axes.shape();
         let maximum_channels = self.maximum_channels.min(shape[spectral_axis]);
         let mut window_shape = shape;

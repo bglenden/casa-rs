@@ -128,10 +128,15 @@ fn frequency_groups(
         .spectral_windows
         .iter()
         .map(|window| {
-            let selected = &spectral.selected_source_channels[&window.spw_id];
-            let channel_frequencies_hz = selected
+            let channel_frequencies_hz = spectral
+                .window_channels(window.spw_id)
                 .iter()
-                .map(|index| window.frequencies_hz[*index])
+                .map(|index| {
+                    *window
+                        .frequencies_hz
+                        .get(*index)
+                        .expect("selected channels index their window's frequency axis")
+                })
                 .collect::<Vec<_>>();
             // TransformMachines2::makeFreqValList selects each SPW's high endpoint.
             let cf_frequency_hz = channel_frequencies_hz

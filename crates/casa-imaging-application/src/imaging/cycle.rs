@@ -19,7 +19,7 @@ use casa_imaging_products::VisibilityProductCompletion;
 use casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan;
 use casa_imaging_reconstruction::{
     ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, MinorCycleImageResponse,
-    ModelGeneration, ModelLifecycle, ModelStoragePlan, PassNormalState, ReconstructionMaskPlan,
+    ModelGeneration, ModelLifecycle, ModelStoragePlan, PassAppender, ReconstructionMaskPlan,
     ReconstructionMaskSet,
 };
 use casa_imaging_runtime::pass::{
@@ -88,6 +88,9 @@ struct Run<'a> {
     host: HostResources,
     policy: ResourcePolicy,
     cube: Option<CubeState>,
+    /// The run's model lifecycle: its generations are paged with the cube
+    /// state, or resident.
+    lifecycle: ModelLifecycle,
     native_spacing_hz: f64,
     backend: BackendChoice,
     visibility_write: Option<VisibilityWriteTarget>,
@@ -360,6 +363,13 @@ impl<'a> Run<'a> {
         let cube = matches!(main.basis(), Basis::ChannelLocal { .. })
             .then(|| cube_state(problem, inputs.spill_directory, workers, &host, &policy))
             .transpose()?;
+        let lifecycle = ModelLifecycle::new(
+            problem,
+            match &cube {
+                Some(cube) => cube.model_storage()?,
+                None => ModelStoragePlan::resident(usize::MAX)?,
+            },
+        );
         let run = Self {
             problem,
             domains,
@@ -370,6 +380,7 @@ impl<'a> Run<'a> {
             host,
             policy,
             cube,
+            lifecycle,
             native_spacing_hz: native_spacing_hz(problem),
             backend,
             visibility_write: inputs.visibility_write,
@@ -396,8 +407,9 @@ impl<'a> Run<'a> {
     /// The initial major cycle: data and PSF, from an empty model; it writes
     /// visibilities when it is also final.
     fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
-        let lifecycle = ModelLifecycle::new(self.problem, self.model_storage()?);
-        let model = lifecycle.prepare_final_model(lifecycle.initial_empty()?, [])?;
+        let model = self
+            .lifecycle
+            .prepare_final_model(self.lifecycle.initial_empty()?, [])?;
         let (residency, _pass) = self.admit_pass(self.initial_modes(), false)?;
         let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(residency)?)?;
         self.reconcile(cycle, true, last, residency)
@@ -412,8 +424,7 @@ impl<'a> Run<'a> {
         last: bool,
     ) -> Result<Major, ImagingError> {
         let (normal_state, model) = completion.into_parts();
-        let lifecycle = ModelLifecycle::new(self.problem, self.model_storage()?);
-        let model = lifecycle.prepare_final_model(model, terms)?;
+        let model = self.lifecycle.prepare_final_model(model, terms)?;
         let (residency, _pass) = self.admit_pass(ModeSet::DATA, true)?;
         let cycle = MajorCycle::refresh(
             self.problem,
@@ -480,13 +491,6 @@ impl<'a> Run<'a> {
         })
     }
 
-    fn model_storage(&self) -> Result<ModelStoragePlan, ImagingError> {
-        Ok(match &self.cube {
-            Some(cube) => cube.model_storage()?,
-            None => ModelStoragePlan::resident(usize::MAX)?,
-        })
-    }
-
     /// Normal storage whose paged window holds the planes of one wave of
     /// `residency`.
     fn normal_storage(&self, residency: Residency) -> Result<NormalStoragePlan, ImagingError> {
@@ -550,7 +554,7 @@ impl<'a> Run<'a> {
         modes: ModeSet,
         model: Option<&ModelGeneration>,
         residency: Residency,
-        state: &mut PassNormalState,
+        mut state: PassAppender<'_>,
         initial: bool,
         mut writer: Option<&mut VisibilityWriter<'_>>,
     ) -> Result<PassSummary, ImagingError> {

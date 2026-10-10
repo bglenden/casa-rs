@@ -316,4 +316,25 @@ mod tests {
         assert!(support[40 * 80 + 40]);
         assert!(!support[0]);
     }
+
+    #[test]
+    fn a_line_without_a_parameter_names_its_line() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("outlier.txt");
+        std::fs::write(&path, "imagename='outlier'\n# a comment\nphasecenter\n")
+            .expect("write outlier fixture");
+        let Err(error) = read_outlier_domains(&path, 100, 4.0) else {
+            panic!("a line without '=' is refused");
+        };
+        assert!(
+            matches!(
+                error,
+                PrepareError::OutlierFile {
+                    problem: OutlierProblem::NotAPair { line: 3 },
+                    ..
+                }
+            ),
+            "{error}"
+        );
+    }
 }

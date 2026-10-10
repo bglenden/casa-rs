@@ -227,7 +227,7 @@ impl Scene {
         let mut cycle = MajorCycle::initial(problem, model, self.storage())
             .expect("initial synthetic major cycle");
         {
-            let (model, state) = cycle.parts();
+            let (model, mut state) = cycle.parts();
             for domain in 0..self.domains.len() {
                 state
                     .append(self.pass_images(domain, model, true))
@@ -251,7 +251,7 @@ impl Scene {
         let mut cycle = MajorCycle::refresh(problem, previous, model, self.storage())
             .expect("refresh synthetic major cycle");
         {
-            let (model, state) = cycle.parts();
+            let (model, mut state) = cycle.parts();
             for domain in 0..self.domains.len() {
                 state
                     .append(self.pass_images(domain, model, false))

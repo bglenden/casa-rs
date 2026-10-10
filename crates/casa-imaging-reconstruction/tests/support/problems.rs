@@ -205,7 +205,7 @@ pub fn reconstruction_problem_with_domains(
             NumericPrecision::F64,
         ),
     ))
-    .expect("compile T20 reconciliation problem")
+    .expect("compile the reconciliation problem")
 }
 
 /// The model lifecycle of `problem`, its generations resident in one window.

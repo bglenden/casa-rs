@@ -131,6 +131,10 @@ impl ModelLifecycle {
     /// non-zero, within the compiled bounds and on valid support of `base`.
     /// The update is queued on `base`'s storage; each bounded window is
     /// updated once on first access.
+    ///
+    /// # Panics
+    ///
+    /// If `base` is not in this lifecycle's model space.
     pub fn prepare_final_model(
         &self,
         mut base: ModelGeneration,
@@ -267,19 +271,20 @@ impl ModelLifecycle {
         Ok(())
     }
 
-    /// Check a generation against the compiled model space and its value
-    /// bound.
+    /// Check a generation against the compiled value bound.
+    ///
+    /// # Panics
+    ///
+    /// If the generation is not in this lifecycle's model space: generations
+    /// are created only by a lifecycle and move through one problem's major
+    /// cycles.
     fn validate_generation(&self, generation: &ModelGeneration) -> Result<(), ModelLifecycleError> {
         generation.samples.finish_updates()?;
-        if generation.shape != *self.contract.target() {
-            return Err(ModelLifecycleError::ForeignModelSpace);
-        }
-        if generation.samples.len() != generation.shape.sample_count() {
-            return Err(ModelLifecycleError::SampleCountMismatch {
-                expected: generation.shape.sample_count(),
-                actual: generation.samples.len(),
-            });
-        }
+        assert!(
+            generation.shape == *self.contract.target()
+                && generation.samples.len() == generation.shape.sample_count(),
+            "a model generation stays in the model space of the lifecycle that created it"
+        );
         // A tighter scientific bound is a new constraint, unlike a routine
         // transfer of an already validated model. Overlap restoration can lower
         // the recorded maximum, so validate rather than reject this transition.
@@ -351,9 +356,6 @@ pub enum ModelLifecycleError {
     /// An update attempted to create a value outside valid support.
     #[error("model update terms may update only valid model support")]
     DeltaOutsideValidSupport,
-    /// A generation belonged to another model space.
-    #[error("model generation belongs to a different model space")]
-    ForeignModelSpace,
     /// Invalid support carried a numeric payload.
     #[error("invalid model support may not carry a numeric value")]
     InvalidSupportPayload,

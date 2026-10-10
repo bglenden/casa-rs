@@ -428,8 +428,7 @@ impl ImageDomainReconstructionMaskPlans {
 
     /// Advance every domain plan to the next shared major-cycle boundary.
     ///
-    /// The T31 slice admits live auto-masking only for a one-domain
-    /// collection. Multi-domain auto-mask evolution fails typed instead of
+    /// Live auto-masking is admitted only for a one-domain collection. Multi-domain auto-mask evolution fails typed instead of
     /// silently sharing or independently inventing support.
     pub fn next_cycle(
         &self,

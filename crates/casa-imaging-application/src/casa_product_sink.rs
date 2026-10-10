@@ -61,33 +61,35 @@ impl CasaImageProductSink {
             base,
             coordinates,
         )])
-        .expect("one main image-domain output is valid")
     }
 
-    /// Bind every compiled image-domain role to one unique output root and WCS.
-    pub fn for_domains(
-        domains: impl IntoIterator<Item = CasaImageDomainOutput>,
-    ) -> Result<Self, std::io::Error> {
+    /// Bind every compiled image-domain role to its output root and WCS.
+    ///
+    /// # Panics
+    ///
+    /// If two outputs share a role or a root, or none is the main domain.
+    /// Compiling a request refuses domains that name one output, and always
+    /// compiles the main domain.
+    #[must_use]
+    pub fn for_domains(domains: impl IntoIterator<Item = CasaImageDomainOutput>) -> Self {
         let mut outputs = BTreeMap::new();
         let mut roots = std::collections::BTreeSet::new();
         for output in domains {
-            if !roots.insert(output.base.clone())
-                || outputs.insert(output.role.clone(), output).is_some()
-            {
-                return Err(std::io::Error::other(
-                    "CASA image-domain output roles and roots must be unique",
-                ));
-            }
+            let new_root = roots.insert(output.base.clone());
+            let new_role = outputs.insert(output.role.clone(), output).is_none();
+            assert!(
+                new_root && new_role,
+                "compiled image domains have distinct roles and output roots"
+            );
         }
-        if outputs.is_empty() || !outputs.contains_key(&ImageDomainRole::Main) {
-            return Err(std::io::Error::other(
-                "CASA image-domain outputs require one main domain",
-            ));
-        }
-        Ok(Self {
+        assert!(
+            outputs.contains_key(&ImageDomainRole::Main),
+            "compiled image domains include the main domain"
+        );
+        Self {
             domains: outputs,
             staged: Mutex::new(Vec::new()),
-        })
+        }
     }
 }
 
@@ -557,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn domain_outputs_require_unique_roles_roots_and_one_main() {
+    fn domain_outputs_bind_every_role() {
         let main = CasaImageDomainOutput::new(
             ImageDomainRole::Main,
             "main".into(),
@@ -568,18 +570,8 @@ mod tests {
             "north".into(),
             CoordinateSystem::new(),
         );
-        let sink = CasaImageProductSink::for_domains([main.clone(), outlier])
-            .expect("unique domain outputs");
+        let sink = CasaImageProductSink::for_domains([main, outlier]);
         assert_eq!(sink.domains.len(), 2);
-        assert!(CasaImageProductSink::for_domains([main.clone(), main]).is_err());
-        assert!(
-            CasaImageProductSink::for_domains([CasaImageDomainOutput::new(
-                ImageDomainRole::Outlier("north".into()),
-                "north".into(),
-                CoordinateSystem::new(),
-            )])
-            .is_err()
-        );
     }
 
     #[test]

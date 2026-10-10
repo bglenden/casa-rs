@@ -536,3 +536,36 @@ fn correlation_type(code: i32) -> Result<CorrelationType, PrepareError> {
         _ => return Err(PrepareError::UnsupportedCorrelation { code }),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use casa_ms::MeasurementSetBuilder;
+    use serde_json::json;
+
+    use super::*;
+    use crate::request::tests::request;
+
+    #[test]
+    fn channels_past_the_window_are_refused() {
+        let request = request(json!({ "channel_start": 1, "channel_count": 2 }));
+        assert!(matches!(
+            selected_channels(&request, 0, &[1.0e9, 1.1e9]),
+            Err(PrepareError::ChannelRange {
+                spw_id: 0,
+                start: 1,
+                count: 2,
+                channels: 2,
+            })
+        ));
+    }
+
+    #[test]
+    fn a_measurement_set_without_visibilities_has_no_column_to_image() {
+        let ms = MeasurementSet::create_memory(MeasurementSetBuilder::new())
+            .expect("a MeasurementSet with neither DATA nor CORRECTED_DATA");
+        assert!(matches!(
+            visibility_column(&ms, None),
+            Err(PrepareError::NoVisibilityColumn)
+        ));
+    }
+}

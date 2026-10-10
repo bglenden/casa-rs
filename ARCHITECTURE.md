@@ -52,8 +52,8 @@ become reconstruction-owned merely because both owners require them.
 ADR-0014 requires trusted in-process generation to transfer bounded owned windows
 directly into private CASA image staging without product content attestation,
 verification-only array rereads or an intermediate readable product store.
-Source/run association, inventory, shape, complete writes, metadata and I/O
-checks remain. Each image replacement is atomic; a failure leaves the run and
+Inventory, shape against the compiled problem, complete writes, metadata and
+I/O checks remain. Each image replacement is atomic; a failure leaves the run and
 its output set incomplete and requires rerun. There is no per-member resumable
 recovery, content-based idempotency or whole-set rollback protocol.
 Generated publication has only generation/write and terminal publication work;
@@ -63,9 +63,11 @@ window shape, finite-value and complete-coverage validation; the CASA writer
 owns physical I/O. Explicit pending, generated, published and consumed states
 make generation/publication failures terminal and completion available once.
 The same ownership rule applies to model lifecycle and normal-state completion:
-validate scientific values/support at introduction or modification, retain exact
-run/model/weighting/replay/coverage associations, and do not hash or reread full
-owned arrays just to assign completion authority. Routine telemetry stays
+validate scientific values/support at introduction or modification; a major
+cycle owns its final model and the normal state its pass forms and releases
+them together, so a residual stays paired with its model without identities;
+and do not hash or reread full owned arrays just to assign completion
+authority. Routine telemetry stays
 indexed in memory and persists a useful final summary, not full-plan checkpoints
 at each work/fence event or scans of historical receipts during admission.
 `casa-imaging-runtime` owns imaging execution (see Imaging execution): host
@@ -511,7 +513,7 @@ or provider semantics that bypass the Rust-owned contracts.
 protocol, and result presentation. `casa-imaging-application` owns the
 `ImagingRequest` and its validation, MeasurementSet expression
 resolution, bounded source access, installed-implementation admission, runtime policy, and
-independently atomic product publication. Resolved immutable selection identity
+independently atomic product publication. The resolved, immutable selection
 belongs to `casa-imaging-model`'s Observation Snapshot compiler. Scientific
 weighting, gridding/degridding, FFT, normalization, deconvolution, restoration,
 and product meaning reside only in their declared native owners.

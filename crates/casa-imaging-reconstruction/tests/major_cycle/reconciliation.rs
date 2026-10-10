@@ -430,7 +430,7 @@ fn a_coupled_refresh_must_form_the_residual_of_every_domain_again() {
     let refresh = |formed: std::ops::Range<usize>| {
         let mut initial = MajorCycle::initial(&problem, empty_final_model(&lifecycle), storage())
             .expect("initial major cycle");
-        let (model, state) = initial.parts();
+        let (model, mut state) = initial.parts();
         for domain in 0..2 {
             let mut images = scene.pass_images(model, true);
             images.domain = domain;
@@ -447,7 +447,7 @@ fn a_coupled_refresh_must_form_the_residual_of_every_domain_again() {
             .expect("prepare the refresh's final model");
         let mut refresh =
             MajorCycle::refresh(&problem, previous, model, storage()).expect("refresh major cycle");
-        let (model, state) = refresh.parts();
+        let (model, mut state) = refresh.parts();
         for domain in formed {
             let mut images = scene.pass_images(model, false);
             images.domain = domain;

@@ -454,6 +454,19 @@ mod tests {
     }
 
     #[test]
+    fn a_phase_centre_other_than_j2000_lon_lat_is_refused() {
+        for text in ["B1950 0rad 0rad", "J2000 0rad"] {
+            assert!(
+                matches!(
+                    parse_phase_center_direction(text),
+                    Err(PrepareError::PhaseCentreSyntax { .. })
+                ),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
     fn the_stokes_axis_lists_the_imaged_coordinate() {
         let coordinates = image_coordinates(
             direction_spec(64, 8.0, DirectionFrame::J2000, 0.0, 0.0),

@@ -48,7 +48,7 @@ impl<'a> ContinuumProductInputs<'a> {
         mask: &'a ReconstructionMask,
     ) -> Result<Self, ProductsError> {
         if mask.shape() != self.normal_state.shape() {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         self.reconstruction_mask = Some(mask);
         self.domain_reconstruction_masks = None;
@@ -70,7 +70,7 @@ impl<'a> ContinuumProductInputs<'a> {
                         || mask.coordinate() != domain.direction()
                 })
         {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         self.reconstruction_mask = None;
         self.domain_reconstruction_masks = Some(masks);
@@ -101,7 +101,7 @@ impl<'a> ContinuumProductInputs<'a> {
             .domains()
             .iter()
             .find(|domain| domain.role() == role)
-            .ok_or(ProductsError::SourceLineageMismatch)?;
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
         let increment = domain.direction().increment_rad();
         Ok([increment[0].abs(), increment[1].abs()])
     }
@@ -118,9 +118,9 @@ impl<'a> ContinuumProductInputs<'a> {
             .iter()
             .enumerate()
             .filter(|(_, candidate)| *candidate == role);
-        let (ordinal, _) = matches.next().ok_or(ProductsError::SourceLineageMismatch)?;
+        let (ordinal, _) = matches.next().ok_or(ProductsError::ProblemShapeMismatch)?;
         if matches.next().is_some() {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         Ok(ordinal)
     }

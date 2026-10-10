@@ -12,7 +12,7 @@ use std::fmt;
 use casa_imaging_model::{CompiledProblem, ImageDomainRole};
 
 use crate::{
-    ModelGeneration, ModelLifecycleError, PassNormalState, PreparedFinalModel,
+    ModelGeneration, ModelLifecycleError, PassImages, PassNormalState, PreparedFinalModel,
     SpectralOperatorError, SpectralPrimitiveCatalog,
     runtime_adapter::{CompleteDataNormalState, NormalStoragePlan},
     spectral_operator::normal_storage::{NormalStatePrimitives, NormalStateWindowPayload},
@@ -60,13 +60,12 @@ pub enum NormalStateCatalog {
     UnnormalizedTaylorBlockV1,
 }
 
-/// Reconstruction-owned proof that the final Normal State generation exists.
+/// The normal state a major cycle's pass formed with its final model.
 ///
-/// The record names exact lineage, the authoritative observation generation,
-/// and the owned model-dependent unnormalized residual; it
-/// makes no promise that the state is fully resident, dense, or
-/// shift-invariant. It is not a Product Graph artifact and mints no
-/// publication authority.
+/// It owns the model-dependent unnormalized residual with the PSF,
+/// sensitivity and sum weights, and the sample and block counts of the
+/// pass; it makes no promise that the state is fully resident, dense, or
+/// shift-invariant. It is not a Product Graph artifact.
 ///
 /// ```compile_fail
 /// use casa_imaging_reconstruction::FinalNormalState;
@@ -147,13 +146,13 @@ impl FinalNormalState {
         self.catalog
     }
 
-    /// Return the exhaustive selected-sample count behind the state.
+    /// Return the number of samples the pass placed.
     #[must_use]
     pub const fn sample_count(&self) -> u64 {
         self.sample_count
     }
 
-    /// Return the exhaustive replay block count behind the state.
+    /// Return the number of source blocks the pass read.
     #[must_use]
     pub const fn block_count(&self) -> u64 {
         self.block_count
@@ -396,7 +395,7 @@ impl FinalNormalStateWindow<'_> {
         self.primitives.dirty()
     }
 
-    /// Return the T19 normal approximation paired with the residual.
+    /// Return the normal approximation (the PSF) paired with the residual.
     #[must_use]
     pub fn normal_approximation(&self) -> crate::NormalValues<'_> {
         self.primitives.psf()
@@ -790,10 +789,44 @@ impl MajorCycleCompletion {
 ///
 /// Owning both pairs the residual with the model that formed it: the pass
 /// reads the model and appends to the state through [`Self::parts`], and only
-/// [`Self::finish`] releases them, together.
+/// [`Self::finish`] releases them, together. The pass cannot take the state
+/// out of its cycle, for example to exchange two cycles' states:
+///
+/// ```compile_fail,E0308
+/// use casa_imaging_reconstruction::MajorCycle;
+///
+/// fn exchange_states(first: &mut MajorCycle, second: &mut MajorCycle) {
+///     std::mem::swap(first.parts().1, second.parts().1);
+/// }
+/// ```
 pub struct MajorCycle {
     model: PreparedFinalModel,
     state: PassNormalState,
+}
+
+/// The pass's access to its [`MajorCycle`]'s normal state: it appends
+/// images and nothing else, so the state stays in its cycle, paired with
+/// the model that formed it.
+pub struct PassAppender<'a> {
+    state: &'a mut PassNormalState,
+}
+
+impl PassAppender<'_> {
+    /// Add one pass's images of one domain.
+    ///
+    /// A non-finite image value or `sumwt` is a generated non-finite value,
+    /// rejected under every [`casa_imaging_model::FiniteValuePolicy`]: the
+    /// policies differ only on non-finite inputs, which the source flags or
+    /// rejects before gridding. Nothing is changed when an append fails.
+    ///
+    /// # Errors
+    ///
+    /// Images whose domain, shape, polarizations, channels or planes do not
+    /// match the problem and the pass (PSF moments on a residual refresh, a
+    /// channel range out of order), and generated non-finite values.
+    pub fn append(&mut self, images: PassImages) -> Result<(), SpectralOperatorError> {
+        self.state.append(images)
+    }
 }
 
 impl MajorCycle {
@@ -825,9 +858,14 @@ impl MajorCycle {
         })
     }
 
-    /// The final model the pass predicts and the state it appends to.
-    pub fn parts(&mut self) -> (&ModelGeneration, &mut PassNormalState) {
-        (self.model.generation(), &mut self.state)
+    /// The final model the pass predicts and the appender its images go to.
+    pub fn parts(&mut self) -> (&ModelGeneration, PassAppender<'_>) {
+        (
+            self.model.generation(),
+            PassAppender {
+                state: &mut self.state,
+            },
+        )
     }
 
     /// Finish the pass, which placed `samples` from `blocks` source blocks,
@@ -879,9 +917,9 @@ impl MajorCycle {
 /// Exact reason a Major-Cycle reconciliation failed closed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MajorCycleError {
-    /// The T19 evidence did not prove exhaustive weighted coverage.
+    /// The pass placed no sample or read no source block.
     IncompleteCoverage,
-    /// The model owner rejected the named generation or pending delta.
+    /// The final model's queued update could not be completed.
     Model(ModelLifecycleError),
     /// Reconciling the final model produced or consumed invalid numbers.
     Residual(SpectralOperatorError),
@@ -891,7 +929,7 @@ impl fmt::Display for MajorCycleError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::IncompleteCoverage => {
-                formatter.write_str("complete-data evidence lacks exhaustive coverage")
+                formatter.write_str("the major-cycle pass placed no sample")
             }
             Self::Model(error) => error.fmt(formatter),
             Self::Residual(error) => error.fmt(formatter),
