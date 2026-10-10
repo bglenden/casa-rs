@@ -92,6 +92,11 @@ path = "tests/ms_full_verify_vs_cpp.rs"
 required-features = ["cpp-interop-tests"]
 
 [[test]]
+name = "ms_locking_vs_cpp"
+path = "tests/ms_locking_vs_cpp.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
 name = "ms_library_coverage"
 path = "tests/ms_library_coverage.rs"
 
