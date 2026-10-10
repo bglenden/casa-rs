@@ -5,7 +5,6 @@ use crate::{
     SelectedObservationEphemeris, SelectedObservationResolutionRequest,
     resolve_selected_observation,
 };
-use casa_imaging_model::AntennaBaseline;
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 use serde::Deserialize;
 use std::{collections::BTreeMap, error::Error, fs, path::Path};
@@ -28,7 +27,6 @@ struct DirectionOracle {
 struct DirectionOracleSample {
     label: String,
     physical_row: u64,
-    time_mjd_seconds: f64,
     time_mjd_days: f64,
     j2000_longitude_rad: f64,
     j2000_latitude_rad: f64,
@@ -49,66 +47,40 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
     copy_attached_ephemerides(&source, &measurement_set)?;
 
     let ms = MeasurementSet::open(&measurement_set)?;
-    let row_count = u64::try_from(ms.row_count())?;
+    let row_count = ms.row_count();
     let channel_frequency_hz = ms.spectral_window()?.chan_freq(0)?[0];
     let channel_width_hz = ms.spectral_window()?.chan_width(0)?[0];
-    let representative_baselines = oracle
-        .samples
-        .iter()
-        .map(|sample| {
-            let row = usize::try_from(sample.physical_row)?;
-            let antenna1 =
-                u32::try_from(crate::columns::main_ids::antenna1(ms.main_table()).get(row)?)?;
-            let antenna2 =
-                u32::try_from(crate::columns::main_ids::antenna2(ms.main_table()).get(row)?)?;
-            Ok::<_, Box<dyn Error>>(AntennaBaseline::new(antenna1, antenna2))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    assert!(
-        representative_baselines
-            .iter()
-            .all(|baseline| *baseline == representative_baselines[0]),
-        "the three CASA oracle rows must use one baseline for exact predicate replay",
-    );
+    // The traversal replays every MAIN row the field and data-description
+    // predicate admits, so the manifest lists exactly those rows.
+    let mut selected_rows = Vec::new();
+    for row in 0..row_count {
+        if crate::columns::main_ids::field_id(ms.main_table()).get(row)? == i32::try_from(FIELD_ID)?
+            && crate::columns::main_ids::data_desc_id(ms.main_table()).get(row)?
+                == i32::try_from(DATA_DESCRIPTION_ID)?
+        {
+            selected_rows.push(SelectedMainRow::new(
+                u64::try_from(row)?,
+                DATA_DESCRIPTION_ID,
+            ));
+        }
+    }
+    let selected_row_count = selected_rows.len();
     let content_budget = SelectedObservationContentBudget::new(64 << 20, 1, 4);
     let ephemeris = SelectedObservationEphemeris::tracked_fields(
         &ms,
         [usize::try_from(FIELD_ID)?],
         content_budget.reference_data_budget(),
     )?;
-    let ephemeris_identity = ephemeris.identity();
     drop(ms);
     let measures = crate::test_helpers::production_measures_provider()?;
 
-    let rows = SelectedRows::from_ordered_main_rows(
-        row_count,
-        oracle
-            .samples
-            .iter()
-            .map(|sample| SelectedMainRow::new(sample.physical_row, DATA_DESCRIPTION_ID)),
-    )?;
+    let rows = SelectedRows::from_ordered_main_rows(u64::try_from(row_count)?, selected_rows)?;
     let selection = ObservationSelection::new(
         rows,
         RowSelection::new(
             IdSelection::Only(vec![FIELD_ID]),
-            TimeSelection::Ranges(
-                oracle
-                    .samples
-                    .iter()
-                    .map(|sample| {
-                        TimeRange::new(
-                            Some(SelectionBound::inclusive(sample.time_mjd_seconds)),
-                            Some(SelectionBound::inclusive(sample.time_mjd_seconds)),
-                        )
-                    })
-                    .collect(),
-            ),
             UvSelection::All,
-            AntennaSelection::Only(vec![representative_baselines[0]]),
-            IdSelection::All,
-            IdSelection::All,
             IntentSelection::All,
-            IdSelection::All,
         ),
         vec![DataDescriptionSelection::new(
             DATA_DESCRIPTION_ID,
@@ -126,12 +98,9 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
     );
     let request = SelectedObservationResolutionRequest::new(
         measurement_set.display().to_string(),
-        identity(0xd1),
         selection,
         VisibilityColumn::Data,
         WeightColumn::Weight,
-        Vec::new(),
-        ModelStateIdentity::Empty,
         content_budget,
         measures,
     )
@@ -140,7 +109,6 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
     let snapshot = compile_observation(snapshot_input)?;
     let geometry = geometry_with_centres(CentreLaws::new(
         PhaseCentreLaw::Ephemeris("TRACKFIELD".to_string()),
-        DelayCentreLaw::PhaseTrackingCentre,
         PointingCentreLaw::PhaseTrackingCentre,
     ))
     .with_spectral(SpectralCoordinateSpec::new(
@@ -159,33 +127,22 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
     let problem = compile(ProblemInput::new(
         specification(),
         geometry,
-        ProblemInputIdentities::new(snapshot.clone()),
-        model_lifecycle(snapshot.model()),
+        snapshot,
+        model_lifecycle(),
     ))?;
-    assert_eq!(
-        problem.geometry().ephemeris_reference(),
-        Some(ephemeris_identity),
-        "compiled geometry must bind the immutable TRACKFIELD ephemeris snapshot",
-    );
-    assert!(
-        problem
-            .inputs()
-            .observation_snapshot()
-            .reference_data()
-            .contains(&(ReferenceDataKind::Ephemeris, ephemeris_identity)),
-        "the production observation snapshot must commit the same ephemeris identity",
-    );
 
     let (_, samples) = stream(&problem, access.open(&problem)?)?;
     let mut actual = BTreeMap::new();
     for sample in &samples {
+        // The pointing law follows the phase-tracking centre, so each
+        // antenna's pointing direction is the evaluated ephemeris direction.
         actual.entry(sample.row.physical_row).or_insert((
             sample.row.coordinates.time.mjd_days(),
-            sample.row.coordinates.phase_direction,
+            sample.row.coordinates.pointing_directions.antenna1,
         ));
     }
-    assert_eq!(samples.len(), 6);
-    assert_eq!(actual.len(), 3);
+    assert_eq!(samples.len(), 2 * selected_row_count);
+    assert_eq!(actual.len(), selected_row_count);
 
     for expected in &oracle.samples {
         let (actual_time, direction) = actual

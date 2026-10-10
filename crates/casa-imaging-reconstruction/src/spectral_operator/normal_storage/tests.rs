@@ -50,8 +50,31 @@ fn complex_scalar_windows_preserve_bits_and_allocation_identity() {
     assert!(scalar_complex(Cow::Owned(Vec::new())).unwrap().is_empty());
 }
 
-fn model() -> ModelGenerationId {
-    ModelGenerationId(LogicalIdentity::from_bytes([19; 32]))
+/// Assert that two primitives have the same plan and values: residual and
+/// PSF bit for bit, the rest by value.
+fn assert_same_primitives(
+    actual: &SpectralOperatorPrimitives,
+    expected: &SpectralOperatorPrimitives,
+) {
+    let bits = |values: &[Complex64]| {
+        values
+            .iter()
+            .flat_map(|value| [value.re.to_bits(), value.im.to_bits()])
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(actual.shape, expected.shape);
+    assert_eq!(actual.slab, expected.slab);
+    assert_eq!(actual.basis, expected.basis);
+    assert_eq!(actual.polarizations, expected.polarizations);
+    assert_eq!(bits(&actual.dirty), bits(&expected.dirty));
+    assert_eq!(bits(&actual.psf), bits(&expected.psf));
+    assert_eq!(
+        actual.sensitivity().iter().collect::<Vec<_>>(),
+        expected.sensitivity().iter().collect::<Vec<_>>()
+    );
+    assert_eq!(actual.sum_weights, expected.sum_weights);
+    assert_eq!(actual.published_sum_weights, expected.published_sum_weights);
+    assert_eq!(actual.validity, expected.validity);
 }
 
 fn domain(range: Range<usize>, published_differ: bool) -> SpectralDomainPrimitives {
@@ -98,7 +121,6 @@ fn domain(range: Range<usize>, published_differ: bool) -> SpectralDomainPrimitiv
                     }
                 })
                 .collect(),
-            residual_model: Some(model()),
         },
     )
 }
@@ -492,13 +514,12 @@ fn residual_epochs_share_only_invariants_without_old_array_access_or_owner_chain
         _alive: Arc::new(()),
     }));
     let invariants = Arc::downgrade(&old.invariants);
-    for epoch in 1..=3 {
-        let next_model = ModelGenerationId(LogicalIdentity::from_bytes([epoch; 32]));
-        let mut next = old.refresh(next_model, &plan).unwrap();
+    for epoch in 1_u8..=3 {
+        let mut next = old.refresh(&plan).unwrap();
         let values: Box<[_]> = (0..CHANNELS * POLARIZATIONS * CELLS)
             .map(|index| index as f32 + f32::from(epoch))
             .collect();
-        next.append_residual_planes(0..CHANNELS, [3, 2], next_model, &values)
+        next.append_residual_planes(0..CHANNELS, [3, 2], &values)
             .unwrap();
         assert!(next.is_complete());
         assert_eq!(accesses.load(Ordering::Relaxed), 0);
@@ -542,11 +563,11 @@ fn owned_residual_wave_writes_in_admitted_windows_without_partition_copies() {
         1,
     )
     .unwrap();
-    let mut next = old.refresh(model(), &plan).unwrap();
+    let mut next = old.refresh(&plan).unwrap();
     let values: Box<[_]> = (0..CHANNELS * POLARIZATIONS * CELLS)
         .map(|n| n as f32 + 0.5)
         .collect();
-    next.append_residual_planes(0..CHANNELS, [3, 2], model(), &values)
+    next.append_residual_planes(0..CHANNELS, [3, 2], &values)
         .unwrap();
     assert!(next.is_complete());
     assert!(maximum_access.load(Ordering::Relaxed) <= allowed);
@@ -582,14 +603,14 @@ fn failed_residual_refresh_leaves_previous_epoch_readable() {
     }
     let plan = NormalStoragePlan::resident(CHANNELS).unwrap();
     let old = StoredChannelNormalDomain::begin(domain(0..CHANNELS, true), &plan).unwrap();
-    let expected = old.content_identity().unwrap();
-    let mut next = old.refresh(model(), &plan).unwrap();
+    let expected = old.read_window(0..CHANNELS).unwrap();
+    let mut next = old.refresh(&plan).unwrap();
     let leading = vec![3.0; (CHANNELS - 1) * POLARIZATIONS * CELLS];
     assert_eq!(
-        next.append_residual_planes(1..CHANNELS, [3, 2], model(), &leading),
+        next.append_residual_planes(1..CHANNELS, [3, 2], &leading),
         Err(SpectralOperatorError::IncompleteCoverage)
     );
-    next.append_residual_planes(0..CHANNELS - 1, [3, 2], model(), &leading)
+    next.append_residual_planes(0..CHANNELS - 1, [3, 2], &leading)
         .unwrap();
     assert!(!next.is_complete());
     next.storage = Box::new(WriteFailure);
@@ -597,23 +618,21 @@ fn failed_residual_refresh_leaves_previous_epoch_readable() {
         next.append_residual_planes(
             CHANNELS - 1..CHANNELS,
             [3, 2],
-            model(),
             &[3.0; POLARIZATIONS * CELLS]
         ),
         Err(SpectralOperatorError::NormalStorage(_))
     ));
     assert!(!next.is_complete());
     drop(next);
-    assert_eq!(old.content_identity().unwrap(), expected);
-    assert!(old.read_window(0..CHANNELS).is_ok());
+    assert_same_primitives(
+        &old.read_window(0..CHANNELS).unwrap().primitives,
+        &expected.primitives,
+    );
 }
 
 #[test]
-fn normal_storage_preserves_field_order_bits_and_identity_across_windows() {
+fn normal_storage_preserves_field_order_and_bits_across_windows() {
     for published_differ in [false, true] {
-        let expected_identity = domain(0..CHANNELS, published_differ)
-            .primitives
-            .normal_state_content_identity();
         for width in [1, 2, 3, CHANNELS] {
             let maximum_access = Arc::new(AtomicUsize::new(0));
             let allowed = 2 * CELLS * POLARIZATIONS * width;
@@ -630,10 +649,7 @@ fn normal_storage_preserves_field_order_bits_and_identity_across_windows() {
                 StoredChannelNormalDomain::begin(domain(0..width, published_differ), &plan)
                     .unwrap();
             for start in (width..CHANNELS).step_by(width) {
-                assert_eq!(
-                    stored.content_identity(),
-                    Err(SpectralOperatorError::IncompleteCoverage)
-                );
+                assert!(!stored.is_complete());
                 assert_eq!(
                     stored.read_window(0..1).unwrap_err(),
                     SpectralOperatorError::IncompleteCoverage
@@ -645,15 +661,12 @@ fn normal_storage_preserves_field_order_bits_and_identity_across_windows() {
                     ))
                     .unwrap();
             }
-            assert_eq!(stored.content_identity().unwrap(), expected_identity);
+            assert!(stored.is_complete());
             for start in (0..CHANNELS).step_by(width) {
                 let end = (start + width).min(CHANNELS);
                 let window = stored.read_window(start..end).unwrap().primitives;
                 let expected = domain(start..end, published_differ).primitives;
-                assert_eq!(
-                    window.normal_state_content_identity(),
-                    expected.normal_state_content_identity()
-                );
+                assert_same_primitives(&window, &expected);
                 assert_eq!(window.psf, expected.psf);
                 assert_eq!(window.dirty, expected.dirty);
                 assert_eq!(window.dirty[0].im.to_bits(), expected.dirty[0].im.to_bits());
@@ -683,9 +696,6 @@ fn natural_cube_scalar_sensitivity_reconstructs_each_plane_without_a_dense_backi
             .collect();
         domain
     };
-    let expected = scalar_domain(0..CHANNELS)
-        .primitives
-        .normal_state_content_identity();
     let plan = NormalStoragePlan::new(
         Arc::new(ObservedFactory {
             maximum_access: Arc::new(AtomicUsize::new(0)),
@@ -701,7 +711,12 @@ fn natural_cube_scalar_sensitivity_reconstructs_each_plane_without_a_dense_backi
     for channel in 1..CHANNELS {
         stored.append(scalar_domain(channel..channel + 1)).unwrap();
     }
-    assert_eq!(stored.content_identity().unwrap(), expected);
+    for channel in 0..CHANNELS {
+        assert_same_primitives(
+            &stored.read_window(channel..channel + 1).unwrap().primitives,
+            &scalar_domain(channel..channel + 1).primitives,
+        );
+    }
     let state = NormalStatePrimitives::ChannelLocal(vec![stored].into());
     let reader = state.read_plane(0, 3, 1).unwrap();
     assert_eq!(reader.read_sensitivity().unwrap().as_ref(), &[8.0; CELLS]);

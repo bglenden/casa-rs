@@ -655,7 +655,6 @@ name = "casa-imaging-model"
 version = "0.27.0"
 dependencies = [
  "num-complex",
- "sha2",
  "thiserror 2.0.18",
 ]
 
@@ -706,7 +705,6 @@ dependencies = [
  "ndarray",
  "num-complex",
  "serde_json",
- "sha2",
  "smallvec",
  "thiserror 2.0.18",
  "tracing",
@@ -818,7 +816,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "sha2",
  "sofars",
  "tar",
  "tempfile",
@@ -4360,16 +4357,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
- "sha2-asm",
-]
-
-[[package]]
-name = "sha2-asm"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
-dependencies = [
- "cc",
 ]
 
 [[package]]

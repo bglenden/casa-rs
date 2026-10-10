@@ -6,26 +6,26 @@
 //! explicit synthetic pass planes (`common::synthetic_pass`), not gridded.
 
 mod common;
-use common::observation::{attempt, identity, source};
+use common::observation::source;
 use common::synthetic_pass::{Scene, two_cycle_round};
 use common::{GeneratedMember, GeneratedProducts, MemoryProductOutput, full_window};
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
-    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
-    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
-    MeasurementEquationContract, ModelBounds, ModelCell, ModelColumnWrite, ModelDeltaTerm,
-    ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity,
-    ModelValue, NumericPrecision, NumericalStage, NumericsContract, ObservationSnapshotInput,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
-    PolarizationCoordinate, ProblemInput, ProblemInputIdentities, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, ProductRole, ProductSchema,
-    ProductTerm, ProductUnit, ProductValidityPolicies, ProductValidityRule, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
-    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
+    AxisOrder, CentreLaws, DeclaredInnerProducts, DirectionCoordinateSpec, DirectionFrame,
+    DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis,
+    ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse, MeasurementEquationContract,
+    ModelBounds, ModelCell, ModelColumnWrite, ModelDeltaTerm, ModelInnerProduct,
+    ModelLifecycleRequirements, ModelValue, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, ProblemInput,
+    ProblemSpecification, ProductBeamRule, ProductKind, ProductNormalization, ProductRequirements,
+    ProductRole, ProductTerm, ProductUnit, ProductValidityPolicies, ProductValidityRule,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy,
+    ScientificContract, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw,
+    VisibilityInnerProduct, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    compile_observation,
 };
 use casa_imaging_products::{
     AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
@@ -105,7 +105,6 @@ fn taylor_problem_with_fraction(
         )],
         CentreLaws::new(
             PhaseCentreLaw::Fixed(direction.reference_direction()),
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::PhaseTrackingCentre,
         ),
         UvwCoordinateLaw::PhaseTrackingCentre,
@@ -123,17 +122,8 @@ fn taylor_problem_with_fraction(
             DopplerConvention::NotApplicable,
         ),
     );
-    let references = if response == InstrumentResponse::Scalar {
-        Vec::new()
-    } else {
-        vec![(ReferenceDataKind::Instrument, identity(seed, 90))]
-    };
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source(seed, "t44")],
-        references,
-        ModelStateIdentity::Empty,
-    ))
-    .expect("observation snapshot");
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![source(seed, "t44")]))
+        .expect("observation snapshot");
     compile(ProblemInput::new(
         ProblemSpecification::new(
             ScientificContract::new(
@@ -177,11 +167,10 @@ fn taylor_problem_with_fraction(
             ),
         ),
         geometry,
-        ProblemInputIdentities::new(snapshot),
+        snapshot,
         ModelLifecycleRequirements::new(
-            ModelBounds::new(4_096, 4_096, 4_096, 4_096, 1.0e30, 1.0e30).expect("model bounds"),
+            ModelBounds::new(4_096, 4_096, 1.0e30, 1.0e30).expect("model bounds"),
             NumericPrecision::F64,
-            ModelInputCommitment::Empty,
         ),
     ))
     .expect("compile Taylor problem")
@@ -198,33 +187,30 @@ fn taylor_scene(problem: &casa_imaging_model::CompiledProblem) -> Scene {
     Scene::new(problem).with_point(0, CENTRE, &[1.0, -0.5])
 }
 
-fn run_round(problem: &casa_imaging_model::CompiledProblem, seed: u8) -> MajorCycleCompletion {
-    run_round_with_model(problem, seed, Some(0.75))
+fn run_round(problem: &casa_imaging_model::CompiledProblem) -> MajorCycleCompletion {
+    run_round_with_model(problem, Some(0.75))
 }
 
 fn run_round_with_model(
     problem: &casa_imaging_model::CompiledProblem,
-    seed: u8,
     model_value: Option<f64>,
 ) -> MajorCycleCompletion {
     let terms = model_value
         .into_iter()
         .map(|value| (0, value))
         .collect::<Vec<_>>();
-    run_round_with_terms(problem, seed, &terms)
+    run_round_with_terms(problem, &terms)
 }
 
 /// The initial major cycle and, when `model_terms` names any
 /// `(coefficient, value)` at the centre, a residual refresh after them.
 fn run_round_with_terms(
     problem: &casa_imaging_model::CompiledProblem,
-    seed: u8,
     model_terms: &[(usize, f64)],
 ) -> MajorCycleCompletion {
     two_cycle_round(
         problem,
         &taylor_scene(problem),
-        attempt(seed),
         model_terms
             .iter()
             .map(|(coefficient, value)| {
@@ -249,13 +235,13 @@ fn generate_with_controls(
     join: &MajorCycleCompletion,
     controls: ContinuumProductControls,
 ) -> GeneratedProducts {
-    let inputs = ContinuumProductInputs::from_major_cycle(problem, join).expect("Taylor inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(problem, join);
     let planned = PlannedContinuumGeneration::new(&inputs, &controls).expect("T44 Taylor plan");
     let output = MemoryProductOutput::default();
     let produced =
         produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &output)
             .expect("T44 Taylor product family");
-    GeneratedProducts::from_output(&produced, &output)
+    GeneratedProducts::from_output(&planned, &produced, &output)
 }
 
 fn member<'a>(generated: &'a GeneratedProducts, name: &str) -> &'a GeneratedMember {
@@ -310,7 +296,7 @@ fn principal_residuals(join: &MajorCycleCompletion) -> [Vec<f32>; TERMS] {
 #[test]
 fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
     let problem = taylor_problem(201, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar);
-    let join = run_round(&problem, 202);
+    let join = run_round(&problem);
     let generated = generate(&problem, &join);
     let names = generated
         .members()
@@ -423,7 +409,7 @@ fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
 #[test]
 fn t44_alpha_and_error_use_strict_principal_support_and_zero_false_blanking() {
     let problem = taylor_problem(203, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar);
-    let join = run_round_with_model(&problem, 204, None);
+    let join = run_round_with_model(&problem, None);
     let principal = principal_residuals(&join);
     let generated = generate(&problem, &join);
     let image0 = member(&generated, ".image.tt0");
@@ -463,7 +449,7 @@ fn t44_alpha_and_error_use_strict_principal_support_and_zero_false_blanking() {
 
     let strict_problem =
         taylor_problem_with_fraction(207, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar, 1.0);
-    let strict_join = run_round_with_model(&strict_problem, 208, None);
+    let strict_join = run_round_with_model(&strict_problem, None);
     let strict = generate(&strict_problem, &strict_join);
     for name in [".alpha", ".alpha.error"] {
         let product = member(&strict, name);
@@ -479,7 +465,6 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
     let names = graph
         .nodes()
         .iter()
-        .filter(|node| node.schema() == ProductSchema::ImageF32V1)
         .filter_map(|node| node.name())
         .collect::<Vec<_>>();
     assert!(names.contains(&".pb.tt0"));
@@ -518,9 +503,9 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
             ProductValidityRule::PrimaryBeam(validity().primary_beam())
         );
         assert_eq!(
-            corrected.dependencies(),
-            [restored.node_id(), pb0.node_id()],
-            "every Taylor image correction uses PB tt0"
+            corrected.beam(),
+            ProductBeamRule::Inherit(restored.node_id()),
+            "every Taylor image correction keeps its restored term's beam"
         );
     }
 
@@ -532,8 +517,8 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
         "the frozen standard CASA row emits no standalone weight family"
     );
 
-    let join = run_round(&problem, 206);
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join).expect("PB inputs");
+    let join = run_round(&problem);
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join);
     assert_eq!(
         PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
             .expect_err("requested PB needs a bound model at planning"),
@@ -594,7 +579,7 @@ fn t47_mosaic_taylor_products_publish_weight_and_pb_corrected_alpha() {
         ProductKind::Beam,
     ];
     let problem = taylor_problem(211, &products, InstrumentResponse::Scalar);
-    let join = run_round(&problem, 212);
+    let join = run_round(&problem);
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::MosaicSensitivity);
     let generated = generate_with_controls(&problem, &join, controls);
@@ -679,7 +664,6 @@ fn t51_weight_derived_mtmfs_plan_matches_casa_eighteen_member_inventory() {
         .product_graph()
         .nodes()
         .iter()
-        .filter(|node| node.schema() == ProductSchema::ImageF32V1)
         .filter_map(|node| node.name())
         .collect::<std::collections::BTreeSet<_>>();
 
@@ -711,8 +695,8 @@ fn t51_weight_derived_mtmfs_plan_matches_casa_eighteen_member_inventory() {
 #[test]
 fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
     let problem = taylor_problem(209, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar);
-    let join = run_round(&problem, 210);
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join).expect("Taylor inputs");
+    let join = run_round(&problem);
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join);
     let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
         .expect("Taylor plan");
     let demand = planned

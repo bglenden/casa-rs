@@ -5,20 +5,19 @@
 //! natural weighting and unit-response normalization.
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts, DelayCentreLaw,
-    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
-    FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    InstrumentResponse, MeasurementEquationContract, ModelBounds, ModelColumnWrite,
-    ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationSnapshotInput,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
-    PolarizationCoordinate, ProblemInput, ProblemInputIdentities, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, compile_observation,
+    AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
+    MeasurementEquationContract, ModelBounds, ModelColumnWrite, ModelInnerProduct,
+    ModelLifecycleRequirements, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, ProblemInput,
+    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 
 use super::observation::{source, validity};
@@ -126,7 +125,6 @@ pub fn continuum_problem_with_domains_and_reconstruction(
         domains,
         CentreLaws::new(
             PhaseCentreLaw::Fixed(phase_centre),
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::PhaseTrackingCentre,
         ),
         UvwCoordinateLaw::PhaseTrackingCentre,
@@ -144,11 +142,10 @@ pub fn continuum_problem_with_domains_and_reconstruction(
             DopplerConvention::NotApplicable,
         ),
     );
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source(observation, "products")],
-        Vec::new(),
-        ModelStateIdentity::Empty,
-    ))
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![source(
+        observation,
+        "products",
+    )]))
     .expect("compile observation snapshot");
     compile(ProblemInput::new(
         ProblemSpecification::new(
@@ -194,11 +191,10 @@ pub fn continuum_problem_with_domains_and_reconstruction(
             ),
         ),
         geometry,
-        ProblemInputIdentities::new(snapshot),
+        snapshot,
         ModelLifecycleRequirements::new(
-            ModelBounds::new(4_096, 4_096, 4_096, 4_096, 1.0e30, 1.0e30).expect("valid bounds"),
+            ModelBounds::new(4_096, 4_096, 1.0e30, 1.0e30).expect("valid bounds"),
             NumericPrecision::F64,
-            ModelInputCommitment::Empty,
         ),
     ))
     .expect("compile T22 continuum problem")

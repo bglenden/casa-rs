@@ -8,10 +8,10 @@
 //! association for publication without hashing or rereading product content.
 
 use casa_imaging_model::{
-    AxisOrder, CompiledProblem, CompiledProblemId, ImageAxis, ImageDomainRole, ProductAxes,
-    ProductBeamRule, ProductGraphId, ProductNodeId, ProductNormalization, ProductPixelMask,
-    ProductRole, ProductSchema, ProductStorageContract, ProductSupportComparison, ProductUnit,
-    ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy,
+    AxisOrder, CompiledProblem, ImageAxis, ImageDomainRole, ProductAxes, ProductBeamRule,
+    ProductNodeId, ProductNormalization, ProductPixelMask, ProductRole, ProductStorageContract,
+    ProductSupportComparison, ProductUnit, ProductValidityRule, ReconstructionBasis,
+    RestoringBeamPolicy,
 };
 use casa_imaging_reconstruction::{
     FinalNormalPlaneReader, ModelGeneration, NormalStateCatalog, SpectralChannelValidity,
@@ -182,16 +182,9 @@ fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
 /// continuum generation.
 #[derive(Debug)]
 pub struct PlannedContinuumGeneration {
-    problem_id: CompiledProblemId,
-    graph_id: ProductGraphId,
-    major_cycle_completion: casa_imaging_reconstruction::MajorCycleCompletionId,
-    normal_state_completion: casa_imaging_reconstruction::FinalNormalStateCompletionId,
     psf_cutoff: f32,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     members: Box<[PlannedMember]>,
-    final_model_generation: casa_imaging_reconstruction::ModelGenerationId,
-    reconstruction_mask_generation:
-        Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId>,
 }
 
 impl PlannedContinuumGeneration {
@@ -236,66 +229,24 @@ impl PlannedContinuumGeneration {
                 shape,
                 payload_values,
                 unit: node.unit(),
-                schema: node.schema(),
                 axes: axes.clone(),
                 normalization: node.normalization(),
                 beam_rule: node.beam(),
                 validity: node.validity(),
                 storage: node.storage(),
-                dependencies: node.dependencies().to_vec().into_boxed_slice(),
             });
         }
         Ok(Self {
-            problem_id: inputs.problem().problem_id(),
-            graph_id: graph.graph_id(),
-            major_cycle_completion: inputs.major_cycle_completion(),
-            normal_state_completion: inputs.normal_state_completion(),
             psf_cutoff: controls.psf_cutoff(),
             primary_beam_model: controls.primary_beam_model(),
             members: members.into_boxed_slice(),
-            final_model_generation: inputs.final_model().generation_id(),
-            reconstruction_mask_generation: inputs.reconstruction_mask_generation(),
         })
-    }
-
-    /// Return the exact compiled problem this generation was planned for.
-    #[must_use]
-    pub const fn problem_id(&self) -> CompiledProblemId {
-        self.problem_id
-    }
-
-    /// Return the exact compiler-owned Product Graph this generation realizes.
-    #[must_use]
-    pub const fn graph_id(&self) -> ProductGraphId {
-        self.graph_id
-    }
-
-    /// Return the released Major-Cycle run association.
-    #[must_use]
-    pub const fn major_cycle_completion(
-        &self,
-    ) -> casa_imaging_reconstruction::MajorCycleCompletionId {
-        self.major_cycle_completion
-    }
-
-    /// Return the released Normal-State completion association.
-    #[must_use]
-    pub const fn normal_state_completion(
-        &self,
-    ) -> casa_imaging_reconstruction::FinalNormalStateCompletionId {
-        self.normal_state_completion
     }
 
     /// Return planned members in exact publication order.
     #[must_use]
     pub const fn members(&self) -> &[PlannedMember] {
         &self.members
-    }
-
-    /// Return the named final model generation this plan restores from.
-    #[must_use]
-    pub const fn final_model_generation(&self) -> casa_imaging_reconstruction::ModelGenerationId {
-        self.final_model_generation
     }
 
     /// Return the beam-fitting cutoff bound into this plan.
@@ -309,12 +260,6 @@ impl PlannedContinuumGeneration {
     pub const fn primary_beam_model(&self) -> Option<AnalyticPrimaryBeamModel> {
         self.primary_beam_model
     }
-
-    pub(crate) const fn reconstruction_mask_generation(
-        &self,
-    ) -> Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId> {
-        self.reconstruction_mask_generation
-    }
 }
 
 /// One planned publication member in exact graph order.
@@ -326,13 +271,11 @@ pub struct PlannedMember {
     shape: [usize; 4],
     payload_values: usize,
     unit: ProductUnit,
-    schema: ProductSchema,
     axes: ProductAxes,
     normalization: Option<ProductNormalization>,
     beam_rule: ProductBeamRule,
     validity: ProductValidityRule,
     storage: ProductStorageContract,
-    dependencies: Box<[ProductNodeId]>,
 }
 
 impl PlannedMember {
@@ -366,12 +309,6 @@ impl PlannedMember {
         self.unit
     }
 
-    /// Return the backend-independent logical payload schema.
-    #[must_use]
-    pub const fn schema(&self) -> ProductSchema {
-        self.schema
-    }
-
     /// Return the exact WCS and storage-axis binding.
     #[must_use]
     pub const fn axes(&self) -> &ProductAxes {
@@ -396,12 +333,6 @@ impl PlannedMember {
         self.storage
     }
 
-    /// Return graph-node dependencies, all of which precede this node.
-    #[must_use]
-    pub const fn dependencies(&self) -> &[ProductNodeId] {
-        &self.dependencies
-    }
-
     /// Return the planned payload value count.
     #[must_use]
     pub const fn payload_values(&self) -> usize {
@@ -412,82 +343,6 @@ impl PlannedMember {
     #[must_use]
     pub const fn normalization(&self) -> Option<ProductNormalization> {
         self.normalization
-    }
-}
-
-/// Complete compiled contract carried by one generated member.
-#[derive(Debug, Clone)]
-pub struct ProductMemberContract {
-    role: ProductRole,
-    unit: ProductUnit,
-    schema: ProductSchema,
-    axes: ProductAxes,
-    beam_rule: ProductBeamRule,
-    validity: ProductValidityRule,
-    storage: ProductStorageContract,
-    dependencies: Box<[ProductNodeId]>,
-}
-
-impl ProductMemberContract {
-    fn from_planned(member: &PlannedMember) -> Self {
-        Self {
-            role: member.role,
-            unit: member.unit,
-            schema: member.schema,
-            axes: member.axes.clone(),
-            beam_rule: member.beam_rule,
-            validity: member.validity,
-            storage: member.storage,
-            dependencies: member.dependencies.clone(),
-        }
-    }
-
-    /// Return the exact logical product meaning.
-    #[must_use]
-    pub const fn role(&self) -> ProductRole {
-        self.role
-    }
-
-    /// Return the required physical unit.
-    #[must_use]
-    pub const fn unit(&self) -> ProductUnit {
-        self.unit
-    }
-
-    /// Return the backend-independent logical payload schema.
-    #[must_use]
-    pub const fn schema(&self) -> ProductSchema {
-        self.schema
-    }
-
-    /// Return the exact WCS and storage-axis binding.
-    #[must_use]
-    pub const fn axes(&self) -> &ProductAxes {
-        &self.axes
-    }
-
-    /// Return fitted, restoring, inherited, or absent beam semantics.
-    #[must_use]
-    pub const fn beam_rule(&self) -> ProductBeamRule {
-        self.beam_rule
-    }
-
-    /// Return the numerical-support rule, independently of the stored mask.
-    #[must_use]
-    pub const fn validity(&self) -> ProductValidityRule {
-        self.validity
-    }
-
-    /// Return the exact stored-mask and metadata contract.
-    #[must_use]
-    pub const fn storage(&self) -> ProductStorageContract {
-        self.storage
-    }
-
-    /// Return graph-node dependencies, all of which precede this node.
-    #[must_use]
-    pub const fn dependencies(&self) -> &[ProductNodeId] {
-        &self.dependencies
     }
 }
 
@@ -508,17 +363,6 @@ pub fn produce_continuum_members(
     execution: &impl crate::ProductWindowExecutor,
     output: &dyn ProductOutput,
 ) -> Result<PublishedContinuumGeneration, ProductsError> {
-    if inputs.problem().problem_id() != planned.problem_id
-        || inputs.problem().product_graph().graph_id() != planned.graph_id
-        || inputs.major_cycle_completion() != planned.major_cycle_completion
-        || inputs.normal_state_completion() != planned.normal_state_completion
-        || inputs.final_model().generation_id() != planned.final_model_generation
-    {
-        return Err(ProductsError::SourceLineageMismatch);
-    }
-    if inputs.reconstruction_mask_generation() != planned.reconstruction_mask_generation {
-        return Err(ProductsError::SourceLineageMismatch);
-    }
     if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
         return produce_taylor_members(planned, inputs, storage_plan, output);
     }
@@ -532,7 +376,7 @@ pub fn produce_continuum_members(
         || inputs.final_model().shape().domains().len()
             != inputs.problem().geometry().domains().len()
     {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     let requires_beam = planned
         .members
@@ -575,7 +419,7 @@ pub fn produce_continuum_members(
                 }
             })?;
             for slot in slots {
-                fitted.push(slot.ok_or(ProductsError::SourceLineageMismatch)?);
+                fitted.push(slot.ok_or(ProductsError::ProblemShapeMismatch)?);
             }
         }
         fitted.into_boxed_slice()
@@ -611,7 +455,7 @@ pub fn produce_continuum_members(
             .shape()
             .domains()
             .get(domain_ordinal)
-            .ok_or(ProductsError::SourceLineageMismatch)?
+            .ok_or(ProductsError::ProblemShapeMismatch)?
             .pixels();
         let reconstruction_only = matches!(
             member.role,
@@ -625,12 +469,12 @@ pub fn produce_continuum_members(
                 && (member.validity != ProductValidityRule::All
                     || member.storage.pixel_mask() != ProductPixelMask::Absent))
         {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         let beam_offset = domain_ordinal
             .checked_mul(channel_count)
             .and_then(|offset| offset.checked_mul(normal_state.polarization_count()))
-            .ok_or(ProductsError::SourceLineageMismatch)?;
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
         let layout = storage_plan.layout(member.axes())?;
         let member_beams = beams_for_member(
             member,
@@ -706,7 +550,7 @@ pub fn produce_continuum_members(
                         let plane =
                             normal_state.read_plane(domain_ordinal, channel, polarization)?;
                         if plane.shape() != plane_shape {
-                            return Err(ProductsError::SourceLineageMismatch);
+                            return Err(ProductsError::ProblemShapeMismatch);
                         }
                         let output_channel = plane.output_channel() - window_start;
                         if matches!(member.role, ProductRole::SumWeights(_)) {
@@ -1120,7 +964,7 @@ fn reconstruction_mask_for_domain<'a>(
         let ordinal = inputs.model_domain_ordinal(role)?;
         return masks
             .get(ordinal)
-            .ok_or(ProductsError::SourceLineageMismatch)
+            .ok_or(ProductsError::ProblemShapeMismatch)
             .map(Some);
     };
     let domain = inputs
@@ -1129,11 +973,11 @@ fn reconstruction_mask_for_domain<'a>(
         .domains()
         .iter()
         .find(|domain| domain.role() == role)
-        .ok_or(ProductsError::SourceLineageMismatch)?;
+        .ok_or(ProductsError::ProblemShapeMismatch)?;
     if mask.shape() == domain.shape().pixels() && mask.coordinate() == domain.direction() {
         Ok(Some(mask))
     } else {
-        Err(ProductsError::SourceLineageMismatch)
+        Err(ProductsError::ProblemShapeMismatch)
     }
 }
 
@@ -1231,7 +1075,7 @@ fn correct_primary_beam(
     policy: casa_imaging_model::PrimaryBeamValidityPolicy,
 ) -> Result<Vec<f32>, ProductsError> {
     if values.len() != primary_beam.len() {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     values
         .iter()
@@ -1254,7 +1098,7 @@ fn correct_primary_beam(
 
 fn zero_invalid_plane_values(payload: &mut [f32], validity: &[bool]) -> Result<(), ProductsError> {
     if payload.len() != validity.len() {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     for (value, valid) in payload.iter_mut().zip(validity) {
         if !*valid {
@@ -1282,7 +1126,7 @@ fn model_real_plane(
             != Some(plane_shape)
         || model.sample_count() != model.shape().sample_count()
     {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     // Canonical model order is y-major (`flat = y * W + x`); product planes
     // are stored x-major like every normal-state primitive.
@@ -1307,7 +1151,7 @@ fn scatter_image_polarization_plane<T: Copy>(
 ) -> Result<(), ProductsError> {
     let [width, height] = plane_shape;
     if width == 0 || height == 0 || width.checked_mul(height) != Some(plane.len()) {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     let last = product_offset(
         order,
@@ -1318,7 +1162,7 @@ fn scatter_image_polarization_plane<T: Copy>(
         output_channel,
     )?;
     if last >= payload.len() {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     let base = product_offset(order, storage_shape, 0, 0, polarization, output_channel)?;
     let (mut longitude_stride, mut latitude_stride) = (0, 0);
@@ -1331,7 +1175,7 @@ fn scatter_image_polarization_plane<T: Copy>(
         }
         stride = stride
             .checked_mul(extent)
-            .ok_or(ProductsError::SourceLineageMismatch)?;
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
     }
     for (x, column) in plane.chunks_exact(height).enumerate() {
         let start = base + x * longitude_stride;
@@ -1380,12 +1224,12 @@ fn product_offset(
         };
         let extent = storage_shape[position];
         if coordinate >= extent {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         offset = offset
             .checked_mul(extent)
             .and_then(|offset| offset.checked_add(coordinate))
-            .ok_or(ProductsError::SourceLineageMismatch)?;
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
     }
     Ok(offset)
 }
@@ -1413,7 +1257,7 @@ fn beams_for_member(
         }
         domain_count += 1;
     }
-    let domain_ordinal = domain_ordinal.ok_or(ProductsError::SourceLineageMismatch)?;
+    let domain_ordinal = domain_ordinal.ok_or(ProductsError::ProblemShapeMismatch)?;
     Ok(resolve_beams(
         rule,
         domain_beam_slice(fitted, domain_ordinal, domain_count)?,
@@ -1430,15 +1274,15 @@ fn domain_beam_slice(
         return Ok(beams);
     }
     if domain_count == 0 || !beams.len().is_multiple_of(domain_count) {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     let channels = beams.len() / domain_count;
     let start = domain_ordinal
         .checked_mul(channels)
-        .ok_or(ProductsError::SourceLineageMismatch)?;
+        .ok_or(ProductsError::ProblemShapeMismatch)?;
     beams
         .get(start..start + channels)
-        .ok_or(ProductsError::SourceLineageMismatch)
+        .ok_or(ProductsError::ProblemShapeMismatch)
 }
 
 fn resolve_beams(
@@ -1471,7 +1315,6 @@ fn published_generation(
         members.push(PublishedMember {
             node: member.node,
             name: member.name.clone(),
-            contract: ProductMemberContract::from_planned(member),
             resolved_beams: beams_for_member(
                 member,
                 &planned.members,
@@ -1482,10 +1325,6 @@ fn published_generation(
         });
     }
     Ok(PublishedContinuumGeneration {
-        problem_id: planned.problem_id,
-        graph_id: planned.graph_id,
-        major_cycle_completion: planned.major_cycle_completion,
-        normal_state_completion: planned.normal_state_completion,
         fitted_beams,
         restoring_beams,
         members: members.into_boxed_slice(),
@@ -1497,7 +1336,6 @@ fn published_generation(
 pub struct PublishedMember {
     node: ProductNodeId,
     name: String,
-    contract: ProductMemberContract,
     resolved_beams: Box<[Option<RestoringBeam>]>,
 }
 
@@ -1512,12 +1350,6 @@ impl PublishedMember {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
-    }
-
-    /// Return the complete compiled member contract.
-    #[must_use]
-    pub const fn contract(&self) -> &ProductMemberContract {
-        &self.contract
     }
 
     /// Return resolved beam metadata in output-channel order.
@@ -1539,44 +1371,12 @@ impl PublishedMember {
 /// Payload-free metadata for one generated continuum run.
 #[derive(Debug, Clone)]
 pub struct PublishedContinuumGeneration {
-    problem_id: CompiledProblemId,
-    graph_id: ProductGraphId,
-    major_cycle_completion: casa_imaging_reconstruction::MajorCycleCompletionId,
-    normal_state_completion: casa_imaging_reconstruction::FinalNormalStateCompletionId,
     fitted_beams: Box<[Option<RestoringBeam>]>,
     restoring_beams: Box<[Option<RestoringBeam>]>,
     members: Box<[PublishedMember]>,
 }
 
 impl PublishedContinuumGeneration {
-    /// Return the exact compiled problem for this generated run.
-    #[must_use]
-    pub const fn problem_id(&self) -> CompiledProblemId {
-        self.problem_id
-    }
-
-    /// Return the exact compiler-owned Product Graph realized by this run.
-    #[must_use]
-    pub const fn graph_id(&self) -> ProductGraphId {
-        self.graph_id
-    }
-
-    /// Return the released Major-Cycle run association.
-    #[must_use]
-    pub const fn major_cycle_completion(
-        &self,
-    ) -> casa_imaging_reconstruction::MajorCycleCompletionId {
-        self.major_cycle_completion
-    }
-
-    /// Return the released Normal-State completion association.
-    #[must_use]
-    pub const fn normal_state_completion(
-        &self,
-    ) -> casa_imaging_reconstruction::FinalNormalStateCompletionId {
-        self.normal_state_completion
-    }
-
     /// Return the fitted restoring beams retained as metadata.
     #[must_use]
     pub const fn fitted_beams(&self) -> &[Option<RestoringBeam>] {

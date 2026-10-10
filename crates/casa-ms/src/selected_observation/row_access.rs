@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use crate::subtables::SubTable;
-use crate::{MeasurementSet, MsError, MsReadPlan, MsResult, MsSelectionIoBudget};
+use crate::{
+    MeasurementSet, MsError, MsReadPlan, MsResult, MsSelectionIoBudget, SelectedObservationRow,
+};
 use casa_imaging_model::{
-    AntennaSelection, DataDescriptionSelection, IdSelection, IntentSelection, ObservationSelection,
-    ResolvedIntent, RowSelection, SelectionBound, TimeSelection, UvDistanceRange, UvDistanceUnit,
-    UvSelection,
+    DataDescriptionSelection, IdSelection, IntentSelection, ObservationSelection, ResolvedIntent,
+    RowSelection, SelectionBound, UvDistanceRange, UvDistanceUnit, UvSelection,
 };
 
-use super::row_selection::{CompiledRowPredicate, RowSelectionEvaluationError, StoredMainRow};
+use super::row_selection::{CompiledRowPredicate, RowSelectionEvaluationError};
 use crate::selection::{UvBound, UvBoundOp, UvSelectionRange, UvUnit};
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
@@ -41,86 +42,6 @@ impl SelectedObservationRowSelection {
     #[must_use]
     pub fn data_descriptions(&self) -> &[DataDescriptionSelection] {
         &self.data_descriptions
-    }
-}
-
-/// One selected MAIN row reported by the canonical bounded row traversal.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SelectedObservationRow {
-    physical_row: usize,
-    data_description_id: i32,
-    field_id: i32,
-    antenna1: i32,
-    antenna2: i32,
-    observation_id: i32,
-    time_mjd_seconds: f64,
-    time_centroid_mjd_seconds: f64,
-    flag_row: bool,
-    uvw_m: [f64; 3],
-}
-
-impl SelectedObservationRow {
-    /// Exact stored bytes read per MAIN row while evaluating the canonical predicate.
-    pub const STORAGE_BYTES_PER_ROW: usize = 73;
-
-    /// Return the physical MAIN row index.
-    #[must_use]
-    pub const fn physical_row(self) -> usize {
-        self.physical_row
-    }
-
-    /// Return the stored `DATA_DESC_ID`.
-    #[must_use]
-    pub const fn data_description_id(self) -> i32 {
-        self.data_description_id
-    }
-
-    /// Return the stored `FIELD_ID`.
-    #[must_use]
-    pub const fn field_id(self) -> i32 {
-        self.field_id
-    }
-
-    /// Return the stored first antenna identifier.
-    #[must_use]
-    pub const fn antenna1(self) -> i32 {
-        self.antenna1
-    }
-
-    /// Return the stored second antenna identifier.
-    #[must_use]
-    pub const fn antenna2(self) -> i32 {
-        self.antenna2
-    }
-
-    /// Return the stored `OBSERVATION_ID`.
-    #[must_use]
-    pub const fn observation_id(self) -> i32 {
-        self.observation_id
-    }
-
-    /// Return the stored `TIME` in MJD seconds.
-    #[must_use]
-    pub const fn time_mjd_seconds(self) -> f64 {
-        self.time_mjd_seconds
-    }
-
-    /// Return the stored `TIME_CENTROID` in MJD seconds.
-    #[must_use]
-    pub const fn time_centroid_mjd_seconds(self) -> f64 {
-        self.time_centroid_mjd_seconds
-    }
-
-    /// Return the stored row-level flag.
-    #[must_use]
-    pub const fn flag_row(self) -> bool {
-        self.flag_row
-    }
-
-    /// Return the stored UVW coordinates in metres.
-    #[must_use]
-    pub const fn uvw_m(self) -> [f64; 3] {
-        self.uvw_m
     }
 }
 
@@ -202,16 +123,7 @@ impl MeasurementSet {
             None => IntentSelection::All,
         };
         Ok(SelectedObservationRowSelection {
-            rows: RowSelection::new(
-                fields,
-                TimeSelection::All,
-                uv_distances,
-                AntennaSelection::All,
-                IdSelection::All,
-                IdSelection::All,
-                intents,
-                IdSelection::All,
-            ),
+            rows: RowSelection::new(fields, uv_distances, intents),
             data_descriptions: selected_descriptions,
         })
     }
@@ -254,22 +166,11 @@ impl MeasurementSet {
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
         self.visit_main_row_selection_blocks(plan, |block| {
             for offset in 0..block.len() {
-                let fact = block
+                let row = block
                     .row(offset)
                     .expect("offset is bounded by MAIN selection block length");
-                if predicate.matches(StoredMainRow::from(fact)) {
-                    visit(SelectedObservationRow {
-                        physical_row: fact.physical_row(),
-                        data_description_id: fact.data_description_id(),
-                        field_id: fact.field_id(),
-                        antenna1: fact.antenna1(),
-                        antenna2: fact.antenna2(),
-                        observation_id: fact.observation_id(),
-                        time_mjd_seconds: fact.time_mjd_seconds(),
-                        time_centroid_mjd_seconds: fact.time_centroid_mjd_seconds(),
-                        flag_row: fact.flag_row(),
-                        uvw_m: fact.uvw_m(),
-                    });
+                if predicate.matches(row) {
+                    visit(row);
                 }
             }
         })

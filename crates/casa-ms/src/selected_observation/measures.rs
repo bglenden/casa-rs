@@ -3,19 +3,19 @@
 use std::alloc::Layout;
 use std::sync::{Arc, atomic::AtomicUsize};
 
-use casa_imaging_model::{CompiledProblem, LogicalIdentity, ReferenceDataKind};
-use casa_types::measures::{MeasuresProvider, MeasuresProviderState};
+use casa_types::measures::MeasuresProvider;
 use thiserror::Error;
 
-/// One explicitly acquired Measures provider bound to its immutable reference snapshot.
+/// One explicitly acquired Measures provider.
 ///
 /// Construction rejects providers that cannot eagerly stabilize and project all
-/// retained cache state. The bound observation owns this capability once and
-/// passes shared provider references inward to its geometry engines.
+/// retained cache state. Resolution acquires it once; the bound observation
+/// owns it from then on and passes shared provider references inward to its
+/// geometry engines, so every pass uses the provider the problem was resolved
+/// with.
 #[derive(Debug)]
 pub struct SelectedObservationMeasures {
     provider: Arc<dyn MeasuresProvider>,
-    provider_state: MeasuresProviderState,
     retained_bytes: usize,
 }
 
@@ -34,15 +34,8 @@ impl SelectedObservationMeasures {
             .ok_or(SelectedObservationMeasuresError::ByteOverflow)?;
         Ok(Self {
             provider,
-            provider_state,
             retained_bytes,
         })
-    }
-
-    /// Return the provider-owned reference-data identity.
-    #[must_use]
-    pub const fn identity(&self) -> LogicalIdentity {
-        LogicalIdentity::from_bytes(self.provider_state.identity_sha256())
     }
 
     pub(crate) const fn retained_bytes(&self) -> usize {
@@ -51,27 +44,6 @@ impl SelectedObservationMeasures {
 
     pub(crate) fn provider(&self) -> Arc<dyn MeasuresProvider> {
         Arc::clone(&self.provider)
-    }
-
-    pub(crate) fn validate_problem(
-        &self,
-        problem: &CompiledProblem,
-    ) -> Result<(), SelectedObservationMeasuresError> {
-        let expected = problem
-            .inputs()
-            .reference_data()
-            .iter()
-            .find_map(|(kind, identity)| {
-                (*kind == ReferenceDataKind::Measures).then_some(*identity)
-            })
-            .ok_or(SelectedObservationMeasuresError::MissingMeasuresReference)?;
-        let actual = self.identity();
-        if actual != expected {
-            return Err(
-                SelectedObservationMeasuresError::ReferenceIdentityMismatch { expected, actual },
-            );
-        }
-        Ok(())
     }
 }
 
@@ -84,17 +56,6 @@ fn arc_allocation_bytes(provider: &dyn MeasuresProvider) -> Option<usize> {
 /// Failure to bind a Measures provider into bounded Selected Observation access.
 #[derive(Debug, Error)]
 pub enum SelectedObservationMeasuresError {
-    /// The compiled input snapshot omitted the Measures reference used by geometry evaluation.
-    #[error("compiled selected observation has no Measures reference-data identity")]
-    MissingMeasuresReference,
-    /// The acquired provider belongs to a different immutable Measures snapshot.
-    #[error("Measures provider identity {actual} does not match compiled identity {expected}")]
-    ReferenceIdentityMismatch {
-        /// Identity required by the compiled problem.
-        expected: LogicalIdentity,
-        /// Identity supplied by the provider acquisition owner.
-        actual: LogicalIdentity,
-    },
     /// The provider could not stabilize its bounded cache state.
     #[error("Measures provider bounded preparation failed: {0}")]
     ProviderPreparation(String),
@@ -107,16 +68,9 @@ pub enum SelectedObservationMeasuresError {
 }
 
 #[cfg(test)]
-pub(crate) fn test_selected_observation_measures(
-    problem: &CompiledProblem,
-) -> Result<SelectedObservationMeasures, SelectedObservationMeasuresError> {
-    let identity = problem
-        .inputs()
-        .reference_data()
-        .iter()
-        .find_map(|(kind, identity)| (*kind == ReferenceDataKind::Measures).then_some(*identity))
-        .ok_or(SelectedObservationMeasuresError::MissingMeasuresReference)?;
+pub(crate) fn test_selected_observation_measures()
+-> Result<SelectedObservationMeasures, SelectedObservationMeasuresError> {
     SelectedObservationMeasures::new(
-        casa_test_support::deterministic_measures_provider_for_identity(identity.as_bytes()),
+        casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
     )
 }

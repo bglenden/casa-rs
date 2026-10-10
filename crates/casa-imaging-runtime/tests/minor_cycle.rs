@@ -17,15 +17,14 @@ use casa_imaging_model::{
     ReconstructionBasis, ReconstructionControls,
 };
 use casa_imaging_reconstruction::{
-    ImageDomainReconstructionMaskPlans, MajorCycleCompletion, MajorCycleOwner,
-    MajorCyclePreparation, MinorCycleImageResponse, PassImages, PassNormalState,
-    ReconstructionMaskPlan, WeightingGenerationId, runtime_adapter::NormalStoragePlan,
+    ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, MinorCycleImageResponse,
+    PassImages, ReconstructionMaskPlan,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{
     MinorCycleOutcome, MinorCycleSetup, PsfCache, prepare_minor_cycle, run_minor_cycle,
 };
-use problems::{attempt, bind_lifecycle, reconstruction_problem, validity};
+use problems::{empty_final_model, model_lifecycle, reconstruction_problem, validity};
 use synthetic_pass::{BLOCKS, SAMPLES, Scene};
 
 fn problem(
@@ -54,27 +53,18 @@ fn completion(
     scene: &Scene,
     edit: impl FnOnce(&mut PassImages),
 ) -> MajorCycleCompletion {
-    let mut lifecycle = bind_lifecycle(problem, attempt(32));
-    let empty = lifecycle.initial_empty().expect("empty model");
-    let preparation = MajorCyclePreparation::prepare(&lifecycle, empty, None).expect("prepare");
-    let mut images = scene.pass_images(preparation.final_model(), true);
-    edit(&mut images);
-    let channels = images.channels.len();
-    let mut pass = PassNormalState::initial(
+    let lifecycle = model_lifecycle(problem);
+    let mut cycle = MajorCycle::initial(
         problem,
-        WeightingGenerationId::next(),
-        preparation.final_model_generation(),
-        NormalStoragePlan::resident(channels).expect("storage"),
+        empty_final_model(&lifecycle),
+        scene.resident_storage(),
     )
-    .expect("pass");
+    .expect("major cycle");
+    let (model, mut pass) = cycle.parts();
+    let mut images = scene.pass_images(model, true);
+    edit(&mut images);
     pass.append(images).expect("images");
-    MajorCycleOwner::from_complete_data(
-        pass.finish(SAMPLES, BLOCKS).expect("complete"),
-        preparation,
-    )
-    .expect("owner")
-    .reconcile(&mut lifecycle)
-    .expect("reconcile")
+    cycle.finish(SAMPLES, BLOCKS).expect("complete")
 }
 
 fn setup(problem: &CompiledProblem, response: Option<MinorCycleImageResponse>) -> MinorCycleSetup {
@@ -246,4 +236,87 @@ fn a_cube_cleans_the_same_on_any_number_of_workers() {
         assert_eq!(many.terms, one.terms, "{workers} workers");
     }
     assert_eq!(one.summary.stops.len(), 3);
+}
+
+/// Flat-noise response weights of a two-channel cube whose channels have
+/// sum weights `weights` and hold the same 1 Jy point, its pass images
+/// edited by `edit`.
+fn cube_with_response(
+    weights: Vec<f64>,
+    edit: impl FnOnce(&mut PassImages),
+) -> (CompiledProblem, MajorCycleCompletion, MinorCycleSetup) {
+    let problem = problem(
+        16,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Hogbom,
+    );
+    let scene = Scene::new(&problem)
+        .with_weights(weights)
+        .with_point([8, 8], &[1.0, 1.0]);
+    let completion = completion(&problem, &scene, edit);
+    let response =
+        MinorCycleImageResponse::new(ProductNormalization::FlatNoise, validity().primary_beam())
+            .expect("response");
+    let setup = setup(&problem, Some(response));
+    (problem, completion, setup)
+}
+
+/// Each model term's channel and increment.
+fn increments(outcome: &MinorCycleOutcome) -> Vec<(usize, f64)> {
+    outcome
+        .terms
+        .iter()
+        .map(|term| (term.cell().coefficient(), term.increment().value()))
+        .collect()
+}
+
+/// `SIImageStore::divideResidualByWeight` loops over every (polarization,
+/// channel) plane: each channel's residual is normalised by that channel's
+/// sum of weights and weight image. The same 1 Jy point under sum weights 1
+/// and 4 cleans as 1 Jy in both channels.
+#[test]
+fn a_cube_normalises_each_channel_by_its_own_weights() {
+    let (problem, completion, setup) = cube_with_response(vec![1.0, 4.0], |_| {});
+    let (_, outcome) = minor_cycle(&problem, &completion, &setup, &controls(1, 1.0), 1);
+    let increments = increments(&outcome);
+    assert_eq!(increments.len(), 2, "{increments:?}");
+    for (channel, value) in increments {
+        assert!((value - 1.0).abs() < 1e-6, "channel {channel}: {value}");
+    }
+}
+
+/// Each channel's residual is divided by that channel's published `.sumwt`
+/// and its weight image by that channel's PSF sum. A cube's sensitivity is
+/// its plane's PSF sum, so the weight image normalises to one only when a
+/// plane reads its own sensitivity and sum: under sum weights 1 and 4
+/// published as 2 and 5, the same 1 Jy point cleans as 1/2 and 4/5 Jy.
+#[test]
+fn a_cube_channel_divides_by_its_own_published_sum_of_weights() {
+    let weights = [1.0, 4.0];
+    let published = [2.0, 5.0];
+    let (problem, completion, setup) = cube_with_response(weights.to_vec(), |images| {
+        images.published_sum_weights = published.to_vec();
+    });
+    let (_, outcome) = minor_cycle(&problem, &completion, &setup, &controls(1, 1.0), 1);
+    let increments = increments(&outcome);
+    assert_eq!(increments.len(), 2, "{increments:?}");
+    for (channel, value) in increments {
+        let expected = weights[channel] / published[channel];
+        assert!(
+            (value - expected).abs() < 1e-6,
+            "channel {channel}: {value}, expected {expected}"
+        );
+    }
+}
+
+/// A channel no sample reached (CASA's `test_cube_flagged_mosaic_hogbom`)
+/// is skipped; the other channels still clean with their own weights.
+#[test]
+fn a_cube_with_an_empty_first_channel_cleans_the_others() {
+    let (problem, completion, setup) = cube_with_response(vec![0.0, 1.0], |_| {});
+    let (_, outcome) = minor_cycle(&problem, &completion, &setup, &controls(1, 1.0), 1);
+    let increments = increments(&outcome);
+    assert_eq!(increments.len(), 1, "{increments:?}");
+    assert_eq!(increments[0].0, 1);
+    assert!((increments[0].1 - 1.0).abs() < 1e-6, "{increments:?}");
 }

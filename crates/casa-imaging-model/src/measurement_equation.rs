@@ -8,27 +8,16 @@
 //! Its output is an explicitly unnormalized normal-state space; publication
 //! normalization and restoration remain beyond [`ProductNormalizationBoundary`].
 
-use std::fmt;
-
-use sha2::{Digest, Sha256};
-
 use crate::{
-    ProblemInputIdentities,
     compiled_problem::{
-        AwProjectionContract, InstrumentModel, InstrumentResponse, NumericsContractId,
-        PolarizationContract, ProductKind, ProductNormalization, ReconstructionBasis,
-        ReconstructionContract, RestoringBeamPolicy, ScientificContract, SpectralKernel,
-        SpectralSamplingLaw, UvTaper, WProjectionContract, WeightDensityScope, WeightingContract,
-        WeightingScheme,
+        AwProjectionContract, InstrumentModel, InstrumentResponse, PolarizationContract,
+        ProductKind, ProductNormalization, ReconstructionBasis, ReconstructionContract,
+        RestoringBeamPolicy, ScientificContract, SpectralKernel, SpectralSamplingLaw, UvTaper,
+        WProjectionContract, WeightDensityScope, WeightingContract, WeightingScheme,
     },
-    geometry::{CompiledGeometry, CompiledGeometryId, VisibilityPhaseConvention},
-    observation::{FlagPolicy, ObservationSnapshotId, WeightColumn},
-    selected_observation::SelectedObservationCommitmentId,
+    geometry::{CompiledGeometry, VisibilityPhaseConvention},
+    observation::{FlagPolicy, ObservationSnapshot, WeightColumn},
 };
-
-const WEIGHTING_COMMITMENT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-weighting-commitment";
-const WEIGHTING_COMMITMENT_IDENTITY_VERSION: u32 = 5;
-const CASA_UNPOLARIZED_WEIGHT_GROUP_LAW_V1: u8 = 0;
 
 /// Inner product on the model-coefficient space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,19 +63,12 @@ impl DeclaredInnerProducts {
 /// Typed domain of the complete logical measurement operator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelCoefficientSpace {
-    geometry: CompiledGeometryId,
     basis: ReconstructionBasis,
     polarization: PolarizationContract,
     inner_product: ModelInnerProduct,
 }
 
 impl ModelCoefficientSpace {
-    /// Return the compiled geometry defining coefficient coordinates.
-    #[must_use]
-    pub const fn geometry(&self) -> CompiledGeometryId {
-        self.geometry
-    }
-
     /// Return the reconstruction basis spanning this space.
     #[must_use]
     pub const fn basis(&self) -> ReconstructionBasis {
@@ -109,17 +91,10 @@ impl ModelCoefficientSpace {
 /// Typed codomain of the complete logical measurement operator before W.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisibilitySampleSpace {
-    observation: ObservationSnapshotId,
     inner_product: VisibilityInnerProduct,
 }
 
 impl VisibilitySampleSpace {
-    /// Return the immutable selected-observation identity defining the samples.
-    #[must_use]
-    pub const fn observation(self) -> ObservationSnapshotId {
-        self.observation
-    }
-
     /// Return the declared unweighted visibility-space inner product.
     #[must_use]
     pub const fn inner_product(self) -> VisibilityInnerProduct {
@@ -261,39 +236,6 @@ impl MeasurementOperatorContract {
     }
 }
 
-/// Stable identity of the compiler-owned weighting-generation commitment.
-///
-/// This describes the requested logical W; it is not evidence that density,
-/// reduction, sum-weight, or replay work ran. Only the reconstruction owner
-/// can turn it into a frozen generation.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct WeightingCommitmentId([u8; 32]);
-
-impl WeightingCommitmentId {
-    /// Identity schema version used by the weighting-commitment encoder.
-    pub const SCHEMA_VERSION: u32 = WEIGHTING_COMMITMENT_IDENTITY_VERSION;
-
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-}
-
-impl fmt::Debug for WeightingCommitmentId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("WeightingCommitmentId(")?;
-        write_hex(formatter, &self.0)?;
-        formatter.write_str(")")
-    }
-}
-
-impl fmt::Display for WeightingCommitmentId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_hex(formatter, &self.0)
-    }
-}
-
 /// Snapshot-derived flag and input-weight columns consumed exclusively by W.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WeightingSource {
@@ -322,10 +264,7 @@ impl WeightingSource {
     }
 }
 
-/// Positive-semidefinite data metric W and its compiler-owned commitment.
-///
-/// Callers cannot construct a weighting operator with a snapshot or source
-/// generation different from the compiled problem inputs.
+/// Positive-semidefinite data metric W, compiled from the selected observation.
 ///
 /// ```compile_fail
 /// use casa_imaging_model::WeightingOperatorContract;
@@ -334,10 +273,7 @@ impl WeightingSource {
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeightingOperatorContract {
-    commitment_id: WeightingCommitmentId,
-    selected_observation: SelectedObservationCommitmentId,
     visibility_inner_product: VisibilityInnerProduct,
-    snapshot: ObservationSnapshotId,
     scheme: WeightingScheme,
     density_scope: WeightDensityScope,
     casa_cube_density_padding: Option<usize>,
@@ -346,28 +282,10 @@ pub struct WeightingOperatorContract {
 }
 
 impl WeightingOperatorContract {
-    /// Return the immutable compiler-owned weighting commitment.
-    #[must_use]
-    pub const fn commitment_id(&self) -> WeightingCommitmentId {
-        self.commitment_id
-    }
-
-    /// Return the exact selected-observation authority consumed by W.
-    #[must_use]
-    pub const fn selected_observation(&self) -> SelectedObservationCommitmentId {
-        self.selected_observation
-    }
-
     /// Return the visibility-space inner-product law under which W is defined.
     #[must_use]
     pub const fn visibility_inner_product(&self) -> VisibilityInnerProduct {
         self.visibility_inner_product
-    }
-
-    /// Return the selected observation bound into this generation.
-    #[must_use]
-    pub const fn snapshot(&self) -> ObservationSnapshotId {
-        self.snapshot
     }
 
     /// Return the weighting formula owned by W.
@@ -519,22 +437,18 @@ impl ProductNormalizationBoundary {
 
 pub(crate) fn compile_normal_equation(
     geometry: &CompiledGeometry,
-    inputs: &ProblemInputIdentities,
+    observation: &ObservationSnapshot,
     science: &ScientificContract,
     reconstruction: &ReconstructionContract,
     weighting: WeightingContract,
-    numerics: NumericsContractId,
-    selected_observation: SelectedObservationCommitmentId,
 ) -> NormalEquationContract {
     let inner_products = science.measurement_equation().inner_products();
     let domain = ModelCoefficientSpace {
-        geometry: geometry.geometry_id(),
         basis: reconstruction.basis(),
         polarization: reconstruction.polarization().clone(),
         inner_product: inner_products.model(),
     };
     let codomain = VisibilitySampleSpace {
-        observation: inputs.observation(),
         inner_product: inner_products.visibility(),
     };
     let mut transforms = vec![
@@ -574,15 +488,7 @@ pub(crate) fn compile_normal_equation(
         codomain,
         transforms: transforms.into_boxed_slice(),
     };
-    let weighting = compile_weighting_operator(
-        geometry,
-        inputs,
-        science.spectral().sampling(),
-        weighting,
-        numerics,
-        selected_observation,
-        inner_products.visibility(),
-    );
+    let weighting = compile_weighting_operator(observation, weighting, inner_products.visibility());
     NormalEquationContract {
         measurement_operator,
         weighting,
@@ -625,16 +531,11 @@ pub(crate) fn compile_product_boundary(
 }
 
 fn compile_weighting_operator(
-    geometry: &CompiledGeometry,
-    inputs: &ProblemInputIdentities,
-    sampling: SpectralSamplingLaw,
+    observation: &ObservationSnapshot,
     weighting: WeightingContract,
-    numerics: NumericsContractId,
-    selected_observation: SelectedObservationCommitmentId,
     visibility_inner_product: VisibilityInnerProduct,
 ) -> WeightingOperatorContract {
-    let snapshot = inputs.observation_snapshot();
-    let sources = snapshot
+    let sources = observation
         .sources()
         .iter()
         .map(|source| WeightingSource {
@@ -645,107 +546,11 @@ fn compile_weighting_operator(
         .collect::<Vec<_>>()
         .into_boxed_slice();
     WeightingOperatorContract {
-        commitment_id: weighting_commitment_id(
-            snapshot.snapshot_id(),
-            geometry.geometry_id(),
-            sampling,
-            weighting,
-            numerics,
-            selected_observation,
-            visibility_inner_product,
-        ),
-        selected_observation,
         visibility_inner_product,
-        snapshot: snapshot.snapshot_id(),
         scheme: weighting.scheme(),
         density_scope: weighting.density_scope(),
         casa_cube_density_padding: weighting.casa_cube_density_padding(),
         uv_taper: weighting.uv_taper(),
         sources,
     }
-}
-
-fn weighting_commitment_id(
-    snapshot: ObservationSnapshotId,
-    geometry: CompiledGeometryId,
-    sampling: SpectralSamplingLaw,
-    weighting: WeightingContract,
-    numerics: NumericsContractId,
-    selected_observation: SelectedObservationCommitmentId,
-    visibility_inner_product: VisibilityInnerProduct,
-) -> WeightingCommitmentId {
-    let mut hasher = Sha256::new();
-    hasher.update(WEIGHTING_COMMITMENT_IDENTITY_DOMAIN);
-    hasher.update(WEIGHTING_COMMITMENT_IDENTITY_VERSION.to_be_bytes());
-    hasher.update(snapshot.as_bytes());
-    hasher.update(geometry.as_bytes());
-    match sampling.kernel() {
-        SpectralKernel::Identity => hasher.update([0]),
-        SpectralKernel::Nearest => hasher.update([1]),
-        SpectralKernel::Linear => hasher.update([2]),
-        SpectralKernel::Cubic => hasher.update([3]),
-        SpectralKernel::ChannelIntegration { maximum_terms } => {
-            hasher.update([4]);
-            hasher.update((maximum_terms as u128).to_be_bytes());
-        }
-    }
-    hasher.update([match sampling.edge_policy() {
-        crate::compiled_problem::SpectralEdgePolicy::CompleteSupport => 0,
-        crate::compiled_problem::SpectralEdgePolicy::PartialOverlap => 1,
-    }]);
-    hasher.update([match sampling.covariance() {
-        crate::compiled_problem::SpectralCovariance::PropagateIndependentSourceNoise => 0,
-    }]);
-    hasher.update(numerics.as_bytes());
-    hasher.update(selected_observation.as_bytes());
-    hasher.update([match visibility_inner_product {
-        VisibilityInnerProduct::HermitianEuclidean => 0,
-    }]);
-    hasher.update([CASA_UNPOLARIZED_WEIGHT_GROUP_LAW_V1]);
-    match weighting.scheme() {
-        WeightingScheme::Natural => hasher.update([0]),
-        WeightingScheme::Uniform => hasher.update([1]),
-        WeightingScheme::Briggs { robust } => {
-            hasher.update([2]);
-            hash_f64(&mut hasher, robust);
-        }
-        WeightingScheme::BriggsBandwidthTaper { robust } => {
-            hasher.update([3]);
-            hash_f64(&mut hasher, robust);
-        }
-    }
-    hasher.update([match weighting.density_scope() {
-        WeightDensityScope::NotApplicable => 0,
-        WeightDensityScope::GlobalSelection => 1,
-        WeightDensityScope::PerOutputChannel => 2,
-    }]);
-    match weighting.casa_cube_density_padding() {
-        None => hasher.update([0]),
-        Some(padding) => {
-            hasher.update([1]);
-            hasher.update((padding as u128).to_be_bytes());
-        }
-    }
-    match weighting.uv_taper() {
-        None => hasher.update([0]),
-        Some(taper) => {
-            hasher.update([1]);
-            hash_f64(&mut hasher, taper.major_lambda());
-            hash_f64(&mut hasher, taper.minor_lambda());
-            hash_f64(&mut hasher, taper.position_angle_rad());
-        }
-    }
-    WeightingCommitmentId(hasher.finalize().into())
-}
-
-fn hash_f64(hasher: &mut Sha256, value: f64) {
-    let bits = if value == 0.0 { 0 } else { value.to_bits() };
-    hasher.update(bits.to_be_bytes());
-}
-
-fn write_hex(formatter: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
-    for byte in bytes {
-        write!(formatter, "{byte:02x}")?;
-    }
-    Ok(())
 }

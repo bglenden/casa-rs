@@ -532,7 +532,7 @@ fn real_clark_worker_cases(
                             .expect("fixture normal window")
                     })
                     .collect::<Vec<_>>();
-                let mut evidence = (
+                let evidence = (
                     fixture_model_samples(science.final_model()),
                     windows
                         .iter()
@@ -552,12 +552,8 @@ fn real_clark_worker_cases(
                 match &baseline {
                     None => baseline = Some((products, evidence)),
                     Some((baseline_products, baseline_evidence)) => {
-                        // Live IDs are execution-local; numerical reductions may round differently.
+                        // Numerical reductions may round differently.
                         assert_eq!(baseline_evidence.5.len(), evidence.5.len());
-                        for (expected, actual) in baseline_evidence.5.iter().zip(&mut evidence.5) {
-                            actual.mask_generation = expected.mask_generation;
-                            actual.mask_model_generation = expected.mask_model_generation;
-                        }
                         for (expected, actual) in baseline_products.iter().zip(&products) {
                             assert_eq!(expected.suffix, actual.suffix);
                             assert_eq!(expected.shape, actual.shape);

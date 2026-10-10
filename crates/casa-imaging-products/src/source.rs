@@ -2,28 +2,23 @@
 
 //! Direct scientific inputs for continuum products.
 //!
-//! The inputs are minted only from a whole released Major-Cycle join, so one
-//! atomic reconciliation result carries the scientific payloads together and
-//! source/run association cannot be substituted independently.
+//! The inputs borrow one whole Major-Cycle completion, so the final normal
+//! state and model they carry come from the same reconciliation.
 
 use casa_imaging_model::{CompiledProblem, ImageDomainRole};
 use casa_imaging_reconstruction::{
-    FinalNormalState, FinalNormalStateCompletionId, ImageDomainReconstructionMasks,
-    MajorCycleCompletion, MajorCycleCompletionId, ModelGeneration, ReconstructionMask,
-    ReconstructionMaskGenerationId,
+    FinalNormalState, ImageDomainReconstructionMasks, MajorCycleCompletion, ModelGeneration,
+    ReconstructionMask,
 };
 
 use crate::error::ProductsError;
 /// Borrowed scientific payloads for producing planned members.
 ///
-/// This value is minted only from a whole join plus its exact compiled
-/// problem, so production always consumes the same atomic reconciliation
-/// result named by the direct run associations.
+/// This value borrows one whole completion and its compiled problem, so the
+/// final normal state and model it carries come from the same reconciliation.
 #[derive(Debug)]
 pub struct ContinuumProductInputs<'a> {
     problem: &'a CompiledProblem,
-    major_cycle_completion: MajorCycleCompletionId,
-    normal_state_completion: FinalNormalStateCompletionId,
     normal_state: &'a FinalNormalState,
     final_model: &'a ModelGeneration,
     reconstruction_mask: Option<&'a ReconstructionMask>,
@@ -31,40 +26,29 @@ pub struct ContinuumProductInputs<'a> {
 }
 
 impl<'a> ContinuumProductInputs<'a> {
-    /// Bind the borrowed payloads of one released join.
-    ///
-    /// # Errors
-    ///
-    /// Rejects joins whose normal state belongs to another compiled problem.
-    pub fn from_major_cycle(
+    /// Bind the borrowed payloads of one released join of `problem`.
+    pub const fn from_major_cycle(
         problem: &'a CompiledProblem,
         join: &'a MajorCycleCompletion,
-    ) -> Result<Self, ProductsError> {
-        if join.normal_state().problem_id() != problem.problem_id() {
-            return Err(ProductsError::SourceLineageMismatch);
-        }
-        Ok(Self {
+    ) -> Self {
+        Self {
             problem,
-            major_cycle_completion: join.completion_id(),
-            normal_state_completion: join.normal_state().completion_id(),
             normal_state: join.normal_state(),
             final_model: join.final_model(),
             reconstruction_mask: None,
             domain_reconstruction_masks: None,
-        })
+        }
     }
 
     /// Bind the exact reconstruction mask used by the final bounded solve.
     ///
-    /// The mask must belong to this problem and model-grid shape.
+    /// The mask must have the model-grid shape.
     pub fn with_reconstruction_mask(
         mut self,
         mask: &'a ReconstructionMask,
     ) -> Result<Self, ProductsError> {
-        if mask.problem_id() != self.problem.problem_id()
-            || mask.shape() != self.normal_state.shape()
-        {
-            return Err(ProductsError::SourceLineageMismatch);
+        if mask.shape() != self.normal_state.shape() {
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         self.reconstruction_mask = Some(mask);
         self.domain_reconstruction_masks = None;
@@ -78,17 +62,15 @@ impl<'a> ContinuumProductInputs<'a> {
     ) -> Result<Self, ProductsError> {
         if masks.len() != self.normal_state.domain_count()
             || masks.len() != self.problem.geometry().domains().len()
-            || self.normal_state.image_domain_mask_generation() != Some(masks.generation_id())
             || masks
                 .iter()
                 .zip(self.problem.geometry().domains())
                 .any(|(mask, domain)| {
-                    mask.problem_id() != self.problem.problem_id()
-                        || mask.shape() != domain.shape().pixels()
+                    mask.shape() != domain.shape().pixels()
                         || mask.coordinate() != domain.direction()
                 })
         {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         self.reconstruction_mask = None;
         self.domain_reconstruction_masks = Some(masks);
@@ -99,18 +81,6 @@ impl<'a> ContinuumProductInputs<'a> {
     #[must_use]
     pub const fn problem(&self) -> &CompiledProblem {
         self.problem
-    }
-
-    /// Return the released Major-Cycle run association for these payloads.
-    #[must_use]
-    pub const fn major_cycle_completion(&self) -> MajorCycleCompletionId {
-        self.major_cycle_completion
-    }
-
-    /// Return the released Normal-State completion associated with this run.
-    #[must_use]
-    pub const fn normal_state_completion(&self) -> FinalNormalStateCompletionId {
-        self.normal_state_completion
     }
 
     /// Return radians-per-pixel on each direction axis of the main domain.
@@ -131,7 +101,7 @@ impl<'a> ContinuumProductInputs<'a> {
             .domains()
             .iter()
             .find(|domain| domain.role() == role)
-            .ok_or(ProductsError::SourceLineageMismatch)?;
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
         let increment = domain.direction().increment_rad();
         Ok([increment[0].abs(), increment[1].abs()])
     }
@@ -148,9 +118,9 @@ impl<'a> ContinuumProductInputs<'a> {
             .iter()
             .enumerate()
             .filter(|(_, candidate)| *candidate == role);
-        let (ordinal, _) = matches.next().ok_or(ProductsError::SourceLineageMismatch)?;
+        let (ordinal, _) = matches.next().ok_or(ProductsError::ProblemShapeMismatch)?;
         if matches.next().is_some() {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         Ok(ordinal)
     }
@@ -177,16 +147,5 @@ impl<'a> ContinuumProductInputs<'a> {
     #[must_use]
     pub const fn domain_reconstruction_masks(&self) -> Option<&ImageDomainReconstructionMasks> {
         self.domain_reconstruction_masks
-    }
-
-    /// Return the one mask or per-domain mask-set generation bound to the inputs.
-    #[must_use]
-    pub fn reconstruction_mask_generation(&self) -> Option<ReconstructionMaskGenerationId> {
-        self.domain_reconstruction_masks
-            .map(ImageDomainReconstructionMasks::generation_id)
-            .or_else(|| {
-                self.reconstruction_mask
-                    .map(ReconstructionMask::generation_id)
-            })
     }
 }

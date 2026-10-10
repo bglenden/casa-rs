@@ -2,25 +2,26 @@
 
 use crate::{
     MeasurementSet, MsError, PointingDirectionBracket, PointingDirectionQuery,
-    SelectedPointingCatalogMeasurements, SelectedPointingQueryDomain, derived::engine::MsCalEngine,
+    SelectedObservationRow, SelectedPointingCatalogMeasurements, SelectedPointingQueryDomain,
+    derived::engine::MsCalEngine,
 };
 use crate::{
+    SelectedObservationBufferCapacity,
     selected_observation_buffer::{
-        selected_observation_buffer_residency, selected_observation_read_staging,
+        SelectedObservationReadStaging, selected_observation_read_staging,
     },
     selected_pointing::selected_pointing_preparation_peak_bytes,
     subtables::SubTable,
 };
 use casa_imaging_model::{
     CompiledProblem, CorrelationProduct, ObservationSource, PointingCentreLaw,
-    SelectedImageDomainProjections, SelectedPointingDirections, SkyDirection, VisibilityColumn,
-    WeightColumn,
+    SelectedImageDomainProjections, SelectedPointingDirections, SkyDirection,
 };
 use thiserror::Error;
 
 use super::access::{
     BoundObservationSource, BufferedObservationBlock, EvaluatedRowGeometry, SelectedChannel,
-    SelectedCoordinates, SelectedReplayRow, selected_visibility, selected_weight,
+    SelectedCoordinates, selected_visibility, selected_weight,
 };
 use super::row_selection::CompiledRowPredicate;
 
@@ -179,6 +180,8 @@ pub struct SelectedObservationContentPlan {
     resident_bytes_per_row: usize,
     preparation_bytes_per_row: usize,
     rows_per_block: usize,
+    buffer_capacity: SelectedObservationBufferCapacity,
+    buffer_bytes_per_block: usize,
     resident_bytes_per_block: usize,
     preparation_bytes_per_block: usize,
     maximum_resident_bytes: usize,
@@ -218,6 +221,20 @@ impl SelectedObservationContentPlan {
     #[must_use]
     pub const fn rows_per_block(self) -> usize {
         self.rows_per_block
+    }
+
+    /// The storage of one block's buffer: [`Self::rows_per_block`] rows of
+    /// the widest selected DATA_DESCRIPTION.
+    pub(crate) const fn buffer_capacity(self) -> SelectedObservationBufferCapacity {
+        self.buffer_capacity
+    }
+
+    /// The bytes charged for one block's buffer, in every phase of every
+    /// block.
+    #[must_use]
+    #[cfg(test)]
+    pub(crate) const fn buffer_bytes_per_block(self) -> usize {
+        self.buffer_bytes_per_block
     }
 
     /// Maximum payload bytes retained by one prepared content block.
@@ -395,26 +412,10 @@ pub(crate) fn selected_content_requirements(
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let polarization = measurement_set.polarization()?;
     let spectral_window = measurement_set.spectral_window()?;
-    let mut resident_bytes_per_row = 0_usize;
-    let mut fill_bytes_per_row = 0_usize;
-    let mut preparation_bytes_per_row = 0_usize;
-    let mut read_staging_fixed_bytes = 0_usize;
-    let empty_fill = selected_observation_buffer_residency(0, 0, 0, 0)
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    let fill_fixed_bytes = empty_fill.fill_peak_bytes;
-    let pointing_direction_column = match problem.geometry().centres().pointing() {
-        PointingCentreLaw::Observation(law) => Some(match law.direction_column() {
-            casa_imaging_model::PointingDirectionColumn::Direction => {
-                crate::PointingDirectionColumn::Direction
-            }
-            casa_imaging_model::PointingDirectionColumn::Target => {
-                crate::PointingDirectionColumn::Target
-            }
-        }),
-        PointingCentreLaw::PhaseTrackingCentre
-        | PointingCentreLaw::FieldCentre
-        | PointingCentreLaw::Fixed(_) => None,
-    };
+    let visibility = selected_visibility(source.columns().visibility());
+    let weight = selected_weight(source.columns().weights());
+    let mut buffer_row: Option<SelectedObservationBufferCapacity> = None;
+    let mut read_staging = SelectedObservationReadStaging::default();
     for description in source.selection().data_descriptions() {
         let channels = source
             .selection()
@@ -439,37 +440,14 @@ pub(crate) fn selected_content_requirements(
             selected_i32_array_len(polarization.table(), "CORR_TYPE", polarization_row)?
                 .filter(|count| *count > 0)
                 .ok_or(SelectedObservationContentPlanError::InvalidCoordinateShape)?;
-        let sample_count = covering_channels
-            .checked_mul(correlations)
-            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-        let visibility_bytes = match source.columns().visibility() {
-            VisibilityColumn::Data | VisibilityColumn::CorrectedData => 8,
-            VisibilityColumn::FloatData => 4,
-        };
-        let weight_values = match source.columns().weights() {
-            WeightColumn::Weight => correlations,
-            WeightColumn::WeightSpectrum => sample_count,
-        };
-        let buffer =
-            selected_observation_buffer_residency(1, sample_count, weight_values, visibility_bytes)
-                .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-        let resident = buffer
-            .resident_bytes
-            .checked_add(size_of::<EvaluatedRowGeometry>())
-            .and_then(|bytes| {
-                bytes.checked_add(size_of::<SelectedReplayRow>() + size_of::<usize>())
-            })
-            .and_then(|bytes| bytes.checked_add(domain_projection_payload_bytes))
-            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-        // A recycled block keeps its row geometry, request indices and frequency-window
-        // metadata allocations while refilling storage and preparing POINTING output.
-        // Charge their capacity during preparation as well as completed handoff.
-        let retained_geometry = size_of::<EvaluatedRowGeometry>()
-            .checked_add(domain_projection_payload_bytes)
-            .and_then(|bytes| {
-                bytes.checked_add(size_of::<SelectedReplayRow>() + size_of::<usize>())
-            })
-            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+        let row = SelectedObservationBufferCapacity::row(
+            visibility,
+            weight,
+            correlations,
+            covering_channels,
+        )
+        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+        buffer_row = Some(buffer_row.map_or(row, |widest| widest.union(row)));
         // A column its data manager reads cell by cell holds each selected
         // row's whole stored cell, every channel of the spectral window, while
         // the covering channels are packed.
@@ -479,76 +457,94 @@ pub(crate) fn selected_content_requirements(
             selected_i32_scalar(spectral_window.table(), "NUM_CHAN", spectral_window_row)?
                 .and_then(|channels| usize::try_from(channels).ok())
                 .ok_or(SelectedObservationContentPlanError::InvalidCoordinateShape)?;
-        let read_staging = selected_observation_read_staging(
+        let staging = selected_observation_read_staging(
             measurement_set.main_table(),
-            selected_visibility(source.columns().visibility()),
-            selected_weight(source.columns().weights()),
+            visibility,
+            weight,
             correlations,
             stored_channels,
         )
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-        read_staging_fixed_bytes = read_staging_fixed_bytes.max(read_staging.fixed_bytes);
-        let fill = buffer
-            .fill_peak_bytes
-            .checked_sub(fill_fixed_bytes)
-            .and_then(|bytes| bytes.checked_add(retained_geometry))
-            .and_then(|bytes| bytes.checked_add(read_staging.bytes_per_row))
-            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-        let geometry_build = buffer
-            .resident_bytes
-            .checked_add(size_of::<EvaluatedRowGeometry>())
-            .and_then(|bytes| {
-                bytes.checked_add(size_of::<SelectedReplayRow>() + size_of::<usize>())
-            })
-            // Vec-to-Arc construction can hold source and destination payloads
-            // simultaneously for the row currently being arranged.
-            .and_then(|bytes| {
-                domain_projection_payload_bytes
-                    .checked_mul(2)
-                    .and_then(|payload| bytes.checked_add(payload))
-            })
-            .and_then(|bytes| {
-                let pointing_output = if pointing_direction_column.is_some() {
-                    size_of::<SelectedPointingDirections>()
-                } else {
-                    0
-                };
-                pointing_output.checked_add(bytes)
-            })
-            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-        let pointing = if let Some(direction_column) = pointing_direction_column {
-            let pointing_scratch = if pointing_catalog.is_some() {
-                2 * size_of::<PointingDirectionQuery>()
-                    + size_of::<SkyDirection>()
-                    + 2 * size_of::<PointingDirectionBracket>()
-                    + size_of::<SelectedPointingDirections>()
-            } else {
-                selected_pointing_preparation_peak_bytes(
-                    1,
-                    1,
-                    maximum_pointing_polynomial_terms,
-                    direction_column,
-                )
-                .ok_or(SelectedObservationContentPlanError::ByteOverflow)?
-            };
-            buffer
-                .resident_bytes
-                .checked_add(retained_geometry)
-                .and_then(|bytes| bytes.checked_add(pointing_scratch))
-                .ok_or(SelectedObservationContentPlanError::ByteOverflow)?
-        } else {
-            0
+        read_staging = SelectedObservationReadStaging {
+            bytes_per_row: read_staging.bytes_per_row.max(staging.bytes_per_row),
+            fixed_bytes: read_staging.fixed_bytes.max(staging.fixed_bytes),
         };
-        resident_bytes_per_row = resident_bytes_per_row.max(resident);
-        fill_bytes_per_row = fill_bytes_per_row.max(fill);
-        preparation_bytes_per_row = preparation_bytes_per_row
-            .max(fill)
-            .max(pointing)
-            .max(geometry_build);
     }
-    if resident_bytes_per_row == 0 || preparation_bytes_per_row == 0 {
-        return Err(SelectedObservationContentPlanError::InvalidCoordinateShape);
-    }
+    let buffer_row =
+        buffer_row.ok_or(SelectedObservationContentPlanError::InvalidCoordinateShape)?;
+    // A block's buffer is allocated once and refilled in place, so every
+    // phase of every block holds all of it: the widest DATA_DESCRIPTION's
+    // samples and weights, whichever one the block reads.
+    let buffer = buffer_row
+        .retained_bytes()
+        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+    let pointing_direction_column = match problem.geometry().centres().pointing() {
+        PointingCentreLaw::Observation(law) => Some(match law.direction_column() {
+            casa_imaging_model::PointingDirectionColumn::Direction => {
+                crate::PointingDirectionColumn::Direction
+            }
+            casa_imaging_model::PointingDirectionColumn::Target => {
+                crate::PointingDirectionColumn::Target
+            }
+        }),
+        PointingCentreLaw::PhaseTrackingCentre
+        | PointingCentreLaw::FieldCentre
+        | PointingCentreLaw::Fixed(_) => None,
+    };
+    // A recycled block keeps its row geometry, selected rows and frequency-window
+    // metadata allocations while refilling storage and preparing POINTING output.
+    // Charge their capacity during preparation as well as completed handoff.
+    let retained_geometry = size_of::<EvaluatedRowGeometry>()
+        .checked_add(domain_projection_payload_bytes)
+        .and_then(|bytes| bytes.checked_add(size_of::<SelectedObservationRow>()))
+        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+    let resident_bytes_per_row = buffer
+        .checked_add(retained_geometry)
+        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+    let fill_bytes_per_row = resident_bytes_per_row
+        .checked_add(read_staging.bytes_per_row)
+        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+    let geometry_build = buffer
+        .checked_add(size_of::<EvaluatedRowGeometry>())
+        .and_then(|bytes| bytes.checked_add(size_of::<SelectedObservationRow>()))
+        // Vec-to-Arc construction can hold source and destination payloads
+        // simultaneously for the row currently being arranged.
+        .and_then(|bytes| {
+            domain_projection_payload_bytes
+                .checked_mul(2)
+                .and_then(|payload| bytes.checked_add(payload))
+        })
+        .and_then(|bytes| {
+            let pointing_output = if pointing_direction_column.is_some() {
+                size_of::<SelectedPointingDirections>()
+            } else {
+                0
+            };
+            pointing_output.checked_add(bytes)
+        })
+        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+    let pointing = if let Some(direction_column) = pointing_direction_column {
+        let pointing_scratch = if pointing_catalog.is_some() {
+            2 * size_of::<PointingDirectionQuery>()
+                + size_of::<SkyDirection>()
+                + 2 * size_of::<PointingDirectionBracket>()
+                + size_of::<SelectedPointingDirections>()
+        } else {
+            selected_pointing_preparation_peak_bytes(
+                1,
+                1,
+                maximum_pointing_polynomial_terms,
+                direction_column,
+            )
+            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?
+        };
+        resident_bytes_per_row
+            .checked_add(pointing_scratch)
+            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?
+    } else {
+        0
+    };
+    let preparation_bytes_per_row = fill_bytes_per_row.max(pointing).max(geometry_build);
     let selected_rows = usize::try_from(source.selection().rows().selected_row_count())
         .map_err(|_| SelectedObservationContentPlanError::ByteOverflow)?;
     if selected_rows == 0 {
@@ -559,19 +555,19 @@ pub(crate) fn selected_content_requirements(
         initialization_scratch_bytes,
         initialization_scan_bytes_per_row,
         traversal_base_bytes,
+        buffer_row,
+        buffer_bytes_per_row: buffer,
         resident_bytes_per_row,
         fill_bytes_per_row,
         preparation_bytes_per_row,
-        fill_fixed_bytes: fill_fixed_bytes
-            .checked_add(read_staging_fixed_bytes)
-            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
+        fill_fixed_bytes: read_staging.fixed_bytes,
         selected_rows,
         maximum_pointing_polynomial_terms,
     })
 }
 
 /// The bytes a bound source retains, and the largest spectral-coordinate
-/// scratch of its construction (one SPW's CHAN_FREQ and CHAN_WIDTH).
+/// scratch of its construction (one SPW's CHAN_FREQ).
 fn retained_source_bytes(
     measurement_set: &MeasurementSet,
     source: &ObservationSource,
@@ -632,15 +628,9 @@ fn retained_source_bytes(
             selected_f64_array_len(spectral_windows.table(), "CHAN_FREQ", spectral_window_row)?
                 .filter(|count| *count > 0)
                 .ok_or(SelectedObservationContentPlanError::InvalidCoordinateShape)?;
-        let width_count =
-            selected_f64_array_len(spectral_windows.table(), "CHAN_WIDTH", spectral_window_row)?
-                .filter(|count| *count > 0)
-                .ok_or(SelectedObservationContentPlanError::InvalidCoordinateShape)?;
-        // CHAN_FREQ and CHAN_WIDTH of one SPW are live together.
         spectral_scratch_bytes = spectral_scratch_bytes.max(
             frequency_count
-                .checked_add(width_count)
-                .and_then(|values| values.checked_mul(size_of::<f64>()))
+                .checked_mul(size_of::<f64>())
                 .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
         );
     }

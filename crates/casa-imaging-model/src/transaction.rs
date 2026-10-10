@@ -2,44 +2,13 @@
 
 //! MeasurementSet access and bounded-side-effect contracts for imaging.
 
-use std::{fmt, sync::Arc};
+use std::sync::Arc;
 
-use crate::compiled_problem::CanonicalEncoder;
 use crate::{
-    LogicalIdentity, MsColumnKind, ObservationSelection, ObservationSnapshot,
-    ObservationSnapshotId, SelectedColumns, SequentialContinuumTransform, SpectralWindowSelection,
+    MsColumnKind, ObservationSelection, ObservationSnapshot, SelectedColumns,
+    SequentialContinuumTransform, SpectralWindowSelection,
 };
 use thiserror::Error;
-
-const OBSERVATION_TRANSACTION_IDENTITY_DOMAIN: &[u8] = b"casa-rs-observation-transaction";
-const OBSERVATION_TRANSACTION_IDENTITY_VERSION: u32 = 3;
-
-/// Stable compiler-derived identity of one snapshot-bound access contract.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ObservationTransactionId(LogicalIdentity);
-
-impl ObservationTransactionId {
-    /// Identity schema version used by the canonical encoder.
-    pub const SCHEMA_VERSION: u32 = OBSERVATION_TRANSACTION_IDENTITY_VERSION;
-
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0.as_bytes()
-    }
-}
-
-impl fmt::Debug for ObservationTransactionId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "ObservationTransactionId({})", self.0)
-    }
-}
-
-impl fmt::Display for ObservationTransactionId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
 
 /// Whether a compiled imaging run writes predicted visibilities to `MODEL_DATA`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,25 +155,11 @@ impl ObservationWriteSet {
 /// Snapshot-bound read/write contract consumed by planning and execution.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObservationTransactionContract {
-    transaction_id: ObservationTransactionId,
-    observation_snapshot_id: ObservationSnapshotId,
     read_set: ObservationReadSet,
     write_set: ObservationWriteSet,
 }
 
 impl ObservationTransactionContract {
-    /// Return the canonical identity of this exact read/write contract.
-    #[must_use]
-    pub const fn transaction_id(&self) -> ObservationTransactionId {
-        self.transaction_id
-    }
-
-    /// Return the immutable observation snapshot this contract accesses.
-    #[must_use]
-    pub const fn observation_snapshot_id(&self) -> ObservationSnapshotId {
-        self.observation_snapshot_id
-    }
-
     /// Return the complete MeasurementSet read set.
     #[must_use]
     pub const fn read_set(&self) -> &ObservationReadSet {
@@ -266,8 +221,6 @@ pub fn compile_observation_transaction(
         }
     }
     Ok(ObservationTransactionContract {
-        transaction_id: canonical_transaction_id(snapshot.snapshot_id(), requirements),
-        observation_snapshot_id: snapshot.snapshot_id(),
         read_set,
         write_set: ObservationWriteSet { visibility_columns },
     })
@@ -326,23 +279,4 @@ pub enum ObservationTransactionCompileError {
     /// The transform must expose at least one output-role channel for each selected SPW.
     #[error("continuum transform selected no CORRECTED_DATA output-role channels")]
     EmptyOutputRoleSelection,
-}
-
-fn canonical_transaction_id(
-    snapshot_id: ObservationSnapshotId,
-    requirements: ObservationTransactionRequirements,
-) -> ObservationTransactionId {
-    let mut encoder = CanonicalEncoder::new();
-    encoder.bytes(OBSERVATION_TRANSACTION_IDENTITY_DOMAIN);
-    encoder.u32(OBSERVATION_TRANSACTION_IDENTITY_VERSION);
-    encoder.identity(snapshot_id.identity());
-    encoder.u8(match requirements.model_column_write {
-        ModelColumnWrite::Disabled => 0,
-        ModelColumnWrite::SelectedRows => 1,
-    });
-    encoder.u8(match requirements.corrected_data_write {
-        CorrectedDataWrite::Disabled => 0,
-        CorrectedDataWrite::SelectedOutputRows => 1,
-    });
-    ObservationTransactionId(LogicalIdentity::from_bytes(encoder.finish()))
 }

@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 /// Invalid or unsupported native EVLA generation inputs.
@@ -23,13 +22,12 @@ pub enum NativeAwRequestError {
 
 /// Explicit EVLA radial dish samples, in metres and dimensionless surface slope.
 ///
-/// Content is validated and identified here, not located by a runtime search or
-/// substituted with an opaque caller-supplied digest. Clones share immutable
-/// samples. Data acquisition and its bounded I/O belong to the application.
+/// Content is validated here, not located by a runtime search. Clones share
+/// immutable samples. Data acquisition and its bounded I/O belong to the
+/// application.
 #[derive(Clone, Debug)]
 pub struct EvlaDishSurface {
     samples: Arc<[[f64; 3]]>,
-    identity: [u8; 32],
 }
 
 impl EvlaDishSurface {
@@ -50,15 +48,8 @@ impl EvlaDishSurface {
         }) {
             return Err(NativeAwRequestError::InvalidSurface);
         }
-        let mut identity = Sha256::new();
-        identity.update(b"casa-rs/evla/radial-dish-surface/v1\0");
-        identity.update((samples.len() as u64).to_le_bytes());
-        for value in samples.iter().flatten() {
-            identity.update(value.to_bits().to_le_bytes());
-        }
         Ok(Self {
             samples: samples.into(),
-            identity: identity.finalize().into(),
         })
     }
 
@@ -89,12 +80,6 @@ impl EvlaDishSurface {
     #[must_use]
     pub fn samples(&self) -> &[[f64; 3]] {
         &self.samples
-    }
-
-    /// Identity of the parsed sample content, independent of source path.
-    #[must_use]
-    pub const fn content_identity(&self) -> [u8; 32] {
-        self.identity
     }
 
     /// Shared sample payload bytes, charged once to generation residency.

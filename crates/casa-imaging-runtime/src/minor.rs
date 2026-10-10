@@ -101,7 +101,6 @@ pub struct PreparedMinorCycle {
     masks: ImageDomainReconstructionMasks,
     auto_masks: Box<[Option<AutoMultithreshEvidence>]>,
     planes: Vec<(PlaneKey, PlaneStatistics)>,
-    weights: BTreeMap<(usize, usize), ResponseWeights>,
     /// The measurements of every plane and field, for the controller.
     pub statistics: ResidualStatistics,
 }
@@ -203,13 +202,11 @@ pub fn prepare_minor_cycle(
         None
     };
     let (masks, auto_masks) = mask_plans.materialize(base, normal, beam)?.into_parts();
-    let weights = response_weights(normal, setup, taylor, &keys)?;
     let inputs = Inputs {
         normal,
         base,
         masks: &masks,
         setup,
-        weights: &weights,
         taylor,
     };
     let mut slots = keys
@@ -281,7 +278,6 @@ pub fn prepare_minor_cycle(
         masks,
         auto_masks,
         planes,
-        weights,
         statistics,
     })
 }
@@ -315,7 +311,6 @@ pub fn run_minor_cycle(
         masks,
         auto_masks,
         planes,
-        weights,
         ..
     } = prepared;
     let normal = completion.normal_state();
@@ -324,7 +319,6 @@ pub fn run_minor_cycle(
         base: completion.final_model(),
         masks: &masks,
         setup,
-        weights: &weights,
         taylor: is_taylor(normal),
     };
     let mut results = Vec::with_capacity(planes.len());
@@ -504,8 +498,6 @@ struct Inputs<'a> {
     base: &'a ModelGeneration,
     masks: &'a ImageDomainReconstructionMasks,
     setup: &'a MinorCycleSetup,
-    /// The response weights, read once per cycle.
-    weights: &'a BTreeMap<(usize, usize), ResponseWeights>,
     /// Whether the normal state is one Taylor family.
     taylor: bool,
 }
@@ -583,7 +575,6 @@ fn load<'a>(
         base,
         masks,
         setup,
-        weights,
         taylor,
     } = *inputs;
     let shape = plane_shape(normal, key);
@@ -624,7 +615,7 @@ fn load<'a>(
     let terms = if taylor {
         read_taylor(normal, setup)?
     } else {
-        read_single(normal, setup, key, weights)?
+        read_single(normal, setup, key)?
     };
     Ok(Some(PlaneData {
         shape,
@@ -636,64 +627,17 @@ fn load<'a>(
     }))
 }
 
-/// A direction-dependent response's weights for one image domain and
-/// polarization (CASA's weight image of one store).
-struct ResponseWeights {
-    sensitivity: Vec<f64>,
-    normal_weight: f64,
-    published_weight: f64,
-}
-
-/// The response weights of every domain and polarization of `keys`, read
-/// once per minor cycle; empty without a response and for a Taylor family,
-/// which reads its own.
-fn response_weights(
-    normal: &FinalNormalState,
-    setup: &MinorCycleSetup,
-    taylor: bool,
-    keys: &[PlaneKey],
-) -> Result<BTreeMap<(usize, usize), ResponseWeights>, MinorCycleRunError> {
-    let mut weights = BTreeMap::new();
-    if setup.response.is_none() || taylor {
-        return Ok(weights);
-    }
-    let window = normal.read_window(normal.slab().core_range())?;
-    for key in keys {
-        if weights.contains_key(&(key.domain, key.polarization)) {
-            continue;
-        }
-        let domain = window
-            .domain(key.domain)
-            .expect("plane keys name existing domains");
-        let cells = plane_shape(normal, *key).len();
-        let sensitivity = domain
-            .sensitivity()
-            .dense()
-            .and_then(|dense| dense.get(key.polarization * cells..(key.polarization + 1) * cells))
-            .expect("a direction-dependent response has a dense sensitivity")
-            .to_vec();
-        weights.insert(
-            (key.domain, key.polarization),
-            ResponseWeights {
-                sensitivity,
-                normal_weight: domain.sum_weights()[key.polarization],
-                published_weight: domain.published_sum_weights()[key.polarization],
-            },
-        );
-    }
-    Ok(weights)
-}
-
 /// One plane's residual and PSF. Without a response both are divided by the
 /// PSF peak; with one the residual takes CASA's normalisation
 /// (`SIImageStore::divideResidualByWeight`: by the published sum of weights,
 /// and the weight image by the PSF gridding's) and the components convert
-/// back with `divideModelByWeight`.
+/// back with `divideModelByWeight`. CASA normalises every (polarization,
+/// channel) plane by that plane's own sums and weight image, so a cube
+/// channel reads its own; a paged cube reads only this plane.
 fn read_single<'a>(
-    normal: &FinalNormalState,
+    normal: &'a FinalNormalState,
     setup: &MinorCycleSetup,
     key: PlaneKey,
-    weights: &'a BTreeMap<(usize, usize), ResponseWeights>,
 ) -> Result<PlaneTerms<'a>, MinorCycleRunError> {
     let plane = normal.read_reconstruction_plane(key.domain, key.channel, key.polarization)?;
     let shape = plane_shape(normal, key);
@@ -711,9 +655,11 @@ fn read_single<'a>(
             response: None,
         });
     };
-    let weights = &weights[&(key.domain, key.polarization)];
-    let bound = MosaicSensitivity::new(&weights.sensitivity)?
-        .with_normal_sum_weight(weights.normal_weight)?;
+    let weights = normal.read_plane(key.domain, key.channel, key.polarization)?;
+    let sensitivity = weights.read_sensitivity()?;
+    let normal_weight = weights.sum_weight();
+    let published_weight = weights.published_sum_weight();
+    let bound = MosaicSensitivity::new(&sensitivity)?.with_normal_sum_weight(normal_weight)?;
     let residual = raw
         .iter()
         .enumerate()
@@ -722,7 +668,7 @@ fn read_single<'a>(
                 value.re,
                 index,
                 response.normalization(),
-                weights.published_weight,
+                published_weight,
                 response.policy(),
             )
         })
@@ -731,9 +677,9 @@ fn read_single<'a>(
         residual: vec![residual],
         psf: vec![normalise(psf, peak)],
         response: Some(ResponseBinding {
-            sensitivity: Cow::Borrowed(weights.sensitivity.as_slice()),
+            sensitivity,
             response,
-            sum_weight: weights.normal_weight,
+            sum_weight: normal_weight,
         }),
     })
 }

@@ -25,8 +25,8 @@ pub use demand::ContinuumGenerationDemand;
 pub use error::ProductsError;
 pub use generation::{
     AnalyticPrimaryBeamModel, CONTINUUM_ALGORITHM_CATALOG_VERSION, ContinuumProductControls,
-    DEFAULT_PSF_CUTOFF, PlannedContinuumGeneration, PlannedMember, ProductMemberContract,
-    PublishedContinuumGeneration, PublishedMember, produce_continuum_members,
+    DEFAULT_PSF_CUTOFF, PlannedContinuumGeneration, PlannedMember, PublishedContinuumGeneration,
+    PublishedMember, produce_continuum_members,
 };
 pub use restore::{
     MosaicSensitivity, ResidualBeamScaling, fft_convolve, gaussian_beam_image, normalize_plane,

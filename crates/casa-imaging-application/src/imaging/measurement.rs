@@ -33,7 +33,7 @@ pub(crate) fn selected_correlations(
     problem: &CompiledProblem,
 ) -> Result<Vec<CorrelationType>, ImagingError> {
     let mut layouts = problem
-        .selected_observation()
+        .observation_transaction()
         .read_set()
         .sources()
         .iter()
@@ -57,9 +57,7 @@ pub(crate) fn selected_correlations(
 }
 
 /// The grid basis of the compiled reconstruction basis. A Taylor basis
-/// expands about the image's reference frequency. Taylor-via-channel-major
-/// (CASA `mvc`) has no pass implementation and no request names it; #656
-/// removes the basis.
+/// expands about the image's reference frequency.
 pub(crate) fn basis(problem: &CompiledProblem) -> Result<Basis, ImagingError> {
     Ok(match problem.reconstruction().basis() {
         ReconstructionBasis::Constant => Basis::Constant,
@@ -70,11 +68,6 @@ pub(crate) fn basis(problem: &CompiledProblem) -> Result<Basis, ImagingError> {
         ReconstructionBasis::ChannelLocal { channels } => Basis::ChannelLocal {
             planes: channels as u32,
         },
-        ReconstructionBasis::TaylorViaChannelMajor { .. } => {
-            return Err(ImagingError::Unsupported {
-                reason: "Taylor terms via channel cubes have no pass implementation",
-            });
-        }
     })
 }
 
@@ -265,7 +258,7 @@ pub(crate) fn domain_operator(
 /// channels' frequencies (`HetArrayConvFunc` beams per window).
 fn mosaic_windows(problem: &CompiledProblem) -> Result<Vec<MosaicWindow>, ImagingError> {
     let mut windows = Vec::new();
-    for source in problem.selected_observation().read_set().sources() {
+    for source in problem.observation_transaction().read_set().sources() {
         for window in source.selection().spectral_windows() {
             if windows
                 .iter()
@@ -365,7 +358,7 @@ const FRAME_MARGIN: f64 = 0.01;
 pub(crate) fn native_spacing_hz(problem: &CompiledProblem) -> f64 {
     let mut widest = 0.0_f64;
     for window in problem
-        .selected_observation()
+        .observation_transaction()
         .read_set()
         .sources()
         .iter()

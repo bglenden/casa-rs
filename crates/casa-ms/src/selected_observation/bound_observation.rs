@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_imaging_model::{CompiledProblem, LogicalIdentity};
+use casa_imaging_model::CompiledProblem;
 use std::sync::Arc;
 use thiserror::Error;
 
+use crate::SelectedObservationBufferCapacity;
 use crate::selected_pointing::SelectedPointingQueryDomain;
 
 use super::access::{BoundObservationReferenceData, SelectedRowReplay};
@@ -17,7 +18,7 @@ use super::{
 /// One snapshot source and its bounded-content budget.
 ///
 /// The content budget is the sole physical blocking authority.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ObservationSourceBinding {
     measurement_set: usize,
     content_budget: SelectedObservationContentBudget,
@@ -25,21 +26,10 @@ pub struct ObservationSourceBinding {
     pointing_query_domain: Option<SelectedPointingQueryDomain>,
 }
 
-/// Check that a binding carries the ephemeris the compiled geometry tracks,
-/// and that its reference data fits its content budget.
+/// Check that a binding's reference data fits its content budget.
 fn check_reference_data(
-    problem: &CompiledProblem,
     binding: &ObservationSourceBinding,
 ) -> Result<(), BoundSelectedObservationError> {
-    let expected = problem.geometry().ephemeris_reference();
-    let actual = binding.ephemeris_identity();
-    if actual != expected {
-        return Err(BoundSelectedObservationError::EphemerisReferenceMismatch {
-            measurement_set: binding.measurement_set,
-            expected,
-            actual,
-        });
-    }
     let available_bytes = binding.content_budget.available_bytes();
     let required_bytes = binding.reference_data_bytes();
     if required_bytes > available_bytes {
@@ -116,12 +106,6 @@ impl ObservationSourceBinding {
 
     pub(crate) fn set_content_budget(&mut self, budget: SelectedObservationContentBudget) {
         self.content_budget = budget;
-    }
-
-    fn ephemeris_identity(&self) -> Option<LogicalIdentity> {
-        self.ephemeris
-            .as_deref()
-            .map(crate::SelectedObservationEphemeris::identity)
     }
 
     pub(crate) fn pointing_query_domain(&self) -> Option<&SelectedPointingQueryDomain> {
@@ -206,7 +190,7 @@ impl BoundSelectedObservation {
         measures: &SelectedObservationMeasures,
         binding: &ObservationSourceBinding,
     ) -> Result<SelectedObservationContentRequirements, BoundSelectedObservationError> {
-        let expected = problem.inputs().observation_snapshot().sources();
+        let expected = problem.observation().sources();
         if expected.len() != 1 {
             return Err(BoundSelectedObservationError::BindingSetMismatch);
         }
@@ -217,11 +201,12 @@ impl BoundSelectedObservation {
             });
         }
         let shared = Self::shared_bytes(measures, std::slice::from_ref(binding))?;
-        BoundObservationSource::content_requirements(problem, source, binding, measures, shared)
-            .map_err(|error| BoundSelectedObservationError::Source {
+        BoundObservationSource::content_requirements(problem, source, binding, shared).map_err(
+            |error| BoundSelectedObservationError::Source {
                 measurement_set: source.input_ordinal(),
                 error: Box::new(error),
-            })
+            },
+        )
     }
 
     /// The Measures provider and every binding's reference data, charged
@@ -252,13 +237,12 @@ impl BoundSelectedObservation {
         measures: SelectedObservationMeasures,
         bindings: Vec<ObservationSourceBinding>,
     ) -> Result<Self, BoundSelectedObservationError> {
-        measures.validate_problem(problem)?;
-        let expected = problem.inputs().observation_snapshot().sources();
+        let expected = problem.observation().sources();
         if bindings.len() != expected.len() {
             return Err(BoundSelectedObservationError::BindingSetMismatch);
         }
         for source in expected {
-            check_reference_data(problem, source_binding(&bindings, source.input_ordinal())?)?;
+            check_reference_data(source_binding(&bindings, source.input_ordinal())?)?;
         }
         let mut sources = Vec::with_capacity(expected.len());
         let first_source_shared_bytes = Self::shared_bytes(&measures, &bindings)?;
@@ -335,12 +319,14 @@ impl BoundSelectedObservation {
         problem: &CompiledProblem,
         window: Option<[f64; 2]>,
     ) -> SelectedObservationBlockSource<'_> {
-        let maximum_rows = self
+        let block_capacity = self
             .sources
             .iter()
-            .map(BoundObservationSource::rows_per_block)
-            .max()
-            .unwrap_or(0);
+            .map(BoundObservationSource::buffer_capacity)
+            .fold(
+                SelectedObservationBufferCapacity::default(),
+                SelectedObservationBufferCapacity::union,
+            );
         SelectedObservationBlockSource {
             problem,
             observation: self,
@@ -348,7 +334,7 @@ impl BoundSelectedObservation {
             row_replay: None,
             selected_rows: 0,
             exhausted: false,
-            maximum_rows,
+            block_capacity,
             window,
         }
     }
@@ -363,7 +349,8 @@ pub struct SelectedObservationBlockSource<'a> {
     /// Rows the predicate selected in the sources already walked.
     selected_rows: u64,
     exhausted: bool,
-    maximum_rows: usize,
+    /// What one block of any source needs; the stream refills one block.
+    block_capacity: SelectedObservationBufferCapacity,
     window: Option<[f64; 2]>,
 }
 
@@ -371,13 +358,14 @@ impl SelectedObservationBlockSource<'_> {
     /// Exact row ceiling from the freshly opened source's physical content plan.
     /// Consumers may reduce an already admitted scratch bound to this size.
     pub const fn maximum_rows_per_block(&self) -> usize {
-        self.maximum_rows
+        self.block_capacity.rows()
     }
 
-    /// Create one empty block sized for this stream.
+    /// Create one empty block, allocated at once for every block of this
+    /// stream.
     #[must_use]
     pub fn create_storage(&self) -> SelectedObservationBlock {
-        SelectedObservationBlock::new(self.maximum_rows)
+        SelectedObservationBlock::new(self.block_capacity)
     }
 
     /// Fill `block` with the next canonical row block and borrow it as filled;
@@ -396,7 +384,7 @@ impl SelectedObservationBlockSource<'_> {
             };
             let logical_source = self
                 .problem
-                .selected_observation()
+                .observation_transaction()
                 .read_set()
                 .sources()
                 .get(self.source_index)
@@ -436,8 +424,7 @@ impl SelectedObservationBlockSource<'_> {
         }
         let expected = self
             .problem
-            .selected_observation()
-            .read_set()
+            .observation()
             .sources()
             .iter()
             .map(|source| source.selection().rows().selected_row_count())
@@ -472,18 +459,6 @@ pub enum BoundSelectedObservationError {
     DuplicateSourceBinding {
         /// Source with duplicate bindings.
         measurement_set: usize,
-    },
-    /// A source binding omitted, substituted, or unexpectedly supplied ephemeris data.
-    #[error(
-        "compiled source {measurement_set} ephemeris reference mismatch: expected {expected:?}, actual {actual:?}"
-    )]
-    EphemerisReferenceMismatch {
-        /// Source whose reference-data binding differs from compiled geometry.
-        measurement_set: usize,
-        /// Compiler-owned ephemeris identity, or absence for fixed geometry.
-        expected: Option<LogicalIdentity>,
-        /// Supplied source-binding identity, or absence when none was supplied.
-        actual: Option<LogicalIdentity>,
     },
     /// A source's retained reference data exceeds its selected-content ceiling.
     #[error(

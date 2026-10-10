@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use super::{
-    BufferedObservationBlock, SelectedObservationContentBudget, SelectedObservationContentPlan,
-    SelectedObservationContentPlanError,
+    BufferedObservationBlock, SelectedObservationBufferCapacity, SelectedObservationContentBudget,
+    SelectedObservationContentPlan, SelectedObservationContentPlanError,
 };
 
 /// Payload-free memory requirements for one selected source.
@@ -16,6 +16,10 @@ pub struct SelectedObservationContentRequirements {
     pub(super) initialization_scratch_bytes: usize,
     pub(super) initialization_scan_bytes_per_row: usize,
     pub(super) traversal_base_bytes: usize,
+    /// One row of a block's buffer, which every phase holds whole.
+    pub(super) buffer_row: SelectedObservationBufferCapacity,
+    /// What [`Self::buffer_row`] retains, within each per-row charge below.
+    pub(super) buffer_bytes_per_row: usize,
     pub(super) resident_bytes_per_row: usize,
     pub(super) fill_bytes_per_row: usize,
     pub(super) preparation_bytes_per_row: usize,
@@ -131,6 +135,10 @@ impl SelectedObservationContentRequirements {
             resident_bytes_per_row: self.resident_bytes_per_row,
             preparation_bytes_per_row: self.preparation_bytes_per_row,
             rows_per_block: rows,
+            buffer_capacity: self.buffer_row.with_rows(rows),
+            buffer_bytes_per_block: rows
+                .checked_mul(self.buffer_bytes_per_row)
+                .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
             resident_bytes_per_block: rows
                 .checked_mul(self.resident_bytes_per_row)
                 .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,

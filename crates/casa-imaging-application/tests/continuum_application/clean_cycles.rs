@@ -40,6 +40,28 @@ fn application_executes_single_ddid_stokes_i_mfs_hogbom_with_one_iteration() {
 }
 
 #[test]
+fn a_clean_that_stops_before_its_first_minor_cycle_publishes_its_products() {
+    // The clean stops at its first convergence check, so the products come
+    // from the initial major cycle with the mask formed after it.
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+    let image_name = root.path().join("threshold-above-peak");
+
+    let result = execute(&request(
+        &measurement_set,
+        &image_name,
+        json!({ "niter": 10, "threshold": "1000Jy" }),
+    ))
+    .expect("a clean whose threshold is above the peak publishes");
+
+    assert!(result.minor_cycles.is_empty());
+    assert_eq!(result.total_minor_iterations, 0);
+    assert_eq!(result.stop, Some(CleanStop::Threshold));
+    assert_standard_products(&image_name, &result.product_names());
+}
+
+#[test]
 fn a_serial_request_runs_on_one_worker() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
@@ -356,22 +378,28 @@ fn application_materializes_static_and_auto_masks_at_the_normal_state_boundary()
     .expect("auto-mask solve");
     let cycles = &auto_result.minor_cycles;
     assert_eq!(cycles.len(), 2);
+    // The first automatic mask has no prior mask, so every support pixel is a
+    // change; the second changes exactly the pixels where it differs from
+    // the first, which it consumed as its prior mask.
     let first_evidence = cycles[0].auto_mask.expect("first auto-mask evidence");
-    assert_eq!(first_evidence.previous_mask_generation, None);
+    assert_eq!(
+        first_evidence.changed_pixels,
+        cycles[0]
+            .mask_support
+            .iter()
+            .filter(|value| **value)
+            .count()
+    );
     let evidence = cycles[1].auto_mask.expect("second auto-mask evidence");
     assert_eq!(
-        evidence.previous_mask_generation,
-        Some(cycles[0].mask_generation),
-        "the next automatic mask must retain the exact prior generation"
-    );
-    assert!(cycles.iter().all(|cycle| cycle.mask_normal_state.is_some()));
-    assert_ne!(
-        cycles[0].mask_normal_state, cycles[1].mask_normal_state,
-        "each automatic-mask generation must consume the current reconciled Normal State"
-    );
-    assert_ne!(
-        cycles[0].mask_model_generation, cycles[1].mask_model_generation,
-        "each automatic mask must constrain the current model generation"
+        evidence.changed_pixels,
+        cycles[0]
+            .mask_support
+            .iter()
+            .zip(&cycles[1].mask_support)
+            .filter(|(first, second)| first != second)
+            .count(),
+        "the next automatic mask must evolve from the prior mask"
     );
     assert!(evidence.robust_rms.is_finite());
     assert!(evidence.positive_threshold.is_finite());

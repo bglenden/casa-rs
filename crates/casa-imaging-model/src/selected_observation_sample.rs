@@ -4,7 +4,7 @@
 
 use std::{mem::size_of, sync::Arc};
 
-use crate::geometry::{Epoch, FrequencyFrame, SkyDirection, UvwCoordinateLaw};
+use crate::geometry::{Epoch, SkyDirection};
 
 /// Per-antenna pointing directions evaluated for one baseline sample.
 ///
@@ -273,37 +273,22 @@ impl SelectedImageDomainProjections {
     }
 }
 
-/// Reported evaluated coordinates consumed by weighting and paired operators.
+/// Evaluated row coordinates read by the paired operators.
+///
+/// The operator `[u, v, w]` and phase shift of each image domain live in the
+/// row's domain projections.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SelectedSampleCoordinates {
     /// Raw MeasurementSet `[u, v, w]` coordinate in metres.
     pub raw_uvw_m: [f64; 3],
-    /// `[u, v, w]` coordinate used for weighting-density evaluation, in metres.
-    pub density_uvw_m: [f64; 3],
-    /// `[u, v, w]` coordinate transformed for operator evaluation, in metres.
-    pub transformed_uvw_m: [f64; 3],
-    /// Signed geometric phase-shift path length in metres.
-    pub phase_shift_m: f64,
-    /// Compiled UVW convention.
-    pub uvw_law: UvwCoordinateLaw,
     /// MAIN `TIME` epoch.
     pub time: Epoch,
-    /// MAIN `TIME_CENTROID` epoch.
-    pub time_centroid: Epoch,
-    /// MAIN `INTERVAL` in seconds.
-    pub interval_seconds: f64,
-    /// MAIN `EXPOSURE` in seconds.
-    pub exposure_seconds: f64,
     /// Evaluated parallactic angles for `ANTENNA1` and `ANTENNA2`, in radians,
     /// or `None` when the compiled operator does not require feed rotation.
     ///
     /// FEED receptor-angle offsets remain instrument-response inputs and are
     /// deliberately not folded into this source-derived coordinate.
     pub parallactic_angles_rad: Option<[f64; 2]>,
-    /// Evaluated phase direction.
-    pub phase_direction: SkyDirection,
-    /// Evaluated delay direction.
-    pub delay_direction: SkyDirection,
     /// Evaluated per-antenna pointing directions.
     pub pointing_directions: SelectedPointingDirections,
 }
@@ -334,7 +319,7 @@ pub struct SelectedAntennaResponses {
     pub family_envelope: AntennaResponseClass,
 }
 
-/// Reported per-sample MeasurementSet provenance.
+/// The MAIN identifiers of one selected row that the operators read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectedSampleMetadata {
     /// MAIN `FIELD_ID`.
@@ -345,18 +330,6 @@ pub struct SelectedSampleMetadata {
     pub antenna2: i32,
     /// Owner-derived paired response, present for a direction-dependent model.
     pub antenna_responses: Option<SelectedAntennaResponses>,
-    /// MAIN `FEED1`.
-    pub feed1: i32,
-    /// MAIN `FEED2`.
-    pub feed2: i32,
-    /// MAIN `SCAN_NUMBER`.
-    pub scan_number: i32,
-    /// MAIN `STATE_ID`.
-    pub state_id: i32,
-    /// MAIN `OBSERVATION_ID`.
-    pub observation_id: i32,
-    /// MAIN `ARRAY_ID`.
-    pub array_id: i32,
 }
 
 /// Row-shared values of one selected MAIN row.
@@ -365,23 +338,19 @@ pub struct SelectedSampleMetadata {
 /// selected channel and correlation of that row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectedObservationRunRow {
-    /// The MeasurementSet's position in the compiled observation snapshot.
-    pub measurement_set: usize,
     /// Physical MAIN row number.
     pub physical_row: u64,
     /// MAIN `DATA_DESC_ID`.
     pub data_description_id: i32,
     /// Resolved `SPECTRAL_WINDOW_ID`.
     pub spectral_window_id: u32,
-    /// Resolved `POLARIZATION_ID`.
-    pub polarization_id: u32,
     /// MAIN `FLAG_ROW` value.
     pub row_flag: bool,
     /// Evaluated science coordinates shared by the row.
     pub coordinates: SelectedSampleCoordinates,
     /// Canonical model and PSF projections shared by every row member.
     pub domain_projections: SelectedImageDomainProjections,
-    /// Per-row MeasurementSet provenance.
+    /// Per-row MAIN identifiers.
     pub metadata: SelectedSampleMetadata,
 }
 
@@ -400,14 +369,6 @@ pub struct SelectedObservationRunChannel {
     pub channel_index: u32,
     /// Native channel centre frequency in hertz.
     pub frequency_centre_hz: f64,
-    /// Lower native channel boundary in hertz.
-    pub frequency_lower_hz: f64,
-    /// Upper native channel boundary in hertz.
-    pub frequency_upper_hz: f64,
-    /// Signed native channel width in hertz.
-    pub channel_width_hz: f64,
-    /// Reference frame of the channel frequencies.
-    pub frequency_frame: FrequencyFrame,
 }
 
 #[cfg(test)]

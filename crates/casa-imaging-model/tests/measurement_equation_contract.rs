@@ -12,30 +12,29 @@
 use std::collections::BTreeSet;
 
 use casa_imaging_model::{
-    AwProjectionContract, AxisOrder, CentreLaws, CompiledProblemId, DeclaredInnerProducts,
-    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FiniteValuePolicy,
-    FlagPolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, InstrumentModel, InstrumentResponse, MeasurementEquationContract, ModelColumnWrite,
-    ModelInnerProduct, ModelStateIdentity, NormalEquationForm, NormalStateNormalization,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationTransactionRequirements, PairedMeasurementTransform, PhaseCentreLaw,
-    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
-    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
-    ProblemInput, ProblemSpecification, ProductBoundaryOperation, ProductKind,
-    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
+    AwProjectionContract, AxisOrder, CentreLaws, DeclaredInnerProducts, DirectionCoordinateSpec,
+    DirectionFrame, DopplerConvention, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentModel,
+    InstrumentResponse, MeasurementEquationContract, ModelColumnWrite, ModelInnerProduct,
+    NormalEquationForm, NormalStateNormalization, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationPointingLaw, ObservationTransactionRequirements,
+    PairedMeasurementTransform, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
+    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
+    PolarizationContract, PolarizationCoordinate, ProblemInput, ProblemSpecification,
+    ProductBoundaryOperation, ProductKind, ProductNormalization, ProductRequirements, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
     SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
-    VisibilityPhaseConvention, WeightColumn, WeightDensityScope, WeightingCommitmentId,
-    WeightingContract, WeightingScheme, compile,
+    VisibilityPhaseConvention, WeightColumn, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile,
 };
 
 mod common;
 #[path = "fixtures/model_lifecycle.rs"]
 mod model_lifecycle_fixture;
 
-use common::{identity, problem_inputs};
+use common::observation_snapshot;
 use model_lifecycle_fixture::model_lifecycle;
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -202,7 +201,6 @@ fn geometry() -> GeometryInput {
         )],
         CentreLaws::new(
             PhaseCentreLaw::Fixed(direction.reference_direction()),
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::Observation(ObservationPointingLaw::new(
                 PointingDirectionColumn::Direction,
                 PointingDirectionSemantic::AntennaBoresight,
@@ -299,12 +297,6 @@ fn compile_contract_with_reduction(
             .map(|stage| (stage, StageErrorBudget::new(1.0e-9, 1.0e-6)))
             .collect(),
     );
-    let inputs = problem_inputs(
-        41,
-        vec![(ReferenceDataKind::Instrument, identity(42))],
-        ModelStateIdentity::Empty,
-    );
-
     compile(ProblemInput::new(
         ProblemSpecification::new(
             science,
@@ -315,42 +307,10 @@ fn compile_contract_with_reduction(
             numerics,
         ),
         geometry(),
-        inputs,
-        model_lifecycle(ModelStateIdentity::Empty),
+        observation_snapshot(41),
+        model_lifecycle(),
     ))
     .expect("compile typed measurement equation")
-}
-
-#[test]
-fn weighting_commitment_binds_sampling_and_numerics() {
-    let linear = compile_contract(SpectralSamplingLaw::LINEAR);
-    let nearest = compile_contract(SpectralSamplingLaw::NEAREST);
-    let deterministic = compile_contract_with_reduction(
-        SpectralSamplingLaw::LINEAR,
-        ReductionPolicy::DeterministicPairwise,
-        None,
-        None,
-    );
-
-    assert_ne!(
-        linear.weighting().commitment_id(),
-        nearest.weighting().commitment_id()
-    );
-    assert_ne!(
-        linear.weighting().commitment_id(),
-        deterministic.weighting().commitment_id()
-    );
-    assert_eq!(
-        linear.weighting().selected_observation(),
-        linear.selected_observation().commitment_id()
-    );
-    assert_eq!(
-        linear.weighting().visibility_inner_product(),
-        linear
-            .selected_observation()
-            .sample_evaluation()
-            .visibility_inner_product()
-    );
 }
 
 #[test]
@@ -366,14 +326,6 @@ fn compiled_contract_owns_paired_operator_weighting_and_product_boundary() {
     assert_eq!(
         operator.codomain().inner_product(),
         VisibilityInnerProduct::HermitianEuclidean
-    );
-    assert_eq!(
-        operator.domain().geometry(),
-        problem.geometry().geometry_id()
-    );
-    assert_eq!(
-        operator.codomain().observation(),
-        problem.inputs().observation()
     );
     assert_eq!(
         operator.transforms(),
@@ -403,11 +355,6 @@ fn compiled_contract_owns_paired_operator_weighting_and_product_boundary() {
         normal.output().normalization(),
         NormalStateNormalization::Unnormalized
     );
-    assert_eq!(
-        normal.weighting().snapshot(),
-        problem.inputs().observation()
-    );
-    assert_ne!(normal.weighting().commitment_id().as_bytes(), [0; 32]);
     assert_eq!(normal.weighting().sources().len(), 1);
     assert_eq!(
         normal.weighting().sources()[0].flags(),
@@ -494,29 +441,7 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
 }
 
 #[test]
-fn problem_and_weighting_commitment_identities_are_pinned() {
-    let problem = compile_contract(SpectralSamplingLaw::LINEAR);
-
-    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 26);
-    assert_eq!(WeightingCommitmentId::SCHEMA_VERSION, 5);
-    assert_eq!(
-        (
-            problem.problem_id().to_string(),
-            problem
-                .normal_equation()
-                .weighting()
-                .commitment_id()
-                .to_string(),
-        ),
-        (
-            "f0a488c884a97bc06b94f1dda21c82ba4cf4b82aad2b8df1df074fb29f727ef2".to_string(),
-            "5a9537fa3ce6f03da06197159f2fa97a4b4d188cb3ff2836007f74148c03186c".to_string(),
-        )
-    );
-}
-
-#[test]
-fn w_projection_is_explicit_paired_and_identity_bound() {
+fn w_projection_is_explicit_and_paired() {
     let contract =
         casa_imaging_model::WProjectionContract::new(12_500.0, std::num::NonZeroUsize::new(17))
             .unwrap();
@@ -526,7 +451,6 @@ fn w_projection_is_explicit_paired_and_identity_bound() {
         Some(contract),
         None,
     );
-    let standard = compile_contract(SpectralSamplingLaw::LINEAR);
 
     assert!(
         w.required_capabilities()
@@ -539,11 +463,10 @@ fn w_projection_is_explicit_paired_and_identity_bound() {
             .last(),
         Some(&PairedMeasurementTransform::WProjection { contract })
     );
-    assert_ne!(w.problem_id(), standard.problem_id());
 }
 
 #[test]
-fn aw_projection_is_distinct_paired_and_identity_bound() {
+fn aw_projection_is_distinct_and_paired() {
     let contract = AwProjectionContract::new(
         12_500.0,
         std::num::NonZeroUsize::new(32).unwrap(),
@@ -607,28 +530,6 @@ fn aw_projection_is_distinct_paired_and_identity_bound() {
     assert_eq!(contract.pointing_offset_sigdev_arcsec(), [300.0, 30.0]);
     assert_eq!(contract.pointing_group_threshold_arcsec(), 300.0);
     assert_eq!(contract.pointing_refresh_threshold_arcsec(), 30.0);
-    assert_ne!(aw.problem_id(), standard.problem_id());
-
-    let changed_pointing_thresholds = AwProjectionContract::new(
-        12_500.0,
-        std::num::NonZeroUsize::new(32).unwrap(),
-        true,
-        false,
-        true,
-        true,
-        true,
-        [301.0, 30.0],
-        5.0,
-        5.0,
-    )
-    .unwrap();
-    let changed = compile_contract_with_reduction(
-        SpectralSamplingLaw::LINEAR,
-        ReductionPolicy::Compensated,
-        None,
-        Some(changed_pointing_thresholds),
-    );
-    assert_ne!(aw.problem_id(), changed.problem_id());
 }
 
 #[test]

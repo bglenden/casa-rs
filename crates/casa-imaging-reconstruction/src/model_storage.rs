@@ -73,13 +73,21 @@ impl ModelSampleUpdate {
         if sample.support() != ModelSupport::Valid {
             return Err(ModelLifecycleError::DeltaOutsideValidSupport);
         }
-        let value = ModelValue::new(crate::add_with_precision(
+        let value = ModelValue::new(add_with_precision(
             precision,
             sample.value().value(),
             self.increment,
         ))?;
         crate::validate_model_value(value, bound)?;
         Ok(ModelSample::valid(value))
+    }
+}
+
+/// `left + right`, rounded to the lifecycle's arithmetic precision.
+fn add_with_precision(precision: NumericPrecision, left: f64, right: f64) -> f64 {
+    match precision {
+        NumericPrecision::F32 => f64::from((left as f32) + (right as f32)),
+        NumericPrecision::F64 => left + right,
     }
 }
 
@@ -178,11 +186,6 @@ pub(crate) struct ModelSamples {
 impl ModelSamples {
     pub(crate) fn maximum_magnitude(&self) -> f64 {
         f64::from_bits(self.maximum_magnitude.load(Ordering::Relaxed))
-    }
-
-    pub(crate) fn record_validated_bound(&mut self, bound: f64) {
-        self.maximum_magnitude
-            .fetch_min(bound.to_bits(), Ordering::Relaxed);
     }
 
     pub(crate) fn queue_updates<I>(

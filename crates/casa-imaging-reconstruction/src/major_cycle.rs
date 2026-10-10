@@ -1,32 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Major-Cycle reconciliation joining complete-data evidence with the model lifecycle.
+//! The major cycle: one pass forms the normal state with the final model.
 //!
-//! The Major Cycle is the sole operation that creates authoritative
-//! residual/normal state. One reconciliation consumes exhaustive T19
-//! complete-data operator evidence, one frozen T18 weighting generation, and
-//! the exact named T28 input model generation, reconciles the exact final
-//! model through the declared normal-operator composition, and returns one
-//! inseparable result containing the authoritative Final Normal State
-//! completion (with its exact model-dependent residual content), the Final
-//! Model completion, and the authoritative final model generation itself. The
-//! three members are never separable outside this operation, and none is a
-//! Product Generation seal or publication authority.
+//! A [`MajorCycle`] owns its final model and the normal state its pass forms
+//! with that model, and releases them together as one
+//! [`MajorCycleCompletion`]: the final normal state, with its model-dependent
+//! residual, and the final model generation.
 
 use std::fmt;
 
-use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblemId, ImageDomainRole, LogicalIdentity, NumericsContractId,
-    WeightingCommitmentId,
-};
+use casa_imaging_model::{CompiledProblem, ImageDomainRole};
 
 use crate::{
-    Encoder, FINAL_NORMAL_STATE_DOMAIN, FINAL_NORMAL_STATE_VERSION, FinalModelCompletion,
-    FinalModelCompletionId, FinalModelContinuation, FinalNormalStateCompletionId,
-    MAJOR_CYCLE_DOMAIN, MAJOR_CYCLE_VERSION, MajorCycleCompletionId, ModelDelta, ModelGeneration,
-    ModelGenerationId, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
-    SpectralOperatorError, SpectralPrimitiveCatalog, WeightingGenerationId, WeightingReplayId,
-    runtime_adapter::CompleteDataNormalState,
+    ModelGeneration, ModelLifecycleError, PassImages, PassNormalState, PreparedFinalModel,
+    SpectralOperatorError, SpectralPrimitiveCatalog,
+    runtime_adapter::{CompleteDataNormalState, NormalStoragePlan},
     spectral_operator::normal_storage::{NormalStatePrimitives, NormalStateWindowPayload},
 };
 
@@ -72,13 +60,12 @@ pub enum NormalStateCatalog {
     UnnormalizedTaylorBlockV1,
 }
 
-/// Reconstruction-owned proof that the final Normal State generation exists.
+/// The normal state a major cycle's pass formed with its final model.
 ///
-/// The record names exact lineage, the authoritative observation generation,
-/// and the owned model-dependent unnormalized residual; it
-/// makes no promise that the state is fully resident, dense, or
-/// shift-invariant. It is not a Product Graph artifact and mints no
-/// publication authority.
+/// It owns the model-dependent unnormalized residual with the PSF,
+/// sensitivity and sum weights, and the sample and block counts of the
+/// pass; it makes no promise that the state is fully resident, dense, or
+/// shift-invariant. It is not a Product Graph artifact.
 ///
 /// ```compile_fail
 /// use casa_imaging_reconstruction::FinalNormalState;
@@ -88,21 +75,9 @@ pub enum NormalStateCatalog {
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct FinalNormalState {
-    completion_id: FinalNormalStateCompletionId,
-    problem: CompiledProblemId,
-    geometry: CompiledGeometryId,
-    numerics: NumericsContractId,
-    weighting_commitment: WeightingCommitmentId,
-    weighting_generation: WeightingGenerationId,
-    replay: WeightingReplayId,
-
     catalog: NormalStateCatalog,
     sample_count: u64,
     block_count: u64,
-    input_model_generation: ModelGenerationId,
-    final_model_generation: ModelGenerationId,
-
-    image_domain_mask_generation: Option<crate::ReconstructionMaskGenerationId>,
     primitives: NormalStatePrimitives,
 }
 
@@ -165,90 +140,22 @@ impl FinalNormalState {
             .copied()
     }
 
-    /// Return the completion identity.
-    #[must_use]
-    pub const fn completion_id(&self) -> FinalNormalStateCompletionId {
-        self.completion_id
-    }
-
-    /// Return the exact Compiled Problem reconciled by this Major Cycle.
-    #[must_use]
-    pub const fn problem_id(&self) -> CompiledProblemId {
-        self.problem
-    }
-
-    /// Return the compiled geometry/operator coordinate commitment.
-    #[must_use]
-    pub const fn geometry_id(&self) -> CompiledGeometryId {
-        self.geometry
-    }
-
-    /// Return the exact numerical contract governing the state arithmetic.
-    #[must_use]
-    pub const fn numerics_id(&self) -> NumericsContractId {
-        self.numerics
-    }
-
-    /// Return the compiler-owned weighting commitment bound to the frozen W.
-    #[must_use]
-    pub const fn weighting_commitment_id(&self) -> WeightingCommitmentId {
-        self.weighting_commitment
-    }
-
-    /// Return the frozen T18 weighting generation behind the state.
-    #[must_use]
-    pub const fn weighting_generation(&self) -> WeightingGenerationId {
-        self.weighting_generation
-    }
-
-    /// Return the terminal replay whose exhaustive coverage produced the state.
-    #[must_use]
-    pub const fn replay_id(&self) -> WeightingReplayId {
-        self.replay
-    }
-
     /// Return the versioned Normal State Generation catalog.
     #[must_use]
     pub const fn catalog(&self) -> NormalStateCatalog {
         self.catalog
     }
 
-    /// Explicitly fingerprint the residual arrays for tests or diagnostics.
-    /// This reads the backing and is never required by the execution lifecycle.
-    pub fn diagnostic_content_identity(&self) -> Result<LogicalIdentity, SpectralOperatorError> {
-        self.primitives.content_identity()
-    }
-
-    /// Return the exhaustive selected-sample count behind the state.
+    /// Return the number of samples the pass placed.
     #[must_use]
     pub const fn sample_count(&self) -> u64 {
         self.sample_count
     }
 
-    /// Return the exhaustive replay block count behind the state.
+    /// Return the number of source blocks the pass read.
     #[must_use]
     pub const fn block_count(&self) -> u64 {
         self.block_count
-    }
-
-    /// Return the exact T28 input model generation this reconciliation named.
-    #[must_use]
-    pub const fn input_model_generation(&self) -> ModelGenerationId {
-        self.input_model_generation
-    }
-
-    /// Return the authoritative final model generation of this reconciliation.
-    #[must_use]
-    pub const fn final_model_generation(&self) -> ModelGenerationId {
-        self.final_model_generation
-    }
-
-    /// Return the immutable image-domain support collection bound to this state.
-    #[must_use]
-    pub const fn image_domain_mask_generation(
-        &self,
-    ) -> Option<crate::ReconstructionMaskGenerationId> {
-        self.image_domain_mask_generation
     }
 
     /// Return the exact unnormalized plane shape of every primitive.
@@ -488,7 +395,7 @@ impl FinalNormalStateWindow<'_> {
         self.primitives.dirty()
     }
 
-    /// Return the T19 normal approximation paired with the residual.
+    /// Return the normal approximation (the PSF) paired with the residual.
     #[must_use]
     pub fn normal_approximation(&self) -> crate::NormalValues<'_> {
         self.primitives.psf()
@@ -840,16 +747,10 @@ impl<'a> FinalNormalStatePlane<'a> {
     }
 }
 
-/// Inseparable result of the one atomic Major-Cycle reconciliation.
+/// One major cycle's result: the final normal state and the final model its
+/// pass formed the residual with, released together.
 ///
-/// The triple cannot be constructed, cloned, or paired by assembly outside
-/// this operation: every successful reconciliation carries exactly one Final
-/// Normal State completion, exactly one Final Model completion, and the exact
-/// authoritative final model generation those completions name. None of the
-/// members is a Product Generation seal. The only way to obtain members is to
-/// consume a whole minted join via [`MajorCycleCompletion::into_parts`].
-///
-/// A caller cannot forge the join from its parts:
+/// A caller cannot assemble one from parts:
 ///
 /// ```compile_fail
 /// use casa_imaging_reconstruction::MajorCycleCompletion;
@@ -858,360 +759,180 @@ impl<'a> FinalNormalStatePlane<'a> {
 /// ```
 #[derive(Debug)]
 pub struct MajorCycleCompletion {
-    completion_id: MajorCycleCompletionId,
     normal_state: FinalNormalState,
-    model_completion: FinalModelCompletion,
     final_model: ModelGeneration,
 }
 
-/// Model ownership retained across exhaustive T18/T19 replay without consuming
-/// final completion. Sparse updates materialize on each worker's first model
-/// access, before that window can be used for prediction.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct MajorCyclePreparation {
-    model: PreparedFinalModel,
-}
-
-impl MajorCyclePreparation {
-    /// Validate and prepare the exact final model before complete-data replay.
-    pub fn prepare(
-        lifecycle: &ModelLifecycle,
-        named: ModelGeneration,
-        delta: Option<ModelDelta>,
-    ) -> Result<Self, MajorCycleError> {
-        Ok(Self {
-            model: lifecycle.prepare_final_model(named, delta)?,
-        })
-    }
-
-    /// Borrow the exact candidate generation for paired-operator prediction.
-    #[must_use]
-    pub const fn final_model(&self) -> &ModelGeneration {
-        self.model.generation()
-    }
-
-    /// Return the exact candidate generation identity.
-    #[must_use]
-    pub const fn final_model_generation(&self) -> ModelGenerationId {
-        self.model.generation_id()
-    }
-}
-
 impl MajorCycleCompletion {
-    /// Return the reconciliation identity binding all typed members.
-    #[must_use]
-    pub const fn completion_id(&self) -> MajorCycleCompletionId {
-        self.completion_id
-    }
-
-    /// Borrow the distinct Final Normal State completion.
+    /// Borrow the final normal state.
     #[must_use]
     pub const fn normal_state(&self) -> &FinalNormalState {
         &self.normal_state
     }
 
-    /// Borrow the distinct Final Model completion.
-    #[must_use]
-    pub const fn model_completion(&self) -> &FinalModelCompletion {
-        &self.model_completion
-    }
-
-    /// Borrow the authoritative final model generation.
-    ///
-    /// Downstream product authority consumes this exact generation rather than
-    /// reconstructing a model from identifiers.
+    /// Borrow the final model generation.
     #[must_use]
     pub const fn final_model(&self) -> &ModelGeneration {
         &self.final_model
     }
 
-    /// Release the three typed members by consuming the whole join.
-    ///
-    /// Members can never be assembled or paired from parts; releasing them is
-    /// reserved for downstream owners (the next Major-Cycle round and the
-    /// product authority) that consume the entire minted result at once.
+    /// Release the normal state and the final model, which the next major
+    /// cycle refreshes and updates.
     #[must_use]
-    pub fn into_parts(self) -> (FinalNormalState, FinalModelCompletion, ModelGeneration) {
-        (self.normal_state, self.model_completion, self.final_model)
-    }
-
-    /// Consume the whole reconciliation into its normal state and the affine
-    /// model continuation required by a following Minor/Major Cycle pair.
-    #[doc(hidden)]
-    #[must_use]
-    pub fn into_continuation(self) -> (FinalNormalState, FinalModelContinuation) {
-        (
-            self.normal_state,
-            FinalModelContinuation {
-                completion: self.model_completion,
-                generation: self.final_model,
-            },
-        )
+    pub fn into_parts(self) -> (FinalNormalState, ModelGeneration) {
+        (self.normal_state, self.final_model)
     }
 }
 
-/// Reconstruction owner of one attempt's Major-Cycle reconciliation.
+/// One major cycle: its final model and the normal state its pass forms
+/// with that model.
 ///
-/// The owner is affine and derived only by consuming one owner-minted T19
-/// result, which stays inseparably paired inside it; it cannot be forged from
-/// raw fields or caller digests and is consumed by its single `reconcile`
-/// call.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct MajorCycleOwner {
-    problem: CompiledProblemId,
-    geometry: CompiledGeometryId,
-    numerics: NumericsContractId,
-    weighting_commitment: WeightingCommitmentId,
-    weighting_generation: WeightingGenerationId,
-    replay: WeightingReplayId,
-
-    catalog: SpectralPrimitiveCatalog,
-
-    image_domain_mask_generation: Option<crate::ReconstructionMaskGenerationId>,
-    sample_count: u64,
-    block_count: u64,
-    primitives: NormalStatePrimitives,
-    preparation: MajorCyclePreparation,
+/// Owning both pairs the residual with the model that formed it: the pass
+/// reads the model and appends to the state through [`Self::parts`], and only
+/// [`Self::finish`] releases them, together. The pass cannot take the state
+/// out of its cycle, for example to exchange two cycles' states:
+///
+/// ```compile_fail,E0308
+/// use casa_imaging_reconstruction::MajorCycle;
+///
+/// fn exchange_states(first: &mut MajorCycle, second: &mut MajorCycle) {
+///     std::mem::swap(first.parts().1, second.parts().1);
+/// }
+/// ```
+pub struct MajorCycle {
+    model: PreparedFinalModel,
+    state: PassNormalState,
 }
 
-impl MajorCycleOwner {
-    /// Derive the reconciliation owner from one owner-minted T19 result.
+/// The pass's access to its [`MajorCycle`]'s normal state: it appends
+/// images and nothing else, so the state stays in its cycle, paired with
+/// the model that formed it.
+pub struct PassAppender<'a> {
+    state: &'a mut PassNormalState,
+}
+
+impl PassAppender<'_> {
+    /// Add one pass's images of one domain.
     ///
-    /// The result is consumed whole, so its completion metadata and primitives
-    /// can never be paired with foreign partners afterwards.
+    /// A non-finite image value or `sumwt` is a generated non-finite value,
+    /// rejected under every [`casa_imaging_model::FiniteValuePolicy`]: the
+    /// policies differ only on non-finite inputs, which the source flags or
+    /// rejects before gridding. Nothing is changed when an append fails.
     ///
     /// # Errors
     ///
-    /// Rejects evidence whose replay did not prove exhaustive coverage.
-    pub fn from_complete_data(
-        result: CompleteDataNormalState,
-        preparation: MajorCyclePreparation,
+    /// Images whose domain, shape, polarizations, channels or planes do not
+    /// match the problem and the pass (PSF moments on a residual refresh, a
+    /// channel range out of order), and generated non-finite values.
+    pub fn append(&mut self, images: PassImages) -> Result<(), SpectralOperatorError> {
+        self.state.append(images)
+    }
+}
+
+impl MajorCycle {
+    /// The initial major cycle of `problem`: its pass forms the data and PSF
+    /// images with `model`, writing them as `storage` plans.
+    pub fn initial(
+        problem: &CompiledProblem,
+        model: PreparedFinalModel,
+        storage: NormalStoragePlan,
     ) -> Result<Self, MajorCycleError> {
-        if result.completion().sample_count() == 0 || result.completion().block_count() == 0 {
+        Ok(Self {
+            state: PassNormalState::initial(problem, storage).map_err(MajorCycleError::Residual)?,
+            model,
+        })
+    }
+
+    /// A residual refresh of `previous` with `model`: the PSF, `sumwt` and
+    /// validity carry over and every residual plane is formed again.
+    pub fn refresh(
+        problem: &CompiledProblem,
+        previous: FinalNormalState,
+        model: PreparedFinalModel,
+        storage: NormalStoragePlan,
+    ) -> Result<Self, MajorCycleError> {
+        Ok(Self {
+            state: PassNormalState::refresh(problem, previous, storage)
+                .map_err(MajorCycleError::Residual)?,
+            model,
+        })
+    }
+
+    /// The final model the pass predicts and the appender its images go to.
+    pub fn parts(&mut self) -> (&ModelGeneration, PassAppender<'_>) {
+        (
+            self.model.generation(),
+            PassAppender {
+                state: &mut self.state,
+            },
+        )
+    }
+
+    /// Finish the pass, which placed `samples` from `blocks` source blocks,
+    /// and release the final normal state with the final model.
+    ///
+    /// # Errors
+    ///
+    /// A pass that placed no sample, left an image incomplete or refreshed
+    /// fewer samples than the state it refreshed, a failed model update and
+    /// generated non-finite residuals all fail with no partial result.
+    pub fn finish(
+        self,
+        samples: u64,
+        blocks: u64,
+    ) -> Result<MajorCycleCompletion, MajorCycleError> {
+        if samples == 0 || blocks == 0 {
             return Err(MajorCycleError::IncompleteCoverage);
         }
         let CompleteDataNormalState {
             primitives,
             completion,
-        } = result;
-        primitives
-            .require_residual_model(preparation.final_model_generation())
+        } = self
+            .state
+            .finish(samples, blocks)
             .map_err(MajorCycleError::Residual)?;
-        Ok(Self {
-            problem: completion.problem_id(),
-            geometry: completion.geometry_id(),
-            numerics: completion.numerics_id(),
-            weighting_commitment: completion.weighting_commitment_id(),
-            weighting_generation: completion.weighting_generation(),
-            replay: completion.replay_id(),
-
-            catalog: completion.primitive_catalog(),
-
-            image_domain_mask_generation: None,
-            sample_count: completion.sample_count(),
-            block_count: completion.block_count(),
-            primitives,
-            preparation,
-        })
-    }
-
-    /// Return the frozen T18 weighting generation this owner reconciles against.
-    #[must_use]
-    pub const fn weighting_generation(&self) -> WeightingGenerationId {
-        self.weighting_generation
-    }
-
-    /// Return the exact compiled problem behind the retained T19 evidence.
-    #[must_use]
-    pub const fn problem_id(&self) -> CompiledProblemId {
-        self.problem
-    }
-
-    /// Return the exhaustive selected-sample count of the retained evidence.
-    #[must_use]
-    pub const fn sample_count(&self) -> u64 {
-        self.sample_count
-    }
-
-    /// Bind the exact reconstruction supports consumed before this final reconciliation.
-    pub fn bind_reconstruction_masks(
-        mut self,
-        masks: &crate::ReconstructionMaskSet,
-    ) -> Result<Self, MajorCycleError> {
-        if let crate::ReconstructionMaskSet::Domains(masks) = masks {
-            if masks.len() != self.primitives.len() {
-                return Err(MajorCycleError::InvalidReconstructionMaskLineage);
-            }
-            self.image_domain_mask_generation = Some(masks.generation_id());
-        }
-        Ok(self)
-    }
-
-    /// Perform the one atomic Major-Cycle reconciliation.
-    ///
-    /// The named T28 input model generation is validated through its lifecycle
-    /// owner, any pending Model Delta is applied only through that same owner,
-    /// and the exact final model is then reconciled through the declared v1
-    /// normal-operator composition before either typed record is minted. The
-    /// lifecycle's final-completion authority is consumed only after every
-    /// pre-check succeeds; a rejected update fails atomically leaving both
-    /// authorities intact.
-    ///
-    /// # Errors
-    ///
-    /// Stale problem evidence, foreign generations or deltas, non-exhaustive
-    /// coverage, and generated-nonfinite residuals all fail closed with no
-    /// partial record.
-    pub fn reconcile(
-        self,
-        lifecycle: &mut ModelLifecycle,
-    ) -> Result<MajorCycleCompletion, MajorCycleError> {
-        if lifecycle.problem() != self.problem {
-            return Err(MajorCycleError::StaleModelEvidence);
-        }
-        let update = lifecycle.commit_final_model(self.preparation.model)?;
-        let (final_model, model_completion) = update.into_parts();
-        let input_model_generation = model_completion.base();
-        let final_model_generation = model_completion.generation();
-        let authority = lifecycle.authority();
-        let attempt = lifecycle.attempt();
-        let epoch = lifecycle.epoch();
-        let normal_state = FinalNormalState {
-            completion_id: final_normal_state_id(
-                authority,
-                attempt,
-                epoch,
-                self.weighting_generation,
-                self.replay,
-                input_model_generation,
-                final_model_generation,
-                self.image_domain_mask_generation,
-            ),
-            problem: self.problem,
-            geometry: self.geometry,
-            numerics: self.numerics,
-            weighting_commitment: self.weighting_commitment,
-            weighting_generation: self.weighting_generation,
-            replay: self.replay,
-
-            catalog: match self.catalog {
-                SpectralPrimitiveCatalog::UnnormalizedPlaneV1 => {
-                    NormalStateCatalog::UnnormalizedPlaneV1
-                }
-                SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1 => {
-                    NormalStateCatalog::UnnormalizedChannelSlabV1
-                }
-                SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1 => {
-                    NormalStateCatalog::UnnormalizedTaylorBlockV1
-                }
-            },
-            sample_count: self.sample_count,
-            block_count: self.block_count,
-            input_model_generation,
-            final_model_generation,
-
-            image_domain_mask_generation: self.image_domain_mask_generation,
-            primitives: self.primitives,
-        };
-        let completion_id = major_cycle_completion_id(
-            authority,
-            attempt,
-            epoch,
-            normal_state.completion_id(),
-            model_completion.completion_id(),
-        );
-        debug_assert_ne!(
-            normal_state.completion_id().as_bytes(),
-            model_completion.completion_id().as_bytes()
-        );
+        let final_model = self.model.complete()?;
         Ok(MajorCycleCompletion {
-            completion_id,
-            normal_state,
-            model_completion,
+            normal_state: FinalNormalState {
+                catalog: match completion.primitive_catalog() {
+                    SpectralPrimitiveCatalog::UnnormalizedPlaneV1 => {
+                        NormalStateCatalog::UnnormalizedPlaneV1
+                    }
+                    SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1 => {
+                        NormalStateCatalog::UnnormalizedChannelSlabV1
+                    }
+                    SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1 => {
+                        NormalStateCatalog::UnnormalizedTaylorBlockV1
+                    }
+                },
+                sample_count: completion.sample_count(),
+                block_count: completion.block_count(),
+                primitives,
+            },
             final_model,
         })
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn final_normal_state_id(
-    authority: LogicalIdentity,
-    attempt: casa_imaging_model::ModelExecutionAttemptId,
-    epoch: u64,
-    weighting_generation: WeightingGenerationId,
-    replay: WeightingReplayId,
-
-    input_model_generation: ModelGenerationId,
-    final_model_generation: ModelGenerationId,
-
-    image_domain_mask_generation: Option<crate::ReconstructionMaskGenerationId>,
-) -> FinalNormalStateCompletionId {
-    let mut encoder = Encoder::new(FINAL_NORMAL_STATE_DOMAIN, FINAL_NORMAL_STATE_VERSION);
-    encoder.identity(authority.as_bytes());
-    encoder.identity(attempt.identity().as_bytes());
-    encoder.u64(epoch);
-    encoder.u64(weighting_generation.ordinal());
-    encoder.u64(replay.ordinal());
-
-    encoder.identity(input_model_generation.as_bytes());
-    encoder.identity(final_model_generation.as_bytes());
-
-    match image_domain_mask_generation {
-        Some(generation) => {
-            encoder.u8(1);
-            encoder.identity(generation.as_bytes());
-        }
-        None => encoder.u8(0),
-    }
-    FinalNormalStateCompletionId(LogicalIdentity::from_bytes(encoder.finish()))
-}
-
-fn major_cycle_completion_id(
-    authority: LogicalIdentity,
-    attempt: casa_imaging_model::ModelExecutionAttemptId,
-    epoch: u64,
-    normal_state: FinalNormalStateCompletionId,
-    model: FinalModelCompletionId,
-) -> MajorCycleCompletionId {
-    let mut encoder = Encoder::new(MAJOR_CYCLE_DOMAIN, MAJOR_CYCLE_VERSION);
-    encoder.identity(authority.as_bytes());
-    encoder.identity(attempt.identity().as_bytes());
-    encoder.u64(epoch);
-    encoder.identity(normal_state.as_bytes());
-    encoder.identity(model.as_bytes());
-    MajorCycleCompletionId(LogicalIdentity::from_bytes(encoder.finish()))
-}
-
 /// Exact reason a Major-Cycle reconciliation failed closed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MajorCycleError {
-    /// The model lifecycle belongs to another compiled problem than the T19 evidence.
-    StaleModelEvidence,
-    /// The T19 evidence did not prove exhaustive weighted coverage.
+    /// The pass placed no sample or read no source block.
     IncompleteCoverage,
-    /// The model owner rejected the named generation or pending delta.
+    /// The final model's queued update could not be completed.
     Model(ModelLifecycleError),
     /// Reconciling the final model produced or consumed invalid numbers.
     Residual(SpectralOperatorError),
-    /// Image-domain mask generations do not match the Normal State domains.
-    InvalidReconstructionMaskLineage,
 }
 
 impl fmt::Display for MajorCycleError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::StaleModelEvidence => {
-                formatter.write_str("model lifecycle does not bind the reconciled problem")
-            }
             Self::IncompleteCoverage => {
-                formatter.write_str("complete-data evidence lacks exhaustive coverage")
+                formatter.write_str("the major-cycle pass placed no sample")
             }
             Self::Model(error) => error.fmt(formatter),
             Self::Residual(error) => error.fmt(formatter),
-            Self::InvalidReconstructionMaskLineage => formatter
-                .write_str("reconstruction masks do not match the normal-state image domains"),
         }
     }
 }

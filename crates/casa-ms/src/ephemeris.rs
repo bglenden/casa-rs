@@ -9,17 +9,14 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 
-use casa_imaging_model::LogicalIdentity;
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::radial_velocity::RadialVelocityRef;
 use casa_types::{ScalarValue, Value};
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::{MeasurementSet, MsError, SelectedObservationReferenceDataBudget};
 
-const EPHEMERIS_IDENTITY_DOMAIN: &[u8] = b"casa-rs-selected-ephemeris-v1";
 const AU_METRES: f64 = 149_597_870_700.0;
 
 #[derive(Debug, Clone, Copy)]
@@ -39,7 +36,6 @@ struct EphemerisRow {
 
 #[derive(Debug)]
 struct EphemerisSeries {
-    identity: LogicalIdentity,
     name: Box<str>,
     position_reference: DirectionRef,
     velocity_reference: RadialVelocityRef,
@@ -51,7 +47,6 @@ struct EphemerisSeriesPreflight {
     row_count: usize,
     position_reference: DirectionRef,
     velocity_reference: RadialVelocityRef,
-    geo_distance_km: f64,
     retained_bytes: usize,
 }
 
@@ -74,32 +69,23 @@ enum EphemerisKind {
     },
 }
 
-/// Immutable, content-identified moving-source data bound to selected traversal.
+/// Immutable moving-source data bound to selected traversal.
 ///
 /// Table rows are loaded once into bounded retained storage. Evaluation later
 /// interpolates only the requested row epoch, so no sample-sized direction or
 /// velocity array is compiled or retained.
 #[derive(Debug, Clone)]
 pub struct SelectedObservationEphemeris {
-    identity: LogicalIdentity,
     kind: EphemerisKind,
     attached_fields: Box<[FieldEphemerisBinding]>,
     retained_bytes: usize,
 }
 
-impl PartialEq for SelectedObservationEphemeris {
-    fn eq(&self, other: &Self) -> bool {
-        self.identity == other.identity
-    }
-}
-
-impl Eq for SelectedObservationEphemeris {}
-
 impl SelectedObservationEphemeris {
-    /// Bind a named CASA/casacore moving target to the immutable Measures snapshot.
+    /// Bind a named CASA/casacore moving target, evaluated with the bound
+    /// Measures provider.
     pub fn named(
         target: impl AsRef<str>,
-        measures_identity: LogicalIdentity,
         budget: SelectedObservationReferenceDataBudget,
     ) -> Result<Self, SelectedObservationEphemerisError> {
         let target = target.as_ref();
@@ -111,7 +97,6 @@ impl SelectedObservationEphemeris {
             .ok_or(SelectedObservationEphemerisError::ByteOverflow)?;
         admit_reference_data(budget, retained_bytes)?;
         Ok(Self {
-            identity: measures_identity,
             kind: EphemerisKind::Named {
                 target: target.into(),
             },
@@ -120,7 +105,7 @@ impl SelectedObservationEphemeris {
         })
     }
 
-    /// Bind one external CASA ephemeris table by exact scientific content.
+    /// Bind one external CASA ephemeris table.
     pub fn external(
         path: impl AsRef<Path>,
         budget: SelectedObservationReferenceDataBudget,
@@ -132,14 +117,13 @@ impl SelectedObservationEphemeris {
         admit_reference_data(budget, retained_bytes)?;
         let series = Arc::new(preflight.load()?);
         Ok(Self {
-            identity: series.identity,
             kind: EphemerisKind::External { series },
             attached_fields: Box::new([]),
             retained_bytes,
         })
     }
 
-    /// Bind every selected FIELD-linked ephemeris by exact table content.
+    /// Bind every selected FIELD-linked ephemeris.
     pub fn tracked_fields(
         measurement_set: &MeasurementSet,
         field_ids: impl IntoIterator<Item = usize>,
@@ -201,9 +185,7 @@ impl SelectedObservationEphemeris {
             })
             .collect::<Vec<_>>();
         bindings.sort_by_key(|binding| binding.field_id);
-        let identity = tracked_identity(&bindings);
         Ok(Self {
-            identity,
             kind: EphemerisKind::TrackedField {
                 fields: bindings.into_boxed_slice(),
             },
@@ -221,12 +203,6 @@ impl SelectedObservationEphemeris {
         let EphemerisKind::TrackedField { fields } = attached.kind else {
             return Err(SelectedObservationEphemerisError::AttachedFieldsRequired);
         };
-        let mut hasher = Sha256::new();
-        hasher.update(EPHEMERIS_IDENTITY_DOMAIN);
-        hasher.update(b"tracking-and-attached-fields");
-        hasher.update(self.identity.as_bytes());
-        hasher.update(attached.identity.as_bytes());
-        self.identity = LogicalIdentity::from_bytes(hasher.finalize().into());
         let shared_owner_bytes = selected_ephemeris_allocation_bytes()?;
         self.retained_bytes = self
             .retained_bytes
@@ -236,12 +212,6 @@ impl SelectedObservationEphemeris {
         admit_reference_data(budget, self.retained_bytes)?;
         self.attached_fields = fields;
         Ok(self)
-    }
-
-    /// Return the immutable reference identity committed by Compiled Geometry.
-    #[must_use]
-    pub const fn identity(&self) -> LogicalIdentity {
-        self.identity
     }
 
     pub(crate) const fn retained_bytes(&self) -> usize {
@@ -351,7 +321,6 @@ impl EphemerisSeriesPreflight {
             row_count,
             position_reference,
             velocity_reference,
-            geo_distance_km,
             retained_bytes,
         })
     }
@@ -396,15 +365,7 @@ impl EphemerisSeriesPreflight {
         if rows.len() < 2 {
             return Err(SelectedObservationEphemerisError::InsufficientRows);
         }
-        let identity = series_identity(
-            &name,
-            self.position_reference,
-            self.velocity_reference,
-            self.geo_distance_km,
-            &rows,
-        );
         Ok(EphemerisSeries {
-            identity,
             name,
             position_reference: self.position_reference,
             velocity_reference: self.velocity_reference,
@@ -541,45 +502,6 @@ fn scalar_f64(
             column: column.to_string(),
         }),
     }
-}
-
-fn series_identity(
-    name: &str,
-    position_reference: DirectionRef,
-    velocity_reference: RadialVelocityRef,
-    geo_distance_km: f64,
-    rows: &[EphemerisRow],
-) -> LogicalIdentity {
-    let mut hasher = Sha256::new();
-    hasher.update(EPHEMERIS_IDENTITY_DOMAIN);
-    hasher.update(b"GEOCENTRIC");
-    hasher.update(position_reference.as_str().as_bytes());
-    hasher.update(velocity_reference.as_str().as_bytes());
-    hasher.update(geo_distance_km.to_bits().to_le_bytes());
-    hasher.update((name.len() as u64).to_le_bytes());
-    hasher.update(name.as_bytes());
-    hasher.update((rows.len() as u64).to_le_bytes());
-    for row in rows {
-        for value in std::iter::once(row.mjd_days)
-            .chain(row.geocentric_position_metres)
-            .chain(std::iter::once(row.radial_velocity_m_per_s))
-        {
-            hasher.update(value.to_bits().to_le_bytes());
-        }
-    }
-    LogicalIdentity::from_bytes(hasher.finalize().into())
-}
-
-fn tracked_identity(fields: &[FieldEphemerisBinding]) -> LogicalIdentity {
-    let mut hasher = Sha256::new();
-    hasher.update(EPHEMERIS_IDENTITY_DOMAIN);
-    hasher.update(b"tracked-fields");
-    hasher.update((fields.len() as u64).to_le_bytes());
-    for field in fields {
-        hasher.update((field.field_id as u64).to_le_bytes());
-        hasher.update(field.series.identity.as_bytes());
-    }
-    LogicalIdentity::from_bytes(hasher.finalize().into())
 }
 
 fn interpolate(before: f64, after: f64, factor: f64) -> f64 {
@@ -770,7 +692,6 @@ mod tests {
 
         let budget = reference_budget(1 << 20);
         let bound = SelectedObservationEphemeris::external(&path, budget).expect("bind snapshot");
-        let original_identity = bound.identity();
         let original_sample = sample_bits(bound.sample(0, 60_001.0).expect("sample snapshot"));
 
         let mut backing = Table::open(TableOptions::new(&path)).expect("reopen backing table");
@@ -784,7 +705,6 @@ mod tests {
             .save_selected_columns(&["RA"])
             .expect("persist mutated RA");
 
-        assert_eq!(bound.identity(), original_identity);
         assert_eq!(
             sample_bits(bound.sample(0, 60_001.0).expect("resample snapshot")),
             original_sample,
@@ -793,7 +713,6 @@ mod tests {
 
         let rebound =
             SelectedObservationEphemeris::external(&path, budget).expect("bind changed table");
-        assert_ne!(rebound.identity(), original_identity);
         assert_ne!(
             sample_bits(rebound.sample(0, 60_001.0).expect("sample changed table")),
             original_sample,

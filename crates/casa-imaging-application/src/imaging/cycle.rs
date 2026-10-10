@@ -1,29 +1,26 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The loop of major and minor cycles on the major-cycle pass.
 //!
-//! The initial pass grids the data and the PSF (the residual of a start
-//! model when there is one); each later pass grids the residual `V − A·m`
-//! of the model the preceding minor cycle produced. Imaging weights are
-//! generated once, before the initial pass, and reused by every pass. The
-//! final pass also writes the model column when the run asks for it.
+//! The initial pass grids the data and the PSF; each later pass grids the
+//! residual `V − A·m` of the model the preceding minor cycle produced.
+//! Imaging weights are generated once, before the initial pass, and reused
+//! by every pass. The final pass also writes the model column when the run
+//! asks for it.
 
 use std::path::Path;
 use std::time::Instant;
 
 use casa_imaging_deconvolution::{CleanStop, Controller, CycleControls};
-use casa_imaging_model::{
-    CompiledProblem, ModelDeltaTerm, ModelInputCommitment, SpectralWcs, WeightingScheme,
-};
+use casa_imaging_model::{CompiledProblem, ModelDeltaTerm, SpectralWcs, WeightingScheme};
 use casa_imaging_operator::{
     BandwidthTaper, Basis, GridPrecision, ModeSet, PlaneRange, WeightingGeneration,
 };
 use casa_imaging_products::VisibilityProductCompletion;
 use casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan;
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks,
-    MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation, MinorCycleImageResponse,
-    ModelGeneration, ModelLifecycle, ModelStoragePlan, PassNormalState, ReconstructionMaskPlan,
-    ReconstructionMaskSet, WeightingGenerationId,
+    ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, MinorCycleImageResponse,
+    ModelGeneration, ModelLifecycle, ModelStoragePlan, PassAppender, ReconstructionMaskPlan,
+    ReconstructionMaskSet,
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain, PassError,
@@ -86,15 +83,16 @@ struct Run<'a> {
     domains: Vec<DomainOperator>,
     source: MeasurementSetSource<'a>,
     weighting: WeightingGeneration,
-    weighting_id: WeightingGenerationId,
     team: &'a WorkerTeam,
     cancel: Cancel,
     host: HostResources,
     policy: ResourcePolicy,
     cube: Option<CubeState>,
+    /// The run's model lifecycle: its generations are paged with the cube
+    /// state, or resident.
+    lifecycle: ModelLifecycle,
     native_spacing_hz: f64,
     backend: BackendChoice,
-    attempts: u64,
     visibility_write: Option<VisibilityWriteTarget>,
     /// Planes per wave of the most finely waved pass so far.
     planes_per_wave: Option<u32>,
@@ -214,7 +212,7 @@ pub(crate) fn run(
         let name = format!("major cycle {}", outcome.major_cycle_count + 1);
         let scientific = outcome.scientific;
         let major = run_phase(name, &cancel, summary, || {
-            run.refresh(scientific, minor.terms, &minor.masks, last)
+            run.refresh(scientific, minor.terms, last)
         })?;
         controller.end_major_cycle();
         outcome.scientific = major.completion;
@@ -281,11 +279,7 @@ fn predict_final_model(
     run: &mut Run<'_>,
     mut outcome: ImagingOutcome,
 ) -> Result<ImagingOutcome, ImagingError> {
-    let masks = match &outcome.masks {
-        Some(ReconstructionMaskSet::Domains(masks)) => masks.clone(),
-        _ => unreachable!("a cleaning run has formed its masks"),
-    };
-    let major = run.refresh(outcome.scientific, Vec::new(), &masks, true)?;
+    let major = run.refresh(outcome.scientific, Vec::new(), true)?;
     outcome.scientific = major.completion;
     outcome.visibility_products = major.visibility;
     outcome.major_cycle_count += 1;
@@ -369,20 +363,26 @@ impl<'a> Run<'a> {
         let cube = matches!(main.basis(), Basis::ChannelLocal { .. })
             .then(|| cube_state(problem, inputs.spill_directory, workers, &host, &policy))
             .transpose()?;
+        let lifecycle = ModelLifecycle::new(
+            problem,
+            match &cube {
+                Some(cube) => cube.model_storage()?,
+                None => ModelStoragePlan::resident(usize::MAX)?,
+            },
+        );
         let run = Self {
             problem,
             domains,
             source,
             weighting,
-            weighting_id: WeightingGenerationId::next(),
             team,
             cancel,
             host,
             policy,
             cube,
+            lifecycle,
             native_spacing_hz: native_spacing_hz(problem),
             backend,
-            attempts: 0,
             visibility_write: inputs.visibility_write,
             planes_per_wave: None,
             weight_image,
@@ -395,7 +395,7 @@ impl<'a> Run<'a> {
             let (modes, with_model) = if cleaning {
                 (ModeSet::DATA, true)
             } else {
-                (run.initial_modes(), start_model(problem))
+                (run.initial_modes(), false)
             };
             if run.admit_pass(modes, with_model)?.0 != Residency::All {
                 return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
@@ -404,85 +404,51 @@ impl<'a> Run<'a> {
         Ok(run)
     }
 
-    /// The initial major cycle: data and PSF, from the start model when the
-    /// problem has one; it writes visibilities when it is also final.
+    /// The initial major cycle: data and PSF, from an empty model; it writes
+    /// visibilities when it is also final.
     fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
-        let mut lifecycle = ModelLifecycle::bind(
-            ExecutableModelProblem::from_compiled(self.problem.clone())?,
-            self.next_attempt(),
-            1,
-            self.model_storage()?,
-        )?;
-        let start_model = !matches!(lifecycle.contract().input(), ModelInputCommitment::Empty);
-        let named = if start_model {
-            lifecycle.initial_reprojected()?
-        } else {
-            lifecycle.initial_empty()?
-        };
-        let preparation = MajorCyclePreparation::prepare(&lifecycle, named, None)?;
-        let (residency, _pass) = self.admit_pass(self.initial_modes(), start_model)?;
-        let state = PassNormalState::initial(
-            self.problem,
-            self.weighting_id,
-            preparation.final_model_generation(),
-            self.normal_storage(residency)?,
-        )?;
-        self.reconcile(lifecycle, state, preparation, None, last, residency)
+        let model = self
+            .lifecycle
+            .prepare_final_model(self.lifecycle.initial_empty()?, [])?;
+        let (residency, _pass) = self.admit_pass(self.initial_modes(), false)?;
+        let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(residency)?)?;
+        self.reconcile(cycle, true, last, residency)
     }
 
     /// The major cycle after a minor cycle: the residual of the model updated
-    /// by `terms`, cleaned within `masks`.
+    /// by `terms`.
     fn refresh(
         &mut self,
         completion: MajorCycleCompletion,
         terms: Vec<ModelDeltaTerm>,
-        masks: &ImageDomainReconstructionMasks,
         last: bool,
     ) -> Result<Major, ImagingError> {
-        let (normal_state, continuation) = completion.into_continuation();
-        let attempt = self.next_attempt();
-        let (lifecycle, named) = ModelLifecycle::continue_from(
-            ExecutableModelProblem::from_compiled(self.problem.clone())?,
-            attempt,
-            1,
-            continuation,
-            self.model_storage()?,
-        )?;
-        let delta = (!terms.is_empty())
-            .then(|| lifecycle.compile_delta(&named, terms))
-            .transpose()?;
-        let preparation = MajorCyclePreparation::prepare(&lifecycle, named, delta)?;
+        let (normal_state, model) = completion.into_parts();
+        let model = self.lifecycle.prepare_final_model(model, terms)?;
         let (residency, _pass) = self.admit_pass(ModeSet::DATA, true)?;
-        let state = PassNormalState::refresh(
+        let cycle = MajorCycle::refresh(
             self.problem,
             normal_state,
-            preparation.final_model_generation(),
+            model,
             self.normal_storage(residency)?,
         )?;
-        let masks = ReconstructionMaskSet::Domains(masks.clone());
-        self.reconcile(lifecycle, state, preparation, Some(&masks), last, residency)
+        self.reconcile(cycle, false, last, residency)
     }
 
-    /// Run one pass into `state` and reconcile it with the prepared model.
-    /// The initial pass grids the start model's residual only when there is
-    /// a start model; every refresh grids the residual.
+    /// Run `cycle`'s pass and finish it. The initial pass grids the data;
+    /// every refresh grids the residual of the cycle's model.
     fn reconcile(
         &mut self,
-        mut lifecycle: ModelLifecycle,
-        mut state: PassNormalState,
-        preparation: MajorCyclePreparation,
-        masks: Option<&ReconstructionMaskSet>,
+        mut cycle: MajorCycle,
+        initial: bool,
         last: bool,
         residency: Residency,
     ) -> Result<Major, ImagingError> {
-        let initial = masks.is_none();
         let modes = if initial {
             self.initial_modes()
         } else {
             ModeSet::DATA
         };
-        let with_model = !initial || start_model(self.problem);
-        let model = with_model.then(|| preparation.final_model());
         let transform = self.problem.visibility_transform();
         let mut writer = self
             .visibility_write
@@ -498,34 +464,22 @@ impl<'a> Run<'a> {
             );
         }
         let started = Instant::now();
+        let (model, state) = cycle.parts();
         let summary = self.pass(
             modes,
-            model,
+            (!initial).then_some(model),
             residency,
-            &mut state,
+            state,
             initial,
             writer.as_mut(),
         )?;
         let pass_seconds = started.elapsed().as_secs_f64();
-        let final_model = preparation.final_model_generation();
         let visibility = writer
             .map(VisibilityWriter::complete)
             .transpose()
             .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?
-            .map(|samples| {
-                VisibilityProductCompletion::new(
-                    self.problem.problem_id(),
-                    final_model,
-                    self.weighting_id,
-                    samples,
-                )
-            });
-        let normal = state.finish(summary.samples, summary.blocks)?;
-        let mut owner = MajorCycleOwner::from_complete_data(normal, preparation)?;
-        if let Some(masks) = masks {
-            owner = owner.bind_reconstruction_masks(masks)?;
-        }
-        let completion = owner.reconcile(&mut lifecycle)?;
+            .map(VisibilityProductCompletion::new);
+        let completion = cycle.finish(summary.samples, summary.blocks)?;
         tracing::info!(
             "imaging major cycle: {} samples, pass {pass_seconds:.2} s, total {:.2} s",
             summary.samples,
@@ -534,23 +488,6 @@ impl<'a> Run<'a> {
         Ok(Major {
             completion,
             visibility,
-        })
-    }
-
-    fn next_attempt(&mut self) -> casa_imaging_model::ModelExecutionAttemptId {
-        self.attempts += 1;
-        let mut identity = [0_u8; 32];
-        identity[0] = 1;
-        identity[24..].copy_from_slice(&self.attempts.to_be_bytes());
-        casa_imaging_model::ModelExecutionAttemptId::new(
-            casa_imaging_model::LogicalIdentity::from_bytes(identity),
-        )
-    }
-
-    fn model_storage(&self) -> Result<ModelStoragePlan, ImagingError> {
-        Ok(match &self.cube {
-            Some(cube) => cube.model_storage()?,
-            None => ModelStoragePlan::resident(usize::MAX)?,
         })
     }
 
@@ -617,7 +554,7 @@ impl<'a> Run<'a> {
         modes: ModeSet,
         model: Option<&ModelGeneration>,
         residency: Residency,
-        state: &mut PassNormalState,
+        mut state: PassAppender<'_>,
         initial: bool,
         mut writer: Option<&mut VisibilityWriter<'_>>,
     ) -> Result<PassSummary, ImagingError> {
@@ -677,14 +614,6 @@ fn pass_domains(domains: &[DomainOperator], workers: usize) -> Vec<PassDomain<'_
             },
         })
         .collect()
-}
-
-/// Whether `problem` starts from a model (CASA `startmodel`).
-fn start_model(problem: &CompiledProblem) -> bool {
-    !matches!(
-        problem.model_lifecycle().input(),
-        ModelInputCommitment::Empty
-    )
 }
 
 /// The next cycle's mask plans: automask evolves from the masks just used,
@@ -835,9 +764,6 @@ fn minor_cycle_record(
         associated_replay_ordinal: cycle,
         recorded_components: summary.trace.clone(),
         mask_support: mask.support().to_vec(),
-        mask_generation: mask.generation_id(),
-        mask_model_generation: mask.model_generation(),
-        mask_normal_state: mask.normal_state_completion(),
         auto_mask: outcome.auto_masks[0],
     }
 }

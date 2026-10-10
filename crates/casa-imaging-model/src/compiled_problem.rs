@@ -1,135 +1,24 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::{collections::BTreeSet, fmt};
+use std::collections::BTreeSet;
 
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::geometry::{CompileGeometryError, CompiledGeometry, GeometryInput, compile_geometry};
 use crate::measurement_equation::{
-    DeclaredInnerProducts, ModelInnerProduct, NormalEquationContract, NormalStateNormalization,
-    PairedMeasurementTransform, ProductBoundaryOperation, ProductNormalizationBoundary,
-    VisibilityInnerProduct, WeightingOperatorContract, compile_normal_equation,
-    compile_product_boundary,
+    DeclaredInnerProducts, NormalEquationContract, ProductNormalizationBoundary,
+    WeightingOperatorContract, compile_normal_equation, compile_product_boundary,
 };
 use crate::model_state::{
     ModelContractError, ModelLifecycleContract, ModelLifecycleRequirements,
     compile_model_lifecycle_contract,
 };
-use crate::observation::{FlagPolicy, ObservationSnapshot, ObservationSnapshotId, WeightColumn};
+use crate::observation::ObservationSnapshot;
 use crate::product_graph::{ProductGraph, compile_product_graph};
-use crate::selected_observation::{
-    SelectedObservationCommitment, compile_selected_observation_commitment,
-};
 use crate::transaction::{
     ObservationTransactionCompileError, ObservationTransactionContract,
     ObservationTransactionRequirements, compile_observation_transaction,
 };
-
-const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 26;
-const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
-const COMPILED_PROBLEM_BASIS_VERSION: u32 = 4;
-const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
-const NUMERICS_CONTRACT_IDENTITY_VERSION: u32 = 1;
-
-/// An identity supplied by an owner outside the problem compiler.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LogicalIdentity([u8; 32]);
-
-impl LogicalIdentity {
-    /// An identity of 32 opaque bytes. Only equality is meaningful: the
-    /// owner chooses the bytes (a digest, a counter or a tag), and nothing
-    /// reads structure from them.
-    #[must_use]
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
-    /// The identity's 32 bytes.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-}
-
-impl fmt::Debug for LogicalIdentity {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("LogicalIdentity(")?;
-        write_hex(formatter, &self.0)?;
-        formatter.write_str(")")
-    }
-}
-
-impl fmt::Display for LogicalIdentity {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_hex(formatter, &self.0)
-    }
-}
-
-/// Authoritative reference-data family bound into an imaging problem.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ReferenceDataKind {
-    /// Measures tables and frame-conversion data.
-    Measures,
-    /// Ephemeris data.
-    Ephemeris,
-    /// Observatory and position data.
-    Observatory,
-    /// Spectral-line catalog data.
-    SpectralLines,
-    /// Instrument-response reference data.
-    Instrument,
-}
-
-/// Logical identity of the initial model state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ModelStateIdentity {
-    /// Begin from an empty model.
-    Empty,
-    /// Seed from an immutable model artifact.
-    Seed(LogicalIdentity),
-    /// Continue from an identified authoritative model generation.
-    Generation(LogicalIdentity),
-}
-
-/// Immutable identities required to compile one logical problem.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProblemInputIdentities {
-    observation: ObservationSnapshot,
-}
-
-impl ProblemInputIdentities {
-    /// Bind a compiler-derived observation snapshot as the sole input authority.
-    #[must_use]
-    pub const fn new(observation: ObservationSnapshot) -> Self {
-        Self { observation }
-    }
-
-    /// Return the observation snapshot identity.
-    #[must_use]
-    pub const fn observation(&self) -> ObservationSnapshotId {
-        self.observation.snapshot_id()
-    }
-
-    /// Return the complete immutable observation snapshot.
-    #[must_use]
-    pub const fn observation_snapshot(&self) -> &ObservationSnapshot {
-        &self.observation
-    }
-
-    /// Return reference identities in canonical family order after compilation.
-    #[must_use]
-    pub fn reference_data(&self) -> &[(ReferenceDataKind, LogicalIdentity)] {
-        self.observation.reference_data()
-    }
-
-    /// Return the initial model-state identity.
-    #[must_use]
-    pub const fn model(&self) -> ModelStateIdentity {
-        self.observation.model()
-    }
-}
 
 /// Spectral coefficient kernel shared exactly by prediction and adjoint imaging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -822,17 +711,6 @@ pub enum ReconstructionBasis {
     Taylor {
         /// Number of Taylor coefficients.
         terms: usize,
-    },
-    /// Taylor model coefficients reconstructed from channel-local major cycles.
-    ///
-    /// The public model and minor-cycle space contains `terms` Taylor planes,
-    /// while prediction and adjoint sampling pass through `channels` distinct
-    /// output-channel planes before their deterministic Taylor reduction.
-    TaylorViaChannelMajor {
-        /// Number of public Taylor coefficients.
-        terms: usize,
-        /// Number of channel-local major-cycle planes.
-        channels: usize,
     },
     /// Independent coefficient state for each output channel.
     ChannelLocal {
@@ -1775,12 +1653,12 @@ pub struct ProblemSpecification {
 }
 
 /// Everything [`compile`] needs: the logical specification, the geometry,
-/// the input identities and the model lifecycle.
+/// the selected observation and the model lifecycle.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProblemInput {
     specification: ProblemSpecification,
     geometry: GeometryInput,
-    inputs: ProblemInputIdentities,
+    observation: ObservationSnapshot,
     model_lifecycle: ModelLifecycleRequirements,
 }
 
@@ -1790,13 +1668,13 @@ impl ProblemInput {
     pub const fn new(
         specification: ProblemSpecification,
         geometry: GeometryInput,
-        inputs: ProblemInputIdentities,
+        observation: ObservationSnapshot,
         model_lifecycle: ModelLifecycleRequirements,
     ) -> Self {
         Self {
             specification,
             geometry,
-            inputs,
+            observation,
             model_lifecycle,
         }
     }
@@ -1978,72 +1856,11 @@ impl RequiredCapability {
     }
 }
 
-/// Stable comparable identity of one compiled problem.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CompiledProblemId(LogicalIdentity);
-
-impl CompiledProblemId {
-    /// Identity schema version used by the canonical encoder.
-    pub const SCHEMA_VERSION: u32 = COMPILED_PROBLEM_IDENTITY_VERSION;
-
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0.as_bytes()
-    }
-}
-
-/// Stable comparable identity of a complete numerical contract.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct NumericsContractId(LogicalIdentity);
-
-impl NumericsContractId {
-    /// Identity schema version used by the canonical encoder.
-    pub const SCHEMA_VERSION: u32 = NUMERICS_CONTRACT_IDENTITY_VERSION;
-
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0.as_bytes()
-    }
-}
-
-impl fmt::Debug for NumericsContractId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("NumericsContractId(")?;
-        write_hex(formatter, &self.as_bytes())?;
-        formatter.write_str(")")
-    }
-}
-
-impl fmt::Display for NumericsContractId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_hex(formatter, &self.as_bytes())
-    }
-}
-
-impl fmt::Debug for CompiledProblemId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("CompiledProblemId(")?;
-        write_hex(formatter, &self.as_bytes())?;
-        formatter.write_str(")")
-    }
-}
-
-impl fmt::Display for CompiledProblemId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_hex(formatter, &self.as_bytes())
-    }
-}
-
 /// Immutable logical problem accepted by downstream planning.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompiledProblem {
-    problem_id: CompiledProblemId,
-    problem_identity_basis: LogicalIdentity,
-    numerics_id: NumericsContractId,
     model_lifecycle: ModelLifecycleContract,
-    inputs: ProblemInputIdentities,
+    observation: ObservationSnapshot,
     geometry: CompiledGeometry,
     science: ScientificContract,
     reconstruction: ReconstructionContract,
@@ -2051,44 +1868,22 @@ pub struct CompiledProblem {
     products: ProductRequirements,
     product_graph: ProductGraph,
     observation_transaction: ObservationTransactionContract,
-    selected_observation: SelectedObservationCommitment,
     numerics: NumericsContract,
     required_capabilities: BTreeSet<RequiredCapability>,
     visibility_transform: Option<crate::SequentialContinuumTransform>,
 }
 
 impl CompiledProblem {
-    /// Return the canonical comparable identity.
-    #[must_use]
-    pub const fn problem_id(&self) -> CompiledProblemId {
-        self.problem_id
-    }
-
-    /// Return the compiler-owned identity beneath the explicit model/lifecycle layer.
-    ///
-    /// Receipt readers combine this basis with the typed initial model and
-    /// lifecycle commitment to revalidate the parent Compiled Problem identity.
-    #[must_use]
-    pub const fn problem_identity_basis(&self) -> LogicalIdentity {
-        self.problem_identity_basis
-    }
-
-    /// Return the exact numerical-contract identity.
-    #[must_use]
-    pub const fn numerics_id(&self) -> NumericsContractId {
-        self.numerics_id
-    }
-
     /// Return the compiler-owned model-lifecycle commitment.
     #[must_use]
     pub const fn model_lifecycle(&self) -> &ModelLifecycleContract {
         &self.model_lifecycle
     }
 
-    /// Return immutable input identities.
+    /// Return the selected observation the problem was compiled from.
     #[must_use]
-    pub const fn inputs(&self) -> &ProblemInputIdentities {
-        &self.inputs
+    pub const fn observation(&self) -> &ObservationSnapshot {
+        &self.observation
     }
 
     /// Return immutable compiler-owned geometry.
@@ -2152,12 +1947,6 @@ impl CompiledProblem {
     #[must_use]
     pub const fn observation_transaction(&self) -> &ObservationTransactionContract {
         &self.observation_transaction
-    }
-
-    /// Return the sole compiler-owned selected-observation commitment.
-    #[must_use]
-    pub const fn selected_observation(&self) -> &SelectedObservationCommitment {
-        &self.selected_observation
     }
 
     /// Return numerical requirements.
@@ -2244,21 +2033,20 @@ pub fn compile(input: ProblemInput) -> Result<CompiledProblem, CompileProblemErr
     let ProblemInput {
         specification,
         geometry,
-        inputs,
+        observation,
         model_lifecycle,
     } = input;
-    let geometry = compile_geometry(geometry, &inputs)?;
+    let geometry = compile_geometry(geometry)?;
     let visibility_transform = specification.visibility_transform;
     let science = specification.science;
     let products = specification.products.canonicalize();
     let observation_transaction = compile_observation_transaction(
-        inputs.observation_snapshot(),
+        &observation,
         specification.observation_transaction,
         visibility_transform.as_ref(),
     )?;
     let numerics = specification.numerics.canonicalize()?;
-    let numerics_id = canonical_numerics_id(&numerics);
-    validate_science(&science, &inputs)?;
+    validate_science(&science)?;
     validate_reconstruction(&specification.reconstruction, &geometry)?;
     if visibility_transform.is_some()
         && !matches!(
@@ -2273,20 +2061,12 @@ pub fn compile(input: ProblemInput) -> Result<CompiledProblem, CompileProblemErr
     let reconstruction = specification.reconstruction.canonicalize()?;
     validate_weighting(specification.weighting)?;
     validate_products(&science, &reconstruction, &products)?;
-    let selected_observation = compile_selected_observation_commitment(
-        &observation_transaction,
-        geometry.geometry_id(),
-        science.measurement_equation().inner_products().visibility(),
-        science.spectral().sampling(),
-    );
     let normal_equation = compile_normal_equation(
         &geometry,
-        &inputs,
+        &observation,
         &science,
         &reconstruction,
         specification.weighting,
-        numerics_id,
-        selected_observation.commitment_id(),
     );
     let mut required_capabilities = derive_capabilities(
         &geometry,
@@ -2302,34 +2082,12 @@ pub fn compile(input: ProblemInput) -> Result<CompiledProblem, CompileProblemErr
     let model_lifecycle = compile_model_lifecycle_contract(
         &geometry,
         normal_equation.measurement_operator().domain(),
-        &inputs,
         &numerics,
-        numerics_id,
-        product_graph.graph_id(),
         model_lifecycle,
     )?;
-    let problem_identity_basis = canonical_problem_identity_basis(ProblemIdentityInput {
-        inputs: &inputs,
-        geometry: &geometry,
-        science: &science,
-        reconstruction: &reconstruction,
-        normal_equation: &normal_equation,
-        products: &products,
-        observation_transaction: &observation_transaction,
-        numerics: &numerics,
-        visibility_transform: visibility_transform.as_ref(),
-    });
-    let problem_id = canonical_problem_id(
-        problem_identity_basis,
-        inputs.model(),
-        LogicalIdentity::from_bytes(model_lifecycle.contract_id().as_bytes()),
-    );
     Ok(CompiledProblem {
-        problem_id,
-        problem_identity_basis,
-        numerics_id,
         model_lifecycle,
-        inputs,
+        observation,
         geometry,
         science,
         reconstruction,
@@ -2337,17 +2095,13 @@ pub fn compile(input: ProblemInput) -> Result<CompiledProblem, CompileProblemErr
         products,
         product_graph,
         observation_transaction,
-        selected_observation,
         numerics,
         required_capabilities,
         visibility_transform,
     })
 }
 
-fn validate_science(
-    science: &ScientificContract,
-    inputs: &ProblemInputIdentities,
-) -> Result<(), CompileProblemError> {
+fn validate_science(science: &ScientificContract) -> Result<(), CompileProblemError> {
     if let SpectralKernel::ChannelIntegration { maximum_terms: 0 } =
         science.spectral.sampling.kernel()
     {
@@ -2374,16 +2128,6 @@ fn validate_science(
             reason: "instrument response and instrument model must form one supported exact pair",
         });
     }
-    if science.measurement_equation.instrument_response != InstrumentResponse::Scalar
-        && !inputs
-            .reference_data()
-            .iter()
-            .any(|(kind, _)| *kind == ReferenceDataKind::Instrument)
-    {
-        return Err(CompileProblemError::InvalidScientificContract {
-            reason: "direction-dependent response requires bound instrument reference data",
-        });
-    }
     if science.measurement_equation.w_projection.is_some()
         && science.measurement_equation.aw_projection.is_some()
     {
@@ -2406,20 +2150,9 @@ fn validate_reconstruction(
     geometry: &CompiledGeometry,
 ) -> Result<(), CompileProblemError> {
     match contract.basis {
-        ReconstructionBasis::Taylor { terms: 0 | 1 }
-        | ReconstructionBasis::TaylorViaChannelMajor { terms: 0 | 1, .. } => {
+        ReconstructionBasis::Taylor { terms: 0 | 1 } => {
             return Err(CompileProblemError::InvalidCapabilityCombination {
                 reason: "a Taylor basis requires at least two terms; single-term MFS uses the constant basis",
-            });
-        }
-        ReconstructionBasis::TaylorViaChannelMajor { channels: 0, .. } => {
-            return Err(CompileProblemError::InvalidCapabilityCombination {
-                reason: "a Taylor-via-channel major-cycle basis requires at least one channel",
-            });
-        }
-        ReconstructionBasis::TaylorViaChannelMajor { terms, channels } if channels < terms => {
-            return Err(CompileProblemError::InvalidCapabilityCombination {
-                reason: "a Taylor-via-channel major-cycle basis requires at least as many channels as Taylor terms",
             });
         }
         ReconstructionBasis::ChannelLocal { channels: 0 } => {
@@ -2429,7 +2162,6 @@ fn validate_reconstruction(
         }
         ReconstructionBasis::Constant
         | ReconstructionBasis::Taylor { .. }
-        | ReconstructionBasis::TaylorViaChannelMajor { .. }
         | ReconstructionBasis::ChannelLocal { .. } => {}
     }
     if let ReconstructionBasis::ChannelLocal { channels } = contract.basis
@@ -2440,19 +2172,8 @@ fn validate_reconstruction(
             reconstruction_channels: channels,
         });
     }
-    if let ReconstructionBasis::TaylorViaChannelMajor { channels, .. } = contract.basis
-        && channels != geometry.spectral().output_channels()
-    {
-        return Err(CompileProblemError::SpectralChannelCountMismatch {
-            geometry_channels: geometry.spectral().output_channels(),
-            reconstruction_channels: channels,
-        });
-    }
     if matches!(contract.algorithm, ReconstructionAlgorithm::Mtmfs { .. })
-        != matches!(
-            contract.basis,
-            ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. }
-        )
+        != matches!(contract.basis, ReconstructionBasis::Taylor { .. })
     {
         return Err(CompileProblemError::InvalidCapabilityCombination {
             reason: "MT-MFS and Taylor-basis reconstruction must be requested together",
@@ -2645,8 +2366,7 @@ fn validate_products(
         });
     }
     let taylor_terms = match reconstruction.basis {
-        ReconstructionBasis::Taylor { terms }
-        | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => terms,
+        ReconstructionBasis::Taylor { terms } => terms,
         ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } => 0,
     };
     if products.contains(ProductKind::TaylorTerms) && taylor_terms == 0 {
@@ -2768,9 +2488,7 @@ fn derive_capabilities(
     }
     capabilities.insert(match reconstruction.basis {
         ReconstructionBasis::Constant => RequiredCapability::ConstantBasis,
-        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. } => {
-            RequiredCapability::TaylorBasis
-        }
+        ReconstructionBasis::Taylor { .. } => RequiredCapability::TaylorBasis,
         ReconstructionBasis::ChannelLocal { .. } => RequiredCapability::ChannelLocalBasis,
     });
     capabilities.insert(match reconstruction.algorithm {
@@ -2801,668 +2519,4 @@ fn derive_capabilities(
             .map(RequiredCapability::Product),
     );
     capabilities
-}
-
-struct ProblemIdentityInput<'a> {
-    inputs: &'a ProblemInputIdentities,
-    geometry: &'a CompiledGeometry,
-    science: &'a ScientificContract,
-    reconstruction: &'a ReconstructionContract,
-    normal_equation: &'a NormalEquationContract,
-    products: &'a ProductRequirements,
-    observation_transaction: &'a ObservationTransactionContract,
-    numerics: &'a NumericsContract,
-    visibility_transform: Option<&'a crate::SequentialContinuumTransform>,
-}
-
-fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalIdentity {
-    let ProblemIdentityInput {
-        inputs,
-        geometry,
-        science,
-        reconstruction,
-        normal_equation,
-        products,
-        observation_transaction,
-        numerics,
-        visibility_transform,
-    } = input;
-    let mut encoder = CanonicalEncoder::new();
-    encoder.bytes(COMPILED_PROBLEM_BASIS_DOMAIN);
-    encoder.u32(COMPILED_PROBLEM_BASIS_VERSION);
-    encoder.identity(inputs.observation().identity());
-    encoder.digest(observation_transaction.transaction_id().as_bytes());
-    encoder.digest(geometry.geometry_id().as_bytes());
-    match visibility_transform {
-        Some(transform) => {
-            encoder.u8(1);
-            encoder.usize(transform.rules().len());
-            for rule in transform.rules() {
-                encoder.u32(rule.field_id().cast_unsigned());
-                encoder.u32(rule.spectral_window_id());
-                encoder.u8(rule.requested_order());
-                encoder.usize(rule.channels().len());
-                for channel in rule.channels() {
-                    encoder.u32(channel.channel_index());
-                    encoder.u8(channel.use_role() as u8);
-                }
-            }
-        }
-        None => encoder.u8(0),
-    }
-    encoder.usize(inputs.reference_data().len());
-    for (kind, identity) in inputs.reference_data() {
-        encoder.u8(reference_data_tag(*kind));
-        encoder.identity(*identity);
-    }
-    encode_prepared_operator(&mut encoder, science, normal_equation);
-    let compiled_weighting = normal_equation.weighting();
-    encode_reconstruction_basis(&mut encoder, reconstruction.basis);
-    match &reconstruction.algorithm {
-        ReconstructionAlgorithm::Dirty => encoder.u8(0),
-        ReconstructionAlgorithm::Hogbom => encoder.u8(1),
-        ReconstructionAlgorithm::Clark => encoder.u8(2),
-        ReconstructionAlgorithm::Multiscale {
-            scales_px,
-            small_scale_bias,
-        } => {
-            encoder.u8(3);
-            encoder.usize(scales_px.len());
-            for scale in scales_px {
-                encoder.f64(*scale);
-            }
-            encoder.f64(*small_scale_bias);
-        }
-        ReconstructionAlgorithm::Mtmfs {
-            scales_px,
-            small_scale_bias,
-        } => {
-            encoder.u8(4);
-            encoder.usize(scales_px.len());
-            for scale in scales_px {
-                encoder.f64(*scale);
-            }
-            encoder.f64(*small_scale_bias);
-        }
-    }
-    encoder.usize(reconstruction.controls.max_minor_iterations);
-    encoder.f64(reconstruction.controls.gain);
-    encoder.f64(reconstruction.controls.threshold_jy_per_beam);
-    for value in [
-        reconstruction.controls.cycle_iteration_limit,
-        reconstruction.controls.maximum_major_cycles,
-    ] {
-        match value {
-            Some(value) => {
-                encoder.u8(1);
-                encoder.usize(value);
-            }
-            None => encoder.u8(0),
-        }
-    }
-    match reconstruction.controls.noise_sigma {
-        Some(value) => {
-            encoder.u8(1);
-            encoder.f64(value);
-        }
-        None => encoder.u8(0),
-    }
-    for value in [
-        reconstruction.controls.cycle_factor,
-        reconstruction.controls.minimum_psf_fraction,
-        reconstruction.controls.maximum_psf_fraction,
-    ] {
-        match value {
-            Some(value) => {
-                encoder.u8(1);
-                encoder.f64(value);
-            }
-            None => encoder.u8(0),
-        }
-    }
-    encoder.u8(match reconstruction.controls.hogbom_iteration_accounting {
-        HogbomIterationAccounting::Strict => 0,
-        HogbomIterationAccounting::CasaInclusive => 1,
-    });
-    encoder.usize(reconstruction.polarization.coordinates.len());
-    for coordinate in &reconstruction.polarization.coordinates {
-        encoder.u8(polarization_tag(*coordinate));
-    }
-    encode_prepared_weighting(&mut encoder, compiled_weighting);
-    encoder.usize(products.products.len());
-    for product in &products.products {
-        encoder.u8(product_tag(*product));
-    }
-    encoder.u8(match products.normalization {
-        ProductNormalization::UnitResponse => 0,
-        ProductNormalization::FlatNoise => 1,
-        ProductNormalization::FlatSky => 2,
-    });
-    encoder.u8(match products.restoring_beam {
-        RestoringBeamPolicy::None => 0,
-        RestoringBeamPolicy::PerPlane => 1,
-        RestoringBeamPolicy::Common => 2,
-    });
-    let primary_beam_validity = products.validity.primary_beam();
-    encoder.u32(primary_beam_validity.cutoff().to_bits());
-    encoder.u8(match primary_beam_validity.comparison() {
-        ProductSupportComparison::StrictlyGreater => 0,
-    });
-    encoder.u8(match primary_beam_validity.blanking() {
-        ProductBlankingPolicy::Zero => 0,
-    });
-    encoder.u8(match products.validity.uncorrected_mask() {
-        UncorrectedImageMaskPolicy::None => 0,
-        UncorrectedImageMaskPolicy::PrimaryBeam => 1,
-    });
-    let taylor_validity = products.validity.taylor();
-    encoder.u8(match taylor_validity.reference() {
-        TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum => 0,
-    });
-    encoder.u32(taylor_validity.peak_fraction().to_bits());
-    encoder.u8(match taylor_validity.comparison() {
-        ProductSupportComparison::StrictlyGreater => 0,
-    });
-    encoder.u8(match taylor_validity.blanking() {
-        ProductBlankingPolicy::Zero => 0,
-    });
-    encoder.usize(products.normalization_boundary.operations().len());
-    for operation in products.normalization_boundary.operations() {
-        match operation {
-            ProductBoundaryOperation::Normalize(normalization) => {
-                encoder.u8(0);
-                encoder.u8(match normalization {
-                    ProductNormalization::UnitResponse => 0,
-                    ProductNormalization::FlatNoise => 1,
-                    ProductNormalization::FlatSky => 2,
-                });
-            }
-            ProductBoundaryOperation::ScaleResidual => encoder.u8(1),
-            ProductBoundaryOperation::Restore(policy) => {
-                encoder.u8(2);
-                encoder.u8(match policy {
-                    RestoringBeamPolicy::None => 0,
-                    RestoringBeamPolicy::PerPlane => 1,
-                    RestoringBeamPolicy::Common => 2,
-                });
-            }
-            ProductBoundaryOperation::CorrectPrimaryBeam => encoder.u8(3),
-            ProductBoundaryOperation::BlankInvalid => encoder.u8(4),
-            ProductBoundaryOperation::ConvertUnits => encoder.u8(5),
-        }
-    }
-    encode_numerics(&mut encoder, numerics);
-    LogicalIdentity::from_bytes(encoder.finish())
-}
-
-fn encode_prepared_operator(
-    encoder: &mut CanonicalEncoder,
-    science: &ScientificContract,
-    normal_equation: &NormalEquationContract,
-) {
-    encode_spectral_sampling_law(encoder, science.spectral.sampling);
-    encoder.u8(match science.spectral.coupling {
-        SpectralCoupling::Independent => 0,
-        SpectralCoupling::CommonRestoringBeam => 1,
-    });
-    encoder.u8(match science.measurement_equation.instrument_response {
-        InstrumentResponse::Scalar => 0,
-        InstrumentResponse::PrimaryBeam => 1,
-        InstrumentResponse::FullMueller => 2,
-    });
-    match science.measurement_equation.w_projection {
-        Some(contract) => {
-            encoder.u8(1);
-            encoder.u64(contract.maximum_abs_w_lambda_bits);
-            match contract.planes {
-                Some(planes) => {
-                    encoder.u8(1);
-                    encoder.usize(planes.get());
-                }
-                None => encoder.u8(0),
-            }
-        }
-        None => encoder.u8(0),
-    }
-    match science.measurement_equation.aw_projection {
-        Some(contract) => {
-            encoder.u8(1);
-            encode_aw_projection_contract(encoder, contract);
-        }
-        None => encoder.u8(0),
-    }
-    encode_instrument_model(encoder, science.instrument_model);
-    let inner_products = science.measurement_equation.inner_products;
-    encoder.u8(match inner_products.model() {
-        ModelInnerProduct::HermitianEuclidean => 0,
-    });
-    encoder.u8(match inner_products.visibility() {
-        VisibilityInnerProduct::HermitianEuclidean => 0,
-    });
-    let operator = normal_equation.measurement_operator();
-    encoder.digest(operator.domain().geometry().as_bytes());
-    encoder.u8(match operator.domain().basis() {
-        ReconstructionBasis::Constant => 0,
-        ReconstructionBasis::Taylor { .. } => 1,
-        ReconstructionBasis::TaylorViaChannelMajor { .. } => 4,
-        ReconstructionBasis::ChannelLocal { .. } => 2,
-    });
-    encoder.usize(operator.domain().polarization().coordinates().len());
-    for coordinate in operator.domain().polarization().coordinates() {
-        encoder.u8(polarization_tag(*coordinate));
-    }
-    encoder.identity(operator.codomain().observation().identity());
-    encoder.usize(operator.transforms().len());
-    for transform in operator.transforms() {
-        match transform {
-            PairedMeasurementTransform::SpectralBasis { basis } => {
-                encoder.u8(0);
-                encode_reconstruction_basis(encoder, *basis);
-            }
-            PairedMeasurementTransform::PolarizationMapping => encoder.u8(1),
-            PairedMeasurementTransform::FeedResponse => encoder.u8(6),
-            PairedMeasurementTransform::DirectionDependentResponse {
-                response,
-                instrument_model,
-            } => {
-                encoder.u8(2);
-                encoder.u8(match response {
-                    InstrumentResponse::Scalar => 0,
-                    InstrumentResponse::PrimaryBeam => 1,
-                    InstrumentResponse::FullMueller => 2,
-                });
-                encode_instrument_model(encoder, *instrument_model);
-            }
-            PairedMeasurementTransform::PhaseRotation { convention } => {
-                encoder.u8(3);
-                encoder.u8(match convention {
-                    crate::geometry::VisibilityPhaseConvention::NegativeTwoPiFrequencyDelay => 0,
-                });
-            }
-            PairedMeasurementTransform::SpectralResampling { sampling } => {
-                encoder.u8(4);
-                encoder.u8(match sampling.kernel() {
-                    SpectralKernel::Nearest => 0,
-                    SpectralKernel::Linear => 1,
-                    SpectralKernel::Cubic => 2,
-                    SpectralKernel::Identity | SpectralKernel::ChannelIntegration { .. } => {
-                        unreachable!("compiled spectral resampling is nearest or linear")
-                    }
-                });
-            }
-            PairedMeasurementTransform::ChannelIntegration { channels_per_bin } => {
-                encoder.u8(5);
-                encoder.usize(*channels_per_bin);
-            }
-            PairedMeasurementTransform::WProjection { contract } => {
-                encoder.u8(7);
-                encoder.u64(contract.maximum_abs_w_lambda_bits);
-                match contract.planes {
-                    Some(planes) => {
-                        encoder.u8(1);
-                        encoder.usize(planes.get());
-                    }
-                    None => encoder.u8(0),
-                }
-            }
-            PairedMeasurementTransform::AwProjection { contract } => {
-                encoder.u8(8);
-                encode_aw_projection_contract(encoder, *contract);
-            }
-        }
-    }
-    let compiled_weighting = normal_equation.weighting();
-    encoder.digest(compiled_weighting.commitment_id().as_bytes());
-    encoder.identity(compiled_weighting.snapshot().identity());
-    encoder.usize(compiled_weighting.sources().len());
-    for source in compiled_weighting.sources() {
-        encoder.usize(source.source());
-        encoder.u8(match source.flags() {
-            FlagPolicy::FlagOrFlagRow => 0,
-        });
-        encoder.u8(match source.input_weights() {
-            WeightColumn::Weight => 0,
-            WeightColumn::WeightSpectrum => 1,
-        });
-    }
-    encoder.u8(match normal_equation.output().normalization() {
-        NormalStateNormalization::Unnormalized => 0,
-    });
-}
-
-fn encode_prepared_weighting(
-    encoder: &mut CanonicalEncoder,
-    compiled_weighting: &WeightingOperatorContract,
-) {
-    match compiled_weighting.scheme() {
-        WeightingScheme::Natural => encoder.u8(0),
-        WeightingScheme::Uniform => encoder.u8(1),
-        WeightingScheme::Briggs { robust } => {
-            encoder.u8(2);
-            encoder.f64(robust);
-        }
-        WeightingScheme::BriggsBandwidthTaper { robust } => {
-            encoder.u8(3);
-            encoder.f64(robust);
-        }
-    }
-    encoder.u8(match compiled_weighting.density_scope() {
-        WeightDensityScope::NotApplicable => 0,
-        WeightDensityScope::GlobalSelection => 1,
-        WeightDensityScope::PerOutputChannel => 2,
-    });
-    match compiled_weighting.casa_cube_density_padding() {
-        None => encoder.u8(0),
-        Some(padding) => {
-            encoder.u8(1);
-            encoder.usize(padding);
-        }
-    }
-    match compiled_weighting.uv_taper() {
-        None => encoder.u8(0),
-        Some(taper) => {
-            encoder.u8(1);
-            encoder.f64(taper.major_lambda());
-            encoder.f64(taper.minor_lambda());
-            encoder.f64(taper.position_angle_rad());
-        }
-    }
-}
-
-pub(crate) fn encode_spectral_sampling_law(
-    encoder: &mut CanonicalEncoder,
-    sampling: SpectralSamplingLaw,
-) {
-    match sampling.kernel() {
-        SpectralKernel::Identity => encoder.u8(0),
-        SpectralKernel::Nearest => encoder.u8(1),
-        SpectralKernel::Linear => encoder.u8(2),
-        SpectralKernel::Cubic => encoder.u8(3),
-        SpectralKernel::ChannelIntegration { maximum_terms } => {
-            encoder.u8(4);
-            encoder.usize(maximum_terms);
-        }
-    }
-    encoder.u8(match sampling.edge_policy() {
-        SpectralEdgePolicy::CompleteSupport => 0,
-        SpectralEdgePolicy::PartialOverlap => 1,
-    });
-    encoder.u8(match sampling.covariance() {
-        SpectralCovariance::PropagateIndependentSourceNoise => 0,
-    });
-}
-
-fn canonical_problem_id(
-    basis: LogicalIdentity,
-    model: ModelStateIdentity,
-    model_lifecycle: LogicalIdentity,
-) -> CompiledProblemId {
-    let mut encoder = CanonicalEncoder::new();
-    encoder.bytes(COMPILED_PROBLEM_IDENTITY_DOMAIN);
-    encoder.u32(COMPILED_PROBLEM_IDENTITY_VERSION);
-    encoder.identity(basis);
-    match model {
-        ModelStateIdentity::Empty => encoder.u8(0),
-        ModelStateIdentity::Seed(identity) => {
-            encoder.u8(1);
-            encoder.identity(identity);
-        }
-        ModelStateIdentity::Generation(identity) => {
-            encoder.u8(2);
-            encoder.identity(identity);
-        }
-    }
-    encoder.identity(model_lifecycle);
-    CompiledProblemId(LogicalIdentity::from_bytes(encoder.finish()))
-}
-
-/// Revalidate the parent Compiled Problem identity from its canonical layers.
-///
-/// This digest-only seam is intended for durable receipt validation. It does
-/// not construct a [`CompiledProblem`] or confer execution authority.
-#[must_use]
-pub fn validate_compiled_problem_identity(
-    claimed: [u8; 32],
-    basis: LogicalIdentity,
-    model: ModelStateIdentity,
-    model_lifecycle: LogicalIdentity,
-) -> bool {
-    if claimed == [0; 32]
-        || basis.as_bytes() == [0; 32]
-        || model_lifecycle.as_bytes() == [0; 32]
-        || matches!(
-            model,
-            ModelStateIdentity::Seed(identity) | ModelStateIdentity::Generation(identity)
-                if identity.as_bytes() == [0; 32]
-        )
-    {
-        return false;
-    }
-    canonical_problem_id(basis, model, model_lifecycle).as_bytes() == claimed
-}
-
-fn canonical_numerics_id(numerics: &NumericsContract) -> NumericsContractId {
-    let mut encoder = CanonicalEncoder::new();
-    encoder.bytes(NUMERICS_CONTRACT_IDENTITY_DOMAIN);
-    encoder.u32(NUMERICS_CONTRACT_IDENTITY_VERSION);
-    encode_numerics(&mut encoder, numerics);
-    NumericsContractId(LogicalIdentity::from_bytes(encoder.finish()))
-}
-
-fn encode_numerics(encoder: &mut CanonicalEncoder, numerics: &NumericsContract) {
-    encoder.usize(numerics.permitted_precisions.len());
-    for precision in &numerics.permitted_precisions {
-        encoder.u8(match precision {
-            NumericPrecision::F32 => 0,
-            NumericPrecision::F64 => 1,
-        });
-    }
-    encoder.u8(match numerics.reduction {
-        ReductionPolicy::DeterministicPairwise => 0,
-        ReductionPolicy::Compensated => 1,
-        ReductionPolicy::UnorderedWithinBudget => 2,
-    });
-    encoder.u8(match numerics.finite_values {
-        FiniteValuePolicy::RejectAll => 0,
-        FiniteValuePolicy::FlagInputRejectGenerated => 1,
-    });
-    for (stage, budget) in &numerics.stage_error_budgets {
-        encoder.u8(numerical_stage_tag(*stage));
-        encoder.f64(budget.absolute);
-        encoder.f64(budget.relative);
-    }
-}
-
-pub(crate) struct CanonicalEncoder {
-    hasher: Sha256,
-}
-
-impl CanonicalEncoder {
-    pub(crate) fn new() -> Self {
-        Self {
-            hasher: Sha256::new(),
-        }
-    }
-
-    fn update(&mut self, value: impl AsRef<[u8]>) {
-        let value = value.as_ref();
-        self.hasher.update(value);
-    }
-
-    pub(crate) fn u8(&mut self, value: u8) {
-        self.update([value]);
-    }
-
-    pub(crate) fn u32(&mut self, value: u32) {
-        self.update(value.to_le_bytes());
-    }
-
-    pub(crate) fn u64(&mut self, value: u64) {
-        self.update(value.to_le_bytes());
-    }
-
-    pub(crate) fn usize(&mut self, value: usize) {
-        self.update((value as u128).to_le_bytes());
-    }
-
-    pub(crate) fn bytes(&mut self, value: &[u8]) {
-        self.usize(value.len());
-        self.update(value);
-    }
-
-    pub(crate) fn identity(&mut self, identity: LogicalIdentity) {
-        self.update(identity.0);
-    }
-
-    pub(crate) fn digest(&mut self, digest: [u8; 32]) {
-        self.update(digest);
-    }
-
-    pub(crate) fn f64(&mut self, value: f64) {
-        let bits = if value == 0.0 { 0 } else { value.to_bits() };
-        self.update(bits.to_le_bytes());
-    }
-
-    pub(crate) fn finish(self) -> [u8; 32] {
-        self.hasher.finalize().into()
-    }
-}
-
-fn reference_data_tag(kind: ReferenceDataKind) -> u8 {
-    match kind {
-        ReferenceDataKind::Measures => 0,
-        ReferenceDataKind::Ephemeris => 1,
-        ReferenceDataKind::Observatory => 2,
-        ReferenceDataKind::SpectralLines => 3,
-        ReferenceDataKind::Instrument => 4,
-    }
-}
-
-fn encode_instrument_model(encoder: &mut CanonicalEncoder, model: Option<InstrumentModel>) {
-    match model {
-        None => encoder.u8(0),
-        Some(model) => encoder.u8(instrument_model_tag(model)),
-    }
-}
-
-const fn instrument_model_tag(model: InstrumentModel) -> u8 {
-    match model {
-        InstrumentModel::CasaAca7mInterferometricDirectPbV1 => 3,
-        // Tag 1 is reserved for the retired homogeneous direct-PB v1 model.
-        InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1 => 2,
-        InstrumentModel::CasaEvlaWidebandAwV1 => 4,
-    }
-}
-
-fn encode_aw_projection_contract(encoder: &mut CanonicalEncoder, contract: AwProjectionContract) {
-    encoder.u64(contract.maximum_abs_w_lambda_bits);
-    encoder.usize(contract.planes.get());
-    encoder.u8(u8::from(contract.a_term));
-    encoder.u8(u8::from(contract.ps_term));
-    encoder.u8(u8::from(contract.wideband));
-    encoder.u8(u8::from(contract.conjugate_beams));
-    encoder.u8(u8::from(contract.use_pointing));
-    encoder.u64(contract.pointing_group_threshold_arcsec_bits);
-    encoder.u64(contract.pointing_refresh_threshold_arcsec_bits);
-    encoder.u64(contract.compute_pa_step_deg_bits);
-    encoder.u64(contract.rotate_pa_step_deg_bits);
-}
-
-fn product_tag(product: ProductKind) -> u8 {
-    match product {
-        ProductKind::Psf => 0,
-        ProductKind::Residual => 1,
-        ProductKind::Model => 2,
-        ProductKind::RestoredImage => 3,
-        ProductKind::SumWeights => 4,
-        ProductKind::Mask => 5,
-        ProductKind::Weight => 6,
-        ProductKind::PrimaryBeam => 7,
-        ProductKind::Sensitivity => 8,
-        ProductKind::PbCorrectedImage => 9,
-        ProductKind::TaylorTerms => 10,
-        ProductKind::SpectralIndex => 11,
-        ProductKind::SpectralIndexError => 12,
-        ProductKind::PbCorrectedSpectralIndex => 13,
-        ProductKind::Beam => 14,
-    }
-}
-
-pub(crate) fn encode_reconstruction_basis(
-    encoder: &mut CanonicalEncoder,
-    basis: ReconstructionBasis,
-) {
-    match basis {
-        ReconstructionBasis::Constant => encoder.u8(0),
-        ReconstructionBasis::Taylor { terms } => {
-            encoder.u8(1);
-            encoder.usize(terms);
-        }
-        ReconstructionBasis::TaylorViaChannelMajor { terms, channels } => {
-            encoder.u8(4);
-            encoder.usize(terms);
-            encoder.usize(channels);
-        }
-        ReconstructionBasis::ChannelLocal { channels } => {
-            encoder.u8(2);
-            encoder.usize(channels);
-        }
-    }
-}
-
-pub(crate) const fn polarization_tag(coordinate: PolarizationCoordinate) -> u8 {
-    match coordinate {
-        PolarizationCoordinate::StokesI => 0,
-        PolarizationCoordinate::StokesQ => 1,
-        PolarizationCoordinate::StokesU => 2,
-        PolarizationCoordinate::StokesV => 3,
-        PolarizationCoordinate::LinearXx => 4,
-        PolarizationCoordinate::LinearXy => 5,
-        PolarizationCoordinate::LinearYx => 6,
-        PolarizationCoordinate::LinearYy => 7,
-        PolarizationCoordinate::CircularRr => 8,
-        PolarizationCoordinate::CircularRl => 9,
-        PolarizationCoordinate::CircularLr => 10,
-        PolarizationCoordinate::CircularLl => 11,
-    }
-}
-
-fn numerical_stage_tag(stage: NumericalStage) -> u8 {
-    match stage {
-        NumericalStage::CoordinateTransforms => 0,
-        NumericalStage::SpectralTransforms => 1,
-        NumericalStage::Weighting => 2,
-        NumericalStage::ForwardOperator => 3,
-        NumericalStage::AdjointOperator => 4,
-        NumericalStage::Reductions => 5,
-        NumericalStage::Reconstruction => 6,
-        NumericalStage::Restoration => 7,
-        NumericalStage::ProductFormation => 8,
-    }
-}
-
-fn write_hex(formatter: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
-    for byte in bytes {
-        write!(formatter, "{byte:02x}")?;
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod encoding_tests {
-    use super::*;
-
-    #[test]
-    fn heterogeneous_instrument_model_does_not_reuse_the_retired_homogeneous_tag() {
-        assert_eq!(
-            instrument_model_tag(
-                InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
-            ),
-            2
-        );
-        assert_eq!(
-            instrument_model_tag(InstrumentModel::CasaAca7mInterferometricDirectPbV1),
-            3
-        );
-    }
 }

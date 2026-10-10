@@ -4,8 +4,7 @@
 
 use casa_imaging_model::{
     ProductBlankingPolicy, ProductNormalization, ProductRole, ProductSupportComparison,
-    ProductTerm, ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy,
-    TaylorSupportReference,
+    ProductTerm, ProductValidityRule, RestoringBeamPolicy, TaylorSupportReference,
 };
 use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 
@@ -39,17 +38,6 @@ pub(crate) struct TaylorProducts {
     clean_mask: Vec<f32>,
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
-}
-
-fn normalize_channel_major_sum_weight(
-    publication_numerator: f64,
-    principal_sum_weight: f64,
-) -> Result<f64, ProductsError> {
-    let published = publication_numerator / principal_sum_weight;
-    published
-        .is_finite()
-        .then_some(published)
-        .ok_or(ProductsError::GeneratedNonfinite)
 }
 
 fn normalize_taylor_plane(
@@ -98,7 +86,7 @@ fn primary_beam_correct_spectral_index(
             .take(terms)
             .any(|moment| moment.len() != cells)
     {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
 
     let mut corrected = vec![0.0; cells];
@@ -150,11 +138,11 @@ impl TaylorProducts {
         let state = inputs.normal_state();
         let state = &state.read_window(state.slab().core_range())?;
         if state.domain_count() != 1 || inputs.final_model().shape().domains().len() != 1 {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         let domain_role = state
             .domain(0)
-            .ok_or(ProductsError::SourceLineageMismatch)?
+            .ok_or(ProductsError::ProblemShapeMismatch)?
             .role();
         let shape = state.shape();
         let cells = shape[0] * shape[1];
@@ -164,14 +152,16 @@ impl TaylorProducts {
             || moments != terms.saturating_mul(2).saturating_sub(1)
             || inputs.final_model().shape().coefficients() != terms
         {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::ProblemShapeMismatch);
         }
         let principal_normal = state
             .normal_moment(0)
-            .ok_or(ProductsError::SourceLineageMismatch)?;
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
         let principal_sum_weight = principal_normal.sum_weight();
         if !(principal_sum_weight.is_finite() && principal_sum_weight > 0.0) {
-            return Err(ProductsError::SourceLineageMismatch);
+            return Err(ProductsError::PrincipalSumWeight {
+                sum_weight: principal_sum_weight,
+            });
         }
         let normalization = inputs.problem().products().normalization();
         let aw_projection = inputs
@@ -202,27 +192,19 @@ impl TaylorProducts {
             .iter()
             .map(|value| *value as f32)
             .collect::<Vec<_>>();
-        let channel_major_publication = matches!(
-            inputs.problem().reconstruction().basis(),
-            ReconstructionBasis::TaylorViaChannelMajor { .. }
-        );
         let published_sum_weights = state.published_sum_weights();
-        if channel_major_publication && published_sum_weights.len() != moments {
-            return Err(ProductsError::SourceLineageMismatch);
-        }
         // Direct CASA AW Taylor completion keeps two principal sums: the
         // WTCF normal sum scales PSF/sensitivity products, while the CFS
         // publication sum scales dirty/residual image products. They are
         // equal for non-AW direct Taylor reconstruction.
-        let residual_sum_weight = if channel_major_publication {
-            principal_sum_weight
-        } else {
-            published_sum_weights
-                .first()
-                .copied()
-                .filter(|value| value.is_finite() && *value > 0.0)
-                .ok_or(ProductsError::SourceLineageMismatch)?
-        };
+        let residual_sum_weight = *published_sum_weights
+            .first()
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
+        if !(residual_sum_weight.is_finite() && residual_sum_weight > 0.0) {
+            return Err(ProductsError::PrincipalSumWeight {
+                sum_weight: residual_sum_weight,
+            });
+        }
         let preparation_nanos = envelope_started.map(|started| started.elapsed().as_nanos());
         let mut psf = Vec::with_capacity(moments);
         let mut weight: Vec<Vec<f32>> = Vec::with_capacity(moments);
@@ -231,7 +213,7 @@ impl TaylorProducts {
             let published_sum_weight = published_sum_weights.get(moment).copied();
             let source = state
                 .normal_moment(moment)
-                .ok_or(ProductsError::SourceLineageMismatch)?;
+                .ok_or(ProductsError::ProblemShapeMismatch)?;
             psf.push(normalize_plane(
                 &source
                     .normal_approximation()
@@ -257,14 +239,7 @@ impl TaylorProducts {
                     .map(|value| (*value / weight_scale) as f32)
                     .collect(),
             );
-            let sum_weight = if channel_major_publication {
-                normalize_channel_major_sum_weight(
-                    published_sum_weight.ok_or(ProductsError::SourceLineageMismatch)?,
-                    principal_sum_weight,
-                )?
-            } else {
-                published_sum_weight.ok_or(ProductsError::SourceLineageMismatch)?
-            };
+            let sum_weight = published_sum_weight.ok_or(ProductsError::ProblemShapeMismatch)?;
             if !sum_weight.is_finite() {
                 return Err(ProductsError::GeneratedNonfinite);
             }
@@ -275,7 +250,7 @@ impl TaylorProducts {
             .map(|term| {
                 let source = state
                     .coefficient_term(term)
-                    .ok_or(ProductsError::SourceLineageMismatch)?;
+                    .ok_or(ProductsError::ProblemShapeMismatch)?;
                 if let Some(sensitivity) = directional {
                     let response = sensitivity.with_normal_sum_weight(principal_sum_weight)?;
                     return source
@@ -328,8 +303,7 @@ impl TaylorProducts {
 
         if let Some(started) = normalization_started {
             eprintln!(
-                "imaging_taylor_normalization_envelope model_generation={} aw_projection={aw_projection} preparation_nanos={} residual_model_nanos={} normal_sum_weight={principal_sum_weight} residual_sum_weight={residual_sum_weight} excludes=psf_weight_products,restoration,publication",
-                inputs.final_model().generation_id(),
+                "imaging_taylor_normalization_envelope aw_projection={aw_projection} preparation_nanos={} residual_model_nanos={} normal_sum_weight={principal_sum_weight} residual_sum_weight={residual_sum_weight} excludes=psf_weight_products,restoration,publication",
                 preparation_nanos.expect("normalization timer follows preparation timer"),
                 started.elapsed().as_nanos(),
             );
@@ -339,7 +313,7 @@ impl TaylorProducts {
             .enumerate()
             .max_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
             .map(|(index, _)| index)
-            .ok_or(ProductsError::SourceLineageMismatch)?;
+            .ok_or(ProductsError::ProblemShapeMismatch)?;
         let mut normal = vec![0.0; terms * terms];
         for row in 0..terms {
             for column in 0..terms {
@@ -568,7 +542,7 @@ impl TaylorProducts {
                             .map(|value| normalized_psf_value(*value, self.principal_psf_peak))
                             .collect()
                     })
-                    .ok_or(ProductsError::SourceLineageMismatch);
+                    .ok_or(ProductsError::ProblemShapeMismatch);
             }
             ProductRole::Residual(value) => self.residual.get(term(value)?),
             ProductRole::Model(value) => self.model.get(term(value)?),
@@ -587,7 +561,7 @@ impl TaylorProducts {
                     .get(term(value)?)
                     .copied()
                     .map(|value| vec![value])
-                    .ok_or(ProductsError::SourceLineageMismatch);
+                    .ok_or(ProductsError::ProblemShapeMismatch);
             }
             _ => None,
         }
@@ -976,7 +950,7 @@ fn model_term(
             .map(|domain| domain.pixels())
             != Some(shape)
     {
-        return Err(ProductsError::SourceLineageMismatch);
+        return Err(ProductsError::ProblemShapeMismatch);
     }
     let mut plane = vec![0.0; shape[0] * shape[1]];
     let samples = model.read_plane(0, coefficient, 0)?;
@@ -1165,15 +1139,6 @@ mod tests {
         )
         .expect("scale-invariant PB spectral correction");
         assert_eq!(scaled, corrected);
-    }
-
-    #[test]
-    fn channel_major_sum_weight_uses_complete_family_denominator() {
-        assert_eq!(
-            super::normalize_channel_major_sum_weight(24.0, 6.0)
-                .expect("finite CASA publication statistic"),
-            4.0
-        );
     }
 
     #[test]

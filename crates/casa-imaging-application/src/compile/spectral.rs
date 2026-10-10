@@ -21,11 +21,11 @@ use casa_types::measures::{
     frequency::FrequencyRef,
 };
 
-use super::boxed;
+use super::PrepareError;
 use super::selection::{
     SourceSpectralWindow, Survey, WindowChannels, explicit_spw_channels, one_window,
 };
-use crate::{ApplicationError, ImagingRequest, SpecMode};
+use crate::{ImagingRequest, SpecMode};
 
 /// The compiled spectral axis and the source channels it reads.
 pub(super) struct PreparedSpectralAxis {
@@ -60,6 +60,13 @@ impl PreparedSpectralAxis {
             self.doppler,
         )
     }
+
+    /// The source channels the axis reads from surveyed window `spw_id`.
+    pub(super) fn window_channels(&self, spw_id: usize) -> &[usize] {
+        self.selected_source_channels
+            .get(&spw_id)
+            .expect("the spectral axis selects channels of every surveyed window")
+    }
 }
 
 /// Where and when a frame conversion is evaluated.
@@ -93,15 +100,14 @@ pub(super) fn prepare_axis(
     survey: &Survey,
     frame: &FrameContext<'_>,
     moving_rest_frame: Option<&MeasFrame>,
-) -> Result<PreparedSpectralAxis, ApplicationError> {
+) -> Result<PreparedSpectralAxis, PrepareError> {
     let source_reference = survey.source_frequency_reference;
     let law = match request.specmode {
-        SpecMode::Mfs => continuum_law(survey)?,
+        SpecMode::Mfs => continuum_law(survey),
         SpecMode::Cube | SpecMode::Cubedata => cube_law(request, ms, survey, frame)?,
         SpecMode::Cubesource => {
-            let frame_with_velocity = moving_rest_frame.ok_or_else(|| {
-                boxed("source-frame cube imaging requires an ephemeris radial velocity")
-            })?;
+            let frame_with_velocity = moving_rest_frame
+                .expect("prepare resolves the moving rest frame of every source-frame cube");
             source_frame_cube_law(request, ms, survey, frame, frame_with_velocity)?
         }
     };
@@ -131,14 +137,14 @@ pub(super) fn prepare_axis(
 }
 
 /// One LSRK plane over the selected band's envelope.
-fn continuum_law(survey: &Survey) -> Result<AxisLaw, ApplicationError> {
+fn continuum_law(survey: &Survey) -> AxisLaw {
     let (channels, envelope) = survey
         .continuum
         .as_ref()
-        .ok_or_else(|| boxed("continuum imaging requires the selected spectral envelope"))?;
+        .expect("the survey reduces the spectral envelope of every continuum run");
     let [lower_hz, upper_hz] = envelope.edges_hz();
     let reference_frequency_hz = envelope.midpoint_hz();
-    Ok(AxisLaw {
+    AxisLaw {
         selected_source_channels: channels.clone(),
         output_frequency_reference: FrequencyRef::LSRK,
         reference_frequency_hz,
@@ -149,7 +155,7 @@ fn continuum_law(survey: &Survey) -> Result<AxisLaw, ApplicationError> {
         doppler: DopplerConvention::NotApplicable,
         sampling: SpectralSamplingLaw::IDENTITY,
         basis: ReconstructionBasis::Constant,
-    })
+    }
 }
 
 /// A cube in its output frame (`cube`) or the data's (`cubedata`).
@@ -158,7 +164,7 @@ fn cube_law(
     ms: &MeasurementSet,
     survey: &Survey,
     frame: &FrameContext<'_>,
-) -> Result<AxisLaw, ApplicationError> {
+) -> Result<AxisLaw, PrepareError> {
     let window = one_window(&survey.spectral_windows, "native cube imaging")?;
     let axis = cube_axis(request)?;
     let output_channels = request.channel_count.unwrap_or(window.frequencies_hz.len());
@@ -170,9 +176,7 @@ fn cube_law(
         selected.retain(|channel| explicit.contains(channel));
     }
     if selected.is_empty() {
-        return Err(boxed(
-            "cube axis and SPW selector have no common source channels",
-        ));
+        return Err(PrepareError::NoCommonCubeChannels);
     }
     let (reference_frequency_hz, increment_hz) = first_and_increment(&setup, output_channels, 1.0)?;
     let source_rest_hz = source_rest_frequency(ms, frame.field_id, &survey.spectral_windows)?;
@@ -212,7 +216,7 @@ fn source_frame_cube_law(
     survey: &Survey,
     frame: &FrameContext<'_>,
     moving_rest_frame: &MeasFrame,
-) -> Result<AxisLaw, ApplicationError> {
+) -> Result<AxisLaw, PrepareError> {
     let window = one_window(&survey.spectral_windows, "source-frame cube imaging")?;
     let source_reference = survey.source_frequency_reference;
     let mut axis = cube_axis(request)?;
@@ -235,7 +239,7 @@ fn source_frame_cube_law(
             frame.field_id,
             &survey.spectral_windows,
         )?)
-        .ok_or_else(|| boxed("source-frame cube imaging requires REST_FREQUENCY metadata"))?;
+        .ok_or(PrepareError::RestFrequencyMissing)?;
     Ok(AxisLaw {
         selected_source_channels: BTreeMap::from([(window.spw_id, support.indices)]),
         output_frequency_reference: FrequencyRef::REST,
@@ -256,11 +260,11 @@ fn source_frame_cube_law(
 
 /// CASA's cube axis of the request: `start` (else `channel_start`) and
 /// `width` in the request's velocity convention.
-fn cube_axis(request: &ImagingRequest) -> Result<CubeAxisConfig, ApplicationError> {
+fn cube_axis(request: &ImagingRequest) -> Result<CubeAxisConfig, PrepareError> {
     let start = match (&request.start, request.channel_start) {
         (Some(start), _) => Some(CubeAxisValue::parse(start, request.veltype)?),
         (None, Some(channel)) => Some(CubeAxisValue::Channel(
-            i32::try_from(channel).map_err(|_| boxed("cube channel start exceeds i32"))?,
+            i32::try_from(channel).map_err(|_| PrepareError::CubeStartChannel { channel })?,
         )),
         (None, None) => None,
     };
@@ -290,7 +294,7 @@ fn cube_setup(
     output_channels: usize,
     axis: &CubeAxisConfig,
     frame: &FrameContext<'_>,
-) -> Result<(CubeSpectralSetup, casa_ms::ResolvedChannelSelection), ApplicationError> {
+) -> Result<(CubeSpectralSetup, casa_ms::ResolvedChannelSelection), PrepareError> {
     Ok(CubeSpectralSetup::for_casa_cube_axis(
         survey.source_frequency_reference,
         &window.frequencies_hz,
@@ -311,7 +315,7 @@ fn first_and_increment(
     setup: &CubeSpectralSetup,
     output_channels: usize,
     factor: f64,
-) -> Result<(f64, f64), ApplicationError> {
+) -> Result<(f64, f64), PrepareError> {
     let first_hz = setup.output_channel_frequencies_hz[0];
     let increment_hz = if output_channels > 1 {
         setup.output_channel_frequencies_hz[1] - first_hz
@@ -319,22 +323,20 @@ fn first_and_increment(
         setup.output_channel_widths_hz[0]
     } * factor;
     if !increment_hz.is_finite() || increment_hz == 0.0 {
-        return Err(boxed(
-            "cube output frequency increment must be finite and non-zero",
-        ));
+        return Err(PrepareError::CubeIncrement { increment_hz });
     }
     Ok((first_hz * factor, increment_hz))
 }
 
 /// The model's Doppler convention of CASA `veltype`.
-fn doppler_convention(veltype: DopplerRef) -> Result<DopplerConvention, ApplicationError> {
+fn doppler_convention(veltype: DopplerRef) -> Result<DopplerConvention, PrepareError> {
     match veltype {
         DopplerRef::RADIO => Ok(DopplerConvention::Radio),
         DopplerRef::Z => Ok(DopplerConvention::Optical),
         DopplerRef::BETA => Ok(DopplerConvention::Relativistic),
-        DopplerRef::RATIO | DopplerRef::GAMMA => {
-            Err(boxed("cube Doppler convention is not supported"))
-        }
+        DopplerRef::RATIO | DopplerRef::GAMMA => Err(PrepareError::UnsupportedDoppler {
+            convention: veltype,
+        }),
     }
 }
 
@@ -350,7 +352,7 @@ fn spectral_frame_anchor(
     source_frame: FrequencyFrame,
     output_frame: FrequencyFrame,
     frame: &FrameContext<'_>,
-) -> Result<SpectralFrameAnchor, ApplicationError> {
+) -> Result<SpectralFrameAnchor, PrepareError> {
     if source_frame == output_frame {
         return Ok(SpectralFrameAnchor::NotApplicable);
     }
@@ -365,27 +367,23 @@ fn spectral_frame_anchor(
     })
 }
 
-fn imaging_frequency_frame(reference: FrequencyRef) -> Result<FrequencyFrame, ApplicationError> {
+fn imaging_frequency_frame(reference: FrequencyRef) -> Result<FrequencyFrame, PrepareError> {
     match reference {
         FrequencyRef::REST => Ok(FrequencyFrame::Rest),
         FrequencyRef::TOPO => Ok(FrequencyFrame::Topocentric),
         FrequencyRef::BARY => Ok(FrequencyFrame::Barycentric),
         FrequencyRef::LSRK => Ok(FrequencyFrame::Lsrk),
-        _ => Err(boxed(format!(
-            "native imaging does not support the frequency frame {reference}"
-        ))),
+        _ => Err(PrepareError::UnsupportedFrequencyFrame { reference }),
     }
 }
 
-pub(super) fn imaging_time_scale(reference: EpochRef) -> Result<TimeScale, ApplicationError> {
+pub(super) fn imaging_time_scale(reference: EpochRef) -> Result<TimeScale, PrepareError> {
     match reference {
         EpochRef::UTC => Ok(TimeScale::Utc),
         EpochRef::TAI => Ok(TimeScale::Tai),
         EpochRef::TT => Ok(TimeScale::Tt),
         EpochRef::TDB => Ok(TimeScale::Tdb),
-        _ => Err(boxed(format!(
-            "native imaging does not support the MeasurementSet epoch reference {reference}"
-        ))),
+        _ => Err(PrepareError::UnsupportedEpochReference { reference }),
     }
 }
 
@@ -395,7 +393,7 @@ fn source_rest_frequency(
     measurement_set: &MeasurementSet,
     field_id: usize,
     spectral_windows: &[SourceSpectralWindow],
-) -> Result<Option<f64>, ApplicationError> {
+) -> Result<Option<f64>, PrepareError> {
     let source_id = measurement_set.field()?.source_id(field_id)?;
     if source_id < 0 || measurement_set.subtable(SubtableId::Source).is_none() {
         return Ok(None);
@@ -403,8 +401,8 @@ fn source_rest_frequency(
     let source = measurement_set.source()?;
     let selected = spectral_windows
         .iter()
-        .map(|window| i32::try_from(window.spw_id))
-        .collect::<Result<BTreeSet<_>, _>>()?;
+        .map(|window| i32::try_from(window.spw_id).expect("SPW ids are stored i32 values"))
+        .collect::<BTreeSet<_>>();
     let mut resolved = None;
     for row in 0..source.row_count() {
         if source.i32(row, "SOURCE_ID")? != source_id {
@@ -422,9 +420,7 @@ fn source_rest_frequency(
             continue;
         };
         if resolved.is_some_and(|prior: f64| prior.to_bits() != value.to_bits()) {
-            return Err(boxed(
-                "selected SOURCE rows disagree on REST_FREQUENCY metadata",
-            ));
+            return Err(PrepareError::RestFrequencyConflict);
         }
         resolved = Some(value);
     }

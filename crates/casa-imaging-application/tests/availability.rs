@@ -6,20 +6,20 @@ use casa_imaging_application::{
 };
 use casa_imaging_model::{
     AwProjectionContract, AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts,
-    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout,
-    FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, InstrumentModel, InstrumentResponse, LogicalIdentity, MeasurementEquationContract,
-    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationPointingLaw, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
+    FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
+    InstrumentModel, InstrumentResponse, MeasurementEquationContract, MissingPointingPolicy,
+    ModelColumnWrite, ModelInnerProduct, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationPointingLaw, ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw,
+    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
-    ProblemInput, ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
-    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
-    RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
-    WProjectionContract, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    ProblemInput, ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, RequiredCapability, RestFrequency,
+    RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WProjectionContract,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 
 mod common;
@@ -76,10 +76,6 @@ fn the_major_cycle_pass_accepts_its_compiled_contract() {
 fn moving_source_is_available_through_selected_observation_geometry() {
     let problem = ProblemFixture {
         phase_centre: PhaseCentreLaw::Ephemeris("Mars".to_string()),
-        inputs: common::problem_inputs(vec![(
-            ReferenceDataKind::Ephemeris,
-            LogicalIdentity::from_bytes([2; 32]),
-        )]),
         ..ProblemFixture::standard()
     }
     .compile();
@@ -210,7 +206,6 @@ fn faceted_geometry_rejects_without_a_pass_implementation() {
 /// Stokes-I MFS request with a scalar measurement equation.
 struct ProblemFixture {
     phase_centre: PhaseCentreLaw,
-    inputs: ProblemInputIdentities,
     basis: ReconstructionBasis,
     algorithm: ReconstructionAlgorithm,
     polarizations: Vec<PolarizationCoordinate>,
@@ -229,7 +224,6 @@ impl ProblemFixture {
                 1.0,
                 -0.5,
             )),
-            inputs: common::problem_inputs(Vec::new()),
             basis: ReconstructionBasis::Constant,
             algorithm: ReconstructionAlgorithm::Dirty,
             polarizations: vec![PolarizationCoordinate::StokesI],
@@ -245,15 +239,11 @@ impl ProblemFixture {
     }
 
     /// Bind a direction-dependent primary-beam response to its exact
-    /// instrument model and instrument reference data.
+    /// instrument model.
     fn with_primary_beam(mut self, instrument_model: InstrumentModel) -> Self {
         self.measurement_equation =
             MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products());
         self.instrument_model = Some(instrument_model);
-        self.inputs = common::problem_inputs(vec![(
-            ReferenceDataKind::Instrument,
-            LogicalIdentity::from_bytes([6; 32]),
-        )]);
         self
     }
 
@@ -300,7 +290,6 @@ impl ProblemFixture {
             )],
             CentreLaws::new(
                 self.phase_centre,
-                DelayCentreLaw::PhaseTrackingCentre,
                 PointingCentreLaw::Observation(ObservationPointingLaw::new(
                     PointingDirectionColumn::Direction,
                     PointingDirectionSemantic::AntennaBoresight,
@@ -350,7 +339,7 @@ impl ProblemFixture {
                 numerics,
             ),
             geometry,
-            self.inputs,
+            common::observation(),
             common::model_lifecycle(),
         )
     }

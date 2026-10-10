@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Generation-bound reconstruction masks.
+//! Reconstruction masks.
 //!
 //! Reconstruction masks constrain where model updates may be placed. They are
-//! intentionally distinct from product-validity masks and consume immutable
-//! model/Normal-State lineage. Static user masks and auto-multithreshold masks
-//! mint the same closed generation type, so solvers need no mask-mode branch.
+//! intentionally distinct from product-validity masks. Static user masks and
+//! auto-multithreshold masks are the same closed type, so solvers need no
+//! mask-mode branch.
 
-use std::{collections::VecDeque, fmt};
+use std::collections::VecDeque;
 
-use casa_imaging_model::{CompiledProblemId, DirectionCoordinateSpec, LogicalIdentity};
+use casa_imaging_model::DirectionCoordinateSpec;
 use thiserror::Error;
 
-use crate::{Encoder, FinalNormalState, FinalNormalStateCompletionId, ModelGenerationId};
+use crate::FinalNormalState;
 
 /// Reproject decoded source support onto the target direction grid.
 ///
@@ -153,31 +153,6 @@ pub fn direction_world_to_pixel(
     }
 }
 
-const MASK_DOMAIN: &[u8] = b"casa-rs-reconstruction-mask";
-const MASK_VERSION: u32 = 2;
-static NEXT_MASK_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-const IMAGE_DOMAIN_MASKS_DOMAIN: &[u8] = b"casa-rs-image-domain-reconstruction-masks";
-
-/// Run-local identity of one immutable reconstruction-mask generation, not its content.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ReconstructionMaskGenerationId(LogicalIdentity);
-
-impl ReconstructionMaskGenerationId {
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0.as_bytes()
-    }
-}
-
-impl fmt::Debug for ReconstructionMaskGenerationId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("ReconstructionMaskGenerationId(")?;
-        crate::write_hex(formatter, &self.as_bytes())?;
-        formatter.write_str(")")
-    }
-}
-
 /// Inclusive pixel box in the named mask coordinate grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MaskBox {
@@ -200,14 +175,10 @@ pub enum ReconstructionMaskPlan {
         /// Inclusive target-grid regions.
         boxes: Vec<MaskBox>,
     },
-    /// Admit exact target-grid support reprojected from a named source WCS.
+    /// Admit exact target-grid support reprojected from a source mask's WCS.
     Reprojected {
         /// Target model direction coordinate.
         coordinate: DirectionCoordinateSpec,
-        /// Source mask direction coordinate retained as lineage evidence.
-        source_coordinate: DirectionCoordinateSpec,
-        /// Source mask direction-plane shape.
-        source_shape: [usize; 2],
         /// Canonical target-grid support produced by exact WCS reprojection.
         support: Box<[bool]>,
     },
@@ -264,39 +235,20 @@ impl ReconstructionMaskPlan {
         normal: &FinalNormalState,
         beam: Option<AutoMaskBeam>,
     ) -> Result<(ReconstructionMask, Option<AutoMultithreshEvidence>), MaskError> {
-        let problem = normal.problem_id();
-        let model_generation = base.generation_id();
         let shape = normal.shape();
         match self {
-            Self::FullPlane { coordinate } => Ok((
-                ReconstructionMask::full_plane(problem, model_generation, *coordinate, shape)?,
-                None,
-            )),
+            Self::FullPlane { coordinate } => {
+                Ok((ReconstructionMask::full_plane(*coordinate, shape)?, None))
+            }
             Self::Boxes { coordinate, boxes } => Ok((
-                ReconstructionMask::from_boxes(
-                    problem,
-                    model_generation,
-                    *coordinate,
-                    shape,
-                    boxes.iter().copied(),
-                )?,
+                ReconstructionMask::from_boxes(*coordinate, shape, boxes.iter().copied())?,
                 None,
             )),
             Self::Reprojected {
                 coordinate,
-                source_coordinate,
-                source_shape,
                 support,
             } => Ok((
-                ReconstructionMask::from_reprojected_support(
-                    problem,
-                    model_generation,
-                    *coordinate,
-                    shape,
-                    support,
-                    *source_coordinate,
-                    *source_shape,
-                )?,
+                ReconstructionMask::from_reprojected_support(*coordinate, shape, support)?,
                 None,
             )),
             Self::AutoMultithresh {
@@ -316,8 +268,6 @@ impl ReconstructionMaskPlan {
                     .map(|sample| sample.support() == casa_imaging_model::ModelSupport::Valid)
                     .collect::<Vec<_>>();
                 let (mask, evidence) = auto_multithresh(
-                    problem,
-                    model_generation,
                     *coordinate,
                     normal,
                     previous.as_deref(),
@@ -388,13 +338,9 @@ impl MaskBox {
     }
 }
 
-/// Immutable reconstruction-mask generation.
+/// Immutable reconstruction-mask support on one direction grid.
 #[derive(Debug, Clone)]
 pub struct ReconstructionMask {
-    generation: ReconstructionMaskGenerationId,
-    problem: CompiledProblemId,
-    model_generation: ModelGenerationId,
-    normal_state: Option<FinalNormalStateCompletionId>,
     coordinate: DirectionCoordinateSpec,
     shape: [usize; 2],
     support: Box<[bool]>,
@@ -403,17 +349,16 @@ pub struct ReconstructionMask {
 /// Canonical per-image-domain mask plans for one shared reconstruction cycle.
 ///
 /// Plan ordinal is the compiled image-domain ordinal. Construction rejects an
-/// empty collection; materialization additionally proves exact cardinality,
-/// shape, problem, model-generation, and Normal-State lineage.
+/// empty collection; materialization checks the domain count and shapes
+/// against the Normal State.
 #[derive(Debug, Clone)]
 pub struct ImageDomainReconstructionMaskPlans {
     plans: Box<[ReconstructionMaskPlan]>,
 }
 
-/// Immutable per-image-domain mask generations bound to one shared cycle.
+/// Immutable per-image-domain masks of one shared cycle.
 #[derive(Debug, Clone)]
 pub struct ImageDomainReconstructionMasks {
-    generation: ReconstructionMaskGenerationId,
     masks: Box<[ReconstructionMask]>,
 }
 
@@ -483,8 +428,7 @@ impl ImageDomainReconstructionMaskPlans {
 
     /// Advance every domain plan to the next shared major-cycle boundary.
     ///
-    /// The T31 slice admits live auto-masking only for a one-domain
-    /// collection. Multi-domain auto-mask evolution fails typed instead of
+    /// Live auto-masking is admitted only for a one-domain collection. Multi-domain auto-mask evolution fails typed instead of
     /// silently sharing or independently inventing support.
     pub fn next_cycle(
         &self,
@@ -542,38 +486,20 @@ impl ImageDomainReconstructionMaskPlans {
         }
         let mut masks = Vec::with_capacity(self.plans.len());
         for (ordinal, plan) in self.plans.iter().enumerate() {
-            let problem = normal.problem_id();
-            let model_generation = base.generation_id();
             let shape = normal
                 .domain_shape(ordinal)
                 .ok_or(MaskError::DomainCardinalityMismatch)?;
             let mask = match plan {
                 ReconstructionMaskPlan::FullPlane { coordinate } => {
-                    ReconstructionMask::full_plane(problem, model_generation, *coordinate, shape)?
+                    ReconstructionMask::full_plane(*coordinate, shape)?
                 }
                 ReconstructionMaskPlan::Boxes { coordinate, boxes } => {
-                    ReconstructionMask::from_boxes(
-                        problem,
-                        model_generation,
-                        *coordinate,
-                        shape,
-                        boxes.iter().copied(),
-                    )?
+                    ReconstructionMask::from_boxes(*coordinate, shape, boxes.iter().copied())?
                 }
                 ReconstructionMaskPlan::Reprojected {
                     coordinate,
-                    source_coordinate,
-                    source_shape,
                     support,
-                } => ReconstructionMask::from_reprojected_support(
-                    problem,
-                    model_generation,
-                    *coordinate,
-                    shape,
-                    support,
-                    *source_coordinate,
-                    *source_shape,
-                )?,
+                } => ReconstructionMask::from_reprojected_support(*coordinate, shape, support)?,
                 ReconstructionMaskPlan::AutoMultithresh { .. } => {
                     return Err(MaskError::UnsupportedMultiDomainPlan);
                 }
@@ -614,34 +540,10 @@ impl ImageDomainMaskMaterialization {
 impl ImageDomainReconstructionMasks {
     fn new(masks: impl IntoIterator<Item = ReconstructionMask>) -> Result<Self, MaskError> {
         let masks = masks.into_iter().collect::<Vec<_>>().into_boxed_slice();
-        let Some(primary) = masks.first() else {
+        if masks.is_empty() {
             return Err(MaskError::DomainCardinalityMismatch);
-        };
-        if masks.iter().any(|mask| {
-            mask.problem != primary.problem
-                || mask.model_generation != primary.model_generation
-                || mask.normal_state != primary.normal_state
-        }) {
-            return Err(MaskError::ShapeMismatch);
         }
-        let mut encoder = Encoder::new(IMAGE_DOMAIN_MASKS_DOMAIN, 1);
-        encoder.usize(masks.len());
-        for (ordinal, mask) in masks.iter().enumerate() {
-            encoder.usize(ordinal);
-            encoder.identity(mask.generation_id().as_bytes());
-        }
-        Ok(Self {
-            generation: ReconstructionMaskGenerationId(LogicalIdentity::from_bytes(
-                encoder.finish(),
-            )),
-            masks,
-        })
-    }
-
-    /// Return the immutable identity binding all supports in domain order.
-    #[must_use]
-    pub const fn generation_id(&self) -> ReconstructionMaskGenerationId {
-        self.generation
+        Ok(Self { masks })
     }
 
     /// Return the canonical domain count.
@@ -675,30 +577,21 @@ impl ImageDomainReconstructionMasks {
 }
 
 impl ReconstructionMask {
-    /// Mint the all-valid default support for one exact model grid.
+    /// The all-valid default support for one exact model grid.
     pub fn full_plane(
-        problem: CompiledProblemId,
-        model_generation: ModelGenerationId,
         coordinate: DirectionCoordinateSpec,
         shape: [usize; 2],
     ) -> Result<Self, MaskError> {
         validate_shape(shape)?;
-        Self::mint(
-            problem,
-            model_generation,
-            None,
+        Ok(Self::new(
             coordinate,
             shape,
             vec![true; shape[0] * shape[1]],
-            2,
-            &[],
-        )
+        ))
     }
 
-    /// Compile target-grid pixel boxes into one static mask generation.
+    /// Compile target-grid pixel boxes into one static mask.
     pub fn from_boxes(
-        problem: CompiledProblemId,
-        model_generation: ModelGenerationId,
         coordinate: DirectionCoordinateSpec,
         shape: [usize; 2],
         boxes: impl IntoIterator<Item = MaskBox>,
@@ -718,75 +611,23 @@ impl ReconstructionMask {
         if !support.iter().any(|value| *value) {
             return Err(MaskError::EmptyMask);
         }
-        Self::mint(
-            problem,
-            model_generation,
-            None,
-            coordinate,
-            shape,
-            support,
-            0,
-            &[],
-        )
+        Ok(Self::new(coordinate, shape, support))
     }
 
-    /// Mint exact target-grid support already reprojected by the geometry owner.
-    #[allow(clippy::too_many_arguments)]
+    /// Exact target-grid support already reprojected by the geometry owner.
     pub fn from_reprojected_support(
-        problem: CompiledProblemId,
-        model_generation: ModelGenerationId,
         target_coordinate: DirectionCoordinateSpec,
         target_shape: [usize; 2],
         support: &[bool],
-        source_coordinate: DirectionCoordinateSpec,
-        source_shape: [usize; 2],
     ) -> Result<Self, MaskError> {
         validate_shape(target_shape)?;
-        validate_shape(source_shape)?;
         if support.len() != target_shape[0] * target_shape[1] {
             return Err(MaskError::ShapeMismatch);
         }
         if !support.iter().any(|value| *value) {
             return Err(MaskError::EmptyMask);
         }
-        let mut source_identity = Encoder::new(b"casa-rs-reprojected-mask-source", 1);
-        source_identity.usize(source_shape[0]);
-        source_identity.usize(source_shape[1]);
-        encode_coordinate(&mut source_identity, source_coordinate);
-        Self::mint(
-            problem,
-            model_generation,
-            None,
-            target_coordinate,
-            target_shape,
-            support.to_vec(),
-            1,
-            &source_identity.finish(),
-        )
-    }
-
-    /// Return the stable generation identity.
-    #[must_use]
-    pub const fn generation_id(&self) -> ReconstructionMaskGenerationId {
-        self.generation
-    }
-
-    /// Return the compiled problem whose model grid this mask constrains.
-    #[must_use]
-    pub const fn problem_id(&self) -> CompiledProblemId {
-        self.problem
-    }
-
-    /// Return the exact model generation constrained by this mask.
-    #[must_use]
-    pub const fn model_generation(&self) -> ModelGenerationId {
-        self.model_generation
-    }
-
-    /// Return the Normal State generation consumed by an auto mask.
-    #[must_use]
-    pub const fn normal_state_completion(&self) -> Option<FinalNormalStateCompletionId> {
-        self.normal_state
+        Ok(Self::new(target_coordinate, target_shape, support.to_vec()))
     }
 
     /// Return the exact target direction coordinate.
@@ -815,35 +656,12 @@ impl ReconstructionMask {
             && self.support[pixel[0] * self.shape[1] + pixel[1]]
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn mint(
-        problem: CompiledProblemId,
-        model_generation: ModelGenerationId,
-        normal_state: Option<FinalNormalStateCompletionId>,
-        coordinate: DirectionCoordinateSpec,
-        shape: [usize; 2],
-        support: Vec<bool>,
-        source_kind: u8,
-        source_identity: &[u8],
-    ) -> Result<Self, MaskError> {
-        let generation = mask_identity(
-            problem,
-            model_generation,
-            normal_state,
-            coordinate,
-            shape,
-            source_kind,
-            source_identity,
-        );
-        Ok(Self {
-            generation,
-            problem,
-            model_generation,
-            normal_state,
+    fn new(coordinate: DirectionCoordinateSpec, shape: [usize; 2], support: Vec<bool>) -> Self {
+        Self {
             coordinate,
             shape,
             support: support.into_boxed_slice(),
-        })
+        }
     }
 }
 
@@ -873,8 +691,6 @@ pub struct AutoMultithreshControls {
 /// Inspectable evidence for one auto-multithreshold generation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AutoMultithreshEvidence {
-    /// Prior immutable mask generation consumed by this update, when present.
-    pub previous_mask_generation: Option<ReconstructionMaskGenerationId>,
     /// Robust residual median.
     pub median: f64,
     /// MAD-derived robust RMS.
@@ -895,8 +711,6 @@ pub struct AutoMultithreshEvidence {
 /// `beam` the PSF's fitted main lobe and sidelobe level.
 #[allow(clippy::too_many_arguments)]
 pub fn auto_multithresh(
-    problem: CompiledProblemId,
-    model_generation: ModelGenerationId,
     coordinate: DirectionCoordinateSpec,
     normal: &FinalNormalState,
     previous: Option<&ReconstructionMask>,
@@ -914,9 +728,7 @@ pub fn auto_multithresh(
     validate_auto_controls(controls, beam.area_pixels)?;
     let shape = normal.shape();
     if valid_support.len() != shape[0] * shape[1]
-        || previous.is_some_and(|mask| {
-            mask.problem != problem || mask.shape != shape || mask.coordinate != coordinate
-        })
+        || previous.is_some_and(|mask| mask.shape != shape || mask.coordinate != coordinate)
     {
         return Err(MaskError::ShapeMismatch);
     }
@@ -1016,52 +828,9 @@ pub fn auto_multithresh(
         || (controls.minimum_percent_change >= 0.0
             && cycle_threshold_reached
             && percent_change <= controls.minimum_percent_change);
-    let mut source = Encoder::new(b"casa-rs-auto-multithresh-evidence", 1);
-    source.identity(normal.completion_id().as_bytes());
-    source.u64(crate::canonical_f64_bits(positive_threshold));
-    source.u64(crate::canonical_f64_bits(low_noise_threshold));
-    source.usize(completed_major_cycles);
-    source.u8(u8::from(cycle_threshold_reached));
-    source.u8(u8::from(evolution_stopped));
-    match previous {
-        Some(previous) => {
-            source.u8(1);
-            source.identity(previous.generation_id().as_bytes());
-        }
-        None => source.u8(0),
-    }
-    for value in [
-        controls.sidelobe_factor,
-        controls.noise_factor,
-        controls.low_noise_factor,
-        controls.negative_factor,
-        controls.minimum_beam_fraction,
-        controls.smooth_factor,
-        controls.cut_threshold,
-        controls.minimum_percent_change,
-        beam.major_fwhm_pixels,
-        beam.minor_fwhm_pixels,
-        beam.position_angle_rad,
-        beam.area_pixels,
-        beam.sidelobe_fraction,
-    ] {
-        source.u64(crate::canonical_f64_bits(value));
-    }
-    source.usize(controls.grow_iterations);
-    let mask = ReconstructionMask::mint(
-        problem,
-        model_generation,
-        Some(normal.completion_id()),
-        coordinate,
-        shape,
-        support,
-        2,
-        &source.finish(),
-    )?;
     Ok((
-        mask,
+        ReconstructionMask::new(coordinate, shape, support),
         AutoMultithreshEvidence {
-            previous_mask_generation: previous.map(ReconstructionMask::generation_id),
             median: residual_median,
             robust_rms,
             positive_threshold,
@@ -1279,62 +1048,6 @@ fn offset_mask_pixel(
     let x = pixel[0].checked_add_signed(offset[0])?;
     let y = pixel[1].checked_add_signed(offset[1])?;
     (x < shape[0] && y < shape[1]).then_some([x, y])
-}
-
-#[allow(clippy::too_many_arguments)]
-fn mask_identity(
-    problem: CompiledProblemId,
-    model_generation: ModelGenerationId,
-    normal: Option<FinalNormalStateCompletionId>,
-    coordinate: DirectionCoordinateSpec,
-    shape: [usize; 2],
-    source_kind: u8,
-    source_identity: &[u8],
-) -> ReconstructionMaskGenerationId {
-    let mut encoder = Encoder::new(MASK_DOMAIN, MASK_VERSION);
-    encoder.identity(problem.as_bytes());
-    encoder.identity(model_generation.as_bytes());
-    match normal {
-        None => encoder.u8(0),
-        Some(normal) => {
-            encoder.u8(1);
-            encoder.identity(normal.as_bytes());
-        }
-    }
-    encode_coordinate(&mut encoder, coordinate);
-    encoder.usize(shape[0]);
-    encoder.usize(shape[1]);
-    encoder.u8(source_kind);
-    encoder.bytes(source_identity);
-    let ordinal = NEXT_MASK_GENERATION
-        .try_update(
-            std::sync::atomic::Ordering::Relaxed,
-            std::sync::atomic::Ordering::Relaxed,
-            |ordinal| ordinal.checked_add(1),
-        )
-        .expect("mask generation event space exhausted");
-    encoder.u64(ordinal);
-    ReconstructionMaskGenerationId(LogicalIdentity::from_bytes(encoder.finish()))
-}
-
-fn encode_coordinate(encoder: &mut Encoder, coordinate: DirectionCoordinateSpec) {
-    encoder.u8(coordinate.projection() as u8);
-    encoder.u8(coordinate.reference_direction().frame() as u8);
-    encoder.u64(crate::canonical_f64_bits(
-        coordinate.reference_direction().longitude_rad(),
-    ));
-    encoder.u64(crate::canonical_f64_bits(
-        coordinate.reference_direction().latitude_rad(),
-    ));
-    for value in coordinate.reference_pixel() {
-        encoder.u64(crate::canonical_f64_bits(value));
-    }
-    for value in coordinate.increment_rad() {
-        encoder.u64(crate::canonical_f64_bits(value));
-    }
-    for value in coordinate.pc().into_iter().flatten() {
-        encoder.u64(crate::canonical_f64_bits(value));
-    }
 }
 
 #[cfg(test)]

@@ -19,36 +19,19 @@ use std::sync::{Arc, Mutex};
 
 use casa_imaging_model::ProductNodeId;
 use casa_imaging_products::{
-    PlannedContinuumGeneration, ProductMemberContract, ProductOutput, ProductStoragePlan,
-    ProductWindow, ProductWindowLayout, ProductWriter, ProductsError, PublishedContinuumGeneration,
-    RestoringBeam,
+    PlannedContinuumGeneration, PlannedMember, ProductOutput, ProductStoragePlan, ProductWindow,
+    ProductWindowLayout, ProductWriter, ProductsError, PublishedContinuumGeneration, RestoringBeam,
 };
 
 /// Sum the actual owned summary fields independently of the production planner.
 pub fn retained_metadata_bytes(generation: &PublishedContinuumGeneration) -> u64 {
-    use casa_imaging_model::{ImageDomainRole, SpectralWcs};
     use std::mem::size_of_val;
     let mut bytes = size_of_val(generation)
         + size_of_val(generation.members())
         + size_of_val(generation.fitted_beams())
         + size_of_val(generation.restoring_beams());
     for member in generation.members() {
-        let contract = member.contract();
-        bytes += member.name().len()
-            + size_of_val(contract.dependencies())
-            + size_of_val(contract.axes().polarization())
-            + size_of_val(member.resolved_beams());
-        if let ImageDomainRole::Outlier(name) = contract.axes().domain() {
-            bytes += name.len();
-        }
-        if let SpectralWcs::Tabular {
-            channel_centres_hz,
-            channel_boundaries_hz,
-        } = contract.axes().spectral().wcs()
-        {
-            bytes += size_of_val(channel_centres_hz.as_slice())
-                + size_of_val(channel_boundaries_hz.as_slice());
-        }
+        bytes += member.name().len() + size_of_val(member.resolved_beams());
     }
     bytes as u64
 }
@@ -252,7 +235,7 @@ impl ProductWriter for MemoryProductWriter {
 pub struct GeneratedMember {
     node: ProductNodeId,
     name: String,
-    contract: ProductMemberContract,
+    contract: PlannedMember,
     resolved_beams: Box<[Option<RestoringBeam>]>,
     payload: Vec<f32>,
     validity: Vec<bool>,
@@ -269,8 +252,9 @@ impl GeneratedMember {
         &self.name
     }
 
+    /// The planned member this one was generated from.
     #[must_use]
-    pub const fn contract(&self) -> &ProductMemberContract {
+    pub const fn contract(&self) -> &PlannedMember {
         &self.contract
     }
 
@@ -301,29 +285,29 @@ impl GeneratedMember {
 /// Test-owned generation result assembled from the direct output collector.
 #[derive(Debug, Clone)]
 pub struct GeneratedProducts {
-    problem_id: casa_imaging_model::CompiledProblemId,
-    graph_id: casa_imaging_model::ProductGraphId,
     fitted_beams: Box<[Option<RestoringBeam>]>,
     restoring_beams: Box<[Option<RestoringBeam>]>,
     members: Box<[GeneratedMember]>,
 }
 
 impl GeneratedProducts {
-    /// Copy output arrays from a completed direct generation.
+    /// Copy output arrays from a completed direct generation of `planned`.
     #[must_use]
     pub fn from_output(
+        planned: &PlannedContinuumGeneration,
         generation: &PublishedContinuumGeneration,
         output: &MemoryProductOutput,
     ) -> Self {
         let members = generation
             .members()
             .iter()
-            .map(|member| {
+            .zip(planned.members())
+            .map(|(member, planned)| {
                 let captured = output.capture(member.node());
                 GeneratedMember {
                     node: member.node(),
                     name: member.name().to_string(),
-                    contract: member.contract().clone(),
+                    contract: planned.clone(),
                     resolved_beams: member.resolved_beams().to_vec().into_boxed_slice(),
                     payload: captured.payload,
                     validity: captured.validity,
@@ -332,22 +316,10 @@ impl GeneratedProducts {
             .collect::<Vec<_>>()
             .into_boxed_slice();
         Self {
-            problem_id: generation.problem_id(),
-            graph_id: generation.graph_id(),
             fitted_beams: generation.fitted_beams().to_vec().into_boxed_slice(),
             restoring_beams: generation.restoring_beams().to_vec().into_boxed_slice(),
             members,
         }
-    }
-
-    #[must_use]
-    pub const fn problem_id(&self) -> casa_imaging_model::CompiledProblemId {
-        self.problem_id
-    }
-
-    #[must_use]
-    pub const fn graph_id(&self) -> casa_imaging_model::ProductGraphId {
-        self.graph_id
     }
 
     #[must_use]

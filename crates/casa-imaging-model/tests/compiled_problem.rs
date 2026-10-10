@@ -1,55 +1,51 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, CompileObservationError, CompileProblemError, ContinuumChannelRole,
-    ContinuumChannelUse, ContinuumFitRule, DeclaredInnerProducts, DelayCentreLaw,
-    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
-    FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, InstrumentModel, InstrumentResponse, ItrfPosition, MeasurementEquationContract,
-    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationSnapshotInput, ObservationTransactionRequirements, PairedMeasurementTransform,
+    AxisOrder, CentreLaws, CompileProblemError, ContinuumChannelRole, ContinuumChannelUse,
+    ContinuumFitRule, DeclaredInnerProducts, DirectionCoordinateSpec, DirectionFrame,
+    DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FrequencyFrame, GeometryInput,
+    ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentModel, InstrumentResponse,
+    ItrfPosition, MeasurementEquationContract, MissingPointingPolicy, ModelColumnWrite,
+    ModelInnerProduct, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationSnapshot, ObservationTransactionRequirements, PairedMeasurementTransform,
     PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
     PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput, ProblemInputIdentities,
-    ProblemSpecification, ProductAxisKind, ProductBeamRule, ProductBlankingPolicy, ProductKind,
-    ProductNormalization, ProductRequirements, ProductRole, ProductSchema,
-    ProductSupportComparison, ProductTerm, ProductUnit, ProductValidityPolicies,
-    ProductValidityRule, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput, ProblemSpecification,
+    ProductAxisKind, ProductBeamRule, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProductRequirements, ProductRole, ProductSupportComparison, ProductTerm, ProductUnit,
+    ProductValidityPolicies, ProductValidityRule, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
     RequiredCapability, RestFrequency, RestoringBeamPolicy, ScientificContract,
     SequentialContinuumTransform, SkyDirection, SpectralContract, SpectralCoordinateSpec,
     SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, StageErrorBudget,
     TaylorSupportReference, TaylorValidityPolicy, TimeScale, UvTaper, UvwCoordinateLaw,
     VisibilityInnerProduct, WeightDensityScope, WeightingContract, WeightingScheme, compile,
-    compile_observation,
 };
 
 mod common;
 #[path = "fixtures/model_lifecycle.rs"]
 mod model_lifecycle_fixture;
 
-use common::{identity, observation_source, problem_inputs};
+use common::observation_snapshot;
 use model_lifecycle_fixture::model_lifecycle;
 
 fn compile_request(
     specification: ProblemSpecification,
-    inputs: ProblemInputIdentities,
+    observation: ObservationSnapshot,
 ) -> Result<casa_imaging_model::CompiledProblem, CompileProblemError> {
-    compile_with_geometry(specification, geometry(), inputs)
+    compile_with_geometry(specification, geometry(), observation)
 }
 
 fn compile_with_geometry(
     specification: ProblemSpecification,
     geometry: GeometryInput,
-    inputs: ProblemInputIdentities,
+    observation: ObservationSnapshot,
 ) -> Result<casa_imaging_model::CompiledProblem, CompileProblemError> {
-    let lifecycle = model_lifecycle(inputs.model());
     compile(ProblemInput::new(
         specification,
         geometry,
-        inputs,
-        lifecycle,
+        observation,
+        model_lifecycle(),
     ))
 }
 
@@ -169,7 +165,6 @@ fn geometry() -> GeometryInput {
         )],
         CentreLaws::new(
             PhaseCentreLaw::Fixed(direction.reference_direction()),
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::Observation(ObservationPointingLaw::new(
                 PointingDirectionColumn::Direction,
                 PointingDirectionSemantic::AntennaBoresight,
@@ -280,27 +275,8 @@ fn native_aw_request_input_validates_its_axes_and_terms() {
     assert!(narrow.validate().is_err());
 }
 
-fn inputs(reverse: bool) -> ProblemInputIdentities {
-    let mut references = vec![
-        (ReferenceDataKind::Measures, identity(3)),
-        (ReferenceDataKind::Ephemeris, identity(4)),
-    ];
-    if reverse {
-        references.reverse();
-    }
-    problem_inputs(1, references, ModelStateIdentity::Seed(identity(5)))
-}
-
-fn inputs_with_instrument() -> ProblemInputIdentities {
-    problem_inputs(
-        1,
-        vec![
-            (ReferenceDataKind::Measures, identity(3)),
-            (ReferenceDataKind::Ephemeris, identity(4)),
-            (ReferenceDataKind::Instrument, identity(6)),
-        ],
-        ModelStateIdentity::Seed(identity(5)),
-    )
+fn observation() -> ObservationSnapshot {
+    observation_snapshot(1)
 }
 
 fn compile_product_set(
@@ -311,11 +287,6 @@ fn compile_product_set(
         RestoringBeamPolicy::PerPlane
     } else {
         RestoringBeamPolicy::None
-    };
-    let inputs = if instrument_response == InstrumentResponse::Scalar {
-        inputs(false)
-    } else {
-        inputs_with_instrument()
     };
     let science = ScientificContract::new(
         SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
@@ -342,21 +313,21 @@ fn compile_product_set(
             read_only_transaction(),
             numerics(false),
         ),
-        inputs,
+        observation(),
     )
 }
 
 #[test]
-fn equivalent_science_has_one_canonical_compiled_identity() {
-    let first = compile_request(specification(false), inputs(false)).expect("compile first");
-    let reordered = compile_request(specification(true), inputs(true)).expect("compile reordered");
+fn equivalent_science_has_one_canonical_compiled_problem() {
+    let first = compile_request(specification(false), observation()).expect("compile first");
+    let reordered = compile_request(specification(true), observation()).expect("compile reordered");
 
-    assert_eq!(first.problem_id(), reordered.problem_id());
+    assert_eq!(first, reordered);
     assert_eq!(
         first.required_capabilities(),
         reordered.required_capabilities()
     );
-    assert_eq!(first.inputs(), reordered.inputs());
+    assert_eq!(first.observation(), reordered.observation());
     assert_eq!(first.reconstruction(), reordered.reconstruction());
     assert_eq!(first.weighting(), reordered.weighting());
     assert_eq!(first.products(), reordered.products());
@@ -365,12 +336,11 @@ fn equivalent_science_has_one_canonical_compiled_identity() {
 
 #[test]
 fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
-    let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
+    let compiled = compile_request(specification(false), observation()).expect("compile problem");
     let graph = compiled.product_graph();
-    let reordered = compile_request(specification(true), inputs(true)).expect("compile reordered");
+    let reordered = compile_request(specification(true), observation()).expect("compile reordered");
 
-    assert_eq!(graph.graph_id(), reordered.product_graph().graph_id());
-    assert_eq!(graph.schema_version(), 4);
+    assert_eq!(graph, reordered.product_graph());
     assert_eq!(
         graph
             .nodes()
@@ -408,7 +378,7 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
         ProductBeamRule::Restoring(RestoringBeamPolicy::PerPlane)
     );
     assert_eq!(restored.validity(), ProductValidityRule::FinalNormalState);
-    assert_eq!(restored.schema(), ProductSchema::ImageF32V1);
+    assert!(graph.publication().members().contains(&restored.node_id()));
 
     let spectral_index = graph
         .nodes()
@@ -420,56 +390,20 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
         spectral_index.validity(),
         ProductValidityRule::Taylor(product_validity().taylor())
     );
-    let mut alpha_sources = [0, 1]
-        .into_iter()
-        .flat_map(|term| {
-            [
-                graph
-                    .node(ProductRole::Residual(ProductTerm::Taylor(term)))
-                    .expect("principal-residual Taylor node")
-                    .node_id(),
-                graph
-                    .node(ProductRole::RestoredImage(ProductTerm::Taylor(term)))
-                    .expect("restored-image Taylor node")
-                    .node_id(),
-            ]
-        })
-        .collect::<Vec<_>>();
-    alpha_sources.sort_unstable();
-    assert_eq!(spectral_index.dependencies(), alpha_sources);
-    assert!(spectral_index.dependencies().iter().all(|dependency| {
-        !matches!(
-            graph.nodes()[dependency.ordinal()].role(),
-            ProductRole::Model(_)
-        )
-    }));
 
     assert_eq!(
         graph.publication().members(),
         graph
             .nodes()
             .iter()
-            .filter(|node| node.schema() == ProductSchema::ImageF32V1)
+            .filter(|node| node.name().is_some())
             .map(|node| node.node_id())
             .collect::<Vec<_>>()
-    );
-    assert!(graph.publication().protocol().requires_durable_prepare());
-    assert!(
-        graph
-            .publication()
-            .protocol()
-            .has_one_visibility_operation_per_member()
-    );
-    assert!(
-        graph
-            .publication()
-            .protocol()
-            .preserves_promoted_members_on_later_failure()
     );
 }
 
 #[test]
-fn uncorrected_mask_is_separate_from_numeric_support_and_binds_publication_identity() {
+fn uncorrected_mask_is_separate_from_numeric_support_and_binds_publication() {
     let validity = product_validity()
         .with_uncorrected_mask(casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam);
     let compile_with_policy = |validity| {
@@ -492,17 +426,12 @@ fn uncorrected_mask_is_separate_from_numeric_support_and_binds_publication_ident
                 read_only_transaction(),
                 numerics(false),
             ),
-            inputs(false),
+            observation(),
         )
         .expect("compile explicit primary-beam mask policy")
     };
     let compiled = compile_with_policy(validity);
     let absent = compile_with_policy(product_validity());
-    assert_ne!(compiled.problem_id(), absent.problem_id());
-    assert_ne!(
-        compiled.product_graph().graph_id(),
-        absent.product_graph().graph_id()
-    );
 
     for role in [
         ProductRole::Residual(ProductTerm::Taylor(0)),
@@ -588,7 +517,7 @@ fn single_and_taylor_storage_contracts_preserve_science_and_exact_casa_metadata(
                     read_only_transaction(),
                     numerics(false),
                 ),
-                inputs(false),
+                observation(),
             )
             .expect("storage contract matrix");
             let graph = compiled.product_graph();
@@ -711,70 +640,6 @@ fn publishing_a_primary_beam_does_not_change_uncorrected_product_validity() {
 }
 
 #[test]
-fn product_graph_identity_is_content_derived_and_stable_across_unrelated_problem_inputs() {
-    let first = compile_request(specification(false), inputs(false)).expect("compile first");
-    let different_numerics = compile_request(
-        ProblemSpecification::new(
-            science(),
-            reconstruction(),
-            weighting(),
-            products(false),
-            read_only_transaction(),
-            NumericsContract::new(
-                vec![NumericPrecision::F32, NumericPrecision::F64],
-                ReductionPolicy::DeterministicPairwise,
-                FiniteValuePolicy::FlagInputRejectGenerated,
-                NumericalStage::ALL
-                    .into_iter()
-                    .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
-                    .collect(),
-            ),
-        ),
-        inputs(false),
-    )
-    .expect("compile with different numerics");
-    let different_products = compile_request(
-        ProblemSpecification::new(
-            science(),
-            reconstruction(),
-            weighting(),
-            ProductRequirements::new(
-                products(false)
-                    .products()
-                    .iter()
-                    .copied()
-                    .chain([ProductKind::Mask])
-                    .collect(),
-                ProductNormalization::FlatNoise,
-                RestoringBeamPolicy::PerPlane,
-                product_validity(),
-            ),
-            read_only_transaction(),
-            numerics(false),
-        ),
-        inputs(false),
-    )
-    .expect("compile with different product topology");
-
-    assert_ne!(first.problem_id(), different_numerics.problem_id());
-    assert_eq!(
-        first.product_graph().graph_id(),
-        different_numerics.product_graph().graph_id()
-    );
-    assert_ne!(
-        first.product_graph().graph_id(),
-        different_products.product_graph().graph_id()
-    );
-    assert_eq!(
-        first.product_graph().graph_id().as_bytes(),
-        [
-            121, 68, 178, 157, 98, 102, 34, 7, 39, 144, 194, 32, 116, 61, 74, 92, 166, 24, 205,
-            230, 209, 202, 252, 4, 105, 157, 222, 219, 105, 236, 179, 213,
-        ]
-    );
-}
-
-#[test]
 fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
     let products = ProductRequirements::new(
         products(false)
@@ -806,33 +671,28 @@ fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
             read_only_transaction(),
             numerics(false),
         ),
-        inputs_with_instrument(),
+        observation(),
     )
     .expect("compile PB-corrected Taylor products");
     let graph = compiled.product_graph();
     let alpha = graph
         .node(ProductRole::SpectralIndex)
         .expect("spectral-index product");
-    let mut alpha_sources = alpha.dependencies().to_vec();
     let alpha_error = graph
         .node(ProductRole::SpectralIndexError)
         .expect("spectral-index-error product");
-    alpha_sources.push(alpha.node_id());
-    alpha_sources.sort_unstable();
-    assert_eq!(alpha_error.dependencies(), alpha_sources);
+    assert!(graph.publication().members().contains(&alpha.node_id()));
+    assert!(
+        graph
+            .publication()
+            .members()
+            .contains(&alpha_error.node_id())
+    );
 
     let pb_alpha = graph
         .node(ProductRole::PrimaryBeamSpectralIndex)
         .expect("internal primary-beam spectral index");
     assert_eq!(pb_alpha.name(), None);
-    assert_eq!(pb_alpha.schema(), ProductSchema::InternalImageF32V1);
-    assert_eq!(
-        pb_alpha.dependencies(),
-        [graph
-            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
-            .expect("primary-beam Taylor-zero product")
-            .node_id()]
-    );
     assert!(!graph.publication().members().contains(&pb_alpha.node_id()));
     assert_eq!(
         graph
@@ -858,7 +718,10 @@ fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
     let corrected_alpha = graph
         .node(ProductRole::PbCorrectedSpectralIndex)
         .expect("PB-corrected spectral index");
-    assert!(corrected_alpha.dependencies().contains(&pb_alpha.node_id()));
+    assert_eq!(
+        corrected_alpha.beam(),
+        ProductBeamRule::Inherit(alpha.node_id())
+    );
     assert!(
         graph
             .publication()
@@ -868,9 +731,7 @@ fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
 }
 
 #[test]
-fn model_column_side_effects_are_compiled_into_problem_identity() {
-    let read_only =
-        compile_request(specification(false), inputs(false)).expect("compile read-only");
+fn model_column_side_effects_are_compiled_into_the_problem() {
     let writable = compile_request(
         ProblemSpecification::new(
             science(),
@@ -880,15 +741,10 @@ fn model_column_side_effects_are_compiled_into_problem_identity() {
             ObservationTransactionRequirements::new(ModelColumnWrite::SelectedRows),
             numerics(false),
         ),
-        inputs(false),
+        observation(),
     )
     .expect("compile model-column write");
 
-    assert_ne!(read_only.problem_id(), writable.problem_id());
-    assert_eq!(
-        writable.observation_transaction().observation_snapshot_id(),
-        writable.inputs().observation()
-    );
     assert_eq!(
         writable
             .observation_transaction()
@@ -901,7 +757,7 @@ fn model_column_side_effects_are_compiled_into_problem_identity() {
 
 #[test]
 fn derived_capabilities_cover_normalization_without_naming_a_backend() {
-    let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
+    let compiled = compile_request(specification(false), observation()).expect("compile problem");
 
     assert!(
         compiled
@@ -940,7 +796,7 @@ fn natural_weighting_rejects_a_meaningless_per_channel_density_scope() {
     );
 
     assert!(matches!(
-        compile_request(specification, inputs(false)),
+        compile_request(specification, observation()),
         Err(CompileProblemError::InvalidWeighting { .. })
     ));
 }
@@ -956,7 +812,7 @@ fn natural_weighting_declares_that_density_generation_is_not_applicable() {
         numerics(false),
     );
 
-    let compiled = compile_request(specification, inputs(false)).expect("natural weighting");
+    let compiled = compile_request(specification, observation()).expect("natural weighting");
     assert!(
         compiled
             .required_capabilities()
@@ -984,7 +840,7 @@ fn incompatible_reconstruction_capabilities_fail_before_execution_inputs_exist()
     );
 
     assert!(matches!(
-        compile_request(specification, inputs(false)),
+        compile_request(specification, observation()),
         Err(CompileProblemError::InvalidCapabilityCombination { .. })
     ));
 }
@@ -1026,100 +882,15 @@ fn channel_local_basis_must_match_compiled_geometry_channels() {
     compile_with_geometry(
         channel_local(2),
         two_channel_geometry.clone(),
-        inputs(false),
+        observation(),
     )
     .expect("matching channel-local geometry");
     assert!(matches!(
-        compile_with_geometry(channel_local(1), two_channel_geometry, inputs(false)),
+        compile_with_geometry(channel_local(1), two_channel_geometry, observation()),
         Err(CompileProblemError::SpectralChannelCountMismatch {
             geometry_channels: 2,
             reconstruction_channels: 1,
         })
-    ));
-}
-
-#[test]
-fn t41_taylor_via_channel_major_is_distinct_and_channel_bounded() {
-    let contract = |basis| {
-        ProblemSpecification::new(
-            science(),
-            ReconstructionContract::new(
-                basis,
-                ReconstructionAlgorithm::Mtmfs {
-                    scales_px: vec![0.0],
-                    small_scale_bias: 0.0,
-                },
-                ReconstructionControls::new(100, 0.1, 0.0),
-                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
-            ),
-            weighting(),
-            products(false),
-            read_only_transaction(),
-            numerics(false),
-        )
-    };
-    let four_channel_geometry =
-        geometry().with_spectral(geometry().spectral().clone().with_wcs(SpectralWcs::Linear {
-            channels: 4,
-            reference_pixel: 1.5,
-            reference_frequency_hz: 1.4e9,
-            increment_hz: 1.0e6,
-        }));
-    let dual = compile_with_geometry(
-        contract(ReconstructionBasis::TaylorViaChannelMajor {
-            terms: 2,
-            channels: 4,
-        }),
-        four_channel_geometry.clone(),
-        inputs(false),
-    )
-    .expect("four channels support two Taylor terms");
-    let direct = compile_with_geometry(
-        contract(ReconstructionBasis::Taylor { terms: 2 }),
-        four_channel_geometry.clone(),
-        inputs(false),
-    )
-    .expect("direct Taylor contract compiles independently of its implementation route");
-    assert_eq!(
-        dual.reconstruction().basis(),
-        ReconstructionBasis::TaylorViaChannelMajor {
-            terms: 2,
-            channels: 4,
-        }
-    );
-    assert!(
-        dual.product_graph()
-            .nodes()
-            .iter()
-            .filter(|node| node.schema() == ProductSchema::ImageF32V1)
-            .all(|node| node.axes().shape()[3] == 1),
-        "public MT-MFS products retain singleton Taylor axes while the major cycle uses channels"
-    );
-    assert_ne!(dual.problem_id(), direct.problem_id());
-    assert!(matches!(
-        compile_with_geometry(
-            contract(ReconstructionBasis::TaylorViaChannelMajor {
-                terms: 2,
-                channels: 3,
-            }),
-            four_channel_geometry.clone(),
-            inputs(false),
-        ),
-        Err(CompileProblemError::SpectralChannelCountMismatch {
-            geometry_channels: 4,
-            reconstruction_channels: 3,
-        })
-    ));
-    assert!(matches!(
-        compile_with_geometry(
-            contract(ReconstructionBasis::TaylorViaChannelMajor {
-                terms: 5,
-                channels: 4,
-            }),
-            four_channel_geometry,
-            inputs(false),
-        ),
-        Err(CompileProblemError::InvalidCapabilityCombination { .. })
     ));
 }
 
@@ -1143,7 +914,7 @@ fn one_term_mfs_uses_the_constant_basis_instead_of_taylor() {
     );
 
     assert!(matches!(
-        compile_request(specification, inputs(false)),
+        compile_request(specification, observation()),
         Err(CompileProblemError::InvalidCapabilityCombination { .. })
     ));
 }
@@ -1172,7 +943,7 @@ fn flat_normalization_uses_internal_sensitivity_without_publishing_it() {
         numerics(false),
     );
 
-    let compiled = compile_request(specification, inputs(false))
+    let compiled = compile_request(specification, observation())
         .expect("flat normalization reads the reconstruction normal state");
     assert!(
         compiled
@@ -1203,7 +974,7 @@ fn incomplete_or_non_finite_numerics_fail_at_compile_time() {
         ),
     );
     assert!(matches!(
-        compile_request(incomplete_specification, inputs(false)),
+        compile_request(incomplete_specification, observation()),
         Err(CompileProblemError::InvalidNumerics { .. })
     ));
 
@@ -1232,7 +1003,7 @@ fn incomplete_or_non_finite_numerics_fail_at_compile_time() {
         ),
     );
     assert!(matches!(
-        compile_request(non_finite_specification, inputs(false)),
+        compile_request(non_finite_specification, observation()),
         Err(CompileProblemError::InvalidNumerics { .. })
     ));
 }
@@ -1351,99 +1122,17 @@ fn taylor_collection_accepts_an_explicit_taylor_image_source() {
         .node(ProductRole::TaylorCoefficientSet)
         .expect("Taylor collection");
 
-    assert!(!collection.dependencies().is_empty());
-    assert!(collection.dependencies().iter().all(|dependency| {
-        matches!(
-            graph.nodes()[dependency.ordinal()].role(),
-            ProductRole::Psf(ProductTerm::Taylor(_))
-        )
-    }));
-}
-
-#[test]
-fn duplicate_reference_families_are_rejected_instead_of_ordered_accidentally() {
-    assert_eq!(
-        compile_observation(ObservationSnapshotInput::new(
-            vec![observation_source(1)],
-            vec![
-                (ReferenceDataKind::Measures, identity(3)),
-                (ReferenceDataKind::Measures, identity(4)),
-            ],
-            ModelStateIdentity::Empty,
-        )),
-        Err(CompileObservationError::DuplicateReferenceData {
-            kind: ReferenceDataKind::Measures,
-        })
+    assert_eq!(collection.name(), None);
+    assert!(
+        !graph
+            .publication()
+            .members()
+            .contains(&collection.node_id())
     );
 }
 
 #[test]
-fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
-    let with_robust = |robust| {
-        ProblemSpecification::new(
-            science(),
-            reconstruction(),
-            WeightingContract::new(
-                WeightingScheme::Briggs { robust },
-                WeightDensityScope::GlobalSelection,
-            ),
-            products(false),
-            read_only_transaction(),
-            numerics(false),
-        )
-    };
-    let negative_zero = compile_request(with_robust(-0.0), inputs(false)).expect("negative zero");
-    let positive_zero = compile_request(with_robust(0.0), inputs(false)).expect("positive zero");
-    let changed = compile_request(with_robust(0.5), inputs(false)).expect("changed science");
-
-    assert_eq!(negative_zero.problem_id(), positive_zero.problem_id());
-    assert_eq!(
-        negative_zero.weighting().commitment_id(),
-        positive_zero.weighting().commitment_id()
-    );
-    assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 26);
-}
-
-#[test]
-fn numerics_contract_has_an_independent_stable_identity() {
-    let first = compile_request(specification(false), inputs(false)).expect("compile first");
-    let reordered = compile_request(specification(true), inputs(true)).expect("compile reordered");
-    assert_eq!(first.numerics_id(), reordered.numerics_id());
-    assert_eq!(
-        first.numerics_id().as_bytes(),
-        [
-            248, 232, 21, 246, 91, 89, 229, 141, 87, 199, 232, 27, 197, 224, 106, 80, 183, 210,
-            185, 125, 118, 131, 243, 133, 31, 193, 111, 19, 68, 150, 117, 86,
-        ]
-    );
-
-    let mut changed = numerics(false);
-    changed = NumericsContract::new(
-        changed.permitted_precisions().to_vec(),
-        ReductionPolicy::DeterministicPairwise,
-        changed.finite_values(),
-        changed.stage_error_budgets().to_vec(),
-    );
-    let changed = compile_request(
-        ProblemSpecification::new(
-            science(),
-            reconstruction(),
-            weighting(),
-            products(false),
-            read_only_transaction(),
-            changed,
-        ),
-        inputs(false),
-    )
-    .expect("compile changed numerics");
-
-    assert_ne!(first.numerics_id(), changed.numerics_id());
-    assert_eq!(casa_imaging_model::NumericsContractId::SCHEMA_VERSION, 1);
-}
-
-#[test]
-fn multiscale_order_and_duplicate_scales_do_not_change_scientific_identity() {
+fn multiscale_order_and_duplicate_scales_do_not_change_the_reconstruction() {
     let specification = |scales_px| {
         ProblemSpecification::new(
             science(),
@@ -1473,17 +1162,16 @@ fn multiscale_order_and_duplicate_scales_do_not_change_scientific_identity() {
             numerics(false),
         )
     };
-    let canonical = compile_request(specification(vec![0.0, 3.0, 10.0]), inputs(false))
+    let canonical = compile_request(specification(vec![0.0, 3.0, 10.0]), observation())
         .expect("canonical scales");
-    let reordered = compile_request(specification(vec![10.0, 3.0, -0.0, 3.0]), inputs(false))
+    let reordered = compile_request(specification(vec![10.0, 3.0, -0.0, 3.0]), observation())
         .expect("reordered scales");
 
-    assert_eq!(canonical.problem_id(), reordered.problem_id());
     assert_eq!(canonical.reconstruction(), reordered.reconstruction());
 }
 
 #[test]
-fn mtmfs_scales_are_canonical_and_part_of_scientific_identity() {
+fn mtmfs_scales_are_canonical_and_part_of_the_reconstruction() {
     let make = |scales_px| {
         ProblemSpecification::new(
             science(),
@@ -1502,17 +1190,17 @@ fn mtmfs_scales_are_canonical_and_part_of_scientific_identity() {
             numerics(false),
         )
     };
-    let canonical = compile_request(make(vec![0.0, 3.0]), inputs(false)).expect("MT-MFS scales");
-    let reordered = compile_request(make(vec![3.0, -0.0, 3.0]), inputs(false))
+    let canonical = compile_request(make(vec![0.0, 3.0]), observation()).expect("MT-MFS scales");
+    let reordered = compile_request(make(vec![3.0, -0.0, 3.0]), observation())
         .expect("canonical MT-MFS scales");
-    let changed = compile_request(make(vec![0.0, 5.0]), inputs(false)).expect("changed scales");
+    let changed = compile_request(make(vec![0.0, 5.0]), observation()).expect("changed scales");
 
-    assert_eq!(canonical.problem_id(), reordered.problem_id());
-    assert_ne!(canonical.problem_id(), changed.problem_id());
+    assert_eq!(canonical.reconstruction(), reordered.reconstruction());
+    assert_ne!(canonical.reconstruction(), changed.reconstruction());
 }
 
 #[test]
-fn complete_science_contract_changes_identity_and_capabilities() {
+fn complete_science_contract_changes_capabilities() {
     let make = |science, weighting, products| {
         ProblemSpecification::new(
             science,
@@ -1523,7 +1211,7 @@ fn complete_science_contract_changes_identity_and_capabilities() {
             numerics(false),
         )
     };
-    let baseline = compile_request(make(science(), weighting(), products(false)), inputs(false))
+    compile_request(make(science(), weighting(), products(false)), observation())
         .expect("baseline");
     let tagged_scalar = compile_request(
         make(
@@ -1533,7 +1221,7 @@ fn complete_science_contract_changes_identity_and_capabilities() {
             weighting(),
             products(false),
         ),
-        inputs(false),
+        observation(),
     );
     assert!(matches!(
         tagged_scalar,
@@ -1587,11 +1275,10 @@ fn complete_science_contract_changes_identity_and_capabilities() {
             products_with_beam(false, RestoringBeamPolicy::Common),
         ),
         widefield_geometry,
-        inputs_with_instrument(),
+        observation(),
     )
     .expect("widefield science");
 
-    assert_ne!(baseline.problem_id(), widefield.problem_id());
     for capability in [
         RequiredCapability::FacetedGeometry,
         RequiredCapability::SpectralFrameTransform,
@@ -1606,7 +1293,7 @@ fn complete_science_contract_changes_identity_and_capabilities() {
 }
 
 #[test]
-fn primary_beam_response_requires_exact_model_and_instrument_identity() {
+fn primary_beam_response_requires_an_exact_instrument_model() {
     let direction_dependent = ScientificContract::new(
         SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
         MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
@@ -1623,10 +1310,7 @@ fn primary_beam_response_requires_exact_model_and_instrument_identity() {
     };
 
     assert!(matches!(
-        compile_request(
-            specification(direction_dependent.clone()),
-            inputs_with_instrument()
-        ),
+        compile_request(specification(direction_dependent.clone()), observation()),
         Err(CompileProblemError::InvalidScientificContract {
             reason: "instrument response and instrument model must form one supported exact pair"
         })
@@ -1638,14 +1322,8 @@ fn primary_beam_response_requires_exact_model_and_instrument_identity() {
         direction_dependent.instrument_model(),
         Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1)
     );
-    assert!(matches!(
-        compile_request(specification(direction_dependent.clone()), inputs(false)),
-        Err(CompileProblemError::InvalidScientificContract {
-            reason: "direction-dependent response requires bound instrument reference data"
-        })
-    ));
 
-    let compiled = compile_request(specification(direction_dependent), inputs_with_instrument())
+    let compiled = compile_request(specification(direction_dependent), observation())
         .expect("compile exact primary-beam instrument model");
     assert!(
         compiled
@@ -1662,7 +1340,7 @@ fn primary_beam_response_requires_exact_model_and_instrument_identity() {
 }
 
 #[test]
-fn sequential_continuum_transform_is_a_compiled_capability_and_identity_input() {
+fn sequential_continuum_transform_is_a_compiled_capability() {
     let base = || {
         ProblemSpecification::new(
             science(),
@@ -1700,10 +1378,10 @@ fn sequential_continuum_transform_is_a_compiled_capability_and_identity_input() 
         .expect("fit/apply rule"),
     ])
     .expect("transform");
-    let plain = compile_request(base(), inputs(false)).expect("plain problem");
+    compile_request(base(), observation()).expect("plain problem");
     let transformed = compile_request(
         base().with_visibility_transform(transform.clone()),
-        inputs(false),
+        observation(),
     )
     .expect("transformed problem");
 
@@ -1713,7 +1391,6 @@ fn sequential_continuum_transform_is_a_compiled_capability_and_identity_input() 
             .required_capabilities()
             .contains(&RequiredCapability::SequentialContinuumTransform)
     );
-    assert_ne!(plain.problem_id(), transformed.problem_id());
 }
 
 #[test]
@@ -1743,10 +1420,10 @@ fn dirty_reconstruction_rejects_scientifically_unused_controls() {
         )
     };
 
-    compile_request(dirty(1.0, 0.0), inputs(false)).expect("canonical dirty problem");
+    compile_request(dirty(1.0, 0.0), observation()).expect("canonical dirty problem");
     for specification in [dirty(0.1, 0.0), dirty(1.0, 0.5)] {
         assert!(matches!(
-            compile_request(specification, inputs(false)),
+            compile_request(specification, observation()),
             Err(CompileProblemError::InvalidCapabilityCombination {
                 reason: "dirty reconstruction requires canonical inactive controls: gain 1 and threshold 0"
             })
@@ -1772,7 +1449,7 @@ fn spectral_coupling_and_restoring_beam_policy_must_agree() {
                 read_only_transaction(),
                 numerics(false),
             ),
-            inputs(false),
+            observation(),
         )
     };
 
@@ -1812,7 +1489,7 @@ fn invalid_science_contracts_fail_before_bulk_io() {
         numerics(false),
     );
     assert!(matches!(
-        compile_request(specification, inputs(false)),
+        compile_request(specification, observation()),
         Err(CompileProblemError::InvalidScientificContract {
             reason: "spectral channel averaging requires a positive bin width"
         })
@@ -1838,7 +1515,7 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
     };
 
     assert!(matches!(
-        compile_request(specification(Vec::new()), inputs(false)),
+        compile_request(specification(Vec::new()), observation()),
         Err(CompileProblemError::InvalidReconstructionContract {
             reason: "at least one polarization coordinate must be requested"
         })
@@ -1849,48 +1526,10 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
                 PolarizationCoordinate::StokesI,
                 PolarizationCoordinate::LinearXx,
             ]),
-            inputs(false),
+            observation(),
         ),
         Err(CompileProblemError::InvalidReconstructionContract {
             reason: "one reconstruction cannot mix Stokes, linear, and circular coordinates"
         })
-    ));
-}
-
-#[test]
-fn compiled_problem_identity_has_a_pinned_schema_twenty_six_digest() {
-    let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
-
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 26);
-    assert_eq!(
-        compiled.problem_id().to_string(),
-        "e4b276170f2a24eacddcfdfed355ad2d3435ededeebb975128cbeb3af7569332"
-    );
-    let lifecycle = casa_imaging_model::LogicalIdentity::from_bytes(
-        compiled.model_lifecycle().contract_id().as_bytes(),
-    );
-    assert!(casa_imaging_model::validate_compiled_problem_identity(
-        compiled.problem_id().as_bytes(),
-        compiled.problem_identity_basis(),
-        compiled.inputs().model(),
-        lifecycle,
-    ));
-    assert!(!casa_imaging_model::validate_compiled_problem_identity(
-        compiled.problem_id().as_bytes(),
-        compiled.problem_identity_basis(),
-        ModelStateIdentity::Seed(identity(200)),
-        lifecycle,
-    ));
-    assert!(!casa_imaging_model::validate_compiled_problem_identity(
-        compiled.problem_id().as_bytes(),
-        casa_imaging_model::LogicalIdentity::from_bytes([0; 32]),
-        compiled.inputs().model(),
-        lifecycle,
-    ));
-    assert!(!casa_imaging_model::validate_compiled_problem_identity(
-        [0; 32],
-        compiled.problem_identity_basis(),
-        compiled.inputs().model(),
-        lifecycle,
     ));
 }

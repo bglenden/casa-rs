@@ -7411,12 +7411,11 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "MFS continuum imaging; cube with CASA Doppler/frame handling; cubedata in the native data frame; cubesource tracked in the source rest frame; or MVC MT-MFS via a channel cube",
+        "summary": "MFS continuum imaging; cube with CASA Doppler/frame handling; cubedata in the native data frame; or cubesource tracked in the source rest frame",
         "details": null,
         "examples": [
           "mfs",
-          "cubesource",
-          "mvc"
+          "cubesource"
         ]
       },
       "persistence_class": "profile"

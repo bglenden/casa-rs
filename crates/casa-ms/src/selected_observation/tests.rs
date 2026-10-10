@@ -14,30 +14,29 @@ use crate::{
     tutorial_vla_a_antennas,
 };
 use casa_imaging_model::{
-    AntennaResponseClass, AntennaSelection, AxisOrder, CentreLaws, CorrelationProduct,
-    CorrelationSelection, CorrelationType, DataDescriptionSelection, DeclaredInnerProducts,
-    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, Epoch, FacetLayout, FiniteValuePolicy,
-    FlagPolicy, FrequencyFrame, GeometryInput, IdSelection, ImageAxis, ImageDomainRole,
-    ImageDomainSpec, ImageShape, InstrumentModel, InstrumentResponse, IntentSelection,
-    ItrfPosition, LogicalIdentity, MeasurementEquationContract, MissingPointingPolicy, ModelBounds,
-    ModelColumnWrite, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationSelection, ObservationSnapshotInput, ObservationSource, ObservationSourceInput,
-    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
-    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
-    PrimaryBeamValidityPolicy, ProblemInput, ProblemInputIdentities, ProblemSpecification,
-    ProductBlankingPolicy, ProductKind, ProductNormalization, ProductRequirements,
-    ProductSupportComparison, ProductValidityPolicies, Projection, PsfPhaseCentreLaw,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, RowSelection,
+    AntennaResponseClass, AxisOrder, CentreLaws, CorrelationProduct, CorrelationSelection,
+    CorrelationType, DataDescriptionSelection, DeclaredInnerProducts, DirectionCoordinateSpec,
+    DirectionFrame, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
+    GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
+    InstrumentModel, InstrumentResponse, IntentSelection, ItrfPosition,
+    MeasurementEquationContract, MissingPointingPolicy, ModelBounds, ModelColumnWrite,
+    ModelInnerProduct, ModelLifecycleRequirements, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationPointingLaw, ObservationSelection, ObservationSnapshotInput,
+    ObservationSource, ObservationSourceInput, ObservationSourceProvenance,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
+    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
+    PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput,
+    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
+    PsfPhaseCentreLaw, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
     ScientificContract, SelectedColumns, SelectedMainRow, SelectedObservationRunChannel,
-    SelectedObservationRunRow, SelectedRows, SelectionBound, SkyDirection, SpectralContract,
+    SelectedObservationRunRow, SelectedRows, SkyDirection, SpectralContract,
     SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
     SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeRange, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    TaylorValidityPolicy, TimeScale, UvSelection, UvwCoordinateLaw, VisibilityColumn,
+    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
+    compile, compile_observation,
 };
 use casa_tables::{ColumnSchema, Table, TableOptions};
 use casa_types::measures::{
@@ -56,23 +55,12 @@ use std::sync::{Arc, Mutex};
 mod content_requirements;
 mod t41_ephemeris_oracle;
 
-/// Canonical model-lifecycle commitment matching the compiled snapshot.
-fn model_lifecycle(model: ModelStateIdentity) -> ModelLifecycleRequirements {
-    let input = match model {
-        ModelStateIdentity::Empty => ModelInputCommitment::Empty,
-        ModelStateIdentity::Seed(source) => ModelInputCommitment::AlignedSeed {
-            source,
-            support: LogicalIdentity::from_bytes([0xa5; 32]),
-        },
-        ModelStateIdentity::Generation(generation) => ModelInputCommitment::Generation(generation),
-    };
+/// Canonical model-lifecycle requirements for the fixture problems.
+fn model_lifecycle() -> ModelLifecycleRequirements {
     ModelLifecycleRequirements::new(
-        ModelBounds::new(
-            10_000_000, 10_000_000, 10_000_000, 10_000_000, 1.0e30, 1.0e30,
-        )
-        .expect("valid model lifecycle bounds"),
+        ModelBounds::new(10_000_000, 10_000_000, 1.0e30, 1.0e30)
+            .expect("valid model lifecycle bounds"),
         NumericPrecision::F32,
-        input,
     )
 }
 
@@ -89,13 +77,9 @@ struct AccountedTestMeasuresState {
 
 impl AccountedTestMeasures {
     fn with_heap_bytes(bytes: usize) -> Self {
-        Self::with_identity(90, bytes)
-    }
-
-    fn with_identity(identity: u8, bytes: usize) -> Self {
         Self {
             state: Mutex::new(AccountedTestMeasuresState {
-                identity_sha256: [identity; 32],
+                identity_sha256: [90; 32],
                 retained: vec![0; bytes],
             }),
         }
@@ -146,7 +130,7 @@ fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
     generate_fixture(&path);
 
     let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     let one_row_budget = content_budget_for_rows(&problem, source, 1, 1);
     let two_row_budget = content_budget_for_rows(&problem, source, 2, 1);
     let one_row = BoundObservationSource::open(&problem, source, one_row_budget)
@@ -210,10 +194,6 @@ fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
     );
     let first = &one_row_samples[0];
     assert_eq!(first.channel.frequency_centre_hz, 1.4e9);
-    assert_eq!(first.channel.frequency_lower_hz, 1.3995e9);
-    assert_eq!(first.channel.frequency_upper_hz, 1.4005e9);
-    assert_eq!(first.channel.channel_width_hz, 1.0e6);
-    assert_eq!(first.channel.frequency_frame, FrequencyFrame::Topocentric);
     assert_eq!(first.frequency_hz, 1.4e9);
     assert_eq!(
         first.correlation.correlation_type(),
@@ -221,19 +201,12 @@ fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
     );
     assert_eq!(first.visibility, Visibility::Complex32([0.0, 0.0]));
     let coordinates = &first.row.coordinates;
-    assert_eq!(coordinates.density_uvw_m, coordinates.raw_uvw_m);
-    assert_eq!(coordinates.transformed_uvw_m, coordinates.raw_uvw_m);
-    assert_eq!(coordinates.phase_shift_m, 0.0);
-    assert_eq!(coordinates.phase_direction, coordinates.delay_direction);
     assert_eq!(
-        coordinates.phase_direction,
-        coordinates.pointing_directions.antenna1
+        coordinates.pointing_directions.antenna1.frame(),
+        DirectionFrame::J2000
     );
-    assert_eq!(coordinates.phase_direction.frame(), DirectionFrame::J2000);
     assert_eq!(first.row.metadata.antenna1, 0);
     assert_eq!(first.row.metadata.antenna2, 1);
-    assert_eq!(first.row.metadata.feed1, 0);
-    assert_eq!(first.row.metadata.feed2, 0);
 }
 
 #[test]
@@ -268,7 +241,7 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
         vec![PolarizationCoordinate::StokesI],
     );
     assert!(!ordinary_problem.requires_parallactic_angles());
-    let ordinary_source = &ordinary_problem.inputs().observation_snapshot().sources()[0];
+    let ordinary_source = &ordinary_problem.observation().sources()[0];
     let ordinary = open_observation(
         &ordinary_problem,
         ordinary_source,
@@ -310,7 +283,7 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
             PolarizationCoordinate::StokesV,
         ],
     );
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     assert!(problem.requires_parallactic_angles());
     let bound = open_observation(
         &problem,
@@ -401,7 +374,7 @@ fn facet_chart_projections_are_domain_major_and_block_partition_invariant() {
         problem.geometry().domains()[2].role(),
         ImageDomainRole::Outlier(name) if name == "zeta"
     ));
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
 
     let traverse = |rows_per_block| {
         let observation = open_observation(
@@ -620,74 +593,12 @@ fn imaging_weight_groups_reject_ambiguous_or_mixed_multi_correlation_layouts() {
 }
 
 #[test]
-fn sparse_manifest_reads_only_selected_physical_rows() {
-    let directory = tempfile::tempdir().expect("temporary sparse selected-observation fixture");
-    let path = directory.path().join("sparse.ms");
-    generate_fixture_with_rows(&path, 64);
-    let selected_rows = SelectedRows::from_ordered_main_rows(
-        64,
-        [SelectedMainRow::new(0, 0), SelectedMainRow::new(63, 0)],
-    )
-    .expect("sparse exact row manifest");
-    let measurement_set = MeasurementSet::open(&path).expect("open sparse fixture");
-    let times = [0, 63].map(|row| main_time_mjd_seconds(&measurement_set, row));
-    let sparse_filter = RowSelection::new(
-        IdSelection::All,
-        TimeSelection::Ranges(
-            times
-                .into_iter()
-                .map(|time| {
-                    TimeRange::new(
-                        Some(SelectionBound::inclusive(time)),
-                        Some(SelectionBound::inclusive(time)),
-                    )
-                })
-                .collect(),
-        ),
-        UvSelection::All,
-        AntennaSelection::All,
-        IdSelection::All,
-        IdSelection::All,
-        IntentSelection::All,
-        IdSelection::All,
-    );
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source_input_with_selected_rows_and_filter(
-            &path,
-            1,
-            selected_rows,
-            sparse_filter,
-        )],
-        vec![(ReferenceDataKind::Measures, identity(90))],
-        ModelStateIdentity::Empty,
-    ))
-    .expect("compile sparse selected observation");
-    let problem = compile(ProblemInput::new(
-        specification(),
-        geometry(),
-        ProblemInputIdentities::new(snapshot.clone()),
-        model_lifecycle(snapshot.model()),
-    ))
-    .expect("compile sparse selected-observation problem");
-    let samples = stream_rows(&problem, 2);
-
-    assert_eq!(samples.len(), 2 * 2 * 2);
-    assert_eq!(
-        samples
-            .iter()
-            .map(|sample| sample.row.physical_row)
-            .collect::<std::collections::BTreeSet<_>>(),
-        [0, 63].into_iter().collect()
-    );
-}
-
-#[test]
 fn retained_metadata_is_rejected_before_content_blocks_are_planned() {
     let directory = tempfile::tempdir().expect("temporary metadata-budget fixture");
     let path = directory.path().join("metadata-budget.ms");
     generate_fixture(&path);
     let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     let error = match BoundObservationSource::open(
         &problem,
         source,
@@ -708,121 +619,10 @@ fn retained_metadata_is_rejected_before_content_blocks_are_planned() {
 }
 
 #[test]
-fn selected_observation_rejects_opaque_and_foreign_measures_providers() {
-    let directory = tempfile::tempdir().expect("temporary Measures-binding fixture");
-    let path = directory.path().join("measures-binding.ms");
-    generate_fixture(&path);
-    let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-
+fn selected_observation_rejects_opaque_measures_providers() {
     assert!(matches!(
         super::SelectedObservationMeasures::new(Arc::new(OpaqueTestMeasures)),
         Err(super::SelectedObservationMeasuresError::UnaccountedProvider)
-    ));
-
-    let foreign = super::SelectedObservationMeasures::new(Arc::new(
-        AccountedTestMeasures::with_identity(91, 0),
-    ))
-    .expect("acquire foreign provider state");
-    let foreign_binding = ObservationSourceBinding::new(
-        source_ordinal(source),
-        content_budget_for_rows(&problem, source, 1, 1),
-    );
-    assert!(matches!(
-        BoundSelectedObservation::open(&problem, foreign, vec![foreign_binding]),
-        Err(super::BoundSelectedObservationError::Measures(
-            super::SelectedObservationMeasuresError::ReferenceIdentityMismatch { .. }
-        ))
-    ));
-}
-
-#[test]
-fn selected_observation_rejects_missing_substituted_and_unexpected_ephemeris_before_source_open() {
-    let directory = tempfile::tempdir().expect("temporary ephemeris-binding fixture");
-    let absent_path = directory.path().join("source-must-not-open.ms");
-    let moving = compiled_problem_with_centres(
-        &absent_path,
-        2,
-        CentreLaws::new(
-            PhaseCentreLaw::Ephemeris("Mars".to_string()),
-            DelayCentreLaw::PhaseTrackingCentre,
-            PointingCentreLaw::PhaseTrackingCentre,
-        ),
-    );
-    let moving_source = &moving.inputs().observation_snapshot().sources()[0];
-    let budget = SelectedObservationContentBudget::new(1 << 20, 1, 4);
-
-    let missing = BoundSelectedObservation::open(
-        &moving,
-        test_measures(&moving),
-        vec![ObservationSourceBinding::new(
-            source_ordinal(moving_source),
-            budget,
-        )],
-    )
-    .err()
-    .expect("required ephemeris must fail before opening the absent source");
-    assert!(matches!(
-        missing,
-        super::BoundSelectedObservationError::EphemerisReferenceMismatch {
-            measurement_set,
-            expected: Some(expected),
-            actual: None,
-        } if measurement_set == moving_source.input_ordinal() && expected == identity(90)
-    ));
-
-    let substituted = crate::SelectedObservationEphemeris::named(
-        "Mars",
-        identity(91),
-        budget.reference_data_budget(),
-    )
-    .expect("admit substituted ephemeris fixture");
-    let substituted = BoundSelectedObservation::open(
-        &moving,
-        test_measures(&moving),
-        vec![
-            ObservationSourceBinding::new(source_ordinal(moving_source), budget)
-                .with_ephemeris(Some(substituted)),
-        ],
-    )
-    .err()
-    .expect("substituted ephemeris must fail before opening the absent source");
-    assert!(matches!(
-        substituted,
-        super::BoundSelectedObservationError::EphemerisReferenceMismatch {
-            measurement_set,
-            expected: Some(expected),
-            actual: Some(actual),
-        } if measurement_set == moving_source.input_ordinal()
-            && expected == identity(90)
-            && actual == identity(91)
-    ));
-
-    let fixed = compiled_problem(&absent_path, 2);
-    let fixed_source = &fixed.inputs().observation_snapshot().sources()[0];
-    let unexpected = crate::SelectedObservationEphemeris::named(
-        "Mars",
-        identity(90),
-        budget.reference_data_budget(),
-    )
-    .expect("admit unexpected ephemeris fixture");
-    let unexpected = BoundSelectedObservation::open(
-        &fixed,
-        test_measures(&fixed),
-        vec![
-            ObservationSourceBinding::new(source_ordinal(fixed_source), budget)
-                .with_ephemeris(Some(unexpected)),
-        ],
-    )
-    .err()
-    .expect("unexpected ephemeris must fail before opening the absent source");
-    assert!(matches!(
-        unexpected,
-        super::BoundSelectedObservationError::EphemerisReferenceMismatch {
-            measurement_set,
-            expected: None,
-            actual: Some(actual),
-        } if measurement_set == fixed_source.input_ordinal() && actual == identity(90)
     ));
 }
 
@@ -836,23 +636,19 @@ fn selected_observation_accepts_exact_ephemeris_within_its_budget() {
         2,
         CentreLaws::new(
             PhaseCentreLaw::Ephemeris("Mars".to_string()),
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::PhaseTrackingCentre,
         ),
     );
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     let budget = SelectedObservationContentBudget::new(64 << 20, 1, 4);
-    let ephemeris = crate::SelectedObservationEphemeris::named(
-        "Mars",
-        identity(90),
-        budget.reference_data_budget(),
-    )
-    .expect("admit exact ephemeris fixture");
+    let ephemeris =
+        crate::SelectedObservationEphemeris::named("Mars", budget.reference_data_budget())
+            .expect("admit exact ephemeris fixture");
     let binding = ObservationSourceBinding::new(source_ordinal(source), budget)
         .with_ephemeris(Some(ephemeris.clone()));
     let reference_data_bytes = binding.reference_data_bytes();
     assert!(reference_data_bytes > 0);
-    BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
+    BoundSelectedObservation::open(&problem, test_measures(), vec![binding])
         .expect("open exact ephemeris binding");
 
     let tight = ObservationSourceBinding::new(
@@ -861,7 +657,7 @@ fn selected_observation_accepts_exact_ephemeris_within_its_budget() {
     )
     .with_ephemeris(Some(ephemeris));
     assert!(matches!(
-        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![tight]),
+        BoundSelectedObservation::open(&problem, test_measures(), vec![tight]),
         Err(super::BoundSelectedObservationError::ReferenceDataBudgetExceeded {
             required_bytes,
             ..
@@ -910,15 +706,11 @@ fn cube_traversals_report_native_channels_and_their_output_frame_centres() {
             (
                 sample.channel.channel_index,
                 sample.channel.frequency_centre_hz,
-                [
-                    sample.channel.frequency_lower_hz,
-                    sample.channel.frequency_upper_hz,
-                ],
             )
         };
-        assert_eq!(channel(&samples[0]), (0, 1.4e9, [1.3995e9, 1.4005e9]));
+        assert_eq!(channel(&samples[0]), (0, 1.4e9));
         assert_eq!(channel(&samples[1]), channel(&samples[0]));
-        assert_eq!(channel(&samples[2]), (2, 1.402e9, [1.4015e9, 1.4025e9]));
+        assert_eq!(channel(&samples[2]), (2, 1.402e9));
         assert_eq!(channel(&samples[3]), channel(&samples[2]));
     }
 }
@@ -959,10 +751,10 @@ fn selected_channels_report_exact_centres_including_flagged_channels() {
         ms.save().expect("save geometry fixture");
         drop(ms);
         let base = compiled_problem(&path, 2);
-        let source = &base.inputs().observation_snapshot().sources()[0];
+        let source = &base.observation().sources()[0];
         let selection = source.selection();
-        let snapshot = compile_observation(ObservationSnapshotInput::new(
-            vec![ObservationSourceInput::new(
+        let snapshot = compile_observation(ObservationSnapshotInput::new(vec![
+            ObservationSourceInput::new(
                 source.provenance().clone(),
                 ObservationSelection::new(
                     selection.rows().clone(),
@@ -973,16 +765,14 @@ fn selected_channels_report_exact_centres_including_flagged_channels() {
                 ),
                 source.columns(),
                 source.corrected_data_present(),
-            )],
-            vec![(ReferenceDataKind::Measures, identity(90))],
-            ModelStateIdentity::Empty,
-        ))
+            ),
+        ]))
         .expect("compile exact selected channels");
         let problem = compile(ProblemInput::new(
             specification(),
             geometry(),
-            ProblemInputIdentities::new(snapshot),
-            model_lifecycle(ModelStateIdentity::Empty),
+            snapshot,
+            model_lifecycle(),
         ))
         .expect("compile geometry problem");
         let samples = stream_rows(&problem, 1);
@@ -1018,8 +808,8 @@ fn real_ms_cube_traversal_uses_the_native_field_frame_for_output_conversion() {
             channel_boundaries_hz: vec![1.39995e9, 1.40005e9, 1.40015e9],
         },
     );
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let expected_measures = test_measures(&problem);
+    let source = &problem.observation().sources()[0];
+    let expected_measures = test_measures();
     let expected_output_frame = MeasFrame::new()
         .with_measures(expected_measures.provider())
         .with_epoch(MEpoch::from_mjd(59_000.25, EpochRef::UTC))
@@ -1035,7 +825,6 @@ fn real_ms_cube_traversal_uses_the_native_field_frame_for_output_conversion() {
     let mut values = Vec::new();
 
     for sample in &samples {
-        assert_eq!(sample.channel.frequency_frame, FrequencyFrame::Topocentric);
         let frame = observation
             .source(0)
             .geometry_engine()
@@ -1098,9 +887,9 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
     let path = directory.path().join("measures-budget.ms");
     generate_fixture(&path);
     let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
 
-    let baseline_measures = test_measures(&problem);
+    let baseline_measures = test_measures();
     let baseline_shared_bytes = selected_observation_shared_bytes(&baseline_measures);
     let baseline_budget =
         content_budget_for_rows_with_shared_bytes(&problem, source, baseline_shared_bytes, 1, 1);
@@ -1160,7 +949,6 @@ fn retained_opened_table_metadata_is_charged_once_for_oversized_variable_referen
     generate_fixture(&path);
     let centres = CentreLaws::new(
         PhaseCentreLaw::Observation,
-        DelayCentreLaw::PhaseTrackingCentre,
         PointingCentreLaw::Observation(ObservationPointingLaw::new(
             PointingDirectionColumn::Direction,
             PointingDirectionSemantic::AntennaBoresight,
@@ -1171,7 +959,7 @@ fn retained_opened_table_metadata_is_charged_once_for_oversized_variable_referen
         )),
     );
     let baseline_problem = compiled_problem_with_centres(&path, 2, centres.clone());
-    let baseline_source = &baseline_problem.inputs().observation_snapshot().sources()[0];
+    let baseline_source = &baseline_problem.observation().sources()[0];
     let baseline_budget = content_budget_for_rows(&baseline_problem, baseline_source, 1, 1);
     let baseline =
         BoundObservationSource::open(&baseline_problem, baseline_source, baseline_budget)
@@ -1231,7 +1019,7 @@ fn retained_opened_table_metadata_is_charged_once_for_oversized_variable_referen
     measurement_set.save().expect("save oversized MEASINFO");
 
     let problem = compiled_problem_with_centres(&path, 2, centres);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     assert!(matches!(
         BoundObservationSource::open(&problem, source, baseline_budget,),
         Err(super::BoundObservationSourceError::ContentPlan(
@@ -1310,7 +1098,6 @@ fn variable_pointing_string_references_are_read_without_retaining_table_state() 
         2,
         CentreLaws::new(
             PhaseCentreLaw::Observation,
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::Observation(ObservationPointingLaw::new(
                 PointingDirectionColumn::Direction,
                 PointingDirectionSemantic::AntennaBoresight,
@@ -1321,7 +1108,7 @@ fn variable_pointing_string_references_are_read_without_retaining_table_state() 
             )),
         ),
     );
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     let two_row_budget = content_budget_for_rows(&problem, source, 2, 1);
     let two_rows = open_observation(&problem, source, two_row_budget)
         .expect("open variable-string reference observation");
@@ -1345,7 +1132,7 @@ fn retained_predicate_catalog_is_charged_before_construction() {
     let path = directory.path().join("predicate-budget.ms");
     generate_fixture(&path);
     let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     let admitted = BoundObservationSource::open(
         &problem,
         source,
@@ -1375,7 +1162,7 @@ fn retained_predicate_catalog_is_charged_before_construction() {
 
 #[test]
 fn frontend_row_projection_uses_the_canonical_bounded_observation_evaluator() {
-    assert_eq!(SelectedObservationRow::STORAGE_BYTES_PER_ROW, 73);
+    assert_eq!(SelectedObservationRow::STORAGE_BYTES_PER_ROW, 65);
     let directory = tempfile::tempdir().expect("temporary row-projection fixture");
     let path = directory.path().join("row-projection.ms");
     generate_fixture(&path);
@@ -1440,7 +1227,7 @@ fn selected_observation_residency_is_cardinality_independent() {
     generate_fixture_with_rows(&large_path, 64);
 
     let small_problem = compiled_problem(&small_path, 4);
-    let small_source = &small_problem.inputs().observation_snapshot().sources()[0];
+    let small_source = &small_problem.observation().sources()[0];
     let synchronous_budget = content_budget_for_rows(&small_problem, small_source, 1, 1);
     let synchronous =
         BoundObservationSource::open(&small_problem, small_source, synchronous_budget)
@@ -1456,7 +1243,7 @@ fn selected_observation_residency_is_cardinality_independent() {
     );
 
     let large_problem = compiled_problem(&large_path, 64);
-    let large_source = &large_problem.inputs().observation_snapshot().sources()[0];
+    let large_source = &large_problem.observation().sources()[0];
     let large_budget = content_budget_for_rows(&large_problem, large_source, 1, 1);
     let large = BoundObservationSource::open(&large_problem, large_source, large_budget)
         .expect("bind large selected observation");
@@ -1513,7 +1300,7 @@ fn numeric_blocks_skip_unused_parallactic_angles() {
     let path = directory.path().join("numeric-stream.ms");
     generate_fixture_with_rows(&path, 4);
     let problem = compiled_problem(&path, 4);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     let observation = open_observation(
         &problem,
         source,
@@ -1554,7 +1341,7 @@ fn a_stream_whose_main_walk_finds_other_than_the_compiled_rows_does_not_complete
     // for a MAIN that gained or lost a selected row after compile.
     for compiled_rows in [3_u64, 5] {
         let problem = compiled_problem(&path, compiled_rows as usize);
-        let source = &problem.inputs().observation_snapshot().sources()[0];
+        let source = &problem.observation().sources()[0];
         let budget = content_budget_for_rows(&problem, source, 1, 1);
         // A window that reaches no channel skips every block's payload but
         // still walks, and counts, every selected row.
@@ -1583,12 +1370,70 @@ fn a_stream_whose_main_walk_finds_other_than_the_compiled_rows_does_not_complete
 }
 
 #[test]
+fn a_sparse_selection_streams_exactly_its_rows_and_their_samples() {
+    const ROWS: usize = 5;
+    const LAST: u64 = ROWS as u64 - 1;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("sparse.ms");
+    generate_fixture_with_rows(&path, ROWS);
+    let dense = stream_rows(&compiled_problem(&path, ROWS), 1)
+        .into_iter()
+        .filter(|sample| matches!(sample.row.physical_row, 0 | LAST))
+        .collect::<Vec<_>>();
+    assert!(!dense.is_empty());
+
+    // The interior rows move to a DATA_DESCRIPTION the selection does not
+    // name, so the predicate admits only the first and last physical rows.
+    let mut main = Table::open(TableOptions::new(&path)).expect("open fixture MAIN");
+    for row in 1..ROWS - 1 {
+        main.row_accessor_mut()
+            .set_cell(row, "DATA_DESC_ID", Value::Scalar(ScalarValue::Int32(7)))
+            .expect("move an interior row out of the selection");
+    }
+    main.flush().expect("persist the sparse fixture");
+    drop(main);
+    let selected_rows = SelectedRows::from_ordered_main_rows(
+        ROWS as u64,
+        [SelectedMainRow::new(0, 0), SelectedMainRow::new(LAST, 0)],
+    )
+    .expect("sparse selected-row manifest");
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![fixture_source_input(
+        &path,
+        fixture_selection(
+            selected_rows,
+            RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
+        ),
+    )]))
+    .expect("compile the sparse selection");
+    let problem = compile(ProblemInput::new(
+        specification(),
+        geometry(),
+        snapshot,
+        model_lifecycle(),
+    ))
+    .expect("compile the sparse problem");
+
+    // With two rows per block both selected rows share one fill, whose
+    // physical rows are not contiguous.
+    for rows_per_block in [1, 2] {
+        let sparse = stream_rows(&problem, rows_per_block);
+        let mut rows = sparse
+            .iter()
+            .map(|sample| sample.row.physical_row)
+            .collect::<Vec<_>>();
+        rows.dedup();
+        assert_eq!(rows, [0, LAST], "{rows_per_block} rows per block");
+        assert_eq!(sparse, dense, "{rows_per_block} rows per block");
+    }
+}
+
+#[test]
 fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("numeric-chunks.ms");
     generate_fixture_with_rows(&path, 17);
     let problem = compiled_problem(&path, 17);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     let selected = open_observation(
         &problem,
         source,
@@ -1681,7 +1526,7 @@ fn refillable_block_stream_reads_whole_numeric_blocks_and_returns_the_owner() {
     let path = directory.path().join("block-stream.ms");
     generate_fixture_with_rows(&path, 4);
     let problem = compiled_problem(&path, 4);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     let observation = open_observation(
         &problem,
         source,
@@ -1790,9 +1635,9 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     let second_path = directory.path().join("second.ms");
     generate_fixture(&first_path);
     generate_fixture(&second_path);
-    let problem = compiled_problem_with_sources(&[(&first_path, 1, 2), (&second_path, 2, 2)]);
-    let sources = problem.inputs().observation_snapshot().sources();
-    let one_row_measures = test_measures(&problem);
+    let problem = compiled_problem_with_sources(&[(&first_path, 2), (&second_path, 2)]);
+    let sources = problem.observation().sources();
+    let one_row_measures = test_measures();
     let one_row_bindings: Vec<_> = sources
         .iter()
         .enumerate()
@@ -1813,7 +1658,7 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
             )
         })
         .collect();
-    let two_row_measures = test_measures(&problem);
+    let two_row_measures = test_measures();
     let mut two_row_bindings: Vec<_> = sources
         .iter()
         .enumerate()
@@ -1840,7 +1685,7 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     let two_rows = BoundSelectedObservation::open(&problem, two_row_measures, two_row_bindings)
         .expect("bind reordered source budgets by snapshot position");
 
-    let shared_measures_bytes = test_measures(&problem).retained_bytes();
+    let shared_measures_bytes = test_measures().retained_bytes();
     for (source_index, source) in sources.iter().enumerate() {
         let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())
             .expect("open multi-source fixture for uncharged comparison");
@@ -1876,39 +1721,22 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
         one_row_samples, two_row_samples,
         "physical source and row blocking are absent from the selected samples"
     );
-    assert_eq!(
-        one_row_samples
-            .as_chunks::<8>()
-            .0
-            .iter()
-            .map(|samples| samples[0].row.measurement_set)
-            .collect::<Vec<_>>(),
-        problem
-            .selected_observation()
-            .read_set()
-            .sources()
-            .iter()
-            .map(|source| source.measurement_set())
-            .collect::<Vec<_>>()
-    );
     let (_, repeated) = stream(&problem, one_row).expect("repeat the retained traversal");
     assert_eq!(repeated, one_row_samples);
 }
 
 #[test]
-fn retained_selected_samples_evaluate_fixed_centres_and_uvw_coordinates() {
+fn retained_selected_samples_evaluate_fixed_pointing_centres() {
     let directory = tempfile::tempdir().expect("temporary fixed-centre fixture");
     let path = directory.path().join("fixed.ms");
     generate_fixture(&path);
     let phase = SkyDirection::new(DirectionFrame::J2000, 0.7, -0.2);
-    let delay = SkyDirection::new(DirectionFrame::J2000, 0.8, -0.25);
     let pointing = SkyDirection::new(DirectionFrame::J2000, 0.9, -0.3);
     let problem = compiled_problem_with_centres(
         &path,
         2,
         CentreLaws::new(
             PhaseCentreLaw::Fixed(phase),
-            DelayCentreLaw::Fixed(delay),
             PointingCentreLaw::Fixed(pointing),
         ),
     );
@@ -1917,13 +1745,8 @@ fn retained_selected_samples_evaluate_fixed_centres_and_uvw_coordinates() {
     assert_eq!(samples.len(), 8);
     for sample in &samples {
         let coordinates = &sample.row.coordinates;
-        assert_eq!(coordinates.phase_direction, phase);
-        assert_eq!(coordinates.delay_direction, delay);
         assert_eq!(coordinates.pointing_directions.antenna1, pointing);
         assert_eq!(coordinates.pointing_directions.antenna2, pointing);
-        assert_ne!(coordinates.transformed_uvw_m, coordinates.raw_uvw_m);
-        assert_eq!(coordinates.density_uvw_m, coordinates.raw_uvw_m);
-        assert_ne!(coordinates.phase_shift_m, 0.0);
     }
 }
 
@@ -1935,7 +1758,6 @@ fn retained_mosaic_projection_uses_girar_uvw_with_adjoint_phase_sign() {
     let phase = SkyDirection::new(DirectionFrame::J2000, 0.7, -0.2);
     let centres = CentreLaws::new(
         PhaseCentreLaw::Fixed(phase),
-        DelayCentreLaw::PhaseTrackingCentre,
         PointingCentreLaw::PhaseTrackingCentre,
     );
     let problem = compiled_problem_with_geometry(
@@ -1943,7 +1765,7 @@ fn retained_mosaic_projection_uses_girar_uvw_with_adjoint_phase_sign() {
         2,
         geometry_with_centres_and_uvw(centres, UvwCoordinateLaw::MosaicPhaseTrackingCentre),
     );
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     let bound = open_observation(
         &problem,
         source,
@@ -1989,21 +1811,17 @@ fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
         2,
         CentreLaws::new(
             PhaseCentreLaw::Ephemeris("Mars".to_string()),
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::PhaseTrackingCentre,
         ),
     );
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     let budget = SelectedObservationContentBudget::new(64 << 20, 1, 4);
-    let ephemeris = crate::SelectedObservationEphemeris::named(
-        "Mars",
-        identity(90),
-        budget.reference_data_budget(),
-    )
-    .expect("admit the Mars ephemeris");
+    let ephemeris =
+        crate::SelectedObservationEphemeris::named("Mars", budget.reference_data_budget())
+            .expect("admit the Mars ephemeris");
     let observation = BoundSelectedObservation::open(
         &problem,
-        test_measures(&problem),
+        test_measures(),
         vec![
             ObservationSourceBinding::new(source_ordinal(source), budget)
                 .with_ephemeris(Some(ephemeris)),
@@ -2018,9 +1836,11 @@ fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
         .find(|sample| sample.row.physical_row == 1)
         .expect("second selected row")
         .row;
+    // Pointing follows the phase-tracking centre, so the pointing direction
+    // is the row's evaluated ephemeris direction.
     assert_ne!(
-        first.coordinates.phase_direction,
-        second_row.coordinates.phase_direction
+        first.coordinates.pointing_directions.antenna1,
+        second_row.coordinates.pointing_directions.antenna1
     );
     assert_ne!(
         first.domain_projections.iter().next().unwrap().model(),
@@ -2028,13 +1848,6 @@ fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
         "moving rows must not retain one fixed primary-domain projection",
     );
     for sample in &samples {
-        let coordinates = &sample.row.coordinates;
-        assert_eq!(coordinates.phase_direction, coordinates.delay_direction);
-        assert_eq!(
-            coordinates.phase_direction,
-            coordinates.pointing_directions.antenna1
-        );
-        assert_ne!(coordinates.phase_shift_m, 0.0);
         let primary = sample
             .row
             .domain_projections
@@ -2042,8 +1855,7 @@ fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
             .next()
             .expect("primary image-domain projection")
             .model();
-        assert_eq!(primary.transformed_uvw_m(), coordinates.transformed_uvw_m);
-        assert_eq!(primary.phase_shift_m(), coordinates.phase_shift_m);
+        assert_ne!(primary.phase_shift_m(), 0.0);
     }
 }
 
@@ -2071,7 +1883,6 @@ fn retained_selected_samples_preserve_bounded_per_antenna_pointing_directions() 
         2,
         CentreLaws::new(
             PhaseCentreLaw::Observation,
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::Observation(ObservationPointingLaw::new(
                 PointingDirectionColumn::Direction,
                 PointingDirectionSemantic::AntennaBoresight,
@@ -2082,7 +1893,7 @@ fn retained_selected_samples_preserve_bounded_per_antenna_pointing_directions() 
             )),
         ),
     );
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     let one_row = BoundObservationSource::open(
         &problem,
         source,
@@ -2147,19 +1958,23 @@ fn observation_pointing_missing_policy_is_explicit_and_fail_closed() {
         2,
         CentreLaws::new(
             PhaseCentreLaw::Observation,
-            DelayCentreLaw::PhaseTrackingCentre,
             observation_pointing(MissingPointingPolicy::UsePhaseTrackingCentre),
         ),
     );
-    for sample in stream_rows(&fallback_problem, 2) {
-        let coordinates = &sample.row.coordinates;
+    // The phase-tracking centre is the observation direction, the same
+    // direction the field-centre pointing law evaluates.
+    let field_centre_problem = compiled_problem_with_centres(
+        &path,
+        2,
+        CentreLaws::new(PhaseCentreLaw::Observation, PointingCentreLaw::FieldCentre),
+    );
+    let field_centre = stream_rows(&field_centre_problem, 2);
+    let fallback = stream_rows(&fallback_problem, 2);
+    assert_eq!(fallback.len(), field_centre.len());
+    for (sample, field_centre) in fallback.iter().zip(&field_centre) {
         assert_eq!(
-            coordinates.pointing_directions.antenna1,
-            coordinates.phase_direction
-        );
-        assert_eq!(
-            coordinates.pointing_directions.antenna2,
-            coordinates.phase_direction
+            sample.row.coordinates.pointing_directions,
+            field_centre.row.coordinates.pointing_directions
         );
     }
 
@@ -2168,11 +1983,10 @@ fn observation_pointing_missing_policy_is_explicit_and_fail_closed() {
         2,
         CentreLaws::new(
             PhaseCentreLaw::Observation,
-            DelayCentreLaw::PhaseTrackingCentre,
             observation_pointing(MissingPointingPolicy::Reject),
         ),
     );
-    let source = &rejecting_problem.inputs().observation_snapshot().sources()[0];
+    let source = &rejecting_problem.observation().sources()[0];
     let observation = open_observation(
         &rejecting_problem,
         source,
@@ -2255,7 +2069,6 @@ fn observation_pointing_interpolates_each_antenna_on_the_shortest_arc() {
         2,
         CentreLaws::new(
             PhaseCentreLaw::Observation,
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::Observation(ObservationPointingLaw::new(
                 PointingDirectionColumn::Direction,
                 PointingDirectionSemantic::AntennaBoresight,
@@ -2312,18 +2125,10 @@ fn selected_rows_pair_owner_derived_heterogeneous_apertures_with_antenna_pointin
 
     let centres = CentreLaws::new(
         PhaseCentreLaw::Observation,
-        DelayCentreLaw::PhaseTrackingCentre,
         observation_pointing(MissingPointingPolicy::Reject),
     );
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source_input(&path, 1, 2)],
-        vec![
-            (ReferenceDataKind::Measures, identity(90)),
-            (ReferenceDataKind::Instrument, identity(91)),
-        ],
-        ModelStateIdentity::Empty,
-    ))
-    .expect("compile heterogeneous observation");
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![source_input(&path, 2)]))
+        .expect("compile heterogeneous observation");
     let science = ScientificContract::new(
         SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
         MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
@@ -2336,8 +2141,8 @@ fn selected_rows_pair_owner_derived_heterogeneous_apertures_with_antenna_pointin
             vec![PolarizationCoordinate::StokesI],
         ),
         geometry_with_centres(centres),
-        ProblemInputIdentities::new(snapshot.clone()),
-        model_lifecycle(snapshot.model()),
+        snapshot,
+        model_lifecycle(),
     ))
     .expect("compile heterogeneous response problem");
     let samples = stream_rows(&problem, 2);
@@ -2362,20 +2167,19 @@ fn multi_spw_selection_is_block_invariant_across_prediction_and_residual_replays
     let path = directory.path().join("multi-spw.ms");
     generate_fixture(&path);
     extend_fixture_with_second_spw(&path);
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![multi_spw_source_input(&path, 1)],
-        vec![(ReferenceDataKind::Measures, identity(90))],
-        ModelStateIdentity::Empty,
-    ))
-    .expect("compile multi-SPW observation");
+    let snapshot =
+        compile_observation(ObservationSnapshotInput::new(vec![multi_spw_source_input(
+            &path,
+        )]))
+        .expect("compile multi-SPW observation");
     let problem = compile(ProblemInput::new(
         specification(),
         geometry(),
-        ProblemInputIdentities::new(snapshot.clone()),
-        model_lifecycle(snapshot.model()),
+        snapshot,
+        model_lifecycle(),
     ))
     .expect("compile multi-SPW problem");
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     let one_row = open_observation(
         &problem,
         source,
@@ -2481,7 +2285,7 @@ fn open_observation(
             .expect("derive the POINTING query domain"),
         );
     }
-    BoundSelectedObservation::open(problem, test_measures(problem), vec![binding])
+    BoundSelectedObservation::open(problem, test_measures(), vec![binding])
 }
 
 /// Every selected sample in stream order, read through the production block
@@ -2494,7 +2298,7 @@ fn stream(
     let mut source = observation.into_block_stream(problem);
     let mut block = source.create_storage();
     let channels = problem
-        .selected_observation()
+        .observation_transaction()
         .read_set()
         .sources()
         .iter()
@@ -2548,7 +2352,7 @@ fn stream(
 /// Open the one source of `problem` with blocks of `rows` rows and read
 /// every selected sample.
 fn stream_rows(problem: &casa_imaging_model::CompiledProblem, rows: usize) -> Vec<Sample> {
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     let observation = open_observation(
         problem,
         source,
@@ -2739,42 +2543,13 @@ fn owner_resolution_request(
     path: &std::path::Path,
     row_count: usize,
 ) -> SelectedObservationResolutionRequest {
-    owner_resolution_request_with_identity(path, row_count, identity(2))
-}
-
-#[cfg(unix)]
-fn owner_resolution_request_with_identity(
-    path: &std::path::Path,
-    row_count: usize,
-    selection_request: LogicalIdentity,
-) -> SelectedObservationResolutionRequest {
-    owner_resolution_request_with_identity_and_channels(
-        path,
-        row_count,
-        selection_request,
-        vec![0, 2],
-    )
+    owner_resolution_request_with_channels(path, row_count, vec![0, 2])
 }
 
 #[cfg(unix)]
 fn owner_resolution_request_with_channels(
     path: &std::path::Path,
     row_count: usize,
-    channel_indices: Vec<u32>,
-) -> SelectedObservationResolutionRequest {
-    owner_resolution_request_with_identity_and_channels(
-        path,
-        row_count,
-        identity(2),
-        channel_indices,
-    )
-}
-
-#[cfg(unix)]
-fn owner_resolution_request_with_identity_and_channels(
-    path: &std::path::Path,
-    row_count: usize,
-    selection_request: LogicalIdentity,
     channel_indices: Vec<u32>,
 ) -> SelectedObservationResolutionRequest {
     let selected_rows = SelectedRows::from_ordered_main_rows(
@@ -2784,27 +2559,15 @@ fn owner_resolution_request_with_identity_and_channels(
     .expect("owner selected-row manifest");
     SelectedObservationResolutionRequest::new(
         path.display().to_string(),
-        selection_request,
         fixture_selection_with_channels(
             selected_rows,
-            RowSelection::new(
-                IdSelection::All,
-                TimeSelection::All,
-                UvSelection::All,
-                AntennaSelection::All,
-                IdSelection::All,
-                IdSelection::All,
-                IntentSelection::All,
-                IdSelection::All,
-            ),
+            RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
             channel_indices,
         ),
         VisibilityColumn::Data,
         WeightColumn::Weight,
-        Vec::new(),
-        ModelStateIdentity::Empty,
         SelectedObservationContentBudget::new(64 << 20, 1, 4),
-        Arc::new(AccountedTestMeasures::with_identity(90, 0)),
+        Arc::new(AccountedTestMeasures::with_heap_bytes(0)),
     )
 }
 
@@ -2822,26 +2585,11 @@ fn owner_problem_and_access(
     let problem = compile(ProblemInput::new(
         specification(),
         geometry(),
-        ProblemInputIdentities::new(snapshot.clone()),
-        model_lifecycle(snapshot.model()),
+        snapshot,
+        model_lifecycle(),
     ))
     .expect("compile owner problem");
     (problem, access)
-}
-
-fn main_time_mjd_seconds(measurement_set: &MeasurementSet, row: usize) -> f64 {
-    match measurement_set
-        .main_table()
-        .cell_accessor(row, "TIME")
-        .and_then(|cell| cell.scalar())
-        .expect("MAIN.TIME")
-    {
-        ScalarValue::Float64(value) => *value,
-        other => panic!(
-            "MAIN.TIME must be Float64, found {:?}",
-            other.primitive_type()
-        ),
-    }
 }
 
 /// The snapshot position a binding names for `source`.
@@ -2849,10 +2597,8 @@ fn source_ordinal(source: &ObservationSource) -> usize {
     source.input_ordinal()
 }
 
-fn test_measures(
-    problem: &casa_imaging_model::CompiledProblem,
-) -> super::SelectedObservationMeasures {
-    super::measures::test_selected_observation_measures(problem)
+fn test_measures() -> super::SelectedObservationMeasures {
+    super::measures::test_selected_observation_measures()
         .expect("bind deterministic Measures provider")
 }
 
@@ -2862,7 +2608,7 @@ fn content_budget_for_rows(
     target_rows_per_block: usize,
     maximum_live_blocks: usize,
 ) -> SelectedObservationContentBudget {
-    let measures = test_measures(problem);
+    let measures = test_measures();
     content_budget_for_rows_with_shared_bytes(
         problem,
         source,
@@ -2942,7 +2688,7 @@ fn compiled_problem(
     path: &std::path::Path,
     row_count: usize,
 ) -> casa_imaging_model::CompiledProblem {
-    compiled_problem_with_sources(&[(path, 1, row_count)])
+    compiled_problem_with_sources(&[(path, row_count)])
 }
 
 fn compiled_problem_with_polarization(
@@ -2950,11 +2696,9 @@ fn compiled_problem_with_polarization(
     row_count: usize,
     coordinates: Vec<PolarizationCoordinate>,
 ) -> casa_imaging_model::CompiledProblem {
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source_input(path, 1, row_count)],
-        vec![(ReferenceDataKind::Measures, identity(90))],
-        ModelStateIdentity::Empty,
-    ))
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![source_input(
+        path, row_count,
+    )]))
     .expect("compile polarized selected observation");
     compile(ProblemInput::new(
         specification_with_sampling_basis_and_polarization(
@@ -2963,8 +2707,8 @@ fn compiled_problem_with_polarization(
             coordinates,
         ),
         geometry(),
-        ProblemInputIdentities::new(snapshot.clone()),
-        model_lifecycle(snapshot.model()),
+        snapshot,
+        model_lifecycle(),
     ))
     .expect("compile polarized selected-observation problem")
 }
@@ -2981,11 +2725,9 @@ fn compiled_problem_with_sampling(
             channel_centres_hz, ..
         } => channel_centres_hz.len(),
     };
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source_input(path, 1, row_count)],
-        vec![(ReferenceDataKind::Measures, identity(90))],
-        ModelStateIdentity::Empty,
-    ))
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![source_input(
+        path, row_count,
+    )]))
     .expect("compile spectral-contribution observation");
     compile(ProblemInput::new(
         specification_with_sampling_and_basis(
@@ -2993,8 +2735,8 @@ fn compiled_problem_with_sampling(
             ReconstructionBasis::ChannelLocal { channels },
         ),
         geometry_with_spectral_wcs(wcs),
-        ProblemInputIdentities::new(snapshot),
-        model_lifecycle(ModelStateIdentity::Empty),
+        snapshot,
+        model_lifecycle(),
     ))
     .expect("compile spectral-contribution problem")
 }
@@ -3011,11 +2753,9 @@ fn compiled_problem_with_transformed_sampling(
             channel_centres_hz, ..
         } => channel_centres_hz.len(),
     };
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source_input(path, 1, row_count)],
-        vec![(ReferenceDataKind::Measures, identity(90))],
-        ModelStateIdentity::Empty,
-    ))
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![source_input(
+        path, row_count,
+    )]))
     .expect("compile transformed spectral-contribution observation");
     let geometry = geometry_with_spectral_wcs(wcs);
     let transformed = geometry
@@ -3033,8 +2773,8 @@ fn compiled_problem_with_transformed_sampling(
             ReconstructionBasis::ChannelLocal { channels },
         ),
         geometry.with_spectral(transformed),
-        ProblemInputIdentities::new(snapshot),
-        model_lifecycle(ModelStateIdentity::Empty),
+        snapshot,
+        model_lifecycle(),
     ))
     .expect("compile transformed spectral-contribution problem")
 }
@@ -3044,21 +2784,15 @@ fn compiled_problem_with_centres(
     row_count: usize,
     centres: CentreLaws,
 ) -> casa_imaging_model::CompiledProblem {
-    let mut references = vec![(ReferenceDataKind::Measures, identity(90))];
-    if matches!(centres.phase_tracking(), PhaseCentreLaw::Ephemeris(_)) {
-        references.push((ReferenceDataKind::Ephemeris, identity(90)));
-    }
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source_input(path, 1, row_count)],
-        references,
-        ModelStateIdentity::Empty,
-    ))
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![source_input(
+        path, row_count,
+    )]))
     .expect("compile fixed-centre observation");
     compile(ProblemInput::new(
         specification(),
         geometry_with_centres(centres),
-        ProblemInputIdentities::new(snapshot.clone()),
-        model_lifecycle(snapshot.model()),
+        snapshot,
+        model_lifecycle(),
     ))
     .expect("compile fixed-centre problem")
 }
@@ -3068,99 +2802,49 @@ fn compiled_problem_with_geometry(
     row_count: usize,
     geometry: GeometryInput,
 ) -> casa_imaging_model::CompiledProblem {
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source_input(path, 1, row_count)],
-        vec![(ReferenceDataKind::Measures, identity(90))],
-        ModelStateIdentity::Empty,
-    ))
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![source_input(
+        path, row_count,
+    )]))
     .expect("compile geometry fixture observation");
     compile(ProblemInput::new(
         specification(),
         geometry,
-        ProblemInputIdentities::new(snapshot.clone()),
-        model_lifecycle(snapshot.model()),
+        snapshot,
+        model_lifecycle(),
     ))
     .expect("compile geometry fixture problem")
 }
 
 fn compiled_problem_with_sources(
-    sources: &[(&std::path::Path, u8, usize)],
+    sources: &[(&std::path::Path, usize)],
 ) -> casa_imaging_model::CompiledProblem {
-    let references = vec![(ReferenceDataKind::Measures, identity(90))];
     let sources = sources
         .iter()
-        .map(|(path, source, row_count)| source_input(path, *source, *row_count))
+        .map(|(path, row_count)| source_input(path, *row_count))
         .collect();
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        sources,
-        references,
-        ModelStateIdentity::Empty,
-    ))
-    .expect("compile selected observation");
+    let snapshot = compile_observation(ObservationSnapshotInput::new(sources))
+        .expect("compile selected observation");
     compile(ProblemInput::new(
         specification(),
         geometry(),
-        ProblemInputIdentities::new(snapshot.clone()),
-        model_lifecycle(snapshot.model()),
+        snapshot,
+        model_lifecycle(),
     ))
     .expect("compile selected-observation problem")
 }
 
-fn source_input(path: &std::path::Path, source: u8, row_count: usize) -> ObservationSourceInput {
+fn source_input(path: &std::path::Path, row_count: usize) -> ObservationSourceInput {
     let selected_rows = SelectedRows::from_ordered_main_rows(
         row_count as u64,
         (0..row_count).map(|row| SelectedMainRow::new(row as u64, 0)),
     )
     .expect("selected row manifest");
-    source_input_with_selected_rows(path, source, selected_rows)
-}
-
-fn source_input_with_selected_rows(
-    path: &std::path::Path,
-    source: u8,
-    selected_rows: SelectedRows,
-) -> ObservationSourceInput {
-    source_input_with_selected_rows_and_filter(
-        path,
-        source,
-        selected_rows,
-        RowSelection::new(
-            IdSelection::All,
-            TimeSelection::All,
-            UvSelection::All,
-            AntennaSelection::All,
-            IdSelection::All,
-            IdSelection::All,
-            IntentSelection::All,
-            IdSelection::All,
-        ),
-    )
-}
-
-fn source_input_with_selected_rows_and_filter(
-    path: &std::path::Path,
-    source: u8,
-    selected_rows: SelectedRows,
-    rows_filter: RowSelection,
-) -> ObservationSourceInput {
-    source_input_with_selected_rows_filter_and_request(
-        path,
-        selected_rows,
-        rows_filter,
-        scoped_identity(source, 2),
-    )
-}
-
-fn source_input_with_selected_rows_filter_and_request(
-    path: &std::path::Path,
-    selected_rows: SelectedRows,
-    rows_filter: RowSelection,
-    selection_request: LogicalIdentity,
-) -> ObservationSourceInput {
     fixture_source_input(
         path,
-        fixture_selection(selected_rows, rows_filter),
-        selection_request,
+        fixture_selection(
+            selected_rows,
+            RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
+        ),
     )
 }
 
@@ -3168,10 +2852,9 @@ fn source_input_with_selected_rows_filter_and_request(
 fn fixture_source_input(
     path: &std::path::Path,
     selection: ObservationSelection,
-    selection_request: LogicalIdentity,
 ) -> ObservationSourceInput {
     ObservationSourceInput::new(
-        ObservationSourceProvenance::new(path.display().to_string(), selection_request),
+        ObservationSourceProvenance::new(path.display().to_string()),
         selection,
         SelectedColumns::new(
             VisibilityColumn::Data,
@@ -3209,7 +2892,7 @@ fn fixture_selection_with_channels(
     )
 }
 
-fn multi_spw_source_input(path: &std::path::Path, source: u8) -> ObservationSourceInput {
+fn multi_spw_source_input(path: &std::path::Path) -> ObservationSourceInput {
     let selected_rows = SelectedRows::from_ordered_main_rows(
         4,
         [
@@ -3222,16 +2905,7 @@ fn multi_spw_source_input(path: &std::path::Path, source: u8) -> ObservationSour
     .expect("multi-SPW selected row manifest");
     let selection = ObservationSelection::new(
         selected_rows,
-        RowSelection::new(
-            IdSelection::All,
-            TimeSelection::All,
-            UvSelection::All,
-            AntennaSelection::All,
-            IdSelection::All,
-            IdSelection::All,
-            IntentSelection::All,
-            IdSelection::All,
-        ),
+        RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
         vec![
             DataDescriptionSelection::new(0, 0, 0),
             DataDescriptionSelection::new(1, 1, 0),
@@ -3248,17 +2922,7 @@ fn multi_spw_source_input(path: &std::path::Path, source: u8) -> ObservationSour
             ],
         )],
     );
-    fixture_source_input(path, selection, scoped_identity(source, 2))
-}
-
-fn identity(byte: u8) -> LogicalIdentity {
-    LogicalIdentity::from_bytes([byte; 32])
-}
-
-fn scoped_identity(source: u8, byte: u8) -> LogicalIdentity {
-    let mut digest = [byte; 32];
-    digest[0] = source;
-    LogicalIdentity::from_bytes(digest)
+    fixture_source_input(path, selection)
 }
 
 fn specification() -> ProblemSpecification {
@@ -3352,7 +3016,6 @@ fn specification_with_science(
 fn geometry() -> GeometryInput {
     geometry_with_centres(CentreLaws::new(
         PhaseCentreLaw::Observation,
-        DelayCentreLaw::PhaseTrackingCentre,
         PointingCentreLaw::PhaseTrackingCentre,
     ))
 }
@@ -3465,7 +3128,6 @@ fn multidomain_geometry() -> GeometryInput {
         ],
         CentreLaws::new(
             PhaseCentreLaw::Observation,
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::PhaseTrackingCentre,
         ),
         UvwCoordinateLaw::PhaseTrackingCentre,

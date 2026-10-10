@@ -241,7 +241,7 @@ fn publish_products(
     publication: ApplicationPublication,
     team: &WorkerTeam,
 ) -> Result<Products, NativeError> {
-    let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
+    let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific);
     if let Some(masks) = reconstruction_masks.as_ref() {
         inputs = match masks {
             ReconstructionMaskSet::Shared(mask) => inputs.with_reconstruction_mask(mask)?,

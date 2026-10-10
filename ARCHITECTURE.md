@@ -18,7 +18,7 @@ coordinates, measures, and related workflows.
 | foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
 | shared numerics (`casa-numerics`) | Domain-neutral numerical algorithms reused by observation, calibration, and imaging owners | Rust numerical ecosystem crates only |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
-| native imaging contracts (`casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`) | Dependency-free logical schemas and commitments; the measurement operator (weighting, spectral resampling, gridding, degridding, FFT and normalization); minor-cycle solvers; authoritative model-state ingest, reprojection, delta, and completion algorithms; continuum product algorithms with bounded owned windows streamed directly to CASA staging and atomic individual-image replacement; process-level resource topology, policies, demand envelopes, arbitration and leases; the major-cycle pass, worker team and paged cube state; the Metal backend | ADR-0016 layering, enforced by `scripts/check-imaging-dependencies.py`: `casa-imaging-model` has no workspace dependencies; the operator and deconvolution depend on the model, `casa-fft` and `casa-numerics`; reconstruction and products depend inward on the model and domain-neutral numerics, with products also depending on reconstruction completions; runtime composes the operator, reconstruction and products; the Metal crate depends only on the operator |
+| native imaging contracts (`casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`) | Dependency-free logical schemas and commitments; the measurement operator (weighting, spectral resampling, gridding, degridding, FFT and normalization); minor-cycle solvers; authoritative model generations, deltas and final-model completion; continuum product algorithms with bounded owned windows streamed directly to CASA staging and atomic individual-image replacement; process-level resource topology, policies, demand envelopes, arbitration and leases; the major-cycle pass, worker team and paged cube state; the Metal backend | ADR-0016 layering, enforced by `scripts/check-imaging-dependencies.py`: `casa-imaging-model` has no workspace dependencies; the operator and deconvolution depend on the model, `casa-fft` and `casa-numerics`; reconstruction and products depend inward on the model and domain-neutral numerics, with products also depending on reconstruction completions; runtime composes the operator, reconstruction and products; the Metal crate depends only on the operator |
 | imaging application composition (`casa-imaging-application`) | Sole production composition seam across MeasurementSet authority, reconstruction, products, resources, execution, typed installed-implementation availability, and CASA product publication | Native imaging owners only; unavailable requests invoke no execution implementation |
 | domain libraries (`casa-ms`, `casa-simulation-synthesis`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence; simulation synthesis owns only the serial model predictor and Airy voltage pattern used by MeasurementSet simulation | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
@@ -52,8 +52,8 @@ become reconstruction-owned merely because both owners require them.
 ADR-0014 requires trusted in-process generation to transfer bounded owned windows
 directly into private CASA image staging without product content attestation,
 verification-only array rereads or an intermediate readable product store.
-Source/run association, inventory, shape, complete writes, metadata and I/O
-checks remain. Each image replacement is atomic; a failure leaves the run and
+Inventory, shape against the compiled problem, complete writes, metadata and
+I/O checks remain. Each image replacement is atomic; a failure leaves the run and
 its output set incomplete and requires rerun. There is no per-member resumable
 recovery, content-based idempotency or whole-set rollback protocol.
 Generated publication has only generation/write and terminal publication work;
@@ -63,9 +63,11 @@ window shape, finite-value and complete-coverage validation; the CASA writer
 owns physical I/O. Explicit pending, generated, published and consumed states
 make generation/publication failures terminal and completion available once.
 The same ownership rule applies to model lifecycle and normal-state completion:
-validate scientific values/support at introduction or modification, retain exact
-run/model/weighting/replay/coverage associations, and do not hash or reread full
-owned arrays just to assign completion authority. Routine telemetry stays
+validate scientific values/support at introduction or modification; a major
+cycle owns its final model and the normal state its pass forms and releases
+them together, so a residual stays paired with its model without identities;
+and do not hash or reread full owned arrays just to assign completion
+authority. Routine telemetry stays
 indexed in memory and persists a useful final summary, not full-plan checkpoints
 at each work/fence event or scans of historical receipts during admission.
 `casa-imaging-runtime` owns imaging execution (see Imaging execution): host
@@ -73,8 +75,7 @@ resources and the admission of each phase's memory, the major-cycle pass on its
 worker team and bounded source stream, cooperative cancellation, the paged cube
 state, the minor-cycle adapter and the run summary. It depends inward on the
 model, reconstruction, deconvolution, products, the operator and the Metal
-backend; it
-does not own reprojection algorithms. Metal runs inside the pass: with
+backend. Metal runs inside the pass: with
 `backend = metal` every owner grids through its own
 `casa_imaging_metal::MetalBackend`.
 
@@ -208,134 +209,83 @@ Additional constraints:
   enforced by `scripts/check-imaging-dependencies.py` in `just arch-check`
   (ADR-0016).
 
-The model's compile input is one `ProblemInput`, and there is exactly
-one `compile` / `plan` / `run` sequence. `compile` validates and canonicalizes
-logical science, including immutable coordinate and image-domain geometry.
-Compiled Geometry identity is derived only by `compile`; callers supply geometry
-laws, not an identity. Observation pointing records the selected MeasurementSet
+The model's compile input is one `ProblemInput`, compiled at one site in the
+application. `compile` validates and canonicalizes logical science, including
+immutable coordinate and image-domain geometry; callers supply geometry laws.
+Observation pointing records the selected MeasurementSet
 column and meaning plus timestamp, interpolation, extrapolation, and missing-row
 policies without evaluating rows. Spectral geometry retains exact channel
 centres and N+1 boundaries, or a linear WCS law that derives both exactly;
-spectral transforms remain unevaluated. `compile_observation` is the sole
-constructor of Observation Snapshot identity. It canonicalizes each resolved
-MeasurementSet field/time/UV/baseline/scan/observation/intent/array predicate,
-SPW/DDID/channel selection, correlation coordinate, selected data/flag/weight
-column, whether MAIN has `CORRECTED_DATA`, reference-data identity, and
-input-model identity.
-Selected MAIN rows retain source and selected counts, the exact used-DDID set,
-and the content-derived identity of the canonical ordered
-`(physical row, DATA_DESC_ID)` sequence. They do not retain the row corpus.
-Visibility samples, stored MAIN facts, content blocks, and execution order
-remain absent. Retained access re-evaluates the row predicate in physical MAIN
-order, validates the resulting sequence against that compact commitment, and
-keeps only the current bounded source block; a sparse selection therefore reads
-but never materializes the intervening physical row span. The snapshot is the
-storage owner's logical-manifest commitment, not an intrinsic digest of all
-MeasurementSet science bytes. Sources keep request order; the identity is
-independent of source location, which a separate provenance identity retains.
+spectral transforms remain unevaluated. `compile_observation` builds the
+Observation Snapshot, which is its sources in request order. Each source holds
+its position (`input_ordinal`), a provenance that is only the MeasurementSet
+locator, the canonical field, UV-distance and intent predicate, the DDID,
+SPW/channel and correlation selection, the selected data, flag and weight
+columns, and whether MAIN has `CORRECTED_DATA`. Selected MAIN rows are kept as
+the MAIN row count, the selected row count and the used-DDID set, not as a
+row list. Neither the snapshot nor its sources carry an identity. Each pass
+re-evaluates the row predicate in physical MAIN order and keeps only the
+current bounded block, so a sparse selection reads but never materializes the
+intervening rows.
 
-T17/#503 adds the native bounded Selected Observation path. `casa-ms` owns the
-retained read capability, canonical one-pass traversal, per-sample validation,
-and owner-minted terminal completion. Its sole content plan may read
-ahead into the explicitly charged live-block count and rotates those blocks in
-canonical consumer order; block size, read-ahead, and buffer slot are absent
-from content identity. The source budget charges the full retained lazy,
-read-locked MeasurementSet/Table object graph (schemas, keywords, column
-keywords, data-manager descriptors, paths, and lock state), the shared immutable
-selection and generation manifests, retained geometry and selected-coordinate
-catalogs, coordinate-construction and digest scratch, request and retained
-row-index vectors, POINTING queries/candidates/brackets/outputs, one-at-a-time
-variable direction-reference cell scratch, transient column-accessor names,
-and every simultaneously live content block before constructing the geometry
-engine or reading content.
-The canonical owner measures the allocated `Vec<BoundObservationSource>`
-capacity and charges its complete slot payload exactly once to the first
-source. That payload includes every inline identity, `MeasurementSet`, geometry
-engine, predicate and coordinate header, content plan, row-count flag, and
-padding; nested projections therefore charge only their heap allocations.
-While that owner is being built, it projects the complete live
-`Vec<ObservationSourceBinding>` graph before removing any binding. The
-first-source initialization peak charges the outer allocation at its actual
-capacity and each binding's POINTING query domain. The whole graph is charged
-once and is absent from retained residency after construction.
-Retained geometry and coordinate arrays use fixed boxed slices, including the
-mount-flag slice, so their payload is the exact immutable element count rather
-than a guessed collection capacity.
-Direction-reference evaluation borrows fixed and integer-mapped MEASINFO rather
-than cloning its retained `TabRefTypes`/`TabRefCodes` payload. The application
-also injects one explicitly acquired `SelectedObservationMeasures` capability.
-Its constructor accepts only the provider: the provider's prepared state
-supplies the inseparable authoritative identity, so a caller cannot relabel a
-foreign provider with the compiled Measures identity. `MeasuresRuntime`
-eagerly materializes all six immutable catalogs and derives that identity from
-their canonical scientific contents and snapshot provenance. Bounded binding
-rejects missing, foreign, opaque, or changed provider state; charges the
-provider's alignment-aware shared allocation and catalog residency once across
-the canonical source set; and rechecks both identity and residency before
-traversal and terminal completion. Geometry engines receive only that injected
-provider state and never discover runtime data inside the selected-observation
-path.
-`casa-imaging-model` owns the closed backend-free sample schema,
-compiler commitment, a closed validation pass, and a distinct content-derived
-generation computed from the actual canonical sample stream. Its affine
-incremental inspection cursor is an opaque workspace coordination type: only a
-compiled problem can construct it, its fields and generation encoder remain
-private, and applications and frontends cannot mint or complete one. This lets
-`casa-ms` validate bounded blocks without moving model semantics into the
-storage owner. The storage
-completion binds logical snapshot identity, provenance, physical access,
-content generation, and retained-access traversal. After synchronous work
-completion and every declared fence, if any, of the owning typed observation-read node
-settles, the runtime supplies a fresh, affine authority that binds that opaque
-storage completion to the execution attempt, owning node, exact settled fence
-set, and live lease epoch. A physical I/O fence alone cannot mint this proof.
-Equal science content may share a content generation while remaining distinct
-logical source and access commitments; prediction destination is provenance and
-therefore cannot split prediction and residual views of the same content
-generation. The displaced `casars-imager`
-`MsSelection`/`resolve_selection` preparation route is removed:
-its frontend projection delegates to the same bounded `casa-ms` predicate as
-native Selected Observation access.
+`casa-ms` owns the bounded Selected Observation read path. A run opens one
+`BoundSelectedObservation`, which holds a casacore read lock on each source's
+tables. Each pass turns it into one block stream (`into_block_stream`):
+`SelectedObservationBlockSource::fill_next` walks MAIN in physical order,
+applies the row predicate, and fills one reusable block with consecutive
+selected rows of one DDID: it keeps the row metadata the walk read, reads
+their visibility, flag and weight columns over the selected channel span and
+evaluates each row's geometry. `complete` refuses a stream that is
+not exhausted and returns the access for the next pass. For a channel-local
+cube with a linear spectral WCS and no continuum transform, a wave that covers
+only part of the cube and need not read whole rows streams through
+`into_windowed_block_stream` instead: it reads only the channels whose
+output-frame frequencies reach the wave, keeping the straddling channel at
+each edge, and skips a block that reaches none.
+
+Each source's content plan prices the retained table
+metadata, geometry engine, selection, predicate and coordinate catalogs, the
+Measures provider and ephemeris (charged once, to the first source), the
+POINTING catalog or AW pointing-epoch plan when the geometry needs one, one
+block over the selected channel span, and `CONSTRUCTION_SLACK_BYTES` for
+construction scratch. The block's row count is the largest whose envelope fits
+the source budget.
+
+The application passes a Measures provider in the
+`SelectedObservationResolutionRequest`; it supplies EOP values, TAI-UTC, IGRF
+coefficients, observatory positions, named-source directions and rest-line
+frequencies. Resolution wraps it in a `SelectedObservationMeasures`, whose
+constructor calls the provider's `prepare_bounded_state` (for
+`MeasuresRuntime`, eager materialization of all six catalogs) and refuses a
+provider that cannot report its retained bytes. The bound sources' geometry
+engines receive that provider and never discover runtime data inside the
+selected-observation path.
+
+`casa-imaging-model` owns the backend-free values a block lends to its
+consumers: per-row metadata, sample coordinates, per-domain UVW and
+phase-shift projections, pointing directions and antenna response classes
+(`SelectedObservationRunRow`, `SelectedObservationRunChannel`), and the
+borrowed visibility, flag and weight columns of a row (`SelectedNumericRow`).
+`casa-ms` fills them from MAIN and the compiled geometry; the application's
+`MeasurementSetSource` converts each block into the runtime's native rows.
 
 `casa-imaging-model` carries the dependency-free model-state schemas and the
-compiler-owned lifecycle commitment introduced by T28/#514.
-`casa-imaging-reconstruction::ModelLifecycle` is the solver-independent owner
-of model generations, ingest, reprojection, deltas, and affine final-model
-completion. The Compiled Problem commitment binds the sole target shape,
-observation and initial-model identities, typed WCS/basis/polarization source
-provenance, an opaque owner-derived reprojection commitment, exact bounds,
-Product Graph, Numerics Contract, selected conversion precision, canonical
-finite-`f64` state encoding, and explicit validity semantics. Reconstruction
-alone prepares the target-ordered samples; the model contract derives and
-validates the preparation, mapping, support, and proof identities atomically.
-Another Product or Numerics Contract is rejected.
-Aligned ingest is a fallible one-pass stream
-whose terminal source errors remain source errors. Reconstruction-derived
-target-ordered reprojection accepts only the closed direction, spectral-basis,
-and real parallel-hand polarization conversions owned by reconstruction: a
-source reader supplies typed geometry and samples but cannot supply mappings or
-fallbacks. The owner derives stencils, projected support, and exact evidence
-with only the target generation plus the current bounded stencil resident.
-Invalid support never aliases numeric zero; any invalid non-zero contributor
-invalidates its target, and uncovered targets remain invalid. Sparse deltas
-must be non-empty, non-zero, canonical, base-bound, within valid support and
-explicit bounds, and are applied in place only by the private authority seal
-that minted them. Resume preserves the exact generation named by the compiled
-input, after
-which new deltas bind the current attempt and epoch. The sole final affine
-operation consumes its private finalization authority and returns the next
-generation plus a distinct opaque reconstruction completion, never a Product
-Generation seal. Major Cycle, Minor Cycle, and Product Generation owners may
-consume this surface but cannot construct raw generations. No
-MeasurementSet/image persistence, runner, or model-column writer changes in
-T28.
+compiler-owned lifecycle commitment: the target shape, the bounds and the
+arithmetic precision. `casa-imaging-reconstruction::ModelLifecycle` owns a
+run's model: every run starts from the empty generation, and each major cycle's
+final model is the previous generation updated by the minor cycle's sparse
+terms, which must be canonical, non-zero, within valid support and within the
+bounds. Invalid support never aliases numeric zero. A `MajorCycle` owns its
+final model and the normal state its pass forms with that model, and releases
+them together as one `MajorCycleCompletion`, which the next major cycle
+consumes. Generations, completions and masks carry no identities: ownership
+pairs what belongs together. Callers cannot construct raw generations.
 
 The Compiled Problem also derives one Observation Transaction: the canonical
 read set of every consumed per-MS selection and selected columns, and the
 exact selected-cell scope of an optional `MODEL_DATA` or `CORRECTED_DATA`
 write. No
-runtime plan binds it (IF-6 deleted the plan, its binder and the receipts):
-the application resolves the selected observation once, every pass reads it
+runtime plan binds it: the application resolves the selected observation once, every pass reads it
 through the bounded source, and the final major-cycle pass writes the
 visibilities (see Imaging execution). Conventional image members and
 `MODEL_DATA` are separate side effects: failure of one never rolls back or
@@ -566,7 +516,7 @@ or provider semantics that bypass the Rust-owned contracts.
 protocol, and result presentation. `casa-imaging-application` owns the
 `ImagingRequest` and its validation, MeasurementSet expression
 resolution, bounded source access, installed-implementation admission, runtime policy, and
-independently atomic product publication. Resolved immutable selection identity
+independently atomic product publication. The resolved, immutable selection
 belongs to `casa-imaging-model`'s Observation Snapshot compiler. Scientific
 weighting, gridding/degridding, FFT, normalization, deconvolution, restoration,
 and product meaning reside only in their declared native owners.
@@ -629,7 +579,7 @@ progress events; the cycle loop logs worker counts and stage timings through
 default) runs the pass with one worker. All production FFTs use FFTW; there is
 no FFT backend selector or fallback.
 
-W-projection, AW-projection and mosaics run on the pass since IF-3. Facets,
+W-projection, AW-projection and mosaics run on the pass. Facets,
 `mtmfs` via cube and cubic spectral interpolation are not in the catalog, so no
 request names them; a compiled problem with faceted geometry is typed
 unavailability in `availability::check` (facets #664, cubic #42).
@@ -710,10 +660,7 @@ never makes a route available.
   listed files.
 - The imaging foundation refactor (#648, ADR-0016) is in progress; the plan in
   `docs/imaging-architecture/imaging-foundation-plan-20261007.md` is the
-  target. IF-2 replaced the gridding drivers and replay cache with the
-  major-cycle pass, and IF-4 added the Metal backend. Product publication
-  still runs through the runtime's plan, executor and receipt layers, which
-  IF-6 deletes; W, AW and mosaic imaging are unavailable until IF-3.
+  target.
 
 ## ADR index
 

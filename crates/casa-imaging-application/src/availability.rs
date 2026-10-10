@@ -98,7 +98,7 @@ pub fn check(
         .collect::<Vec<_>>();
     if matches!(
         problem.reconstruction().basis(),
-        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. }
+        ReconstructionBasis::Taylor { .. }
     ) && problem.reconstruction().polarization().coordinates()
         != [PolarizationCoordinate::StokesI]
     {

@@ -2,28 +2,28 @@
 
 use casa_imaging_model::{
     AxisOrder, CentreLaws, CompileGeometryError, CompileProblemError, DeclaredInnerProducts,
-    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
+    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, InstrumentResponse, ItrfPosition, LogicalIdentity, MeasurementEquationContract,
-    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
-    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, ProblemInput, ProblemSpecification, ProductKind,
-    ProductNormalization, ProductRequirements, Projection, PsfPhaseCentreLaw,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
-    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, TimeScale, UvwAxes, UvwCoordinateLaw,
-    UvwUnit, VisibilityInnerProduct, VisibilityPhaseConvention, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile,
+    ImageShape, InstrumentResponse, ItrfPosition, MeasurementEquationContract,
+    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationPointingLaw, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    ProblemInput, ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements,
+    Projection, PsfPhaseCentreLaw, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, RestFrequency,
+    RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, StageErrorBudget, TimeScale, UvwAxes, UvwCoordinateLaw, UvwUnit,
+    VisibilityInnerProduct, VisibilityPhaseConvention, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile,
 };
 
 mod common;
 #[path = "fixtures/model_lifecycle.rs"]
 mod model_lifecycle_fixture;
 
-use common::{identity, problem_inputs};
+use common::observation_snapshot;
 use model_lifecycle_fixture::model_lifecycle;
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -83,7 +83,6 @@ fn geometry() -> GeometryInput {
         )],
         CentreLaws::new(
             PhaseCentreLaw::Fixed(direction.reference_direction()),
-            DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::Observation(observation_pointing()),
         ),
         UvwCoordinateLaw::PhaseTrackingCentre,
@@ -111,10 +110,7 @@ fn conversion_anchor(mjd_days: f64) -> SpectralFrameAnchor {
     }
 }
 
-fn request(
-    geometry: GeometryInput,
-    references: Vec<(ReferenceDataKind, LogicalIdentity)>,
-) -> ProblemInput {
+fn request(geometry: GeometryInput) -> ProblemInput {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         ReductionPolicy::Compensated,
@@ -124,7 +120,6 @@ fn request(
             .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
             .collect(),
     );
-    let inputs = problem_inputs(1, references, ModelStateIdentity::Empty);
     ProblemInput::new(
         ProblemSpecification::new(
             ScientificContract::new(
@@ -154,17 +149,16 @@ fn request(
             numerics,
         ),
         geometry,
-        inputs,
-        model_lifecycle(ModelStateIdentity::Empty),
+        observation_snapshot(1),
+        model_lifecycle(),
     )
 }
 
 #[test]
 fn compiles_exact_axis_centre_uvw_and_continuum_spectral_laws() {
-    let problem = compile(request(geometry(), Vec::new())).expect("compile geometry");
+    let problem = compile(request(geometry())).expect("compile geometry");
     let compiled = problem.geometry();
 
-    assert_ne!(compiled.geometry_id().as_bytes(), [0; 32]);
     assert_eq!(compiled.domains().len(), 1);
     assert_eq!(compiled.domains()[0].facets().len(), 1);
     assert_eq!(
@@ -201,7 +195,7 @@ fn compiles_exact_axis_centre_uvw_and_continuum_spectral_laws() {
 
 #[test]
 fn exact_wcs_metadata_round_trips_through_compilation() {
-    let first = compile(request(geometry(), Vec::new())).expect("compile source geometry");
+    let first = compile(request(geometry())).expect("compile source geometry");
     let compiled = first.geometry();
     let domain = &compiled.domains()[0];
     let direction = domain.direction();
@@ -233,12 +227,12 @@ fn exact_wcs_metadata_round_trips_through_compilation() {
         compiled.uvw(),
         compiled.spectral().clone(),
     );
-    let second = compile(request(reconstructed, Vec::new())).expect("compile round trip");
-    assert_eq!(compiled.geometry_id(), second.geometry().geometry_id());
+    let second = compile(request(reconstructed)).expect("compile round trip");
+    assert_eq!(compiled, second.geometry());
 }
 
 #[test]
-fn every_observation_pointing_semantic_is_identity_bearing() {
+fn every_observation_pointing_semantic_is_retained() {
     let variants = [
         observation_pointing(),
         observation_pointing().with_direction(
@@ -253,19 +247,14 @@ fn every_observation_pointing_semantic_is_identity_bearing() {
     let compiled = variants.map(|law| {
         let input = geometry().with_centres(CentreLaws::new(
             geometry().centres().phase_tracking().clone(),
-            geometry().centres().delay().clone(),
             PointingCentreLaw::Observation(law),
         ));
-        compile(request(input, Vec::new())).expect("compile pointing law")
+        compile(request(input)).expect("compile pointing law")
     });
 
     for first in 0..compiled.len() {
         for second in first + 1..compiled.len() {
-            assert_ne!(
-                compiled[first].geometry().geometry_id(),
-                compiled[second].geometry().geometry_id()
-            );
-            assert_ne!(compiled[first].problem_id(), compiled[second].problem_id());
+            assert_ne!(compiled[first].geometry(), compiled[second].geometry());
         }
     }
 }
@@ -274,7 +263,6 @@ fn every_observation_pointing_semantic_is_identity_bearing() {
 fn pointing_column_and_semantic_must_match() {
     let inconsistent = geometry().with_centres(CentreLaws::new(
         geometry().centres().phase_tracking().clone(),
-        geometry().centres().delay().clone(),
         PointingCentreLaw::Observation(observation_pointing().with_direction(
             PointingDirectionColumn::Direction,
             PointingDirectionSemantic::TrackingTarget,
@@ -282,7 +270,7 @@ fn pointing_column_and_semantic_must_match() {
     ));
 
     assert!(matches!(
-        compile(request(inconsistent, Vec::new())),
+        compile(request(inconsistent)),
         Err(CompileProblemError::Geometry(
             CompileGeometryError::InconsistentPointingDirection
         ))
@@ -290,8 +278,8 @@ fn pointing_column_and_semantic_must_match() {
 }
 
 #[test]
-fn spectral_axes_define_exact_channel_boundaries_and_identity() {
-    let linear = compile(request(geometry(), Vec::new())).expect("compile linear axis");
+fn spectral_axes_define_exact_channel_boundaries() {
+    let linear = compile(request(geometry())).expect("compile linear axis");
     assert_eq!(linear.geometry().spectral().output_channels(), 1);
     assert_eq!(
         linear.geometry().spectral().channel_boundary_hz(0),
@@ -309,7 +297,7 @@ fn spectral_axes_define_exact_channel_boundaries_and_identity() {
             channel_boundaries_hz: vec![1.0e9, 1.1e9, 1.3e9],
         },
     ));
-    let first = compile(request(tabular.clone(), Vec::new())).expect("compile tabular axis");
+    let first = compile(request(tabular)).expect("compile tabular axis");
     assert_eq!(first.geometry().spectral().output_channels(), 2);
     assert_eq!(
         first.geometry().spectral().channel_centre_hz(0),
@@ -332,35 +320,10 @@ fn spectral_axes_define_exact_channel_boundaries_and_identity() {
         Some(1.3e9)
     );
     assert_eq!(first.geometry().spectral().channel_boundary_hz(3), None);
-
-    let changed_boundary = tabular
-        .clone()
-        .with_spectral(tabular.spectral().clone().with_wcs(SpectralWcs::Tabular {
-            channel_centres_hz: vec![1.05e9, 1.2e9],
-            channel_boundaries_hz: vec![1.0e9, 1.1e9, 1.31e9],
-        }));
-    let second = compile(request(changed_boundary, Vec::new())).expect("compile changed boundary");
-    let changed_centre = tabular
-        .clone()
-        .with_spectral(tabular.spectral().clone().with_wcs(SpectralWcs::Tabular {
-            channel_centres_hz: vec![1.04e9, 1.2e9],
-            channel_boundaries_hz: vec![1.0e9, 1.1e9, 1.3e9],
-        }));
-    let third = compile(request(changed_centre, Vec::new())).expect("compile changed centre");
-    assert_ne!(
-        first.geometry().geometry_id(),
-        second.geometry().geometry_id()
-    );
-    assert_ne!(first.problem_id(), second.problem_id());
-    assert_ne!(
-        first.geometry().geometry_id(),
-        third.geometry().geometry_id()
-    );
-    assert_ne!(first.problem_id(), third.problem_id());
 }
 
 #[test]
-fn canonical_geometry_identity_normalizes_signed_zero_and_outlier_order() {
+fn canonical_geometry_normalizes_signed_zero_and_outlier_order() {
     let mut first = geometry();
     let main = first.domains()[0].clone();
     let mut east = main
@@ -383,17 +346,14 @@ fn canonical_geometry_identity_normalizes_signed_zero_and_outlier_order() {
     );
     let second = geometry().with_domains(vec![east, main.with_direction(equivalent_pole), west]);
 
-    let first = compile(request(first, Vec::new())).expect("compile first");
-    let second = compile(request(second, Vec::new())).expect("compile second");
-    assert_eq!(
-        first.geometry().geometry_id(),
-        second.geometry().geometry_id()
-    );
-    assert_eq!(first.problem_id(), second.problem_id());
+    let first = compile(request(first)).expect("compile first");
+    let second = compile(request(second)).expect("compile second");
+    assert_eq!(first.geometry(), second.geometry());
+    assert_eq!(first, second);
 }
 
 #[test]
-fn multi_domain_centres_are_canonical_explicit_and_identity_bearing() {
+fn multi_domain_centres_are_canonical_and_explicit() {
     let main = geometry().domains()[0].clone();
     let outlier_direction = main
         .direction()
@@ -409,8 +369,8 @@ fn multi_domain_centres_are_canonical_explicit_and_identity_bearing() {
             1.7,
             -0.4,
         )));
-    let input = geometry().with_domains(vec![outlier_spec.clone(), main]);
-    let compiled = compile(request(input, Vec::new())).expect("compile multi-domain geometry");
+    let input = geometry().with_domains(vec![outlier_spec, main]);
+    let compiled = compile(request(input)).expect("compile multi-domain geometry");
 
     assert_eq!(compiled.geometry().domains().len(), 2);
     assert_eq!(
@@ -430,26 +390,10 @@ fn multi_domain_centres_are_canonical_explicit_and_identity_bearing() {
             .required_capabilities()
             .contains(&casa_imaging_model::RequiredCapability::MultiDomainGeometry)
     );
-
-    let changed = geometry().with_domains(vec![
-        geometry().domains()[0].clone(),
-        outlier_spec
-            .clone()
-            .with_psf_phase_centre(PsfPhaseCentreLaw::Fixed(SkyDirection::new(
-                DirectionFrame::J2000,
-                1.8,
-                -0.4,
-            ))),
-    ]);
-    let changed = compile(request(changed, Vec::new())).expect("compile changed PSF centre");
-    assert_ne!(
-        compiled.geometry().geometry_id(),
-        changed.geometry().geometry_id()
-    );
 }
 
 #[test]
-fn frame_transform_requires_bound_measures_and_changes_identity_with_anchor() {
+fn frame_transform_requires_a_valid_spectral_anchor() {
     let unanchored = geometry().with_spectral(
         geometry()
             .spectral()
@@ -457,7 +401,7 @@ fn frame_transform_requires_bound_measures_and_changes_identity_with_anchor() {
             .with_output_frame(FrequencyFrame::Lsrk),
     );
     assert!(matches!(
-        compile(request(unanchored, Vec::new())),
+        compile(request(unanchored)),
         Err(CompileProblemError::Geometry(
             CompileGeometryError::InconsistentSpectralAnchor
         ))
@@ -475,10 +419,7 @@ fn frame_transform_requires_bound_measures_and_changes_identity_with_anchor() {
             }),
     );
     assert!(matches!(
-        compile(request(
-            invalid_anchor,
-            vec![(ReferenceDataKind::Measures, identity(7))],
-        )),
+        compile(request(invalid_anchor)),
         Err(CompileProblemError::Geometry(
             CompileGeometryError::InvalidSpectralAnchor
         ))
@@ -491,29 +432,11 @@ fn frame_transform_requires_bound_measures_and_changes_identity_with_anchor() {
             .with_output_frame(FrequencyFrame::Lsrk)
             .with_anchor(conversion_anchor(59_000.25)),
     );
-    assert!(matches!(
-        compile(request(transform.clone(), Vec::new())),
-        Err(CompileProblemError::Geometry(
-            CompileGeometryError::MissingMeasuresReference
-        ))
-    ));
-
-    let references = vec![(ReferenceDataKind::Measures, identity(7))];
-    let first = compile(request(transform.clone(), references.clone())).expect("compile transform");
-    let shifted_spectral = transform
-        .spectral()
-        .clone()
-        .with_anchor(conversion_anchor(59_001.25));
-    let shifted = transform.with_spectral(shifted_spectral);
-    let second = compile(request(shifted, references)).expect("compile shifted anchor");
-    assert_ne!(
-        first.geometry().geometry_id(),
-        second.geometry().geometry_id()
-    );
+    compile(request(transform)).expect("compile transform");
 }
 
 #[test]
-fn topo_barycentric_and_lsrk_frames_and_reference_snapshots_are_identity_bearing() {
+fn topo_barycentric_and_lsrk_frames_are_recorded_exactly() {
     // Pihlstrom, Essential Radio Astronomy for Interferometry (2024), slides
     // 40-42 distinguishes TOPO, BARY, and LSR frames and the frame context
     // needed to convert them. T06 records that context; T36 will evaluate it.
@@ -525,27 +448,13 @@ fn topo_barycentric_and_lsrk_frames_and_reference_snapshots_are_identity_bearing
                 .with_output_frame(output)
                 .with_anchor(conversion_anchor(59_000.25)),
         );
-        let first = compile(request(
-            transformed.clone(),
-            vec![(ReferenceDataKind::Measures, identity(7))],
-        ))
-        .expect("compile first Measures snapshot");
-        let second = compile(request(
-            transformed,
-            vec![(ReferenceDataKind::Measures, identity(8))],
-        ))
-        .expect("compile second Measures snapshot");
+        let compiled = compile(request(transformed)).expect("compile frame transform");
 
         assert_eq!(
-            first.geometry().spectral().source_frame(),
+            compiled.geometry().spectral().source_frame(),
             FrequencyFrame::Topocentric
         );
-        assert_eq!(first.geometry().spectral().output_frame(), output);
-        assert_eq!(first.geometry().measures_reference(), Some(identity(7)));
-        assert_ne!(
-            first.geometry().geometry_id(),
-            second.geometry().geometry_id()
-        );
+        assert_eq!(compiled.geometry().spectral().output_frame(), output);
     }
 }
 
@@ -557,7 +466,7 @@ fn facet_windows_cover_the_domain_exactly_and_non_divisible_layouts_fail_closed(
             rows: 4,
         },
     )]);
-    let compiled = compile(request(faceted, Vec::new())).expect("compile facets");
+    let compiled = compile(request(faceted)).expect("compile facets");
     let domain = &compiled.geometry().domains()[0];
     let facets = domain.facets();
     assert_eq!(facets.len(), 8);
@@ -615,7 +524,7 @@ fn facet_windows_cover_the_domain_exactly_and_non_divisible_layouts_fail_closed(
         },
     )]);
     assert!(matches!(
-        compile(request(invalid, Vec::new())),
+        compile(request(invalid)),
         Err(CompileProblemError::Geometry(
             CompileGeometryError::NonDivisibleFacetLayout { .. }
         ))
@@ -624,7 +533,7 @@ fn facet_windows_cover_the_domain_exactly_and_non_divisible_layouts_fail_closed(
 
 #[test]
 fn one_facet_preserves_the_domain_chart_and_phase_centre() {
-    let compiled = compile(request(geometry(), Vec::new())).expect("compile one facet");
+    let compiled = compile(request(geometry())).expect("compile one facet");
     let domain = &compiled.geometry().domains()[0];
     let facet = domain.facets()[0];
 
@@ -645,7 +554,7 @@ fn line_velocity_metadata_is_explicit_and_fail_closed() {
             })
             .with_doppler_convention(DopplerConvention::Radio),
     );
-    compile(request(line, Vec::new())).expect("compile line law");
+    compile(request(line)).expect("compile line law");
 
     let inconsistent = geometry().with_spectral(
         geometry()
@@ -655,7 +564,7 @@ fn line_velocity_metadata_is_explicit_and_fail_closed() {
             .with_doppler_convention(DopplerConvention::Radio),
     );
     assert!(matches!(
-        compile(request(inconsistent, Vec::new())),
+        compile(request(inconsistent)),
         Err(CompileProblemError::Geometry(
             CompileGeometryError::InconsistentVelocityMetadata
         ))
@@ -667,7 +576,7 @@ fn invalid_shapes_axes_direction_matrices_and_spectral_tables_fail_closed() {
     let domain = geometry().domains()[0].clone();
     let empty = geometry().with_domains(vec![domain.clone().with_shape(ImageShape::new(0, 512))]);
     assert!(matches!(
-        compile(request(empty, Vec::new())),
+        compile(request(empty)),
         Err(CompileProblemError::Geometry(
             CompileGeometryError::EmptyImageDomain
         ))
@@ -680,7 +589,7 @@ fn invalid_shapes_axes_direction_matrices_and_spectral_tables_fail_closed() {
         ImageAxis::Spectral,
     ]))]);
     assert!(matches!(
-        compile(request(duplicate_axes, Vec::new())),
+        compile(request(duplicate_axes)),
         Err(CompileProblemError::Geometry(
             CompileGeometryError::InvalidAxisOrder
         ))
@@ -697,7 +606,7 @@ fn invalid_shapes_axes_direction_matrices_and_spectral_tables_fail_closed() {
     );
     let singular = geometry().with_domains(vec![domain.with_direction(singular_direction)]);
     assert!(matches!(
-        compile(request(singular, Vec::new())),
+        compile(request(singular)),
         Err(CompileProblemError::Geometry(
             CompileGeometryError::SingularDirectionMatrix
         ))
@@ -710,7 +619,7 @@ fn invalid_shapes_axes_direction_matrices_and_spectral_tables_fail_closed() {
         },
     ));
     assert!(matches!(
-        compile(request(non_monotonic, Vec::new())),
+        compile(request(non_monotonic)),
         Err(CompileProblemError::Geometry(
             CompileGeometryError::InvalidSpectralWcs
         ))
@@ -723,7 +632,7 @@ fn invalid_shapes_axes_direction_matrices_and_spectral_tables_fail_closed() {
         },
     ));
     assert!(matches!(
-        compile(request(missing_endpoint_width, Vec::new())),
+        compile(request(missing_endpoint_width)),
         Err(CompileProblemError::Geometry(
             CompileGeometryError::InvalidSpectralWcs
         ))
@@ -737,40 +646,9 @@ fn invalid_shapes_axes_direction_matrices_and_spectral_tables_fail_closed() {
             increment_hz: 1.0,
         }));
     assert!(matches!(
-        compile(request(collapsed_linear_axis, Vec::new())),
+        compile(request(collapsed_linear_axis)),
         Err(CompileProblemError::Geometry(
             CompileGeometryError::InvalidSpectralWcs
         ))
     ));
-}
-
-#[test]
-fn ephemeris_centre_laws_require_and_identify_one_bound_snapshot() {
-    let moving = geometry().with_centres(CentreLaws::new(
-        PhaseCentreLaw::Ephemeris("Mars".into()),
-        DelayCentreLaw::PhaseTrackingCentre,
-        PointingCentreLaw::PhaseTrackingCentre,
-    ));
-    assert!(matches!(
-        compile(request(moving.clone(), Vec::new())),
-        Err(CompileProblemError::Geometry(
-            CompileGeometryError::MissingEphemerisReference
-        ))
-    ));
-
-    let first = compile(request(
-        moving.clone(),
-        vec![(ReferenceDataKind::Ephemeris, identity(9))],
-    ))
-    .expect("compile moving centre");
-    let second = compile(request(
-        moving,
-        vec![(ReferenceDataKind::Ephemeris, identity(10))],
-    ))
-    .expect("compile changed ephemeris");
-    assert_eq!(first.geometry().ephemeris_reference(), Some(identity(9)));
-    assert_ne!(
-        first.geometry().geometry_id(),
-        second.geometry().geometry_id()
-    );
 }
