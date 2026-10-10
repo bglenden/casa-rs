@@ -4,6 +4,7 @@ use casa_imaging_model::CompiledProblem;
 use std::sync::Arc;
 use thiserror::Error;
 
+use crate::SelectedObservationBufferCapacity;
 use crate::selected_pointing::SelectedPointingQueryDomain;
 
 use super::access::{BoundObservationReferenceData, SelectedRowReplay};
@@ -318,12 +319,14 @@ impl BoundSelectedObservation {
         problem: &CompiledProblem,
         window: Option<[f64; 2]>,
     ) -> SelectedObservationBlockSource<'_> {
-        let maximum_rows = self
+        let block_capacity = self
             .sources
             .iter()
-            .map(BoundObservationSource::rows_per_block)
-            .max()
-            .unwrap_or(0);
+            .map(BoundObservationSource::buffer_capacity)
+            .fold(
+                SelectedObservationBufferCapacity::default(),
+                SelectedObservationBufferCapacity::union,
+            );
         SelectedObservationBlockSource {
             problem,
             observation: self,
@@ -331,7 +334,7 @@ impl BoundSelectedObservation {
             row_replay: None,
             selected_rows: 0,
             exhausted: false,
-            maximum_rows,
+            block_capacity,
             window,
         }
     }
@@ -346,7 +349,8 @@ pub struct SelectedObservationBlockSource<'a> {
     /// Rows the predicate selected in the sources already walked.
     selected_rows: u64,
     exhausted: bool,
-    maximum_rows: usize,
+    /// What one block of any source needs; the stream refills one block.
+    block_capacity: SelectedObservationBufferCapacity,
     window: Option<[f64; 2]>,
 }
 
@@ -354,13 +358,14 @@ impl SelectedObservationBlockSource<'_> {
     /// Exact row ceiling from the freshly opened source's physical content plan.
     /// Consumers may reduce an already admitted scratch bound to this size.
     pub const fn maximum_rows_per_block(&self) -> usize {
-        self.maximum_rows
+        self.block_capacity.rows()
     }
 
-    /// Create one empty block sized for this stream.
+    /// Create one empty block, allocated at once for every block of this
+    /// stream.
     #[must_use]
     pub fn create_storage(&self) -> SelectedObservationBlock {
-        SelectedObservationBlock::new(self.maximum_rows)
+        SelectedObservationBlock::new(self.block_capacity)
     }
 
     /// Fill `block` with the next canonical row block and borrow it as filled;

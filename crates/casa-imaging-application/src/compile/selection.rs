@@ -44,10 +44,10 @@ pub(super) type WindowChannels = BTreeMap<usize, Vec<usize>>;
 
 /// What one pass over the selected rows establishes.
 pub(super) struct Survey {
+    /// The request's row predicate over the data descriptions of the
+    /// selected rows.
     pub(super) row_selection: SelectedObservationRowSelection,
     pub(super) rows: SelectedRows,
-    /// `(spectral window, polarization)` of each selected data description.
-    pub(super) bindings: Vec<(usize, usize)>,
     /// The selected spectral windows, in one source frame.
     pub(super) spectral_windows: Vec<SourceSpectralWindow>,
     pub(super) source_frequency_reference: FrequencyRef,
@@ -196,27 +196,32 @@ pub(super) fn survey(
     if rows.selected_row_count() == 0 {
         return Err(PrepareError::NoSelectedRows);
     }
-    let bindings = facts
-        .ddids
+    let continuum = continuum
+        .map(|(selected, reducer)| reducer.finish().map(|envelope| (selected, envelope)))
+        .transpose()?;
+    // A candidate data description no selected row has goes, with its
+    // spectral window: the predicate admits a row only through its data
+    // description, so over the observed ones it selects the same rows.
+    let row_selection = ms.selected_observation_row_selection(
+        &facts.ddids.iter().copied().collect::<Vec<_>>(),
+        request.field.as_deref(),
+        request.uvrange.as_deref(),
+        request.intent.as_deref(),
+    )?;
+    let spw_ids = row_selection
+        .data_descriptions()
         .iter()
-        .map(|ddid| data_description_binding(&data_description, *ddid))
-        .collect::<Result<Vec<_>, _>>()?;
-    let spw_ids = bindings
-        .iter()
-        .map(|(spw_id, _)| *spw_id)
+        .map(|description| description.spectral_window_id() as usize)
         .collect::<BTreeSet<_>>();
     spectral_windows.retain(|window| spw_ids.contains(&window.spw_id));
     let source_frequency_reference = one_source_frame(&spectral_windows)?;
-    let continuum = continuum
-        .map(|(mut selected, reducer)| {
-            selected.retain(|spw_id, _| spw_ids.contains(spw_id));
-            reducer.finish().map(|envelope| (selected, envelope))
-        })
-        .transpose()?;
+    let continuum = continuum.map(|(mut selected, envelope)| {
+        selected.retain(|spw_id, _| spw_ids.contains(spw_id));
+        (selected, envelope)
+    });
     Ok(Survey {
         row_selection,
         rows,
-        bindings,
         spectral_windows,
         source_frequency_reference,
         fields: facts.fields,
@@ -448,14 +453,15 @@ pub(super) fn observation_selection(
         })
         .collect::<Vec<_>>();
     let correlations = survey
-        .bindings
+        .row_selection
+        .data_descriptions()
         .iter()
-        .map(|(_, polarization_id)| *polarization_id)
+        .map(|description| description.polarization_id())
         .collect::<BTreeSet<_>>()
         .into_iter()
         .map(|polarization_id| {
             let correlations = polarization
-                .corr_type(polarization_id)?
+                .corr_type(polarization_id as usize)?
                 .iter()
                 .enumerate()
                 .map(|(index, code)| {
@@ -465,11 +471,7 @@ pub(super) fn observation_selection(
                     ))
                 })
                 .collect::<Result<Vec<_>, PrepareError>>()?;
-            Ok(CorrelationSelection::new(
-                u32::try_from(polarization_id)
-                    .expect("polarization ids are nonnegative stored i32 values"),
-                correlations,
-            ))
+            Ok(CorrelationSelection::new(polarization_id, correlations))
         })
         .collect::<Result<Vec<_>, PrepareError>>()?;
     Ok(ObservationSelection::new(

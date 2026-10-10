@@ -14,8 +14,9 @@ use crate::{
     ObservationOwnerError, PointingDirectionBracket,
     PointingDirectionColumn as StoredPointingDirectionColumn, PointingDirectionQuery,
     PointingReadPlan, PreparedSelectedPointingCatalog, SelectedObservationBuffer,
-    SelectedObservationBufferRequest, SelectedObservationRow, SelectedPointingQueryDomain,
-    SelectedStoredRow, SelectedVisibilityColumn, SelectedWeightColumn, VisibilityChannelReadRange,
+    SelectedObservationBufferCapacity, SelectedObservationBufferRequest, SelectedObservationRow,
+    SelectedPointingQueryDomain, SelectedStoredRow, SelectedVisibilityColumn, SelectedWeightColumn,
+    VisibilityChannelReadRange,
 };
 use casa_coordinates::{
     Coordinate, DirectionCoordinate, Projection as CoordinateProjection, ProjectionType,
@@ -145,8 +146,9 @@ impl BoundObservationSource {
         self.geometry_engine.antenna_response_classes()
     }
 
-    pub(super) const fn rows_per_block(&self) -> usize {
-        self.content_plan.rows_per_block()
+    /// The storage one block of this source needs.
+    pub(super) const fn buffer_capacity(&self) -> SelectedObservationBufferCapacity {
+        self.content_plan.buffer_capacity()
     }
 
     /// Open the source locator under retained read locks without traversing MAIN rows.
@@ -975,12 +977,20 @@ impl SelectedObservationNumericGeometryChunk<'_> {
 }
 
 impl SelectedObservationBlock {
-    pub(super) fn new(rows_per_block: usize) -> Self {
+    /// Storage allocated once for blocks within `capacity`, which no fill
+    /// grows.
+    pub(super) fn new(capacity: SelectedObservationBufferCapacity) -> Self {
         Self {
-            buffer: SelectedObservationBuffer::default(),
-            row_geometry: Vec::with_capacity(rows_per_block),
-            selected_rows: Vec::with_capacity(rows_per_block),
+            buffer: SelectedObservationBuffer::with_capacity(capacity),
+            row_geometry: Vec::with_capacity(capacity.rows()),
+            selected_rows: Vec::with_capacity(capacity.rows()),
         }
+    }
+
+    /// The bytes the buffer's vectors hold allocated.
+    #[cfg(test)]
+    pub(super) fn buffer_allocated_bytes(&self) -> usize {
+        self.buffer.allocated_bytes()
     }
 }
 
