@@ -237,3 +237,60 @@ fn a_cube_cleans_the_same_on_any_number_of_workers() {
     }
     assert_eq!(one.summary.stops.len(), 3);
 }
+
+/// Flat-noise response weights of a two-channel cube whose channels have
+/// sum weights `weights` and hold the same 1 Jy point.
+fn cube_with_response(
+    weights: Vec<f64>,
+) -> (CompiledProblem, MajorCycleCompletion, MinorCycleSetup) {
+    let problem = problem(
+        16,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Hogbom,
+    );
+    let scene = Scene::new(&problem)
+        .with_weights(weights)
+        .with_point([8, 8], &[1.0, 1.0]);
+    let completion = completion(&problem, &scene, |_| {});
+    let response =
+        MinorCycleImageResponse::new(ProductNormalization::FlatNoise, validity().primary_beam())
+            .expect("response");
+    let setup = setup(&problem, Some(response));
+    (problem, completion, setup)
+}
+
+/// Each model term's channel and increment.
+fn increments(outcome: &MinorCycleOutcome) -> Vec<(usize, f64)> {
+    outcome
+        .terms
+        .iter()
+        .map(|term| (term.cell().coefficient(), term.increment().value()))
+        .collect()
+}
+
+/// `SIImageStore::divideResidualByWeight` loops over every (polarization,
+/// channel) plane: each channel's residual is normalised by that channel's
+/// sum of weights and weight image. The same 1 Jy point under sum weights 1
+/// and 4 cleans as 1 Jy in both channels.
+#[test]
+fn a_cube_normalises_each_channel_by_its_own_weights() {
+    let (problem, completion, setup) = cube_with_response(vec![1.0, 4.0]);
+    let (_, outcome) = minor_cycle(&problem, &completion, &setup, &controls(1, 1.0), 1);
+    let increments = increments(&outcome);
+    assert_eq!(increments.len(), 2, "{increments:?}");
+    for (channel, value) in increments {
+        assert!((value - 1.0).abs() < 1e-6, "channel {channel}: {value}");
+    }
+}
+
+/// A channel no sample reached (CASA's `test_cube_flagged_mosaic_hogbom`)
+/// is skipped; the other channels still clean with their own weights.
+#[test]
+fn a_cube_with_an_empty_first_channel_cleans_the_others() {
+    let (problem, completion, setup) = cube_with_response(vec![0.0, 1.0]);
+    let (_, outcome) = minor_cycle(&problem, &completion, &setup, &controls(1, 1.0), 1);
+    let increments = increments(&outcome);
+    assert_eq!(increments.len(), 1, "{increments:?}");
+    assert_eq!(increments[0].0, 1);
+    assert!((increments[0].1 - 1.0).abs() < 1e-6, "{increments:?}");
+}
