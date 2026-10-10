@@ -1775,9 +1775,10 @@ impl MeasurementSetWriteSession {
     /// waiting, before it changes anything, and holds it until
     /// [`finish_mutation`](Self::finish_mutation) or until the session is
     /// dropped. Another writer is therefore refused while the session lives:
-    /// a casacore or casa-rs process, or another handle in this process.
-    /// `measurement_set` must be opened without table locking
-    /// ([`MeasurementSet::open`]).
+    /// a casacore or casa-rs process, another handle in this process, and a
+    /// [`MeasurementSet::save`] of any handle, this one included; the session
+    /// persists its own batches. `measurement_set` must be opened without
+    /// table locking ([`MeasurementSet::open`]).
     ///
     /// # Errors
     ///
