@@ -5482,6 +5482,168 @@ mod lock_tests {
         );
     }
 
+    /// A published write describes the table as persisted: casacore takes a
+    /// reopened table's row count from the sync data, refuses a lock whose
+    /// column count differs, and asserts one change counter per data manager
+    /// (`ColumnSet::resync`). Covers `Table::unlock` on a table with several
+    /// data managers and `TableWriteLock` across a layout change.
+    #[test]
+    fn published_writes_describe_the_persisted_layout() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("mixed.tbl");
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("id", PrimitiveType::Int32),
+            ColumnSchema::scalar("name", PrimitiveType::String),
+            ColumnSchema::scalar("flag", PrimitiveType::Bool),
+        ])
+        .unwrap();
+        let mut table = Table::with_schema(schema);
+        for id in 0..3 {
+            table
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("id", Value::Scalar(ScalarValue::Int32(id))),
+                    RecordField::new("name", Value::Scalar(ScalarValue::String("n".into()))),
+                    RecordField::new("flag", Value::Scalar(ScalarValue::Bool(false))),
+                ]))
+                .unwrap();
+        }
+        let binding = |data_manager| ColumnBinding {
+            data_manager,
+            tile_shape: None,
+        };
+        let bindings = HashMap::from([
+            (
+                "name".to_string(),
+                binding(DataManagerKind::IncrementalStMan),
+            ),
+            ("flag".to_string(), binding(DataManagerKind::StManAipsIO)),
+        ]);
+        table
+            .save_with_bindings(
+                TableOptions::new(&path).with_data_manager(DataManagerKind::StandardStMan),
+                &bindings,
+            )
+            .unwrap();
+        let persisted = |path: &std::path::Path| {
+            let contents =
+                crate::storage::table_control::read_table_dat(&path.join("table.dat")).unwrap();
+            (
+                contents.nrrow,
+                contents.table_desc.columns.len() as i32,
+                contents.column_set.data_managers.len(),
+            )
+        };
+        let published = |path: &std::path::Path| {
+            let sync = crate::lock::read_sync_data_from_table_dir(path)
+                .unwrap()
+                .expect("published sync data");
+            (
+                sync.nrrow,
+                sync.nrcolumn,
+                sync.data_man_change_counters.len(),
+            )
+        };
+        assert_eq!(persisted(&path), (3, 3, 3));
+
+        // An in-place writer publishes the three managers.
+        let mut lock = crate::TableWriteLock::acquire(&path, 1).unwrap();
+        lock.record_write();
+        lock.release().unwrap();
+        assert_eq!(published(&path), persisted(&path));
+
+        // Table::unlock currently saves through Table::save with the data
+        // manager of its open options, which collapses the three managers to
+        // one; that is a known problem of the save, not of the publication.
+        // Whatever the save leaves, the published counters follow it, here
+        // shrinking from three to one.
+        let mut locked = Table::open_with_lock(
+            TableOptions::new(&path),
+            LockOptions::new(LockMode::UserLocking),
+        )
+        .unwrap();
+        assert!(locked.lock(LockType::Write, 1).unwrap());
+        locked
+            .row_accessor_mut()
+            .set_cell(
+                0,
+                "name",
+                Value::Scalar(ScalarValue::String("changed".into())),
+            )
+            .unwrap();
+        locked.unlock().unwrap();
+        drop(locked);
+        assert_eq!(published(&path), persisted(&path));
+
+        // A layout change made under the lock adds a manager.
+        let managers_before = persisted(&path).2;
+        let mut lock = crate::TableWriteLock::acquire(&path, 1).unwrap();
+        let mut plain = Table::open(TableOptions::new(&path)).unwrap();
+        plain
+            .add_column(
+                ColumnSchema::array_variable("extra", PrimitiveType::Float32, Some(1)),
+                None,
+            )
+            .unwrap();
+        lock.record_write();
+        plain
+            .prepare_write()
+            .add_tiled_shape_column("extra", &[], None)
+            .unwrap();
+        lock.release().unwrap();
+        let after_layout_change = persisted(&path);
+        assert_eq!(after_layout_change.1, 4);
+        assert_eq!(after_layout_change.2, managers_before + 1);
+        assert_eq!(published(&path), after_layout_change);
+    }
+
+    /// casacore raises the modify counter only when a write lock period
+    /// changed the table (`TableSyncData::write`, `PlainTable::putFile`): a
+    /// write lock released without a change publishes nothing, and a change
+    /// is published once, however many lock periods follow it.
+    #[test]
+    fn a_write_lock_that_changes_nothing_publishes_nothing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+        let lock_opts = LockOptions::new(LockMode::UserLocking);
+        let published = || {
+            let mut reader = Table::open_with_lock(opts.clone(), lock_opts.clone()).unwrap();
+            assert!(reader.lock(LockType::Read, 1).unwrap());
+            reader.locked_modify_counter().unwrap()
+        };
+        let before = published();
+
+        let mut writer = Table::open_with_lock(opts.clone(), lock_opts.clone()).unwrap();
+        // A write refused for want of the write lock changes nothing.
+        assert!(
+            writer
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("id", Value::Scalar(ScalarValue::Int32(2))),
+                    RecordField::new("name", Value::Scalar(ScalarValue::String("bob".into()))),
+                ]))
+                .is_err()
+        );
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        assert_eq!(writer.row_count(), 1);
+        writer.unlock().unwrap();
+        assert_eq!(published(), before, "an unchanged write lock was published");
+
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        writer
+            .keywords_mut()
+            .upsert("CHANGED", Value::Scalar(ScalarValue::Bool(true)));
+        writer.unlock().unwrap();
+        assert_eq!(published(), before.wrapping_add(1));
+
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        writer.unlock().unwrap();
+        drop(writer);
+        assert_eq!(
+            published(),
+            before.wrapping_add(1),
+            "a change was published twice"
+        );
+    }
+
     #[test]
     fn lock_reloads_after_external_modification() {
         let tmp = tempfile::TempDir::new().unwrap();

@@ -15,7 +15,12 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use casa_tables::{ColumnBinding, ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
+use casa_tables::{
+    ColumnBinding, ColumnSchema, DataManagerKind, Table, TableError, TableOptions, TableSchema,
+    TableWriteLock,
+};
+#[cfg(unix)]
+use casa_tables::{LockMode, LockOptions};
 use casa_types::{
     ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
@@ -2766,7 +2771,8 @@ pub fn restore_flag_version(
     validate_version_name(ms, versionname)?;
     let path = ms_path(ms)?.to_path_buf();
     let version_path = flag_version_table_path(&path, versionname);
-    let table = Table::open(TableOptions::new(&version_path)).map_err(|source| {
+    // The version is read under its read lock, held until the restore ends.
+    let table = open_flag_version_for_reading(&version_path).map_err(|source| {
         FlaggingError::FlagVersion {
             path: path.display().to_string(),
             reason: format!("open flag version {versionname:?}: {source}"),
@@ -3043,12 +3049,45 @@ where
     })
 }
 
+/// Open a flag-version table to read it, holding casacore's read lock until
+/// the table is dropped. The open waits, as a casacore `AutoLocking` open
+/// does, while another process (casacore's flagmanager or casa-rs) holds the
+/// version's write lock, so a version being written is never read half
+/// written; the table is read only once the lock is held.
+fn open_flag_version_for_reading(version_path: &Path) -> Result<Table, TableError> {
+    #[cfg(unix)]
+    {
+        Table::open_with_lock(
+            TableOptions::new(version_path),
+            LockOptions::new(LockMode::AutoLocking),
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        Table::open(TableOptions::new(version_path))
+    }
+}
+
+/// Take casacore's write lock on an existing flag-version table before it is
+/// read and merged, waiting for another process as every in-place writer
+/// does. The table is read only once the lock is held, so a write another
+/// process published while this one waited is not stale here: the refusal
+/// [`TableWriteLock`] gives for it is answered by taking the lock again.
+fn lock_existing_flag_version(version_path: &Path) -> Result<TableWriteLock, TableError> {
+    TableWriteLock::acquire(version_path, 0).or_else(|_| TableWriteLock::acquire(version_path, 0))
+}
+
 fn merge_flags_into_existing_version(
     ms: &MeasurementSet,
     version_path: &Path,
     merge: FlagMerge,
 ) -> Result<(), FlaggingError> {
     let path = ms_path(ms)?.to_path_buf();
+    let mut lock =
+        lock_existing_flag_version(version_path).map_err(|source| FlaggingError::FlagVersion {
+            path: path.display().to_string(),
+            reason: format!("lock existing flag version: {source}"),
+        })?;
     let mut table = Table::open(TableOptions::new(version_path)).map_err(|source| {
         FlaggingError::FlagVersion {
             path: path.display().to_string(),
@@ -3085,12 +3124,19 @@ fn merge_flags_into_existing_version(
                 reason: format!("write existing FLAG_ROW row {row}: {source}"),
             })?;
     }
+    // Recorded before the save, so an interrupted save still tells other
+    // processes to re-read the version.
+    lock.record_write();
     table
         .save(TableOptions::new(version_path))
         .map_err(|source| FlaggingError::FlagVersion {
             path: path.display().to_string(),
             reason: format!("save existing flag version: {source}"),
-        })
+        })?;
+    lock.release().map_err(|source| FlaggingError::FlagVersion {
+        path: path.display().to_string(),
+        reason: format!("release existing flag version: {source}"),
+    })
 }
 
 fn merge_bool(source: bool, dest: bool, merge: FlagMerge) -> bool {
