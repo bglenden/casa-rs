@@ -19,8 +19,8 @@
 <a href=#19 id=19 data-nosnippet>19</a>};
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>casa_types::measures::frequency::FrequencyRef;
 <a href=#21 id=21 data-nosnippet>21</a>
-<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span><span class="kw">super</span>::boxed;
-<a href=#23 id=23 data-nosnippet>23</a><span class="kw">use crate</span>::{ApplicationError, DataColumn, ImagingRequest, SpecMode};
+<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span><span class="kw">super</span>::PrepareError;
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">use crate</span>::{DataColumn, ImagingRequest, SpecMode};
 <a href=#24 id=24 data-nosnippet>24</a>
 <a href=#25 id=25 data-nosnippet>25</a><span class="doccomment">/// One selected spectral window's frequency axis.
 <a href=#26 id=26 data-nosnippet>26</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>SourceSpectralWindow {
@@ -44,10 +44,10 @@
 <a href=#44 id=44 data-nosnippet>44</a>
 <a href=#45 id=45 data-nosnippet>45</a><span class="doccomment">/// What one pass over the selected rows establishes.
 <a href=#46 id=46 data-nosnippet>46</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Survey {
-<a href=#47 id=47 data-nosnippet>47</a>    <span class="kw">pub</span>(<span class="kw">super</span>) row_selection: SelectedObservationRowSelection,
-<a href=#48 id=48 data-nosnippet>48</a>    <span class="kw">pub</span>(<span class="kw">super</span>) rows: SelectedRows,
-<a href=#49 id=49 data-nosnippet>49</a>    <span class="doccomment">/// `(spectral window, polarization)` of each selected data description.
-<a href=#50 id=50 data-nosnippet>50</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) bindings: Vec&lt;(usize, usize)&gt;,
+<a href=#47 id=47 data-nosnippet>47</a>    <span class="doccomment">/// The request's row predicate over the data descriptions of the
+<a href=#48 id=48 data-nosnippet>48</a>    /// selected rows.
+<a href=#49 id=49 data-nosnippet>49</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) row_selection: SelectedObservationRowSelection,
+<a href=#50 id=50 data-nosnippet>50</a>    <span class="kw">pub</span>(<span class="kw">super</span>) rows: SelectedRows,
 <a href=#51 id=51 data-nosnippet>51</a>    <span class="doccomment">/// The selected spectral windows, in one source frame.
 <a href=#52 id=52 data-nosnippet>52</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) spectral_windows: Vec&lt;SourceSpectralWindow&gt;,
 <a href=#53 id=53 data-nosnippet>53</a>    <span class="kw">pub</span>(<span class="kw">super</span>) source_frequency_reference: FrequencyRef,
@@ -80,10 +80,10 @@
 <a href=#80 id=80 data-nosnippet>80</a><span class="kw">impl </span>RowFacts {
 <a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// Nothing observed yet, over `row_count` MAIN rows and `ddids`
 <a href=#82 id=82 data-nosnippet>82</a>    /// candidate data descriptions.
-<a href=#83 id=83 data-nosnippet>83</a>    </span><span class="kw">fn </span>new(row_count: usize, ddids: usize) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ApplicationError&gt; {
-<a href=#84 id=84 data-nosnippet>84</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#83 id=83 data-nosnippet>83</a>    </span><span class="kw">fn </span>new(row_count: usize, ddids: usize) -&gt; <span class="self">Self </span>{
+<a href=#84 id=84 data-nosnippet>84</a>        <span class="self">Self </span>{
 <a href=#85 id=85 data-nosnippet>85</a>            rows: SelectedRowsBuilder::with_data_description_capacity(
-<a href=#86 id=86 data-nosnippet>86</a>                u64::try_from(row_count).map_err(|<span class="kw">_</span>| boxed(<span class="string">"MS row count exceeds u64"</span>))<span class="question-mark">?</span>,
+<a href=#86 id=86 data-nosnippet>86</a>                u64::try_from(row_count).expect(<span class="string">"a MAIN row count fits u64"</span>),
 <a href=#87 id=87 data-nosnippet>87</a>                ddids,
 <a href=#88 id=88 data-nosnippet>88</a>            ),
 <a href=#89 id=89 data-nosnippet>89</a>            rows_error: <span class="prelude-val">None</span>,
@@ -99,7 +99,7 @@
 <a href=#99 id=99 data-nosnippet>99</a>                sum_squares_m2: <span class="number">0.0</span>,
 <a href=#100 id=100 data-nosnippet>100</a>                rows: <span class="number">0</span>,
 <a href=#101 id=101 data-nosnippet>101</a>            },
-<a href=#102 id=102 data-nosnippet>102</a>        })
+<a href=#102 id=102 data-nosnippet>102</a>        }
 <a href=#103 id=103 data-nosnippet>103</a>    }
 <a href=#104 id=104 data-nosnippet>104</a>
 <a href=#105 id=105 data-nosnippet>105</a>    <span class="kw">fn </span>observe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, row: SelectedObservationRow) {
@@ -138,7 +138,7 @@
 <a href=#138 id=138 data-nosnippet>138</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
 <a href=#139 id=139 data-nosnippet>139</a>    budget: SelectedObservationContentBudget,
 <a href=#140 id=140 data-nosnippet>140</a>    frame_engine: <span class="kw-2">&amp;</span>casa_ms::derived::engine::MsCalEngine,
-<a href=#141 id=141 data-nosnippet>141</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Survey, ApplicationError&gt; {
+<a href=#141 id=141 data-nosnippet>141</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Survey, PrepareError&gt; {
 <a href=#142 id=142 data-nosnippet>142</a>    <span class="kw">let </span>data_description = ms.data_description()<span class="question-mark">?</span>;
 <a href=#143 id=143 data-nosnippet>143</a>    <span class="kw">let </span>ddids = selected_data_descriptions(request, <span class="kw-2">&amp;</span>data_description)<span class="question-mark">?</span>;
 <a href=#144 id=144 data-nosnippet>144</a>    <span class="kw">let </span>row_selection = ms.selected_observation_row_selection(
@@ -164,8 +164,8 @@
 <a href=#164 id=164 data-nosnippet>164</a>                .as_ref()
 <a href=#165 id=165 data-nosnippet>165</a>                .map_or(<span class="number">0</span>, |(<span class="kw">_</span>, reducer)| reducer.retained_bytes()),
 <a href=#166 id=166 data-nosnippet>166</a>        )
-<a href=#167 id=167 data-nosnippet>167</a>        .ok_or_else(|| boxed(<span class="string">"selected spectral envelope exhausts the row traversal budget"</span>))<span class="question-mark">?</span>;
-<a href=#168 id=168 data-nosnippet>168</a>    <span class="kw">let </span><span class="kw-2">mut </span>facts = RowFacts::new(ms.row_count(), ddids.len())<span class="question-mark">?</span>;
+<a href=#167 id=167 data-nosnippet>167</a>        .ok_or(PrepareError::SpectralEnvelopeBudget)<span class="question-mark">?</span>;
+<a href=#168 id=168 data-nosnippet>168</a>    <span class="kw">let </span><span class="kw-2">mut </span>facts = RowFacts::new(ms.row_count(), ddids.len());
 <a href=#169 id=169 data-nosnippet>169</a>    <span class="kw">let </span>main_table = ms.main_table();
 <a href=#170 id=170 data-nosnippet>170</a>    <span class="kw">let </span><span class="kw-2">mut </span>weight_spectrum_complete = main_table.column_accessor(<span class="string">"WEIGHT_SPECTRUM"</span>).is_ok();
 <a href=#171 id=171 data-nosnippet>171</a>    <span class="kw">let </span><span class="kw-2">mut </span>row_error = <span class="prelude-val">None</span>;
@@ -173,176 +173,176 @@
 <a href=#173 id=173 data-nosnippet>173</a>        <span class="kw">if </span>row_error.is_none()
 <a href=#174 id=174 data-nosnippet>174</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, reducer)) = continuum.as_mut()
 <a href=#175 id=175 data-nosnippet>175</a>        {
-<a href=#176 id=176 data-nosnippet>176</a>            row_error = reducer
-<a href=#177 id=177 data-nosnippet>177</a>                .observe(row)
-<a href=#178 id=178 data-nosnippet>178</a>                .err()
-<a href=#179 id=179 data-nosnippet>179</a>                .map(|error| Box::new(error) <span class="kw">as </span>ApplicationError);
-<a href=#180 id=180 data-nosnippet>180</a>        }
-<a href=#181 id=181 data-nosnippet>181</a>        <span class="kw">if </span>weight_spectrum_complete {
-<a href=#182 id=182 data-nosnippet>182</a>            <span class="kw">match </span>main_table
-<a href=#183 id=183 data-nosnippet>183</a>                .column_accessor(<span class="string">"WEIGHT_SPECTRUM"</span>)
-<a href=#184 id=184 data-nosnippet>184</a>                .and_then(|column| column.array_cell_is_defined_uncached(row.physical_row()))
-<a href=#185 id=185 data-nosnippet>185</a>            {
-<a href=#186 id=186 data-nosnippet>186</a>                <span class="prelude-val">Ok</span>(defined) =&gt; weight_spectrum_complete = defined,
-<a href=#187 id=187 data-nosnippet>187</a>                <span class="prelude-val">Err</span>(error) =&gt; row_error = <span class="prelude-val">Some</span>(Box::new(error)),
-<a href=#188 id=188 data-nosnippet>188</a>            }
-<a href=#189 id=189 data-nosnippet>189</a>        }
-<a href=#190 id=190 data-nosnippet>190</a>        facts.observe(row);
-<a href=#191 id=191 data-nosnippet>191</a>    })<span class="question-mark">?</span>;
-<a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(error) = facts.rows_error {
-<a href=#193 id=193 data-nosnippet>193</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Box::new(error));
+<a href=#176 id=176 data-nosnippet>176</a>            row_error = reducer.observe(row).err();
+<a href=#177 id=177 data-nosnippet>177</a>        }
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">if </span>weight_spectrum_complete {
+<a href=#179 id=179 data-nosnippet>179</a>            <span class="kw">match </span>main_table
+<a href=#180 id=180 data-nosnippet>180</a>                .column_accessor(<span class="string">"WEIGHT_SPECTRUM"</span>)
+<a href=#181 id=181 data-nosnippet>181</a>                .and_then(|column| column.array_cell_is_defined_uncached(row.physical_row()))
+<a href=#182 id=182 data-nosnippet>182</a>            {
+<a href=#183 id=183 data-nosnippet>183</a>                <span class="prelude-val">Ok</span>(defined) =&gt; weight_spectrum_complete = defined,
+<a href=#184 id=184 data-nosnippet>184</a>                <span class="prelude-val">Err</span>(error) =&gt; row_error = <span class="prelude-val">Some</span>(error.into()),
+<a href=#185 id=185 data-nosnippet>185</a>            }
+<a href=#186 id=186 data-nosnippet>186</a>        }
+<a href=#187 id=187 data-nosnippet>187</a>        facts.observe(row);
+<a href=#188 id=188 data-nosnippet>188</a>    })<span class="question-mark">?</span>;
+<a href=#189 id=189 data-nosnippet>189</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(error) = facts.rows_error {
+<a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(error.into());
+<a href=#191 id=191 data-nosnippet>191</a>    }
+<a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(error) = row_error {
+<a href=#193 id=193 data-nosnippet>193</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(error.into());
 <a href=#194 id=194 data-nosnippet>194</a>    }
-<a href=#195 id=195 data-nosnippet>195</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(error) = row_error {
-<a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(error);
-<a href=#197 id=197 data-nosnippet>197</a>    }
-<a href=#198 id=198 data-nosnippet>198</a>    <span class="kw">let </span>rows = facts.rows.finish();
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">if </span>rows.selected_row_count() == <span class="number">0 </span>{
-<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(<span class="string">"selection resolved to no rows"</span>));
-<a href=#201 id=201 data-nosnippet>201</a>    }
-<a href=#202 id=202 data-nosnippet>202</a>    <span class="kw">let </span>bindings = facts
-<a href=#203 id=203 data-nosnippet>203</a>        .ddids
-<a href=#204 id=204 data-nosnippet>204</a>        .iter()
-<a href=#205 id=205 data-nosnippet>205</a>        .map(|ddid| data_description_binding(<span class="kw-2">&amp;</span>data_description, <span class="kw-2">*</span>ddid))
-<a href=#206 id=206 data-nosnippet>206</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#207 id=207 data-nosnippet>207</a>    <span class="kw">let </span>spw_ids = bindings
-<a href=#208 id=208 data-nosnippet>208</a>        .iter()
-<a href=#209 id=209 data-nosnippet>209</a>        .map(|(spw_id, <span class="kw">_</span>)| <span class="kw-2">*</span>spw_id)
-<a href=#210 id=210 data-nosnippet>210</a>        .collect::&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#211 id=211 data-nosnippet>211</a>    spectral_windows.retain(|window| spw_ids.contains(<span class="kw-2">&amp;</span>window.spw_id));
-<a href=#212 id=212 data-nosnippet>212</a>    <span class="kw">let </span>source_frequency_reference = one_source_frame(<span class="kw-2">&amp;</span>spectral_windows)<span class="question-mark">?</span>;
-<a href=#213 id=213 data-nosnippet>213</a>    <span class="kw">let </span>continuum = continuum
-<a href=#214 id=214 data-nosnippet>214</a>        .map(|(<span class="kw-2">mut </span>selected, reducer)| {
-<a href=#215 id=215 data-nosnippet>215</a>            selected.retain(|spw_id, <span class="kw">_</span>| spw_ids.contains(spw_id));
-<a href=#216 id=216 data-nosnippet>216</a>            reducer.finish().map(|envelope| (selected, envelope))
-<a href=#217 id=217 data-nosnippet>217</a>        })
-<a href=#218 id=218 data-nosnippet>218</a>        .transpose()<span class="question-mark">?</span>;
-<a href=#219 id=219 data-nosnippet>219</a>    <span class="prelude-val">Ok</span>(Survey {
-<a href=#220 id=220 data-nosnippet>220</a>        row_selection,
-<a href=#221 id=221 data-nosnippet>221</a>        rows,
-<a href=#222 id=222 data-nosnippet>222</a>        bindings,
-<a href=#223 id=223 data-nosnippet>223</a>        spectral_windows,
-<a href=#224 id=224 data-nosnippet>224</a>        source_frequency_reference,
-<a href=#225 id=225 data-nosnippet>225</a>        fields: facts.fields,
-<a href=#226 id=226 data-nosnippet>226</a>        observation_ids: facts.observation_ids,
-<a href=#227 id=227 data-nosnippet>227</a>        first_time_mjd_seconds: facts
-<a href=#228 id=228 data-nosnippet>228</a>            .first_time_mjd_seconds
-<a href=#229 id=229 data-nosnippet>229</a>            .expect(<span class="string">"nonempty selected row traversal"</span>),
-<a href=#230 id=230 data-nosnippet>230</a>        time_bounds_mjd_seconds: facts.time_bounds_mjd_seconds,
-<a href=#231 id=231 data-nosnippet>231</a>        first_cross_row: facts.first_cross_row,
-<a href=#232 id=232 data-nosnippet>232</a>        w: facts.w,
-<a href=#233 id=233 data-nosnippet>233</a>        weight_spectrum_complete,
-<a href=#234 id=234 data-nosnippet>234</a>        continuum,
-<a href=#235 id=235 data-nosnippet>235</a>    })
-<a href=#236 id=236 data-nosnippet>236</a>}
-<a href=#237 id=237 data-nosnippet>237</a>
-<a href=#238 id=238 data-nosnippet>238</a><span class="doccomment">/// A continuum run's selected channels per candidate window, with the
-<a href=#239 id=239 data-nosnippet>239</a>/// reducer of their LSRK envelope that the row pass feeds; `None` for a
-<a href=#240 id=240 data-nosnippet>240</a>/// cube.
-<a href=#241 id=241 data-nosnippet>241</a></span><span class="kw">fn </span>continuum_envelope&lt;<span class="lifetime">'a</span>&gt;(
-<a href=#242 id=242 data-nosnippet>242</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#243 id=243 data-nosnippet>243</a>    ms: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>MeasurementSet,
-<a href=#244 id=244 data-nosnippet>244</a>    row_selection: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>SelectedObservationRowSelection,
-<a href=#245 id=245 data-nosnippet>245</a>    spectral_windows: <span class="kw-2">&amp;</span>[SourceSpectralWindow],
-<a href=#246 id=246 data-nosnippet>246</a>    frame_engine: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>casa_ms::derived::engine::MsCalEngine,
-<a href=#247 id=247 data-nosnippet>247</a>    budget: SelectedObservationContentBudget,
-<a href=#248 id=248 data-nosnippet>248</a>) -&gt; <span class="prelude-ty">Result</span>&lt;
-<a href=#249 id=249 data-nosnippet>249</a>    <span class="prelude-ty">Option</span>&lt;(
-<a href=#250 id=250 data-nosnippet>250</a>        WindowChannels,
-<a href=#251 id=251 data-nosnippet>251</a>        SelectedObservationSpectralEnvelopeReducer&lt;<span class="lifetime">'a</span>&gt;,
-<a href=#252 id=252 data-nosnippet>252</a>    )&gt;,
-<a href=#253 id=253 data-nosnippet>253</a>    ApplicationError,
-<a href=#254 id=254 data-nosnippet>254</a>&gt; {
-<a href=#255 id=255 data-nosnippet>255</a>    <span class="kw">if </span>request.specmode != SpecMode::Mfs {
-<a href=#256 id=256 data-nosnippet>256</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#257 id=257 data-nosnippet>257</a>    }
-<a href=#258 id=258 data-nosnippet>258</a>    <span class="kw">let </span>selected = spectral_windows
-<a href=#259 id=259 data-nosnippet>259</a>        .iter()
-<a href=#260 id=260 data-nosnippet>260</a>        .map(|window| {
-<a href=#261 id=261 data-nosnippet>261</a>            <span class="prelude-val">Ok</span>((
-<a href=#262 id=262 data-nosnippet>262</a>                window.spw_id,
-<a href=#263 id=263 data-nosnippet>263</a>                selected_channels(request, window.spw_id, <span class="kw-2">&amp;</span>window.frequencies_hz)<span class="question-mark">?</span>,
-<a href=#264 id=264 data-nosnippet>264</a>            ))
-<a href=#265 id=265 data-nosnippet>265</a>        })
-<a href=#266 id=266 data-nosnippet>266</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;BTreeMap&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;, ApplicationError&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#267 id=267 data-nosnippet>267</a>    <span class="kw">let </span>reducer = ms.selected_observation_spectral_envelope_reducer(
-<a href=#268 id=268 data-nosnippet>268</a>        row_selection,
-<a href=#269 id=269 data-nosnippet>269</a>        spectral_windows.iter().map(|window| {
-<a href=#270 id=270 data-nosnippet>270</a>            SelectedObservationSpectralWindow::borrow_selected(
-<a href=#271 id=271 data-nosnippet>271</a>                u32::try_from(window.spw_id).expect(<span class="string">"nonnegative i32 SPW fits u32"</span>),
-<a href=#272 id=272 data-nosnippet>272</a>                window.frequency_reference,
-<a href=#273 id=273 data-nosnippet>273</a>                <span class="kw-2">&amp;</span>window.frequencies_hz,
-<a href=#274 id=274 data-nosnippet>274</a>                <span class="kw-2">&amp;</span>window.channel_widths_hz,
-<a href=#275 id=275 data-nosnippet>275</a>                selected
-<a href=#276 id=276 data-nosnippet>276</a>                    .get(<span class="kw-2">&amp;</span>window.spw_id)
-<a href=#277 id=277 data-nosnippet>277</a>                    .expect(<span class="string">"selected every candidate spectral window"</span>),
-<a href=#278 id=278 data-nosnippet>278</a>            )
-<a href=#279 id=279 data-nosnippet>279</a>        }),
-<a href=#280 id=280 data-nosnippet>280</a>        FrequencyRef::LSRK,
-<a href=#281 id=281 data-nosnippet>281</a>        frame_engine,
-<a href=#282 id=282 data-nosnippet>282</a>        budget.available_bytes(),
-<a href=#283 id=283 data-nosnippet>283</a>    )<span class="question-mark">?</span>;
-<a href=#284 id=284 data-nosnippet>284</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>((selected, reducer)))
-<a href=#285 id=285 data-nosnippet>285</a>}
-<a href=#286 id=286 data-nosnippet>286</a>
-<a href=#287 id=287 data-nosnippet>287</a><span class="doccomment">/// The spectral windows of the candidate data descriptions.
-<a href=#288 id=288 data-nosnippet>288</a></span><span class="kw">fn </span>candidate_windows(
-<a href=#289 id=289 data-nosnippet>289</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#290 id=290 data-nosnippet>290</a>    data_description: <span class="kw-2">&amp;</span>casa_ms::MsDataDescription&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#291 id=291 data-nosnippet>291</a>    ddids: <span class="kw-2">&amp;</span>[i32],
-<a href=#292 id=292 data-nosnippet>292</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;SourceSpectralWindow&gt;, ApplicationError&gt; {
-<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">let </span>spectral_window = ms.spectral_window()<span class="question-mark">?</span>;
-<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">let </span>spw_ids = ddids
-<a href=#295 id=295 data-nosnippet>295</a>        .iter()
-<a href=#296 id=296 data-nosnippet>296</a>        .map(|ddid| data_description_binding(data_description, <span class="kw-2">*</span>ddid).map(|(spw_id, <span class="kw">_</span>)| spw_id))
-<a href=#297 id=297 data-nosnippet>297</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;BTreeSet&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#298 id=298 data-nosnippet>298</a>    spw_ids
-<a href=#299 id=299 data-nosnippet>299</a>        .into_iter()
-<a href=#300 id=300 data-nosnippet>300</a>        .map(|spw_id| {
-<a href=#301 id=301 data-nosnippet>301</a>            <span class="prelude-val">Ok</span>(SourceSpectralWindow {
-<a href=#302 id=302 data-nosnippet>302</a>                spw_id,
-<a href=#303 id=303 data-nosnippet>303</a>                frequency_reference: FrequencyRef::from_casacore_code(
-<a href=#304 id=304 data-nosnippet>304</a>                    spectral_window.meas_freq_ref(spw_id)<span class="question-mark">?</span>,
-<a href=#305 id=305 data-nosnippet>305</a>                )
-<a href=#306 id=306 data-nosnippet>306</a>                .ok_or_else(|| boxed(<span class="string">"selected SPW has an unsupported frequency frame"</span>))<span class="question-mark">?</span>,
-<a href=#307 id=307 data-nosnippet>307</a>                frequencies_hz: spectral_window.chan_freq(spw_id)<span class="question-mark">?</span>,
-<a href=#308 id=308 data-nosnippet>308</a>                channel_widths_hz: spectral_window.chan_width(spw_id)<span class="question-mark">?</span>,
-<a href=#309 id=309 data-nosnippet>309</a>            })
-<a href=#310 id=310 data-nosnippet>310</a>        })
-<a href=#311 id=311 data-nosnippet>311</a>        .collect()
-<a href=#312 id=312 data-nosnippet>312</a>}
-<a href=#313 id=313 data-nosnippet>313</a>
-<a href=#314 id=314 data-nosnippet>314</a><span class="doccomment">/// The one source frame every selected window shares.
-<a href=#315 id=315 data-nosnippet>315</a></span><span class="kw">fn </span>one_source_frame(windows: <span class="kw-2">&amp;</span>[SourceSpectralWindow]) -&gt; <span class="prelude-ty">Result</span>&lt;FrequencyRef, ApplicationError&gt; {
-<a href=#316 id=316 data-nosnippet>316</a>    <span class="kw">let </span><span class="kw-2">mut </span>frames = windows.iter().map(|window| window.frequency_reference);
-<a href=#317 id=317 data-nosnippet>317</a>    <span class="kw">let </span>first = frames
-<a href=#318 id=318 data-nosnippet>318</a>        .next()
-<a href=#319 id=319 data-nosnippet>319</a>        .ok_or_else(|| boxed(<span class="string">"selection holds no spectral window"</span>))<span class="question-mark">?</span>;
-<a href=#320 id=320 data-nosnippet>320</a>    <span class="kw">if </span>frames.any(|frame| frame != first) {
-<a href=#321 id=321 data-nosnippet>321</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(
-<a href=#322 id=322 data-nosnippet>322</a>            <span class="string">"selected spectral windows use different source frequency frames"</span>,
-<a href=#323 id=323 data-nosnippet>323</a>        ));
-<a href=#324 id=324 data-nosnippet>324</a>    }
-<a href=#325 id=325 data-nosnippet>325</a>    <span class="prelude-val">Ok</span>(first)
-<a href=#326 id=326 data-nosnippet>326</a>}
-<a href=#327 id=327 data-nosnippet>327</a>
-<a href=#328 id=328 data-nosnippet>328</a><span class="doccomment">/// The one selected spectral window of a stage that images one; `stage`
-<a href=#329 id=329 data-nosnippet>329</a>/// names it in the error.
-<a href=#330 id=330 data-nosnippet>330</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>one_window&lt;<span class="lifetime">'a</span>&gt;(
-<a href=#331 id=331 data-nosnippet>331</a>    windows: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[SourceSpectralWindow],
-<a href=#332 id=332 data-nosnippet>332</a>    stage: <span class="kw-2">&amp;</span>str,
-<a href=#333 id=333 data-nosnippet>333</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>SourceSpectralWindow, ApplicationError&gt; {
-<a href=#334 id=334 data-nosnippet>334</a>    <span class="kw">match </span>windows {
-<a href=#335 id=335 data-nosnippet>335</a>        [window] =&gt; <span class="prelude-val">Ok</span>(window),
-<a href=#336 id=336 data-nosnippet>336</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(boxed(<span class="macro">format!</span>(
-<a href=#337 id=337 data-nosnippet>337</a>            <span class="string">"{stage} requires exactly one selected spectral window"
-<a href=#338 id=338 data-nosnippet>338</a>        </span>))),
+<a href=#195 id=195 data-nosnippet>195</a>    <span class="kw">let </span>rows = facts.rows.finish();
+<a href=#196 id=196 data-nosnippet>196</a>    <span class="kw">if </span>rows.selected_row_count() == <span class="number">0 </span>{
+<a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::NoSelectedRows);
+<a href=#198 id=198 data-nosnippet>198</a>    }
+<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">let </span>continuum = continuum
+<a href=#200 id=200 data-nosnippet>200</a>        .map(|(selected, reducer)| reducer.finish().map(|envelope| (selected, envelope)))
+<a href=#201 id=201 data-nosnippet>201</a>        .transpose()<span class="question-mark">?</span>;
+<a href=#202 id=202 data-nosnippet>202</a>    <span class="comment">// A candidate data description no selected row has goes, with its
+<a href=#203 id=203 data-nosnippet>203</a>    // spectral window: the predicate admits a row only through its data
+<a href=#204 id=204 data-nosnippet>204</a>    // description, so over the observed ones it selects the same rows.
+<a href=#205 id=205 data-nosnippet>205</a>    </span><span class="kw">let </span>row_selection = ms.selected_observation_row_selection(
+<a href=#206 id=206 data-nosnippet>206</a>        <span class="kw-2">&amp;</span>facts.ddids.iter().copied().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#207 id=207 data-nosnippet>207</a>        request.field.as_deref(),
+<a href=#208 id=208 data-nosnippet>208</a>        request.uvrange.as_deref(),
+<a href=#209 id=209 data-nosnippet>209</a>        request.intent.as_deref(),
+<a href=#210 id=210 data-nosnippet>210</a>    )<span class="question-mark">?</span>;
+<a href=#211 id=211 data-nosnippet>211</a>    <span class="kw">let </span>spw_ids = row_selection
+<a href=#212 id=212 data-nosnippet>212</a>        .data_descriptions()
+<a href=#213 id=213 data-nosnippet>213</a>        .iter()
+<a href=#214 id=214 data-nosnippet>214</a>        .map(|description| description.spectral_window_id() <span class="kw">as </span>usize)
+<a href=#215 id=215 data-nosnippet>215</a>        .collect::&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#216 id=216 data-nosnippet>216</a>    spectral_windows.retain(|window| spw_ids.contains(<span class="kw-2">&amp;</span>window.spw_id));
+<a href=#217 id=217 data-nosnippet>217</a>    <span class="kw">let </span>source_frequency_reference = one_source_frame(<span class="kw-2">&amp;</span>spectral_windows)<span class="question-mark">?</span>;
+<a href=#218 id=218 data-nosnippet>218</a>    <span class="kw">let </span>continuum = continuum.map(|(<span class="kw-2">mut </span>selected, envelope)| {
+<a href=#219 id=219 data-nosnippet>219</a>        selected.retain(|spw_id, <span class="kw">_</span>| spw_ids.contains(spw_id));
+<a href=#220 id=220 data-nosnippet>220</a>        (selected, envelope)
+<a href=#221 id=221 data-nosnippet>221</a>    });
+<a href=#222 id=222 data-nosnippet>222</a>    <span class="prelude-val">Ok</span>(Survey {
+<a href=#223 id=223 data-nosnippet>223</a>        row_selection,
+<a href=#224 id=224 data-nosnippet>224</a>        rows,
+<a href=#225 id=225 data-nosnippet>225</a>        spectral_windows,
+<a href=#226 id=226 data-nosnippet>226</a>        source_frequency_reference,
+<a href=#227 id=227 data-nosnippet>227</a>        fields: facts.fields,
+<a href=#228 id=228 data-nosnippet>228</a>        observation_ids: facts.observation_ids,
+<a href=#229 id=229 data-nosnippet>229</a>        first_time_mjd_seconds: facts
+<a href=#230 id=230 data-nosnippet>230</a>            .first_time_mjd_seconds
+<a href=#231 id=231 data-nosnippet>231</a>            .expect(<span class="string">"nonempty selected row traversal"</span>),
+<a href=#232 id=232 data-nosnippet>232</a>        time_bounds_mjd_seconds: facts.time_bounds_mjd_seconds,
+<a href=#233 id=233 data-nosnippet>233</a>        first_cross_row: facts.first_cross_row,
+<a href=#234 id=234 data-nosnippet>234</a>        w: facts.w,
+<a href=#235 id=235 data-nosnippet>235</a>        weight_spectrum_complete,
+<a href=#236 id=236 data-nosnippet>236</a>        continuum,
+<a href=#237 id=237 data-nosnippet>237</a>    })
+<a href=#238 id=238 data-nosnippet>238</a>}
+<a href=#239 id=239 data-nosnippet>239</a>
+<a href=#240 id=240 data-nosnippet>240</a><span class="doccomment">/// A continuum run's selected channels per candidate window, with the
+<a href=#241 id=241 data-nosnippet>241</a>/// reducer of their LSRK envelope that the row pass feeds; `None` for a
+<a href=#242 id=242 data-nosnippet>242</a>/// cube.
+<a href=#243 id=243 data-nosnippet>243</a></span><span class="kw">fn </span>continuum_envelope&lt;<span class="lifetime">'a</span>&gt;(
+<a href=#244 id=244 data-nosnippet>244</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#245 id=245 data-nosnippet>245</a>    ms: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>MeasurementSet,
+<a href=#246 id=246 data-nosnippet>246</a>    row_selection: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>SelectedObservationRowSelection,
+<a href=#247 id=247 data-nosnippet>247</a>    spectral_windows: <span class="kw-2">&amp;</span>[SourceSpectralWindow],
+<a href=#248 id=248 data-nosnippet>248</a>    frame_engine: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>casa_ms::derived::engine::MsCalEngine,
+<a href=#249 id=249 data-nosnippet>249</a>    budget: SelectedObservationContentBudget,
+<a href=#250 id=250 data-nosnippet>250</a>) -&gt; <span class="prelude-ty">Result</span>&lt;
+<a href=#251 id=251 data-nosnippet>251</a>    <span class="prelude-ty">Option</span>&lt;(
+<a href=#252 id=252 data-nosnippet>252</a>        WindowChannels,
+<a href=#253 id=253 data-nosnippet>253</a>        SelectedObservationSpectralEnvelopeReducer&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#254 id=254 data-nosnippet>254</a>    )&gt;,
+<a href=#255 id=255 data-nosnippet>255</a>    PrepareError,
+<a href=#256 id=256 data-nosnippet>256</a>&gt; {
+<a href=#257 id=257 data-nosnippet>257</a>    <span class="kw">if </span>request.specmode != SpecMode::Mfs {
+<a href=#258 id=258 data-nosnippet>258</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#259 id=259 data-nosnippet>259</a>    }
+<a href=#260 id=260 data-nosnippet>260</a>    <span class="kw">let </span>selected = spectral_windows
+<a href=#261 id=261 data-nosnippet>261</a>        .iter()
+<a href=#262 id=262 data-nosnippet>262</a>        .map(|window| {
+<a href=#263 id=263 data-nosnippet>263</a>            <span class="prelude-val">Ok</span>((
+<a href=#264 id=264 data-nosnippet>264</a>                window.spw_id,
+<a href=#265 id=265 data-nosnippet>265</a>                selected_channels(request, window.spw_id, <span class="kw-2">&amp;</span>window.frequencies_hz)<span class="question-mark">?</span>,
+<a href=#266 id=266 data-nosnippet>266</a>            ))
+<a href=#267 id=267 data-nosnippet>267</a>        })
+<a href=#268 id=268 data-nosnippet>268</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;BTreeMap&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;, PrepareError&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#269 id=269 data-nosnippet>269</a>    <span class="kw">let </span>reducer = ms.selected_observation_spectral_envelope_reducer(
+<a href=#270 id=270 data-nosnippet>270</a>        row_selection,
+<a href=#271 id=271 data-nosnippet>271</a>        spectral_windows.iter().map(|window| {
+<a href=#272 id=272 data-nosnippet>272</a>            SelectedObservationSpectralWindow::borrow_selected(
+<a href=#273 id=273 data-nosnippet>273</a>                u32::try_from(window.spw_id).expect(<span class="string">"nonnegative i32 SPW fits u32"</span>),
+<a href=#274 id=274 data-nosnippet>274</a>                window.frequency_reference,
+<a href=#275 id=275 data-nosnippet>275</a>                <span class="kw-2">&amp;</span>window.frequencies_hz,
+<a href=#276 id=276 data-nosnippet>276</a>                <span class="kw-2">&amp;</span>window.channel_widths_hz,
+<a href=#277 id=277 data-nosnippet>277</a>                selected
+<a href=#278 id=278 data-nosnippet>278</a>                    .get(<span class="kw-2">&amp;</span>window.spw_id)
+<a href=#279 id=279 data-nosnippet>279</a>                    .expect(<span class="string">"selected every candidate spectral window"</span>),
+<a href=#280 id=280 data-nosnippet>280</a>            )
+<a href=#281 id=281 data-nosnippet>281</a>        }),
+<a href=#282 id=282 data-nosnippet>282</a>        FrequencyRef::LSRK,
+<a href=#283 id=283 data-nosnippet>283</a>        frame_engine,
+<a href=#284 id=284 data-nosnippet>284</a>        budget.available_bytes(),
+<a href=#285 id=285 data-nosnippet>285</a>    )<span class="question-mark">?</span>;
+<a href=#286 id=286 data-nosnippet>286</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>((selected, reducer)))
+<a href=#287 id=287 data-nosnippet>287</a>}
+<a href=#288 id=288 data-nosnippet>288</a>
+<a href=#289 id=289 data-nosnippet>289</a><span class="doccomment">/// The spectral windows of the candidate data descriptions.
+<a href=#290 id=290 data-nosnippet>290</a></span><span class="kw">fn </span>candidate_windows(
+<a href=#291 id=291 data-nosnippet>291</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#292 id=292 data-nosnippet>292</a>    data_description: <span class="kw-2">&amp;</span>casa_ms::MsDataDescription&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#293 id=293 data-nosnippet>293</a>    ddids: <span class="kw-2">&amp;</span>[i32],
+<a href=#294 id=294 data-nosnippet>294</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;SourceSpectralWindow&gt;, PrepareError&gt; {
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="kw">let </span>spectral_window = ms.spectral_window()<span class="question-mark">?</span>;
+<a href=#296 id=296 data-nosnippet>296</a>    <span class="kw">let </span>spw_ids = ddids
+<a href=#297 id=297 data-nosnippet>297</a>        .iter()
+<a href=#298 id=298 data-nosnippet>298</a>        .map(|ddid| data_description_binding(data_description, <span class="kw-2">*</span>ddid).map(|(spw_id, <span class="kw">_</span>)| spw_id))
+<a href=#299 id=299 data-nosnippet>299</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;BTreeSet&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#300 id=300 data-nosnippet>300</a>    spw_ids
+<a href=#301 id=301 data-nosnippet>301</a>        .into_iter()
+<a href=#302 id=302 data-nosnippet>302</a>        .map(|spw_id| {
+<a href=#303 id=303 data-nosnippet>303</a>            <span class="kw">let </span>code = spectral_window.meas_freq_ref(spw_id)<span class="question-mark">?</span>;
+<a href=#304 id=304 data-nosnippet>304</a>            <span class="prelude-val">Ok</span>(SourceSpectralWindow {
+<a href=#305 id=305 data-nosnippet>305</a>                spw_id,
+<a href=#306 id=306 data-nosnippet>306</a>                frequency_reference: FrequencyRef::from_casacore_code(code)
+<a href=#307 id=307 data-nosnippet>307</a>                    .ok_or(PrepareError::UnknownSourceFrame { spw_id, code })<span class="question-mark">?</span>,
+<a href=#308 id=308 data-nosnippet>308</a>                frequencies_hz: spectral_window.chan_freq(spw_id)<span class="question-mark">?</span>,
+<a href=#309 id=309 data-nosnippet>309</a>                channel_widths_hz: spectral_window.chan_width(spw_id)<span class="question-mark">?</span>,
+<a href=#310 id=310 data-nosnippet>310</a>            })
+<a href=#311 id=311 data-nosnippet>311</a>        })
+<a href=#312 id=312 data-nosnippet>312</a>        .collect()
+<a href=#313 id=313 data-nosnippet>313</a>}
+<a href=#314 id=314 data-nosnippet>314</a>
+<a href=#315 id=315 data-nosnippet>315</a><span class="doccomment">/// The one source frame every selected window shares.
+<a href=#316 id=316 data-nosnippet>316</a></span><span class="kw">fn </span>one_source_frame(windows: <span class="kw-2">&amp;</span>[SourceSpectralWindow]) -&gt; <span class="prelude-ty">Result</span>&lt;FrequencyRef, PrepareError&gt; {
+<a href=#317 id=317 data-nosnippet>317</a>    <span class="kw">let </span><span class="kw-2">mut </span>frames = windows.iter().map(|window| window.frequency_reference);
+<a href=#318 id=318 data-nosnippet>318</a>    <span class="kw">let </span>first = frames
+<a href=#319 id=319 data-nosnippet>319</a>        .next()
+<a href=#320 id=320 data-nosnippet>320</a>        .expect(<span class="string">"the selected rows' data descriptions bind a candidate spectral window"</span>);
+<a href=#321 id=321 data-nosnippet>321</a>    <span class="kw">if </span>frames.any(|frame| frame != first) {
+<a href=#322 id=322 data-nosnippet>322</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::MixedSourceFrames);
+<a href=#323 id=323 data-nosnippet>323</a>    }
+<a href=#324 id=324 data-nosnippet>324</a>    <span class="prelude-val">Ok</span>(first)
+<a href=#325 id=325 data-nosnippet>325</a>}
+<a href=#326 id=326 data-nosnippet>326</a>
+<a href=#327 id=327 data-nosnippet>327</a><span class="doccomment">/// The one selected spectral window of a stage that images one; `stage`
+<a href=#328 id=328 data-nosnippet>328</a>/// names it in the error.
+<a href=#329 id=329 data-nosnippet>329</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>one_window&lt;<span class="lifetime">'a</span>&gt;(
+<a href=#330 id=330 data-nosnippet>330</a>    windows: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[SourceSpectralWindow],
+<a href=#331 id=331 data-nosnippet>331</a>    stage: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#332 id=332 data-nosnippet>332</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>SourceSpectralWindow, PrepareError&gt; {
+<a href=#333 id=333 data-nosnippet>333</a>    <span class="kw">match </span>windows {
+<a href=#334 id=334 data-nosnippet>334</a>        [window] =&gt; <span class="prelude-val">Ok</span>(window),
+<a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(PrepareError::OneSpectralWindow {
+<a href=#336 id=336 data-nosnippet>336</a>            stage,
+<a href=#337 id=337 data-nosnippet>337</a>            selected: windows.len(),
+<a href=#338 id=338 data-nosnippet>338</a>        }),
 <a href=#339 id=339 data-nosnippet>339</a>    }
 <a href=#340 id=340 data-nosnippet>340</a>}
 <a href=#341 id=341 data-nosnippet>341</a>
 <a href=#342 id=342 data-nosnippet>342</a><span class="kw">fn </span>selected_data_descriptions(
 <a href=#343 id=343 data-nosnippet>343</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
 <a href=#344 id=344 data-nosnippet>344</a>    table: <span class="kw-2">&amp;</span>casa_ms::MsDataDescription&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#345 id=345 data-nosnippet>345</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;i32&gt;, ApplicationError&gt; {
+<a href=#345 id=345 data-nosnippet>345</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;i32&gt;, PrepareError&gt; {
 <a href=#346 id=346 data-nosnippet>346</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(ddid) = request.ddid {
 <a href=#347 id=347 data-nosnippet>347</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="macro">vec!</span>[ddid]);
 <a href=#348 id=348 data-nosnippet>348</a>    }
@@ -363,11 +363,11 @@
 <a href=#363 id=363 data-nosnippet>363</a>            </span>&amp;&amp; polarization &gt;= <span class="number">0
 <a href=#364 id=364 data-nosnippet>364</a>            </span>&amp;&amp; (selected_spws.is_empty() || selected_spws.contains(<span class="kw-2">&amp;</span>spw))
 <a href=#365 id=365 data-nosnippet>365</a>        {
-<a href=#366 id=366 data-nosnippet>366</a>            ddids.push(i32::try_from(row).map_err(|<span class="kw">_</span>| boxed(<span class="string">"DDID exceeds i32"</span>))<span class="question-mark">?</span>);
+<a href=#366 id=366 data-nosnippet>366</a>            ddids.push(i32::try_from(row).expect(<span class="string">"DATA_DESCRIPTION rows are addressed by i32 ids"</span>));
 <a href=#367 id=367 data-nosnippet>367</a>        }
 <a href=#368 id=368 data-nosnippet>368</a>    }
 <a href=#369 id=369 data-nosnippet>369</a>    <span class="kw">if </span>ddids.is_empty() {
-<a href=#370 id=370 data-nosnippet>370</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(<span class="string">"selection resolved to no data descriptions"</span>));
+<a href=#370 id=370 data-nosnippet>370</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::NoSelectedDataDescriptions);
 <a href=#371 id=371 data-nosnippet>371</a>    }
 <a href=#372 id=372 data-nosnippet>372</a>    <span class="prelude-val">Ok</span>(ddids)
 <a href=#373 id=373 data-nosnippet>373</a>}
@@ -375,170 +375,200 @@
 <a href=#375 id=375 data-nosnippet>375</a><span class="kw">fn </span>data_description_binding(
 <a href=#376 id=376 data-nosnippet>376</a>    table: <span class="kw-2">&amp;</span>casa_ms::MsDataDescription&lt;<span class="lifetime">'_</span>&gt;,
 <a href=#377 id=377 data-nosnippet>377</a>    ddid: i32,
-<a href=#378 id=378 data-nosnippet>378</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(usize, usize), ApplicationError&gt; {
-<a href=#379 id=379 data-nosnippet>379</a>    <span class="kw">let </span>ddid = usize::try_from(ddid).map_err(|<span class="kw">_</span>| boxed(<span class="string">"selected DATA_DESC_ID is negative"</span>))<span class="question-mark">?</span>;
-<a href=#380 id=380 data-nosnippet>380</a>    <span class="kw">let </span>spw = table.spectral_window_id(ddid)<span class="question-mark">?</span>;
-<a href=#381 id=381 data-nosnippet>381</a>    <span class="kw">let </span>polarization = table.polarization_id(ddid)<span class="question-mark">?</span>;
-<a href=#382 id=382 data-nosnippet>382</a>    <span class="prelude-val">Ok</span>((
-<a href=#383 id=383 data-nosnippet>383</a>        usize::try_from(spw).map_err(|<span class="kw">_</span>| boxed(<span class="string">"selected DDID has a negative SPW id"</span>))<span class="question-mark">?</span>,
-<a href=#384 id=384 data-nosnippet>384</a>        usize::try_from(polarization)
-<a href=#385 id=385 data-nosnippet>385</a>            .map_err(|<span class="kw">_</span>| boxed(<span class="string">"selected DDID has a negative polarization id"</span>))<span class="question-mark">?</span>,
-<a href=#386 id=386 data-nosnippet>386</a>    ))
-<a href=#387 id=387 data-nosnippet>387</a>}
-<a href=#388 id=388 data-nosnippet>388</a>
-<a href=#389 id=389 data-nosnippet>389</a><span class="doccomment">/// The channels of `spw_id` the request selects: those its `spw`
-<a href=#390 id=390 data-nosnippet>390</a>/// selector names, else `channel_start` and `channel_count`.
-<a href=#391 id=391 data-nosnippet>391</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>selected_channels(
-<a href=#392 id=392 data-nosnippet>392</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#393 id=393 data-nosnippet>393</a>    spw_id: usize,
-<a href=#394 id=394 data-nosnippet>394</a>    frequencies: <span class="kw-2">&amp;</span>[f64],
-<a href=#395 id=395 data-nosnippet>395</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;usize&gt;, ApplicationError&gt; {
-<a href=#396 id=396 data-nosnippet>396</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(channels) = explicit_spw_channels(request, spw_id, frequencies)<span class="question-mark">? </span>{
-<a href=#397 id=397 data-nosnippet>397</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(channels);
-<a href=#398 id=398 data-nosnippet>398</a>    }
-<a href=#399 id=399 data-nosnippet>399</a>    <span class="kw">let </span>start = request.channel_start.unwrap_or(<span class="number">0</span>);
-<a href=#400 id=400 data-nosnippet>400</a>    <span class="kw">let </span>count = request
-<a href=#401 id=401 data-nosnippet>401</a>        .channel_count
-<a href=#402 id=402 data-nosnippet>402</a>        .unwrap_or_else(|| frequencies.len().saturating_sub(start));
-<a href=#403 id=403 data-nosnippet>403</a>    <span class="kw">let </span>end = start
-<a href=#404 id=404 data-nosnippet>404</a>        .checked_add(count)
-<a href=#405 id=405 data-nosnippet>405</a>        .ok_or_else(|| boxed(<span class="string">"channel range overflows usize"</span>))<span class="question-mark">?</span>;
-<a href=#406 id=406 data-nosnippet>406</a>    <span class="kw">if </span>count == <span class="number">0 </span>|| end &gt; frequencies.len() {
-<a href=#407 id=407 data-nosnippet>407</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(<span class="string">"selected channel range is empty or out of bounds"</span>));
-<a href=#408 id=408 data-nosnippet>408</a>    }
-<a href=#409 id=409 data-nosnippet>409</a>    <span class="prelude-val">Ok</span>((start..end).collect())
-<a href=#410 id=410 data-nosnippet>410</a>}
-<a href=#411 id=411 data-nosnippet>411</a>
-<a href=#412 id=412 data-nosnippet>412</a><span class="doccomment">/// The channels of `spw_id` the request's `spw` selector names, if it
-<a href=#413 id=413 data-nosnippet>413</a>/// names any.
-<a href=#414 id=414 data-nosnippet>414</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>explicit_spw_channels(
-<a href=#415 id=415 data-nosnippet>415</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#416 id=416 data-nosnippet>416</a>    spw_id: usize,
-<a href=#417 id=417 data-nosnippet>417</a>    frequencies: <span class="kw-2">&amp;</span>[f64],
-<a href=#418 id=418 data-nosnippet>418</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;usize&gt;&gt;, ApplicationError&gt; {
-<a href=#419 id=419 data-nosnippet>419</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(text) = request.spw.as_deref() <span class="kw">else </span>{
-<a href=#420 id=420 data-nosnippet>420</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#421 id=421 data-nosnippet>421</a>    };
-<a href=#422 id=422 data-nosnippet>422</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(selector) = parse_spw_selector(text)<span class="question-mark">?
-<a href=#423 id=423 data-nosnippet>423</a>        </span>.into_iter()
-<a href=#424 id=424 data-nosnippet>424</a>        .find(|selector| usize::try_from(selector.spw_id).ok() == <span class="prelude-val">Some</span>(spw_id))
-<a href=#425 id=425 data-nosnippet>425</a>        .and_then(|selector| selector.channels)
-<a href=#426 id=426 data-nosnippet>426</a>    <span class="kw">else </span>{
-<a href=#427 id=427 data-nosnippet>427</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#428 id=428 data-nosnippet>428</a>    };
-<a href=#429 id=429 data-nosnippet>429</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(
-<a href=#430 id=430 data-nosnippet>430</a>        resolve_channel_selector_selection(frequencies, <span class="kw-2">&amp;</span>selector)<span class="question-mark">?</span>.indices,
-<a href=#431 id=431 data-nosnippet>431</a>    ))
-<a href=#432 id=432 data-nosnippet>432</a>}
-<a href=#433 id=433 data-nosnippet>433</a>
-<a href=#434 id=434 data-nosnippet>434</a><span class="doccomment">/// The observation selection: the surveyed rows, `channels` per window and
-<a href=#435 id=435 data-nosnippet>435</a>/// every correlation of the selected polarization setups.
-<a href=#436 id=436 data-nosnippet>436</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>observation_selection(
-<a href=#437 id=437 data-nosnippet>437</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#438 id=438 data-nosnippet>438</a>    survey: Survey,
-<a href=#439 id=439 data-nosnippet>439</a>    channels: <span class="kw-2">&amp;</span>WindowChannels,
-<a href=#440 id=440 data-nosnippet>440</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ObservationSelection, ApplicationError&gt; {
-<a href=#441 id=441 data-nosnippet>441</a>    <span class="kw">let </span>polarization = ms.polarization()<span class="question-mark">?</span>;
-<a href=#442 id=442 data-nosnippet>442</a>    <span class="kw">let </span>spectral_windows = channels
-<a href=#443 id=443 data-nosnippet>443</a>        .iter()
-<a href=#444 id=444 data-nosnippet>444</a>        .map(|(spw_id, channels)| {
-<a href=#445 id=445 data-nosnippet>445</a>            <span class="prelude-val">Ok</span>(SpectralWindowSelection::new(
-<a href=#446 id=446 data-nosnippet>446</a>                u32::try_from(<span class="kw-2">*</span>spw_id).map_err(|<span class="kw">_</span>| boxed(<span class="string">"SPW id exceeds u32"</span>))<span class="question-mark">?</span>,
-<a href=#447 id=447 data-nosnippet>447</a>                channels
-<a href=#448 id=448 data-nosnippet>448</a>                    .iter()
-<a href=#449 id=449 data-nosnippet>449</a>                    .map(|channel| {
-<a href=#450 id=450 data-nosnippet>450</a>                        u32::try_from(<span class="kw-2">*</span>channel).map_err(|<span class="kw">_</span>| boxed(<span class="string">"channel exceeds u32"</span>))
-<a href=#451 id=451 data-nosnippet>451</a>                    })
-<a href=#452 id=452 data-nosnippet>452</a>                    .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>,
-<a href=#453 id=453 data-nosnippet>453</a>            ))
-<a href=#454 id=454 data-nosnippet>454</a>        })
-<a href=#455 id=455 data-nosnippet>455</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, ApplicationError&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#456 id=456 data-nosnippet>456</a>    <span class="kw">let </span>correlations = survey
-<a href=#457 id=457 data-nosnippet>457</a>        .bindings
+<a href=#378 id=378 data-nosnippet>378</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(usize, usize), PrepareError&gt; {
+<a href=#379 id=379 data-nosnippet>379</a>    <span class="kw">let </span>row = usize::try_from(ddid).map_err(|<span class="kw">_</span>| PrepareError::InvalidDataDescription { ddid })<span class="question-mark">?</span>;
+<a href=#380 id=380 data-nosnippet>380</a>    <span class="kw">let </span>spw = table.spectral_window_id(row)<span class="question-mark">?</span>;
+<a href=#381 id=381 data-nosnippet>381</a>    <span class="kw">let </span>polarization = table.polarization_id(row)<span class="question-mark">?</span>;
+<a href=#382 id=382 data-nosnippet>382</a>    <span class="kw">match </span>(usize::try_from(spw), usize::try_from(polarization)) {
+<a href=#383 id=383 data-nosnippet>383</a>        (<span class="prelude-val">Ok</span>(spw), <span class="prelude-val">Ok</span>(polarization)) =&gt; <span class="prelude-val">Ok</span>((spw, polarization)),
+<a href=#384 id=384 data-nosnippet>384</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(PrepareError::InvalidDataDescription { ddid }),
+<a href=#385 id=385 data-nosnippet>385</a>    }
+<a href=#386 id=386 data-nosnippet>386</a>}
+<a href=#387 id=387 data-nosnippet>387</a>
+<a href=#388 id=388 data-nosnippet>388</a><span class="doccomment">/// The channels of `spw_id` the request selects: those its `spw`
+<a href=#389 id=389 data-nosnippet>389</a>/// selector names, else `channel_start` and `channel_count`.
+<a href=#390 id=390 data-nosnippet>390</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>selected_channels(
+<a href=#391 id=391 data-nosnippet>391</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#392 id=392 data-nosnippet>392</a>    spw_id: usize,
+<a href=#393 id=393 data-nosnippet>393</a>    frequencies: <span class="kw-2">&amp;</span>[f64],
+<a href=#394 id=394 data-nosnippet>394</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;usize&gt;, PrepareError&gt; {
+<a href=#395 id=395 data-nosnippet>395</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(channels) = explicit_spw_channels(request, spw_id, frequencies)<span class="question-mark">? </span>{
+<a href=#396 id=396 data-nosnippet>396</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(channels);
+<a href=#397 id=397 data-nosnippet>397</a>    }
+<a href=#398 id=398 data-nosnippet>398</a>    <span class="kw">let </span>start = request.channel_start.unwrap_or(<span class="number">0</span>);
+<a href=#399 id=399 data-nosnippet>399</a>    <span class="kw">let </span>count = request
+<a href=#400 id=400 data-nosnippet>400</a>        .channel_count
+<a href=#401 id=401 data-nosnippet>401</a>        .unwrap_or_else(|| frequencies.len().saturating_sub(start));
+<a href=#402 id=402 data-nosnippet>402</a>    <span class="kw">match </span>start.checked_add(count) {
+<a href=#403 id=403 data-nosnippet>403</a>        <span class="prelude-val">Some</span>(end) <span class="kw">if </span>count &gt; <span class="number">0 </span>&amp;&amp; end &lt;= frequencies.len() =&gt; <span class="prelude-val">Ok</span>((start..end).collect()),
+<a href=#404 id=404 data-nosnippet>404</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(PrepareError::ChannelRange {
+<a href=#405 id=405 data-nosnippet>405</a>            spw_id,
+<a href=#406 id=406 data-nosnippet>406</a>            start,
+<a href=#407 id=407 data-nosnippet>407</a>            count,
+<a href=#408 id=408 data-nosnippet>408</a>            channels: frequencies.len(),
+<a href=#409 id=409 data-nosnippet>409</a>        }),
+<a href=#410 id=410 data-nosnippet>410</a>    }
+<a href=#411 id=411 data-nosnippet>411</a>}
+<a href=#412 id=412 data-nosnippet>412</a>
+<a href=#413 id=413 data-nosnippet>413</a><span class="doccomment">/// The channels of `spw_id` the request's `spw` selector names, if it
+<a href=#414 id=414 data-nosnippet>414</a>/// names any.
+<a href=#415 id=415 data-nosnippet>415</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>explicit_spw_channels(
+<a href=#416 id=416 data-nosnippet>416</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#417 id=417 data-nosnippet>417</a>    spw_id: usize,
+<a href=#418 id=418 data-nosnippet>418</a>    frequencies: <span class="kw-2">&amp;</span>[f64],
+<a href=#419 id=419 data-nosnippet>419</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;usize&gt;&gt;, PrepareError&gt; {
+<a href=#420 id=420 data-nosnippet>420</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(text) = request.spw.as_deref() <span class="kw">else </span>{
+<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#422 id=422 data-nosnippet>422</a>    };
+<a href=#423 id=423 data-nosnippet>423</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(selector) = parse_spw_selector(text)<span class="question-mark">?
+<a href=#424 id=424 data-nosnippet>424</a>        </span>.into_iter()
+<a href=#425 id=425 data-nosnippet>425</a>        .find(|selector| usize::try_from(selector.spw_id).ok() == <span class="prelude-val">Some</span>(spw_id))
+<a href=#426 id=426 data-nosnippet>426</a>        .and_then(|selector| selector.channels)
+<a href=#427 id=427 data-nosnippet>427</a>    <span class="kw">else </span>{
+<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#429 id=429 data-nosnippet>429</a>    };
+<a href=#430 id=430 data-nosnippet>430</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(
+<a href=#431 id=431 data-nosnippet>431</a>        resolve_channel_selector_selection(frequencies, <span class="kw-2">&amp;</span>selector)<span class="question-mark">?</span>.indices,
+<a href=#432 id=432 data-nosnippet>432</a>    ))
+<a href=#433 id=433 data-nosnippet>433</a>}
+<a href=#434 id=434 data-nosnippet>434</a>
+<a href=#435 id=435 data-nosnippet>435</a><span class="doccomment">/// The observation selection: the surveyed rows, `channels` per window and
+<a href=#436 id=436 data-nosnippet>436</a>/// every correlation of the selected polarization setups.
+<a href=#437 id=437 data-nosnippet>437</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>observation_selection(
+<a href=#438 id=438 data-nosnippet>438</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#439 id=439 data-nosnippet>439</a>    survey: Survey,
+<a href=#440 id=440 data-nosnippet>440</a>    channels: <span class="kw-2">&amp;</span>WindowChannels,
+<a href=#441 id=441 data-nosnippet>441</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ObservationSelection, PrepareError&gt; {
+<a href=#442 id=442 data-nosnippet>442</a>    <span class="kw">let </span>polarization = ms.polarization()<span class="question-mark">?</span>;
+<a href=#443 id=443 data-nosnippet>443</a>    <span class="kw">let </span>spectral_windows = channels
+<a href=#444 id=444 data-nosnippet>444</a>        .iter()
+<a href=#445 id=445 data-nosnippet>445</a>        .map(|(spw_id, channels)| {
+<a href=#446 id=446 data-nosnippet>446</a>            SpectralWindowSelection::new(
+<a href=#447 id=447 data-nosnippet>447</a>                u32::try_from(<span class="kw-2">*</span>spw_id).expect(<span class="string">"SPW ids are nonnegative stored i32 values"</span>),
+<a href=#448 id=448 data-nosnippet>448</a>                channels
+<a href=#449 id=449 data-nosnippet>449</a>                    .iter()
+<a href=#450 id=450 data-nosnippet>450</a>                    .map(|channel| u32::try_from(<span class="kw-2">*</span>channel).expect(<span class="string">"a CHAN_FREQ index fits u32"</span>))
+<a href=#451 id=451 data-nosnippet>451</a>                    .collect(),
+<a href=#452 id=452 data-nosnippet>452</a>            )
+<a href=#453 id=453 data-nosnippet>453</a>        })
+<a href=#454 id=454 data-nosnippet>454</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#455 id=455 data-nosnippet>455</a>    <span class="kw">let </span>correlations = survey
+<a href=#456 id=456 data-nosnippet>456</a>        .row_selection
+<a href=#457 id=457 data-nosnippet>457</a>        .data_descriptions()
 <a href=#458 id=458 data-nosnippet>458</a>        .iter()
-<a href=#459 id=459 data-nosnippet>459</a>        .map(|(<span class="kw">_</span>, polarization_id)| <span class="kw-2">*</span>polarization_id)
+<a href=#459 id=459 data-nosnippet>459</a>        .map(|description| description.polarization_id())
 <a href=#460 id=460 data-nosnippet>460</a>        .collect::&lt;BTreeSet&lt;<span class="kw">_</span>&gt;&gt;()
 <a href=#461 id=461 data-nosnippet>461</a>        .into_iter()
 <a href=#462 id=462 data-nosnippet>462</a>        .map(|polarization_id| {
 <a href=#463 id=463 data-nosnippet>463</a>            <span class="kw">let </span>correlations = polarization
-<a href=#464 id=464 data-nosnippet>464</a>                .corr_type(polarization_id)<span class="question-mark">?
+<a href=#464 id=464 data-nosnippet>464</a>                .corr_type(polarization_id <span class="kw">as </span>usize)<span class="question-mark">?
 <a href=#465 id=465 data-nosnippet>465</a>                </span>.iter()
 <a href=#466 id=466 data-nosnippet>466</a>                .enumerate()
 <a href=#467 id=467 data-nosnippet>467</a>                .map(|(index, code)| {
 <a href=#468 id=468 data-nosnippet>468</a>                    <span class="prelude-val">Ok</span>(CorrelationProduct::new(
-<a href=#469 id=469 data-nosnippet>469</a>                        u32::try_from(index).map_err(|<span class="kw">_</span>| boxed(<span class="string">"correlation index exceeds u32"</span>))<span class="question-mark">?</span>,
+<a href=#469 id=469 data-nosnippet>469</a>                        u32::try_from(index).expect(<span class="string">"a CORR_TYPE index fits u32"</span>),
 <a href=#470 id=470 data-nosnippet>470</a>                        correlation_type(<span class="kw-2">*</span>code)<span class="question-mark">?</span>,
 <a href=#471 id=471 data-nosnippet>471</a>                    ))
 <a href=#472 id=472 data-nosnippet>472</a>                })
-<a href=#473 id=473 data-nosnippet>473</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, ApplicationError&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#474 id=474 data-nosnippet>474</a>            <span class="prelude-val">Ok</span>(CorrelationSelection::new(
-<a href=#475 id=475 data-nosnippet>475</a>                u32::try_from(polarization_id).map_err(|<span class="kw">_</span>| boxed(<span class="string">"polarization id exceeds u32"</span>))<span class="question-mark">?</span>,
-<a href=#476 id=476 data-nosnippet>476</a>                correlations,
-<a href=#477 id=477 data-nosnippet>477</a>            ))
-<a href=#478 id=478 data-nosnippet>478</a>        })
-<a href=#479 id=479 data-nosnippet>479</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, ApplicationError&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#480 id=480 data-nosnippet>480</a>    <span class="prelude-val">Ok</span>(ObservationSelection::new(
-<a href=#481 id=481 data-nosnippet>481</a>        survey.rows,
-<a href=#482 id=482 data-nosnippet>482</a>        survey.row_selection.rows().clone(),
-<a href=#483 id=483 data-nosnippet>483</a>        survey.row_selection.data_descriptions().to_vec(),
-<a href=#484 id=484 data-nosnippet>484</a>        spectral_windows,
-<a href=#485 id=485 data-nosnippet>485</a>        correlations,
-<a href=#486 id=486 data-nosnippet>486</a>    ))
-<a href=#487 id=487 data-nosnippet>487</a>}
-<a href=#488 id=488 data-nosnippet>488</a>
-<a href=#489 id=489 data-nosnippet>489</a><span class="doccomment">/// The visibility column imaged: the requested one, else `CORRECTED_DATA`
-<a href=#490 id=490 data-nosnippet>490</a>/// when present, else `DATA`.
-<a href=#491 id=491 data-nosnippet>491</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>visibility_column(
-<a href=#492 id=492 data-nosnippet>492</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#493 id=493 data-nosnippet>493</a>    requested: <span class="prelude-ty">Option</span>&lt;DataColumn&gt;,
-<a href=#494 id=494 data-nosnippet>494</a>) -&gt; <span class="prelude-ty">Result</span>&lt;OwnerVisibilityColumn, ApplicationError&gt; {
-<a href=#495 id=495 data-nosnippet>495</a>    <span class="prelude-val">Ok</span>(<span class="kw">match </span>requested {
-<a href=#496 id=496 data-nosnippet>496</a>        <span class="prelude-val">Some</span>(DataColumn::Data) =&gt; OwnerVisibilityColumn::Data,
-<a href=#497 id=497 data-nosnippet>497</a>        <span class="prelude-val">Some</span>(DataColumn::Corrected) =&gt; OwnerVisibilityColumn::CorrectedData,
-<a href=#498 id=498 data-nosnippet>498</a>        <span class="prelude-val">None </span><span class="kw">if </span>ms.data_column(VisibilityDataColumn::CorrectedData).is_ok() =&gt; {
-<a href=#499 id=499 data-nosnippet>499</a>            OwnerVisibilityColumn::CorrectedData
-<a href=#500 id=500 data-nosnippet>500</a>        }
-<a href=#501 id=501 data-nosnippet>501</a>        <span class="prelude-val">None </span><span class="kw">if </span>ms.data_column(VisibilityDataColumn::Data).is_ok() =&gt; OwnerVisibilityColumn::Data,
-<a href=#502 id=502 data-nosnippet>502</a>        <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(<span class="string">"MS has neither CORRECTED_DATA nor DATA"</span>)),
-<a href=#503 id=503 data-nosnippet>503</a>    })
-<a href=#504 id=504 data-nosnippet>504</a>}
-<a href=#505 id=505 data-nosnippet>505</a>
-<a href=#506 id=506 data-nosnippet>506</a><span class="kw">fn </span>correlation_type(code: i32) -&gt; <span class="prelude-ty">Result</span>&lt;CorrelationType, ApplicationError&gt; {
-<a href=#507 id=507 data-nosnippet>507</a>    <span class="kw">use </span>CorrelationType::<span class="kw-2">*</span>;
-<a href=#508 id=508 data-nosnippet>508</a>    <span class="prelude-val">Ok</span>(<span class="kw">match </span>code {
-<a href=#509 id=509 data-nosnippet>509</a>        <span class="number">1 </span>=&gt; StokesI,
-<a href=#510 id=510 data-nosnippet>510</a>        <span class="number">2 </span>=&gt; StokesQ,
-<a href=#511 id=511 data-nosnippet>511</a>        <span class="number">3 </span>=&gt; StokesU,
-<a href=#512 id=512 data-nosnippet>512</a>        <span class="number">4 </span>=&gt; StokesV,
-<a href=#513 id=513 data-nosnippet>513</a>        <span class="number">5 </span>=&gt; CircularRr,
-<a href=#514 id=514 data-nosnippet>514</a>        <span class="number">6 </span>=&gt; CircularRl,
-<a href=#515 id=515 data-nosnippet>515</a>        <span class="number">7 </span>=&gt; CircularLr,
-<a href=#516 id=516 data-nosnippet>516</a>        <span class="number">8 </span>=&gt; CircularLl,
-<a href=#517 id=517 data-nosnippet>517</a>        <span class="number">9 </span>=&gt; LinearXx,
-<a href=#518 id=518 data-nosnippet>518</a>        <span class="number">10 </span>=&gt; LinearXy,
-<a href=#519 id=519 data-nosnippet>519</a>        <span class="number">11 </span>=&gt; LinearYx,
-<a href=#520 id=520 data-nosnippet>520</a>        <span class="number">12 </span>=&gt; LinearYy,
-<a href=#521 id=521 data-nosnippet>521</a>        <span class="number">13 </span>=&gt; MixedRx,
-<a href=#522 id=522 data-nosnippet>522</a>        <span class="number">14 </span>=&gt; MixedRy,
-<a href=#523 id=523 data-nosnippet>523</a>        <span class="number">15 </span>=&gt; MixedLx,
-<a href=#524 id=524 data-nosnippet>524</a>        <span class="number">16 </span>=&gt; MixedLy,
-<a href=#525 id=525 data-nosnippet>525</a>        <span class="number">17 </span>=&gt; MixedXr,
-<a href=#526 id=526 data-nosnippet>526</a>        <span class="number">18 </span>=&gt; MixedXl,
-<a href=#527 id=527 data-nosnippet>527</a>        <span class="number">19 </span>=&gt; MixedYr,
-<a href=#528 id=528 data-nosnippet>528</a>        <span class="number">20 </span>=&gt; MixedYl,
-<a href=#529 id=529 data-nosnippet>529</a>        <span class="number">21 </span>=&gt; QuasiOrthogonalPp,
-<a href=#530 id=530 data-nosnippet>530</a>        <span class="number">22 </span>=&gt; QuasiOrthogonalPq,
-<a href=#531 id=531 data-nosnippet>531</a>        <span class="number">23 </span>=&gt; QuasiOrthogonalQp,
-<a href=#532 id=532 data-nosnippet>532</a>        <span class="number">24 </span>=&gt; QuasiOrthogonalQq,
-<a href=#533 id=533 data-nosnippet>533</a>        <span class="number">25 </span>=&gt; RightCircular,
-<a href=#534 id=534 data-nosnippet>534</a>        <span class="number">26 </span>=&gt; LeftCircular,
-<a href=#535 id=535 data-nosnippet>535</a>        <span class="number">27 </span>=&gt; Linear,
-<a href=#536 id=536 data-nosnippet>536</a>        <span class="number">28 </span>=&gt; PolarizedIntensity,
-<a href=#537 id=537 data-nosnippet>537</a>        <span class="number">29 </span>=&gt; LinearPolarizedIntensity,
-<a href=#538 id=538 data-nosnippet>538</a>        <span class="number">30 </span>=&gt; FractionalPolarizedIntensity,
-<a href=#539 id=539 data-nosnippet>539</a>        <span class="number">31 </span>=&gt; FractionalLinearPolarizedIntensity,
-<a href=#540 id=540 data-nosnippet>540</a>        <span class="number">32 </span>=&gt; PolarizationAngle,
-<a href=#541 id=541 data-nosnippet>541</a>        <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(<span class="macro">format!</span>(<span class="string">"unsupported correlation code {code}"</span>))),
-<a href=#542 id=542 data-nosnippet>542</a>    })
-<a href=#543 id=543 data-nosnippet>543</a>}
+<a href=#473 id=473 data-nosnippet>473</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, PrepareError&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#474 id=474 data-nosnippet>474</a>            <span class="prelude-val">Ok</span>(CorrelationSelection::new(polarization_id, correlations))
+<a href=#475 id=475 data-nosnippet>475</a>        })
+<a href=#476 id=476 data-nosnippet>476</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, PrepareError&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#477 id=477 data-nosnippet>477</a>    <span class="prelude-val">Ok</span>(ObservationSelection::new(
+<a href=#478 id=478 data-nosnippet>478</a>        survey.rows,
+<a href=#479 id=479 data-nosnippet>479</a>        survey.row_selection.rows().clone(),
+<a href=#480 id=480 data-nosnippet>480</a>        survey.row_selection.data_descriptions().to_vec(),
+<a href=#481 id=481 data-nosnippet>481</a>        spectral_windows,
+<a href=#482 id=482 data-nosnippet>482</a>        correlations,
+<a href=#483 id=483 data-nosnippet>483</a>    ))
+<a href=#484 id=484 data-nosnippet>484</a>}
+<a href=#485 id=485 data-nosnippet>485</a>
+<a href=#486 id=486 data-nosnippet>486</a><span class="doccomment">/// The visibility column imaged: the requested one, else `CORRECTED_DATA`
+<a href=#487 id=487 data-nosnippet>487</a>/// when present, else `DATA`.
+<a href=#488 id=488 data-nosnippet>488</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>visibility_column(
+<a href=#489 id=489 data-nosnippet>489</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#490 id=490 data-nosnippet>490</a>    requested: <span class="prelude-ty">Option</span>&lt;DataColumn&gt;,
+<a href=#491 id=491 data-nosnippet>491</a>) -&gt; <span class="prelude-ty">Result</span>&lt;OwnerVisibilityColumn, PrepareError&gt; {
+<a href=#492 id=492 data-nosnippet>492</a>    <span class="prelude-val">Ok</span>(<span class="kw">match </span>requested {
+<a href=#493 id=493 data-nosnippet>493</a>        <span class="prelude-val">Some</span>(DataColumn::Data) =&gt; OwnerVisibilityColumn::Data,
+<a href=#494 id=494 data-nosnippet>494</a>        <span class="prelude-val">Some</span>(DataColumn::Corrected) =&gt; OwnerVisibilityColumn::CorrectedData,
+<a href=#495 id=495 data-nosnippet>495</a>        <span class="prelude-val">None </span><span class="kw">if </span>ms.data_column(VisibilityDataColumn::CorrectedData).is_ok() =&gt; {
+<a href=#496 id=496 data-nosnippet>496</a>            OwnerVisibilityColumn::CorrectedData
+<a href=#497 id=497 data-nosnippet>497</a>        }
+<a href=#498 id=498 data-nosnippet>498</a>        <span class="prelude-val">None </span><span class="kw">if </span>ms.data_column(VisibilityDataColumn::Data).is_ok() =&gt; OwnerVisibilityColumn::Data,
+<a href=#499 id=499 data-nosnippet>499</a>        <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::NoVisibilityColumn),
+<a href=#500 id=500 data-nosnippet>500</a>    })
+<a href=#501 id=501 data-nosnippet>501</a>}
+<a href=#502 id=502 data-nosnippet>502</a>
+<a href=#503 id=503 data-nosnippet>503</a><span class="kw">fn </span>correlation_type(code: i32) -&gt; <span class="prelude-ty">Result</span>&lt;CorrelationType, PrepareError&gt; {
+<a href=#504 id=504 data-nosnippet>504</a>    <span class="kw">use </span>CorrelationType::<span class="kw-2">*</span>;
+<a href=#505 id=505 data-nosnippet>505</a>    <span class="prelude-val">Ok</span>(<span class="kw">match </span>code {
+<a href=#506 id=506 data-nosnippet>506</a>        <span class="number">1 </span>=&gt; StokesI,
+<a href=#507 id=507 data-nosnippet>507</a>        <span class="number">2 </span>=&gt; StokesQ,
+<a href=#508 id=508 data-nosnippet>508</a>        <span class="number">3 </span>=&gt; StokesU,
+<a href=#509 id=509 data-nosnippet>509</a>        <span class="number">4 </span>=&gt; StokesV,
+<a href=#510 id=510 data-nosnippet>510</a>        <span class="number">5 </span>=&gt; CircularRr,
+<a href=#511 id=511 data-nosnippet>511</a>        <span class="number">6 </span>=&gt; CircularRl,
+<a href=#512 id=512 data-nosnippet>512</a>        <span class="number">7 </span>=&gt; CircularLr,
+<a href=#513 id=513 data-nosnippet>513</a>        <span class="number">8 </span>=&gt; CircularLl,
+<a href=#514 id=514 data-nosnippet>514</a>        <span class="number">9 </span>=&gt; LinearXx,
+<a href=#515 id=515 data-nosnippet>515</a>        <span class="number">10 </span>=&gt; LinearXy,
+<a href=#516 id=516 data-nosnippet>516</a>        <span class="number">11 </span>=&gt; LinearYx,
+<a href=#517 id=517 data-nosnippet>517</a>        <span class="number">12 </span>=&gt; LinearYy,
+<a href=#518 id=518 data-nosnippet>518</a>        <span class="number">13 </span>=&gt; MixedRx,
+<a href=#519 id=519 data-nosnippet>519</a>        <span class="number">14 </span>=&gt; MixedRy,
+<a href=#520 id=520 data-nosnippet>520</a>        <span class="number">15 </span>=&gt; MixedLx,
+<a href=#521 id=521 data-nosnippet>521</a>        <span class="number">16 </span>=&gt; MixedLy,
+<a href=#522 id=522 data-nosnippet>522</a>        <span class="number">17 </span>=&gt; MixedXr,
+<a href=#523 id=523 data-nosnippet>523</a>        <span class="number">18 </span>=&gt; MixedXl,
+<a href=#524 id=524 data-nosnippet>524</a>        <span class="number">19 </span>=&gt; MixedYr,
+<a href=#525 id=525 data-nosnippet>525</a>        <span class="number">20 </span>=&gt; MixedYl,
+<a href=#526 id=526 data-nosnippet>526</a>        <span class="number">21 </span>=&gt; QuasiOrthogonalPp,
+<a href=#527 id=527 data-nosnippet>527</a>        <span class="number">22 </span>=&gt; QuasiOrthogonalPq,
+<a href=#528 id=528 data-nosnippet>528</a>        <span class="number">23 </span>=&gt; QuasiOrthogonalQp,
+<a href=#529 id=529 data-nosnippet>529</a>        <span class="number">24 </span>=&gt; QuasiOrthogonalQq,
+<a href=#530 id=530 data-nosnippet>530</a>        <span class="number">25 </span>=&gt; RightCircular,
+<a href=#531 id=531 data-nosnippet>531</a>        <span class="number">26 </span>=&gt; LeftCircular,
+<a href=#532 id=532 data-nosnippet>532</a>        <span class="number">27 </span>=&gt; Linear,
+<a href=#533 id=533 data-nosnippet>533</a>        <span class="number">28 </span>=&gt; PolarizedIntensity,
+<a href=#534 id=534 data-nosnippet>534</a>        <span class="number">29 </span>=&gt; LinearPolarizedIntensity,
+<a href=#535 id=535 data-nosnippet>535</a>        <span class="number">30 </span>=&gt; FractionalPolarizedIntensity,
+<a href=#536 id=536 data-nosnippet>536</a>        <span class="number">31 </span>=&gt; FractionalLinearPolarizedIntensity,
+<a href=#537 id=537 data-nosnippet>537</a>        <span class="number">32 </span>=&gt; PolarizationAngle,
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::UnsupportedCorrelation { code }),
+<a href=#539 id=539 data-nosnippet>539</a>    })
+<a href=#540 id=540 data-nosnippet>540</a>}
+<a href=#541 id=541 data-nosnippet>541</a>
+<a href=#542 id=542 data-nosnippet>542</a><span class="attr">#[cfg(test)]
+<a href=#543 id=543 data-nosnippet>543</a></span><span class="kw">mod </span>tests {
+<a href=#544 id=544 data-nosnippet>544</a>    <span class="kw">use </span>casa_ms::MeasurementSetBuilder;
+<a href=#545 id=545 data-nosnippet>545</a>    <span class="kw">use </span>serde_json::json;
+<a href=#546 id=546 data-nosnippet>546</a>
+<a href=#547 id=547 data-nosnippet>547</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#548 id=548 data-nosnippet>548</a>    <span class="kw">use </span><span class="kw">crate</span>::request::tests::request;
+<a href=#549 id=549 data-nosnippet>549</a>
+<a href=#550 id=550 data-nosnippet>550</a>    <span class="attr">#[test]
+<a href=#551 id=551 data-nosnippet>551</a>    </span><span class="kw">fn </span>channels_past_the_window_are_refused() {
+<a href=#552 id=552 data-nosnippet>552</a>        <span class="kw">let </span>request = request(<span class="macro">json!</span>({ <span class="string">"channel_start"</span>: <span class="number">1</span>, <span class="string">"channel_count"</span>: <span class="number">2 </span>}));
+<a href=#553 id=553 data-nosnippet>553</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#554 id=554 data-nosnippet>554</a>            selected_channels(<span class="kw-2">&amp;</span>request, <span class="number">0</span>, <span class="kw-2">&amp;</span>[<span class="number">1.0e9</span>, <span class="number">1.1e9</span>]),
+<a href=#555 id=555 data-nosnippet>555</a>            <span class="prelude-val">Err</span>(PrepareError::ChannelRange {
+<a href=#556 id=556 data-nosnippet>556</a>                spw_id: <span class="number">0</span>,
+<a href=#557 id=557 data-nosnippet>557</a>                start: <span class="number">1</span>,
+<a href=#558 id=558 data-nosnippet>558</a>                count: <span class="number">2</span>,
+<a href=#559 id=559 data-nosnippet>559</a>                channels: <span class="number">2</span>,
+<a href=#560 id=560 data-nosnippet>560</a>            })
+<a href=#561 id=561 data-nosnippet>561</a>        ));
+<a href=#562 id=562 data-nosnippet>562</a>    }
+<a href=#563 id=563 data-nosnippet>563</a>
+<a href=#564 id=564 data-nosnippet>564</a>    <span class="attr">#[test]
+<a href=#565 id=565 data-nosnippet>565</a>    </span><span class="kw">fn </span>a_measurement_set_without_visibilities_has_no_column_to_image() {
+<a href=#566 id=566 data-nosnippet>566</a>        <span class="kw">let </span>ms = MeasurementSet::create_memory(MeasurementSetBuilder::new())
+<a href=#567 id=567 data-nosnippet>567</a>            .expect(<span class="string">"a MeasurementSet with neither DATA nor CORRECTED_DATA"</span>);
+<a href=#568 id=568 data-nosnippet>568</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#569 id=569 data-nosnippet>569</a>            visibility_column(<span class="kw-2">&amp;</span>ms, <span class="prelude-val">None</span>),
+<a href=#570 id=570 data-nosnippet>570</a>            <span class="prelude-val">Err</span>(PrepareError::NoVisibilityColumn)
+<a href=#571 id=571 data-nosnippet>571</a>        ));
+<a href=#572 id=572 data-nosnippet>572</a>    }
+<a href=#573 id=573 data-nosnippet>573</a>}
 </code></pre></div></section></main></body></html>

@@ -63,25 +63,34 @@
 <a href=#63 id=63 data-nosnippet>63</a>        <span class="doccomment">/// The offending Taylor term.
 <a href=#64 id=64 data-nosnippet>64</a>        </span>term: ProductTerm,
 <a href=#65 id=65 data-nosnippet>65</a>    },
-<a href=#66 id=66 data-nosnippet>66</a>    <span class="doccomment">/// The source evidence did not come from the same Major-Cycle result.
-<a href=#67 id=67 data-nosnippet>67</a>    </span><span class="attr">#[error(<span class="string">"source evidence does not match the Major-Cycle lineage"</span>)]
-<a href=#68 id=68 data-nosnippet>68</a>    </span>SourceLineageMismatch,
-<a href=#69 id=69 data-nosnippet>69</a>    <span class="doccomment">/// A produced payload length disagreed with its declared shape.
-<a href=#70 id=70 data-nosnippet>70</a>    </span><span class="attr">#[error(<span class="string">"member payload requires {expected} values but carries {actual}"</span>)]
-<a href=#71 id=71 data-nosnippet>71</a>    </span>PayloadLengthMismatch {
-<a href=#72 id=72 data-nosnippet>72</a>        <span class="doccomment">/// Shape-derived value count.
-<a href=#73 id=73 data-nosnippet>73</a>        </span>expected: usize,
-<a href=#74 id=74 data-nosnippet>74</a>        <span class="doccomment">/// Actual payload length.
-<a href=#75 id=75 data-nosnippet>75</a>        </span>actual: usize,
-<a href=#76 id=76 data-nosnippet>76</a>    },
-<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// Beam fitting failed for a graph that requires fitted beam metadata.
-<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="attr">#[error(<span class="string">"restoring-beam fitting failed: {0}"</span>)]
-<a href=#79 id=79 data-nosnippet>79</a>    </span>BeamFitFailed(String),
-<a href=#80 id=80 data-nosnippet>80</a>    <span class="doccomment">/// Solver arithmetic produced a non-finite product value.
-<a href=#81 id=81 data-nosnippet>81</a>    </span><span class="attr">#[error(<span class="string">"product arithmetic generated a non-finite value"</span>)]
-<a href=#82 id=82 data-nosnippet>82</a>    </span>GeneratedNonfinite,
-<a href=#83 id=83 data-nosnippet>83</a>    <span class="doccomment">/// Checked product-generation resource arithmetic exceeded `u64`.
-<a href=#84 id=84 data-nosnippet>84</a>    </span><span class="attr">#[error(<span class="string">"continuum generation demand overflowed while calculating {0}"</span>)]
-<a href=#85 id=85 data-nosnippet>85</a>    </span>ResourceDemandOverflow(<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),
-<a href=#86 id=86 data-nosnippet>86</a>}
+<a href=#66 id=66 data-nosnippet>66</a>    <span class="doccomment">/// The normal state, final model, masks or beams given to the products
+<a href=#67 id=67 data-nosnippet>67</a>    /// do not match the compiled problem: its image domains, their shapes,
+<a href=#68 id=68 data-nosnippet>68</a>    /// planes or Taylor terms.
+<a href=#69 id=69 data-nosnippet>69</a>    </span><span class="attr">#[error(<span class="string">"product inputs do not match the shape of the compiled problem"</span>)]
+<a href=#70 id=70 data-nosnippet>70</a>    </span>ProblemShapeMismatch,
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="doccomment">/// A Taylor run's principal sum of weights, normal or published, is not
+<a href=#72 id=72 data-nosnippet>72</a>    /// positive and finite: no weighted sample reached the image.
+<a href=#73 id=73 data-nosnippet>73</a>    </span><span class="attr">#[error(<span class="string">"Taylor products need a positive principal sum of weights, not {sum_weight}"</span>)]
+<a href=#74 id=74 data-nosnippet>74</a>    </span>PrincipalSumWeight {
+<a href=#75 id=75 data-nosnippet>75</a>        <span class="doccomment">/// The principal sum of weights.
+<a href=#76 id=76 data-nosnippet>76</a>        </span>sum_weight: f64,
+<a href=#77 id=77 data-nosnippet>77</a>    },
+<a href=#78 id=78 data-nosnippet>78</a>    <span class="doccomment">/// A produced payload length disagreed with its declared shape.
+<a href=#79 id=79 data-nosnippet>79</a>    </span><span class="attr">#[error(<span class="string">"member payload requires {expected} values but carries {actual}"</span>)]
+<a href=#80 id=80 data-nosnippet>80</a>    </span>PayloadLengthMismatch {
+<a href=#81 id=81 data-nosnippet>81</a>        <span class="doccomment">/// Shape-derived value count.
+<a href=#82 id=82 data-nosnippet>82</a>        </span>expected: usize,
+<a href=#83 id=83 data-nosnippet>83</a>        <span class="doccomment">/// Actual payload length.
+<a href=#84 id=84 data-nosnippet>84</a>        </span>actual: usize,
+<a href=#85 id=85 data-nosnippet>85</a>    },
+<a href=#86 id=86 data-nosnippet>86</a>    <span class="doccomment">/// Beam fitting failed for a graph that requires fitted beam metadata.
+<a href=#87 id=87 data-nosnippet>87</a>    </span><span class="attr">#[error(<span class="string">"restoring-beam fitting failed: {0}"</span>)]
+<a href=#88 id=88 data-nosnippet>88</a>    </span>BeamFitFailed(String),
+<a href=#89 id=89 data-nosnippet>89</a>    <span class="doccomment">/// Solver arithmetic produced a non-finite product value.
+<a href=#90 id=90 data-nosnippet>90</a>    </span><span class="attr">#[error(<span class="string">"product arithmetic generated a non-finite value"</span>)]
+<a href=#91 id=91 data-nosnippet>91</a>    </span>GeneratedNonfinite,
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="doccomment">/// Checked product-generation resource arithmetic exceeded `u64`.
+<a href=#93 id=93 data-nosnippet>93</a>    </span><span class="attr">#[error(<span class="string">"continuum generation demand overflowed while calculating {0}"</span>)]
+<a href=#94 id=94 data-nosnippet>94</a>    </span>ResourceDemandOverflow(<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),
+<a href=#95 id=95 data-nosnippet>95</a>}
 </code></pre></div></section></main></body></html>

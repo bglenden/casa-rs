@@ -5,480 +5,479 @@
 <a href=#5 id=5 data-nosnippet>5</a>//! coordinate system the products are written in.
 <a href=#6 id=6 data-nosnippet>6</a>
 <a href=#7 id=7 data-nosnippet>7</a></span><span class="kw">use </span>std::path::Path;
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>std::sync::Arc;
-<a href=#9 id=9 data-nosnippet>9</a>
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>casa_coordinates::{
-<a href=#11 id=11 data-nosnippet>11</a>    CoordinateSystem, DirectionCoordinate, ObsInfo, Projection <span class="kw">as </span>CoordinateProjection,
-<a href=#12 id=12 data-nosnippet>12</a>    ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
-<a href=#13 id=13 data-nosnippet>13</a>};
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>casa_imaging_model::{
-<a href=#15 id=15 data-nosnippet>15</a>    DirectionCoordinateSpec, DirectionFrame, PhaseCentreLaw, PolarizationCoordinate, Projection,
-<a href=#16 id=16 data-nosnippet>16</a>    SkyDirection,
-<a href=#17 id=17 data-nosnippet>17</a>};
-<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>casa_ms::{
-<a href=#19 id=19 data-nosnippet>19</a>    MeasurementSet, SelectedObservationContentBudget, SelectedObservationEphemeris,
-<a href=#20 id=20 data-nosnippet>20</a>    SelectedObservationMeasures,
-<a href=#21 id=21 data-nosnippet>21</a>};
-<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span>casa_types::measures::{
-<a href=#23 id=23 data-nosnippet>23</a>    MeasuresProvider,
-<a href=#24 id=24 data-nosnippet>24</a>    direction::{DirectionRef, MDirection},
-<a href=#25 id=25 data-nosnippet>25</a>    epoch::MEpoch,
-<a href=#26 id=26 data-nosnippet>26</a>    frequency::FrequencyRef,
-<a href=#27 id=27 data-nosnippet>27</a>};
-<a href=#28 id=28 data-nosnippet>28</a>
-<a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span><span class="kw">super</span>::boxed;
-<a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span><span class="kw">super</span>::selection::Survey;
-<a href=#31 id=31 data-nosnippet>31</a><span class="kw">use crate</span>::{ApplicationError, ImagingRequest};
-<a href=#32 id=32 data-nosnippet>32</a>
-<a href=#33 id=33 data-nosnippet>33</a><span class="doccomment">/// The resolved image centre.
-<a href=#34 id=34 data-nosnippet>34</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Centre {
-<a href=#35 id=35 data-nosnippet>35</a>    <span class="kw">pub</span>(<span class="kw">super</span>) law: PhaseCentreLaw,
-<a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">pub</span>(<span class="kw">super</span>) ephemeris: <span class="prelude-ty">Option</span>&lt;SelectedObservationEphemeris&gt;,
-<a href=#37 id=37 data-nosnippet>37</a>    <span class="doccomment">/// The J2000 phase centre frame conversions are evaluated at.
-<a href=#38 id=38 data-nosnippet>38</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) phase: MDirection,
-<a href=#39 id=39 data-nosnippet>39</a>    <span class="doccomment">/// The image's reference direction, in the frame the image records.
-<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) image_centre: MDirection,
-<a href=#41 id=41 data-nosnippet>41</a>    <span class="kw">pub</span>(<span class="kw">super</span>) direction: DirectionCoordinateSpec,
-<a href=#42 id=42 data-nosnippet>42</a>    <span class="doccomment">/// The `FIELD_ID` whose phase centre anchors the image.
-<a href=#43 id=43 data-nosnippet>43</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) field_id: usize,
-<a href=#44 id=44 data-nosnippet>44</a>    <span class="kw">pub</span>(<span class="kw">super</span>) measures: Arc&lt;<span class="kw">dyn </span>MeasuresProvider&gt;,
-<a href=#45 id=45 data-nosnippet>45</a>}
-<a href=#46 id=46 data-nosnippet>46</a>
-<a href=#47 id=47 data-nosnippet>47</a><span class="doccomment">/// Resolve the request's image centre over the surveyed fields.
-<a href=#48 id=48 data-nosnippet>48</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>resolve_centre(
-<a href=#49 id=49 data-nosnippet>49</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#50 id=50 data-nosnippet>50</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#51 id=51 data-nosnippet>51</a>    survey: <span class="kw-2">&amp;</span>Survey,
-<a href=#52 id=52 data-nosnippet>52</a>    engine: <span class="kw-2">&amp;</span>casa_ms::derived::engine::MsCalEngine,
-<a href=#53 id=53 data-nosnippet>53</a>    budget: SelectedObservationContentBudget,
-<a href=#54 id=54 data-nosnippet>54</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Centre, ApplicationError&gt; {
-<a href=#55 id=55 data-nosnippet>55</a>    <span class="kw">let </span>selected_field = request
-<a href=#56 id=56 data-nosnippet>56</a>        .phasecenter_field
-<a href=#57 id=57 data-nosnippet>57</a>        .unwrap_or_else(|| <span class="kw-2">*</span>survey.fields.first().expect(<span class="string">"nonempty selection"</span>));
-<a href=#58 id=58 data-nosnippet>58</a>    <span class="kw">if </span>!survey.fields.contains(<span class="kw-2">&amp;</span>selected_field) {
-<a href=#59 id=59 data-nosnippet>59</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(<span class="macro">format!</span>(
-<a href=#60 id=60 data-nosnippet>60</a>            <span class="string">"phase-center FIELD_ID {selected_field} is not part of selected fields {:?}"</span>,
-<a href=#61 id=61 data-nosnippet>61</a>            survey.fields
-<a href=#62 id=62 data-nosnippet>62</a>        )));
-<a href=#63 id=63 data-nosnippet>63</a>    }
-<a href=#64 id=64 data-nosnippet>64</a>    <span class="kw">let </span>field_id =
-<a href=#65 id=65 data-nosnippet>65</a>        usize::try_from(selected_field).map_err(|<span class="kw">_</span>| boxed(<span class="string">"selected FIELD_ID is negative"</span>))<span class="question-mark">?</span>;
-<a href=#66 id=66 data-nosnippet>66</a>    <span class="kw">let </span>stored_phase = casa_ms::derived::engine::raw_field_phase_direction(ms, field_id)<span class="question-mark">?</span>;
-<a href=#67 id=67 data-nosnippet>67</a>    <span class="kw">let </span>field_phase = casa_ms::derived::engine::resolve_field_phase_direction_j2000(ms, field_id)<span class="question-mark">?</span>;
-<a href=#68 id=68 data-nosnippet>68</a>    <span class="kw">let </span>field_direction = SkyDirection::new(
-<a href=#69 id=69 data-nosnippet>69</a>        DirectionFrame::J2000,
-<a href=#70 id=70 data-nosnippet>70</a>        field_phase.as_angles().<span class="number">0</span>,
-<a href=#71 id=71 data-nosnippet>71</a>        field_phase.as_angles().<span class="number">1</span>,
-<a href=#72 id=72 data-nosnippet>72</a>    );
-<a href=#73 id=73 data-nosnippet>73</a>    <span class="kw">let </span>anchor_time = survey.first_time_mjd_seconds;
-<a href=#74 id=74 data-nosnippet>74</a>    <span class="kw">let </span>measures = casa_ms::open_measures_runtime()<span class="question-mark">?</span>;
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">let </span>ephemeris_direction = |name: <span class="kw-2">&amp;</span>str, ephemeris: <span class="kw-2">&amp;</span>SelectedObservationEphemeris| {
-<a href=#76 id=76 data-nosnippet>76</a>        <span class="kw">let </span>direction = engine.ephemeris_direction_j2000(anchor_time, field_id, name, ephemeris)<span class="question-mark">?</span>;
-<a href=#77 id=77 data-nosnippet>77</a>        <span class="kw">let </span>(longitude, latitude) = direction.as_angles();
-<a href=#78 id=78 data-nosnippet>78</a>        <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ApplicationError&gt;(SkyDirection::new(
-<a href=#79 id=79 data-nosnippet>79</a>            DirectionFrame::J2000,
-<a href=#80 id=80 data-nosnippet>80</a>            longitude,
-<a href=#81 id=81 data-nosnippet>81</a>            latitude,
-<a href=#82 id=82 data-nosnippet>82</a>        ))
-<a href=#83 id=83 data-nosnippet>83</a>    };
-<a href=#84 id=84 data-nosnippet>84</a>    <span class="kw">let </span>(law, ephemeris, main_direction) = <span class="kw">match </span>request.phasecenter.as_deref() {
-<a href=#85 id=85 data-nosnippet>85</a>        <span class="prelude-val">None </span>=&gt; (
-<a href=#86 id=86 data-nosnippet>86</a>            PhaseCentreLaw::Fixed(field_direction),
-<a href=#87 id=87 data-nosnippet>87</a>            <span class="prelude-val">None</span>,
-<a href=#88 id=88 data-nosnippet>88</a>            field_direction,
-<a href=#89 id=89 data-nosnippet>89</a>        ),
-<a href=#90 id=90 data-nosnippet>90</a>        <span class="prelude-val">Some</span>(text) <span class="kw">if </span>text.split_ascii_whitespace().next() == <span class="prelude-val">Some</span>(<span class="string">"J2000"</span>) =&gt; {
-<a href=#91 id=91 data-nosnippet>91</a>            <span class="kw">let </span>direction = parse_phase_center_direction(text)<span class="question-mark">?</span>;
-<a href=#92 id=92 data-nosnippet>92</a>            (PhaseCentreLaw::Fixed(direction), <span class="prelude-val">None</span>, direction)
-<a href=#93 id=93 data-nosnippet>93</a>        }
-<a href=#94 id=94 data-nosnippet>94</a>        <span class="prelude-val">Some</span>(<span class="string">"TRACKFIELD"</span>) =&gt; {
-<a href=#95 id=95 data-nosnippet>95</a>            <span class="kw">let </span>ephemeris = SelectedObservationEphemeris::tracked_fields(
-<a href=#96 id=96 data-nosnippet>96</a>                ms,
-<a href=#97 id=97 data-nosnippet>97</a>                survey
-<a href=#98 id=98 data-nosnippet>98</a>                    .fields
-<a href=#99 id=99 data-nosnippet>99</a>                    .iter()
-<a href=#100 id=100 data-nosnippet>100</a>                    .map(|field| usize::try_from(<span class="kw-2">*</span>field).expect(<span class="string">"validated FIELD_ID"</span>)),
-<a href=#101 id=101 data-nosnippet>101</a>                budget.reference_data_budget(),
-<a href=#102 id=102 data-nosnippet>102</a>            )<span class="question-mark">?</span>;
-<a href=#103 id=103 data-nosnippet>103</a>            <span class="kw">let </span>direction = ephemeris_direction(<span class="string">"TRACKFIELD"</span>, <span class="kw-2">&amp;</span>ephemeris)<span class="question-mark">?</span>;
+<a href=#8 id=8 data-nosnippet>8</a>
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_coordinates::{
+<a href=#10 id=10 data-nosnippet>10</a>    CoordinateSystem, DirectionCoordinate, ObsInfo, Projection <span class="kw">as </span>CoordinateProjection,
+<a href=#11 id=11 data-nosnippet>11</a>    ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
+<a href=#12 id=12 data-nosnippet>12</a>};
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>casa_imaging_model::{
+<a href=#14 id=14 data-nosnippet>14</a>    DirectionCoordinateSpec, DirectionFrame, PhaseCentreLaw, PolarizationCoordinate, Projection,
+<a href=#15 id=15 data-nosnippet>15</a>    SkyDirection,
+<a href=#16 id=16 data-nosnippet>16</a>};
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>casa_ms::{MeasurementSet, SelectedObservationContentBudget, SelectedObservationEphemeris};
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>casa_types::measures::{
+<a href=#19 id=19 data-nosnippet>19</a>    direction::{DirectionRef, MDirection},
+<a href=#20 id=20 data-nosnippet>20</a>    epoch::MEpoch,
+<a href=#21 id=21 data-nosnippet>21</a>    frequency::FrequencyRef,
+<a href=#22 id=22 data-nosnippet>22</a>};
+<a href=#23 id=23 data-nosnippet>23</a>
+<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span><span class="kw">super</span>::PrepareError;
+<a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span><span class="kw">super</span>::selection::Survey;
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span><span class="kw">crate</span>::ImagingRequest;
+<a href=#27 id=27 data-nosnippet>27</a>
+<a href=#28 id=28 data-nosnippet>28</a><span class="doccomment">/// The resolved image centre.
+<a href=#29 id=29 data-nosnippet>29</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Centre {
+<a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">pub</span>(<span class="kw">super</span>) law: PhaseCentreLaw,
+<a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">pub</span>(<span class="kw">super</span>) ephemeris: <span class="prelude-ty">Option</span>&lt;SelectedObservationEphemeris&gt;,
+<a href=#32 id=32 data-nosnippet>32</a>    <span class="doccomment">/// The J2000 phase centre frame conversions are evaluated at.
+<a href=#33 id=33 data-nosnippet>33</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) phase: MDirection,
+<a href=#34 id=34 data-nosnippet>34</a>    <span class="doccomment">/// The image's reference direction, in the frame the image records.
+<a href=#35 id=35 data-nosnippet>35</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) image_centre: MDirection,
+<a href=#36 id=36 data-nosnippet>36</a>    <span class="kw">pub</span>(<span class="kw">super</span>) direction: DirectionCoordinateSpec,
+<a href=#37 id=37 data-nosnippet>37</a>    <span class="doccomment">/// The `FIELD_ID` whose phase centre anchors the image.
+<a href=#38 id=38 data-nosnippet>38</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) field_id: usize,
+<a href=#39 id=39 data-nosnippet>39</a>}
+<a href=#40 id=40 data-nosnippet>40</a>
+<a href=#41 id=41 data-nosnippet>41</a><span class="doccomment">/// Resolve the request's image centre over the surveyed fields.
+<a href=#42 id=42 data-nosnippet>42</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>resolve_centre(
+<a href=#43 id=43 data-nosnippet>43</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#44 id=44 data-nosnippet>44</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#45 id=45 data-nosnippet>45</a>    survey: <span class="kw-2">&amp;</span>Survey,
+<a href=#46 id=46 data-nosnippet>46</a>    engine: <span class="kw-2">&amp;</span>casa_ms::derived::engine::MsCalEngine,
+<a href=#47 id=47 data-nosnippet>47</a>    budget: SelectedObservationContentBudget,
+<a href=#48 id=48 data-nosnippet>48</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Centre, PrepareError&gt; {
+<a href=#49 id=49 data-nosnippet>49</a>    <span class="kw">let </span>selected_field = request
+<a href=#50 id=50 data-nosnippet>50</a>        .phasecenter_field
+<a href=#51 id=51 data-nosnippet>51</a>        .unwrap_or_else(|| <span class="kw-2">*</span>survey.fields.first().expect(<span class="string">"nonempty selection"</span>));
+<a href=#52 id=52 data-nosnippet>52</a>    <span class="kw">if </span>!survey.fields.contains(<span class="kw-2">&amp;</span>selected_field) {
+<a href=#53 id=53 data-nosnippet>53</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::PhaseCentreField {
+<a href=#54 id=54 data-nosnippet>54</a>            field: selected_field,
+<a href=#55 id=55 data-nosnippet>55</a>            selected: survey.fields.clone(),
+<a href=#56 id=56 data-nosnippet>56</a>        });
+<a href=#57 id=57 data-nosnippet>57</a>    }
+<a href=#58 id=58 data-nosnippet>58</a>    <span class="kw">let </span>field_id = usize::try_from(selected_field).map_err(|<span class="kw">_</span>| PrepareError::NegativeMainId {
+<a href=#59 id=59 data-nosnippet>59</a>        column: <span class="string">"FIELD_ID"</span>,
+<a href=#60 id=60 data-nosnippet>60</a>        value: selected_field,
+<a href=#61 id=61 data-nosnippet>61</a>    })<span class="question-mark">?</span>;
+<a href=#62 id=62 data-nosnippet>62</a>    <span class="kw">let </span>stored_phase = casa_ms::derived::engine::raw_field_phase_direction(ms, field_id)<span class="question-mark">?</span>;
+<a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">let </span>(field_longitude, field_latitude) = engine.field_direction_j2000(field_id)<span class="question-mark">?</span>.as_angles();
+<a href=#64 id=64 data-nosnippet>64</a>    <span class="kw">let </span>field_direction = SkyDirection::new(DirectionFrame::J2000, field_longitude, field_latitude);
+<a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">let </span>anchor_time = survey.first_time_mjd_seconds;
+<a href=#66 id=66 data-nosnippet>66</a>    <span class="kw">let </span>ephemeris_direction = |name: <span class="kw-2">&amp;</span>str, ephemeris: <span class="kw-2">&amp;</span>SelectedObservationEphemeris| {
+<a href=#67 id=67 data-nosnippet>67</a>        <span class="kw">let </span>direction = engine.ephemeris_direction_j2000(anchor_time, field_id, name, ephemeris)<span class="question-mark">?</span>;
+<a href=#68 id=68 data-nosnippet>68</a>        <span class="kw">let </span>(longitude, latitude) = direction.as_angles();
+<a href=#69 id=69 data-nosnippet>69</a>        <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PrepareError&gt;(SkyDirection::new(
+<a href=#70 id=70 data-nosnippet>70</a>            DirectionFrame::J2000,
+<a href=#71 id=71 data-nosnippet>71</a>            longitude,
+<a href=#72 id=72 data-nosnippet>72</a>            latitude,
+<a href=#73 id=73 data-nosnippet>73</a>        ))
+<a href=#74 id=74 data-nosnippet>74</a>    };
+<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">let </span>(law, ephemeris, main_direction) = <span class="kw">match </span>request.phasecenter.as_deref() {
+<a href=#76 id=76 data-nosnippet>76</a>        <span class="prelude-val">None </span>=&gt; (
+<a href=#77 id=77 data-nosnippet>77</a>            PhaseCentreLaw::Fixed(field_direction),
+<a href=#78 id=78 data-nosnippet>78</a>            <span class="prelude-val">None</span>,
+<a href=#79 id=79 data-nosnippet>79</a>            field_direction,
+<a href=#80 id=80 data-nosnippet>80</a>        ),
+<a href=#81 id=81 data-nosnippet>81</a>        <span class="prelude-val">Some</span>(text) <span class="kw">if </span>text.split_ascii_whitespace().next() == <span class="prelude-val">Some</span>(<span class="string">"J2000"</span>) =&gt; {
+<a href=#82 id=82 data-nosnippet>82</a>            <span class="kw">let </span>direction = parse_phase_center_direction(text)<span class="question-mark">?</span>;
+<a href=#83 id=83 data-nosnippet>83</a>            (PhaseCentreLaw::Fixed(direction), <span class="prelude-val">None</span>, direction)
+<a href=#84 id=84 data-nosnippet>84</a>        }
+<a href=#85 id=85 data-nosnippet>85</a>        <span class="prelude-val">Some</span>(<span class="string">"TRACKFIELD"</span>) =&gt; {
+<a href=#86 id=86 data-nosnippet>86</a>            <span class="kw">let </span>ephemeris = SelectedObservationEphemeris::tracked_fields(
+<a href=#87 id=87 data-nosnippet>87</a>                ms,
+<a href=#88 id=88 data-nosnippet>88</a>                survey
+<a href=#89 id=89 data-nosnippet>89</a>                    .fields
+<a href=#90 id=90 data-nosnippet>90</a>                    .iter()
+<a href=#91 id=91 data-nosnippet>91</a>                    .map(|field| usize::try_from(<span class="kw-2">*</span>field).expect(<span class="string">"validated FIELD_ID"</span>)),
+<a href=#92 id=92 data-nosnippet>92</a>                budget.reference_data_budget(),
+<a href=#93 id=93 data-nosnippet>93</a>            )<span class="question-mark">?</span>;
+<a href=#94 id=94 data-nosnippet>94</a>            <span class="kw">let </span>direction = ephemeris_direction(<span class="string">"TRACKFIELD"</span>, <span class="kw-2">&amp;</span>ephemeris)<span class="question-mark">?</span>;
+<a href=#95 id=95 data-nosnippet>95</a>            (
+<a href=#96 id=96 data-nosnippet>96</a>                PhaseCentreLaw::Ephemeris(<span class="string">"TRACKFIELD"</span>.to_string()),
+<a href=#97 id=97 data-nosnippet>97</a>                <span class="prelude-val">Some</span>(ephemeris),
+<a href=#98 id=98 data-nosnippet>98</a>                direction,
+<a href=#99 id=99 data-nosnippet>99</a>            )
+<a href=#100 id=100 data-nosnippet>100</a>        }
+<a href=#101 id=101 data-nosnippet>101</a>        <span class="prelude-val">Some</span>(text) =&gt; {
+<a href=#102 id=102 data-nosnippet>102</a>            <span class="kw">let </span>ephemeris = named_ephemeris(text, ms, survey, budget)<span class="question-mark">?</span>;
+<a href=#103 id=103 data-nosnippet>103</a>            <span class="kw">let </span>direction = ephemeris_direction(text, <span class="kw-2">&amp;</span>ephemeris)<span class="question-mark">?</span>;
 <a href=#104 id=104 data-nosnippet>104</a>            (
-<a href=#105 id=105 data-nosnippet>105</a>                PhaseCentreLaw::Ephemeris(<span class="string">"TRACKFIELD"</span>.to_string()),
+<a href=#105 id=105 data-nosnippet>105</a>                PhaseCentreLaw::Ephemeris(text.to_string()),
 <a href=#106 id=106 data-nosnippet>106</a>                <span class="prelude-val">Some</span>(ephemeris),
 <a href=#107 id=107 data-nosnippet>107</a>                direction,
 <a href=#108 id=108 data-nosnippet>108</a>            )
 <a href=#109 id=109 data-nosnippet>109</a>        }
-<a href=#110 id=110 data-nosnippet>110</a>        <span class="prelude-val">Some</span>(text) =&gt; {
-<a href=#111 id=111 data-nosnippet>111</a>            <span class="kw">let </span>ephemeris = named_ephemeris(text, ms, survey, <span class="kw-2">&amp;</span>measures, budget)<span class="question-mark">?</span>;
-<a href=#112 id=112 data-nosnippet>112</a>            <span class="kw">let </span>direction = ephemeris_direction(text, <span class="kw-2">&amp;</span>ephemeris)<span class="question-mark">?</span>;
-<a href=#113 id=113 data-nosnippet>113</a>            (
-<a href=#114 id=114 data-nosnippet>114</a>                PhaseCentreLaw::Ephemeris(text.to_string()),
-<a href=#115 id=115 data-nosnippet>115</a>                <span class="prelude-val">Some</span>(ephemeris),
-<a href=#116 id=116 data-nosnippet>116</a>                direction,
-<a href=#117 id=117 data-nosnippet>117</a>            )
-<a href=#118 id=118 data-nosnippet>118</a>        }
-<a href=#119 id=119 data-nosnippet>119</a>    };
-<a href=#120 id=120 data-nosnippet>120</a>    <span class="kw">let </span>phase = MDirection::from_angles(
-<a href=#121 id=121 data-nosnippet>121</a>        main_direction.longitude_rad(),
-<a href=#122 id=122 data-nosnippet>122</a>        main_direction.latitude_rad(),
-<a href=#123 id=123 data-nosnippet>123</a>        DirectionRef::J2000,
-<a href=#124 id=124 data-nosnippet>124</a>    );
-<a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">let </span>(image_centre, frame) = image_centre(
-<a href=#126 id=126 data-nosnippet>126</a>        request,
-<a href=#127 id=127 data-nosnippet>127</a>        engine,
-<a href=#128 id=128 data-nosnippet>128</a>        anchor_time,
-<a href=#129 id=129 data-nosnippet>129</a>        <span class="kw-2">&amp;</span>phase,
-<a href=#130 id=130 data-nosnippet>130</a>        stored_phase,
-<a href=#131 id=131 data-nosnippet>131</a>        ephemeris.is_some(),
-<a href=#132 id=132 data-nosnippet>132</a>    )<span class="question-mark">?</span>;
-<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">let </span>(longitude, latitude) = image_centre.as_angles();
-<a href=#134 id=134 data-nosnippet>134</a>    <span class="prelude-val">Ok</span>(Centre {
-<a href=#135 id=135 data-nosnippet>135</a>        law,
-<a href=#136 id=136 data-nosnippet>136</a>        ephemeris,
-<a href=#137 id=137 data-nosnippet>137</a>        phase,
-<a href=#138 id=138 data-nosnippet>138</a>        direction: direction_spec(request.imsize, request.cell, frame, longitude, latitude),
-<a href=#139 id=139 data-nosnippet>139</a>        image_centre,
-<a href=#140 id=140 data-nosnippet>140</a>        field_id,
-<a href=#141 id=141 data-nosnippet>141</a>        measures,
-<a href=#142 id=142 data-nosnippet>142</a>    })
-<a href=#143 id=143 data-nosnippet>143</a>}
-<a href=#144 id=144 data-nosnippet>144</a>
-<a href=#145 id=145 data-nosnippet>145</a><span class="doccomment">/// The image's reference direction and the frame it records: ICRS at the
-<a href=#146 id=146 data-nosnippet>146</a>/// anchor time for a moving source, the field's stored direction in its
-<a href=#147 id=147 data-nosnippet>147</a>/// own frame when the request names no centre, else the J2000 phase
-<a href=#148 id=148 data-nosnippet>148</a>/// centre.
-<a href=#149 id=149 data-nosnippet>149</a></span><span class="kw">fn </span>image_centre(
-<a href=#150 id=150 data-nosnippet>150</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#151 id=151 data-nosnippet>151</a>    engine: <span class="kw-2">&amp;</span>casa_ms::derived::engine::MsCalEngine,
-<a href=#152 id=152 data-nosnippet>152</a>    anchor_time: f64,
-<a href=#153 id=153 data-nosnippet>153</a>    phase: <span class="kw-2">&amp;</span>MDirection,
-<a href=#154 id=154 data-nosnippet>154</a>    stored_phase: MDirection,
-<a href=#155 id=155 data-nosnippet>155</a>    moving: bool,
-<a href=#156 id=156 data-nosnippet>156</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(MDirection, DirectionFrame), ApplicationError&gt; {
-<a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">if </span>moving {
-<a href=#158 id=158 data-nosnippet>158</a>        <span class="kw">let </span>frame = engine.spectral_frame_observatory_direction(anchor_time, phase.clone())<span class="question-mark">?</span>;
-<a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((
-<a href=#160 id=160 data-nosnippet>160</a>            phase.convert_to(DirectionRef::ICRS, <span class="kw-2">&amp;</span>frame)<span class="question-mark">?</span>,
-<a href=#161 id=161 data-nosnippet>161</a>            DirectionFrame::Icrs,
-<a href=#162 id=162 data-nosnippet>162</a>        ));
-<a href=#163 id=163 data-nosnippet>163</a>    }
-<a href=#164 id=164 data-nosnippet>164</a>    <span class="kw">let </span>centre = <span class="kw">if </span>request.phasecenter.is_none()
-<a href=#165 id=165 data-nosnippet>165</a>        &amp;&amp; <span class="macro">matches!</span>(
-<a href=#166 id=166 data-nosnippet>166</a>            stored_phase.refer(),
-<a href=#167 id=167 data-nosnippet>167</a>            DirectionRef::J2000 | DirectionRef::ICRS | DirectionRef::B1950 | DirectionRef::GALACTIC
-<a href=#168 id=168 data-nosnippet>168</a>        ) {
-<a href=#169 id=169 data-nosnippet>169</a>        stored_phase
-<a href=#170 id=170 data-nosnippet>170</a>    } <span class="kw">else </span>{
-<a href=#171 id=171 data-nosnippet>171</a>        phase.clone()
-<a href=#172 id=172 data-nosnippet>172</a>    };
-<a href=#173 id=173 data-nosnippet>173</a>    <span class="kw">let </span>frame = <span class="kw">match </span>centre.refer() {
-<a href=#174 id=174 data-nosnippet>174</a>        DirectionRef::ICRS =&gt; DirectionFrame::Icrs,
-<a href=#175 id=175 data-nosnippet>175</a>        DirectionRef::B1950 =&gt; DirectionFrame::B1950,
-<a href=#176 id=176 data-nosnippet>176</a>        DirectionRef::GALACTIC =&gt; DirectionFrame::Galactic,
-<a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">_ </span>=&gt; DirectionFrame::J2000,
-<a href=#178 id=178 data-nosnippet>178</a>    };
-<a href=#179 id=179 data-nosnippet>179</a>    <span class="prelude-val">Ok</span>((centre, frame))
-<a href=#180 id=180 data-nosnippet>180</a>}
-<a href=#181 id=181 data-nosnippet>181</a>
-<a href=#182 id=182 data-nosnippet>182</a><span class="doccomment">/// A named ephemeris (or an external table), joined with the selected
-<a href=#183 id=183 data-nosnippet>183</a>/// fields' attached ephemerides when they have them.
-<a href=#184 id=184 data-nosnippet>184</a></span><span class="kw">fn </span>named_ephemeris(
-<a href=#185 id=185 data-nosnippet>185</a>    text: <span class="kw-2">&amp;</span>str,
-<a href=#186 id=186 data-nosnippet>186</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#187 id=187 data-nosnippet>187</a>    survey: <span class="kw-2">&amp;</span>Survey,
-<a href=#188 id=188 data-nosnippet>188</a>    measures: <span class="kw-2">&amp;</span>Arc&lt;<span class="kw">dyn </span>MeasuresProvider&gt;,
-<a href=#189 id=189 data-nosnippet>189</a>    budget: SelectedObservationContentBudget,
-<a href=#190 id=190 data-nosnippet>190</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SelectedObservationEphemeris, ApplicationError&gt; {
-<a href=#191 id=191 data-nosnippet>191</a>    <span class="kw">let </span>budget = budget.reference_data_budget();
-<a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">let </span><span class="kw-2">mut </span>ephemeris = <span class="kw">if </span>Path::new(text).is_dir() {
-<a href=#193 id=193 data-nosnippet>193</a>        SelectedObservationEphemeris::external(text, budget)<span class="question-mark">?
-<a href=#194 id=194 data-nosnippet>194</a>    </span>} <span class="kw">else </span>{
-<a href=#195 id=195 data-nosnippet>195</a>        SelectedObservationEphemeris::named(
-<a href=#196 id=196 data-nosnippet>196</a>            text,
-<a href=#197 id=197 data-nosnippet>197</a>            SelectedObservationMeasures::new(Arc::clone(measures))<span class="question-mark">?</span>.identity(),
-<a href=#198 id=198 data-nosnippet>198</a>            budget,
-<a href=#199 id=199 data-nosnippet>199</a>        )<span class="question-mark">?
-<a href=#200 id=200 data-nosnippet>200</a>    </span>};
-<a href=#201 id=201 data-nosnippet>201</a>    <span class="kw">let </span>field = ms.field()<span class="question-mark">?</span>;
-<a href=#202 id=202 data-nosnippet>202</a>    <span class="kw">let </span><span class="kw-2">mut </span>attached = Vec::new();
-<a href=#203 id=203 data-nosnippet>203</a>    <span class="kw">for </span>field_id <span class="kw">in </span><span class="kw-2">&amp;</span>survey.fields {
-<a href=#204 id=204 data-nosnippet>204</a>        <span class="kw">let </span>field_id = usize::try_from(<span class="kw-2">*</span>field_id)<span class="question-mark">?</span>;
-<a href=#205 id=205 data-nosnippet>205</a>        <span class="kw">if </span>field
-<a href=#206 id=206 data-nosnippet>206</a>            .ephemeris_id(field_id)<span class="question-mark">?
-<a href=#207 id=207 data-nosnippet>207</a>            </span>.is_some_and(|value| value &gt;= <span class="number">0</span>)
-<a href=#208 id=208 data-nosnippet>208</a>        {
-<a href=#209 id=209 data-nosnippet>209</a>            attached.push(field_id);
-<a href=#210 id=210 data-nosnippet>210</a>        }
-<a href=#211 id=211 data-nosnippet>211</a>    }
-<a href=#212 id=212 data-nosnippet>212</a>    <span class="kw">if </span>attached.is_empty() {
-<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(ephemeris);
-<a href=#214 id=214 data-nosnippet>214</a>    }
-<a href=#215 id=215 data-nosnippet>215</a>    <span class="kw">if </span>attached.len() != survey.fields.len() {
-<a href=#216 id=216 data-nosnippet>216</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(
-<a href=#217 id=217 data-nosnippet>217</a>            <span class="string">"moving-source selection mixes FIELD rows with and without attached ephemerides"</span>,
-<a href=#218 id=218 data-nosnippet>218</a>        ));
-<a href=#219 id=219 data-nosnippet>219</a>    }
-<a href=#220 id=220 data-nosnippet>220</a>    ephemeris = ephemeris.with_attached_fields(
-<a href=#221 id=221 data-nosnippet>221</a>        SelectedObservationEphemeris::tracked_fields(ms, attached, budget)<span class="question-mark">?</span>,
-<a href=#222 id=222 data-nosnippet>222</a>        budget,
-<a href=#223 id=223 data-nosnippet>223</a>    )<span class="question-mark">?</span>;
-<a href=#224 id=224 data-nosnippet>224</a>    <span class="prelude-val">Ok</span>(ephemeris)
-<a href=#225 id=225 data-nosnippet>225</a>}
-<a href=#226 id=226 data-nosnippet>226</a>
-<a href=#227 id=227 data-nosnippet>227</a><span class="doccomment">/// The image's observation record: telescope and observer of the selected
-<a href=#228 id=228 data-nosnippet>228</a>/// observations, which must agree, the first selected time and the image
-<a href=#229 id=229 data-nosnippet>229</a>/// centre.
-<a href=#230 id=230 data-nosnippet>230</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>observation_info(
-<a href=#231 id=231 data-nosnippet>231</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#232 id=232 data-nosnippet>232</a>    survey: <span class="kw-2">&amp;</span>Survey,
-<a href=#233 id=233 data-nosnippet>233</a>    centre: <span class="kw-2">&amp;</span>Centre,
-<a href=#234 id=234 data-nosnippet>234</a>    engine: <span class="kw-2">&amp;</span>casa_ms::derived::engine::MsCalEngine,
-<a href=#235 id=235 data-nosnippet>235</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ObsInfo, ApplicationError&gt; {
-<a href=#236 id=236 data-nosnippet>236</a>    <span class="kw">let </span>observation = ms.observation()<span class="question-mark">?</span>;
-<a href=#237 id=237 data-nosnippet>237</a>    <span class="kw">let </span><span class="kw-2">mut </span>labels = std::collections::BTreeSet::new();
-<a href=#238 id=238 data-nosnippet>238</a>    <span class="kw">for </span>id <span class="kw">in </span><span class="kw-2">&amp;</span>survey.observation_ids {
-<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">let </span>id = usize::try_from(<span class="kw-2">*</span>id).map_err(|<span class="kw">_</span>| boxed(<span class="string">"selected OBSERVATION_ID is negative"</span>))<span class="question-mark">?</span>;
-<a href=#240 id=240 data-nosnippet>240</a>        labels.insert(<span class="kw">if </span>id &lt; observation.row_count() {
-<a href=#241 id=241 data-nosnippet>241</a>            (
-<a href=#242 id=242 data-nosnippet>242</a>                observation.string(id, <span class="string">"TELESCOPE_NAME"</span>)<span class="question-mark">?</span>,
-<a href=#243 id=243 data-nosnippet>243</a>                observation.string(id, <span class="string">"OBSERVER"</span>)<span class="question-mark">?</span>,
-<a href=#244 id=244 data-nosnippet>244</a>            )
-<a href=#245 id=245 data-nosnippet>245</a>        } <span class="kw">else </span>{
-<a href=#246 id=246 data-nosnippet>246</a>            (String::new(), String::new())
-<a href=#247 id=247 data-nosnippet>247</a>        });
-<a href=#248 id=248 data-nosnippet>248</a>    }
-<a href=#249 id=249 data-nosnippet>249</a>    <span class="kw">if </span>labels.len() != <span class="number">1 </span>{
-<a href=#250 id=250 data-nosnippet>250</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(<span class="macro">format!</span>(
-<a href=#251 id=251 data-nosnippet>251</a>            <span class="string">"image observation metadata requires consistent telescope and observer labels for \
-<a href=#252 id=252 data-nosnippet>252</a>             selected OBSERVATION_IDs {:?}; found {labels:?}"</span>,
-<a href=#253 id=253 data-nosnippet>253</a>            survey.observation_ids
-<a href=#254 id=254 data-nosnippet>254</a>        )));
-<a href=#255 id=255 data-nosnippet>255</a>    }
-<a href=#256 id=256 data-nosnippet>256</a>    <span class="kw">let </span>(telescope_name, observer) = labels.pop_first().expect(<span class="string">"one label pair"</span>);
-<a href=#257 id=257 data-nosnippet>257</a>    <span class="comment">// ObsInfo::toRecord uses MVDirection::get, preserving the signed atan2
-<a href=#258 id=258 data-nosnippet>258</a>    // endpoint rather than mapping an exactly positive pi to negative pi.
-<a href=#259 id=259 data-nosnippet>259</a>    </span><span class="kw">let </span>[pointing_x, pointing_y, <span class="kw">_</span>] = centre.image_centre.cosines();
-<a href=#260 id=260 data-nosnippet>260</a>    <span class="kw">let </span>pointing_longitude = <span class="kw">if </span>pointing_x == <span class="number">0.0 </span>&amp;&amp; pointing_y == <span class="number">0.0 </span>{
-<a href=#261 id=261 data-nosnippet>261</a>        <span class="number">0.0
-<a href=#262 id=262 data-nosnippet>262</a>    </span>} <span class="kw">else </span>{
-<a href=#263 id=263 data-nosnippet>263</a>        pointing_y.atan2(pointing_x)
-<a href=#264 id=264 data-nosnippet>264</a>    };
-<a href=#265 id=265 data-nosnippet>265</a>    <span class="prelude-val">Ok</span>(ObsInfo::new(telescope_name)
-<a href=#266 id=266 data-nosnippet>266</a>        .with_observer(observer)
-<a href=#267 id=267 data-nosnippet>267</a>        .with_date(MEpoch::from_mjd(
-<a href=#268 id=268 data-nosnippet>268</a>            survey.first_time_mjd_seconds / <span class="number">86_400.0</span>,
-<a href=#269 id=269 data-nosnippet>269</a>            engine.time_reference(),
-<a href=#270 id=270 data-nosnippet>270</a>        ))
-<a href=#271 id=271 data-nosnippet>271</a>        .with_telescope_position(engine.observatory_position().clone())
-<a href=#272 id=272 data-nosnippet>272</a>        .with_pointing_center(pointing_longitude, centre.image_centre.as_angles().<span class="number">1</span>))
-<a href=#273 id=273 data-nosnippet>273</a>}
-<a href=#274 id=274 data-nosnippet>274</a>
-<a href=#275 id=275 data-nosnippet>275</a><span class="doccomment">/// A SIN direction coordinate of `image_size` square cells of `cell_arcsec`
-<a href=#276 id=276 data-nosnippet>276</a>/// centred on `(longitude, latitude)` in `frame`.
-<a href=#277 id=277 data-nosnippet>277</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>direction_spec(
-<a href=#278 id=278 data-nosnippet>278</a>    image_size: usize,
-<a href=#279 id=279 data-nosnippet>279</a>    cell_arcsec: f64,
-<a href=#280 id=280 data-nosnippet>280</a>    frame: DirectionFrame,
-<a href=#281 id=281 data-nosnippet>281</a>    longitude: f64,
-<a href=#282 id=282 data-nosnippet>282</a>    latitude: f64,
-<a href=#283 id=283 data-nosnippet>283</a>) -&gt; DirectionCoordinateSpec {
-<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">let </span>cell = cell_arcsec * std::f64::consts::PI / (<span class="number">180.0 </span>* <span class="number">3600.0</span>);
-<a href=#285 id=285 data-nosnippet>285</a>    <span class="kw">let </span>reference_pixel = image_reference_pixel(image_size);
-<a href=#286 id=286 data-nosnippet>286</a>    DirectionCoordinateSpec::new(
-<a href=#287 id=287 data-nosnippet>287</a>        Projection::Sin,
-<a href=#288 id=288 data-nosnippet>288</a>        SkyDirection::new(frame, longitude, latitude),
-<a href=#289 id=289 data-nosnippet>289</a>        [reference_pixel, reference_pixel],
-<a href=#290 id=290 data-nosnippet>290</a>        [-cell, cell],
-<a href=#291 id=291 data-nosnippet>291</a>        [[<span class="number">1.0</span>, <span class="number">0.0</span>], [<span class="number">0.0</span>, <span class="number">1.0</span>]],
-<a href=#292 id=292 data-nosnippet>292</a>        [<span class="number">180.0</span>, <span class="number">0.0</span>],
-<a href=#293 id=293 data-nosnippet>293</a>    )
-<a href=#294 id=294 data-nosnippet>294</a>}
-<a href=#295 id=295 data-nosnippet>295</a>
-<a href=#296 id=296 data-nosnippet>296</a><span class="doccomment">/// The spectral axis an image header records.
-<a href=#297 id=297 data-nosnippet>297</a></span><span class="attr">#[derive(Clone, Copy)]
-<a href=#298 id=298 data-nosnippet>298</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ImageSpectralCoordinate {
-<a href=#299 id=299 data-nosnippet>299</a>    <span class="kw">pub</span>(<span class="kw">super</span>) frequency_reference: FrequencyRef,
-<a href=#300 id=300 data-nosnippet>300</a>    <span class="kw">pub</span>(<span class="kw">super</span>) reference_frequency_hz: f64,
-<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">pub</span>(<span class="kw">super</span>) increment_hz: f64,
-<a href=#302 id=302 data-nosnippet>302</a>    <span class="kw">pub</span>(<span class="kw">super</span>) rest_frequency_hz: f64,
-<a href=#303 id=303 data-nosnippet>303</a>}
-<a href=#304 id=304 data-nosnippet>304</a>
-<a href=#305 id=305 data-nosnippet>305</a><span class="doccomment">/// The coordinate system of one image domain's products.
-<a href=#306 id=306 data-nosnippet>306</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>image_coordinates(
-<a href=#307 id=307 data-nosnippet>307</a>    direction: DirectionCoordinateSpec,
-<a href=#308 id=308 data-nosnippet>308</a>    image_size: usize,
-<a href=#309 id=309 data-nosnippet>309</a>    polarizations: <span class="kw-2">&amp;</span>[PolarizationCoordinate],
-<a href=#310 id=310 data-nosnippet>310</a>    spectral: ImageSpectralCoordinate,
-<a href=#311 id=311 data-nosnippet>311</a>    observation: <span class="kw-2">&amp;</span>ObsInfo,
-<a href=#312 id=312 data-nosnippet>312</a>) -&gt; CoordinateSystem {
-<a href=#313 id=313 data-nosnippet>313</a>    <span class="kw">let </span>reference = direction.reference_direction();
-<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">let </span>reference_pixel = image_reference_pixel(image_size);
-<a href=#315 id=315 data-nosnippet>315</a>    <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
-<a href=#316 id=316 data-nosnippet>316</a>    coordinates.add_coordinate(DirectionCoordinate::new(
-<a href=#317 id=317 data-nosnippet>317</a>        direction_ref(reference.frame()),
-<a href=#318 id=318 data-nosnippet>318</a>        CoordinateProjection::new(ProjectionType::SIN),
-<a href=#319 id=319 data-nosnippet>319</a>        [reference.longitude_rad(), reference.latitude_rad()],
-<a href=#320 id=320 data-nosnippet>320</a>        direction.increment_rad(),
-<a href=#321 id=321 data-nosnippet>321</a>        [reference_pixel, reference_pixel],
-<a href=#322 id=322 data-nosnippet>322</a>    ));
-<a href=#323 id=323 data-nosnippet>323</a>    coordinates.add_coordinate(StokesCoordinate::new(
-<a href=#324 id=324 data-nosnippet>324</a>        polarizations.iter().copied().map(stokes_type).collect(),
-<a href=#325 id=325 data-nosnippet>325</a>    ));
-<a href=#326 id=326 data-nosnippet>326</a>    coordinates.add_coordinate(SpectralCoordinate::new(
-<a href=#327 id=327 data-nosnippet>327</a>        spectral.frequency_reference,
-<a href=#328 id=328 data-nosnippet>328</a>        spectral.reference_frequency_hz,
-<a href=#329 id=329 data-nosnippet>329</a>        spectral.increment_hz,
-<a href=#330 id=330 data-nosnippet>330</a>        <span class="number">0.0</span>,
-<a href=#331 id=331 data-nosnippet>331</a>        spectral.rest_frequency_hz,
-<a href=#332 id=332 data-nosnippet>332</a>    ));
-<a href=#333 id=333 data-nosnippet>333</a>    <span class="kw-2">*</span>coordinates.obs_info_mut() = observation.clone();
-<a href=#334 id=334 data-nosnippet>334</a>    coordinates
-<a href=#335 id=335 data-nosnippet>335</a>}
-<a href=#336 id=336 data-nosnippet>336</a>
-<a href=#337 id=337 data-nosnippet>337</a><span class="doccomment">/// CASA's direction reference pixel: half the image extent.
-<a href=#338 id=338 data-nosnippet>338</a></span><span class="kw">fn </span>image_reference_pixel(image_size: usize) -&gt; f64 {
-<a href=#339 id=339 data-nosnippet>339</a>    image_size <span class="kw">as </span>f64 / <span class="number">2.0
-<a href=#340 id=340 data-nosnippet>340</a></span>}
-<a href=#341 id=341 data-nosnippet>341</a>
-<a href=#342 id=342 data-nosnippet>342</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const fn </span>direction_ref(frame: DirectionFrame) -&gt; DirectionRef {
-<a href=#343 id=343 data-nosnippet>343</a>    <span class="kw">match </span>frame {
-<a href=#344 id=344 data-nosnippet>344</a>        DirectionFrame::J2000 =&gt; DirectionRef::J2000,
-<a href=#345 id=345 data-nosnippet>345</a>        DirectionFrame::Icrs =&gt; DirectionRef::ICRS,
-<a href=#346 id=346 data-nosnippet>346</a>        DirectionFrame::B1950 =&gt; DirectionRef::B1950,
-<a href=#347 id=347 data-nosnippet>347</a>        DirectionFrame::Galactic =&gt; DirectionRef::GALACTIC,
-<a href=#348 id=348 data-nosnippet>348</a>    }
-<a href=#349 id=349 data-nosnippet>349</a>}
-<a href=#350 id=350 data-nosnippet>350</a>
-<a href=#351 id=351 data-nosnippet>351</a><span class="kw">const fn </span>stokes_type(coordinate: PolarizationCoordinate) -&gt; StokesType {
-<a href=#352 id=352 data-nosnippet>352</a>    <span class="kw">match </span>coordinate {
-<a href=#353 id=353 data-nosnippet>353</a>        PolarizationCoordinate::StokesI =&gt; StokesType::I,
-<a href=#354 id=354 data-nosnippet>354</a>        PolarizationCoordinate::StokesQ =&gt; StokesType::Q,
-<a href=#355 id=355 data-nosnippet>355</a>        PolarizationCoordinate::StokesU =&gt; StokesType::U,
-<a href=#356 id=356 data-nosnippet>356</a>        PolarizationCoordinate::StokesV =&gt; StokesType::V,
-<a href=#357 id=357 data-nosnippet>357</a>        PolarizationCoordinate::CircularRr =&gt; StokesType::RR,
-<a href=#358 id=358 data-nosnippet>358</a>        PolarizationCoordinate::CircularRl =&gt; StokesType::RL,
-<a href=#359 id=359 data-nosnippet>359</a>        PolarizationCoordinate::CircularLr =&gt; StokesType::LR,
-<a href=#360 id=360 data-nosnippet>360</a>        PolarizationCoordinate::CircularLl =&gt; StokesType::LL,
-<a href=#361 id=361 data-nosnippet>361</a>        PolarizationCoordinate::LinearXx =&gt; StokesType::XX,
-<a href=#362 id=362 data-nosnippet>362</a>        PolarizationCoordinate::LinearXy =&gt; StokesType::XY,
-<a href=#363 id=363 data-nosnippet>363</a>        PolarizationCoordinate::LinearYx =&gt; StokesType::YX,
-<a href=#364 id=364 data-nosnippet>364</a>        PolarizationCoordinate::LinearYy =&gt; StokesType::YY,
-<a href=#365 id=365 data-nosnippet>365</a>    }
-<a href=#366 id=366 data-nosnippet>366</a>}
-<a href=#367 id=367 data-nosnippet>367</a>
-<a href=#368 id=368 data-nosnippet>368</a><span class="doccomment">/// A CASA phase-centre literal `J2000 &lt;lon&gt; &lt;lat&gt;`, with sexagesimal,
-<a href=#369 id=369 data-nosnippet>369</a>/// degree or radian angles.
-<a href=#370 id=370 data-nosnippet>370</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>parse_phase_center_direction(text: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;SkyDirection, ApplicationError&gt; {
-<a href=#371 id=371 data-nosnippet>371</a>    <span class="kw">let </span>parts = text.split_whitespace().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#372 id=372 data-nosnippet>372</a>    <span class="kw">if </span>parts.len() != <span class="number">3 </span>|| !parts[<span class="number">0</span>].eq_ignore_ascii_case(<span class="string">"J2000"</span>) {
-<a href=#373 id=373 data-nosnippet>373</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(
-<a href=#374 id=374 data-nosnippet>374</a>            <span class="string">"phasecenter must be 'J2000 lon lat', for example 'J2000 19:59:28.500 +40.44.01.50'"</span>,
-<a href=#375 id=375 data-nosnippet>375</a>        ));
-<a href=#376 id=376 data-nosnippet>376</a>    }
-<a href=#377 id=377 data-nosnippet>377</a>    <span class="prelude-val">Ok</span>(SkyDirection::new(
-<a href=#378 id=378 data-nosnippet>378</a>        DirectionFrame::J2000,
-<a href=#379 id=379 data-nosnippet>379</a>        parse_phase_center_angle(parts[<span class="number">1</span>], <span class="bool-val">true</span>)<span class="question-mark">?</span>,
-<a href=#380 id=380 data-nosnippet>380</a>        parse_phase_center_angle(parts[<span class="number">2</span>], <span class="bool-val">false</span>)<span class="question-mark">?</span>,
-<a href=#381 id=381 data-nosnippet>381</a>    ))
-<a href=#382 id=382 data-nosnippet>382</a>}
-<a href=#383 id=383 data-nosnippet>383</a>
-<a href=#384 id=384 data-nosnippet>384</a><span class="kw">fn </span>parse_phase_center_angle(text: <span class="kw-2">&amp;</span>str, longitude: bool) -&gt; <span class="prelude-ty">Result</span>&lt;f64, ApplicationError&gt; {
-<a href=#385 id=385 data-nosnippet>385</a>    <span class="kw">let </span>lower = text.to_ascii_lowercase();
-<a href=#386 id=386 data-nosnippet>386</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(radians) = lower.strip_suffix(<span class="string">"rad"</span>) {
-<a href=#387 id=387 data-nosnippet>387</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(radians.trim().parse::&lt;f64&gt;()<span class="question-mark">?</span>);
-<a href=#388 id=388 data-nosnippet>388</a>    }
-<a href=#389 id=389 data-nosnippet>389</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(degrees) = lower.strip_suffix(<span class="string">"deg"</span>) {
-<a href=#390 id=390 data-nosnippet>390</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(degrees.trim().parse::&lt;f64&gt;()<span class="question-mark">?</span>.to_radians());
-<a href=#391 id=391 data-nosnippet>391</a>    }
-<a href=#392 id=392 data-nosnippet>392</a>    <span class="kw">if </span>longitude {
-<a href=#393 id=393 data-nosnippet>393</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(hours) = parse_sexagesimal(text, <span class="bool-val">true</span>) {
-<a href=#394 id=394 data-nosnippet>394</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(hours * std::f64::consts::PI / <span class="number">12.0</span>);
-<a href=#395 id=395 data-nosnippet>395</a>        }
-<a href=#396 id=396 data-nosnippet>396</a>    } <span class="kw">else if let </span><span class="prelude-val">Some</span>(degrees) = parse_sexagesimal(text, <span class="bool-val">false</span>) {
-<a href=#397 id=397 data-nosnippet>397</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(degrees.to_radians());
-<a href=#398 id=398 data-nosnippet>398</a>    }
-<a href=#399 id=399 data-nosnippet>399</a>    <span class="prelude-val">Err</span>(boxed(<span class="macro">format!</span>(<span class="string">"unsupported phasecenter angle {text:?}"</span>)))
-<a href=#400 id=400 data-nosnippet>400</a>}
-<a href=#401 id=401 data-nosnippet>401</a>
-<a href=#402 id=402 data-nosnippet>402</a><span class="kw">fn </span>parse_sexagesimal(text: <span class="kw-2">&amp;</span>str, hours: bool) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
-<a href=#403 id=403 data-nosnippet>403</a>    <span class="kw">let </span>trimmed = text.trim();
-<a href=#404 id=404 data-nosnippet>404</a>    <span class="kw">let </span>sign = <span class="kw">if </span>trimmed.starts_with(<span class="string">'-'</span>) { -<span class="number">1.0 </span>} <span class="kw">else </span>{ <span class="number">1.0 </span>};
-<a href=#405 id=405 data-nosnippet>405</a>    <span class="kw">let </span>body = trimmed.trim_start_matches([<span class="string">'+'</span>, <span class="string">'-'</span>]);
-<a href=#406 id=406 data-nosnippet>406</a>    <span class="kw">let </span>fields = <span class="kw">if </span>body.contains(<span class="string">':'</span>) {
-<a href=#407 id=407 data-nosnippet>407</a>        body.split(<span class="string">':'</span>).map(str::to_owned).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#408 id=408 data-nosnippet>408</a>    } <span class="kw">else if </span>body.contains(<span class="string">'h'</span>) || body.contains(<span class="string">'d'</span>) || body.contains(<span class="string">'m'</span>) || body.contains(<span class="string">'s'</span>) {
-<a href=#409 id=409 data-nosnippet>409</a>        body.replace([<span class="string">'h'</span>, <span class="string">'d'</span>, <span class="string">'m'</span>, <span class="string">'s'</span>], <span class="string">" "</span>)
-<a href=#410 id=410 data-nosnippet>410</a>            .split_whitespace()
-<a href=#411 id=411 data-nosnippet>411</a>            .map(str::to_owned)
-<a href=#412 id=412 data-nosnippet>412</a>            .collect()
-<a href=#413 id=413 data-nosnippet>413</a>    } <span class="kw">else if </span>!hours &amp;&amp; body.matches(<span class="string">'.'</span>).count() &gt;= <span class="number">2 </span>{
-<a href=#414 id=414 data-nosnippet>414</a>        <span class="kw">let </span><span class="kw-2">mut </span>split = body.split(<span class="string">'.'</span>);
-<a href=#415 id=415 data-nosnippet>415</a>        <span class="kw">let </span>major = split.next()<span class="question-mark">?</span>.to_owned();
-<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span>minutes = split.next()<span class="question-mark">?</span>.to_owned();
-<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">let </span>seconds = split.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().join(<span class="string">"."</span>);
-<a href=#418 id=418 data-nosnippet>418</a>        <span class="macro">vec!</span>[major, minutes, seconds]
-<a href=#419 id=419 data-nosnippet>419</a>    } <span class="kw">else </span>{
+<a href=#110 id=110 data-nosnippet>110</a>    };
+<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">let </span>phase = MDirection::from_angles(
+<a href=#112 id=112 data-nosnippet>112</a>        main_direction.longitude_rad(),
+<a href=#113 id=113 data-nosnippet>113</a>        main_direction.latitude_rad(),
+<a href=#114 id=114 data-nosnippet>114</a>        DirectionRef::J2000,
+<a href=#115 id=115 data-nosnippet>115</a>    );
+<a href=#116 id=116 data-nosnippet>116</a>    <span class="kw">let </span>(image_centre, frame) = image_centre(
+<a href=#117 id=117 data-nosnippet>117</a>        request,
+<a href=#118 id=118 data-nosnippet>118</a>        engine,
+<a href=#119 id=119 data-nosnippet>119</a>        anchor_time,
+<a href=#120 id=120 data-nosnippet>120</a>        <span class="kw-2">&amp;</span>phase,
+<a href=#121 id=121 data-nosnippet>121</a>        stored_phase,
+<a href=#122 id=122 data-nosnippet>122</a>        ephemeris.is_some(),
+<a href=#123 id=123 data-nosnippet>123</a>    )<span class="question-mark">?</span>;
+<a href=#124 id=124 data-nosnippet>124</a>    <span class="kw">let </span>(longitude, latitude) = image_centre.as_angles();
+<a href=#125 id=125 data-nosnippet>125</a>    <span class="prelude-val">Ok</span>(Centre {
+<a href=#126 id=126 data-nosnippet>126</a>        law,
+<a href=#127 id=127 data-nosnippet>127</a>        ephemeris,
+<a href=#128 id=128 data-nosnippet>128</a>        phase,
+<a href=#129 id=129 data-nosnippet>129</a>        direction: direction_spec(request.imsize, request.cell, frame, longitude, latitude),
+<a href=#130 id=130 data-nosnippet>130</a>        image_centre,
+<a href=#131 id=131 data-nosnippet>131</a>        field_id,
+<a href=#132 id=132 data-nosnippet>132</a>    })
+<a href=#133 id=133 data-nosnippet>133</a>}
+<a href=#134 id=134 data-nosnippet>134</a>
+<a href=#135 id=135 data-nosnippet>135</a><span class="doccomment">/// The image's reference direction and the frame it records: ICRS at the
+<a href=#136 id=136 data-nosnippet>136</a>/// anchor time for a moving source, the field's stored direction in its
+<a href=#137 id=137 data-nosnippet>137</a>/// own frame when the request names no centre, else the J2000 phase
+<a href=#138 id=138 data-nosnippet>138</a>/// centre.
+<a href=#139 id=139 data-nosnippet>139</a></span><span class="kw">fn </span>image_centre(
+<a href=#140 id=140 data-nosnippet>140</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#141 id=141 data-nosnippet>141</a>    engine: <span class="kw-2">&amp;</span>casa_ms::derived::engine::MsCalEngine,
+<a href=#142 id=142 data-nosnippet>142</a>    anchor_time: f64,
+<a href=#143 id=143 data-nosnippet>143</a>    phase: <span class="kw-2">&amp;</span>MDirection,
+<a href=#144 id=144 data-nosnippet>144</a>    stored_phase: MDirection,
+<a href=#145 id=145 data-nosnippet>145</a>    moving: bool,
+<a href=#146 id=146 data-nosnippet>146</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(MDirection, DirectionFrame), PrepareError&gt; {
+<a href=#147 id=147 data-nosnippet>147</a>    <span class="kw">if </span>moving {
+<a href=#148 id=148 data-nosnippet>148</a>        <span class="kw">let </span>frame = engine.spectral_frame_observatory_direction(anchor_time, phase.clone())<span class="question-mark">?</span>;
+<a href=#149 id=149 data-nosnippet>149</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((
+<a href=#150 id=150 data-nosnippet>150</a>            phase.convert_to(DirectionRef::ICRS, <span class="kw-2">&amp;</span>frame)<span class="question-mark">?</span>,
+<a href=#151 id=151 data-nosnippet>151</a>            DirectionFrame::Icrs,
+<a href=#152 id=152 data-nosnippet>152</a>        ));
+<a href=#153 id=153 data-nosnippet>153</a>    }
+<a href=#154 id=154 data-nosnippet>154</a>    <span class="kw">let </span>centre = <span class="kw">if </span>request.phasecenter.is_none()
+<a href=#155 id=155 data-nosnippet>155</a>        &amp;&amp; <span class="macro">matches!</span>(
+<a href=#156 id=156 data-nosnippet>156</a>            stored_phase.refer(),
+<a href=#157 id=157 data-nosnippet>157</a>            DirectionRef::J2000 | DirectionRef::ICRS | DirectionRef::B1950 | DirectionRef::GALACTIC
+<a href=#158 id=158 data-nosnippet>158</a>        ) {
+<a href=#159 id=159 data-nosnippet>159</a>        stored_phase
+<a href=#160 id=160 data-nosnippet>160</a>    } <span class="kw">else </span>{
+<a href=#161 id=161 data-nosnippet>161</a>        phase.clone()
+<a href=#162 id=162 data-nosnippet>162</a>    };
+<a href=#163 id=163 data-nosnippet>163</a>    <span class="kw">let </span>frame = <span class="kw">match </span>centre.refer() {
+<a href=#164 id=164 data-nosnippet>164</a>        DirectionRef::ICRS =&gt; DirectionFrame::Icrs,
+<a href=#165 id=165 data-nosnippet>165</a>        DirectionRef::B1950 =&gt; DirectionFrame::B1950,
+<a href=#166 id=166 data-nosnippet>166</a>        DirectionRef::GALACTIC =&gt; DirectionFrame::Galactic,
+<a href=#167 id=167 data-nosnippet>167</a>        <span class="kw">_ </span>=&gt; DirectionFrame::J2000,
+<a href=#168 id=168 data-nosnippet>168</a>    };
+<a href=#169 id=169 data-nosnippet>169</a>    <span class="prelude-val">Ok</span>((centre, frame))
+<a href=#170 id=170 data-nosnippet>170</a>}
+<a href=#171 id=171 data-nosnippet>171</a>
+<a href=#172 id=172 data-nosnippet>172</a><span class="doccomment">/// A named ephemeris (or an external table), joined with the selected
+<a href=#173 id=173 data-nosnippet>173</a>/// fields' attached ephemerides when they have them.
+<a href=#174 id=174 data-nosnippet>174</a></span><span class="kw">fn </span>named_ephemeris(
+<a href=#175 id=175 data-nosnippet>175</a>    text: <span class="kw-2">&amp;</span>str,
+<a href=#176 id=176 data-nosnippet>176</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#177 id=177 data-nosnippet>177</a>    survey: <span class="kw-2">&amp;</span>Survey,
+<a href=#178 id=178 data-nosnippet>178</a>    budget: SelectedObservationContentBudget,
+<a href=#179 id=179 data-nosnippet>179</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SelectedObservationEphemeris, PrepareError&gt; {
+<a href=#180 id=180 data-nosnippet>180</a>    <span class="kw">let </span>budget = budget.reference_data_budget();
+<a href=#181 id=181 data-nosnippet>181</a>    <span class="kw">let </span><span class="kw-2">mut </span>ephemeris = <span class="kw">if </span>Path::new(text).is_dir() {
+<a href=#182 id=182 data-nosnippet>182</a>        SelectedObservationEphemeris::external(text, budget)<span class="question-mark">?
+<a href=#183 id=183 data-nosnippet>183</a>    </span>} <span class="kw">else </span>{
+<a href=#184 id=184 data-nosnippet>184</a>        SelectedObservationEphemeris::named(text, budget)<span class="question-mark">?
+<a href=#185 id=185 data-nosnippet>185</a>    </span>};
+<a href=#186 id=186 data-nosnippet>186</a>    <span class="kw">let </span>field = ms.field()<span class="question-mark">?</span>;
+<a href=#187 id=187 data-nosnippet>187</a>    <span class="kw">let </span><span class="kw-2">mut </span>attached = Vec::new();
+<a href=#188 id=188 data-nosnippet>188</a>    <span class="kw">for </span>field_id <span class="kw">in </span><span class="kw-2">&amp;</span>survey.fields {
+<a href=#189 id=189 data-nosnippet>189</a>        <span class="kw">let </span>field_id = usize::try_from(<span class="kw-2">*</span>field_id).map_err(|<span class="kw">_</span>| PrepareError::NegativeMainId {
+<a href=#190 id=190 data-nosnippet>190</a>            column: <span class="string">"FIELD_ID"</span>,
+<a href=#191 id=191 data-nosnippet>191</a>            value: <span class="kw-2">*</span>field_id,
+<a href=#192 id=192 data-nosnippet>192</a>        })<span class="question-mark">?</span>;
+<a href=#193 id=193 data-nosnippet>193</a>        <span class="kw">if </span>field
+<a href=#194 id=194 data-nosnippet>194</a>            .ephemeris_id(field_id)<span class="question-mark">?
+<a href=#195 id=195 data-nosnippet>195</a>            </span>.is_some_and(|value| value &gt;= <span class="number">0</span>)
+<a href=#196 id=196 data-nosnippet>196</a>        {
+<a href=#197 id=197 data-nosnippet>197</a>            attached.push(field_id);
+<a href=#198 id=198 data-nosnippet>198</a>        }
+<a href=#199 id=199 data-nosnippet>199</a>    }
+<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">if </span>attached.is_empty() {
+<a href=#201 id=201 data-nosnippet>201</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(ephemeris);
+<a href=#202 id=202 data-nosnippet>202</a>    }
+<a href=#203 id=203 data-nosnippet>203</a>    <span class="kw">if </span>attached.len() != survey.fields.len() {
+<a href=#204 id=204 data-nosnippet>204</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::MixedEphemerisFields);
+<a href=#205 id=205 data-nosnippet>205</a>    }
+<a href=#206 id=206 data-nosnippet>206</a>    ephemeris = ephemeris.with_attached_fields(
+<a href=#207 id=207 data-nosnippet>207</a>        SelectedObservationEphemeris::tracked_fields(ms, attached, budget)<span class="question-mark">?</span>,
+<a href=#208 id=208 data-nosnippet>208</a>        budget,
+<a href=#209 id=209 data-nosnippet>209</a>    )<span class="question-mark">?</span>;
+<a href=#210 id=210 data-nosnippet>210</a>    <span class="prelude-val">Ok</span>(ephemeris)
+<a href=#211 id=211 data-nosnippet>211</a>}
+<a href=#212 id=212 data-nosnippet>212</a>
+<a href=#213 id=213 data-nosnippet>213</a><span class="doccomment">/// The image's observation record: telescope and observer of the selected
+<a href=#214 id=214 data-nosnippet>214</a>/// observations, which must agree, the first selected time and the image
+<a href=#215 id=215 data-nosnippet>215</a>/// centre.
+<a href=#216 id=216 data-nosnippet>216</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>observation_info(
+<a href=#217 id=217 data-nosnippet>217</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#218 id=218 data-nosnippet>218</a>    survey: <span class="kw-2">&amp;</span>Survey,
+<a href=#219 id=219 data-nosnippet>219</a>    centre: <span class="kw-2">&amp;</span>Centre,
+<a href=#220 id=220 data-nosnippet>220</a>    engine: <span class="kw-2">&amp;</span>casa_ms::derived::engine::MsCalEngine,
+<a href=#221 id=221 data-nosnippet>221</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ObsInfo, PrepareError&gt; {
+<a href=#222 id=222 data-nosnippet>222</a>    <span class="kw">let </span>observation = ms.observation()<span class="question-mark">?</span>;
+<a href=#223 id=223 data-nosnippet>223</a>    <span class="kw">let </span><span class="kw-2">mut </span>labels = std::collections::BTreeSet::new();
+<a href=#224 id=224 data-nosnippet>224</a>    <span class="kw">for </span>id <span class="kw">in </span><span class="kw-2">&amp;</span>survey.observation_ids {
+<a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">let </span>id = usize::try_from(<span class="kw-2">*</span>id).map_err(|<span class="kw">_</span>| PrepareError::NegativeMainId {
+<a href=#226 id=226 data-nosnippet>226</a>            column: <span class="string">"OBSERVATION_ID"</span>,
+<a href=#227 id=227 data-nosnippet>227</a>            value: <span class="kw-2">*</span>id,
+<a href=#228 id=228 data-nosnippet>228</a>        })<span class="question-mark">?</span>;
+<a href=#229 id=229 data-nosnippet>229</a>        labels.insert(<span class="kw">if </span>id &lt; observation.row_count() {
+<a href=#230 id=230 data-nosnippet>230</a>            (
+<a href=#231 id=231 data-nosnippet>231</a>                observation.string(id, <span class="string">"TELESCOPE_NAME"</span>)<span class="question-mark">?</span>,
+<a href=#232 id=232 data-nosnippet>232</a>                observation.string(id, <span class="string">"OBSERVER"</span>)<span class="question-mark">?</span>,
+<a href=#233 id=233 data-nosnippet>233</a>            )
+<a href=#234 id=234 data-nosnippet>234</a>        } <span class="kw">else </span>{
+<a href=#235 id=235 data-nosnippet>235</a>            (String::new(), String::new())
+<a href=#236 id=236 data-nosnippet>236</a>        });
+<a href=#237 id=237 data-nosnippet>237</a>    }
+<a href=#238 id=238 data-nosnippet>238</a>    <span class="kw">if </span>labels.len() != <span class="number">1 </span>{
+<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::ObservationLabels {
+<a href=#240 id=240 data-nosnippet>240</a>            observation_ids: survey.observation_ids.clone(),
+<a href=#241 id=241 data-nosnippet>241</a>            labels,
+<a href=#242 id=242 data-nosnippet>242</a>        });
+<a href=#243 id=243 data-nosnippet>243</a>    }
+<a href=#244 id=244 data-nosnippet>244</a>    <span class="kw">let </span>(telescope_name, observer) = labels.pop_first().expect(<span class="string">"one label pair"</span>);
+<a href=#245 id=245 data-nosnippet>245</a>    <span class="comment">// ObsInfo::toRecord uses MVDirection::get, preserving the signed atan2
+<a href=#246 id=246 data-nosnippet>246</a>    // endpoint rather than mapping an exactly positive pi to negative pi.
+<a href=#247 id=247 data-nosnippet>247</a>    </span><span class="kw">let </span>[pointing_x, pointing_y, <span class="kw">_</span>] = centre.image_centre.cosines();
+<a href=#248 id=248 data-nosnippet>248</a>    <span class="kw">let </span>pointing_longitude = <span class="kw">if </span>pointing_x == <span class="number">0.0 </span>&amp;&amp; pointing_y == <span class="number">0.0 </span>{
+<a href=#249 id=249 data-nosnippet>249</a>        <span class="number">0.0
+<a href=#250 id=250 data-nosnippet>250</a>    </span>} <span class="kw">else </span>{
+<a href=#251 id=251 data-nosnippet>251</a>        pointing_y.atan2(pointing_x)
+<a href=#252 id=252 data-nosnippet>252</a>    };
+<a href=#253 id=253 data-nosnippet>253</a>    <span class="prelude-val">Ok</span>(ObsInfo::new(telescope_name)
+<a href=#254 id=254 data-nosnippet>254</a>        .with_observer(observer)
+<a href=#255 id=255 data-nosnippet>255</a>        .with_date(MEpoch::from_mjd(
+<a href=#256 id=256 data-nosnippet>256</a>            survey.first_time_mjd_seconds / <span class="number">86_400.0</span>,
+<a href=#257 id=257 data-nosnippet>257</a>            engine.time_reference(),
+<a href=#258 id=258 data-nosnippet>258</a>        ))
+<a href=#259 id=259 data-nosnippet>259</a>        .with_telescope_position(engine.observatory_position().clone())
+<a href=#260 id=260 data-nosnippet>260</a>        .with_pointing_center(pointing_longitude, centre.image_centre.as_angles().<span class="number">1</span>))
+<a href=#261 id=261 data-nosnippet>261</a>}
+<a href=#262 id=262 data-nosnippet>262</a>
+<a href=#263 id=263 data-nosnippet>263</a><span class="doccomment">/// A SIN direction coordinate of `image_size` square cells of `cell_arcsec`
+<a href=#264 id=264 data-nosnippet>264</a>/// centred on `(longitude, latitude)` in `frame`.
+<a href=#265 id=265 data-nosnippet>265</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>direction_spec(
+<a href=#266 id=266 data-nosnippet>266</a>    image_size: usize,
+<a href=#267 id=267 data-nosnippet>267</a>    cell_arcsec: f64,
+<a href=#268 id=268 data-nosnippet>268</a>    frame: DirectionFrame,
+<a href=#269 id=269 data-nosnippet>269</a>    longitude: f64,
+<a href=#270 id=270 data-nosnippet>270</a>    latitude: f64,
+<a href=#271 id=271 data-nosnippet>271</a>) -&gt; DirectionCoordinateSpec {
+<a href=#272 id=272 data-nosnippet>272</a>    <span class="kw">let </span>cell = cell_arcsec * std::f64::consts::PI / (<span class="number">180.0 </span>* <span class="number">3600.0</span>);
+<a href=#273 id=273 data-nosnippet>273</a>    <span class="kw">let </span>reference_pixel = image_reference_pixel(image_size);
+<a href=#274 id=274 data-nosnippet>274</a>    DirectionCoordinateSpec::new(
+<a href=#275 id=275 data-nosnippet>275</a>        Projection::Sin,
+<a href=#276 id=276 data-nosnippet>276</a>        SkyDirection::new(frame, longitude, latitude),
+<a href=#277 id=277 data-nosnippet>277</a>        [reference_pixel, reference_pixel],
+<a href=#278 id=278 data-nosnippet>278</a>        [-cell, cell],
+<a href=#279 id=279 data-nosnippet>279</a>        [[<span class="number">1.0</span>, <span class="number">0.0</span>], [<span class="number">0.0</span>, <span class="number">1.0</span>]],
+<a href=#280 id=280 data-nosnippet>280</a>        [<span class="number">180.0</span>, <span class="number">0.0</span>],
+<a href=#281 id=281 data-nosnippet>281</a>    )
+<a href=#282 id=282 data-nosnippet>282</a>}
+<a href=#283 id=283 data-nosnippet>283</a>
+<a href=#284 id=284 data-nosnippet>284</a><span class="doccomment">/// The spectral axis an image header records.
+<a href=#285 id=285 data-nosnippet>285</a></span><span class="attr">#[derive(Clone, Copy)]
+<a href=#286 id=286 data-nosnippet>286</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ImageSpectralCoordinate {
+<a href=#287 id=287 data-nosnippet>287</a>    <span class="kw">pub</span>(<span class="kw">super</span>) frequency_reference: FrequencyRef,
+<a href=#288 id=288 data-nosnippet>288</a>    <span class="kw">pub</span>(<span class="kw">super</span>) reference_frequency_hz: f64,
+<a href=#289 id=289 data-nosnippet>289</a>    <span class="kw">pub</span>(<span class="kw">super</span>) increment_hz: f64,
+<a href=#290 id=290 data-nosnippet>290</a>    <span class="kw">pub</span>(<span class="kw">super</span>) rest_frequency_hz: f64,
+<a href=#291 id=291 data-nosnippet>291</a>}
+<a href=#292 id=292 data-nosnippet>292</a>
+<a href=#293 id=293 data-nosnippet>293</a><span class="doccomment">/// The coordinate system of one image domain's products.
+<a href=#294 id=294 data-nosnippet>294</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>image_coordinates(
+<a href=#295 id=295 data-nosnippet>295</a>    direction: DirectionCoordinateSpec,
+<a href=#296 id=296 data-nosnippet>296</a>    image_size: usize,
+<a href=#297 id=297 data-nosnippet>297</a>    polarizations: <span class="kw-2">&amp;</span>[PolarizationCoordinate],
+<a href=#298 id=298 data-nosnippet>298</a>    spectral: ImageSpectralCoordinate,
+<a href=#299 id=299 data-nosnippet>299</a>    observation: <span class="kw-2">&amp;</span>ObsInfo,
+<a href=#300 id=300 data-nosnippet>300</a>) -&gt; CoordinateSystem {
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">let </span>reference = direction.reference_direction();
+<a href=#302 id=302 data-nosnippet>302</a>    <span class="kw">let </span>reference_pixel = image_reference_pixel(image_size);
+<a href=#303 id=303 data-nosnippet>303</a>    <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new();
+<a href=#304 id=304 data-nosnippet>304</a>    coordinates.add_coordinate(DirectionCoordinate::new(
+<a href=#305 id=305 data-nosnippet>305</a>        direction_ref(reference.frame()),
+<a href=#306 id=306 data-nosnippet>306</a>        CoordinateProjection::new(ProjectionType::SIN),
+<a href=#307 id=307 data-nosnippet>307</a>        [reference.longitude_rad(), reference.latitude_rad()],
+<a href=#308 id=308 data-nosnippet>308</a>        direction.increment_rad(),
+<a href=#309 id=309 data-nosnippet>309</a>        [reference_pixel, reference_pixel],
+<a href=#310 id=310 data-nosnippet>310</a>    ));
+<a href=#311 id=311 data-nosnippet>311</a>    coordinates.add_coordinate(StokesCoordinate::new(
+<a href=#312 id=312 data-nosnippet>312</a>        polarizations.iter().copied().map(stokes_type).collect(),
+<a href=#313 id=313 data-nosnippet>313</a>    ));
+<a href=#314 id=314 data-nosnippet>314</a>    coordinates.add_coordinate(SpectralCoordinate::new(
+<a href=#315 id=315 data-nosnippet>315</a>        spectral.frequency_reference,
+<a href=#316 id=316 data-nosnippet>316</a>        spectral.reference_frequency_hz,
+<a href=#317 id=317 data-nosnippet>317</a>        spectral.increment_hz,
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="number">0.0</span>,
+<a href=#319 id=319 data-nosnippet>319</a>        spectral.rest_frequency_hz,
+<a href=#320 id=320 data-nosnippet>320</a>    ));
+<a href=#321 id=321 data-nosnippet>321</a>    <span class="kw-2">*</span>coordinates.obs_info_mut() = observation.clone();
+<a href=#322 id=322 data-nosnippet>322</a>    coordinates
+<a href=#323 id=323 data-nosnippet>323</a>}
+<a href=#324 id=324 data-nosnippet>324</a>
+<a href=#325 id=325 data-nosnippet>325</a><span class="doccomment">/// CASA's direction reference pixel: half the image extent.
+<a href=#326 id=326 data-nosnippet>326</a></span><span class="kw">fn </span>image_reference_pixel(image_size: usize) -&gt; f64 {
+<a href=#327 id=327 data-nosnippet>327</a>    image_size <span class="kw">as </span>f64 / <span class="number">2.0
+<a href=#328 id=328 data-nosnippet>328</a></span>}
+<a href=#329 id=329 data-nosnippet>329</a>
+<a href=#330 id=330 data-nosnippet>330</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const fn </span>direction_ref(frame: DirectionFrame) -&gt; DirectionRef {
+<a href=#331 id=331 data-nosnippet>331</a>    <span class="kw">match </span>frame {
+<a href=#332 id=332 data-nosnippet>332</a>        DirectionFrame::J2000 =&gt; DirectionRef::J2000,
+<a href=#333 id=333 data-nosnippet>333</a>        DirectionFrame::Icrs =&gt; DirectionRef::ICRS,
+<a href=#334 id=334 data-nosnippet>334</a>        DirectionFrame::B1950 =&gt; DirectionRef::B1950,
+<a href=#335 id=335 data-nosnippet>335</a>        DirectionFrame::Galactic =&gt; DirectionRef::GALACTIC,
+<a href=#336 id=336 data-nosnippet>336</a>    }
+<a href=#337 id=337 data-nosnippet>337</a>}
+<a href=#338 id=338 data-nosnippet>338</a>
+<a href=#339 id=339 data-nosnippet>339</a><span class="kw">const fn </span>stokes_type(coordinate: PolarizationCoordinate) -&gt; StokesType {
+<a href=#340 id=340 data-nosnippet>340</a>    <span class="kw">match </span>coordinate {
+<a href=#341 id=341 data-nosnippet>341</a>        PolarizationCoordinate::StokesI =&gt; StokesType::I,
+<a href=#342 id=342 data-nosnippet>342</a>        PolarizationCoordinate::StokesQ =&gt; StokesType::Q,
+<a href=#343 id=343 data-nosnippet>343</a>        PolarizationCoordinate::StokesU =&gt; StokesType::U,
+<a href=#344 id=344 data-nosnippet>344</a>        PolarizationCoordinate::StokesV =&gt; StokesType::V,
+<a href=#345 id=345 data-nosnippet>345</a>        PolarizationCoordinate::CircularRr =&gt; StokesType::RR,
+<a href=#346 id=346 data-nosnippet>346</a>        PolarizationCoordinate::CircularRl =&gt; StokesType::RL,
+<a href=#347 id=347 data-nosnippet>347</a>        PolarizationCoordinate::CircularLr =&gt; StokesType::LR,
+<a href=#348 id=348 data-nosnippet>348</a>        PolarizationCoordinate::CircularLl =&gt; StokesType::LL,
+<a href=#349 id=349 data-nosnippet>349</a>        PolarizationCoordinate::LinearXx =&gt; StokesType::XX,
+<a href=#350 id=350 data-nosnippet>350</a>        PolarizationCoordinate::LinearXy =&gt; StokesType::XY,
+<a href=#351 id=351 data-nosnippet>351</a>        PolarizationCoordinate::LinearYx =&gt; StokesType::YX,
+<a href=#352 id=352 data-nosnippet>352</a>        PolarizationCoordinate::LinearYy =&gt; StokesType::YY,
+<a href=#353 id=353 data-nosnippet>353</a>    }
+<a href=#354 id=354 data-nosnippet>354</a>}
+<a href=#355 id=355 data-nosnippet>355</a>
+<a href=#356 id=356 data-nosnippet>356</a><span class="doccomment">/// A CASA phase-centre literal `J2000 &lt;lon&gt; &lt;lat&gt;`, with sexagesimal,
+<a href=#357 id=357 data-nosnippet>357</a>/// degree or radian angles.
+<a href=#358 id=358 data-nosnippet>358</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>parse_phase_center_direction(text: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;SkyDirection, PrepareError&gt; {
+<a href=#359 id=359 data-nosnippet>359</a>    <span class="kw">let </span>parts = text.split_whitespace().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#360 id=360 data-nosnippet>360</a>    <span class="kw">if </span>parts.len() != <span class="number">3 </span>|| !parts[<span class="number">0</span>].eq_ignore_ascii_case(<span class="string">"J2000"</span>) {
+<a href=#361 id=361 data-nosnippet>361</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::PhaseCentreSyntax {
+<a href=#362 id=362 data-nosnippet>362</a>            text: text.to_string(),
+<a href=#363 id=363 data-nosnippet>363</a>        });
+<a href=#364 id=364 data-nosnippet>364</a>    }
+<a href=#365 id=365 data-nosnippet>365</a>    <span class="prelude-val">Ok</span>(SkyDirection::new(
+<a href=#366 id=366 data-nosnippet>366</a>        DirectionFrame::J2000,
+<a href=#367 id=367 data-nosnippet>367</a>        parse_phase_center_angle(parts[<span class="number">1</span>], <span class="bool-val">true</span>)<span class="question-mark">?</span>,
+<a href=#368 id=368 data-nosnippet>368</a>        parse_phase_center_angle(parts[<span class="number">2</span>], <span class="bool-val">false</span>)<span class="question-mark">?</span>,
+<a href=#369 id=369 data-nosnippet>369</a>    ))
+<a href=#370 id=370 data-nosnippet>370</a>}
+<a href=#371 id=371 data-nosnippet>371</a>
+<a href=#372 id=372 data-nosnippet>372</a><span class="kw">fn </span>parse_phase_center_angle(text: <span class="kw-2">&amp;</span>str, longitude: bool) -&gt; <span class="prelude-ty">Result</span>&lt;f64, PrepareError&gt; {
+<a href=#373 id=373 data-nosnippet>373</a>    <span class="kw">let </span>lower = text.to_ascii_lowercase();
+<a href=#374 id=374 data-nosnippet>374</a>    <span class="kw">let </span>angle = <span class="kw">if let </span><span class="prelude-val">Some</span>(radians) = lower.strip_suffix(<span class="string">"rad"</span>) {
+<a href=#375 id=375 data-nosnippet>375</a>        radians.trim().parse::&lt;f64&gt;().ok()
+<a href=#376 id=376 data-nosnippet>376</a>    } <span class="kw">else if let </span><span class="prelude-val">Some</span>(degrees) = lower.strip_suffix(<span class="string">"deg"</span>) {
+<a href=#377 id=377 data-nosnippet>377</a>        degrees.trim().parse::&lt;f64&gt;().ok().map(f64::to_radians)
+<a href=#378 id=378 data-nosnippet>378</a>    } <span class="kw">else if </span>longitude {
+<a href=#379 id=379 data-nosnippet>379</a>        parse_sexagesimal(text, <span class="bool-val">true</span>).map(|hours| hours * std::f64::consts::PI / <span class="number">12.0</span>)
+<a href=#380 id=380 data-nosnippet>380</a>    } <span class="kw">else </span>{
+<a href=#381 id=381 data-nosnippet>381</a>        parse_sexagesimal(text, <span class="bool-val">false</span>).map(f64::to_radians)
+<a href=#382 id=382 data-nosnippet>382</a>    };
+<a href=#383 id=383 data-nosnippet>383</a>    angle.ok_or_else(|| PrepareError::PhaseCentreAngle {
+<a href=#384 id=384 data-nosnippet>384</a>        angle: text.to_string(),
+<a href=#385 id=385 data-nosnippet>385</a>    })
+<a href=#386 id=386 data-nosnippet>386</a>}
+<a href=#387 id=387 data-nosnippet>387</a>
+<a href=#388 id=388 data-nosnippet>388</a><span class="kw">fn </span>parse_sexagesimal(text: <span class="kw-2">&amp;</span>str, hours: bool) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
+<a href=#389 id=389 data-nosnippet>389</a>    <span class="kw">let </span>trimmed = text.trim();
+<a href=#390 id=390 data-nosnippet>390</a>    <span class="kw">let </span>sign = <span class="kw">if </span>trimmed.starts_with(<span class="string">'-'</span>) { -<span class="number">1.0 </span>} <span class="kw">else </span>{ <span class="number">1.0 </span>};
+<a href=#391 id=391 data-nosnippet>391</a>    <span class="kw">let </span>body = trimmed.trim_start_matches([<span class="string">'+'</span>, <span class="string">'-'</span>]);
+<a href=#392 id=392 data-nosnippet>392</a>    <span class="kw">let </span>fields = <span class="kw">if </span>body.contains(<span class="string">':'</span>) {
+<a href=#393 id=393 data-nosnippet>393</a>        body.split(<span class="string">':'</span>).map(str::to_owned).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#394 id=394 data-nosnippet>394</a>    } <span class="kw">else if </span>body.contains(<span class="string">'h'</span>) || body.contains(<span class="string">'d'</span>) || body.contains(<span class="string">'m'</span>) || body.contains(<span class="string">'s'</span>) {
+<a href=#395 id=395 data-nosnippet>395</a>        body.replace([<span class="string">'h'</span>, <span class="string">'d'</span>, <span class="string">'m'</span>, <span class="string">'s'</span>], <span class="string">" "</span>)
+<a href=#396 id=396 data-nosnippet>396</a>            .split_whitespace()
+<a href=#397 id=397 data-nosnippet>397</a>            .map(str::to_owned)
+<a href=#398 id=398 data-nosnippet>398</a>            .collect()
+<a href=#399 id=399 data-nosnippet>399</a>    } <span class="kw">else if </span>!hours &amp;&amp; body.matches(<span class="string">'.'</span>).count() &gt;= <span class="number">2 </span>{
+<a href=#400 id=400 data-nosnippet>400</a>        <span class="kw">let </span><span class="kw-2">mut </span>split = body.split(<span class="string">'.'</span>);
+<a href=#401 id=401 data-nosnippet>401</a>        <span class="kw">let </span>major = split.next()<span class="question-mark">?</span>.to_owned();
+<a href=#402 id=402 data-nosnippet>402</a>        <span class="kw">let </span>minutes = split.next()<span class="question-mark">?</span>.to_owned();
+<a href=#403 id=403 data-nosnippet>403</a>        <span class="kw">let </span>seconds = split.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().join(<span class="string">"."</span>);
+<a href=#404 id=404 data-nosnippet>404</a>        <span class="macro">vec!</span>[major, minutes, seconds]
+<a href=#405 id=405 data-nosnippet>405</a>    } <span class="kw">else </span>{
+<a href=#406 id=406 data-nosnippet>406</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#407 id=407 data-nosnippet>407</a>    };
+<a href=#408 id=408 data-nosnippet>408</a>    <span class="kw">let </span>[major, minutes, seconds] = fields.as_slice() <span class="kw">else </span>{
+<a href=#409 id=409 data-nosnippet>409</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#410 id=410 data-nosnippet>410</a>    };
+<a href=#411 id=411 data-nosnippet>411</a>    <span class="kw">let </span>major = major.parse::&lt;f64&gt;().ok()<span class="question-mark">?</span>;
+<a href=#412 id=412 data-nosnippet>412</a>    <span class="kw">let </span>minutes = minutes.parse::&lt;f64&gt;().ok()<span class="question-mark">?</span>;
+<a href=#413 id=413 data-nosnippet>413</a>    <span class="kw">let </span>seconds = seconds.parse::&lt;f64&gt;().ok()<span class="question-mark">?</span>;
+<a href=#414 id=414 data-nosnippet>414</a>    <span class="kw">if </span>!(major.is_finite()
+<a href=#415 id=415 data-nosnippet>415</a>        &amp;&amp; minutes.is_finite()
+<a href=#416 id=416 data-nosnippet>416</a>        &amp;&amp; seconds.is_finite()
+<a href=#417 id=417 data-nosnippet>417</a>        &amp;&amp; (<span class="number">0.0</span>..<span class="number">60.0</span>).contains(<span class="kw-2">&amp;</span>minutes)
+<a href=#418 id=418 data-nosnippet>418</a>        &amp;&amp; (<span class="number">0.0</span>..<span class="number">60.0</span>).contains(<span class="kw-2">&amp;</span>seconds))
+<a href=#419 id=419 data-nosnippet>419</a>    {
 <a href=#420 id=420 data-nosnippet>420</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#421 id=421 data-nosnippet>421</a>    };
-<a href=#422 id=422 data-nosnippet>422</a>    <span class="kw">let </span>[major, minutes, seconds] = fields.as_slice() <span class="kw">else </span>{
-<a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#424 id=424 data-nosnippet>424</a>    };
-<a href=#425 id=425 data-nosnippet>425</a>    <span class="kw">let </span>major = major.parse::&lt;f64&gt;().ok()<span class="question-mark">?</span>;
-<a href=#426 id=426 data-nosnippet>426</a>    <span class="kw">let </span>minutes = minutes.parse::&lt;f64&gt;().ok()<span class="question-mark">?</span>;
-<a href=#427 id=427 data-nosnippet>427</a>    <span class="kw">let </span>seconds = seconds.parse::&lt;f64&gt;().ok()<span class="question-mark">?</span>;
-<a href=#428 id=428 data-nosnippet>428</a>    <span class="kw">if </span>!(major.is_finite()
-<a href=#429 id=429 data-nosnippet>429</a>        &amp;&amp; minutes.is_finite()
-<a href=#430 id=430 data-nosnippet>430</a>        &amp;&amp; seconds.is_finite()
-<a href=#431 id=431 data-nosnippet>431</a>        &amp;&amp; (<span class="number">0.0</span>..<span class="number">60.0</span>).contains(<span class="kw-2">&amp;</span>minutes)
-<a href=#432 id=432 data-nosnippet>432</a>        &amp;&amp; (<span class="number">0.0</span>..<span class="number">60.0</span>).contains(<span class="kw-2">&amp;</span>seconds))
-<a href=#433 id=433 data-nosnippet>433</a>    {
-<a href=#434 id=434 data-nosnippet>434</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#421 id=421 data-nosnippet>421</a>    }
+<a href=#422 id=422 data-nosnippet>422</a>    <span class="prelude-val">Some</span>(sign * (major.abs() + minutes / <span class="number">60.0 </span>+ seconds / <span class="number">3600.0</span>))
+<a href=#423 id=423 data-nosnippet>423</a>}
+<a href=#424 id=424 data-nosnippet>424</a>
+<a href=#425 id=425 data-nosnippet>425</a><span class="attr">#[cfg(test)]
+<a href=#426 id=426 data-nosnippet>426</a></span><span class="kw">mod </span>tests {
+<a href=#427 id=427 data-nosnippet>427</a>    <span class="kw">use </span>casa_coordinates::{CoordinateModel, CoordinateType};
+<a href=#428 id=428 data-nosnippet>428</a>
+<a href=#429 id=429 data-nosnippet>429</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#430 id=430 data-nosnippet>430</a>
+<a href=#431 id=431 data-nosnippet>431</a>    <span class="attr">#[test]
+<a href=#432 id=432 data-nosnippet>432</a>    </span><span class="kw">fn </span>casa_direction_reference_pixel_uses_half_the_image_extent() {
+<a href=#433 id=433 data-nosnippet>433</a>        <span class="macro">assert_eq!</span>(image_reference_pixel(<span class="number">16</span>), <span class="number">8.0</span>);
+<a href=#434 id=434 data-nosnippet>434</a>        <span class="macro">assert_eq!</span>(image_reference_pixel(<span class="number">15</span>), <span class="number">7.5</span>);
 <a href=#435 id=435 data-nosnippet>435</a>    }
-<a href=#436 id=436 data-nosnippet>436</a>    <span class="prelude-val">Some</span>(sign * (major.abs() + minutes / <span class="number">60.0 </span>+ seconds / <span class="number">3600.0</span>))
-<a href=#437 id=437 data-nosnippet>437</a>}
-<a href=#438 id=438 data-nosnippet>438</a>
-<a href=#439 id=439 data-nosnippet>439</a><span class="attr">#[cfg(test)]
-<a href=#440 id=440 data-nosnippet>440</a></span><span class="kw">mod </span>tests {
-<a href=#441 id=441 data-nosnippet>441</a>    <span class="kw">use </span>casa_coordinates::{CoordinateModel, CoordinateType};
-<a href=#442 id=442 data-nosnippet>442</a>
-<a href=#443 id=443 data-nosnippet>443</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#444 id=444 data-nosnippet>444</a>
-<a href=#445 id=445 data-nosnippet>445</a>    <span class="attr">#[test]
-<a href=#446 id=446 data-nosnippet>446</a>    </span><span class="kw">fn </span>casa_direction_reference_pixel_uses_half_the_image_extent() {
-<a href=#447 id=447 data-nosnippet>447</a>        <span class="macro">assert_eq!</span>(image_reference_pixel(<span class="number">16</span>), <span class="number">8.0</span>);
-<a href=#448 id=448 data-nosnippet>448</a>        <span class="macro">assert_eq!</span>(image_reference_pixel(<span class="number">15</span>), <span class="number">7.5</span>);
-<a href=#449 id=449 data-nosnippet>449</a>    }
-<a href=#450 id=450 data-nosnippet>450</a>
-<a href=#451 id=451 data-nosnippet>451</a>    <span class="attr">#[test]
-<a href=#452 id=452 data-nosnippet>452</a>    </span><span class="kw">fn </span>casa_phase_center_literal_preserves_recentered_chart_coordinates() {
-<a href=#453 id=453 data-nosnippet>453</a>        <span class="kw">let </span>direction = parse_phase_center_direction(<span class="string">"J2000 19:58:40.895 +40.55.58.543"</span>)
-<a href=#454 id=454 data-nosnippet>454</a>            .expect(<span class="string">"CASA outlier phase center"</span>);
-<a href=#455 id=455 data-nosnippet>455</a>        <span class="kw">let </span>expected_ra = (<span class="number">19.0 </span>+ <span class="number">58.0 </span>/ <span class="number">60.0 </span>+ <span class="number">40.895 </span>/ <span class="number">3600.0</span>) * std::f64::consts::PI / <span class="number">12.0</span>;
-<a href=#456 id=456 data-nosnippet>456</a>        <span class="kw">let </span>expected_dec = (<span class="number">40.0 </span>+ <span class="number">55.0 </span>/ <span class="number">60.0 </span>+ <span class="number">58.543 </span>/ <span class="number">3600.0</span>) * std::f64::consts::PI / <span class="number">180.0</span>;
-<a href=#457 id=457 data-nosnippet>457</a>        <span class="macro">assert!</span>((direction.longitude_rad() - expected_ra).abs() &lt; <span class="number">1.0e-14</span>);
-<a href=#458 id=458 data-nosnippet>458</a>        <span class="macro">assert!</span>((direction.latitude_rad() - expected_dec).abs() &lt; <span class="number">1.0e-14</span>);
-<a href=#459 id=459 data-nosnippet>459</a>    }
-<a href=#460 id=460 data-nosnippet>460</a>
-<a href=#461 id=461 data-nosnippet>461</a>    <span class="attr">#[test]
-<a href=#462 id=462 data-nosnippet>462</a>    </span><span class="kw">fn </span>the_stokes_axis_lists_the_imaged_coordinate() {
-<a href=#463 id=463 data-nosnippet>463</a>        <span class="kw">let </span>coordinates = image_coordinates(
-<a href=#464 id=464 data-nosnippet>464</a>            direction_spec(<span class="number">64</span>, <span class="number">8.0</span>, DirectionFrame::J2000, <span class="number">0.0</span>, <span class="number">0.0</span>),
-<a href=#465 id=465 data-nosnippet>465</a>            <span class="number">64</span>,
-<a href=#466 id=466 data-nosnippet>466</a>            <span class="kw-2">&amp;</span>[PolarizationCoordinate::StokesQ],
-<a href=#467 id=467 data-nosnippet>467</a>            ImageSpectralCoordinate {
-<a href=#468 id=468 data-nosnippet>468</a>                frequency_reference: FrequencyRef::LSRK,
-<a href=#469 id=469 data-nosnippet>469</a>                reference_frequency_hz: <span class="number">1.0e9</span>,
-<a href=#470 id=470 data-nosnippet>470</a>                increment_hz: <span class="number">1.0</span>,
-<a href=#471 id=471 data-nosnippet>471</a>                rest_frequency_hz: <span class="number">1.0e9</span>,
-<a href=#472 id=472 data-nosnippet>472</a>            },
-<a href=#473 id=473 data-nosnippet>473</a>            <span class="kw-2">&amp;</span>ObsInfo::default(),
-<a href=#474 id=474 data-nosnippet>474</a>        );
-<a href=#475 id=475 data-nosnippet>475</a>        <span class="kw">let </span>index = coordinates
-<a href=#476 id=476 data-nosnippet>476</a>            .find_coordinate(CoordinateType::Stokes)
-<a href=#477 id=477 data-nosnippet>477</a>            .expect(<span class="string">"polarization coordinate"</span>);
-<a href=#478 id=478 data-nosnippet>478</a>        <span class="kw">let </span>CoordinateModel::Stokes(stokes) = coordinates.coordinate(index) <span class="kw">else </span>{
-<a href=#479 id=479 data-nosnippet>479</a>            <span class="macro">panic!</span>(<span class="string">"polarization coordinate has the wrong type"</span>);
-<a href=#480 id=480 data-nosnippet>480</a>        };
-<a href=#481 id=481 data-nosnippet>481</a>        <span class="macro">assert_eq!</span>(stokes.stokes(), [StokesType::Q]);
-<a href=#482 id=482 data-nosnippet>482</a>    }
-<a href=#483 id=483 data-nosnippet>483</a>}
+<a href=#436 id=436 data-nosnippet>436</a>
+<a href=#437 id=437 data-nosnippet>437</a>    <span class="attr">#[test]
+<a href=#438 id=438 data-nosnippet>438</a>    </span><span class="kw">fn </span>casa_phase_center_literal_preserves_recentered_chart_coordinates() {
+<a href=#439 id=439 data-nosnippet>439</a>        <span class="kw">let </span>direction = parse_phase_center_direction(<span class="string">"J2000 19:58:40.895 +40.55.58.543"</span>)
+<a href=#440 id=440 data-nosnippet>440</a>            .expect(<span class="string">"CASA outlier phase center"</span>);
+<a href=#441 id=441 data-nosnippet>441</a>        <span class="kw">let </span>expected_ra = (<span class="number">19.0 </span>+ <span class="number">58.0 </span>/ <span class="number">60.0 </span>+ <span class="number">40.895 </span>/ <span class="number">3600.0</span>) * std::f64::consts::PI / <span class="number">12.0</span>;
+<a href=#442 id=442 data-nosnippet>442</a>        <span class="kw">let </span>expected_dec = (<span class="number">40.0 </span>+ <span class="number">55.0 </span>/ <span class="number">60.0 </span>+ <span class="number">58.543 </span>/ <span class="number">3600.0</span>) * std::f64::consts::PI / <span class="number">180.0</span>;
+<a href=#443 id=443 data-nosnippet>443</a>        <span class="macro">assert!</span>((direction.longitude_rad() - expected_ra).abs() &lt; <span class="number">1.0e-14</span>);
+<a href=#444 id=444 data-nosnippet>444</a>        <span class="macro">assert!</span>((direction.latitude_rad() - expected_dec).abs() &lt; <span class="number">1.0e-14</span>);
+<a href=#445 id=445 data-nosnippet>445</a>    }
+<a href=#446 id=446 data-nosnippet>446</a>
+<a href=#447 id=447 data-nosnippet>447</a>    <span class="attr">#[test]
+<a href=#448 id=448 data-nosnippet>448</a>    </span><span class="kw">fn </span>a_phase_centre_other_than_j2000_lon_lat_is_refused() {
+<a href=#449 id=449 data-nosnippet>449</a>        <span class="kw">for </span>text <span class="kw">in </span>[<span class="string">"B1950 0rad 0rad"</span>, <span class="string">"J2000 0rad"</span>] {
+<a href=#450 id=450 data-nosnippet>450</a>            <span class="macro">assert!</span>(
+<a href=#451 id=451 data-nosnippet>451</a>                <span class="macro">matches!</span>(
+<a href=#452 id=452 data-nosnippet>452</a>                    parse_phase_center_direction(text),
+<a href=#453 id=453 data-nosnippet>453</a>                    <span class="prelude-val">Err</span>(PrepareError::PhaseCentreSyntax { .. })
+<a href=#454 id=454 data-nosnippet>454</a>                ),
+<a href=#455 id=455 data-nosnippet>455</a>                <span class="string">"{text}"
+<a href=#456 id=456 data-nosnippet>456</a>            </span>);
+<a href=#457 id=457 data-nosnippet>457</a>        }
+<a href=#458 id=458 data-nosnippet>458</a>    }
+<a href=#459 id=459 data-nosnippet>459</a>
+<a href=#460 id=460 data-nosnippet>460</a>    <span class="attr">#[test]
+<a href=#461 id=461 data-nosnippet>461</a>    </span><span class="kw">fn </span>the_stokes_axis_lists_the_imaged_coordinate() {
+<a href=#462 id=462 data-nosnippet>462</a>        <span class="kw">let </span>coordinates = image_coordinates(
+<a href=#463 id=463 data-nosnippet>463</a>            direction_spec(<span class="number">64</span>, <span class="number">8.0</span>, DirectionFrame::J2000, <span class="number">0.0</span>, <span class="number">0.0</span>),
+<a href=#464 id=464 data-nosnippet>464</a>            <span class="number">64</span>,
+<a href=#465 id=465 data-nosnippet>465</a>            <span class="kw-2">&amp;</span>[PolarizationCoordinate::StokesQ],
+<a href=#466 id=466 data-nosnippet>466</a>            ImageSpectralCoordinate {
+<a href=#467 id=467 data-nosnippet>467</a>                frequency_reference: FrequencyRef::LSRK,
+<a href=#468 id=468 data-nosnippet>468</a>                reference_frequency_hz: <span class="number">1.0e9</span>,
+<a href=#469 id=469 data-nosnippet>469</a>                increment_hz: <span class="number">1.0</span>,
+<a href=#470 id=470 data-nosnippet>470</a>                rest_frequency_hz: <span class="number">1.0e9</span>,
+<a href=#471 id=471 data-nosnippet>471</a>            },
+<a href=#472 id=472 data-nosnippet>472</a>            <span class="kw-2">&amp;</span>ObsInfo::default(),
+<a href=#473 id=473 data-nosnippet>473</a>        );
+<a href=#474 id=474 data-nosnippet>474</a>        <span class="kw">let </span>index = coordinates
+<a href=#475 id=475 data-nosnippet>475</a>            .find_coordinate(CoordinateType::Stokes)
+<a href=#476 id=476 data-nosnippet>476</a>            .expect(<span class="string">"polarization coordinate"</span>);
+<a href=#477 id=477 data-nosnippet>477</a>        <span class="kw">let </span>CoordinateModel::Stokes(stokes) = coordinates.coordinate(index) <span class="kw">else </span>{
+<a href=#478 id=478 data-nosnippet>478</a>            <span class="macro">panic!</span>(<span class="string">"polarization coordinate has the wrong type"</span>);
+<a href=#479 id=479 data-nosnippet>479</a>        };
+<a href=#480 id=480 data-nosnippet>480</a>        <span class="macro">assert_eq!</span>(stokes.stokes(), [StokesType::Q]);
+<a href=#481 id=481 data-nosnippet>481</a>    }
+<a href=#482 id=482 data-nosnippet>482</a>}
 </code></pre></div></section></main></body></html>

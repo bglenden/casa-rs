@@ -11,543 +11,528 @@
 <a href=#11 id=11 data-nosnippet>11</a>
 <a href=#12 id=12 data-nosnippet>12</a></span><span class="kw">mod </span>direction;
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">mod </span>domains;
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">mod </span>instrument;
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">mod </span>native_aw;
-<a href=#16 id=16 data-nosnippet>16</a><span class="kw">mod </span>outliers;
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">mod </span>selection;
-<a href=#18 id=18 data-nosnippet>18</a><span class="kw">mod </span>specification;
-<a href=#19 id=19 data-nosnippet>19</a><span class="kw">mod </span>spectral;
-<a href=#20 id=20 data-nosnippet>20</a>
-<a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span>std::collections::BTreeMap;
-<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span>std::path::{Path, PathBuf};
-<a href=#23 id=23 data-nosnippet>23</a>
-<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span>casa_imaging_model::{
-<a href=#25 id=25 data-nosnippet>25</a>    CentreLaws, DelayCentreLaw, GeometryInput, ModelBounds, ModelInputCommitment,
-<a href=#26 id=26 data-nosnippet>26</a>    ModelLifecycleRequirements, ModelStateIdentity, NativeAwRequestInput, NumericPrecision,
-<a href=#27 id=27 data-nosnippet>27</a>    ProblemSpecification, ReferenceDataKind, SequentialContinuumTransform,
-<a href=#28 id=28 data-nosnippet>28</a>    UncorrectedImageMaskPolicy, UvwCoordinateLaw, WeightColumn <span class="kw">as </span>OwnerWeightColumn,
-<a href=#29 id=29 data-nosnippet>29</a>};
-<a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span>casa_imaging_operator::{AwCatalog, AwIndexing};
-<a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span>casa_imaging_products::{AnalyticPrimaryBeamModel, ContinuumProductControls};
-<a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>casa_imaging_reconstruction::{ImageDomainReconstructionMaskPlans, MinorCycleImageResponse};
-<a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span>casa_ms::derived::engine::MsCalEngine;
-<a href=#34 id=34 data-nosnippet>34</a><span class="kw">use </span>casa_ms::{
-<a href=#35 id=35 data-nosnippet>35</a>    MeasurementSet, SelectedObservationContentBudget, SelectedObservationResolutionRequest,
-<a href=#36 id=36 data-nosnippet>36</a>    SelectedObservationSpectralWindow,
-<a href=#37 id=37 data-nosnippet>37</a>};
-<a href=#38 id=38 data-nosnippet>38</a><span class="kw">use </span>casa_types::measures::frame::MeasFrame;
-<a href=#39 id=39 data-nosnippet>39</a>
-<a href=#40 id=40 data-nosnippet>40</a><span class="kw">use crate</span>::{
-<a href=#41 id=41 data-nosnippet>41</a>    ApplicationError, ApplicationNative, ApplicationPublication, ApplicationRuntime,
-<a href=#42 id=42 data-nosnippet>42</a>    AwCatalogDeployment, AwCfSource, AwProjection, CasaImageProductSink, Deconvolver, Gridder,
-<a href=#43 id=43 data-nosnippet>43</a>    ImagingRequest, NativeAwCachePolicy, RunContext, SpecMode,
-<a href=#44 id=44 data-nosnippet>44</a>};
-<a href=#45 id=45 data-nosnippet>45</a><span class="kw">use </span>direction::{Centre, ImageSpectralCoordinate};
-<a href=#46 id=46 data-nosnippet>46</a><span class="kw">use </span>domains::PreparedImageDomain;
-<a href=#47 id=47 data-nosnippet>47</a><span class="kw">use </span>selection::{Survey, WindowChannels};
-<a href=#48 id=48 data-nosnippet>48</a><span class="kw">use </span>specification::SpecificationInputs;
-<a href=#49 id=49 data-nosnippet>49</a><span class="kw">use </span>spectral::{FrameContext, PreparedSpectralAxis};
-<a href=#50 id=50 data-nosnippet>50</a>
-<a href=#51 id=51 data-nosnippet>51</a><span class="doccomment">/// A request compiled against its MeasurementSet, before the problem
-<a href=#52 id=52 data-nosnippet>52</a>/// compiler binds the observation.
-<a href=#53 id=53 data-nosnippet>53</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Prepared {
-<a href=#54 id=54 data-nosnippet>54</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) specification: ProblemSpecification,
-<a href=#55 id=55 data-nosnippet>55</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) geometry: GeometryInput,
-<a href=#56 id=56 data-nosnippet>56</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) model_lifecycle: ModelLifecycleRequirements,
-<a href=#57 id=57 data-nosnippet>57</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) masks: ImageDomainReconstructionMaskPlans,
-<a href=#58 id=58 data-nosnippet>58</a>    <span class="doccomment">/// A direction-dependent gridder's residual units, which bind every
-<a href=#59 id=59 data-nosnippet>59</a>    /// solver.
-<a href=#60 id=60 data-nosnippet>60</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) minor_cycle_image_response: <span class="prelude-ty">Option</span>&lt;MinorCycleImageResponse&gt;,
-<a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) observation: SelectedObservationResolutionRequest,
-<a href=#62 id=62 data-nosnippet>62</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) write_model_column: bool,
-<a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) write_corrected_data: bool,
-<a href=#64 id=64 data-nosnippet>64</a>    <span class="doccomment">/// What the native run deploys once the availability check passes.
-<a href=#65 id=65 data-nosnippet>65</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) deployment: Deployment,
-<a href=#66 id=66 data-nosnippet>66</a>}
-<a href=#67 id=67 data-nosnippet>67</a>
-<a href=#68 id=68 data-nosnippet>68</a><span class="doccomment">/// The MeasurementSet as [`prepare`] surveyed it: the table, its geometry
-<a href=#69 id=69 data-nosnippet>69</a>/// engine, the source budget, the selection survey and the spectral axis.
-<a href=#70 id=70 data-nosnippet>70</a></span><span class="kw">struct </span>Surveyed&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#71 id=71 data-nosnippet>71</a>    ms: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>MeasurementSet,
-<a href=#72 id=72 data-nosnippet>72</a>    engine: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>MsCalEngine,
-<a href=#73 id=73 data-nosnippet>73</a>    budget: SelectedObservationContentBudget,
-<a href=#74 id=74 data-nosnippet>74</a>    survey: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Survey,
-<a href=#75 id=75 data-nosnippet>75</a>    spectral: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>PreparedSpectralAxis,
-<a href=#76 id=76 data-nosnippet>76</a>}
-<a href=#77 id=77 data-nosnippet>77</a>
-<a href=#78 id=78 data-nosnippet>78</a><span class="doccomment">/// Compile `request` against its MeasurementSet.
-<a href=#79 id=79 data-nosnippet>79</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>prepare(
-<a href=#80 id=80 data-nosnippet>80</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#81 id=81 data-nosnippet>81</a>    context: <span class="kw-2">&amp;</span>RunContext,
-<a href=#82 id=82 data-nosnippet>82</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Prepared, ApplicationError&gt; {
-<a href=#83 id=83 data-nosnippet>83</a>    <span class="kw">let </span>ms = MeasurementSet::open(<span class="kw-2">&amp;</span>request.vis)<span class="question-mark">?</span>;
-<a href=#84 id=84 data-nosnippet>84</a>    <span class="kw">let </span>budget = casa_imaging_runtime::bootstrap_source_budget();
-<a href=#85 id=85 data-nosnippet>85</a>    <span class="kw">let </span>engine = MsCalEngine::new(<span class="kw-2">&amp;</span>ms)<span class="question-mark">?</span>;
-<a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">let </span>survey = selection::survey(request, <span class="kw-2">&amp;</span>ms, budget, <span class="kw-2">&amp;</span>engine)<span class="question-mark">?</span>;
-<a href=#87 id=87 data-nosnippet>87</a>    <span class="kw">let </span>centre = direction::resolve_centre(request, <span class="kw-2">&amp;</span>ms, <span class="kw-2">&amp;</span>survey, <span class="kw-2">&amp;</span>engine, budget)<span class="question-mark">?</span>;
-<a href=#88 id=88 data-nosnippet>88</a>    <span class="kw">let </span>frame = FrameContext {
-<a href=#89 id=89 data-nosnippet>89</a>        anchor_time_mjd_seconds: survey.first_time_mjd_seconds,
-<a href=#90 id=90 data-nosnippet>90</a>        time_bounds_mjd_seconds: survey.time_bounds_mjd_seconds,
-<a href=#91 id=91 data-nosnippet>91</a>        field_id: centre.field_id,
-<a href=#92 id=92 data-nosnippet>92</a>        phase: centre.phase.clone(),
-<a href=#93 id=93 data-nosnippet>93</a>        direction: centre.direction,
-<a href=#94 id=94 data-nosnippet>94</a>        engine: <span class="kw-2">&amp;</span>engine,
-<a href=#95 id=95 data-nosnippet>95</a>    };
-<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">let </span>moving_rest_frame = moving_rest_frame(request, <span class="kw-2">&amp;</span>centre, <span class="kw-2">&amp;</span>frame)<span class="question-mark">?</span>;
-<a href=#97 id=97 data-nosnippet>97</a>    <span class="kw">let </span>spectral =
-<a href=#98 id=98 data-nosnippet>98</a>        spectral::prepare_axis(request, <span class="kw-2">&amp;</span>ms, <span class="kw-2">&amp;</span>survey, <span class="kw-2">&amp;</span>frame, moving_rest_frame.as_ref())<span class="question-mark">?</span>;
-<a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">let </span>surveyed = Surveyed {
-<a href=#100 id=100 data-nosnippet>100</a>        ms: <span class="kw-2">&amp;</span>ms,
-<a href=#101 id=101 data-nosnippet>101</a>        engine: <span class="kw-2">&amp;</span>engine,
-<a href=#102 id=102 data-nosnippet>102</a>        budget,
-<a href=#103 id=103 data-nosnippet>103</a>        survey: <span class="kw-2">&amp;</span>survey,
-<a href=#104 id=104 data-nosnippet>104</a>        spectral: <span class="kw-2">&amp;</span>spectral,
-<a href=#105 id=105 data-nosnippet>105</a>    };
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">let </span>(continuum_transform, channels) = continuum_selection(request, <span class="kw-2">&amp;</span>surveyed, <span class="kw-2">&amp;</span>centre)<span class="question-mark">?</span>;
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">let </span>observation_info = direction::observation_info(<span class="kw-2">&amp;</span>ms, <span class="kw-2">&amp;</span>survey, <span class="kw-2">&amp;</span>centre, <span class="kw-2">&amp;</span>engine)<span class="question-mark">?</span>;
-<a href=#108 id=108 data-nosnippet>108</a>    <span class="kw">let </span>domains = domains::prepare_domains(
-<a href=#109 id=109 data-nosnippet>109</a>        request,
-<a href=#110 id=110 data-nosnippet>110</a>        <span class="kw-2">&amp;</span>centre,
-<a href=#111 id=111 data-nosnippet>111</a>        ImageSpectralCoordinate {
-<a href=#112 id=112 data-nosnippet>112</a>            frequency_reference: spectral.output_frequency_reference,
-<a href=#113 id=113 data-nosnippet>113</a>            reference_frequency_hz: spectral.reference_frequency_hz,
-<a href=#114 id=114 data-nosnippet>114</a>            increment_hz: spectral.increment_hz,
-<a href=#115 id=115 data-nosnippet>115</a>            rest_frequency_hz: spectral.image_rest_frequency_hz,
-<a href=#116 id=116 data-nosnippet>116</a>        },
-<a href=#117 id=117 data-nosnippet>117</a>        <span class="kw-2">&amp;</span>observation_info,
-<a href=#118 id=118 data-nosnippet>118</a>    )<span class="question-mark">?</span>;
-<a href=#119 id=119 data-nosnippet>119</a>    <span class="kw">let </span>primary_beam = primary_beam_model(request, <span class="kw-2">&amp;</span>ms)<span class="question-mark">?</span>;
-<a href=#120 id=120 data-nosnippet>120</a>    <span class="kw">let </span>deployment = deployment(request, context, <span class="kw-2">&amp;</span>surveyed, <span class="kw-2">&amp;</span>domains, primary_beam)<span class="question-mark">?</span>;
-<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">let </span>instrument = instrument::scientific_instrument_model(<span class="kw-2">&amp;</span>request.gridder, <span class="kw-2">&amp;</span>ms)<span class="question-mark">?</span>;
-<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">let </span>specification = specification::specification(
-<a href=#123 id=123 data-nosnippet>123</a>        request,
-<a href=#124 id=124 data-nosnippet>124</a>        <span class="kw-2">&amp;</span>spectral,
-<a href=#125 id=125 data-nosnippet>125</a>        specification_inputs(
-<a href=#126 id=126 data-nosnippet>126</a>            request,
-<a href=#127 id=127 data-nosnippet>127</a>            <span class="kw-2">&amp;</span>surveyed,
-<a href=#128 id=128 data-nosnippet>128</a>            instrument.map(|(model, <span class="kw">_</span>)| model),
-<a href=#129 id=129 data-nosnippet>129</a>            primary_beam.is_some(),
-<a href=#130 id=130 data-nosnippet>130</a>            continuum_transform,
-<a href=#131 id=131 data-nosnippet>131</a>        )<span class="question-mark">?</span>,
-<a href=#132 id=132 data-nosnippet>132</a>    )<span class="question-mark">?</span>;
-<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">let </span>reconstruction_planes = <span class="kw">match </span>request.deconvolver {
-<a href=#134 id=134 data-nosnippet>134</a>        Deconvolver::Mtmfs =&gt; request.nterms,
-<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">_ </span>=&gt; spectral.output_channels,
-<a href=#136 id=136 data-nosnippet>136</a>    };
-<a href=#137 id=137 data-nosnippet>137</a>    <span class="kw">let </span>model_samples = domains::model_samples(<span class="kw-2">&amp;</span>domains, reconstruction_planes, <span class="kw-2">&amp;</span>request.stokes)<span class="question-mark">?</span>;
-<a href=#138 id=138 data-nosnippet>138</a>    <span class="kw">let </span>geometry = geometry(request, <span class="kw-2">&amp;</span>domains, <span class="kw-2">&amp;</span>centre, <span class="kw-2">&amp;</span>spectral);
-<a href=#139 id=139 data-nosnippet>139</a>    <span class="kw">let </span>instrument_reference = instrument.map(|(<span class="kw">_</span>, reference)| reference);
-<a href=#140 id=140 data-nosnippet>140</a>    <span class="kw">let </span>observation = observation_request(
-<a href=#141 id=141 data-nosnippet>141</a>        request,
-<a href=#142 id=142 data-nosnippet>142</a>        <span class="kw-2">&amp;</span>ms,
-<a href=#143 id=143 data-nosnippet>143</a>        survey,
-<a href=#144 id=144 data-nosnippet>144</a>        <span class="kw-2">&amp;</span>channels,
-<a href=#145 id=145 data-nosnippet>145</a>        instrument_reference,
-<a href=#146 id=146 data-nosnippet>146</a>        centre,
-<a href=#147 id=147 data-nosnippet>147</a>        budget,
-<a href=#148 id=148 data-nosnippet>148</a>    )<span class="question-mark">?</span>;
-<a href=#149 id=149 data-nosnippet>149</a>    <span class="prelude-val">Ok</span>(Prepared {
-<a href=#150 id=150 data-nosnippet>150</a>        specification,
-<a href=#151 id=151 data-nosnippet>151</a>        geometry,
-<a href=#152 id=152 data-nosnippet>152</a>        model_lifecycle: ModelLifecycleRequirements::new(
-<a href=#153 id=153 data-nosnippet>153</a>            ModelBounds::new(
-<a href=#154 id=154 data-nosnippet>154</a>                model_samples,
-<a href=#155 id=155 data-nosnippet>155</a>                spectral.output_channels,
-<a href=#156 id=156 data-nosnippet>156</a>                spectral.output_channels,
-<a href=#157 id=157 data-nosnippet>157</a>                model_samples,
-<a href=#158 id=158 data-nosnippet>158</a>                f64::MAX,
-<a href=#159 id=159 data-nosnippet>159</a>                f64::MAX,
-<a href=#160 id=160 data-nosnippet>160</a>            )<span class="question-mark">?</span>,
-<a href=#161 id=161 data-nosnippet>161</a>            NumericPrecision::F64,
-<a href=#162 id=162 data-nosnippet>162</a>            ModelInputCommitment::Empty,
-<a href=#163 id=163 data-nosnippet>163</a>        ),
-<a href=#164 id=164 data-nosnippet>164</a>        masks: domains::mask_plans(<span class="kw-2">&amp;</span>domains)<span class="question-mark">?</span>,
-<a href=#165 id=165 data-nosnippet>165</a>        minor_cycle_image_response: <span class="kw">match </span><span class="kw-2">&amp;</span>request.gridder {
-<a href=#166 id=166 data-nosnippet>166</a>            Gridder::Mosaic { .. } | Gridder::Awproject(<span class="kw">_</span>) =&gt; <span class="prelude-val">Some</span>(MinorCycleImageResponse::new(
-<a href=#167 id=167 data-nosnippet>167</a>                specification::normalization(request),
-<a href=#168 id=168 data-nosnippet>168</a>                specification::primary_beam_validity(request)<span class="question-mark">?</span>,
-<a href=#169 id=169 data-nosnippet>169</a>            )<span class="question-mark">?</span>),
-<a href=#170 id=170 data-nosnippet>170</a>            Gridder::Standard | Gridder::Wproject { .. } =&gt; <span class="prelude-val">None</span>,
-<a href=#171 id=171 data-nosnippet>171</a>        },
-<a href=#172 id=172 data-nosnippet>172</a>        observation,
-<a href=#173 id=173 data-nosnippet>173</a>        write_model_column: request.savemodel,
-<a href=#174 id=174 data-nosnippet>174</a>        write_corrected_data: request.save_continuum_residual,
-<a href=#175 id=175 data-nosnippet>175</a>        deployment,
-<a href=#176 id=176 data-nosnippet>176</a>    })
-<a href=#177 id=177 data-nosnippet>177</a>}
-<a href=#178 id=178 data-nosnippet>178</a>
-<a href=#179 id=179 data-nosnippet>179</a><span class="doccomment">/// The rest frame of a moving source (`cubesource`): the observatory frame
-<a href=#180 id=180 data-nosnippet>180</a>/// at the anchor time with the ephemeris's radial velocity.
-<a href=#181 id=181 data-nosnippet>181</a></span><span class="kw">fn </span>moving_rest_frame(
-<a href=#182 id=182 data-nosnippet>182</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#183 id=183 data-nosnippet>183</a>    centre: <span class="kw-2">&amp;</span>Centre,
-<a href=#184 id=184 data-nosnippet>184</a>    frame: <span class="kw-2">&amp;</span>FrameContext&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#185 id=185 data-nosnippet>185</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;MeasFrame&gt;, ApplicationError&gt; {
-<a href=#186 id=186 data-nosnippet>186</a>    <span class="kw">if </span>request.specmode != SpecMode::Cubesource {
-<a href=#187 id=187 data-nosnippet>187</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#188 id=188 data-nosnippet>188</a>    }
-<a href=#189 id=189 data-nosnippet>189</a>    <span class="kw">let </span>ephemeris = centre
-<a href=#190 id=190 data-nosnippet>190</a>        .ephemeris
-<a href=#191 id=191 data-nosnippet>191</a>        .as_ref()
-<a href=#192 id=192 data-nosnippet>192</a>        .ok_or_else(|| boxed(<span class="string">"source-frame cube imaging requires a moving phase centre"</span>))<span class="question-mark">?</span>;
-<a href=#193 id=193 data-nosnippet>193</a>    <span class="kw">let </span>velocity = frame.engine.ephemeris_radial_velocity(
-<a href=#194 id=194 data-nosnippet>194</a>        frame.anchor_time_mjd_seconds,
-<a href=#195 id=195 data-nosnippet>195</a>        frame.field_id,
-<a href=#196 id=196 data-nosnippet>196</a>        ephemeris,
-<a href=#197 id=197 data-nosnippet>197</a>    )<span class="question-mark">?</span>;
-<a href=#198 id=198 data-nosnippet>198</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(
-<a href=#199 id=199 data-nosnippet>199</a>        frame
-<a href=#200 id=200 data-nosnippet>200</a>            .engine
-<a href=#201 id=201 data-nosnippet>201</a>            .spectral_frame_observatory_direction(
-<a href=#202 id=202 data-nosnippet>202</a>                frame.anchor_time_mjd_seconds,
-<a href=#203 id=203 data-nosnippet>203</a>                centre.phase.clone(),
-<a href=#204 id=204 data-nosnippet>204</a>            )<span class="question-mark">?
-<a href=#205 id=205 data-nosnippet>205</a>            </span>.with_radial_velocity(velocity),
-<a href=#206 id=206 data-nosnippet>206</a>    ))
-<a href=#207 id=207 data-nosnippet>207</a>}
-<a href=#208 id=208 data-nosnippet>208</a>
-<a href=#209 id=209 data-nosnippet>209</a><span class="doccomment">/// The continuum transform of a `fitspw` request and the source channels
-<a href=#210 id=210 data-nosnippet>210</a>/// the observation reads: the fit channels with the output channels, or
-<a href=#211 id=211 data-nosnippet>211</a>/// the output channels alone.
-<a href=#212 id=212 data-nosnippet>212</a></span><span class="kw">fn </span>continuum_selection(
-<a href=#213 id=213 data-nosnippet>213</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#214 id=214 data-nosnippet>214</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#215 id=215 data-nosnippet>215</a>    centre: <span class="kw-2">&amp;</span>Centre,
-<a href=#216 id=216 data-nosnippet>216</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(<span class="prelude-ty">Option</span>&lt;SequentialContinuumTransform&gt;, WindowChannels), ApplicationError&gt; {
-<a href=#217 id=217 data-nosnippet>217</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(fitspw) = <span class="kw-2">&amp;</span>request.fitspw <span class="kw">else </span>{
-<a href=#218 id=218 data-nosnippet>218</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((<span class="prelude-val">None</span>, surveyed.spectral.selected_source_channels.clone()));
-<a href=#219 id=219 data-nosnippet>219</a>    };
-<a href=#220 id=220 data-nosnippet>220</a>    <span class="kw">let </span>window = selection::one_window(<span class="kw-2">&amp;</span>surveyed.survey.spectral_windows, <span class="string">"continuum subtraction"</span>)<span class="question-mark">?</span>;
-<a href=#221 id=221 data-nosnippet>221</a>    <span class="kw">let </span>(transform, selected) = specification::continuum_transform(
-<a href=#222 id=222 data-nosnippet>222</a>        fitspw,
-<a href=#223 id=223 data-nosnippet>223</a>        request.fitorder,
-<a href=#224 id=224 data-nosnippet>224</a>        i32::try_from(centre.field_id).map_err(|<span class="kw">_</span>| boxed(<span class="string">"FIELD_ID exceeds i32"</span>))<span class="question-mark">?</span>,
-<a href=#225 id=225 data-nosnippet>225</a>        window,
-<a href=#226 id=226 data-nosnippet>226</a>        <span class="kw-2">&amp;</span>surveyed.spectral.selected_source_channels[<span class="kw-2">&amp;</span>window.spw_id],
-<a href=#227 id=227 data-nosnippet>227</a>    )<span class="question-mark">?</span>;
-<a href=#228 id=228 data-nosnippet>228</a>    <span class="prelude-val">Ok</span>((<span class="prelude-val">Some</span>(transform), BTreeMap::from([(window.spw_id, selected)])))
-<a href=#229 id=229 data-nosnippet>229</a>}
-<a href=#230 id=230 data-nosnippet>230</a>
-<a href=#231 id=231 data-nosnippet>231</a><span class="doccomment">/// The specification's inputs beyond the request: the instrument, the
-<a href=#232 id=232 data-nosnippet>232</a>/// W and AW projections over the observed W range, the cube's density
-<a href=#233 id=233 data-nosnippet>233</a>/// padding and the continuum transform.
-<a href=#234 id=234 data-nosnippet>234</a></span><span class="kw">fn </span>specification_inputs(
-<a href=#235 id=235 data-nosnippet>235</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#236 id=236 data-nosnippet>236</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#237 id=237 data-nosnippet>237</a>    instrument: <span class="prelude-ty">Option</span>&lt;casa_imaging_model::InstrumentModel&gt;,
-<a href=#238 id=238 data-nosnippet>238</a>    primary_beam: bool,
-<a href=#239 id=239 data-nosnippet>239</a>    continuum_transform: <span class="prelude-ty">Option</span>&lt;SequentialContinuumTransform&gt;,
-<a href=#240 id=240 data-nosnippet>240</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SpecificationInputs, ApplicationError&gt; {
-<a href=#241 id=241 data-nosnippet>241</a>    <span class="kw">let </span>windows = <span class="kw-2">&amp;</span>surveyed.survey.spectral_windows;
-<a href=#242 id=242 data-nosnippet>242</a>    <span class="prelude-val">Ok</span>(SpecificationInputs {
-<a href=#243 id=243 data-nosnippet>243</a>        instrument,
-<a href=#244 id=244 data-nosnippet>244</a>        uncorrected_mask: <span class="kw">if </span>primary_beam &amp;&amp; request.pblimit &gt;= <span class="number">0.0 </span>{
-<a href=#245 id=245 data-nosnippet>245</a>            UncorrectedImageMaskPolicy::PrimaryBeam
-<a href=#246 id=246 data-nosnippet>246</a>        } <span class="kw">else </span>{
-<a href=#247 id=247 data-nosnippet>247</a>            UncorrectedImageMaskPolicy::None
-<a href=#248 id=248 data-nosnippet>248</a>        },
-<a href=#249 id=249 data-nosnippet>249</a>        w_projection: <span class="kw">match </span><span class="kw-2">&amp;</span>request.gridder {
-<a href=#250 id=250 data-nosnippet>250</a>            Gridder::Wproject { wprojplanes } =&gt; <span class="prelude-val">Some</span>(specification::w_projection(
-<a href=#251 id=251 data-nosnippet>251</a>                <span class="kw-2">*</span>wprojplanes,
-<a href=#252 id=252 data-nosnippet>252</a>                windows,
-<a href=#253 id=253 data-nosnippet>253</a>                surveyed.survey.w,
-<a href=#254 id=254 data-nosnippet>254</a>            )<span class="question-mark">?</span>),
-<a href=#255 id=255 data-nosnippet>255</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#256 id=256 data-nosnippet>256</a>        },
-<a href=#257 id=257 data-nosnippet>257</a>        aw_projection: <span class="kw">match </span><span class="kw-2">&amp;</span>request.gridder {
-<a href=#258 id=258 data-nosnippet>258</a>            Gridder::Awproject(aw) =&gt; <span class="prelude-val">Some</span>(specification::aw_projection(
-<a href=#259 id=259 data-nosnippet>259</a>                aw,
-<a href=#260 id=260 data-nosnippet>260</a>                windows,
-<a href=#261 id=261 data-nosnippet>261</a>                surveyed.survey.w,
-<a href=#262 id=262 data-nosnippet>262</a>            )<span class="question-mark">?</span>),
-<a href=#263 id=263 data-nosnippet>263</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#264 id=264 data-nosnippet>264</a>        },
-<a href=#265 id=265 data-nosnippet>265</a>        cube_density_padding: cube_density_padding(request, surveyed)<span class="question-mark">?</span>,
-<a href=#266 id=266 data-nosnippet>266</a>        continuum_transform,
-<a href=#267 id=267 data-nosnippet>267</a>    })
-<a href=#268 id=268 data-nosnippet>268</a>}
-<a href=#269 id=269 data-nosnippet>269</a>
-<a href=#270 id=270 data-nosnippet>270</a><span class="doccomment">/// The selected-observation request: the survey's rows and the channels
-<a href=#271 id=271 data-nosnippet>271</a>/// read, the visibility and weight columns, the instrument reference data
-<a href=#272 id=272 data-nosnippet>272</a>/// and the centre's ephemeris.
-<a href=#273 id=273 data-nosnippet>273</a></span><span class="kw">fn </span>observation_request(
-<a href=#274 id=274 data-nosnippet>274</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#275 id=275 data-nosnippet>275</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#276 id=276 data-nosnippet>276</a>    survey: Survey,
-<a href=#277 id=277 data-nosnippet>277</a>    channels: <span class="kw-2">&amp;</span>WindowChannels,
-<a href=#278 id=278 data-nosnippet>278</a>    instrument_reference: <span class="prelude-ty">Option</span>&lt;casa_imaging_model::LogicalIdentity&gt;,
-<a href=#279 id=279 data-nosnippet>279</a>    centre: Centre,
-<a href=#280 id=280 data-nosnippet>280</a>    budget: SelectedObservationContentBudget,
-<a href=#281 id=281 data-nosnippet>281</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SelectedObservationResolutionRequest, ApplicationError&gt; {
-<a href=#282 id=282 data-nosnippet>282</a>    <span class="kw">let </span>weight_column = <span class="kw">if </span>survey.weight_spectrum_complete {
-<a href=#283 id=283 data-nosnippet>283</a>        OwnerWeightColumn::WeightSpectrum
-<a href=#284 id=284 data-nosnippet>284</a>    } <span class="kw">else </span>{
-<a href=#285 id=285 data-nosnippet>285</a>        OwnerWeightColumn::Weight
-<a href=#286 id=286 data-nosnippet>286</a>    };
-<a href=#287 id=287 data-nosnippet>287</a>    <span class="prelude-val">Ok</span>(SelectedObservationResolutionRequest::new(
-<a href=#288 id=288 data-nosnippet>288</a>        request.vis.display().to_string(),
-<a href=#289 id=289 data-nosnippet>289</a>        selection_request_identity(),
-<a href=#290 id=290 data-nosnippet>290</a>        selection::observation_selection(ms, survey, channels)<span class="question-mark">?</span>,
-<a href=#291 id=291 data-nosnippet>291</a>        selection::visibility_column(ms, request.datacolumn)<span class="question-mark">?</span>,
-<a href=#292 id=292 data-nosnippet>292</a>        weight_column,
-<a href=#293 id=293 data-nosnippet>293</a>        instrument_reference
-<a href=#294 id=294 data-nosnippet>294</a>            .map(|reference| <span class="macro">vec!</span>[(ReferenceDataKind::Instrument, reference)])
-<a href=#295 id=295 data-nosnippet>295</a>            .unwrap_or_default(),
-<a href=#296 id=296 data-nosnippet>296</a>        ModelStateIdentity::Empty,
-<a href=#297 id=297 data-nosnippet>297</a>        budget,
-<a href=#298 id=298 data-nosnippet>298</a>        centre.measures,
-<a href=#299 id=299 data-nosnippet>299</a>    )
-<a href=#300 id=300 data-nosnippet>300</a>    .with_ephemeris(centre.ephemeris))
-<a href=#301 id=301 data-nosnippet>301</a>}
-<a href=#302 id=302 data-nosnippet>302</a>
-<a href=#303 id=303 data-nosnippet>303</a><span class="doccomment">/// The image geometry: the domains, the centre laws and the spectral axis.
-<a href=#304 id=304 data-nosnippet>304</a></span><span class="kw">fn </span>geometry(
-<a href=#305 id=305 data-nosnippet>305</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#306 id=306 data-nosnippet>306</a>    domains: <span class="kw-2">&amp;</span>[PreparedImageDomain],
-<a href=#307 id=307 data-nosnippet>307</a>    centre: <span class="kw-2">&amp;</span>Centre,
-<a href=#308 id=308 data-nosnippet>308</a>    spectral: <span class="kw-2">&amp;</span>PreparedSpectralAxis,
-<a href=#309 id=309 data-nosnippet>309</a>) -&gt; GeometryInput {
-<a href=#310 id=310 data-nosnippet>310</a>    <span class="kw">let </span>direction_dependent = <span class="macro">matches!</span>(
-<a href=#311 id=311 data-nosnippet>311</a>        request.gridder,
-<a href=#312 id=312 data-nosnippet>312</a>        Gridder::Mosaic { .. } | Gridder::Awproject(<span class="kw">_</span>)
-<a href=#313 id=313 data-nosnippet>313</a>    );
-<a href=#314 id=314 data-nosnippet>314</a>    GeometryInput::new(
-<a href=#315 id=315 data-nosnippet>315</a>        domains.iter().map(PreparedImageDomain::spec).collect(),
-<a href=#316 id=316 data-nosnippet>316</a>        CentreLaws::new(
-<a href=#317 id=317 data-nosnippet>317</a>            centre.law.clone(),
-<a href=#318 id=318 data-nosnippet>318</a>            DelayCentreLaw::PhaseTrackingCentre,
-<a href=#319 id=319 data-nosnippet>319</a>            instrument::pointing_centre_law(<span class="kw-2">&amp;</span>request.gridder),
-<a href=#320 id=320 data-nosnippet>320</a>        ),
-<a href=#321 id=321 data-nosnippet>321</a>        <span class="kw">if </span>direction_dependent {
-<a href=#322 id=322 data-nosnippet>322</a>            UvwCoordinateLaw::MosaicPhaseTrackingCentre
-<a href=#323 id=323 data-nosnippet>323</a>        } <span class="kw">else </span>{
-<a href=#324 id=324 data-nosnippet>324</a>            UvwCoordinateLaw::PhaseTrackingCentre
-<a href=#325 id=325 data-nosnippet>325</a>        },
-<a href=#326 id=326 data-nosnippet>326</a>        spectral.coordinate(),
-<a href=#327 id=327 data-nosnippet>327</a>    )
-<a href=#328 id=328 data-nosnippet>328</a>}
-<a href=#329 id=329 data-nosnippet>329</a>
-<a href=#330 id=330 data-nosnippet>330</a><span class="doccomment">/// The primary beam the products are written with: the mosaic
-<a href=#331 id=331 data-nosnippet>331</a>/// sensitivity of a direction-dependent gridder, else the telescope's
-<a href=#332 id=332 data-nosnippet>332</a>/// analytic beam when `.pb` or `.image.pbcor` is asked for.
-<a href=#333 id=333 data-nosnippet>333</a></span><span class="kw">fn </span>primary_beam_model(
-<a href=#334 id=334 data-nosnippet>334</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#335 id=335 data-nosnippet>335</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
-<a href=#336 id=336 data-nosnippet>336</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;AnalyticPrimaryBeamModel&gt;, ApplicationError&gt; {
-<a href=#337 id=337 data-nosnippet>337</a>    <span class="prelude-val">Ok</span>(<span class="kw">match </span>request.gridder {
-<a href=#338 id=338 data-nosnippet>338</a>        Gridder::Mosaic { .. } | Gridder::Awproject(<span class="kw">_</span>) =&gt; {
-<a href=#339 id=339 data-nosnippet>339</a>            <span class="prelude-val">Some</span>(AnalyticPrimaryBeamModel::MosaicSensitivity)
-<a href=#340 id=340 data-nosnippet>340</a>        }
-<a href=#341 id=341 data-nosnippet>341</a>        Gridder::Standard | Gridder::Wproject { .. } <span class="kw">if </span>request.write_pb || request.pbcor =&gt; {
-<a href=#342 id=342 data-nosnippet>342</a>            <span class="prelude-val">Some</span>(instrument::standard_primary_beam_model(ms)<span class="question-mark">?</span>)
-<a href=#343 id=343 data-nosnippet>343</a>        }
-<a href=#344 id=344 data-nosnippet>344</a>        Gridder::Standard | Gridder::Wproject { .. } =&gt; <span class="prelude-val">None</span>,
-<a href=#345 id=345 data-nosnippet>345</a>    })
-<a href=#346 id=346 data-nosnippet>346</a>}
-<a href=#347 id=347 data-nosnippet>347</a>
-<a href=#348 id=348 data-nosnippet>348</a><span class="doccomment">/// CASA's padded per-channel density grid of a linearly interpolated
-<a href=#349 id=349 data-nosnippet>349</a>/// cube with per-channel density.
-<a href=#350 id=350 data-nosnippet>350</a></span><span class="kw">fn </span>cube_density_padding(
-<a href=#351 id=351 data-nosnippet>351</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#352 id=352 data-nosnippet>352</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#353 id=353 data-nosnippet>353</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;usize&gt;, ApplicationError&gt; {
-<a href=#354 id=354 data-nosnippet>354</a>    <span class="kw">let </span>(survey, spectral) = (surveyed.survey, surveyed.spectral);
-<a href=#355 id=355 data-nosnippet>355</a>    <span class="kw">if </span>!specification::cube_density_padded(request, spectral) {
-<a href=#356 id=356 data-nosnippet>356</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#357 id=357 data-nosnippet>357</a>    }
-<a href=#358 id=358 data-nosnippet>358</a>    <span class="kw">let </span>window = selection::one_window(<span class="kw-2">&amp;</span>survey.spectral_windows, <span class="string">"cube density"</span>)<span class="question-mark">?</span>;
-<a href=#359 id=359 data-nosnippet>359</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(
-<a href=#360 id=360 data-nosnippet>360</a>        surveyed.ms.selected_observation_cube_density_padding(
-<a href=#361 id=361 data-nosnippet>361</a>            <span class="kw-2">&amp;</span>survey.row_selection,
-<a href=#362 id=362 data-nosnippet>362</a>            SelectedObservationSpectralWindow::borrow_selected(
-<a href=#363 id=363 data-nosnippet>363</a>                u32::try_from(window.spw_id).map_err(|<span class="kw">_</span>| boxed(<span class="string">"SPW id exceeds u32"</span>))<span class="question-mark">?</span>,
-<a href=#364 id=364 data-nosnippet>364</a>                window.frequency_reference,
-<a href=#365 id=365 data-nosnippet>365</a>                <span class="kw-2">&amp;</span>window.frequencies_hz,
-<a href=#366 id=366 data-nosnippet>366</a>                <span class="kw-2">&amp;</span>window.channel_widths_hz,
-<a href=#367 id=367 data-nosnippet>367</a>                <span class="kw-2">&amp;</span>spectral.selected_source_channels[<span class="kw-2">&amp;</span>window.spw_id],
-<a href=#368 id=368 data-nosnippet>368</a>            ),
-<a href=#369 id=369 data-nosnippet>369</a>            survey.fields.iter().copied(),
-<a href=#370 id=370 data-nosnippet>370</a>            spectral.output_frequency_reference,
-<a href=#371 id=371 data-nosnippet>371</a>            [
-<a href=#372 id=372 data-nosnippet>372</a>                spectral.reference_frequency_hz,
-<a href=#373 id=373 data-nosnippet>373</a>                spectral.reference_frequency_hz
-<a href=#374 id=374 data-nosnippet>374</a>                    + (spectral.output_channels - <span class="number">1</span>) <span class="kw">as </span>f64 * spectral.increment_hz,
-<a href=#375 id=375 data-nosnippet>375</a>            ],
-<a href=#376 id=376 data-nosnippet>376</a>            spectral.output_channels,
-<a href=#377 id=377 data-nosnippet>377</a>            surveyed.engine,
-<a href=#378 id=378 data-nosnippet>378</a>            surveyed.budget.row_io_budget(),
-<a href=#379 id=379 data-nosnippet>379</a>        )<span class="question-mark">?</span>,
-<a href=#380 id=380 data-nosnippet>380</a>    ))
-<a href=#381 id=381 data-nosnippet>381</a>}
-<a href=#382 id=382 data-nosnippet>382</a>
-<a href=#383 id=383 data-nosnippet>383</a><span class="doccomment">/// The native run's runtime, product publication and AW catalog, still to
-<a href=#384 id=384 data-nosnippet>384</a>/// be deployed: no directory exists and no AW cell is generated until
-<a href=#385 id=385 data-nosnippet>385</a>/// [`Deployment::deploy`].
-<a href=#386 id=386 data-nosnippet>386</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Deployment {
-<a href=#387 id=387 data-nosnippet>387</a>    <span class="doccomment">/// The runtime; its spill directory is made canonical on deployment.
-<a href=#388 id=388 data-nosnippet>388</a>    </span>runtime: ApplicationRuntime,
-<a href=#389 id=389 data-nosnippet>389</a>    publication: ApplicationPublication,
-<a href=#390 id=390 data-nosnippet>390</a>    <span class="doccomment">/// Every domain's output directory.
-<a href=#391 id=391 data-nosnippet>391</a>    </span>output_directories: Vec&lt;PathBuf&gt;,
-<a href=#392 id=392 data-nosnippet>392</a>    aw: <span class="prelude-ty">Option</span>&lt;AwPlan&gt;,
-<a href=#393 id=393 data-nosnippet>393</a>}
-<a href=#394 id=394 data-nosnippet>394</a>
-<a href=#395 id=395 data-nosnippet>395</a><span class="doccomment">/// The AW catalog a run opens and, for a native cache, the cells to bring
-<a href=#396 id=396 data-nosnippet>396</a>/// to the request's policy.
-<a href=#397 id=397 data-nosnippet>397</a></span><span class="kw">struct </span>AwPlan {
-<a href=#398 id=398 data-nosnippet>398</a>    root: PathBuf,
-<a href=#399 id=399 data-nosnippet>399</a>    native: <span class="prelude-ty">Option</span>&lt;(NativeAwCachePolicy, NativeAwRequestInput)&gt;,
-<a href=#400 id=400 data-nosnippet>400</a>    indexing: AwIndexing,
-<a href=#401 id=401 data-nosnippet>401</a>    resident_bytes: usize,
-<a href=#402 id=402 data-nosnippet>402</a>}
-<a href=#403 id=403 data-nosnippet>403</a>
-<a href=#404 id=404 data-nosnippet>404</a><span class="kw">impl </span>Deployment {
-<a href=#405 id=405 data-nosnippet>405</a>    <span class="doccomment">/// Create every domain's output directory, settle the spill directory
-<a href=#406 id=406 data-nosnippet>406</a>    /// beside the main image and bring a native AW cache to the request's
-<a href=#407 id=407 data-nosnippet>407</a>    /// policy.
-<a href=#408 id=408 data-nosnippet>408</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>deploy(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;ApplicationNative, ApplicationError&gt; {
-<a href=#409 id=409 data-nosnippet>409</a>        <span class="kw">for </span>directory <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.output_directories {
-<a href=#410 id=410 data-nosnippet>410</a>            std::fs::create_dir_all(directory)<span class="question-mark">?</span>;
-<a href=#411 id=411 data-nosnippet>411</a>        }
-<a href=#412 id=412 data-nosnippet>412</a>        <span class="kw">let </span><span class="kw-2">mut </span>runtime = <span class="self">self</span>.runtime;
-<a href=#413 id=413 data-nosnippet>413</a>        runtime.spill_directory = runtime.spill_directory.canonicalize()<span class="question-mark">?</span>;
-<a href=#414 id=414 data-nosnippet>414</a>        <span class="prelude-val">Ok</span>(ApplicationNative {
-<a href=#415 id=415 data-nosnippet>415</a>            runtime,
-<a href=#416 id=416 data-nosnippet>416</a>            publication: <span class="self">self</span>.publication,
-<a href=#417 id=417 data-nosnippet>417</a>            aw_catalog: <span class="self">self</span>.aw.map(AwPlan::deploy).transpose()<span class="question-mark">?</span>,
-<a href=#418 id=418 data-nosnippet>418</a>        })
-<a href=#419 id=419 data-nosnippet>419</a>    }
-<a href=#420 id=420 data-nosnippet>420</a>}
-<a href=#421 id=421 data-nosnippet>421</a>
-<a href=#422 id=422 data-nosnippet>422</a><span class="kw">impl </span>AwPlan {
-<a href=#423 id=423 data-nosnippet>423</a>    <span class="doccomment">/// Under every policy the request's cells are compared with the
-<a href=#424 id=424 data-nosnippet>424</a>    /// directory: reuse needs every one, generation fills in the absent
-<a href=#425 id=425 data-nosnippet>425</a>    /// ones, regeneration clears the cache first; the loader then checks
-<a href=#426 id=426 data-nosnippet>426</a>    /// each cell's sky increment against the image (plan section 5.6).
-<a href=#427 id=427 data-nosnippet>427</a>    </span><span class="kw">fn </span>deploy(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;AwCatalogDeployment, ApplicationError&gt; {
-<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((policy, input)) = <span class="kw-2">&amp;</span><span class="self">self</span>.native {
-<a href=#429 id=429 data-nosnippet>429</a>            <span class="kw">let </span>(present, expected) = AwCatalog::native_cells_present(<span class="kw-2">&amp;</span><span class="self">self</span>.root, input);
-<a href=#430 id=430 data-nosnippet>430</a>            <span class="kw">match </span>policy {
-<a href=#431 id=431 data-nosnippet>431</a>                NativeAwCachePolicy::ReuseOnly <span class="kw">if </span>present != expected =&gt; {
-<a href=#432 id=432 data-nosnippet>432</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(<span class="macro">format!</span>(
-<a href=#433 id=433 data-nosnippet>433</a>                        <span class="string">"native AW cache reuse found {present} of the {expected} cells the \
-<a href=#434 id=434 data-nosnippet>434</a>                         request names"
-<a href=#435 id=435 data-nosnippet>435</a>                    </span>)));
-<a href=#436 id=436 data-nosnippet>436</a>                }
-<a href=#437 id=437 data-nosnippet>437</a>                NativeAwCachePolicy::ReuseOnly =&gt; {}
-<a href=#438 id=438 data-nosnippet>438</a>                NativeAwCachePolicy::GenerateMissing =&gt; {
-<a href=#439 id=439 data-nosnippet>439</a>                    <span class="kw">if </span>present != expected {
-<a href=#440 id=440 data-nosnippet>440</a>                        AwCatalog::generate_native(<span class="kw-2">&amp;</span><span class="self">self</span>.root, input, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
-<a href=#441 id=441 data-nosnippet>441</a>                    }
-<a href=#442 id=442 data-nosnippet>442</a>                }
-<a href=#443 id=443 data-nosnippet>443</a>                NativeAwCachePolicy::Regenerate =&gt; {
-<a href=#444 id=444 data-nosnippet>444</a>                    AwCatalog::clear_native(<span class="kw-2">&amp;</span><span class="self">self</span>.root)<span class="question-mark">?</span>;
-<a href=#445 id=445 data-nosnippet>445</a>                    AwCatalog::generate_native(<span class="kw-2">&amp;</span><span class="self">self</span>.root, input, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
-<a href=#446 id=446 data-nosnippet>446</a>                }
-<a href=#447 id=447 data-nosnippet>447</a>            }
-<a href=#448 id=448 data-nosnippet>448</a>        }
-<a href=#449 id=449 data-nosnippet>449</a>        <span class="prelude-val">Ok</span>(AwCatalogDeployment {
-<a href=#450 id=450 data-nosnippet>450</a>            root: <span class="self">self</span>.root,
-<a href=#451 id=451 data-nosnippet>451</a>            indexing: <span class="self">self</span>.indexing,
-<a href=#452 id=452 data-nosnippet>452</a>            resident_bytes: <span class="self">self</span>.resident_bytes,
-<a href=#453 id=453 data-nosnippet>453</a>        })
-<a href=#454 id=454 data-nosnippet>454</a>    }
-<a href=#455 id=455 data-nosnippet>455</a>}
-<a href=#456 id=456 data-nosnippet>456</a>
-<a href=#457 id=457 data-nosnippet>457</a><span class="doccomment">/// The native run's deployment: the runtime with the paged cube state
-<a href=#458 id=458 data-nosnippet>458</a>/// beside the main image, the product controls and sink, and the AW plan.
-<a href=#459 id=459 data-nosnippet>459</a></span><span class="kw">fn </span>deployment(
-<a href=#460 id=460 data-nosnippet>460</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#461 id=461 data-nosnippet>461</a>    context: <span class="kw-2">&amp;</span>RunContext,
-<a href=#462 id=462 data-nosnippet>462</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#463 id=463 data-nosnippet>463</a>    domains: <span class="kw-2">&amp;</span>[PreparedImageDomain],
-<a href=#464 id=464 data-nosnippet>464</a>    primary_beam: <span class="prelude-ty">Option</span>&lt;AnalyticPrimaryBeamModel&gt;,
-<a href=#465 id=465 data-nosnippet>465</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Deployment, ApplicationError&gt; {
-<a href=#466 id=466 data-nosnippet>466</a>    <span class="kw">let </span>parent = |path: <span class="kw-2">&amp;</span>Path| {
-<a href=#467 id=467 data-nosnippet>467</a>        path.parent()
-<a href=#468 id=468 data-nosnippet>468</a>            .unwrap_or_else(|| Path::new(<span class="string">"."</span>))
-<a href=#469 id=469 data-nosnippet>469</a>            .to_path_buf()
-<a href=#470 id=470 data-nosnippet>470</a>    };
-<a href=#471 id=471 data-nosnippet>471</a>    <span class="kw">let </span><span class="kw-2">mut </span>controls = ContinuumProductControls::new(request.psfcutoff <span class="kw">as </span>f32)<span class="question-mark">?</span>;
-<a href=#472 id=472 data-nosnippet>472</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(model) = primary_beam {
-<a href=#473 id=473 data-nosnippet>473</a>        controls = controls.with_primary_beam_model(model);
-<a href=#474 id=474 data-nosnippet>474</a>    }
-<a href=#475 id=475 data-nosnippet>475</a>    <span class="prelude-val">Ok</span>(Deployment {
-<a href=#476 id=476 data-nosnippet>476</a>        runtime: ApplicationRuntime {
-<a href=#477 id=477 data-nosnippet>477</a>            host: context.host,
-<a href=#478 id=478 data-nosnippet>478</a>            resource_policy: context.policy,
-<a href=#479 id=479 data-nosnippet>479</a>            backend: request.backend,
-<a href=#480 id=480 data-nosnippet>480</a>            grid_precision: request.gridprecision,
-<a href=#481 id=481 data-nosnippet>481</a>            cancel: context.cancel.clone(),
-<a href=#482 id=482 data-nosnippet>482</a>            spill_directory: parent(<span class="kw-2">&amp;</span>request.imagename),
-<a href=#483 id=483 data-nosnippet>483</a>            summary: context.summary.clone(),
-<a href=#484 id=484 data-nosnippet>484</a>        },
-<a href=#485 id=485 data-nosnippet>485</a>        publication: ApplicationPublication {
-<a href=#486 id=486 data-nosnippet>486</a>            controls,
-<a href=#487 id=487 data-nosnippet>487</a>            sink: CasaImageProductSink::for_domains(
-<a href=#488 id=488 data-nosnippet>488</a>                domains.iter().map(PreparedImageDomain::output),
-<a href=#489 id=489 data-nosnippet>489</a>            )<span class="question-mark">?</span>,
-<a href=#490 id=490 data-nosnippet>490</a>        },
-<a href=#491 id=491 data-nosnippet>491</a>        output_directories: domains
-<a href=#492 id=492 data-nosnippet>492</a>            .iter()
-<a href=#493 id=493 data-nosnippet>493</a>            .map(|domain| parent(<span class="kw-2">&amp;</span>domain.output))
-<a href=#494 id=494 data-nosnippet>494</a>            .collect(),
-<a href=#495 id=495 data-nosnippet>495</a>        aw: <span class="kw">match </span><span class="kw-2">&amp;</span>request.gridder {
-<a href=#496 id=496 data-nosnippet>496</a>            Gridder::Awproject(aw) =&gt; <span class="prelude-val">Some</span>(aw_plan(request, aw, surveyed)<span class="question-mark">?</span>),
-<a href=#497 id=497 data-nosnippet>497</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#498 id=498 data-nosnippet>498</a>        },
-<a href=#499 id=499 data-nosnippet>499</a>    })
-<a href=#500 id=500 data-nosnippet>500</a>}
-<a href=#501 id=501 data-nosnippet>501</a>
-<a href=#502 id=502 data-nosnippet>502</a><span class="doccomment">/// The AW catalog to open: a CASA cache read as it is, or a native cache
-<a href=#503 id=503 data-nosnippet>503</a>/// in CASA's format with the input its cells are generated from.
-<a href=#504 id=504 data-nosnippet>504</a></span><span class="kw">fn </span>aw_plan(
-<a href=#505 id=505 data-nosnippet>505</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#506 id=506 data-nosnippet>506</a>    aw: <span class="kw-2">&amp;</span>AwProjection,
-<a href=#507 id=507 data-nosnippet>507</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#508 id=508 data-nosnippet>508</a>) -&gt; <span class="prelude-ty">Result</span>&lt;AwPlan, ApplicationError&gt; {
-<a href=#509 id=509 data-nosnippet>509</a>    <span class="kw">let </span>(root, native) = <span class="kw">match </span><span class="kw-2">&amp;</span>aw.cf_source {
-<a href=#510 id=510 data-nosnippet>510</a>        AwCfSource::CasaImport { cfcache } =&gt; (cfcache.clone(), <span class="prelude-val">None</span>),
-<a href=#511 id=511 data-nosnippet>511</a>        AwCfSource::NativeEvla {
-<a href=#512 id=512 data-nosnippet>512</a>            native_cf_cache,
-<a href=#513 id=513 data-nosnippet>513</a>            native_cf_policy,
-<a href=#514 id=514 data-nosnippet>514</a>            ..
-<a href=#515 id=515 data-nosnippet>515</a>        } =&gt; {
-<a href=#516 id=516 data-nosnippet>516</a>            <span class="kw">let </span>first_row = surveyed
-<a href=#517 id=517 data-nosnippet>517</a>                .survey
-<a href=#518 id=518 data-nosnippet>518</a>                .first_cross_row
-<a href=#519 id=519 data-nosnippet>519</a>                .ok_or_else(|| boxed(<span class="string">"native AW has no unflagged cross-correlation row"</span>))<span class="question-mark">?</span>;
-<a href=#520 id=520 data-nosnippet>520</a>            <span class="kw">let </span>input = native_aw::resolve(request, aw, surveyed, first_row)<span class="question-mark">?</span>;
-<a href=#521 id=521 data-nosnippet>521</a>            input.validate()<span class="question-mark">?</span>;
-<a href=#522 id=522 data-nosnippet>522</a>            (native_cf_cache.clone(), <span class="prelude-val">Some</span>((<span class="kw-2">*</span>native_cf_policy, input)))
-<a href=#523 id=523 data-nosnippet>523</a>        }
-<a href=#524 id=524 data-nosnippet>524</a>    };
-<a href=#525 id=525 data-nosnippet>525</a>    <span class="prelude-val">Ok</span>(AwPlan {
-<a href=#526 id=526 data-nosnippet>526</a>        root,
-<a href=#527 id=527 data-nosnippet>527</a>        native,
-<a href=#528 id=528 data-nosnippet>528</a>        indexing: AwIndexing {
-<a href=#529 id=529 data-nosnippet>529</a>            conjugate_beams: <span class="bool-val">true</span>,
-<a href=#530 id=530 data-nosnippet>530</a>            image_reference_hz: surveyed.spectral.reference_frequency_hz,
-<a href=#531 id=531 data-nosnippet>531</a>        },
-<a href=#532 id=532 data-nosnippet>532</a>        resident_bytes: aw
-<a href=#533 id=533 data-nosnippet>533</a>            .cf_resident_mb
-<a href=#534 id=534 data-nosnippet>534</a>            .checked_mul(<span class="number">1 </span>&lt;&lt; <span class="number">20</span>)
-<a href=#535 id=535 data-nosnippet>535</a>            .ok_or_else(|| boxed(<span class="string">"cf_resident_mb exceeds addressable memory"</span>))<span class="question-mark">?</span>,
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">mod </span>error;
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">mod </span>instrument;
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">mod </span>native_aw;
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">mod </span>outliers;
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">mod </span>selection;
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">mod </span>specification;
+<a href=#20 id=20 data-nosnippet>20</a><span class="kw">mod </span>spectral;
+<a href=#21 id=21 data-nosnippet>21</a>
+<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span>std::collections::BTreeMap;
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span>std::path::{Path, PathBuf};
+<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span>std::sync::Arc;
+<a href=#25 id=25 data-nosnippet>25</a>
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span>casa_imaging_model::{
+<a href=#27 id=27 data-nosnippet>27</a>    CentreLaws, GeometryInput, ModelBounds, ModelLifecycleRequirements, NativeAwRequestInput,
+<a href=#28 id=28 data-nosnippet>28</a>    NumericPrecision, ProblemSpecification, SequentialContinuumTransform,
+<a href=#29 id=29 data-nosnippet>29</a>    UncorrectedImageMaskPolicy, UvwCoordinateLaw, WeightColumn <span class="kw">as </span>OwnerWeightColumn,
+<a href=#30 id=30 data-nosnippet>30</a>};
+<a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span>casa_imaging_operator::{AwCatalog, AwIndexing};
+<a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>casa_imaging_products::{AnalyticPrimaryBeamModel, ContinuumProductControls};
+<a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span>casa_imaging_reconstruction::{ImageDomainReconstructionMaskPlans, MinorCycleImageResponse};
+<a href=#34 id=34 data-nosnippet>34</a><span class="kw">use </span>casa_ms::derived::engine::MsCalEngine;
+<a href=#35 id=35 data-nosnippet>35</a><span class="kw">use </span>casa_ms::{
+<a href=#36 id=36 data-nosnippet>36</a>    MeasurementSet, SelectedObservationContentBudget, SelectedObservationEphemeris,
+<a href=#37 id=37 data-nosnippet>37</a>    SelectedObservationResolutionRequest, SelectedObservationSpectralWindow,
+<a href=#38 id=38 data-nosnippet>38</a>};
+<a href=#39 id=39 data-nosnippet>39</a><span class="kw">use </span>casa_types::measures::{MeasuresProvider, frame::MeasFrame};
+<a href=#40 id=40 data-nosnippet>40</a>
+<a href=#41 id=41 data-nosnippet>41</a><span class="kw">use crate</span>::{
+<a href=#42 id=42 data-nosnippet>42</a>    ApplicationNative, ApplicationPublication, ApplicationRuntime, AwCatalogDeployment, AwCfSource,
+<a href=#43 id=43 data-nosnippet>43</a>    AwProjection, CasaImageProductSink, Deconvolver, Gridder, ImagingRequest, NativeAwCachePolicy,
+<a href=#44 id=44 data-nosnippet>44</a>    RunContext, SpecMode,
+<a href=#45 id=45 data-nosnippet>45</a>};
+<a href=#46 id=46 data-nosnippet>46</a><span class="kw">use </span>direction::{Centre, ImageSpectralCoordinate};
+<a href=#47 id=47 data-nosnippet>47</a><span class="kw">use </span>domains::PreparedImageDomain;
+<a href=#48 id=48 data-nosnippet>48</a><span class="kw">pub use </span>error::{OutlierProblem, PrepareError};
+<a href=#49 id=49 data-nosnippet>49</a><span class="kw">use </span>selection::{Survey, WindowChannels};
+<a href=#50 id=50 data-nosnippet>50</a><span class="kw">use </span>specification::SpecificationInputs;
+<a href=#51 id=51 data-nosnippet>51</a><span class="kw">use </span>spectral::{FrameContext, PreparedSpectralAxis};
+<a href=#52 id=52 data-nosnippet>52</a>
+<a href=#53 id=53 data-nosnippet>53</a><span class="doccomment">/// A request compiled against its MeasurementSet, before the problem
+<a href=#54 id=54 data-nosnippet>54</a>/// compiler binds the observation.
+<a href=#55 id=55 data-nosnippet>55</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Prepared {
+<a href=#56 id=56 data-nosnippet>56</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) specification: ProblemSpecification,
+<a href=#57 id=57 data-nosnippet>57</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) geometry: GeometryInput,
+<a href=#58 id=58 data-nosnippet>58</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) model_lifecycle: ModelLifecycleRequirements,
+<a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) masks: ImageDomainReconstructionMaskPlans,
+<a href=#60 id=60 data-nosnippet>60</a>    <span class="doccomment">/// A direction-dependent gridder's residual units, which bind every
+<a href=#61 id=61 data-nosnippet>61</a>    /// solver.
+<a href=#62 id=62 data-nosnippet>62</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) minor_cycle_image_response: <span class="prelude-ty">Option</span>&lt;MinorCycleImageResponse&gt;,
+<a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) observation: SelectedObservationResolutionRequest,
+<a href=#64 id=64 data-nosnippet>64</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) write_model_column: bool,
+<a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) write_corrected_data: bool,
+<a href=#66 id=66 data-nosnippet>66</a>    <span class="doccomment">/// What the native run deploys once the availability check passes.
+<a href=#67 id=67 data-nosnippet>67</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) deployment: Deployment,
+<a href=#68 id=68 data-nosnippet>68</a>}
+<a href=#69 id=69 data-nosnippet>69</a>
+<a href=#70 id=70 data-nosnippet>70</a><span class="doccomment">/// The MeasurementSet as [`prepare`] surveyed it: the table, its geometry
+<a href=#71 id=71 data-nosnippet>71</a>/// engine, the source budget, the selection survey and the spectral axis.
+<a href=#72 id=72 data-nosnippet>72</a></span><span class="kw">struct </span>Surveyed&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#73 id=73 data-nosnippet>73</a>    ms: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>MeasurementSet,
+<a href=#74 id=74 data-nosnippet>74</a>    engine: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>MsCalEngine,
+<a href=#75 id=75 data-nosnippet>75</a>    budget: SelectedObservationContentBudget,
+<a href=#76 id=76 data-nosnippet>76</a>    survey: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Survey,
+<a href=#77 id=77 data-nosnippet>77</a>    spectral: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>PreparedSpectralAxis,
+<a href=#78 id=78 data-nosnippet>78</a>}
+<a href=#79 id=79 data-nosnippet>79</a>
+<a href=#80 id=80 data-nosnippet>80</a><span class="doccomment">/// Compile `request` against its MeasurementSet.
+<a href=#81 id=81 data-nosnippet>81</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>prepare(
+<a href=#82 id=82 data-nosnippet>82</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#83 id=83 data-nosnippet>83</a>    context: <span class="kw-2">&amp;</span>RunContext,
+<a href=#84 id=84 data-nosnippet>84</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Prepared, PrepareError&gt; {
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="kw">let </span>ms = MeasurementSet::open(<span class="kw-2">&amp;</span>request.vis)<span class="question-mark">?</span>;
+<a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">let </span>budget = casa_imaging_runtime::bootstrap_source_budget();
+<a href=#87 id=87 data-nosnippet>87</a>    <span class="comment">// The one Measures provider of the run: compile's geometry and the bound
+<a href=#88 id=88 data-nosnippet>88</a>    // observation's both evaluate with it.
+<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="kw">let </span>measures = casa_ms::open_measures_runtime()<span class="question-mark">?</span>;
+<a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">let </span>engine = MsCalEngine::with_measures(<span class="kw-2">&amp;</span>ms, Arc::clone(<span class="kw-2">&amp;</span>measures))<span class="question-mark">?</span>;
+<a href=#91 id=91 data-nosnippet>91</a>    <span class="kw">let </span>survey = selection::survey(request, <span class="kw-2">&amp;</span>ms, budget, <span class="kw-2">&amp;</span>engine)<span class="question-mark">?</span>;
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">let </span>centre = direction::resolve_centre(request, <span class="kw-2">&amp;</span>ms, <span class="kw-2">&amp;</span>survey, <span class="kw-2">&amp;</span>engine, budget)<span class="question-mark">?</span>;
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="kw">let </span>frame = FrameContext {
+<a href=#94 id=94 data-nosnippet>94</a>        anchor_time_mjd_seconds: survey.first_time_mjd_seconds,
+<a href=#95 id=95 data-nosnippet>95</a>        time_bounds_mjd_seconds: survey.time_bounds_mjd_seconds,
+<a href=#96 id=96 data-nosnippet>96</a>        field_id: centre.field_id,
+<a href=#97 id=97 data-nosnippet>97</a>        phase: centre.phase.clone(),
+<a href=#98 id=98 data-nosnippet>98</a>        direction: centre.direction,
+<a href=#99 id=99 data-nosnippet>99</a>        engine: <span class="kw-2">&amp;</span>engine,
+<a href=#100 id=100 data-nosnippet>100</a>    };
+<a href=#101 id=101 data-nosnippet>101</a>    <span class="kw">let </span>moving_rest_frame = moving_rest_frame(request, <span class="kw-2">&amp;</span>centre, <span class="kw-2">&amp;</span>frame)<span class="question-mark">?</span>;
+<a href=#102 id=102 data-nosnippet>102</a>    <span class="kw">let </span>spectral =
+<a href=#103 id=103 data-nosnippet>103</a>        spectral::prepare_axis(request, <span class="kw-2">&amp;</span>ms, <span class="kw-2">&amp;</span>survey, <span class="kw-2">&amp;</span>frame, moving_rest_frame.as_ref())<span class="question-mark">?</span>;
+<a href=#104 id=104 data-nosnippet>104</a>    <span class="kw">let </span>surveyed = Surveyed {
+<a href=#105 id=105 data-nosnippet>105</a>        ms: <span class="kw-2">&amp;</span>ms,
+<a href=#106 id=106 data-nosnippet>106</a>        engine: <span class="kw-2">&amp;</span>engine,
+<a href=#107 id=107 data-nosnippet>107</a>        budget,
+<a href=#108 id=108 data-nosnippet>108</a>        survey: <span class="kw-2">&amp;</span>survey,
+<a href=#109 id=109 data-nosnippet>109</a>        spectral: <span class="kw-2">&amp;</span>spectral,
+<a href=#110 id=110 data-nosnippet>110</a>    };
+<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">let </span>(continuum_transform, channels) = continuum_selection(request, <span class="kw-2">&amp;</span>surveyed, <span class="kw-2">&amp;</span>centre)<span class="question-mark">?</span>;
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">let </span>observation_info = direction::observation_info(<span class="kw-2">&amp;</span>ms, <span class="kw-2">&amp;</span>survey, <span class="kw-2">&amp;</span>centre, <span class="kw-2">&amp;</span>engine)<span class="question-mark">?</span>;
+<a href=#113 id=113 data-nosnippet>113</a>    <span class="kw">let </span>domains = domains::prepare_domains(
+<a href=#114 id=114 data-nosnippet>114</a>        request,
+<a href=#115 id=115 data-nosnippet>115</a>        <span class="kw-2">&amp;</span>centre,
+<a href=#116 id=116 data-nosnippet>116</a>        ImageSpectralCoordinate {
+<a href=#117 id=117 data-nosnippet>117</a>            frequency_reference: spectral.output_frequency_reference,
+<a href=#118 id=118 data-nosnippet>118</a>            reference_frequency_hz: spectral.reference_frequency_hz,
+<a href=#119 id=119 data-nosnippet>119</a>            increment_hz: spectral.increment_hz,
+<a href=#120 id=120 data-nosnippet>120</a>            rest_frequency_hz: spectral.image_rest_frequency_hz,
+<a href=#121 id=121 data-nosnippet>121</a>        },
+<a href=#122 id=122 data-nosnippet>122</a>        <span class="kw-2">&amp;</span>observation_info,
+<a href=#123 id=123 data-nosnippet>123</a>    )<span class="question-mark">?</span>;
+<a href=#124 id=124 data-nosnippet>124</a>    <span class="kw">let </span>primary_beam = primary_beam_model(request, <span class="kw-2">&amp;</span>ms)<span class="question-mark">?</span>;
+<a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">let </span>deployment = deployment(request, context, <span class="kw-2">&amp;</span>surveyed, <span class="kw-2">&amp;</span>domains, primary_beam)<span class="question-mark">?</span>;
+<a href=#126 id=126 data-nosnippet>126</a>    <span class="kw">let </span>instrument = instrument::scientific_instrument_model(<span class="kw-2">&amp;</span>request.gridder, <span class="kw-2">&amp;</span>ms)<span class="question-mark">?</span>;
+<a href=#127 id=127 data-nosnippet>127</a>    <span class="kw">let </span>specification = specification::specification(
+<a href=#128 id=128 data-nosnippet>128</a>        request,
+<a href=#129 id=129 data-nosnippet>129</a>        <span class="kw-2">&amp;</span>spectral,
+<a href=#130 id=130 data-nosnippet>130</a>        specification_inputs(
+<a href=#131 id=131 data-nosnippet>131</a>            request,
+<a href=#132 id=132 data-nosnippet>132</a>            <span class="kw-2">&amp;</span>surveyed,
+<a href=#133 id=133 data-nosnippet>133</a>            instrument,
+<a href=#134 id=134 data-nosnippet>134</a>            primary_beam.is_some(),
+<a href=#135 id=135 data-nosnippet>135</a>            continuum_transform,
+<a href=#136 id=136 data-nosnippet>136</a>        )<span class="question-mark">?</span>,
+<a href=#137 id=137 data-nosnippet>137</a>    )<span class="question-mark">?</span>;
+<a href=#138 id=138 data-nosnippet>138</a>    <span class="kw">let </span>reconstruction_planes = <span class="kw">match </span>request.deconvolver {
+<a href=#139 id=139 data-nosnippet>139</a>        Deconvolver::Mtmfs =&gt; request.nterms,
+<a href=#140 id=140 data-nosnippet>140</a>        <span class="kw">_ </span>=&gt; spectral.output_channels,
+<a href=#141 id=141 data-nosnippet>141</a>    };
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="kw">let </span>model_samples = domains::model_samples(<span class="kw-2">&amp;</span>domains, reconstruction_planes, <span class="kw-2">&amp;</span>request.stokes)<span class="question-mark">?</span>;
+<a href=#143 id=143 data-nosnippet>143</a>    <span class="kw">let </span>geometry = geometry(request, <span class="kw-2">&amp;</span>domains, <span class="kw-2">&amp;</span>centre, <span class="kw-2">&amp;</span>spectral);
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="kw">let </span>observation = observation_request(
+<a href=#145 id=145 data-nosnippet>145</a>        request,
+<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw-2">&amp;</span>ms,
+<a href=#147 id=147 data-nosnippet>147</a>        survey,
+<a href=#148 id=148 data-nosnippet>148</a>        <span class="kw-2">&amp;</span>channels,
+<a href=#149 id=149 data-nosnippet>149</a>        measures,
+<a href=#150 id=150 data-nosnippet>150</a>        centre.ephemeris,
+<a href=#151 id=151 data-nosnippet>151</a>        budget,
+<a href=#152 id=152 data-nosnippet>152</a>    )<span class="question-mark">?</span>;
+<a href=#153 id=153 data-nosnippet>153</a>    <span class="prelude-val">Ok</span>(Prepared {
+<a href=#154 id=154 data-nosnippet>154</a>        specification,
+<a href=#155 id=155 data-nosnippet>155</a>        geometry,
+<a href=#156 id=156 data-nosnippet>156</a>        model_lifecycle: ModelLifecycleRequirements::new(
+<a href=#157 id=157 data-nosnippet>157</a>            ModelBounds::new(model_samples, model_samples, f64::MAX, f64::MAX)<span class="question-mark">?</span>,
+<a href=#158 id=158 data-nosnippet>158</a>            NumericPrecision::F64,
+<a href=#159 id=159 data-nosnippet>159</a>        ),
+<a href=#160 id=160 data-nosnippet>160</a>        masks: domains::mask_plans(<span class="kw-2">&amp;</span>domains)<span class="question-mark">?</span>,
+<a href=#161 id=161 data-nosnippet>161</a>        minor_cycle_image_response: <span class="kw">match </span><span class="kw-2">&amp;</span>request.gridder {
+<a href=#162 id=162 data-nosnippet>162</a>            Gridder::Mosaic { .. } | Gridder::Awproject(<span class="kw">_</span>) =&gt; <span class="prelude-val">Some</span>(MinorCycleImageResponse::new(
+<a href=#163 id=163 data-nosnippet>163</a>                specification::normalization(request),
+<a href=#164 id=164 data-nosnippet>164</a>                specification::primary_beam_validity(request)<span class="question-mark">?</span>,
+<a href=#165 id=165 data-nosnippet>165</a>            )<span class="question-mark">?</span>),
+<a href=#166 id=166 data-nosnippet>166</a>            Gridder::Standard | Gridder::Wproject { .. } =&gt; <span class="prelude-val">None</span>,
+<a href=#167 id=167 data-nosnippet>167</a>        },
+<a href=#168 id=168 data-nosnippet>168</a>        observation,
+<a href=#169 id=169 data-nosnippet>169</a>        write_model_column: request.savemodel,
+<a href=#170 id=170 data-nosnippet>170</a>        write_corrected_data: request.save_continuum_residual,
+<a href=#171 id=171 data-nosnippet>171</a>        deployment,
+<a href=#172 id=172 data-nosnippet>172</a>    })
+<a href=#173 id=173 data-nosnippet>173</a>}
+<a href=#174 id=174 data-nosnippet>174</a>
+<a href=#175 id=175 data-nosnippet>175</a><span class="doccomment">/// The rest frame of a moving source (`cubesource`): the observatory frame
+<a href=#176 id=176 data-nosnippet>176</a>/// at the anchor time with the ephemeris's radial velocity.
+<a href=#177 id=177 data-nosnippet>177</a></span><span class="kw">fn </span>moving_rest_frame(
+<a href=#178 id=178 data-nosnippet>178</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#179 id=179 data-nosnippet>179</a>    centre: <span class="kw-2">&amp;</span>Centre,
+<a href=#180 id=180 data-nosnippet>180</a>    frame: <span class="kw-2">&amp;</span>FrameContext&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#181 id=181 data-nosnippet>181</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;MeasFrame&gt;, PrepareError&gt; {
+<a href=#182 id=182 data-nosnippet>182</a>    <span class="kw">if </span>request.specmode != SpecMode::Cubesource {
+<a href=#183 id=183 data-nosnippet>183</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#184 id=184 data-nosnippet>184</a>    }
+<a href=#185 id=185 data-nosnippet>185</a>    <span class="kw">let </span>ephemeris = centre
+<a href=#186 id=186 data-nosnippet>186</a>        .ephemeris
+<a href=#187 id=187 data-nosnippet>187</a>        .as_ref()
+<a href=#188 id=188 data-nosnippet>188</a>        .ok_or(PrepareError::MovingPhaseCentre)<span class="question-mark">?</span>;
+<a href=#189 id=189 data-nosnippet>189</a>    <span class="kw">let </span>velocity = frame.engine.ephemeris_radial_velocity(
+<a href=#190 id=190 data-nosnippet>190</a>        frame.anchor_time_mjd_seconds,
+<a href=#191 id=191 data-nosnippet>191</a>        frame.field_id,
+<a href=#192 id=192 data-nosnippet>192</a>        ephemeris,
+<a href=#193 id=193 data-nosnippet>193</a>    )<span class="question-mark">?</span>;
+<a href=#194 id=194 data-nosnippet>194</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(
+<a href=#195 id=195 data-nosnippet>195</a>        frame
+<a href=#196 id=196 data-nosnippet>196</a>            .engine
+<a href=#197 id=197 data-nosnippet>197</a>            .spectral_frame_observatory_direction(
+<a href=#198 id=198 data-nosnippet>198</a>                frame.anchor_time_mjd_seconds,
+<a href=#199 id=199 data-nosnippet>199</a>                centre.phase.clone(),
+<a href=#200 id=200 data-nosnippet>200</a>            )<span class="question-mark">?
+<a href=#201 id=201 data-nosnippet>201</a>            </span>.with_radial_velocity(velocity),
+<a href=#202 id=202 data-nosnippet>202</a>    ))
+<a href=#203 id=203 data-nosnippet>203</a>}
+<a href=#204 id=204 data-nosnippet>204</a>
+<a href=#205 id=205 data-nosnippet>205</a><span class="doccomment">/// The continuum transform of a `fitspw` request and the source channels
+<a href=#206 id=206 data-nosnippet>206</a>/// the observation reads: the fit channels with the output channels, or
+<a href=#207 id=207 data-nosnippet>207</a>/// the output channels alone.
+<a href=#208 id=208 data-nosnippet>208</a></span><span class="kw">fn </span>continuum_selection(
+<a href=#209 id=209 data-nosnippet>209</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#210 id=210 data-nosnippet>210</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#211 id=211 data-nosnippet>211</a>    centre: <span class="kw-2">&amp;</span>Centre,
+<a href=#212 id=212 data-nosnippet>212</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(<span class="prelude-ty">Option</span>&lt;SequentialContinuumTransform&gt;, WindowChannels), PrepareError&gt; {
+<a href=#213 id=213 data-nosnippet>213</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(fitspw) = <span class="kw-2">&amp;</span>request.fitspw <span class="kw">else </span>{
+<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((<span class="prelude-val">None</span>, surveyed.spectral.selected_source_channels.clone()));
+<a href=#215 id=215 data-nosnippet>215</a>    };
+<a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">let </span>window = selection::one_window(<span class="kw-2">&amp;</span>surveyed.survey.spectral_windows, <span class="string">"continuum subtraction"</span>)<span class="question-mark">?</span>;
+<a href=#217 id=217 data-nosnippet>217</a>    <span class="kw">let </span>(transform, selected) = specification::continuum_transform(
+<a href=#218 id=218 data-nosnippet>218</a>        fitspw,
+<a href=#219 id=219 data-nosnippet>219</a>        request.fitorder,
+<a href=#220 id=220 data-nosnippet>220</a>        i32::try_from(centre.field_id).expect(<span class="string">"the centre's field id is a stored i32 FIELD_ID"</span>),
+<a href=#221 id=221 data-nosnippet>221</a>        window,
+<a href=#222 id=222 data-nosnippet>222</a>        surveyed.spectral.window_channels(window.spw_id),
+<a href=#223 id=223 data-nosnippet>223</a>    )<span class="question-mark">?</span>;
+<a href=#224 id=224 data-nosnippet>224</a>    <span class="prelude-val">Ok</span>((<span class="prelude-val">Some</span>(transform), BTreeMap::from([(window.spw_id, selected)])))
+<a href=#225 id=225 data-nosnippet>225</a>}
+<a href=#226 id=226 data-nosnippet>226</a>
+<a href=#227 id=227 data-nosnippet>227</a><span class="doccomment">/// The specification's inputs beyond the request: the instrument, the
+<a href=#228 id=228 data-nosnippet>228</a>/// W and AW projections over the observed W range, the cube's density
+<a href=#229 id=229 data-nosnippet>229</a>/// padding and the continuum transform.
+<a href=#230 id=230 data-nosnippet>230</a></span><span class="kw">fn </span>specification_inputs(
+<a href=#231 id=231 data-nosnippet>231</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#232 id=232 data-nosnippet>232</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#233 id=233 data-nosnippet>233</a>    instrument: <span class="prelude-ty">Option</span>&lt;casa_imaging_model::InstrumentModel&gt;,
+<a href=#234 id=234 data-nosnippet>234</a>    primary_beam: bool,
+<a href=#235 id=235 data-nosnippet>235</a>    continuum_transform: <span class="prelude-ty">Option</span>&lt;SequentialContinuumTransform&gt;,
+<a href=#236 id=236 data-nosnippet>236</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SpecificationInputs, PrepareError&gt; {
+<a href=#237 id=237 data-nosnippet>237</a>    <span class="kw">let </span>windows = <span class="kw-2">&amp;</span>surveyed.survey.spectral_windows;
+<a href=#238 id=238 data-nosnippet>238</a>    <span class="prelude-val">Ok</span>(SpecificationInputs {
+<a href=#239 id=239 data-nosnippet>239</a>        instrument,
+<a href=#240 id=240 data-nosnippet>240</a>        uncorrected_mask: <span class="kw">if </span>primary_beam &amp;&amp; request.pblimit &gt;= <span class="number">0.0 </span>{
+<a href=#241 id=241 data-nosnippet>241</a>            UncorrectedImageMaskPolicy::PrimaryBeam
+<a href=#242 id=242 data-nosnippet>242</a>        } <span class="kw">else </span>{
+<a href=#243 id=243 data-nosnippet>243</a>            UncorrectedImageMaskPolicy::None
+<a href=#244 id=244 data-nosnippet>244</a>        },
+<a href=#245 id=245 data-nosnippet>245</a>        w_projection: <span class="kw">match </span><span class="kw-2">&amp;</span>request.gridder {
+<a href=#246 id=246 data-nosnippet>246</a>            Gridder::Wproject { wprojplanes } =&gt; <span class="prelude-val">Some</span>(specification::w_projection(
+<a href=#247 id=247 data-nosnippet>247</a>                <span class="kw-2">*</span>wprojplanes,
+<a href=#248 id=248 data-nosnippet>248</a>                windows,
+<a href=#249 id=249 data-nosnippet>249</a>                surveyed.survey.w,
+<a href=#250 id=250 data-nosnippet>250</a>            )<span class="question-mark">?</span>),
+<a href=#251 id=251 data-nosnippet>251</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#252 id=252 data-nosnippet>252</a>        },
+<a href=#253 id=253 data-nosnippet>253</a>        aw_projection: <span class="kw">match </span><span class="kw-2">&amp;</span>request.gridder {
+<a href=#254 id=254 data-nosnippet>254</a>            Gridder::Awproject(aw) =&gt; <span class="prelude-val">Some</span>(specification::aw_projection(
+<a href=#255 id=255 data-nosnippet>255</a>                aw,
+<a href=#256 id=256 data-nosnippet>256</a>                windows,
+<a href=#257 id=257 data-nosnippet>257</a>                surveyed.survey.w,
+<a href=#258 id=258 data-nosnippet>258</a>            )<span class="question-mark">?</span>),
+<a href=#259 id=259 data-nosnippet>259</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#260 id=260 data-nosnippet>260</a>        },
+<a href=#261 id=261 data-nosnippet>261</a>        cube_density_padding: cube_density_padding(request, surveyed)<span class="question-mark">?</span>,
+<a href=#262 id=262 data-nosnippet>262</a>        continuum_transform,
+<a href=#263 id=263 data-nosnippet>263</a>    })
+<a href=#264 id=264 data-nosnippet>264</a>}
+<a href=#265 id=265 data-nosnippet>265</a>
+<a href=#266 id=266 data-nosnippet>266</a><span class="doccomment">/// The selected-observation request: the survey's rows and the channels
+<a href=#267 id=267 data-nosnippet>267</a>/// read, the visibility and weight columns, and the Measures provider and
+<a href=#268 id=268 data-nosnippet>268</a>/// centre ephemeris compile evaluated with.
+<a href=#269 id=269 data-nosnippet>269</a></span><span class="kw">fn </span>observation_request(
+<a href=#270 id=270 data-nosnippet>270</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#271 id=271 data-nosnippet>271</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#272 id=272 data-nosnippet>272</a>    survey: Survey,
+<a href=#273 id=273 data-nosnippet>273</a>    channels: <span class="kw-2">&amp;</span>WindowChannels,
+<a href=#274 id=274 data-nosnippet>274</a>    measures: Arc&lt;<span class="kw">dyn </span>MeasuresProvider&gt;,
+<a href=#275 id=275 data-nosnippet>275</a>    ephemeris: <span class="prelude-ty">Option</span>&lt;SelectedObservationEphemeris&gt;,
+<a href=#276 id=276 data-nosnippet>276</a>    budget: SelectedObservationContentBudget,
+<a href=#277 id=277 data-nosnippet>277</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SelectedObservationResolutionRequest, PrepareError&gt; {
+<a href=#278 id=278 data-nosnippet>278</a>    <span class="kw">let </span>weight_column = <span class="kw">if </span>survey.weight_spectrum_complete {
+<a href=#279 id=279 data-nosnippet>279</a>        OwnerWeightColumn::WeightSpectrum
+<a href=#280 id=280 data-nosnippet>280</a>    } <span class="kw">else </span>{
+<a href=#281 id=281 data-nosnippet>281</a>        OwnerWeightColumn::Weight
+<a href=#282 id=282 data-nosnippet>282</a>    };
+<a href=#283 id=283 data-nosnippet>283</a>    <span class="prelude-val">Ok</span>(SelectedObservationResolutionRequest::new(
+<a href=#284 id=284 data-nosnippet>284</a>        request.vis.display().to_string(),
+<a href=#285 id=285 data-nosnippet>285</a>        selection::observation_selection(ms, survey, channels)<span class="question-mark">?</span>,
+<a href=#286 id=286 data-nosnippet>286</a>        selection::visibility_column(ms, request.datacolumn)<span class="question-mark">?</span>,
+<a href=#287 id=287 data-nosnippet>287</a>        weight_column,
+<a href=#288 id=288 data-nosnippet>288</a>        budget,
+<a href=#289 id=289 data-nosnippet>289</a>        measures,
+<a href=#290 id=290 data-nosnippet>290</a>    )
+<a href=#291 id=291 data-nosnippet>291</a>    .with_ephemeris(ephemeris))
+<a href=#292 id=292 data-nosnippet>292</a>}
+<a href=#293 id=293 data-nosnippet>293</a>
+<a href=#294 id=294 data-nosnippet>294</a><span class="doccomment">/// The image geometry: the domains, the centre laws and the spectral axis.
+<a href=#295 id=295 data-nosnippet>295</a></span><span class="kw">fn </span>geometry(
+<a href=#296 id=296 data-nosnippet>296</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#297 id=297 data-nosnippet>297</a>    domains: <span class="kw-2">&amp;</span>[PreparedImageDomain],
+<a href=#298 id=298 data-nosnippet>298</a>    centre: <span class="kw-2">&amp;</span>Centre,
+<a href=#299 id=299 data-nosnippet>299</a>    spectral: <span class="kw-2">&amp;</span>PreparedSpectralAxis,
+<a href=#300 id=300 data-nosnippet>300</a>) -&gt; GeometryInput {
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">let </span>direction_dependent = <span class="macro">matches!</span>(
+<a href=#302 id=302 data-nosnippet>302</a>        request.gridder,
+<a href=#303 id=303 data-nosnippet>303</a>        Gridder::Mosaic { .. } | Gridder::Awproject(<span class="kw">_</span>)
+<a href=#304 id=304 data-nosnippet>304</a>    );
+<a href=#305 id=305 data-nosnippet>305</a>    GeometryInput::new(
+<a href=#306 id=306 data-nosnippet>306</a>        domains.iter().map(PreparedImageDomain::spec).collect(),
+<a href=#307 id=307 data-nosnippet>307</a>        CentreLaws::new(
+<a href=#308 id=308 data-nosnippet>308</a>            centre.law.clone(),
+<a href=#309 id=309 data-nosnippet>309</a>            instrument::pointing_centre_law(<span class="kw-2">&amp;</span>request.gridder),
+<a href=#310 id=310 data-nosnippet>310</a>        ),
+<a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">if </span>direction_dependent {
+<a href=#312 id=312 data-nosnippet>312</a>            UvwCoordinateLaw::MosaicPhaseTrackingCentre
+<a href=#313 id=313 data-nosnippet>313</a>        } <span class="kw">else </span>{
+<a href=#314 id=314 data-nosnippet>314</a>            UvwCoordinateLaw::PhaseTrackingCentre
+<a href=#315 id=315 data-nosnippet>315</a>        },
+<a href=#316 id=316 data-nosnippet>316</a>        spectral.coordinate(),
+<a href=#317 id=317 data-nosnippet>317</a>    )
+<a href=#318 id=318 data-nosnippet>318</a>}
+<a href=#319 id=319 data-nosnippet>319</a>
+<a href=#320 id=320 data-nosnippet>320</a><span class="doccomment">/// The primary beam the products are written with: the mosaic
+<a href=#321 id=321 data-nosnippet>321</a>/// sensitivity of a direction-dependent gridder, else the telescope's
+<a href=#322 id=322 data-nosnippet>322</a>/// analytic beam when `.pb` or `.image.pbcor` is asked for.
+<a href=#323 id=323 data-nosnippet>323</a></span><span class="kw">fn </span>primary_beam_model(
+<a href=#324 id=324 data-nosnippet>324</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#325 id=325 data-nosnippet>325</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#326 id=326 data-nosnippet>326</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;AnalyticPrimaryBeamModel&gt;, PrepareError&gt; {
+<a href=#327 id=327 data-nosnippet>327</a>    <span class="prelude-val">Ok</span>(<span class="kw">match </span>request.gridder {
+<a href=#328 id=328 data-nosnippet>328</a>        Gridder::Mosaic { .. } | Gridder::Awproject(<span class="kw">_</span>) =&gt; {
+<a href=#329 id=329 data-nosnippet>329</a>            <span class="prelude-val">Some</span>(AnalyticPrimaryBeamModel::MosaicSensitivity)
+<a href=#330 id=330 data-nosnippet>330</a>        }
+<a href=#331 id=331 data-nosnippet>331</a>        Gridder::Standard | Gridder::Wproject { .. } <span class="kw">if </span>request.write_pb || request.pbcor =&gt; {
+<a href=#332 id=332 data-nosnippet>332</a>            <span class="prelude-val">Some</span>(instrument::standard_primary_beam_model(ms)<span class="question-mark">?</span>)
+<a href=#333 id=333 data-nosnippet>333</a>        }
+<a href=#334 id=334 data-nosnippet>334</a>        Gridder::Standard | Gridder::Wproject { .. } =&gt; <span class="prelude-val">None</span>,
+<a href=#335 id=335 data-nosnippet>335</a>    })
+<a href=#336 id=336 data-nosnippet>336</a>}
+<a href=#337 id=337 data-nosnippet>337</a>
+<a href=#338 id=338 data-nosnippet>338</a><span class="doccomment">/// CASA's padded per-channel density grid of a linearly interpolated
+<a href=#339 id=339 data-nosnippet>339</a>/// cube with per-channel density.
+<a href=#340 id=340 data-nosnippet>340</a></span><span class="kw">fn </span>cube_density_padding(
+<a href=#341 id=341 data-nosnippet>341</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#342 id=342 data-nosnippet>342</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#343 id=343 data-nosnippet>343</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;usize&gt;, PrepareError&gt; {
+<a href=#344 id=344 data-nosnippet>344</a>    <span class="kw">let </span>(survey, spectral) = (surveyed.survey, surveyed.spectral);
+<a href=#345 id=345 data-nosnippet>345</a>    <span class="kw">if </span>!specification::cube_density_padded(request, spectral) {
+<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#347 id=347 data-nosnippet>347</a>    }
+<a href=#348 id=348 data-nosnippet>348</a>    <span class="kw">let </span>window = selection::one_window(<span class="kw-2">&amp;</span>survey.spectral_windows, <span class="string">"cube density"</span>)<span class="question-mark">?</span>;
+<a href=#349 id=349 data-nosnippet>349</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(
+<a href=#350 id=350 data-nosnippet>350</a>        surveyed.ms.selected_observation_cube_density_padding(
+<a href=#351 id=351 data-nosnippet>351</a>            <span class="kw-2">&amp;</span>survey.row_selection,
+<a href=#352 id=352 data-nosnippet>352</a>            SelectedObservationSpectralWindow::borrow_selected(
+<a href=#353 id=353 data-nosnippet>353</a>                u32::try_from(window.spw_id).expect(<span class="string">"SPW ids are nonnegative stored i32 values"</span>),
+<a href=#354 id=354 data-nosnippet>354</a>                window.frequency_reference,
+<a href=#355 id=355 data-nosnippet>355</a>                <span class="kw-2">&amp;</span>window.frequencies_hz,
+<a href=#356 id=356 data-nosnippet>356</a>                <span class="kw-2">&amp;</span>window.channel_widths_hz,
+<a href=#357 id=357 data-nosnippet>357</a>                spectral.window_channels(window.spw_id),
+<a href=#358 id=358 data-nosnippet>358</a>            ),
+<a href=#359 id=359 data-nosnippet>359</a>            survey.fields.iter().copied(),
+<a href=#360 id=360 data-nosnippet>360</a>            spectral.output_frequency_reference,
+<a href=#361 id=361 data-nosnippet>361</a>            [
+<a href=#362 id=362 data-nosnippet>362</a>                spectral.reference_frequency_hz,
+<a href=#363 id=363 data-nosnippet>363</a>                spectral.reference_frequency_hz
+<a href=#364 id=364 data-nosnippet>364</a>                    + (spectral.output_channels - <span class="number">1</span>) <span class="kw">as </span>f64 * spectral.increment_hz,
+<a href=#365 id=365 data-nosnippet>365</a>            ],
+<a href=#366 id=366 data-nosnippet>366</a>            spectral.output_channels,
+<a href=#367 id=367 data-nosnippet>367</a>            surveyed.engine,
+<a href=#368 id=368 data-nosnippet>368</a>            surveyed.budget.row_io_budget(),
+<a href=#369 id=369 data-nosnippet>369</a>        )<span class="question-mark">?</span>,
+<a href=#370 id=370 data-nosnippet>370</a>    ))
+<a href=#371 id=371 data-nosnippet>371</a>}
+<a href=#372 id=372 data-nosnippet>372</a>
+<a href=#373 id=373 data-nosnippet>373</a><span class="doccomment">/// The native run's runtime, product publication and AW catalog, still to
+<a href=#374 id=374 data-nosnippet>374</a>/// be deployed: no directory exists and no AW cell is generated until
+<a href=#375 id=375 data-nosnippet>375</a>/// [`Deployment::deploy`].
+<a href=#376 id=376 data-nosnippet>376</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Deployment {
+<a href=#377 id=377 data-nosnippet>377</a>    <span class="doccomment">/// The runtime; its spill directory is made canonical on deployment.
+<a href=#378 id=378 data-nosnippet>378</a>    </span>runtime: ApplicationRuntime,
+<a href=#379 id=379 data-nosnippet>379</a>    publication: ApplicationPublication,
+<a href=#380 id=380 data-nosnippet>380</a>    <span class="doccomment">/// Every domain's output directory.
+<a href=#381 id=381 data-nosnippet>381</a>    </span>output_directories: Vec&lt;PathBuf&gt;,
+<a href=#382 id=382 data-nosnippet>382</a>    aw: <span class="prelude-ty">Option</span>&lt;AwPlan&gt;,
+<a href=#383 id=383 data-nosnippet>383</a>}
+<a href=#384 id=384 data-nosnippet>384</a>
+<a href=#385 id=385 data-nosnippet>385</a><span class="doccomment">/// The AW catalog a run opens and, for a native cache, the cells to bring
+<a href=#386 id=386 data-nosnippet>386</a>/// to the request's policy.
+<a href=#387 id=387 data-nosnippet>387</a></span><span class="kw">struct </span>AwPlan {
+<a href=#388 id=388 data-nosnippet>388</a>    root: PathBuf,
+<a href=#389 id=389 data-nosnippet>389</a>    native: <span class="prelude-ty">Option</span>&lt;(NativeAwCachePolicy, NativeAwRequestInput)&gt;,
+<a href=#390 id=390 data-nosnippet>390</a>    indexing: AwIndexing,
+<a href=#391 id=391 data-nosnippet>391</a>    resident_bytes: usize,
+<a href=#392 id=392 data-nosnippet>392</a>}
+<a href=#393 id=393 data-nosnippet>393</a>
+<a href=#394 id=394 data-nosnippet>394</a><span class="kw">impl </span>Deployment {
+<a href=#395 id=395 data-nosnippet>395</a>    <span class="doccomment">/// Create every domain's output directory, settle the spill directory
+<a href=#396 id=396 data-nosnippet>396</a>    /// beside the main image and bring a native AW cache to the request's
+<a href=#397 id=397 data-nosnippet>397</a>    /// policy.
+<a href=#398 id=398 data-nosnippet>398</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>deploy(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;ApplicationNative, PrepareError&gt; {
+<a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">for </span>directory <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.output_directories {
+<a href=#400 id=400 data-nosnippet>400</a>            std::fs::create_dir_all(directory).map_err(|source| PrepareError::OutputDirectory {
+<a href=#401 id=401 data-nosnippet>401</a>                path: directory.clone(),
+<a href=#402 id=402 data-nosnippet>402</a>                source,
+<a href=#403 id=403 data-nosnippet>403</a>            })<span class="question-mark">?</span>;
+<a href=#404 id=404 data-nosnippet>404</a>        }
+<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">let </span><span class="kw-2">mut </span>runtime = <span class="self">self</span>.runtime;
+<a href=#406 id=406 data-nosnippet>406</a>        runtime.spill_directory = runtime.spill_directory.canonicalize().map_err(|source| {
+<a href=#407 id=407 data-nosnippet>407</a>            PrepareError::OutputDirectory {
+<a href=#408 id=408 data-nosnippet>408</a>                path: runtime.spill_directory.clone(),
+<a href=#409 id=409 data-nosnippet>409</a>                source,
+<a href=#410 id=410 data-nosnippet>410</a>            }
+<a href=#411 id=411 data-nosnippet>411</a>        })<span class="question-mark">?</span>;
+<a href=#412 id=412 data-nosnippet>412</a>        <span class="prelude-val">Ok</span>(ApplicationNative {
+<a href=#413 id=413 data-nosnippet>413</a>            runtime,
+<a href=#414 id=414 data-nosnippet>414</a>            publication: <span class="self">self</span>.publication,
+<a href=#415 id=415 data-nosnippet>415</a>            aw_catalog: <span class="self">self</span>.aw.map(AwPlan::deploy).transpose()<span class="question-mark">?</span>,
+<a href=#416 id=416 data-nosnippet>416</a>        })
+<a href=#417 id=417 data-nosnippet>417</a>    }
+<a href=#418 id=418 data-nosnippet>418</a>}
+<a href=#419 id=419 data-nosnippet>419</a>
+<a href=#420 id=420 data-nosnippet>420</a><span class="kw">impl </span>AwPlan {
+<a href=#421 id=421 data-nosnippet>421</a>    <span class="doccomment">/// Under every policy the request's cells are compared with the
+<a href=#422 id=422 data-nosnippet>422</a>    /// directory: reuse needs every one, generation fills in the absent
+<a href=#423 id=423 data-nosnippet>423</a>    /// ones, regeneration clears the cache first; the loader then checks
+<a href=#424 id=424 data-nosnippet>424</a>    /// each cell's sky increment against the image (plan section 5.6).
+<a href=#425 id=425 data-nosnippet>425</a>    </span><span class="kw">fn </span>deploy(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;AwCatalogDeployment, PrepareError&gt; {
+<a href=#426 id=426 data-nosnippet>426</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((policy, input)) = <span class="kw-2">&amp;</span><span class="self">self</span>.native {
+<a href=#427 id=427 data-nosnippet>427</a>            <span class="kw">let </span>(present, expected) = AwCatalog::native_cells_present(<span class="kw-2">&amp;</span><span class="self">self</span>.root, input);
+<a href=#428 id=428 data-nosnippet>428</a>            <span class="kw">match </span>policy {
+<a href=#429 id=429 data-nosnippet>429</a>                NativeAwCachePolicy::ReuseOnly <span class="kw">if </span>present != expected =&gt; {
+<a href=#430 id=430 data-nosnippet>430</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::AwCacheIncomplete { present, expected });
+<a href=#431 id=431 data-nosnippet>431</a>                }
+<a href=#432 id=432 data-nosnippet>432</a>                NativeAwCachePolicy::ReuseOnly =&gt; {}
+<a href=#433 id=433 data-nosnippet>433</a>                NativeAwCachePolicy::GenerateMissing =&gt; {
+<a href=#434 id=434 data-nosnippet>434</a>                    <span class="kw">if </span>present != expected {
+<a href=#435 id=435 data-nosnippet>435</a>                        AwCatalog::generate_native(<span class="kw-2">&amp;</span><span class="self">self</span>.root, input, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+<a href=#436 id=436 data-nosnippet>436</a>                    }
+<a href=#437 id=437 data-nosnippet>437</a>                }
+<a href=#438 id=438 data-nosnippet>438</a>                NativeAwCachePolicy::Regenerate =&gt; {
+<a href=#439 id=439 data-nosnippet>439</a>                    AwCatalog::clear_native(<span class="kw-2">&amp;</span><span class="self">self</span>.root)<span class="question-mark">?</span>;
+<a href=#440 id=440 data-nosnippet>440</a>                    AwCatalog::generate_native(<span class="kw-2">&amp;</span><span class="self">self</span>.root, input, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
+<a href=#441 id=441 data-nosnippet>441</a>                }
+<a href=#442 id=442 data-nosnippet>442</a>            }
+<a href=#443 id=443 data-nosnippet>443</a>        }
+<a href=#444 id=444 data-nosnippet>444</a>        <span class="prelude-val">Ok</span>(AwCatalogDeployment {
+<a href=#445 id=445 data-nosnippet>445</a>            root: <span class="self">self</span>.root,
+<a href=#446 id=446 data-nosnippet>446</a>            indexing: <span class="self">self</span>.indexing,
+<a href=#447 id=447 data-nosnippet>447</a>            resident_bytes: <span class="self">self</span>.resident_bytes,
+<a href=#448 id=448 data-nosnippet>448</a>        })
+<a href=#449 id=449 data-nosnippet>449</a>    }
+<a href=#450 id=450 data-nosnippet>450</a>}
+<a href=#451 id=451 data-nosnippet>451</a>
+<a href=#452 id=452 data-nosnippet>452</a><span class="doccomment">/// The native run's deployment: the runtime with the paged cube state
+<a href=#453 id=453 data-nosnippet>453</a>/// beside the main image, the product controls and sink, and the AW plan.
+<a href=#454 id=454 data-nosnippet>454</a></span><span class="kw">fn </span>deployment(
+<a href=#455 id=455 data-nosnippet>455</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#456 id=456 data-nosnippet>456</a>    context: <span class="kw-2">&amp;</span>RunContext,
+<a href=#457 id=457 data-nosnippet>457</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#458 id=458 data-nosnippet>458</a>    domains: <span class="kw-2">&amp;</span>[PreparedImageDomain],
+<a href=#459 id=459 data-nosnippet>459</a>    primary_beam: <span class="prelude-ty">Option</span>&lt;AnalyticPrimaryBeamModel&gt;,
+<a href=#460 id=460 data-nosnippet>460</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Deployment, PrepareError&gt; {
+<a href=#461 id=461 data-nosnippet>461</a>    <span class="kw">let </span>parent = |path: <span class="kw-2">&amp;</span>Path| {
+<a href=#462 id=462 data-nosnippet>462</a>        path.parent()
+<a href=#463 id=463 data-nosnippet>463</a>            .unwrap_or_else(|| Path::new(<span class="string">"."</span>))
+<a href=#464 id=464 data-nosnippet>464</a>            .to_path_buf()
+<a href=#465 id=465 data-nosnippet>465</a>    };
+<a href=#466 id=466 data-nosnippet>466</a>    <span class="kw">let </span><span class="kw-2">mut </span>controls = ContinuumProductControls::new(request.psfcutoff <span class="kw">as </span>f32).map_err(|<span class="kw">_</span>| {
+<a href=#467 id=467 data-nosnippet>467</a>        PrepareError::PsfCutoff {
+<a href=#468 id=468 data-nosnippet>468</a>            psfcutoff: request.psfcutoff,
+<a href=#469 id=469 data-nosnippet>469</a>        }
+<a href=#470 id=470 data-nosnippet>470</a>    })<span class="question-mark">?</span>;
+<a href=#471 id=471 data-nosnippet>471</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(model) = primary_beam {
+<a href=#472 id=472 data-nosnippet>472</a>        controls = controls.with_primary_beam_model(model);
+<a href=#473 id=473 data-nosnippet>473</a>    }
+<a href=#474 id=474 data-nosnippet>474</a>    <span class="prelude-val">Ok</span>(Deployment {
+<a href=#475 id=475 data-nosnippet>475</a>        runtime: ApplicationRuntime {
+<a href=#476 id=476 data-nosnippet>476</a>            host: context.host,
+<a href=#477 id=477 data-nosnippet>477</a>            resource_policy: context.policy,
+<a href=#478 id=478 data-nosnippet>478</a>            backend: request.backend,
+<a href=#479 id=479 data-nosnippet>479</a>            grid_precision: request.gridprecision,
+<a href=#480 id=480 data-nosnippet>480</a>            cancel: context.cancel.clone(),
+<a href=#481 id=481 data-nosnippet>481</a>            spill_directory: parent(<span class="kw-2">&amp;</span>request.imagename),
+<a href=#482 id=482 data-nosnippet>482</a>            summary: context.summary.clone(),
+<a href=#483 id=483 data-nosnippet>483</a>        },
+<a href=#484 id=484 data-nosnippet>484</a>        publication: ApplicationPublication {
+<a href=#485 id=485 data-nosnippet>485</a>            controls,
+<a href=#486 id=486 data-nosnippet>486</a>            sink: CasaImageProductSink::for_domains(
+<a href=#487 id=487 data-nosnippet>487</a>                domains.iter().map(PreparedImageDomain::output),
+<a href=#488 id=488 data-nosnippet>488</a>            ),
+<a href=#489 id=489 data-nosnippet>489</a>        },
+<a href=#490 id=490 data-nosnippet>490</a>        output_directories: domains
+<a href=#491 id=491 data-nosnippet>491</a>            .iter()
+<a href=#492 id=492 data-nosnippet>492</a>            .map(|domain| parent(<span class="kw-2">&amp;</span>domain.output))
+<a href=#493 id=493 data-nosnippet>493</a>            .collect(),
+<a href=#494 id=494 data-nosnippet>494</a>        aw: <span class="kw">match </span><span class="kw-2">&amp;</span>request.gridder {
+<a href=#495 id=495 data-nosnippet>495</a>            Gridder::Awproject(aw) =&gt; <span class="prelude-val">Some</span>(aw_plan(request, aw, surveyed)<span class="question-mark">?</span>),
+<a href=#496 id=496 data-nosnippet>496</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#497 id=497 data-nosnippet>497</a>        },
+<a href=#498 id=498 data-nosnippet>498</a>    })
+<a href=#499 id=499 data-nosnippet>499</a>}
+<a href=#500 id=500 data-nosnippet>500</a>
+<a href=#501 id=501 data-nosnippet>501</a><span class="doccomment">/// The AW catalog to open: a CASA cache read as it is, or a native cache
+<a href=#502 id=502 data-nosnippet>502</a>/// in CASA's format with the input its cells are generated from.
+<a href=#503 id=503 data-nosnippet>503</a></span><span class="kw">fn </span>aw_plan(
+<a href=#504 id=504 data-nosnippet>504</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#505 id=505 data-nosnippet>505</a>    aw: <span class="kw-2">&amp;</span>AwProjection,
+<a href=#506 id=506 data-nosnippet>506</a>    surveyed: <span class="kw-2">&amp;</span>Surveyed&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#507 id=507 data-nosnippet>507</a>) -&gt; <span class="prelude-ty">Result</span>&lt;AwPlan, PrepareError&gt; {
+<a href=#508 id=508 data-nosnippet>508</a>    <span class="kw">let </span>(root, native) = <span class="kw">match </span><span class="kw-2">&amp;</span>aw.cf_source {
+<a href=#509 id=509 data-nosnippet>509</a>        AwCfSource::CasaImport { cfcache } =&gt; (cfcache.clone(), <span class="prelude-val">None</span>),
+<a href=#510 id=510 data-nosnippet>510</a>        AwCfSource::NativeEvla {
+<a href=#511 id=511 data-nosnippet>511</a>            native_cf_cache,
+<a href=#512 id=512 data-nosnippet>512</a>            native_cf_policy,
+<a href=#513 id=513 data-nosnippet>513</a>            ..
+<a href=#514 id=514 data-nosnippet>514</a>        } =&gt; {
+<a href=#515 id=515 data-nosnippet>515</a>            <span class="kw">let </span>first_row = surveyed
+<a href=#516 id=516 data-nosnippet>516</a>                .survey
+<a href=#517 id=517 data-nosnippet>517</a>                .first_cross_row
+<a href=#518 id=518 data-nosnippet>518</a>                .ok_or(PrepareError::NoCrossCorrelationRow)<span class="question-mark">?</span>;
+<a href=#519 id=519 data-nosnippet>519</a>            <span class="kw">let </span>input = native_aw::resolve(request, aw, surveyed, first_row)<span class="question-mark">?</span>;
+<a href=#520 id=520 data-nosnippet>520</a>            input.validate()<span class="question-mark">?</span>;
+<a href=#521 id=521 data-nosnippet>521</a>            (native_cf_cache.clone(), <span class="prelude-val">Some</span>((<span class="kw-2">*</span>native_cf_policy, input)))
+<a href=#522 id=522 data-nosnippet>522</a>        }
+<a href=#523 id=523 data-nosnippet>523</a>    };
+<a href=#524 id=524 data-nosnippet>524</a>    <span class="prelude-val">Ok</span>(AwPlan {
+<a href=#525 id=525 data-nosnippet>525</a>        root,
+<a href=#526 id=526 data-nosnippet>526</a>        native,
+<a href=#527 id=527 data-nosnippet>527</a>        indexing: AwIndexing {
+<a href=#528 id=528 data-nosnippet>528</a>            conjugate_beams: <span class="bool-val">true</span>,
+<a href=#529 id=529 data-nosnippet>529</a>            image_reference_hz: surveyed.spectral.reference_frequency_hz,
+<a href=#530 id=530 data-nosnippet>530</a>        },
+<a href=#531 id=531 data-nosnippet>531</a>        resident_bytes: aw.cf_resident_mb.checked_mul(<span class="number">1 </span>&lt;&lt; <span class="number">20</span>).ok_or(
+<a href=#532 id=532 data-nosnippet>532</a>            PrepareError::CfResidentSize {
+<a href=#533 id=533 data-nosnippet>533</a>                megabytes: aw.cf_resident_mb,
+<a href=#534 id=534 data-nosnippet>534</a>            },
+<a href=#535 id=535 data-nosnippet>535</a>        )<span class="question-mark">?</span>,
 <a href=#536 id=536 data-nosnippet>536</a>    })
 <a href=#537 id=537 data-nosnippet>537</a>}
-<a href=#538 id=538 data-nosnippet>538</a>
-<a href=#539 id=539 data-nosnippet>539</a><span class="doccomment">/// The identity of one prepared selection request: unique in the process,
-<a href=#540 id=540 data-nosnippet>540</a>/// since a request is identified by who owns it, not by its content.
-<a href=#541 id=541 data-nosnippet>541</a></span><span class="kw">fn </span>selection_request_identity() -&gt; casa_imaging_model::LogicalIdentity {
-<a href=#542 id=542 data-nosnippet>542</a>    <span class="kw">use </span>std::sync::atomic::{AtomicU64, Ordering};
-<a href=#543 id=543 data-nosnippet>543</a>    <span class="kw">static </span>NEXT: AtomicU64 = AtomicU64::new(<span class="number">1</span>);
-<a href=#544 id=544 data-nosnippet>544</a>    <span class="kw">let </span><span class="kw-2">mut </span>identity = [<span class="number">0_u8</span>; <span class="number">32</span>];
-<a href=#545 id=545 data-nosnippet>545</a>    identity[<span class="number">0</span>] = <span class="number">2</span>;
-<a href=#546 id=546 data-nosnippet>546</a>    identity[<span class="number">24</span>..].copy_from_slice(<span class="kw-2">&amp;</span>NEXT.fetch_add(<span class="number">1</span>, Ordering::Relaxed).to_be_bytes());
-<a href=#547 id=547 data-nosnippet>547</a>    casa_imaging_model::LogicalIdentity::from_bytes(identity)
-<a href=#548 id=548 data-nosnippet>548</a>}
-<a href=#549 id=549 data-nosnippet>549</a>
-<a href=#550 id=550 data-nosnippet>550</a><span class="kw">fn </span>boxed(message: <span class="kw">impl </span>Into&lt;String&gt;) -&gt; ApplicationError {
-<a href=#551 id=551 data-nosnippet>551</a>    Box::new(std::io::Error::other(message.into()))
-<a href=#552 id=552 data-nosnippet>552</a>}
 </code></pre></div></section></main></body></html>

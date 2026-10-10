@@ -3,332 +3,334 @@
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="doccomment">//! The image domains: the main image and the outlier file's, each with its
 <a href=#4 id=4 data-nosnippet>4</a>//! direction coordinate, product coordinate system and clean mask.
 <a href=#5 id=5 data-nosnippet>5</a>
-<a href=#6 id=6 data-nosnippet>6</a></span><span class="kw">use </span>std::path::{Path, PathBuf};
-<a href=#7 id=7 data-nosnippet>7</a>
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>casa_coordinates::{
-<a href=#9 id=9 data-nosnippet>9</a>    CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo, ProjectionType,
-<a href=#10 id=10 data-nosnippet>10</a>};
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>casa_images::AnyPagedImage;
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_imaging_model::{
-<a href=#13 id=13 data-nosnippet>13</a>    AxisOrder, DirectionCoordinateSpec, DirectionFrame, FacetLayout, ImageAxis, ImageDomainRole,
-<a href=#14 id=14 data-nosnippet>14</a>    ImageDomainSpec, ImageShape, PolarizationCoordinate, Projection, SkyDirection,
-<a href=#15 id=15 data-nosnippet>15</a>};
-<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>casa_imaging_reconstruction::{
-<a href=#17 id=17 data-nosnippet>17</a>    AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, ReconstructionMaskPlan,
-<a href=#18 id=18 data-nosnippet>18</a>};
-<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>casa_types::measures::direction::DirectionRef;
-<a href=#20 id=20 data-nosnippet>20</a>
-<a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span><span class="kw">super</span>::boxed;
-<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span><span class="kw">super</span>::direction::{
-<a href=#23 id=23 data-nosnippet>23</a>    Centre, ImageSpectralCoordinate, direction_spec, image_coordinates,
-<a href=#24 id=24 data-nosnippet>24</a>    parse_phase_center_direction,
-<a href=#25 id=25 data-nosnippet>25</a>};
-<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span><span class="kw">super</span>::outliers::read_outlier_domains;
-<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use crate</span>::{ApplicationError, CasaImageDomainOutput, ImagingRequest, UseMask};
-<a href=#28 id=28 data-nosnippet>28</a>
-<a href=#29 id=29 data-nosnippet>29</a><span class="doccomment">/// The pixels a domain's minor cycle may update.
-<a href=#30 id=30 data-nosnippet>30</a></span><span class="attr">#[derive(Clone, Debug, PartialEq)]
-<a href=#31 id=31 data-nosnippet>31</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>DomainMask {
-<a href=#32 id=32 data-nosnippet>32</a>    <span class="doccomment">/// Every valid model pixel.
-<a href=#33 id=33 data-nosnippet>33</a>    </span>FullPlane,
-<a href=#34 id=34 data-nosnippet>34</a>    <span class="doccomment">/// The union of inclusive pixel boxes `[x0, y0, x1, y1]`.
-<a href=#35 id=35 data-nosnippet>35</a>    </span>Boxes(Vec&lt;[usize; <span class="number">4</span>]&gt;),
-<a href=#36 id=36 data-nosnippet>36</a>    <span class="doccomment">/// The non-zero pixels of a CASA image, reprojected onto the domain.
-<a href=#37 id=37 data-nosnippet>37</a>    </span>Image(PathBuf),
-<a href=#38 id=38 data-nosnippet>38</a>    <span class="doccomment">/// Row-major support over the domain's own grid.
-<a href=#39 id=39 data-nosnippet>39</a>    </span>PixelSupport(Box&lt;[bool]&gt;),
-<a href=#40 id=40 data-nosnippet>40</a>    <span class="doccomment">/// CASA auto-multithresh support from the current normal state.
-<a href=#41 id=41 data-nosnippet>41</a>    </span>AutoMultithresh(AutoMultithreshControls),
-<a href=#42 id=42 data-nosnippet>42</a>}
-<a href=#43 id=43 data-nosnippet>43</a>
-<a href=#44 id=44 data-nosnippet>44</a><span class="doccomment">/// One image domain of the run.
-<a href=#45 id=45 data-nosnippet>45</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PreparedImageDomain {
-<a href=#46 id=46 data-nosnippet>46</a>    <span class="kw">pub</span>(<span class="kw">super</span>) role: ImageDomainRole,
-<a href=#47 id=47 data-nosnippet>47</a>    <span class="kw">pub</span>(<span class="kw">super</span>) output: PathBuf,
-<a href=#48 id=48 data-nosnippet>48</a>    <span class="kw">pub</span>(<span class="kw">super</span>) image_size: usize,
-<a href=#49 id=49 data-nosnippet>49</a>    <span class="kw">pub</span>(<span class="kw">super</span>) direction: DirectionCoordinateSpec,
-<a href=#50 id=50 data-nosnippet>50</a>    <span class="kw">pub</span>(<span class="kw">super</span>) coordinates: CoordinateSystem,
-<a href=#51 id=51 data-nosnippet>51</a>    <span class="kw">pub</span>(<span class="kw">super</span>) mask: DomainMask,
-<a href=#52 id=52 data-nosnippet>52</a>}
-<a href=#53 id=53 data-nosnippet>53</a>
-<a href=#54 id=54 data-nosnippet>54</a><span class="kw">impl </span>PreparedImageDomain {
-<a href=#55 id=55 data-nosnippet>55</a>    <span class="doccomment">/// The model's specification of this domain: one facet, axes
-<a href=#56 id=56 data-nosnippet>56</a>    /// direction, polarization, spectral.
-<a href=#57 id=57 data-nosnippet>57</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>spec(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ImageDomainSpec {
-<a href=#58 id=58 data-nosnippet>58</a>        ImageDomainSpec::new(
-<a href=#59 id=59 data-nosnippet>59</a>            <span class="self">self</span>.role.clone(),
-<a href=#60 id=60 data-nosnippet>60</a>            ImageShape::new(<span class="self">self</span>.image_size, <span class="self">self</span>.image_size),
-<a href=#61 id=61 data-nosnippet>61</a>            <span class="self">self</span>.direction,
-<a href=#62 id=62 data-nosnippet>62</a>            FacetLayout::Single,
-<a href=#63 id=63 data-nosnippet>63</a>            AxisOrder::new([
-<a href=#64 id=64 data-nosnippet>64</a>                ImageAxis::DirectionLongitude,
-<a href=#65 id=65 data-nosnippet>65</a>                ImageAxis::DirectionLatitude,
-<a href=#66 id=66 data-nosnippet>66</a>                ImageAxis::Polarization,
-<a href=#67 id=67 data-nosnippet>67</a>                ImageAxis::Spectral,
-<a href=#68 id=68 data-nosnippet>68</a>            ]),
-<a href=#69 id=69 data-nosnippet>69</a>        )
-<a href=#70 id=70 data-nosnippet>70</a>    }
-<a href=#71 id=71 data-nosnippet>71</a>
-<a href=#72 id=72 data-nosnippet>72</a>    <span class="doccomment">/// Where the product sink writes this domain's images.
-<a href=#73 id=73 data-nosnippet>73</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>output(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; CasaImageDomainOutput {
-<a href=#74 id=74 data-nosnippet>74</a>        CasaImageDomainOutput::new(
-<a href=#75 id=75 data-nosnippet>75</a>            <span class="self">self</span>.role.clone(),
-<a href=#76 id=76 data-nosnippet>76</a>            <span class="self">self</span>.output.clone(),
-<a href=#77 id=77 data-nosnippet>77</a>            <span class="self">self</span>.coordinates.clone(),
-<a href=#78 id=78 data-nosnippet>78</a>        )
-<a href=#79 id=79 data-nosnippet>79</a>    }
-<a href=#80 id=80 data-nosnippet>80</a>}
-<a href=#81 id=81 data-nosnippet>81</a>
-<a href=#82 id=82 data-nosnippet>82</a><span class="doccomment">/// The main domain and the outlier file's, ordered by role.
-<a href=#83 id=83 data-nosnippet>83</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>prepare_domains(
-<a href=#84 id=84 data-nosnippet>84</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
-<a href=#85 id=85 data-nosnippet>85</a>    centre: <span class="kw-2">&amp;</span>Centre,
-<a href=#86 id=86 data-nosnippet>86</a>    spectral: ImageSpectralCoordinate,
-<a href=#87 id=87 data-nosnippet>87</a>    observation: <span class="kw-2">&amp;</span>ObsInfo,
-<a href=#88 id=88 data-nosnippet>88</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;PreparedImageDomain&gt;, ApplicationError&gt; {
-<a href=#89 id=89 data-nosnippet>89</a>    <span class="kw">let </span>polarizations = <span class="kw-2">&amp;</span>request.stokes;
-<a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">let </span><span class="kw-2">mut </span>domains = <span class="macro">vec!</span>[PreparedImageDomain {
-<a href=#91 id=91 data-nosnippet>91</a>        role: ImageDomainRole::Main,
-<a href=#92 id=92 data-nosnippet>92</a>        output: request.imagename.clone(),
-<a href=#93 id=93 data-nosnippet>93</a>        image_size: request.imsize,
-<a href=#94 id=94 data-nosnippet>94</a>        direction: centre.direction,
-<a href=#95 id=95 data-nosnippet>95</a>        coordinates: image_coordinates(
-<a href=#96 id=96 data-nosnippet>96</a>            centre.direction,
-<a href=#97 id=97 data-nosnippet>97</a>            request.imsize,
-<a href=#98 id=98 data-nosnippet>98</a>            polarizations,
-<a href=#99 id=99 data-nosnippet>99</a>            spectral,
-<a href=#100 id=100 data-nosnippet>100</a>            observation,
-<a href=#101 id=101 data-nosnippet>101</a>        ),
-<a href=#102 id=102 data-nosnippet>102</a>        mask: request_mask(request),
-<a href=#103 id=103 data-nosnippet>103</a>    }];
-<a href=#104 id=104 data-nosnippet>104</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(path) = request.outlierfile.as_deref() {
-<a href=#105 id=105 data-nosnippet>105</a>        <span class="kw">for </span>outlier <span class="kw">in </span>read_outlier_domains(path, request.imsize, request.cell)<span class="question-mark">? </span>{
-<a href=#106 id=106 data-nosnippet>106</a>            <span class="kw">let </span>centre = parse_phase_center_direction(<span class="kw-2">&amp;</span>outlier.phase_center)<span class="question-mark">?</span>;
-<a href=#107 id=107 data-nosnippet>107</a>            <span class="kw">let </span>direction = direction_spec(
-<a href=#108 id=108 data-nosnippet>108</a>                outlier.image_size,
-<a href=#109 id=109 data-nosnippet>109</a>                outlier.cell_arcsec,
-<a href=#110 id=110 data-nosnippet>110</a>                DirectionFrame::J2000,
-<a href=#111 id=111 data-nosnippet>111</a>                centre.longitude_rad(),
-<a href=#112 id=112 data-nosnippet>112</a>                centre.latitude_rad(),
-<a href=#113 id=113 data-nosnippet>113</a>            );
-<a href=#114 id=114 data-nosnippet>114</a>            domains.push(PreparedImageDomain {
-<a href=#115 id=115 data-nosnippet>115</a>                role: ImageDomainRole::Outlier(outlier.name),
-<a href=#116 id=116 data-nosnippet>116</a>                output: outlier.output,
-<a href=#117 id=117 data-nosnippet>117</a>                image_size: outlier.image_size,
-<a href=#118 id=118 data-nosnippet>118</a>                direction,
-<a href=#119 id=119 data-nosnippet>119</a>                coordinates: image_coordinates(
-<a href=#120 id=120 data-nosnippet>120</a>                    direction,
-<a href=#121 id=121 data-nosnippet>121</a>                    outlier.image_size,
-<a href=#122 id=122 data-nosnippet>122</a>                    polarizations,
-<a href=#123 id=123 data-nosnippet>123</a>                    spectral,
-<a href=#124 id=124 data-nosnippet>124</a>                    observation,
-<a href=#125 id=125 data-nosnippet>125</a>                ),
-<a href=#126 id=126 data-nosnippet>126</a>                mask: outlier.mask,
-<a href=#127 id=127 data-nosnippet>127</a>            });
-<a href=#128 id=128 data-nosnippet>128</a>        }
-<a href=#129 id=129 data-nosnippet>129</a>    }
-<a href=#130 id=130 data-nosnippet>130</a>    domains.sort_by(|left, right| left.role.cmp(<span class="kw-2">&amp;</span>right.role));
-<a href=#131 id=131 data-nosnippet>131</a>    <span class="prelude-val">Ok</span>(domains)
-<a href=#132 id=132 data-nosnippet>132</a>}
-<a href=#133 id=133 data-nosnippet>133</a>
-<a href=#134 id=134 data-nosnippet>134</a><span class="doccomment">/// The main domain's mask: CASA auto-multithresh, the user mask image or
-<a href=#135 id=135 data-nosnippet>135</a>/// boxes, or every pixel. The auto-multithresh controls the catalog does
-<a href=#136 id=136 data-nosnippet>136</a>/// not carry take CASA's defaults (`smoothfactor = 1`, `cutthreshold =
-<a href=#137 id=137 data-nosnippet>137</a>/// 0.01`, `minpercentchange = -1`).
-<a href=#138 id=138 data-nosnippet>138</a></span><span class="kw">fn </span>request_mask(request: <span class="kw-2">&amp;</span>ImagingRequest) -&gt; DomainMask {
-<a href=#139 id=139 data-nosnippet>139</a>    <span class="kw">match </span>(request.usemask, <span class="kw-2">&amp;</span>request.mask_image) {
-<a href=#140 id=140 data-nosnippet>140</a>        (UseMask::AutoMultithresh, <span class="kw">_</span>) =&gt; DomainMask::AutoMultithresh(AutoMultithreshControls {
-<a href=#141 id=141 data-nosnippet>141</a>            sidelobe_factor: request.sidelobethreshold,
-<a href=#142 id=142 data-nosnippet>142</a>            noise_factor: request.noisethreshold,
-<a href=#143 id=143 data-nosnippet>143</a>            low_noise_factor: request.lownoisethreshold,
-<a href=#144 id=144 data-nosnippet>144</a>            negative_factor: request.negativethreshold,
-<a href=#145 id=145 data-nosnippet>145</a>            minimum_beam_fraction: request.minbeamfrac,
-<a href=#146 id=146 data-nosnippet>146</a>            smooth_factor: <span class="number">1.0</span>,
-<a href=#147 id=147 data-nosnippet>147</a>            cut_threshold: <span class="number">0.01</span>,
-<a href=#148 id=148 data-nosnippet>148</a>            grow_iterations: request.growiterations,
-<a href=#149 id=149 data-nosnippet>149</a>            minimum_percent_change: -<span class="number">1.0</span>,
-<a href=#150 id=150 data-nosnippet>150</a>        }),
-<a href=#151 id=151 data-nosnippet>151</a>        (UseMask::User, <span class="prelude-val">Some</span>(path)) =&gt; DomainMask::Image(path.clone()),
-<a href=#152 id=152 data-nosnippet>152</a>        (UseMask::User, <span class="prelude-val">None</span>) <span class="kw">if </span>request.mask_box.is_empty() =&gt; DomainMask::FullPlane,
-<a href=#153 id=153 data-nosnippet>153</a>        (UseMask::User, <span class="prelude-val">None</span>) =&gt; DomainMask::Boxes(request.mask_box.clone()),
-<a href=#154 id=154 data-nosnippet>154</a>    }
-<a href=#155 id=155 data-nosnippet>155</a>}
-<a href=#156 id=156 data-nosnippet>156</a>
-<a href=#157 id=157 data-nosnippet>157</a><span class="doccomment">/// Each domain's mask plan, bound to its direction coordinate.
-<a href=#158 id=158 data-nosnippet>158</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>mask_plans(
-<a href=#159 id=159 data-nosnippet>159</a>    domains: <span class="kw-2">&amp;</span>[PreparedImageDomain],
-<a href=#160 id=160 data-nosnippet>160</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ImageDomainReconstructionMaskPlans, ApplicationError&gt; {
-<a href=#161 id=161 data-nosnippet>161</a>    <span class="prelude-val">Ok</span>(ImageDomainReconstructionMaskPlans::new(
-<a href=#162 id=162 data-nosnippet>162</a>        domains
-<a href=#163 id=163 data-nosnippet>163</a>            .iter()
-<a href=#164 id=164 data-nosnippet>164</a>            .map(|domain| mask_plan(domain.mask.clone(), domain.direction, domain.image_size))
-<a href=#165 id=165 data-nosnippet>165</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>,
-<a href=#166 id=166 data-nosnippet>166</a>    )<span class="question-mark">?</span>)
+<a href=#6 id=6 data-nosnippet>6</a></span><span class="kw">use </span>std::collections::BTreeSet;
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>std::path::{Path, PathBuf};
+<a href=#8 id=8 data-nosnippet>8</a>
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_coordinates::{
+<a href=#10 id=10 data-nosnippet>10</a>    CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo, ProjectionType,
+<a href=#11 id=11 data-nosnippet>11</a>};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_images::AnyPagedImage;
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>casa_imaging_model::{
+<a href=#14 id=14 data-nosnippet>14</a>    AxisOrder, DirectionCoordinateSpec, DirectionFrame, FacetLayout, ImageAxis, ImageDomainRole,
+<a href=#15 id=15 data-nosnippet>15</a>    ImageDomainSpec, ImageShape, PolarizationCoordinate, Projection, SkyDirection,
+<a href=#16 id=16 data-nosnippet>16</a>};
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>casa_imaging_reconstruction::{
+<a href=#18 id=18 data-nosnippet>18</a>    AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, ReconstructionMaskPlan,
+<a href=#19 id=19 data-nosnippet>19</a>};
+<a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>casa_types::measures::direction::DirectionRef;
+<a href=#21 id=21 data-nosnippet>21</a>
+<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span><span class="kw">super</span>::PrepareError;
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span><span class="kw">super</span>::direction::{
+<a href=#24 id=24 data-nosnippet>24</a>    Centre, ImageSpectralCoordinate, direction_spec, image_coordinates,
+<a href=#25 id=25 data-nosnippet>25</a>    parse_phase_center_direction,
+<a href=#26 id=26 data-nosnippet>26</a>};
+<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span><span class="kw">super</span>::outliers::read_outlier_domains;
+<a href=#28 id=28 data-nosnippet>28</a><span class="kw">use crate</span>::{CasaImageDomainOutput, ImagingRequest, UseMask};
+<a href=#29 id=29 data-nosnippet>29</a>
+<a href=#30 id=30 data-nosnippet>30</a><span class="doccomment">/// The pixels a domain's minor cycle may update.
+<a href=#31 id=31 data-nosnippet>31</a></span><span class="attr">#[derive(Clone, Debug, PartialEq)]
+<a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>DomainMask {
+<a href=#33 id=33 data-nosnippet>33</a>    <span class="doccomment">/// Every valid model pixel.
+<a href=#34 id=34 data-nosnippet>34</a>    </span>FullPlane,
+<a href=#35 id=35 data-nosnippet>35</a>    <span class="doccomment">/// The union of inclusive pixel boxes `[x0, y0, x1, y1]`.
+<a href=#36 id=36 data-nosnippet>36</a>    </span>Boxes(Vec&lt;[usize; <span class="number">4</span>]&gt;),
+<a href=#37 id=37 data-nosnippet>37</a>    <span class="doccomment">/// The non-zero pixels of a CASA image, reprojected onto the domain.
+<a href=#38 id=38 data-nosnippet>38</a>    </span>Image(PathBuf),
+<a href=#39 id=39 data-nosnippet>39</a>    <span class="doccomment">/// Row-major support over the domain's own grid.
+<a href=#40 id=40 data-nosnippet>40</a>    </span>PixelSupport(Box&lt;[bool]&gt;),
+<a href=#41 id=41 data-nosnippet>41</a>    <span class="doccomment">/// CASA auto-multithresh support from the current normal state.
+<a href=#42 id=42 data-nosnippet>42</a>    </span>AutoMultithresh(AutoMultithreshControls),
+<a href=#43 id=43 data-nosnippet>43</a>}
+<a href=#44 id=44 data-nosnippet>44</a>
+<a href=#45 id=45 data-nosnippet>45</a><span class="doccomment">/// One image domain of the run.
+<a href=#46 id=46 data-nosnippet>46</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PreparedImageDomain {
+<a href=#47 id=47 data-nosnippet>47</a>    <span class="kw">pub</span>(<span class="kw">super</span>) role: ImageDomainRole,
+<a href=#48 id=48 data-nosnippet>48</a>    <span class="kw">pub</span>(<span class="kw">super</span>) output: PathBuf,
+<a href=#49 id=49 data-nosnippet>49</a>    <span class="kw">pub</span>(<span class="kw">super</span>) image_size: usize,
+<a href=#50 id=50 data-nosnippet>50</a>    <span class="kw">pub</span>(<span class="kw">super</span>) direction: DirectionCoordinateSpec,
+<a href=#51 id=51 data-nosnippet>51</a>    <span class="kw">pub</span>(<span class="kw">super</span>) coordinates: CoordinateSystem,
+<a href=#52 id=52 data-nosnippet>52</a>    <span class="kw">pub</span>(<span class="kw">super</span>) mask: DomainMask,
+<a href=#53 id=53 data-nosnippet>53</a>}
+<a href=#54 id=54 data-nosnippet>54</a>
+<a href=#55 id=55 data-nosnippet>55</a><span class="kw">impl </span>PreparedImageDomain {
+<a href=#56 id=56 data-nosnippet>56</a>    <span class="doccomment">/// The model's specification of this domain: one facet, axes
+<a href=#57 id=57 data-nosnippet>57</a>    /// direction, polarization, spectral.
+<a href=#58 id=58 data-nosnippet>58</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>spec(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ImageDomainSpec {
+<a href=#59 id=59 data-nosnippet>59</a>        ImageDomainSpec::new(
+<a href=#60 id=60 data-nosnippet>60</a>            <span class="self">self</span>.role.clone(),
+<a href=#61 id=61 data-nosnippet>61</a>            ImageShape::new(<span class="self">self</span>.image_size, <span class="self">self</span>.image_size),
+<a href=#62 id=62 data-nosnippet>62</a>            <span class="self">self</span>.direction,
+<a href=#63 id=63 data-nosnippet>63</a>            FacetLayout::Single,
+<a href=#64 id=64 data-nosnippet>64</a>            AxisOrder::new([
+<a href=#65 id=65 data-nosnippet>65</a>                ImageAxis::DirectionLongitude,
+<a href=#66 id=66 data-nosnippet>66</a>                ImageAxis::DirectionLatitude,
+<a href=#67 id=67 data-nosnippet>67</a>                ImageAxis::Polarization,
+<a href=#68 id=68 data-nosnippet>68</a>                ImageAxis::Spectral,
+<a href=#69 id=69 data-nosnippet>69</a>            ]),
+<a href=#70 id=70 data-nosnippet>70</a>        )
+<a href=#71 id=71 data-nosnippet>71</a>    }
+<a href=#72 id=72 data-nosnippet>72</a>
+<a href=#73 id=73 data-nosnippet>73</a>    <span class="doccomment">/// Where the product sink writes this domain's images.
+<a href=#74 id=74 data-nosnippet>74</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>output(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; CasaImageDomainOutput {
+<a href=#75 id=75 data-nosnippet>75</a>        CasaImageDomainOutput::new(
+<a href=#76 id=76 data-nosnippet>76</a>            <span class="self">self</span>.role.clone(),
+<a href=#77 id=77 data-nosnippet>77</a>            <span class="self">self</span>.output.clone(),
+<a href=#78 id=78 data-nosnippet>78</a>            <span class="self">self</span>.coordinates.clone(),
+<a href=#79 id=79 data-nosnippet>79</a>        )
+<a href=#80 id=80 data-nosnippet>80</a>    }
+<a href=#81 id=81 data-nosnippet>81</a>}
+<a href=#82 id=82 data-nosnippet>82</a>
+<a href=#83 id=83 data-nosnippet>83</a><span class="doccomment">/// The main domain and the outlier file's, ordered by role, each writing
+<a href=#84 id=84 data-nosnippet>84</a>/// to its own output.
+<a href=#85 id=85 data-nosnippet>85</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>prepare_domains(
+<a href=#86 id=86 data-nosnippet>86</a>    request: <span class="kw-2">&amp;</span>ImagingRequest,
+<a href=#87 id=87 data-nosnippet>87</a>    centre: <span class="kw-2">&amp;</span>Centre,
+<a href=#88 id=88 data-nosnippet>88</a>    spectral: ImageSpectralCoordinate,
+<a href=#89 id=89 data-nosnippet>89</a>    observation: <span class="kw-2">&amp;</span>ObsInfo,
+<a href=#90 id=90 data-nosnippet>90</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;PreparedImageDomain&gt;, PrepareError&gt; {
+<a href=#91 id=91 data-nosnippet>91</a>    <span class="kw">let </span>polarizations = <span class="kw-2">&amp;</span>request.stokes;
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">let </span><span class="kw-2">mut </span>domains = <span class="macro">vec!</span>[PreparedImageDomain {
+<a href=#93 id=93 data-nosnippet>93</a>        role: ImageDomainRole::Main,
+<a href=#94 id=94 data-nosnippet>94</a>        output: request.imagename.clone(),
+<a href=#95 id=95 data-nosnippet>95</a>        image_size: request.imsize,
+<a href=#96 id=96 data-nosnippet>96</a>        direction: centre.direction,
+<a href=#97 id=97 data-nosnippet>97</a>        coordinates: image_coordinates(
+<a href=#98 id=98 data-nosnippet>98</a>            centre.direction,
+<a href=#99 id=99 data-nosnippet>99</a>            request.imsize,
+<a href=#100 id=100 data-nosnippet>100</a>            polarizations,
+<a href=#101 id=101 data-nosnippet>101</a>            spectral,
+<a href=#102 id=102 data-nosnippet>102</a>            observation,
+<a href=#103 id=103 data-nosnippet>103</a>        ),
+<a href=#104 id=104 data-nosnippet>104</a>        mask: request_mask(request),
+<a href=#105 id=105 data-nosnippet>105</a>    }];
+<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(path) = request.outlierfile.as_deref() {
+<a href=#107 id=107 data-nosnippet>107</a>        <span class="kw">for </span>outlier <span class="kw">in </span>read_outlier_domains(path, request.imsize, request.cell)<span class="question-mark">? </span>{
+<a href=#108 id=108 data-nosnippet>108</a>            <span class="kw">let </span>centre = parse_phase_center_direction(<span class="kw-2">&amp;</span>outlier.phase_center)<span class="question-mark">?</span>;
+<a href=#109 id=109 data-nosnippet>109</a>            <span class="kw">let </span>direction = direction_spec(
+<a href=#110 id=110 data-nosnippet>110</a>                outlier.image_size,
+<a href=#111 id=111 data-nosnippet>111</a>                outlier.cell_arcsec,
+<a href=#112 id=112 data-nosnippet>112</a>                DirectionFrame::J2000,
+<a href=#113 id=113 data-nosnippet>113</a>                centre.longitude_rad(),
+<a href=#114 id=114 data-nosnippet>114</a>                centre.latitude_rad(),
+<a href=#115 id=115 data-nosnippet>115</a>            );
+<a href=#116 id=116 data-nosnippet>116</a>            domains.push(PreparedImageDomain {
+<a href=#117 id=117 data-nosnippet>117</a>                role: ImageDomainRole::Outlier(outlier.name),
+<a href=#118 id=118 data-nosnippet>118</a>                output: outlier.output,
+<a href=#119 id=119 data-nosnippet>119</a>                image_size: outlier.image_size,
+<a href=#120 id=120 data-nosnippet>120</a>                direction,
+<a href=#121 id=121 data-nosnippet>121</a>                coordinates: image_coordinates(
+<a href=#122 id=122 data-nosnippet>122</a>                    direction,
+<a href=#123 id=123 data-nosnippet>123</a>                    outlier.image_size,
+<a href=#124 id=124 data-nosnippet>124</a>                    polarizations,
+<a href=#125 id=125 data-nosnippet>125</a>                    spectral,
+<a href=#126 id=126 data-nosnippet>126</a>                    observation,
+<a href=#127 id=127 data-nosnippet>127</a>                ),
+<a href=#128 id=128 data-nosnippet>128</a>                mask: outlier.mask,
+<a href=#129 id=129 data-nosnippet>129</a>            });
+<a href=#130 id=130 data-nosnippet>130</a>        }
+<a href=#131 id=131 data-nosnippet>131</a>    }
+<a href=#132 id=132 data-nosnippet>132</a>    <span class="comment">// Distinct outputs give distinct roles: an outlier's output is its name
+<a href=#133 id=133 data-nosnippet>133</a>    // resolved beside the outlier file.
+<a href=#134 id=134 data-nosnippet>134</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>outputs = BTreeSet::new();
+<a href=#135 id=135 data-nosnippet>135</a>    <span class="kw">for </span>domain <span class="kw">in </span><span class="kw-2">&amp;</span>domains {
+<a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">if </span>!outputs.insert(domain.output.as_path()) {
+<a href=#137 id=137 data-nosnippet>137</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::DuplicateOutput {
+<a href=#138 id=138 data-nosnippet>138</a>                path: domain.output.clone(),
+<a href=#139 id=139 data-nosnippet>139</a>            });
+<a href=#140 id=140 data-nosnippet>140</a>        }
+<a href=#141 id=141 data-nosnippet>141</a>    }
+<a href=#142 id=142 data-nosnippet>142</a>    domains.sort_by(|left, right| left.role.cmp(<span class="kw-2">&amp;</span>right.role));
+<a href=#143 id=143 data-nosnippet>143</a>    <span class="prelude-val">Ok</span>(domains)
+<a href=#144 id=144 data-nosnippet>144</a>}
+<a href=#145 id=145 data-nosnippet>145</a>
+<a href=#146 id=146 data-nosnippet>146</a><span class="doccomment">/// The main domain's mask: CASA auto-multithresh, the user mask image or
+<a href=#147 id=147 data-nosnippet>147</a>/// boxes, or every pixel. The auto-multithresh controls the catalog does
+<a href=#148 id=148 data-nosnippet>148</a>/// not carry take CASA's defaults (`smoothfactor = 1`, `cutthreshold =
+<a href=#149 id=149 data-nosnippet>149</a>/// 0.01`, `minpercentchange = -1`).
+<a href=#150 id=150 data-nosnippet>150</a></span><span class="kw">fn </span>request_mask(request: <span class="kw-2">&amp;</span>ImagingRequest) -&gt; DomainMask {
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">match </span>(request.usemask, <span class="kw-2">&amp;</span>request.mask_image) {
+<a href=#152 id=152 data-nosnippet>152</a>        (UseMask::AutoMultithresh, <span class="kw">_</span>) =&gt; DomainMask::AutoMultithresh(AutoMultithreshControls {
+<a href=#153 id=153 data-nosnippet>153</a>            sidelobe_factor: request.sidelobethreshold,
+<a href=#154 id=154 data-nosnippet>154</a>            noise_factor: request.noisethreshold,
+<a href=#155 id=155 data-nosnippet>155</a>            low_noise_factor: request.lownoisethreshold,
+<a href=#156 id=156 data-nosnippet>156</a>            negative_factor: request.negativethreshold,
+<a href=#157 id=157 data-nosnippet>157</a>            minimum_beam_fraction: request.minbeamfrac,
+<a href=#158 id=158 data-nosnippet>158</a>            smooth_factor: <span class="number">1.0</span>,
+<a href=#159 id=159 data-nosnippet>159</a>            cut_threshold: <span class="number">0.01</span>,
+<a href=#160 id=160 data-nosnippet>160</a>            grow_iterations: request.growiterations,
+<a href=#161 id=161 data-nosnippet>161</a>            minimum_percent_change: -<span class="number">1.0</span>,
+<a href=#162 id=162 data-nosnippet>162</a>        }),
+<a href=#163 id=163 data-nosnippet>163</a>        (UseMask::User, <span class="prelude-val">Some</span>(path)) =&gt; DomainMask::Image(path.clone()),
+<a href=#164 id=164 data-nosnippet>164</a>        (UseMask::User, <span class="prelude-val">None</span>) <span class="kw">if </span>request.mask_box.is_empty() =&gt; DomainMask::FullPlane,
+<a href=#165 id=165 data-nosnippet>165</a>        (UseMask::User, <span class="prelude-val">None</span>) =&gt; DomainMask::Boxes(request.mask_box.clone()),
+<a href=#166 id=166 data-nosnippet>166</a>    }
 <a href=#167 id=167 data-nosnippet>167</a>}
 <a href=#168 id=168 data-nosnippet>168</a>
-<a href=#169 id=169 data-nosnippet>169</a><span class="kw">fn </span>mask_plan(
-<a href=#170 id=170 data-nosnippet>170</a>    mask: DomainMask,
-<a href=#171 id=171 data-nosnippet>171</a>    coordinate: DirectionCoordinateSpec,
-<a href=#172 id=172 data-nosnippet>172</a>    image_size: usize,
-<a href=#173 id=173 data-nosnippet>173</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ReconstructionMaskPlan, ApplicationError&gt; {
-<a href=#174 id=174 data-nosnippet>174</a>    <span class="prelude-val">Ok</span>(<span class="kw">match </span>mask {
-<a href=#175 id=175 data-nosnippet>175</a>        DomainMask::FullPlane =&gt; ReconstructionMaskPlan::FullPlane { coordinate },
-<a href=#176 id=176 data-nosnippet>176</a>        DomainMask::Boxes(boxes) =&gt; ReconstructionMaskPlan::Boxes {
-<a href=#177 id=177 data-nosnippet>177</a>            coordinate,
-<a href=#178 id=178 data-nosnippet>178</a>            boxes: boxes
-<a href=#179 id=179 data-nosnippet>179</a>                .into_iter()
-<a href=#180 id=180 data-nosnippet>180</a>                .map(|[x0, y0, x1, y1]| MaskBox::new([x0, y0], [x1, y1]))
-<a href=#181 id=181 data-nosnippet>181</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>,
-<a href=#182 id=182 data-nosnippet>182</a>        },
-<a href=#183 id=183 data-nosnippet>183</a>        DomainMask::Image(path) =&gt; reproject_image_mask(<span class="kw-2">&amp;</span>path, coordinate, image_size)<span class="question-mark">?</span>,
-<a href=#184 id=184 data-nosnippet>184</a>        DomainMask::PixelSupport(support) =&gt; {
-<a href=#185 id=185 data-nosnippet>185</a>            <span class="kw">if </span>image_size
-<a href=#186 id=186 data-nosnippet>186</a>                .checked_mul(image_size)
-<a href=#187 id=187 data-nosnippet>187</a>                .is_none_or(|expected| support.len() != expected)
-<a href=#188 id=188 data-nosnippet>188</a>            {
-<a href=#189 id=189 data-nosnippet>189</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(<span class="string">"pixel mask support does not match its image domain"</span>));
-<a href=#190 id=190 data-nosnippet>190</a>            }
-<a href=#191 id=191 data-nosnippet>191</a>            ReconstructionMaskPlan::Reprojected {
-<a href=#192 id=192 data-nosnippet>192</a>                coordinate,
-<a href=#193 id=193 data-nosnippet>193</a>                source_coordinate: coordinate,
-<a href=#194 id=194 data-nosnippet>194</a>                source_shape: [image_size, image_size],
-<a href=#195 id=195 data-nosnippet>195</a>                support,
-<a href=#196 id=196 data-nosnippet>196</a>            }
-<a href=#197 id=197 data-nosnippet>197</a>        }
-<a href=#198 id=198 data-nosnippet>198</a>        DomainMask::AutoMultithresh(controls) =&gt; ReconstructionMaskPlan::AutoMultithresh {
-<a href=#199 id=199 data-nosnippet>199</a>            coordinate,
-<a href=#200 id=200 data-nosnippet>200</a>            controls,
-<a href=#201 id=201 data-nosnippet>201</a>            completed_major_cycles: <span class="number">0</span>,
-<a href=#202 id=202 data-nosnippet>202</a>            cycle_threshold_reached: <span class="bool-val">false</span>,
-<a href=#203 id=203 data-nosnippet>203</a>            previous: <span class="prelude-val">None</span>,
-<a href=#204 id=204 data-nosnippet>204</a>            evolution_stopped: <span class="bool-val">false</span>,
-<a href=#205 id=205 data-nosnippet>205</a>        },
-<a href=#206 id=206 data-nosnippet>206</a>    })
-<a href=#207 id=207 data-nosnippet>207</a>}
-<a href=#208 id=208 data-nosnippet>208</a>
-<a href=#209 id=209 data-nosnippet>209</a><span class="doccomment">/// The non-zero, unmasked, finite pixels of a one-plane CASA image,
-<a href=#210 id=210 data-nosnippet>210</a>/// reprojected onto `target_spec`.
-<a href=#211 id=211 data-nosnippet>211</a></span><span class="kw">fn </span>reproject_image_mask(
-<a href=#212 id=212 data-nosnippet>212</a>    path: <span class="kw-2">&amp;</span>Path,
-<a href=#213 id=213 data-nosnippet>213</a>    target_spec: DirectionCoordinateSpec,
-<a href=#214 id=214 data-nosnippet>214</a>    target_size: usize,
-<a href=#215 id=215 data-nosnippet>215</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ReconstructionMaskPlan, ApplicationError&gt; {
-<a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">let </span>(source_shape, source_coordinates, source_support) = <span class="kw">match </span>AnyPagedImage::open(path)<span class="question-mark">? </span>{
-<a href=#217 id=217 data-nosnippet>217</a>        AnyPagedImage::Float32(image) =&gt; {
-<a href=#218 id=218 data-nosnippet>218</a>            <span class="kw">let </span>mask = image.get_mask()<span class="question-mark">?</span>;
-<a href=#219 id=219 data-nosnippet>219</a>            <span class="kw">let </span>support = image
-<a href=#220 id=220 data-nosnippet>220</a>                .get()<span class="question-mark">?
-<a href=#221 id=221 data-nosnippet>221</a>                </span>.iter()
-<a href=#222 id=222 data-nosnippet>222</a>                .enumerate()
-<a href=#223 id=223 data-nosnippet>223</a>                .map(|(index, value)| {
-<a href=#224 id=224 data-nosnippet>224</a>                    value.is_finite()
-<a href=#225 id=225 data-nosnippet>225</a>                        &amp;&amp; <span class="kw-2">*</span>value != <span class="number">0.0
-<a href=#226 id=226 data-nosnippet>226</a>                        </span>&amp;&amp; mask.as_ref().is_none_or(|mask| mask[index])
-<a href=#227 id=227 data-nosnippet>227</a>                })
-<a href=#228 id=228 data-nosnippet>228</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#229 id=229 data-nosnippet>229</a>            (image.shape().to_vec(), image.coordinates().clone(), support)
-<a href=#230 id=230 data-nosnippet>230</a>        }
-<a href=#231 id=231 data-nosnippet>231</a>        AnyPagedImage::Float64(image) =&gt; {
-<a href=#232 id=232 data-nosnippet>232</a>            <span class="kw">let </span>mask = image.get_mask()<span class="question-mark">?</span>;
-<a href=#233 id=233 data-nosnippet>233</a>            <span class="kw">let </span>support = image
-<a href=#234 id=234 data-nosnippet>234</a>                .get()<span class="question-mark">?
-<a href=#235 id=235 data-nosnippet>235</a>                </span>.iter()
-<a href=#236 id=236 data-nosnippet>236</a>                .enumerate()
-<a href=#237 id=237 data-nosnippet>237</a>                .map(|(index, value)| {
-<a href=#238 id=238 data-nosnippet>238</a>                    value.is_finite()
-<a href=#239 id=239 data-nosnippet>239</a>                        &amp;&amp; <span class="kw-2">*</span>value != <span class="number">0.0
-<a href=#240 id=240 data-nosnippet>240</a>                        </span>&amp;&amp; mask.as_ref().is_none_or(|mask| mask[index])
-<a href=#241 id=241 data-nosnippet>241</a>                })
-<a href=#242 id=242 data-nosnippet>242</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#243 id=243 data-nosnippet>243</a>            (image.shape().to_vec(), image.coordinates().clone(), support)
-<a href=#244 id=244 data-nosnippet>244</a>        }
-<a href=#245 id=245 data-nosnippet>245</a>        AnyPagedImage::Complex32(<span class="kw">_</span>) | AnyPagedImage::Complex64(<span class="kw">_</span>) =&gt; {
-<a href=#246 id=246 data-nosnippet>246</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(<span class="string">"reconstruction masks require a real CASA image"</span>));
-<a href=#247 id=247 data-nosnippet>247</a>        }
-<a href=#248 id=248 data-nosnippet>248</a>    };
-<a href=#249 id=249 data-nosnippet>249</a>    <span class="kw">if </span>source_shape.len() &lt; <span class="number">2
-<a href=#250 id=250 data-nosnippet>250</a>        </span>|| source_shape[<span class="number">2</span>..].iter().any(|extent| <span class="kw-2">*</span>extent != <span class="number">1</span>)
-<a href=#251 id=251 data-nosnippet>251</a>        || source_support.len() != source_shape[<span class="number">0</span>] * source_shape[<span class="number">1</span>]
-<a href=#252 id=252 data-nosnippet>252</a>    {
-<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(
-<a href=#254 id=254 data-nosnippet>254</a>            <span class="string">"reconstruction mask must contain one two-dimensional direction plane"</span>,
-<a href=#255 id=255 data-nosnippet>255</a>        ));
-<a href=#256 id=256 data-nosnippet>256</a>    }
-<a href=#257 id=257 data-nosnippet>257</a>    <span class="kw">let </span>index = source_coordinates
-<a href=#258 id=258 data-nosnippet>258</a>        .find_coordinate(CoordinateType::Direction)
-<a href=#259 id=259 data-nosnippet>259</a>        .ok_or_else(|| boxed(<span class="string">"mask image has no direction coordinate"</span>))<span class="question-mark">?</span>;
-<a href=#260 id=260 data-nosnippet>260</a>    <span class="kw">let </span>source_spec = direction_model_spec(source_coordinates.coordinate(index))<span class="question-mark">?</span>;
-<a href=#261 id=261 data-nosnippet>261</a>    <span class="kw">let </span>support = casa_imaging_reconstruction::reproject_mask_support(
-<a href=#262 id=262 data-nosnippet>262</a>        source_spec,
-<a href=#263 id=263 data-nosnippet>263</a>        [source_shape[<span class="number">0</span>], source_shape[<span class="number">1</span>]],
-<a href=#264 id=264 data-nosnippet>264</a>        <span class="kw-2">&amp;</span>source_support,
-<a href=#265 id=265 data-nosnippet>265</a>        target_spec,
-<a href=#266 id=266 data-nosnippet>266</a>        [target_size, target_size],
-<a href=#267 id=267 data-nosnippet>267</a>    )<span class="question-mark">?</span>;
-<a href=#268 id=268 data-nosnippet>268</a>    <span class="prelude-val">Ok</span>(ReconstructionMaskPlan::Reprojected {
-<a href=#269 id=269 data-nosnippet>269</a>        coordinate: target_spec,
-<a href=#270 id=270 data-nosnippet>270</a>        source_coordinate: source_spec,
-<a href=#271 id=271 data-nosnippet>271</a>        source_shape: [source_shape[<span class="number">0</span>], source_shape[<span class="number">1</span>]],
-<a href=#272 id=272 data-nosnippet>272</a>        support,
-<a href=#273 id=273 data-nosnippet>273</a>    })
-<a href=#274 id=274 data-nosnippet>274</a>}
-<a href=#275 id=275 data-nosnippet>275</a>
-<a href=#276 id=276 data-nosnippet>276</a><span class="kw">fn </span>direction_model_spec(
-<a href=#277 id=277 data-nosnippet>277</a>    coordinate: <span class="kw-2">&amp;</span>CoordinateModel,
-<a href=#278 id=278 data-nosnippet>278</a>) -&gt; <span class="prelude-ty">Result</span>&lt;DirectionCoordinateSpec, ApplicationError&gt; {
-<a href=#279 id=279 data-nosnippet>279</a>    <span class="kw">let </span>CoordinateModel::Direction(direction) = coordinate <span class="kw">else </span>{
-<a href=#280 id=280 data-nosnippet>280</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(<span class="string">"mask direction-coordinate lookup was inconsistent"</span>));
-<a href=#281 id=281 data-nosnippet>281</a>    };
-<a href=#282 id=282 data-nosnippet>282</a>    <span class="kw">if </span>direction.projection().projection_type() != ProjectionType::SIN {
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(
-<a href=#284 id=284 data-nosnippet>284</a>            <span class="string">"native mask reprojection currently requires SIN coordinates"</span>,
-<a href=#285 id=285 data-nosnippet>285</a>        ));
-<a href=#286 id=286 data-nosnippet>286</a>    }
-<a href=#287 id=287 data-nosnippet>287</a>    <span class="kw">let </span>frame = <span class="kw">match </span>direction.direction_ref() {
-<a href=#288 id=288 data-nosnippet>288</a>        DirectionRef::J2000 =&gt; DirectionFrame::J2000,
-<a href=#289 id=289 data-nosnippet>289</a>        DirectionRef::B1950 =&gt; DirectionFrame::B1950,
-<a href=#290 id=290 data-nosnippet>290</a>        DirectionRef::GALACTIC =&gt; DirectionFrame::Galactic,
-<a href=#291 id=291 data-nosnippet>291</a>        DirectionRef::ICRS =&gt; DirectionFrame::Icrs,
-<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">_ </span>=&gt; {
-<a href=#293 id=293 data-nosnippet>293</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(boxed(
-<a href=#294 id=294 data-nosnippet>294</a>                <span class="string">"mask direction frame is not supported by native imaging"</span>,
-<a href=#295 id=295 data-nosnippet>295</a>            ));
-<a href=#296 id=296 data-nosnippet>296</a>        }
-<a href=#297 id=297 data-nosnippet>297</a>    };
-<a href=#298 id=298 data-nosnippet>298</a>    <span class="kw">let </span>reference = coordinate.reference_value();
-<a href=#299 id=299 data-nosnippet>299</a>    <span class="kw">let </span>pixel = coordinate.reference_pixel();
-<a href=#300 id=300 data-nosnippet>300</a>    <span class="kw">let </span>increment = coordinate.increment();
-<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">let </span>pc = direction.pc_matrix();
-<a href=#302 id=302 data-nosnippet>302</a>    <span class="prelude-val">Ok</span>(DirectionCoordinateSpec::new(
-<a href=#303 id=303 data-nosnippet>303</a>        Projection::Sin,
-<a href=#304 id=304 data-nosnippet>304</a>        SkyDirection::new(frame, reference[<span class="number">0</span>], reference[<span class="number">1</span>]),
-<a href=#305 id=305 data-nosnippet>305</a>        [pixel[<span class="number">0</span>], pixel[<span class="number">1</span>]],
-<a href=#306 id=306 data-nosnippet>306</a>        [increment[<span class="number">0</span>], increment[<span class="number">1</span>]],
-<a href=#307 id=307 data-nosnippet>307</a>        [[pc[[<span class="number">0</span>, <span class="number">0</span>]], pc[[<span class="number">0</span>, <span class="number">1</span>]]], [pc[[<span class="number">1</span>, <span class="number">0</span>]], pc[[<span class="number">1</span>, <span class="number">1</span>]]]],
-<a href=#308 id=308 data-nosnippet>308</a>        [
-<a href=#309 id=309 data-nosnippet>309</a>            direction.longpole().to_degrees(),
-<a href=#310 id=310 data-nosnippet>310</a>            direction.latpole().to_degrees(),
-<a href=#311 id=311 data-nosnippet>311</a>        ],
-<a href=#312 id=312 data-nosnippet>312</a>    ))
-<a href=#313 id=313 data-nosnippet>313</a>}
-<a href=#314 id=314 data-nosnippet>314</a>
-<a href=#315 id=315 data-nosnippet>315</a><span class="doccomment">/// Pixels a model plane holds across every domain, times `planes` and
-<a href=#316 id=316 data-nosnippet>316</a>/// `polarizations`.
-<a href=#317 id=317 data-nosnippet>317</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>model_samples(
-<a href=#318 id=318 data-nosnippet>318</a>    domains: <span class="kw-2">&amp;</span>[PreparedImageDomain],
-<a href=#319 id=319 data-nosnippet>319</a>    planes: usize,
-<a href=#320 id=320 data-nosnippet>320</a>    polarizations: <span class="kw-2">&amp;</span>[PolarizationCoordinate],
-<a href=#321 id=321 data-nosnippet>321</a>) -&gt; <span class="prelude-ty">Result</span>&lt;usize, ApplicationError&gt; {
-<a href=#322 id=322 data-nosnippet>322</a>    domains
-<a href=#323 id=323 data-nosnippet>323</a>        .iter()
-<a href=#324 id=324 data-nosnippet>324</a>        .try_fold(<span class="number">0_usize</span>, |total, domain| {
-<a href=#325 id=325 data-nosnippet>325</a>            domain
-<a href=#326 id=326 data-nosnippet>326</a>                .image_size
-<a href=#327 id=327 data-nosnippet>327</a>                .saturating_mul(domain.image_size)
-<a href=#328 id=328 data-nosnippet>328</a>                .checked_add(total)
-<a href=#329 id=329 data-nosnippet>329</a>        })
-<a href=#330 id=330 data-nosnippet>330</a>        .and_then(|samples| samples.checked_mul(planes))
-<a href=#331 id=331 data-nosnippet>331</a>        .and_then(|samples| samples.checked_mul(polarizations.len()))
-<a href=#332 id=332 data-nosnippet>332</a>        .ok_or_else(|| boxed(<span class="string">"reconstruction model sample count overflowed"</span>))
-<a href=#333 id=333 data-nosnippet>333</a>}
+<a href=#169 id=169 data-nosnippet>169</a><span class="doccomment">/// Each domain's mask plan, bound to its direction coordinate.
+<a href=#170 id=170 data-nosnippet>170</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>mask_plans(
+<a href=#171 id=171 data-nosnippet>171</a>    domains: <span class="kw-2">&amp;</span>[PreparedImageDomain],
+<a href=#172 id=172 data-nosnippet>172</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ImageDomainReconstructionMaskPlans, PrepareError&gt; {
+<a href=#173 id=173 data-nosnippet>173</a>    <span class="prelude-val">Ok</span>(ImageDomainReconstructionMaskPlans::new(
+<a href=#174 id=174 data-nosnippet>174</a>        domains
+<a href=#175 id=175 data-nosnippet>175</a>            .iter()
+<a href=#176 id=176 data-nosnippet>176</a>            .map(|domain| mask_plan(domain.mask.clone(), domain.direction, domain.image_size))
+<a href=#177 id=177 data-nosnippet>177</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>,
+<a href=#178 id=178 data-nosnippet>178</a>    )<span class="question-mark">?</span>)
+<a href=#179 id=179 data-nosnippet>179</a>}
+<a href=#180 id=180 data-nosnippet>180</a>
+<a href=#181 id=181 data-nosnippet>181</a><span class="kw">fn </span>mask_plan(
+<a href=#182 id=182 data-nosnippet>182</a>    mask: DomainMask,
+<a href=#183 id=183 data-nosnippet>183</a>    coordinate: DirectionCoordinateSpec,
+<a href=#184 id=184 data-nosnippet>184</a>    image_size: usize,
+<a href=#185 id=185 data-nosnippet>185</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ReconstructionMaskPlan, PrepareError&gt; {
+<a href=#186 id=186 data-nosnippet>186</a>    <span class="prelude-val">Ok</span>(<span class="kw">match </span>mask {
+<a href=#187 id=187 data-nosnippet>187</a>        DomainMask::FullPlane =&gt; ReconstructionMaskPlan::FullPlane { coordinate },
+<a href=#188 id=188 data-nosnippet>188</a>        DomainMask::Boxes(boxes) =&gt; ReconstructionMaskPlan::Boxes {
+<a href=#189 id=189 data-nosnippet>189</a>            coordinate,
+<a href=#190 id=190 data-nosnippet>190</a>            boxes: boxes
+<a href=#191 id=191 data-nosnippet>191</a>                .into_iter()
+<a href=#192 id=192 data-nosnippet>192</a>                .map(|[x0, y0, x1, y1]| MaskBox::new([x0, y0], [x1, y1]))
+<a href=#193 id=193 data-nosnippet>193</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>,
+<a href=#194 id=194 data-nosnippet>194</a>        },
+<a href=#195 id=195 data-nosnippet>195</a>        DomainMask::Image(path) =&gt; reproject_image_mask(<span class="kw-2">&amp;</span>path, coordinate, image_size)<span class="question-mark">?</span>,
+<a href=#196 id=196 data-nosnippet>196</a>        DomainMask::PixelSupport(support) =&gt; {
+<a href=#197 id=197 data-nosnippet>197</a>            <span class="macro">assert_eq!</span>(
+<a href=#198 id=198 data-nosnippet>198</a>                image_size.checked_mul(image_size),
+<a href=#199 id=199 data-nosnippet>199</a>                <span class="prelude-val">Some</span>(support.len()),
+<a href=#200 id=200 data-nosnippet>200</a>                <span class="string">"an outlier circle mask covers exactly its image domain"
+<a href=#201 id=201 data-nosnippet>201</a>            </span>);
+<a href=#202 id=202 data-nosnippet>202</a>            ReconstructionMaskPlan::Reprojected {
+<a href=#203 id=203 data-nosnippet>203</a>                coordinate,
+<a href=#204 id=204 data-nosnippet>204</a>                support,
+<a href=#205 id=205 data-nosnippet>205</a>            }
+<a href=#206 id=206 data-nosnippet>206</a>        }
+<a href=#207 id=207 data-nosnippet>207</a>        DomainMask::AutoMultithresh(controls) =&gt; ReconstructionMaskPlan::AutoMultithresh {
+<a href=#208 id=208 data-nosnippet>208</a>            coordinate,
+<a href=#209 id=209 data-nosnippet>209</a>            controls,
+<a href=#210 id=210 data-nosnippet>210</a>            completed_major_cycles: <span class="number">0</span>,
+<a href=#211 id=211 data-nosnippet>211</a>            cycle_threshold_reached: <span class="bool-val">false</span>,
+<a href=#212 id=212 data-nosnippet>212</a>            previous: <span class="prelude-val">None</span>,
+<a href=#213 id=213 data-nosnippet>213</a>            evolution_stopped: <span class="bool-val">false</span>,
+<a href=#214 id=214 data-nosnippet>214</a>        },
+<a href=#215 id=215 data-nosnippet>215</a>    })
+<a href=#216 id=216 data-nosnippet>216</a>}
+<a href=#217 id=217 data-nosnippet>217</a>
+<a href=#218 id=218 data-nosnippet>218</a><span class="doccomment">/// The non-zero, unmasked, finite pixels of a one-plane CASA image,
+<a href=#219 id=219 data-nosnippet>219</a>/// reprojected onto `target_spec`.
+<a href=#220 id=220 data-nosnippet>220</a></span><span class="kw">fn </span>reproject_image_mask(
+<a href=#221 id=221 data-nosnippet>221</a>    path: <span class="kw-2">&amp;</span>Path,
+<a href=#222 id=222 data-nosnippet>222</a>    target_spec: DirectionCoordinateSpec,
+<a href=#223 id=223 data-nosnippet>223</a>    target_size: usize,
+<a href=#224 id=224 data-nosnippet>224</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ReconstructionMaskPlan, PrepareError&gt; {
+<a href=#225 id=225 data-nosnippet>225</a>    <span class="kw">let </span>(source_shape, source_coordinates, source_support) = <span class="kw">match </span>AnyPagedImage::open(path)<span class="question-mark">? </span>{
+<a href=#226 id=226 data-nosnippet>226</a>        AnyPagedImage::Float32(image) =&gt; {
+<a href=#227 id=227 data-nosnippet>227</a>            <span class="kw">let </span>mask = image.get_mask()<span class="question-mark">?</span>;
+<a href=#228 id=228 data-nosnippet>228</a>            <span class="kw">let </span>support = image
+<a href=#229 id=229 data-nosnippet>229</a>                .get()<span class="question-mark">?
+<a href=#230 id=230 data-nosnippet>230</a>                </span>.iter()
+<a href=#231 id=231 data-nosnippet>231</a>                .enumerate()
+<a href=#232 id=232 data-nosnippet>232</a>                .map(|(index, value)| {
+<a href=#233 id=233 data-nosnippet>233</a>                    value.is_finite()
+<a href=#234 id=234 data-nosnippet>234</a>                        &amp;&amp; <span class="kw-2">*</span>value != <span class="number">0.0
+<a href=#235 id=235 data-nosnippet>235</a>                        </span>&amp;&amp; mask.as_ref().is_none_or(|mask| mask[index])
+<a href=#236 id=236 data-nosnippet>236</a>                })
+<a href=#237 id=237 data-nosnippet>237</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#238 id=238 data-nosnippet>238</a>            (image.shape().to_vec(), image.coordinates().clone(), support)
+<a href=#239 id=239 data-nosnippet>239</a>        }
+<a href=#240 id=240 data-nosnippet>240</a>        AnyPagedImage::Float64(image) =&gt; {
+<a href=#241 id=241 data-nosnippet>241</a>            <span class="kw">let </span>mask = image.get_mask()<span class="question-mark">?</span>;
+<a href=#242 id=242 data-nosnippet>242</a>            <span class="kw">let </span>support = image
+<a href=#243 id=243 data-nosnippet>243</a>                .get()<span class="question-mark">?
+<a href=#244 id=244 data-nosnippet>244</a>                </span>.iter()
+<a href=#245 id=245 data-nosnippet>245</a>                .enumerate()
+<a href=#246 id=246 data-nosnippet>246</a>                .map(|(index, value)| {
+<a href=#247 id=247 data-nosnippet>247</a>                    value.is_finite()
+<a href=#248 id=248 data-nosnippet>248</a>                        &amp;&amp; <span class="kw-2">*</span>value != <span class="number">0.0
+<a href=#249 id=249 data-nosnippet>249</a>                        </span>&amp;&amp; mask.as_ref().is_none_or(|mask| mask[index])
+<a href=#250 id=250 data-nosnippet>250</a>                })
+<a href=#251 id=251 data-nosnippet>251</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#252 id=252 data-nosnippet>252</a>            (image.shape().to_vec(), image.coordinates().clone(), support)
+<a href=#253 id=253 data-nosnippet>253</a>        }
+<a href=#254 id=254 data-nosnippet>254</a>        AnyPagedImage::Complex32(<span class="kw">_</span>) | AnyPagedImage::Complex64(<span class="kw">_</span>) =&gt; {
+<a href=#255 id=255 data-nosnippet>255</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::ComplexMaskImage);
+<a href=#256 id=256 data-nosnippet>256</a>        }
+<a href=#257 id=257 data-nosnippet>257</a>    };
+<a href=#258 id=258 data-nosnippet>258</a>    <span class="kw">if </span>source_shape.len() &lt; <span class="number">2
+<a href=#259 id=259 data-nosnippet>259</a>        </span>|| source_shape[<span class="number">2</span>..].iter().any(|extent| <span class="kw-2">*</span>extent != <span class="number">1</span>)
+<a href=#260 id=260 data-nosnippet>260</a>        || source_support.len() != source_shape[<span class="number">0</span>] * source_shape[<span class="number">1</span>]
+<a href=#261 id=261 data-nosnippet>261</a>    {
+<a href=#262 id=262 data-nosnippet>262</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::MaskImageShape {
+<a href=#263 id=263 data-nosnippet>263</a>            shape: source_shape,
+<a href=#264 id=264 data-nosnippet>264</a>        });
+<a href=#265 id=265 data-nosnippet>265</a>    }
+<a href=#266 id=266 data-nosnippet>266</a>    <span class="kw">let </span>index = source_coordinates
+<a href=#267 id=267 data-nosnippet>267</a>        .find_coordinate(CoordinateType::Direction)
+<a href=#268 id=268 data-nosnippet>268</a>        .ok_or(PrepareError::MaskImageDirection)<span class="question-mark">?</span>;
+<a href=#269 id=269 data-nosnippet>269</a>    <span class="kw">let </span>source_spec = direction_model_spec(source_coordinates.coordinate(index))<span class="question-mark">?</span>;
+<a href=#270 id=270 data-nosnippet>270</a>    <span class="kw">let </span>support = casa_imaging_reconstruction::reproject_mask_support(
+<a href=#271 id=271 data-nosnippet>271</a>        source_spec,
+<a href=#272 id=272 data-nosnippet>272</a>        [source_shape[<span class="number">0</span>], source_shape[<span class="number">1</span>]],
+<a href=#273 id=273 data-nosnippet>273</a>        <span class="kw-2">&amp;</span>source_support,
+<a href=#274 id=274 data-nosnippet>274</a>        target_spec,
+<a href=#275 id=275 data-nosnippet>275</a>        [target_size, target_size],
+<a href=#276 id=276 data-nosnippet>276</a>    )<span class="question-mark">?</span>;
+<a href=#277 id=277 data-nosnippet>277</a>    <span class="prelude-val">Ok</span>(ReconstructionMaskPlan::Reprojected {
+<a href=#278 id=278 data-nosnippet>278</a>        coordinate: target_spec,
+<a href=#279 id=279 data-nosnippet>279</a>        support,
+<a href=#280 id=280 data-nosnippet>280</a>    })
+<a href=#281 id=281 data-nosnippet>281</a>}
+<a href=#282 id=282 data-nosnippet>282</a>
+<a href=#283 id=283 data-nosnippet>283</a><span class="kw">fn </span>direction_model_spec(
+<a href=#284 id=284 data-nosnippet>284</a>    coordinate: <span class="kw-2">&amp;</span>CoordinateModel,
+<a href=#285 id=285 data-nosnippet>285</a>) -&gt; <span class="prelude-ty">Result</span>&lt;DirectionCoordinateSpec, PrepareError&gt; {
+<a href=#286 id=286 data-nosnippet>286</a>    <span class="kw">let </span>CoordinateModel::Direction(direction) = coordinate <span class="kw">else </span>{
+<a href=#287 id=287 data-nosnippet>287</a>        <span class="macro">unreachable!</span>(<span class="string">"find_coordinate(Direction) names a direction coordinate"</span>);
+<a href=#288 id=288 data-nosnippet>288</a>    };
+<a href=#289 id=289 data-nosnippet>289</a>    <span class="kw">let </span>projection = direction.projection().projection_type();
+<a href=#290 id=290 data-nosnippet>290</a>    <span class="kw">if </span>projection != ProjectionType::SIN {
+<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::MaskImageProjection { projection });
+<a href=#292 id=292 data-nosnippet>292</a>    }
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">let </span>frame = <span class="kw">match </span>direction.direction_ref() {
+<a href=#294 id=294 data-nosnippet>294</a>        DirectionRef::J2000 =&gt; DirectionFrame::J2000,
+<a href=#295 id=295 data-nosnippet>295</a>        DirectionRef::B1950 =&gt; DirectionFrame::B1950,
+<a href=#296 id=296 data-nosnippet>296</a>        DirectionRef::GALACTIC =&gt; DirectionFrame::Galactic,
+<a href=#297 id=297 data-nosnippet>297</a>        DirectionRef::ICRS =&gt; DirectionFrame::Icrs,
+<a href=#298 id=298 data-nosnippet>298</a>        frame =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(PrepareError::MaskImageFrame { frame }),
+<a href=#299 id=299 data-nosnippet>299</a>    };
+<a href=#300 id=300 data-nosnippet>300</a>    <span class="kw">let </span>reference = coordinate.reference_value();
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">let </span>pixel = coordinate.reference_pixel();
+<a href=#302 id=302 data-nosnippet>302</a>    <span class="kw">let </span>increment = coordinate.increment();
+<a href=#303 id=303 data-nosnippet>303</a>    <span class="kw">let </span>pc = direction.pc_matrix();
+<a href=#304 id=304 data-nosnippet>304</a>    <span class="prelude-val">Ok</span>(DirectionCoordinateSpec::new(
+<a href=#305 id=305 data-nosnippet>305</a>        Projection::Sin,
+<a href=#306 id=306 data-nosnippet>306</a>        SkyDirection::new(frame, reference[<span class="number">0</span>], reference[<span class="number">1</span>]),
+<a href=#307 id=307 data-nosnippet>307</a>        [pixel[<span class="number">0</span>], pixel[<span class="number">1</span>]],
+<a href=#308 id=308 data-nosnippet>308</a>        [increment[<span class="number">0</span>], increment[<span class="number">1</span>]],
+<a href=#309 id=309 data-nosnippet>309</a>        [[pc[[<span class="number">0</span>, <span class="number">0</span>]], pc[[<span class="number">0</span>, <span class="number">1</span>]]], [pc[[<span class="number">1</span>, <span class="number">0</span>]], pc[[<span class="number">1</span>, <span class="number">1</span>]]]],
+<a href=#310 id=310 data-nosnippet>310</a>        [
+<a href=#311 id=311 data-nosnippet>311</a>            direction.longpole().to_degrees(),
+<a href=#312 id=312 data-nosnippet>312</a>            direction.latpole().to_degrees(),
+<a href=#313 id=313 data-nosnippet>313</a>        ],
+<a href=#314 id=314 data-nosnippet>314</a>    ))
+<a href=#315 id=315 data-nosnippet>315</a>}
+<a href=#316 id=316 data-nosnippet>316</a>
+<a href=#317 id=317 data-nosnippet>317</a><span class="doccomment">/// Pixels a model plane holds across every domain, times `planes` and
+<a href=#318 id=318 data-nosnippet>318</a>/// `polarizations`.
+<a href=#319 id=319 data-nosnippet>319</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>model_samples(
+<a href=#320 id=320 data-nosnippet>320</a>    domains: <span class="kw-2">&amp;</span>[PreparedImageDomain],
+<a href=#321 id=321 data-nosnippet>321</a>    planes: usize,
+<a href=#322 id=322 data-nosnippet>322</a>    polarizations: <span class="kw-2">&amp;</span>[PolarizationCoordinate],
+<a href=#323 id=323 data-nosnippet>323</a>) -&gt; <span class="prelude-ty">Result</span>&lt;usize, PrepareError&gt; {
+<a href=#324 id=324 data-nosnippet>324</a>    domains
+<a href=#325 id=325 data-nosnippet>325</a>        .iter()
+<a href=#326 id=326 data-nosnippet>326</a>        .try_fold(<span class="number">0_usize</span>, |total, domain| {
+<a href=#327 id=327 data-nosnippet>327</a>            domain
+<a href=#328 id=328 data-nosnippet>328</a>                .image_size
+<a href=#329 id=329 data-nosnippet>329</a>                .saturating_mul(domain.image_size)
+<a href=#330 id=330 data-nosnippet>330</a>                .checked_add(total)
+<a href=#331 id=331 data-nosnippet>331</a>        })
+<a href=#332 id=332 data-nosnippet>332</a>        .and_then(|samples| samples.checked_mul(planes))
+<a href=#333 id=333 data-nosnippet>333</a>        .and_then(|samples| samples.checked_mul(polarizations.len()))
+<a href=#334 id=334 data-nosnippet>334</a>        .ok_or(PrepareError::ImageSize)
+<a href=#335 id=335 data-nosnippet>335</a>}
 </code></pre></div></section></main></body></html>

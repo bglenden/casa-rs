@@ -54,7 +54,7 @@
 <a href=#54 id=54 data-nosnippet>54</a>            .positions()
 <a href=#55 id=55 data-nosnippet>55</a>            .iter()
 <a href=#56 id=56 data-nosnippet>56</a>            .position(|axis| <span class="kw-2">*</span>axis == ImageAxis::Spectral)
-<a href=#57 id=57 data-nosnippet>57</a>            .ok_or(ProductsError::SourceLineageMismatch)<span class="question-mark">?</span>;
+<a href=#57 id=57 data-nosnippet>57</a>            .ok_or(ProductsError::ProblemShapeMismatch)<span class="question-mark">?</span>;
 <a href=#58 id=58 data-nosnippet>58</a>        <span class="kw">let </span>shape = axes.shape();
 <a href=#59 id=59 data-nosnippet>59</a>        <span class="kw">let </span>maximum_channels = <span class="self">self</span>.maximum_channels.min(shape[spectral_axis]);
 <a href=#60 id=60 data-nosnippet>60</a>        <span class="kw">let </span><span class="kw-2">mut </span>window_shape = shape;

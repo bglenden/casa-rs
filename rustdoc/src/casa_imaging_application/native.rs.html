@@ -241,7 +241,7 @@
 <a href=#241 id=241 data-nosnippet>241</a>    publication: ApplicationPublication,
 <a href=#242 id=242 data-nosnippet>242</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
 <a href=#243 id=243 data-nosnippet>243</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Products, NativeError&gt; {
-<a href=#244 id=244 data-nosnippet>244</a>    <span class="kw">let </span><span class="kw-2">mut </span>inputs = ContinuumProductInputs::from_major_cycle(problem, <span class="kw-2">&amp;</span>scientific)<span class="question-mark">?</span>;
+<a href=#244 id=244 data-nosnippet>244</a>    <span class="kw">let </span><span class="kw-2">mut </span>inputs = ContinuumProductInputs::from_major_cycle(problem, <span class="kw-2">&amp;</span>scientific);
 <a href=#245 id=245 data-nosnippet>245</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(masks) = reconstruction_masks.as_ref() {
 <a href=#246 id=246 data-nosnippet>246</a>        inputs = <span class="kw">match </span>masks {
 <a href=#247 id=247 data-nosnippet>247</a>            ReconstructionMaskSet::Shared(mask) =&gt; inputs.with_reconstruction_mask(mask)<span class="question-mark">?</span>,
