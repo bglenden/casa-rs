@@ -527,7 +527,7 @@ pub(crate) fn selected_content_requirements(
 }
 
 /// The bytes a bound source retains, and the largest spectral-coordinate
-/// scratch of its construction (one SPW's CHAN_FREQ and CHAN_WIDTH).
+/// scratch of its construction (one SPW's CHAN_FREQ).
 fn retained_source_bytes(
     measurement_set: &MeasurementSet,
     source: &ObservationSource,
@@ -588,15 +588,9 @@ fn retained_source_bytes(
             selected_f64_array_len(spectral_windows.table(), "CHAN_FREQ", spectral_window_row)?
                 .filter(|count| *count > 0)
                 .ok_or(SelectedObservationContentPlanError::InvalidCoordinateShape)?;
-        let width_count =
-            selected_f64_array_len(spectral_windows.table(), "CHAN_WIDTH", spectral_window_row)?
-                .filter(|count| *count > 0)
-                .ok_or(SelectedObservationContentPlanError::InvalidCoordinateShape)?;
-        // CHAN_FREQ and CHAN_WIDTH of one SPW are live together.
         spectral_scratch_bytes = spectral_scratch_bytes.max(
             frequency_count
-                .checked_add(width_count)
-                .and_then(|values| values.checked_mul(size_of::<f64>()))
+                .checked_mul(size_of::<f64>())
                 .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
         );
     }

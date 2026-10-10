@@ -116,16 +116,8 @@ pub(crate) struct SelectedObservationBuffer {
     field_ids: Vec<i32>,
     antenna1: Vec<i32>,
     antenna2: Vec<i32>,
-    feed1: Vec<i32>,
-    feed2: Vec<i32>,
     time_mjd_seconds: Vec<f64>,
     time_centroid_mjd_seconds: Vec<f64>,
-    interval_seconds: Vec<f64>,
-    exposure_seconds: Vec<f64>,
-    scan_numbers: Vec<i32>,
-    state_ids: Vec<i32>,
-    observation_ids: Vec<i32>,
-    array_ids: Vec<i32>,
 }
 
 /// Heap residency of one selected-observation buffer and its fill operation.
@@ -149,7 +141,7 @@ pub(crate) fn selected_observation_buffer_residency(
     let flags = packed_samples.checked_mul(size_of::<bool>())?;
     let weights = weight_values.checked_mul(size_of::<f32>())?;
     let scalar_payload =
-        rows.checked_mul(10 * size_of::<i32>() + 4 * size_of::<f64>() + size_of::<bool>())?;
+        rows.checked_mul(4 * size_of::<i32>() + 2 * size_of::<f64>() + size_of::<bool>())?;
     let uvw = rows.checked_mul(size_of::<[f64; 3]>())?;
     let resident_bytes = row_indices
         .checked_add(visibility)?
@@ -158,25 +150,17 @@ pub(crate) fn selected_observation_buffer_residency(
         .checked_add(scalar_payload)?
         .checked_add(uvw)?;
 
-    // The typed scalar batch owns fifteen named vectors until they move into
-    // the destination buffer. Hashbrown keeps at most 7/8 load, so derive the
+    // The typed scalar batch owns seven named vectors until they move into the
+    // destination buffer. Hashbrown keeps at most 7/8 load, so derive the
     // allocated bucket count from the actual column count rather than hiding a
     // fixture-specific allowance.
-    const SCALAR_COLUMNS: [&str; 15] = [
+    const SCALAR_COLUMNS: [&str; 7] = [
         "DATA_DESC_ID",
         "FIELD_ID",
         "ANTENNA1",
         "ANTENNA2",
-        "FEED1",
-        "FEED2",
         "TIME",
         "TIME_CENTROID",
-        "INTERVAL",
-        "EXPOSURE",
-        "SCAN_NUMBER",
-        "STATE_ID",
-        "OBSERVATION_ID",
-        "ARRAY_ID",
         "FLAG_ROW",
     ];
     let minimum_buckets = SCALAR_COLUMNS
@@ -216,16 +200,8 @@ impl Default for SelectedObservationBuffer {
             field_ids: Vec::new(),
             antenna1: Vec::new(),
             antenna2: Vec::new(),
-            feed1: Vec::new(),
-            feed2: Vec::new(),
             time_mjd_seconds: Vec::new(),
             time_centroid_mjd_seconds: Vec::new(),
-            interval_seconds: Vec::new(),
-            exposure_seconds: Vec::new(),
-            scan_numbers: Vec::new(),
-            state_ids: Vec::new(),
-            observation_ids: Vec::new(),
-            array_ids: Vec::new(),
         }
     }
 }
@@ -272,17 +248,9 @@ impl SelectedObservationBuffer {
             uvw_m: [uvw[0], uvw[1], uvw[2]],
             time_mjd_seconds: *self.time_mjd_seconds.get(row_offset)?,
             time_centroid_mjd_seconds: *self.time_centroid_mjd_seconds.get(row_offset)?,
-            interval_seconds: *self.interval_seconds.get(row_offset)?,
-            exposure_seconds: *self.exposure_seconds.get(row_offset)?,
             field_id: *self.field_ids.get(row_offset)?,
             antenna1: *self.antenna1.get(row_offset)?,
             antenna2: *self.antenna2.get(row_offset)?,
-            feed1: *self.feed1.get(row_offset)?,
-            feed2: *self.feed2.get(row_offset)?,
-            scan_number: *self.scan_numbers.get(row_offset)?,
-            state_id: *self.state_ids.get(row_offset)?,
-            observation_id: *self.observation_ids.get(row_offset)?,
-            array_id: *self.array_ids.get(row_offset)?,
         })
     }
 }
@@ -296,17 +264,9 @@ pub(crate) struct SelectedStoredRow {
     uvw_m: [f64; 3],
     time_mjd_seconds: f64,
     time_centroid_mjd_seconds: f64,
-    interval_seconds: f64,
-    exposure_seconds: f64,
     field_id: i32,
     antenna1: i32,
     antenna2: i32,
-    feed1: i32,
-    feed2: i32,
-    scan_number: i32,
-    state_id: i32,
-    observation_id: i32,
-    array_id: i32,
 }
 
 macro_rules! selected_sample_getter {
@@ -346,32 +306,9 @@ impl SelectedStoredRow {
         f64,
         "Return MAIN `TIME_CENTROID` in MJD seconds."
     );
-    selected_sample_getter!(
-        interval_seconds,
-        interval_seconds,
-        f64,
-        "Return MAIN `INTERVAL` seconds."
-    );
-    selected_sample_getter!(
-        exposure_seconds,
-        exposure_seconds,
-        f64,
-        "Return MAIN `EXPOSURE` seconds."
-    );
     selected_sample_getter!(field_id, field_id, i32, "Return `FIELD_ID`.");
     selected_sample_getter!(antenna1, antenna1, i32, "Return `ANTENNA1`.");
     selected_sample_getter!(antenna2, antenna2, i32, "Return `ANTENNA2`.");
-    selected_sample_getter!(feed1, feed1, i32, "Return `FEED1`.");
-    selected_sample_getter!(feed2, feed2, i32, "Return `FEED2`.");
-    selected_sample_getter!(scan_number, scan_number, i32, "Return `SCAN_NUMBER`.");
-    selected_sample_getter!(state_id, state_id, i32, "Return `STATE_ID`.");
-    selected_sample_getter!(
-        observation_id,
-        observation_id,
-        i32,
-        "Return `OBSERVATION_ID`."
-    );
-    selected_sample_getter!(array_id, array_id, i32, "Return `ARRAY_ID`.");
 }
 
 impl MeasurementSet {
@@ -551,44 +488,12 @@ impl MeasurementSet {
                     RequiredScalarColumnValuesMut::Int32(&mut buffer.antenna2),
                 ),
                 RequiredScalarColumnDestination::new(
-                    "FEED1",
-                    RequiredScalarColumnValuesMut::Int32(&mut buffer.feed1),
-                ),
-                RequiredScalarColumnDestination::new(
-                    "FEED2",
-                    RequiredScalarColumnValuesMut::Int32(&mut buffer.feed2),
-                ),
-                RequiredScalarColumnDestination::new(
                     "TIME",
                     RequiredScalarColumnValuesMut::Float64(&mut buffer.time_mjd_seconds),
                 ),
                 RequiredScalarColumnDestination::new(
                     "TIME_CENTROID",
                     RequiredScalarColumnValuesMut::Float64(&mut buffer.time_centroid_mjd_seconds),
-                ),
-                RequiredScalarColumnDestination::new(
-                    "INTERVAL",
-                    RequiredScalarColumnValuesMut::Float64(&mut buffer.interval_seconds),
-                ),
-                RequiredScalarColumnDestination::new(
-                    "EXPOSURE",
-                    RequiredScalarColumnValuesMut::Float64(&mut buffer.exposure_seconds),
-                ),
-                RequiredScalarColumnDestination::new(
-                    "SCAN_NUMBER",
-                    RequiredScalarColumnValuesMut::Int32(&mut buffer.scan_numbers),
-                ),
-                RequiredScalarColumnDestination::new(
-                    "STATE_ID",
-                    RequiredScalarColumnValuesMut::Int32(&mut buffer.state_ids),
-                ),
-                RequiredScalarColumnDestination::new(
-                    "OBSERVATION_ID",
-                    RequiredScalarColumnValuesMut::Int32(&mut buffer.observation_ids),
-                ),
-                RequiredScalarColumnDestination::new(
-                    "ARRAY_ID",
-                    RequiredScalarColumnValuesMut::Int32(&mut buffer.array_ids),
                 ),
                 RequiredScalarColumnDestination::new(
                     "FLAG_ROW",
@@ -661,16 +566,8 @@ fn validate_buffer_lengths(buffer: &SelectedObservationBuffer) -> MsResult<()> {
         buffer.field_ids.len(),
         buffer.antenna1.len(),
         buffer.antenna2.len(),
-        buffer.feed1.len(),
-        buffer.feed2.len(),
         buffer.time_mjd_seconds.len(),
         buffer.time_centroid_mjd_seconds.len(),
-        buffer.interval_seconds.len(),
-        buffer.exposure_seconds.len(),
-        buffer.scan_numbers.len(),
-        buffer.state_ids.len(),
-        buffer.observation_ids.len(),
-        buffer.array_ids.len(),
     ];
     if lengths.into_iter().any(|length| length != rows) {
         return Err(invalid("selected-observation scalar column lengths differ"));
@@ -763,17 +660,9 @@ mod tests {
         assert_eq!(row.uvw_m(), [101.0, 102.0, 103.0]);
         assert_eq!(row.time_mjd_seconds(), 1001.0);
         assert_eq!(row.time_centroid_mjd_seconds(), 1002.0);
-        assert_eq!(row.interval_seconds(), 1010.0);
-        assert_eq!(row.exposure_seconds(), 1020.0);
         assert_eq!(row.field_id(), 14);
         assert_eq!(row.antenna1(), 11);
         assert_eq!(row.antenna2(), 12);
-        assert_eq!(row.feed1(), 19);
-        assert_eq!(row.feed2(), 20);
-        assert_eq!(row.scan_number(), 17);
-        assert_eq!(row.state_id(), 18);
-        assert_eq!(row.observation_id(), 16);
-        assert_eq!(row.array_id(), 15);
         assert!(buffer.row(2).is_none());
     }
 
@@ -853,7 +742,7 @@ mod tests {
         assert!(error.to_string().contains("WEIGHT_SPECTRUM"));
     }
 
-    fn storage_pointers(buffer: &SelectedObservationBuffer) -> [usize; 19] {
+    fn storage_pointers(buffer: &SelectedObservationBuffer) -> [usize; 11] {
         let visibility = match buffer.visibility.as_ref().unwrap() {
             super::SelectedStoredVisibilities::Float32(values) => values.as_ptr() as usize,
             super::SelectedStoredVisibilities::Complex32(values) => values.as_ptr() as usize,
@@ -872,16 +761,8 @@ mod tests {
             buffer.field_ids.as_ptr() as usize,
             buffer.antenna1.as_ptr() as usize,
             buffer.antenna2.as_ptr() as usize,
-            buffer.feed1.as_ptr() as usize,
-            buffer.feed2.as_ptr() as usize,
             buffer.time_mjd_seconds.as_ptr() as usize,
             buffer.time_centroid_mjd_seconds.as_ptr() as usize,
-            buffer.interval_seconds.as_ptr() as usize,
-            buffer.exposure_seconds.as_ptr() as usize,
-            buffer.scan_numbers.as_ptr() as usize,
-            buffer.state_ids.as_ptr() as usize,
-            buffer.observation_ids.as_ptr() as usize,
-            buffer.array_ids.as_ptr() as usize,
         ]
     }
 

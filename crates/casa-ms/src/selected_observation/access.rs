@@ -10,26 +10,25 @@ use crate::derived::engine::{MsCalEngine, polarization_operator_angle};
 use crate::spectral_selection::PreparedFrequencyFrameConversion;
 use crate::subtables::SubTable;
 use crate::{
-    MainRowSelectionCursor, MainRowSelectionFact, MeasurementSet, MsError, MsReadPlan,
-    MsSelectionIoBudget, ObservationOwnerError, PointingDirectionBracket,
+    MainRowSelectionCursor, MeasurementSet, MsError, MsReadPlan, MsSelectionIoBudget,
+    ObservationOwnerError, PointingDirectionBracket,
     PointingDirectionColumn as StoredPointingDirectionColumn, PointingDirectionQuery,
     PointingReadPlan, PreparedSelectedPointingCatalog, SelectedObservationBuffer,
-    SelectedObservationBufferRequest, SelectedPointingQueryDomain, SelectedStoredRow,
-    SelectedVisibilityColumn, SelectedWeightColumn, VisibilityChannelReadRange,
+    SelectedObservationBufferRequest, SelectedObservationRow, SelectedPointingQueryDomain,
+    SelectedStoredRow, SelectedVisibilityColumn, SelectedWeightColumn, VisibilityChannelReadRange,
 };
 use casa_coordinates::{
     Coordinate, DirectionCoordinate, Projection as CoordinateProjection, ProjectionType,
 };
 use casa_imaging_model::{
-    CompiledProblem, CorrelationProduct, CorrelationType, DataDescriptionSelection, DelayCentreLaw,
-    DirectionFrame, Epoch, FrequencyFrame, InstrumentModel, MeasurementSetReadAccess,
-    MissingPointingPolicy, ObservationSelection, ObservationSource, PhaseCentreLaw,
-    PointingCentreLaw, PointingDirectionColumn, PointingExtrapolation, PointingInterpolation,
-    PointingTimeSampling, Projection as ModelProjection, SelectedAntennaResponses,
-    SelectedImageDomainProjection, SelectedImageDomainProjections, SelectedObservationRunChannel,
-    SelectedObservationRunRow, SelectedPhaseCentreProjection, SelectedPointingDirections,
-    SelectedSampleCoordinates, SelectedSampleMetadata, SkyDirection, TimeScale, VisibilityColumn,
-    WeightColumn,
+    CompiledProblem, CorrelationProduct, CorrelationType, DataDescriptionSelection, DirectionFrame,
+    Epoch, FrequencyFrame, InstrumentModel, MeasurementSetReadAccess, MissingPointingPolicy,
+    ObservationSelection, ObservationSource, PhaseCentreLaw, PointingCentreLaw,
+    PointingDirectionColumn, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
+    Projection as ModelProjection, SelectedAntennaResponses, SelectedImageDomainProjection,
+    SelectedImageDomainProjections, SelectedObservationRunChannel, SelectedObservationRunRow,
+    SelectedPhaseCentreProjection, SelectedPointingDirections, SelectedSampleCoordinates,
+    SelectedSampleMetadata, SkyDirection, TimeScale, VisibilityColumn, WeightColumn,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use ndarray::arr2;
@@ -45,7 +44,7 @@ use super::{
         selected_content_plan_with_pointing_catalog, selected_content_requirements,
         selected_pointing_catalog_budget,
     },
-    row_selection::{CompiledRowPredicate, RowSelectionEvaluationError, StoredMainRow},
+    row_selection::{CompiledRowPredicate, RowSelectionEvaluationError},
 };
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
@@ -460,7 +459,7 @@ impl BoundObservationSource {
                 )?);
             }
             block.coordinate_index = coordinate_index;
-            block.bind_source(self, logical_source);
+            block.bind_source(self);
             return Ok(true);
         }
     }
@@ -542,7 +541,7 @@ pub(super) struct SelectedReplayRow {
 }
 
 impl SelectedReplayRow {
-    fn new(physical_row: u64, data_description_id: u32, fact: MainRowSelectionFact) -> Self {
+    fn new(physical_row: u64, data_description_id: u32, fact: SelectedObservationRow) -> Self {
         Self {
             physical_row,
             data_description_id,
@@ -733,7 +732,7 @@ impl SelectedRowReplay {
             return Ok(Some(row));
         }
         while let Some(fact) = self.cursor.next(&source.measurement_set)? {
-            if !source.row_predicate.matches(StoredMainRow::from(fact)) {
+            if !source.row_predicate.matches(fact) {
                 continue;
             }
             return Ok(Some(SelectedReplayRow::new(
@@ -752,7 +751,6 @@ impl SelectedRowReplay {
 }
 
 fn project_stored_run_row(
-    logical_source: &MeasurementSetReadAccess,
     problem: &CompiledProblem,
     geometry_engine: &MsCalEngine,
     coordinates: &SelectedCoordinates,
@@ -809,25 +807,14 @@ fn project_stored_run_row(
     let physical_row = u64::try_from(stored.physical_row())
         .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?;
     Ok(SelectedObservationRunRow {
-        measurement_set: logical_source.measurement_set(),
         physical_row,
         data_description_id: stored.data_description_id(),
         spectral_window_id: coordinates.data_description.spectral_window_id(),
-        polarization_id: coordinates.data_description.polarization_id(),
         row_flag: stored.row_flag(),
         coordinates: SelectedSampleCoordinates {
             raw_uvw_m: stored.uvw_m(),
-            density_uvw_m: geometry.density_uvw_m,
-            transformed_uvw_m: geometry.transformed_uvw_m,
-            phase_shift_m: geometry.phase_shift_m,
-            uvw_law: problem.geometry().uvw(),
             time: Epoch::new(stored.time_mjd_seconds() / 86_400.0, time_scale),
-            time_centroid: Epoch::new(stored.time_centroid_mjd_seconds() / 86_400.0, time_scale),
-            interval_seconds: stored.interval_seconds(),
-            exposure_seconds: stored.exposure_seconds(),
             parallactic_angles_rad,
-            phase_direction: geometry.phase_direction,
-            delay_direction: geometry.delay_direction,
             pointing_directions: geometry.pointing_directions,
         },
         domain_projections: geometry.domain_projections.clone(),
@@ -836,12 +823,6 @@ fn project_stored_run_row(
             antenna1: stored.antenna1(),
             antenna2: stored.antenna2(),
             antenna_responses,
-            feed1: stored.feed1(),
-            feed2: stored.feed2(),
-            scan_number: stored.scan_number(),
-            state_id: stored.state_id(),
-            observation_id: stored.observation_id(),
-            array_id: stored.array_id(),
         },
     })
 }
@@ -850,10 +831,6 @@ const fn project_run_channel(channel: SelectedChannel) -> SelectedObservationRun
     SelectedObservationRunChannel {
         channel_index: channel.channel_index,
         frequency_centre_hz: channel.centre_hz,
-        frequency_lower_hz: channel.lower_hz,
-        frequency_upper_hz: channel.upper_hz,
-        channel_width_hz: channel.width_hz,
-        frequency_frame: channel.frame,
     }
 }
 
@@ -872,7 +849,6 @@ pub struct SelectedObservationBlock {
     request_rows: Vec<usize>,
     row_contexts: Vec<SelectedReplayRow>,
     admitted_channel_ordinals: Option<std::ops::Range<usize>>,
-    logical_source: Option<MeasurementSetReadAccess>,
     coordinates: Option<Arc<[SelectedCoordinates]>>,
     geometry_engine: Option<Arc<MsCalEngine>>,
 }
@@ -927,7 +903,6 @@ impl SelectedObservationNumericGeometry {
 pub struct SelectedObservationNumericGeometryChunk<'a> {
     block: &'a SelectedObservationBlock,
     problem: &'a CompiledProblem,
-    logical: &'a MeasurementSetReadAccess,
     engine: &'a MsCalEngine,
     coordinates: &'a SelectedCoordinates,
     channels: &'a [SelectedObservationRunChannel],
@@ -950,7 +925,6 @@ impl SelectedObservationNumericGeometryChunk<'_> {
                 .row(row)
                 .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
             let projected = project_stored_run_row(
-                self.logical,
                 self.problem,
                 self.engine,
                 self.coordinates,
@@ -1034,10 +1008,6 @@ impl SelectedObservationBlock {
             .as_ref()
             .and_then(|v| v.get(self.coordinate_index))
             .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
-        let logical = self
-            .logical_source
-            .as_ref()
-            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
         let engine = self
             .geometry_engine
             .as_deref()
@@ -1080,7 +1050,6 @@ impl SelectedObservationBlock {
             chunks.push(SelectedObservationNumericGeometryChunk {
                 block: self,
                 problem,
-                logical,
                 engine,
                 coordinates,
                 channels: &geometry.channels,
@@ -1173,7 +1142,6 @@ impl SelectedObservationBlock {
             request_rows: Vec::with_capacity(rows_per_block),
             row_contexts: Vec::with_capacity(rows_per_block),
             admitted_channel_ordinals: None,
-            logical_source: None,
             coordinates: None,
             geometry_engine: None,
         }
@@ -1184,8 +1152,7 @@ impl SelectedObservationBlock {
         self.filled = false;
     }
 
-    fn bind_source(&mut self, source: &BoundObservationSource, logical: &MeasurementSetReadAccess) {
-        self.logical_source = Some(logical.clone());
+    fn bind_source(&mut self, source: &BoundObservationSource) {
         self.coordinates = Some(Arc::clone(&source.coordinates));
         self.geometry_engine = Some(Arc::clone(&source.geometry_engine));
         self.fill = self.fill.wrapping_add(1);
@@ -1325,9 +1292,6 @@ pub(super) struct SelectedCoordinates {
 pub(super) struct SelectedChannel {
     channel_index: u32,
     centre_hz: f64,
-    lower_hz: f64,
-    upper_hz: f64,
-    width_hz: f64,
     frame: FrequencyFrame,
 }
 
@@ -1363,19 +1327,6 @@ fn selected_coordinates(
                 spectral_window_id: data_description.spectral_window_id(),
             });
         };
-        let Some(casa_types::ArrayValue::Float64(widths)) = spectral_windows
-            .table()
-            .column_accessor("CHAN_WIDTH")
-            .map_err(MsError::from)?
-            .array_cells_owned_uncached(&[spw_row])
-            .map_err(MsError::from)?
-            .pop()
-            .flatten()
-        else {
-            return Err(BoundObservationSourceError::SpectralCoordinateMismatch {
-                spectral_window_id: data_description.spectral_window_id(),
-            });
-        };
         let frame = frequency_frame(selected_i32_scalar(
             spectral_windows.table(),
             "MEAS_FREQ_REF",
@@ -1393,17 +1344,7 @@ fn selected_coordinates(
                     spectral_window_id: data_description.spectral_window_id(),
                 },
             )?;
-            let width_hz = *widths.get(channel).ok_or(
-                BoundObservationSourceError::SpectralCoordinateMismatch {
-                    spectral_window_id: data_description.spectral_window_id(),
-                },
-            )?;
-            let first_edge = centre_hz - 0.5 * width_hz;
-            let second_edge = centre_hz + 0.5 * width_hz;
-            if ![centre_hz, width_hz, first_edge, second_edge]
-                .into_iter()
-                .all(f64::is_finite)
-            {
+            if !centre_hz.is_finite() {
                 return Err(BoundObservationSourceError::SpectralCoordinateMismatch {
                     spectral_window_id: data_description.spectral_window_id(),
                 });
@@ -1411,9 +1352,6 @@ fn selected_coordinates(
             channels.push(SelectedChannel {
                 channel_index,
                 centre_hz,
-                lower_hz: first_edge.min(second_edge),
-                upper_hz: first_edge.max(second_edge),
-                width_hz,
                 frame,
             });
         }
@@ -1429,7 +1367,6 @@ fn selected_coordinates(
                 spectral_window_id: data_description.spectral_window_id(),
             })?;
         drop(centres);
-        drop(widths);
         let polarization = selection
             .correlations()
             .iter()
@@ -1510,12 +1447,7 @@ fn matches_canonical_correlation_order(
 
 #[derive(Clone)]
 pub(super) struct EvaluatedRowGeometry {
-    density_uvw_m: [f64; 3],
-    transformed_uvw_m: [f64; 3],
-    phase_shift_m: f64,
     domain_projections: SelectedImageDomainProjections,
-    phase_direction: SkyDirection,
-    delay_direction: SkyDirection,
     pointing_directions: SelectedPointingDirections,
 }
 
@@ -1547,11 +1479,6 @@ fn evaluate_row_geometry(
             SkyDirection::new(DirectionFrame::J2000, longitude_rad, latitude_rad)
         }
     };
-    let delay_direction = match centres.delay() {
-        DelayCentreLaw::PhaseTrackingCentre => phase_direction,
-        DelayCentreLaw::Observation => observation_direction,
-        DelayCentreLaw::Fixed(direction) => require_fixed_j2000(*direction)?,
-    };
     let pointing_directions = match centres.pointing() {
         PointingCentreLaw::PhaseTrackingCentre => SelectedPointingDirections {
             antenna1: phase_direction,
@@ -1571,31 +1498,6 @@ fn evaluate_row_geometry(
         PointingCentreLaw::Observation(_) => observation_pointing
             .ok_or(BoundObservationSourceError::MissingEvaluatedPointingDirections)?,
     };
-    let (density_uvw_m, transformed_uvw_m, phase_shift_m) =
-        if matches!(centres.phase_tracking(), PhaseCentreLaw::Observation) {
-            (stored.uvw_m(), stored.uvw_m(), 0.0)
-        } else {
-            let target = [
-                phase_direction.longitude_rad(),
-                phase_direction.latitude_rad(),
-            ];
-            let observation = [
-                observation_direction.longitude_rad(),
-                observation_direction.latitude_rad(),
-            ];
-            // CASA's ordinary MFS VisImagingWeight density grid bins the
-            // MeasurementSet UVW.  Phase-centre reprojection belongs to the
-            // GridFT coordinate and phase correction below, not weighting.
-            let density_uvw_m = stored.uvw_m();
-            let (transformed_uvw_m, phase_shift_m) = source
-                .geometry_engine
-                .reproject_raw_uvw_for_gridft_between_j2000_directions(
-                    stored.uvw_m(),
-                    observation,
-                    target,
-                )?;
-            (density_uvw_m, transformed_uvw_m, phase_shift_m)
-        };
     let domains = problem.geometry().domains();
     let moving_direction_shift = if matches!(centres.phase_tracking(), PhaseCentreLaw::Ephemeris(_))
     {
@@ -1708,12 +1610,7 @@ fn evaluate_row_geometry(
     let domain_projections = SelectedImageDomainProjections::new(domain_projections)
         .ok_or(BoundObservationSourceError::InvalidRowGeometry)?;
     Ok(EvaluatedRowGeometry {
-        density_uvw_m,
-        transformed_uvw_m,
-        phase_shift_m,
         domain_projections,
-        phase_direction,
-        delay_direction,
         pointing_directions,
     })
 }
@@ -1896,7 +1793,7 @@ fn build_aw_pointing_epoch_plan(
         .main_row_selection_cursor(scan_plan)?;
     let mut epochs = Vec::<AwPointingEpochInput>::new();
     while let Some(row) = cursor.next(&source.measurement_set)? {
-        if !source.row_predicate.matches(StoredMainRow::from(row)) {
+        if !source.row_predicate.matches(row) {
             continue;
         }
         let key = AwPointingEpochKey {

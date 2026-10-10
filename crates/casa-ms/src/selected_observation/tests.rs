@@ -194,10 +194,6 @@ fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
     );
     let first = &one_row_samples[0];
     assert_eq!(first.channel.frequency_centre_hz, 1.4e9);
-    assert_eq!(first.channel.frequency_lower_hz, 1.3995e9);
-    assert_eq!(first.channel.frequency_upper_hz, 1.4005e9);
-    assert_eq!(first.channel.channel_width_hz, 1.0e6);
-    assert_eq!(first.channel.frequency_frame, FrequencyFrame::Topocentric);
     assert_eq!(first.frequency_hz, 1.4e9);
     assert_eq!(
         first.correlation.correlation_type(),
@@ -205,19 +201,12 @@ fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
     );
     assert_eq!(first.visibility, Visibility::Complex32([0.0, 0.0]));
     let coordinates = &first.row.coordinates;
-    assert_eq!(coordinates.density_uvw_m, coordinates.raw_uvw_m);
-    assert_eq!(coordinates.transformed_uvw_m, coordinates.raw_uvw_m);
-    assert_eq!(coordinates.phase_shift_m, 0.0);
-    assert_eq!(coordinates.phase_direction, coordinates.delay_direction);
     assert_eq!(
-        coordinates.phase_direction,
-        coordinates.pointing_directions.antenna1
+        coordinates.pointing_directions.antenna1.frame(),
+        DirectionFrame::J2000
     );
-    assert_eq!(coordinates.phase_direction.frame(), DirectionFrame::J2000);
     assert_eq!(first.row.metadata.antenna1, 0);
     assert_eq!(first.row.metadata.antenna2, 1);
-    assert_eq!(first.row.metadata.feed1, 0);
-    assert_eq!(first.row.metadata.feed2, 0);
 }
 
 #[test]
@@ -718,15 +707,11 @@ fn cube_traversals_report_native_channels_and_their_output_frame_centres() {
             (
                 sample.channel.channel_index,
                 sample.channel.frequency_centre_hz,
-                [
-                    sample.channel.frequency_lower_hz,
-                    sample.channel.frequency_upper_hz,
-                ],
             )
         };
-        assert_eq!(channel(&samples[0]), (0, 1.4e9, [1.3995e9, 1.4005e9]));
+        assert_eq!(channel(&samples[0]), (0, 1.4e9));
         assert_eq!(channel(&samples[1]), channel(&samples[0]));
-        assert_eq!(channel(&samples[2]), (2, 1.402e9, [1.4015e9, 1.4025e9]));
+        assert_eq!(channel(&samples[2]), (2, 1.402e9));
         assert_eq!(channel(&samples[3]), channel(&samples[2]));
     }
 }
@@ -841,7 +826,6 @@ fn real_ms_cube_traversal_uses_the_native_field_frame_for_output_conversion() {
     let mut values = Vec::new();
 
     for sample in &samples {
-        assert_eq!(sample.channel.frequency_frame, FrequencyFrame::Topocentric);
         let frame = observation
             .source(0)
             .geometry_engine()
@@ -1664,27 +1648,12 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
         one_row_samples, two_row_samples,
         "physical source and row blocking are absent from the selected samples"
     );
-    assert_eq!(
-        one_row_samples
-            .as_chunks::<8>()
-            .0
-            .iter()
-            .map(|samples| samples[0].row.measurement_set)
-            .collect::<Vec<_>>(),
-        problem
-            .observation_transaction()
-            .read_set()
-            .sources()
-            .iter()
-            .map(|source| source.measurement_set())
-            .collect::<Vec<_>>()
-    );
     let (_, repeated) = stream(&problem, one_row).expect("repeat the retained traversal");
     assert_eq!(repeated, one_row_samples);
 }
 
 #[test]
-fn retained_selected_samples_evaluate_fixed_centres_and_uvw_coordinates() {
+fn retained_selected_samples_evaluate_fixed_pointing_centres() {
     let directory = tempfile::tempdir().expect("temporary fixed-centre fixture");
     let path = directory.path().join("fixed.ms");
     generate_fixture(&path);
@@ -1705,13 +1674,8 @@ fn retained_selected_samples_evaluate_fixed_centres_and_uvw_coordinates() {
     assert_eq!(samples.len(), 8);
     for sample in &samples {
         let coordinates = &sample.row.coordinates;
-        assert_eq!(coordinates.phase_direction, phase);
-        assert_eq!(coordinates.delay_direction, delay);
         assert_eq!(coordinates.pointing_directions.antenna1, pointing);
         assert_eq!(coordinates.pointing_directions.antenna2, pointing);
-        assert_ne!(coordinates.transformed_uvw_m, coordinates.raw_uvw_m);
-        assert_eq!(coordinates.density_uvw_m, coordinates.raw_uvw_m);
-        assert_ne!(coordinates.phase_shift_m, 0.0);
     }
 }
 
@@ -1803,9 +1767,11 @@ fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
         .find(|sample| sample.row.physical_row == 1)
         .expect("second selected row")
         .row;
+    // Pointing follows the phase-tracking centre, so the pointing direction
+    // is the row's evaluated ephemeris direction.
     assert_ne!(
-        first.coordinates.phase_direction,
-        second_row.coordinates.phase_direction
+        first.coordinates.pointing_directions.antenna1,
+        second_row.coordinates.pointing_directions.antenna1
     );
     assert_ne!(
         first.domain_projections.iter().next().unwrap().model(),
@@ -1813,13 +1779,6 @@ fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
         "moving rows must not retain one fixed primary-domain projection",
     );
     for sample in &samples {
-        let coordinates = &sample.row.coordinates;
-        assert_eq!(coordinates.phase_direction, coordinates.delay_direction);
-        assert_eq!(
-            coordinates.phase_direction,
-            coordinates.pointing_directions.antenna1
-        );
-        assert_ne!(coordinates.phase_shift_m, 0.0);
         let primary = sample
             .row
             .domain_projections
@@ -1827,8 +1786,7 @@ fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
             .next()
             .expect("primary image-domain projection")
             .model();
-        assert_eq!(primary.transformed_uvw_m(), coordinates.transformed_uvw_m);
-        assert_eq!(primary.phase_shift_m(), coordinates.phase_shift_m);
+        assert_ne!(primary.phase_shift_m(), 0.0);
     }
 }
 
@@ -1936,15 +1894,24 @@ fn observation_pointing_missing_policy_is_explicit_and_fail_closed() {
             observation_pointing(MissingPointingPolicy::UsePhaseTrackingCentre),
         ),
     );
-    for sample in stream_rows(&fallback_problem, 2) {
-        let coordinates = &sample.row.coordinates;
+    // The phase-tracking centre is the observation direction, the same
+    // direction the field-centre pointing law evaluates.
+    let field_centre_problem = compiled_problem_with_centres(
+        &path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Observation,
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::FieldCentre,
+        ),
+    );
+    let field_centre = stream_rows(&field_centre_problem, 2);
+    let fallback = stream_rows(&fallback_problem, 2);
+    assert_eq!(fallback.len(), field_centre.len());
+    for (sample, field_centre) in fallback.iter().zip(&field_centre) {
         assert_eq!(
-            coordinates.pointing_directions.antenna1,
-            coordinates.phase_direction
-        );
-        assert_eq!(
-            coordinates.pointing_directions.antenna2,
-            coordinates.phase_direction
+            sample.row.coordinates.pointing_directions,
+            field_centre.row.coordinates.pointing_directions
         );
     }
 

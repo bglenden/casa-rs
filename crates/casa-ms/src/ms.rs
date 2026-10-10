@@ -40,79 +40,90 @@ use crate::validate::{self, ValidationIssue};
 pub const MS_VERSION: f32 = 2.0;
 const CASACORE_MS_TABLE_TYPE: &str = "Measurement Set";
 
-/// The stored MAIN facts needed to evaluate one compiled row selection.
+/// The stored MAIN columns of one row that the selected-observation row
+/// predicate and the bounded row traversal read.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct MainRowSelectionFact {
-    physical_row: usize,
-    data_description_id: i32,
-    field_id: i32,
-    antenna1: i32,
-    antenna2: i32,
-    time_mjd_seconds: f64,
-    time_centroid_mjd_seconds: f64,
-    state_id: i32,
-    observation_id: i32,
-    flag_row: bool,
-    uvw_m: [f64; 3],
+pub struct SelectedObservationRow {
+    pub(crate) physical_row: usize,
+    pub(crate) data_description_id: i32,
+    pub(crate) field_id: i32,
+    pub(crate) antenna1: i32,
+    pub(crate) antenna2: i32,
+    pub(crate) time_mjd_seconds: f64,
+    pub(crate) time_centroid_mjd_seconds: f64,
+    pub(crate) state_id: i32,
+    pub(crate) observation_id: i32,
+    pub(crate) flag_row: bool,
+    pub(crate) uvw_m: [f64; 3],
 }
 
-impl MainRowSelectionFact {
+impl SelectedObservationRow {
     /// Exact bytes read from stored MAIN columns for each row.
-    pub(crate) const STORAGE_BYTES_PER_ROW: usize = 65;
+    pub const STORAGE_BYTES_PER_ROW: usize = 65;
 
     /// Return the physical MAIN row index.
     #[must_use]
-    pub(crate) fn physical_row(self) -> usize {
+    pub const fn physical_row(self) -> usize {
         self.physical_row
     }
+
     /// Return the stored `DATA_DESC_ID`.
     #[must_use]
-    pub(crate) fn data_description_id(self) -> i32 {
+    pub const fn data_description_id(self) -> i32 {
         self.data_description_id
     }
+
     /// Return the stored `FIELD_ID`.
     #[must_use]
-    pub(crate) fn field_id(self) -> i32 {
+    pub const fn field_id(self) -> i32 {
         self.field_id
     }
+
     /// Return the stored first antenna identifier.
     #[must_use]
-    pub(crate) fn antenna1(self) -> i32 {
+    pub const fn antenna1(self) -> i32 {
         self.antenna1
     }
+
     /// Return the stored second antenna identifier.
     #[must_use]
-    pub(crate) fn antenna2(self) -> i32 {
+    pub const fn antenna2(self) -> i32 {
         self.antenna2
     }
+
     /// Return the stored `TIME` in MJD seconds.
     #[must_use]
-    pub(crate) fn time_mjd_seconds(self) -> f64 {
+    pub const fn time_mjd_seconds(self) -> f64 {
         self.time_mjd_seconds
     }
+
     /// Return the stored `TIME_CENTROID` in MJD seconds.
     #[must_use]
-    pub(crate) fn time_centroid_mjd_seconds(self) -> f64 {
+    pub const fn time_centroid_mjd_seconds(self) -> f64 {
         self.time_centroid_mjd_seconds
     }
+
     /// Return the stored `STATE_ID`.
     #[must_use]
-    pub(crate) fn state_id(self) -> i32 {
+    pub const fn state_id(self) -> i32 {
         self.state_id
     }
+
     /// Return the stored `OBSERVATION_ID`.
     #[must_use]
-    pub(crate) fn observation_id(self) -> i32 {
+    pub const fn observation_id(self) -> i32 {
         self.observation_id
     }
+
     /// Return the stored row-level flag.
     #[must_use]
-    pub(crate) fn flag_row(self) -> bool {
+    pub const fn flag_row(self) -> bool {
         self.flag_row
     }
+
     /// Return the stored UVW coordinates in metres.
     #[must_use]
-    pub(crate) fn uvw_m(self) -> [f64; 3] {
+    pub const fn uvw_m(self) -> [f64; 3] {
         self.uvw_m
     }
 }
@@ -159,10 +170,10 @@ impl MainRowSelectionBlock {
         self.data_description_ids.len()
     }
 
-    /// Return one row fact by its block-local offset.
+    /// Return one row by its block-local offset.
     #[must_use]
-    pub(crate) fn row(&self, offset: usize) -> Option<MainRowSelectionFact> {
-        (offset < self.len()).then(|| MainRowSelectionFact {
+    pub(crate) fn row(&self, offset: usize) -> Option<SelectedObservationRow> {
+        (offset < self.len()).then(|| SelectedObservationRow {
             physical_row: self.first_row + offset,
             data_description_id: self.data_description_ids[offset],
             field_id: self.field_ids[offset],
@@ -183,7 +194,7 @@ impl MainRowSelectionBlock {
 
     /// Iterate the stored facts in physical MAIN row order.
     #[cfg(test)]
-    pub(crate) fn rows(&self) -> impl ExactSizeIterator<Item = MainRowSelectionFact> + '_ {
+    pub(crate) fn rows(&self) -> impl ExactSizeIterator<Item = SelectedObservationRow> + '_ {
         (0..self.len()).map(|offset| self.row(offset).expect("offset is bounded by block length"))
     }
 }
@@ -199,13 +210,13 @@ pub(crate) struct MainRowSelectionCursor {
 
 impl MainRowSelectionCursor {
     pub(crate) const fn retained_bytes_per_row() -> usize {
-        MainRowSelectionFact::STORAGE_BYTES_PER_ROW + size_of::<usize>()
+        SelectedObservationRow::STORAGE_BYTES_PER_ROW + size_of::<usize>()
     }
 
     pub(crate) fn next(
         &mut self,
         measurement_set: &MeasurementSet,
-    ) -> MsResult<Option<MainRowSelectionFact>> {
+    ) -> MsResult<Option<SelectedObservationRow>> {
         if self.offset < self.block.len() {
             let fact = self
                 .block
@@ -639,7 +650,7 @@ impl MeasurementSet {
         }
         let required_bytes = plan
             .rows_per_block
-            .checked_mul(MainRowSelectionFact::STORAGE_BYTES_PER_ROW)
+            .checked_mul(SelectedObservationRow::STORAGE_BYTES_PER_ROW)
             .ok_or_else(|| {
                 MsError::InvalidInput("MAIN row block byte count overflow".to_string())
             })?;
@@ -1580,7 +1591,7 @@ mod tests {
 
     #[test]
     fn main_row_selection_blocks_follow_the_explicit_read_plan_and_reuse_storage() {
-        assert_eq!(MainRowSelectionFact::STORAGE_BYTES_PER_ROW, 65);
+        assert_eq!(SelectedObservationRow::STORAGE_BYTES_PER_ROW, 65);
         assert_eq!(
             MainRowSelectionCursor::retained_bytes_per_row(),
             65 + size_of::<usize>()
@@ -1627,9 +1638,9 @@ mod tests {
         let plan = crate::MsReadPlan::new(
             ms.row_count(),
             crate::MsSelectionIoBudget {
-                available_bytes: 2 * MainRowSelectionFact::STORAGE_BYTES_PER_ROW,
+                available_bytes: 2 * SelectedObservationRow::STORAGE_BYTES_PER_ROW,
                 maximum_live_blocks: 1,
-                requested_bytes_per_row: MainRowSelectionFact::STORAGE_BYTES_PER_ROW,
+                requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
                 storage_alignment_rows: None,
             },
         )

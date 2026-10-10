@@ -138,9 +138,11 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
     let (_, samples) = stream(&problem, access.open(&problem)?)?;
     let mut actual = BTreeMap::new();
     for sample in &samples {
+        // The pointing law follows the phase-tracking centre, so each
+        // antenna's pointing direction is the evaluated ephemeris direction.
         actual.entry(sample.row.physical_row).or_insert((
             sample.row.coordinates.time.mjd_days(),
-            sample.row.coordinates.phase_direction,
+            sample.row.coordinates.pointing_directions.antenna1,
         ));
     }
     assert_eq!(samples.len(), 2 * selected_row_count);

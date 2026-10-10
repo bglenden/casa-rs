@@ -16,6 +16,7 @@ mod spectral_evaluation;
 #[cfg(test)]
 mod tests;
 
+pub use crate::ms::SelectedObservationRow;
 pub(crate) use access::BoundObservationSource;
 pub use access::{
     BoundObservationSourceError, SelectedObservationBlock, SelectedObservationNumericGeometry,
@@ -30,7 +31,7 @@ pub use content_plan::{
     SelectedObservationReferenceDataBudget,
 };
 pub use measures::{SelectedObservationMeasures, SelectedObservationMeasuresError};
-pub use row_access::{SelectedObservationRow, SelectedObservationRowSelection};
+pub use row_access::SelectedObservationRowSelection;
 pub use spectral_evaluation::{
     SelectedObservationSpectralEnvelope, SelectedObservationSpectralEnvelopeReducer,
     SelectedObservationSpectralWindow,

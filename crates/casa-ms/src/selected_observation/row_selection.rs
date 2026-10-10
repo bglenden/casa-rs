@@ -2,43 +2,12 @@
 
 use std::mem::size_of;
 
-use crate::{MainRowSelectionFact, SelectedStoredRow};
+use crate::SelectedObservationRow;
 use casa_imaging_model::{
     DataDescriptionSelection, IdSelection, IntentSelection, ObservationSource, RowSelection,
     SelectionBound, UvDistanceUnit, UvSelection,
 };
 use thiserror::Error;
-
-/// The MAIN columns the row predicate reads.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct StoredMainRow {
-    pub(crate) data_description_id: i32,
-    pub(crate) field_id: i32,
-    pub(crate) state_id: i32,
-    pub(crate) uvw_m: [f64; 3],
-}
-
-impl From<MainRowSelectionFact> for StoredMainRow {
-    fn from(fact: MainRowSelectionFact) -> Self {
-        Self {
-            data_description_id: fact.data_description_id(),
-            field_id: fact.field_id(),
-            state_id: fact.state_id(),
-            uvw_m: fact.uvw_m(),
-        }
-    }
-}
-
-impl From<SelectedStoredRow> for StoredMainRow {
-    fn from(sample: SelectedStoredRow) -> Self {
-        Self {
-            data_description_id: sample.data_description_id(),
-            field_id: sample.field_id(),
-            state_id: sample.state_id(),
-            uvw_m: sample.uvw_m(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub(crate) enum RowSelectionEvaluationError {
@@ -147,7 +116,7 @@ impl CompiledRowPredicate {
         })
     }
 
-    pub(crate) fn matches(&self, row: StoredMainRow) -> bool {
+    pub(crate) fn matches(&self, row: SelectedObservationRow) -> bool {
         let selection = self.catalog.selection();
         let data_descriptions = self.catalog.data_descriptions();
         let Ok(data_description_id) = u32::try_from(row.data_description_id) else {
@@ -248,7 +217,8 @@ mod tests {
         SelectionBound, UvDistanceRange, UvDistanceUnit, UvSelection,
     };
 
-    use super::{CompiledRowPredicate, RowSelectionEvaluationError, StoredMainRow};
+    use super::{CompiledRowPredicate, RowSelectionEvaluationError};
+    use crate::SelectedObservationRow;
 
     fn exact_selection(uv_distances: UvSelection) -> RowSelection {
         RowSelection::new(
@@ -258,11 +228,18 @@ mod tests {
         )
     }
 
-    fn matching_row() -> StoredMainRow {
-        StoredMainRow {
+    fn matching_row() -> SelectedObservationRow {
+        SelectedObservationRow {
+            physical_row: 0,
             data_description_id: 6,
             field_id: 3,
+            antenna1: 0,
+            antenna2: 1,
+            time_mjd_seconds: 0.0,
+            time_centroid_mjd_seconds: 0.0,
             state_id: 5,
+            observation_id: 0,
+            flag_row: false,
             uvw_m: [3.0, 4.0, 12.0],
         }
     }
@@ -281,13 +258,13 @@ mod tests {
         assert!(predicate.matches(row));
 
         for rejected in [
-            StoredMainRow {
+            SelectedObservationRow {
                 data_description_id: 4,
                 ..row
             },
-            StoredMainRow { field_id: 4, ..row },
-            StoredMainRow { state_id: 6, ..row },
-            StoredMainRow {
+            SelectedObservationRow { field_id: 4, ..row },
+            SelectedObservationRow { state_id: 6, ..row },
+            SelectedObservationRow {
                 uvw_m: [6.0, 0.0, 0.0],
                 ..row
             },
@@ -307,7 +284,7 @@ mod tests {
         let predicate =
             CompiledRowPredicate::new(&selection, &descriptions, |ddid| (ddid == 6).then_some(1.0))
                 .expect("selected DDID has a positive finite reference wavelength");
-        let row = StoredMainRow {
+        let row = SelectedObservationRow {
             uvw_m: [3.0, 4.0, 0.0],
             ..matching_row()
         };
@@ -326,7 +303,7 @@ mod tests {
         let descriptions = [DataDescriptionSelection::new(6, 8, 10)];
         let selection = RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All);
         let predicate = CompiledRowPredicate::new(&selection, &descriptions, |_| None).unwrap();
-        assert!(predicate.matches(StoredMainRow {
+        assert!(predicate.matches(SelectedObservationRow {
             uvw_m: [f64::NAN; 3],
             ..matching_row()
         }));
