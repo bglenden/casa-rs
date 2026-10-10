@@ -207,7 +207,7 @@ fn continuum_selection(
         request.fitorder,
         i32::try_from(centre.field_id).expect("the centre's field id is a stored i32 FIELD_ID"),
         window,
-        &surveyed.spectral.selected_source_channels[&window.spw_id],
+        surveyed.spectral.window_channels(window.spw_id),
     )?;
     Ok((Some(transform), BTreeMap::from([(window.spw_id, selected)])))
 }
@@ -341,7 +341,7 @@ fn cube_density_padding(
                 window.frequency_reference,
                 &window.frequencies_hz,
                 &window.channel_widths_hz,
-                &spectral.selected_source_channels[&window.spw_id],
+                spectral.window_channels(window.spw_id),
             ),
             survey.fields.iter().copied(),
             spectral.output_frequency_reference,
@@ -472,8 +472,7 @@ fn deployment(
             controls,
             sink: CasaImageProductSink::for_domains(
                 domains.iter().map(PreparedImageDomain::output),
-            )
-            .map_err(|_| PrepareError::DuplicateOutput)?,
+            ),
         },
         output_directories: domains
             .iter()
