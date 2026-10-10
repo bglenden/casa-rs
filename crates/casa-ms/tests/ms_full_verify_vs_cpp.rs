@@ -30,8 +30,7 @@ use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::{
     SelectedObservationContentBudget, SelectedObservationResolutionRequest,
-    SelectedVisibilityWrite, SelectedVisibilityWriteGenerations, SelectedVisibilityWriteTargets,
-    initialize_measurement_set_owner_manifest, resolve_selected_observation,
+    SelectedVisibilityWrite, SelectedVisibilityWriteTargets, resolve_selected_observation,
 };
 use casa_tables::{ColumnType, Table};
 use casa_test_support::casacore_oracle_available;
@@ -1044,7 +1043,6 @@ fn model_data_write_read_interoperability_matrix() {
     populate_subtables(&mut ms);
     populate_main_rows(&mut ms, 6);
     ms.save().unwrap();
-    initialize_measurement_set_owner_manifest(&ms_path).expect("initialize owner manifest");
 
     let selection = ObservationSelection::new(
         SelectedRows::from_ordered_main_rows(
@@ -1074,7 +1072,6 @@ fn model_data_write_read_interoperability_matrix() {
             ],
         )],
     );
-    let model_selection = selection.clone();
     let request = SelectedObservationResolutionRequest::new(
         ms_path.display().to_string(),
         LogicalIdentity::from_bytes([2; 32]),
@@ -1086,25 +1083,15 @@ fn model_data_write_read_interoperability_matrix() {
         SelectedObservationContentBudget::new(1 << 20, 6, 64),
         casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
     );
-    let resolved = resolve_selected_observation(request).expect("resolve owner state");
-    let (_, access) = resolved.into_parts();
-    let mut writer = SelectedVisibilityWrite::begin(
-        &ms_path,
-        access.source_state(),
-        &model_selection,
-        SelectedVisibilityWriteTargets::new(true, false),
-    )
-    .expect("begin MODEL_DATA write");
+    resolve_selected_observation(request).expect("resolve the MS without preparation");
+    let mut writer =
+        SelectedVisibilityWrite::begin(&ms_path, SelectedVisibilityWriteTargets::new(true, false))
+            .expect("begin MODEL_DATA write");
     let rust_written = casa_types::Complex32::new(4.5, -1.25);
     writer
         .write(MsColumnKind::ModelData, 0, 0, 0, rust_written)
         .expect("write prediction");
-    writer
-        .complete(SelectedVisibilityWriteGenerations {
-            model_data: Some(LogicalIdentity::from_bytes([73; 32])),
-            corrected_data: None,
-        })
-        .expect("complete MODEL_DATA write");
+    writer.complete().expect("complete MODEL_DATA write");
 
     let reopened = MeasurementSet::open(&ms_path).expect("reopen committed MS in Rust");
     let rust_manifest = digest_measurement_set_manifest(&reopened);
@@ -1150,7 +1137,6 @@ fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
     let path = directory.path().join("cpp-heterogeneous-tiled-shape.ms");
     MeasurementSetOracle::write_heterogeneous_tiled_shape_fixture(&path)
         .expect("C++ creates heterogeneous TiledShapeStMan fixture");
-    initialize_measurement_set_owner_manifest(&path).expect("initialize owner manifest");
     let selection = ObservationSelection::new(
         SelectedRows::from_ordered_main_rows(
             2,
@@ -1205,13 +1191,9 @@ fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
     assert_eq!(storage.maximum_cell_bytes(), 512);
     assert_eq!(storage.write_buffer_bytes(), 1_024);
 
-    let mut writer = SelectedVisibilityWrite::begin(
-        &path,
-        access.source_state(),
-        &selection,
-        SelectedVisibilityWriteTargets::new(true, false),
-    )
-    .expect("clone and initialize MODEL_DATA");
+    let mut writer =
+        SelectedVisibilityWrite::begin(&path, SelectedVisibilityWriteTargets::new(true, false))
+            .expect("clone and initialize MODEL_DATA");
     let rust_first = casa_types::Complex32::new(4.25, -0.75);
     let rust_second = casa_types::Complex32::new(-3.0, 2.5);
     writer
@@ -1220,12 +1202,7 @@ fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
     writer
         .write(MsColumnKind::ModelData, 1, 7, 2, rust_second)
         .expect("write 4x8 cell");
-    writer
-        .complete(SelectedVisibilityWriteGenerations {
-            model_data: Some(LogicalIdentity::from_bytes([83; 32])),
-            corrected_data: None,
-        })
-        .expect("complete Rust write");
+    writer.complete().expect("complete Rust write");
 
     MeasurementSetOracle::verify_heterogeneous_model_clone(&path)
         .expect("C++ verifies cloned TiledShapeStMan and heterogeneous row shapes");

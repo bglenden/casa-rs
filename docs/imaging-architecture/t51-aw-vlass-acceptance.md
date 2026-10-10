@@ -80,8 +80,8 @@ produce a passing receipt.
 ## Required external inputs
 
 ```text
-Explicitly owner-initialized dataset root used for the retained T51 evidence
-(the immutable source MS remains unchanged):
+Dataset root used for the retained T51 evidence (the immutable source MS
+remains unchanged):
 /Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-ticket-537-20260903.thHAWF/data
 
 Frozen dirty CASA prefix:
@@ -130,9 +130,9 @@ The gate rejects a preexisting private store, requires the dirty run to
 materialize exactly 1,024 private manifests, and requires the clean run to
 reuse the exact unchanged manifest set.
 
-The direct MeasurementSet must already contain a valid
-`CASA_RS_IMAGING_OWNER_MANIFEST`; the gate never mutates or silently migrates
-the source dataset. The output directory, artifact root, CASA-oracle cache root,
+The gate never mutates the source dataset. (Its earlier requirement of a
+`CASA_RS_IMAGING_OWNER_MANIFEST` keyword was removed on 2026-10-09; casa-rs
+reads a MeasurementSet as CASA wrote it.) The output directory, artifact root, CASA-oracle cache root,
 and shared native prepared-store parent must all be fresh safe paths on
 `/Volumes/GLENDENNING`. Native production storage validation requires the
 MeasurementSet and outputs to share one filesystem; do not make an unrecorded

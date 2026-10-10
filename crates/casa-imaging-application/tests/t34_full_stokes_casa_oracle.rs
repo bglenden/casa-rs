@@ -38,7 +38,6 @@ fn t34_full_stokes_hogbom_matches_casa_products() -> Result<(), Box<dyn Error>> 
     let staging = tempfile::tempdir()?;
     let measurement_set = staging.path().join("refim_point_stokes.ms");
     MeasurementSet::open(&source)?.save_as(&measurement_set)?;
-    casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
     let rust_prefix = staging.path().join("rust-full-stokes");
 
     let result = run(&measurement_set, &rust_prefix, json!({}))?;
@@ -292,7 +291,6 @@ fn issue607_representative_full_stokes_matches_casa_products() -> Result<(), Box
     let staging = tempfile::tempdir()?;
     let measurement_set = staging.path().join("full-stokes-shaped.ms");
     MeasurementSet::open(&source)?.save_as(&measurement_set)?;
-    casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
     let rust_prefix = staging.path().join("rust-full-stokes-representative");
     let representative = |iterations: usize| {
         json!({
@@ -329,7 +327,6 @@ fn issue607_representative_full_stokes_matches_casa_products() -> Result<(), Box
 fn measurement_set_path(source: &Path, staging: &Path) -> Result<PathBuf, Box<dyn Error>> {
     let path = staging.join("full-stokes-shaped-dirty.ms");
     MeasurementSet::open(source)?.save_as(&path)?;
-    casa_ms::initialize_measurement_set_owner_manifest(&path)?;
     Ok(path)
 }
 

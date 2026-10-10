@@ -18,7 +18,8 @@ import test_run_workload
 
 
 CASA_PYTHON = "/configured/casa/python"
-OWNER_KEYWORD = "CASA_RS_IMAGING_OWNER_MANIFEST"
+# The keyword casa-rs once wrote into MAIN; it is no longer exempt.
+OLD_OWNER_KEYWORD = "CASA_RS_IMAGING_OWNER_MANIFEST"
 
 
 def write_measurement_set(root: pathlib.Path) -> None:
@@ -106,13 +107,6 @@ class MeasurementSetEquivalenceTests(unittest.TestCase):
         self.assertEqual(result["history_appended_rows"], [])
         self.assertEqual(result["scientific_payload_files"], 4)
 
-    def test_only_exact_main_owner_annotation_may_differ(self):
-        owner = {"generation": "owned-current-copy", "revision": 7}
-        self.current_metadata["main"]["keywords"][OWNER_KEYWORD] = owner
-        self.current_metadata["main"]["description"]["_keywords_"][OWNER_KEYWORD] = owner
-        (self.current / "table.dat").write_bytes(b"main rewritten for owner annotation")
-        self.validate()
-
     def test_nested_table_locks_do_not_change_equivalence(self):
         (self.current / "table.lock").write_bytes(b"current process")
         (self.historical / "HISTORY/table.lock").write_bytes(b"historical process")
@@ -141,9 +135,9 @@ class MeasurementSetEquivalenceTests(unittest.TestCase):
             (("main", "columns"), ["DATA", "FLAG", "EXTRA"]),
             (("main", "description", "DATA", "valueType"), "dcomplex"),
             (("main", "keywords", "UNKNOWN_SCIENCE"), "changed"),
-            (("main", "keywords", OWNER_KEYWORD + "_EXTRA"), "not the owner annotation"),
+            (("main", "keywords", OLD_OWNER_KEYWORD), "no keyword is exempt"),
             (("main", "description", "_keywords_", "UNKNOWN_SCIENCE"), "changed"),
-            (("main", "description", "DATA", OWNER_KEYWORD), "not a table keyword"),
+            (("main", "description", "DATA", OLD_OWNER_KEYWORD), "not a table keyword"),
             (("main", "data_managers", "*1", "SPEC", "BucketSize"), 8192),
         )
         for path, value in changes:
@@ -249,7 +243,7 @@ class MeasurementSetEquivalenceTests(unittest.TestCase):
             (("columns",), ["TIME", "MESSAGE", "EXTRA"]),
             (("description", "MESSAGE", "valueType"), "double"),
             (("keywords", "UNKNOWN"), "changed"),
-            (("keywords", OWNER_KEYWORD), "owner exemption is MAIN only"),
+            (("keywords", OLD_OWNER_KEYWORD), "no keyword is exempt"),
             (("data_managers", "*1", "SPEC", "BucketSize"), 8192),
             (("data_managers", "*1", "SPEC", "IndexLength"), 8),
         )

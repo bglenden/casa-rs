@@ -924,7 +924,7 @@ impl<'a> SelectedObservationTraversalRun<'a> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SpectralProjectionKey {
-    measurement_set: casa_imaging_model::MeasurementSetIdentity,
+    measurement_set: usize,
     spectral_window_id: u32,
     channel_index: u32,
     frequency_centre_bits: u64,
@@ -958,7 +958,7 @@ impl SpectralProjectionKey {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SpectralTransformKey {
-    measurement_set: casa_imaging_model::MeasurementSetIdentity,
+    measurement_set: usize,
     field_id: i32,
     time_mjd_seconds_bits: u64,
     source_ref: FrequencyRef,
@@ -973,7 +973,7 @@ struct SpectralTransformKey {
 /// change forces a fresh owner evaluation.
 pub(super) struct SpectralEvaluationProjector {
     last_row_geometry: Option<(SelectedRowSpectralSelection, SelectedRowSpectralGeometry)>,
-    last_source: Option<casa_imaging_model::MeasurementSetIdentity>,
+    last_source: Option<usize>,
     source_frame: Option<(i32, u64, MeasFrame)>,
     last_transform: Option<(SpectralTransformKey, PreparedFrequencyFrameConversion)>,
     last_projection: Option<(

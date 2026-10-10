@@ -15,16 +15,14 @@ use sha2::{Digest, Sha256};
 use crate::{
     ProblemInputIdentities,
     compiled_problem::{
-        AwProjectionContract, InstrumentModel, InstrumentResponse, LogicalIdentity,
-        NumericsContractId, PolarizationContract, ProductKind, ProductNormalization,
-        ReconstructionBasis, ReconstructionContract, RestoringBeamPolicy, ScientificContract,
-        SpectralKernel, SpectralSamplingLaw, UvTaper, WProjectionContract, WeightDensityScope,
-        WeightingContract, WeightingScheme,
+        AwProjectionContract, InstrumentModel, InstrumentResponse, NumericsContractId,
+        PolarizationContract, ProductKind, ProductNormalization, ReconstructionBasis,
+        ReconstructionContract, RestoringBeamPolicy, ScientificContract, SpectralKernel,
+        SpectralSamplingLaw, UvTaper, WProjectionContract, WeightDensityScope, WeightingContract,
+        WeightingScheme,
     },
     geometry::{CompiledGeometry, CompiledGeometryId, VisibilityPhaseConvention},
-    observation::{
-        FlagPolicy, MeasurementSetIdentity, MsColumnKind, ObservationSnapshotId, WeightColumn,
-    },
+    observation::{FlagPolicy, ObservationSnapshotId, WeightColumn},
     selected_observation::SelectedObservationCommitmentId,
 };
 
@@ -296,21 +294,18 @@ impl fmt::Display for WeightingCommitmentId {
     }
 }
 
-/// Snapshot-derived flag and input-weight provenance consumed exclusively by W.
+/// Snapshot-derived flag and input-weight columns consumed exclusively by W.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WeightingSource {
-    source: MeasurementSetIdentity,
+    source: usize,
     flags: FlagPolicy,
     input_weights: WeightColumn,
-    flag_generation: LogicalIdentity,
-    flag_row_generation: LogicalIdentity,
-    input_weight_generation: LogicalIdentity,
 }
 
 impl WeightingSource {
-    /// Return the immutable source identity.
+    /// Return the source's position in the snapshot.
     #[must_use]
-    pub const fn source(self) -> MeasurementSetIdentity {
+    pub const fn source(self) -> usize {
         self.source
     }
 
@@ -324,24 +319,6 @@ impl WeightingSource {
     #[must_use]
     pub const fn input_weights(self) -> WeightColumn {
         self.input_weights
-    }
-
-    /// Return the captured `FLAG` generation.
-    #[must_use]
-    pub const fn flag_generation(self) -> LogicalIdentity {
-        self.flag_generation
-    }
-
-    /// Return the captured `FLAG_ROW` generation.
-    #[must_use]
-    pub const fn flag_row_generation(self) -> LogicalIdentity {
-        self.flag_row_generation
-    }
-
-    /// Return the captured input-weight generation.
-    #[must_use]
-    pub const fn input_weight_generation(self) -> LogicalIdentity {
-        self.input_weight_generation
     }
 }
 
@@ -660,27 +637,10 @@ fn compile_weighting_operator(
     let sources = snapshot
         .sources()
         .iter()
-        .map(|source| {
-            let columns = source.generations().columns();
-            let input_weights = columns.weights();
-            let weight_kind = match input_weights {
-                WeightColumn::Weight => MsColumnKind::Weight,
-                WeightColumn::WeightSpectrum => MsColumnKind::WeightSpectrum,
-            };
-            WeightingSource {
-                source: source.identity(),
-                flags: columns.flags(),
-                input_weights,
-                flag_generation: columns
-                    .generation(MsColumnKind::Flag)
-                    .expect("compiled observation binds FLAG"),
-                flag_row_generation: columns
-                    .generation(MsColumnKind::FlagRow)
-                    .expect("compiled observation binds FLAG_ROW"),
-                input_weight_generation: columns
-                    .generation(weight_kind)
-                    .expect("compiled observation binds its selected weight column"),
-            }
+        .map(|source| WeightingSource {
+            source: source.input_ordinal(),
+            flags: source.columns().flags(),
+            input_weights: source.columns().weights(),
         })
         .collect::<Vec<_>>()
         .into_boxed_slice();

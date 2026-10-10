@@ -6,6 +6,9 @@ Date: 2026-07-18
 
 Reaffirmed: 2026-08-26
 
+Amended: 2026-10-09, on owner direction: casa-rs writes nothing into a
+MeasurementSet that CASA does not write.
+
 ## Context
 
 CASA interoperability depends on the casacore table data model and persisted
@@ -43,25 +46,25 @@ typed cells, installs the planned columns, and reports rows, bytes, producer
 time, bounded-queue wait, assembly, physical-write, and finalization time.
 
 Creation uses a sibling staging directory and publishes it only after a
-complete interoperable table has been written. In-place mutation creates a
-small incomplete-write marker before the first physical change and removes it
-after successful finalization. An interrupted mutation is detectable and is
-not presented as complete.
+complete interoperable table has been written. In-place mutation writes under
+casacore's table lock, as CASA does. casa-rs adds nothing of its own to a
+MeasurementSet: no table keywords, marker files, generations or identities.
+An interrupted in-place write may leave cells partly written, as an
+interrupted CASA write does; rerunning the producing task recomputes them.
 
 The persistence layer does not provide rollback, snapshot generations,
 journaling, or copy-on-write recovery. Such a feature requires a new concrete
 product requirement and a separate architecture decision.
 
-This applies explicitly to imaging `MODEL_DATA`. Prediction writes selected
-cells in place under the exact source-scoped table lock and incomplete-write
-marker. The writer retains at most one array cell, persists that cell through
+This applies explicitly to imaging `MODEL_DATA` and `CORRECTED_DATA`.
+Prediction writes selected cells in place under the exact source-scoped table
+lock. The writer retains at most one array cell, persists that cell through
 the selected-row/selected-column table seam, and discards its cache entry before
 accepting another row; it does not materialize MAIN rows or the full column.
 Unrelated MeasurementSets may therefore progress concurrently while two live
 writers for the same source remain mutually exclusive. Successful completion
-flushes the column, advances its owner generation, and removes the marker. An
-interrupted write may leave partial derived values and must be recovered or
-recomputed explicitly. Full-column staging copies, backup columns, content
+flushes the column and releases the lock. An interrupted write may leave
+partial derived values, which the next run recomputes. Full-column staging copies, backup columns, content
 digests, and rollback are prohibited unless a later concrete requirement
 demonstrates that CASA-compatible in-place behavior is inadequate and
 separately accounts for the I/O and storage cost.
@@ -73,7 +76,9 @@ separately accounts for the I/O and storage cost.
 - Memory use is planned from the real column shapes and writer buffers rather
   than a fixed row-count heuristic.
 - New-output failure is isolated before publication. In-place failure may have
-  written some cells, but the marker prevents silent acceptance as complete.
+  written some cells, as in CASA; rerunning the task recomputes them.
+- A MeasurementSet written by casa-rs carries only what CASA would write, so
+  CASA and casa-rs can each open the other's output without preparation.
 - Flag-version tables remain an explicit domain feature of `flagmanager`; they
   are not a transaction or rollback mechanism for general table writes.
 - Storage changes require Rust-read/Rust-write and C++-read/C++-write

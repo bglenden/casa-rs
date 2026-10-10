@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    AntennaSelection, ColumnGeneration, ConsistencyToken, CorrectedDataColumnState,
-    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    FlagPolicy, IdSelection, IntentSelection, LogicalIdentity, MeasurementSetIdentity,
-    MetadataGeneration, MetadataTableKind, ModelColumnState, ModelStateIdentity, MsColumnKind,
-    ObservationSelection, ObservationSnapshot, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, ProblemInputIdentities, ReferenceDataKind, RowSelection,
-    SelectedColumns, SelectedMainRow, SelectedRows, SourceGenerations, SpectralWindowSelection,
+    AntennaSelection, CorrelationProduct, CorrelationSelection, CorrelationType,
+    DataDescriptionSelection, FlagPolicy, IdSelection, IntentSelection, LogicalIdentity,
+    ModelStateIdentity, ObservationSelection, ObservationSnapshot, ObservationSnapshotInput,
+    ObservationSourceInput, ObservationSourceProvenance, ProblemInputIdentities, ReferenceDataKind,
+    RowSelection, SelectedColumns, SelectedMainRow, SelectedRows, SpectralWindowSelection,
     TimeSelection, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
 };
 
@@ -35,107 +33,23 @@ pub fn observation_snapshot(
 }
 
 pub fn observation_source(observation: u8) -> ObservationSourceInput {
-    observation_source_with_model_generation(observation, None)
+    observation_source_with_corrected_data(observation, false)
 }
 
-pub fn observation_source_with_model_generation(
+/// A one-row source; `corrected_data_present` says whether MAIN has
+/// `CORRECTED_DATA`.
+pub fn observation_source_with_corrected_data(
     observation: u8,
-    model_generation: Option<LogicalIdentity>,
+    corrected_data_present: bool,
 ) -> ObservationSourceInput {
-    observation_source_with_model_state(
-        observation,
-        model_generation.map_or(ModelColumnState::Absent, ModelColumnState::Present),
-        model_generation,
-    )
-}
-
-pub fn observation_source_with_model_state(
-    observation: u8,
-    model_column: ModelColumnState,
-    consumed_model_generation: Option<LogicalIdentity>,
-) -> ObservationSourceInput {
-    observation_source_with_write_generations(
-        observation,
-        model_column,
-        consumed_model_generation,
-        None,
-    )
-}
-
-#[allow(
-    dead_code,
-    reason = "this shared helper is used only by the observation-transaction test target"
-)]
-pub fn observation_source_with_corrected_generation(
-    observation: u8,
-    corrected_generation: LogicalIdentity,
-) -> ObservationSourceInput {
-    observation_source_with_write_generations(
-        observation,
-        ModelColumnState::Absent,
-        None,
-        Some(corrected_generation),
-    )
-}
-
-fn observation_source_with_write_generations(
-    observation: u8,
-    model_column: ModelColumnState,
-    consumed_model_generation: Option<LogicalIdentity>,
-    corrected_generation: Option<LogicalIdentity>,
-) -> ObservationSourceInput {
-    let column_kinds = [
-        MsColumnKind::Data,
-        MsColumnKind::Flag,
-        MsColumnKind::FlagRow,
-        MsColumnKind::Weight,
-        MsColumnKind::Uvw,
-        MsColumnKind::Time,
-        MsColumnKind::TimeCentroid,
-        MsColumnKind::Interval,
-        MsColumnKind::Exposure,
-        MsColumnKind::FieldId,
-        MsColumnKind::DataDescriptionId,
-        MsColumnKind::Antenna1,
-        MsColumnKind::Antenna2,
-        MsColumnKind::Feed1,
-        MsColumnKind::Feed2,
-        MsColumnKind::ScanNumber,
-        MsColumnKind::StateId,
-        MsColumnKind::ObservationId,
-        MsColumnKind::ArrayId,
-    ];
-    let mut columns = column_kinds
-        .into_iter()
-        .enumerate()
-        .map(|(index, kind)| {
-            ColumnGeneration::new(kind, scoped_identity(observation, 20 + index as u8))
-        })
-        .collect::<Vec<_>>();
-    if let Some(generation) = consumed_model_generation {
-        columns.push(ColumnGeneration::new(MsColumnKind::ModelData, generation));
-    }
-    let metadata_kinds = [
-        MetadataTableKind::Antenna,
-        MetadataTableKind::DataDescription,
-        MetadataTableKind::Feed,
-        MetadataTableKind::Field,
-        MetadataTableKind::Observation,
-        MetadataTableKind::Pointing,
-        MetadataTableKind::Polarization,
-        MetadataTableKind::SpectralWindow,
-        MetadataTableKind::State,
-    ];
-    let metadata = metadata_kinds
-        .into_iter()
-        .enumerate()
-        .map(|(index, kind)| {
-            MetadataGeneration::new(kind, scoped_identity(observation, 60 + index as u8))
-        })
-        .collect();
+    // The observation seed sets the MeasurementSet's row count, so sources
+    // from different seeds are different observations.
     let selection = ObservationSelection::new(
-        SelectedRows::from_ordered_main_rows(1, [SelectedMainRow::new(0, 0)])
-            .expect("single selected MAIN row fixture"),
+        SelectedRows::from_ordered_main_rows(
+            1 + u64::from(observation),
+            [SelectedMainRow::new(0, 0)],
+        )
+        .expect("single selected MAIN row fixture"),
         RowSelection::new(
             IdSelection::All,
             TimeSelection::All,
@@ -154,27 +68,17 @@ fn observation_source_with_write_generations(
         )],
     );
     ObservationSourceInput::new(
-        MeasurementSetIdentity::new(scoped_identity(observation, 1)),
         ObservationSourceProvenance::new(
             format!("fixture://observation/{observation}"),
             scoped_identity(observation, 3),
         ),
         selection,
-        SourceGenerations::new(
-            ConsistencyToken::new(scoped_identity(observation, 4)),
-            SelectedColumns::new(
-                VisibilityColumn::Data,
-                FlagPolicy::FlagOrFlagRow,
-                WeightColumn::Weight,
-                columns,
-            ),
-            metadata,
-            model_column,
-        )
-        .with_corrected_data_column(corrected_generation.map_or(
-            CorrectedDataColumnState::Absent,
-            CorrectedDataColumnState::Present,
-        )),
+        SelectedColumns::new(
+            VisibilityColumn::Data,
+            FlagPolicy::FlagOrFlagRow,
+            WeightColumn::Weight,
+        ),
+        corrected_data_present,
     )
 }
 

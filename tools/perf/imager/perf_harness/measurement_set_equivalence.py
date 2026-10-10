@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Strict read-only proof for relocated, owner-initialized MeasurementSets.
+"""Strict read-only proof for relocated MeasurementSets.
 
-Scientific storage remains byte-identical. Only MAIN's owner keyword and
-append-only HISTORY provenance may differ semantically; table locks are volatile.
+Scientific storage remains byte-identical. Only append-only HISTORY provenance
+may differ semantically; table locks are volatile. casa-rs writes no keywords
+of its own into a MeasurementSet, so every MAIN keyword must match.
 This is an internal reuse check, not an alternative dataset identity contract.
 """
 
@@ -24,7 +25,6 @@ from perf_harness.errors import HarnessError
 from perf_harness.tree_identity import sha256_file
 
 
-OWNER_KEYWORD = "CASA_RS_IMAGING_OWNER_MANIFEST"
 SEMANTIC_FILES = frozenset({"table.dat", "HISTORY/table.f0"})
 
 
@@ -91,14 +91,9 @@ def _encoded(value: Any) -> bytes:
     ).encode()
 
 
-def _table_metadata(
-    metadata: dict[str, Any], root: pathlib.Path, *, main: bool = False
-) -> dict[str, Any]:
+def _table_metadata(metadata: dict[str, Any], root: pathlib.Path) -> dict[str, Any]:
     value = copy.deepcopy(metadata)
     keyword_records = [value["keywords"], value["description"].get("_keywords_", {})]
-    if main:
-        for keywords in keyword_records:
-            keywords.pop(OWNER_KEYWORD, None)
     keyword_records.extend(
         description["keywords"]
         for name, description in value["description"].items()
@@ -181,7 +176,7 @@ def validate_measurement_set_equivalence(
             size += left_size
         metadata = [_read_metadata(root, casa_python) for root in (current, historical)]
         main = [
-            _table_metadata(value["main"], root, main=True)
+            _table_metadata(value["main"], root)
             for value, root in zip(metadata, (current, historical))
         ]
         if _encoded(main[0]) != _encoded(main[1]):

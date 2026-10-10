@@ -3,8 +3,8 @@
 //! Opt-in production-measures counterpart of the bounded T55 cube workload.
 //! Requires CASA_RS_T55_REAL_MS, CASA_RS_T55_ARTIFACT_ROOT (a fresh directory),
 //! and CASA_RS_T55_NATIVE_MEMORY_BYTES. Products and receipts are never removed.
-//! Initialize the imaging-owner manifest explicitly on an isolated input copy
-//! with casa-ms's `initialize_imaging_owner` example before invoking this test.
+//! Point CASA_RS_T55_REAL_MS at an isolated input copy: the run may write
+//! MODEL_DATA into it.
 
 use super::*;
 use std::{collections::BTreeMap, fs};
@@ -38,7 +38,7 @@ fn required_path(variable: &str) -> PathBuf {
 }
 
 #[test]
-#[ignore = "Q-band diagnostic only: requires owner-initialized reduced-row/512-channel fixture, fresh durable artifacts and an external RSS guard"]
+#[ignore = "Q-band diagnostic only: requires a reduced-row/512-channel fixture, fresh durable artifacts and an external RSS guard"]
 fn t55_q_band_rebaseline_preflight() {
     let image_size: usize = std::env::var("CASA_RS_T55_PREFLIGHT_IMAGE_SIZE")
         .map(|value| value.parse().expect("positive diagnostic image size"))

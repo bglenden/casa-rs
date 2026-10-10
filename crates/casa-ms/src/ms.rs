@@ -433,14 +433,6 @@ impl MeasurementSet {
         path: PathBuf,
         mut open_table: impl FnMut(&Path) -> Result<Table, TableError>,
     ) -> MsResult<Self> {
-        let incomplete_marker = crate::write_session::incomplete_write_marker(&path);
-        if incomplete_marker.exists() {
-            return Err(MsError::InvalidInput(format!(
-                "MeasurementSet {} has an incomplete write marker at {}",
-                path.display(),
-                incomplete_marker.display()
-            )));
-        }
         tracing::info!(path = %path.display(), "opening MeasurementSet");
         let main = open_table(&path)?;
 
@@ -496,7 +488,6 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
-        let incomplete_marker = crate::write_session::begin_in_place_write(&path)?;
         save_main_table_with_policy(&mut self.main, &path)?;
 
         for (id, table) in &self.subtables {
@@ -507,7 +498,6 @@ impl MeasurementSet {
                 .unwrap_or_else(|| path.join(id.name()));
             table.save(measurement_set_table_options(&subtable_path))?;
         }
-        crate::write_session::complete_in_place_write(incomplete_marker)?;
 
         tracing::info!(path = %path.display(), rows = self.row_count(), "saved MeasurementSet");
         Ok(())
@@ -525,7 +515,6 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
-        let incomplete_marker = crate::write_session::begin_in_place_write(&path)?;
         save_main_table_with_policy_and_column_overrides(&mut self.main, &path, column_overrides)?;
 
         for (id, table) in &mut self.subtables {
@@ -538,7 +527,6 @@ impl MeasurementSet {
                 .prepare_write()
                 .save(measurement_set_table_options(&subtable_path))?;
         }
-        crate::write_session::complete_in_place_write(incomplete_marker)?;
 
         Ok(())
     }
@@ -559,9 +547,7 @@ impl MeasurementSet {
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
-        let incomplete_marker = crate::write_session::begin_in_place_write(&path)?;
         save_main_table_with_policy(&mut self.main, &path)?;
-        crate::write_session::complete_in_place_write(incomplete_marker)?;
         Ok(())
     }
 
@@ -1881,22 +1867,23 @@ mod tests {
     }
 
     #[test]
-    fn open_rejects_incomplete_in_place_write_marker() {
+    fn in_place_saves_add_nothing_casacore_would_not_write() {
         let dir = tempfile::tempdir().unwrap();
-        let ms_path = dir.path().join("incomplete.ms");
+        let ms_path = dir.path().join("in_place.ms");
         let mut ms = MeasurementSet::create(&ms_path, MeasurementSetBuilder::new()).unwrap();
         ms.save().unwrap();
-        let marker = crate::write_session::incomplete_write_marker(&ms_path);
-        fs::write(&marker, b"interrupted").unwrap();
+        let mut ms = MeasurementSet::open(&ms_path).unwrap();
+        ms.save().unwrap();
+        ms.save_main_table_only().unwrap();
 
-        let error = match MeasurementSet::open(&ms_path) {
-            Ok(_) => panic!("incomplete MS must not open"),
-            Err(error) => error,
-        };
-        assert!(error.to_string().contains("incomplete write marker"));
-
-        fs::remove_file(marker).unwrap();
-        MeasurementSet::open(&ms_path).expect("complete MS reopens after explicit recovery");
+        let entries = fs::read_dir(&ms_path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(
+            entries.iter().all(|name| !name.contains("casa-rs")),
+            "an in-place save left casa-rs files: {entries:?}"
+        );
     }
 
     #[test]

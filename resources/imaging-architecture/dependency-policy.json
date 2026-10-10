@@ -246,7 +246,6 @@
     "crates/casa-imaging-model/src/compiled_problem.rs",
     "crates/casa-imaging-model/src/measurement_equation.rs",
     "crates/casa-imaging-model/src/native_aw.rs",
-    "crates/casa-imaging-model/src/visibility_transform.rs",
     "crates/casa-imaging-reconstruction/src/identity.rs"
    ]
   },

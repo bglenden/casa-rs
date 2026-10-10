@@ -509,7 +509,7 @@ impl<'a> Run<'a> {
         let pass_seconds = started.elapsed().as_secs_f64();
         let final_model = preparation.final_model_generation();
         let visibility = writer
-            .map(|writer| writer.complete(final_model))
+            .map(VisibilityWriter::complete)
             .transpose()
             .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?
             .map(|samples| {

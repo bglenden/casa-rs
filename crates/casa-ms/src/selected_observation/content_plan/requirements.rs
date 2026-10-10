@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_imaging_model::{
-    CompiledProblem, CompiledProblemId, MeasurementSetIdentity, ObservationProvenanceId,
-};
+use casa_imaging_model::{CompiledProblem, CompiledProblemId, ObservationProvenanceId};
 
 use super::{
     BufferedObservationBlock, SelectedObservationContentBudget, SelectedObservationContentPlan,
@@ -18,7 +16,7 @@ use super::{
 pub struct SelectedObservationContentRequirements {
     pub(super) problem: CompiledProblemId,
     pub(super) provenance: ObservationProvenanceId,
-    pub(super) source: MeasurementSetIdentity,
+    pub(super) source: usize,
     pub(super) retained_bytes: usize,
     pub(super) initialization_scratch_bytes: usize,
     pub(super) initialization_scan_bytes_per_row: usize,
@@ -34,11 +32,7 @@ pub struct SelectedObservationContentRequirements {
 }
 
 impl SelectedObservationContentRequirements {
-    pub(crate) fn matches(
-        &self,
-        problem: &CompiledProblem,
-        source: MeasurementSetIdentity,
-    ) -> bool {
+    pub(crate) fn matches(&self, problem: &CompiledProblem, source: usize) -> bool {
         self.problem == problem.problem_id()
             && self.provenance == problem.inputs().observation_snapshot().provenance_id()
             && self.source == source

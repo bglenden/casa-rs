@@ -2,9 +2,6 @@
 
 //! Logical visibility transforms applied before spectral sampling and weighting.
 
-use std::fmt;
-
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 /// Role of one selected native channel in sequential continuum subtraction.
@@ -146,33 +143,11 @@ impl ContinuumFitRule {
     }
 }
 
-/// Stable logical identity of one canonical sequential-continuum contract.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ContinuumTransformContractId([u8; 32]);
-
-impl ContinuumTransformContractId {
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-}
-
-impl fmt::Debug for ContinuumTransformContractId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for byte in self.0 {
-            write!(formatter, "{byte:02x}")?;
-        }
-        Ok(())
-    }
-}
-
 /// Canonical, backend-independent sequential continuum-transform contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SequentialContinuumTransform {
     rules: Vec<ContinuumFitRule>,
     covariance: ContinuumCovariancePolicy,
-    contract_id: ContinuumTransformContractId,
 }
 
 impl SequentialContinuumTransform {
@@ -187,12 +162,9 @@ impl SequentialContinuumTransform {
         {
             return Err(ContinuumTransformContractError::DuplicateRule);
         }
-        let covariance = ContinuumCovariancePolicy::NotRepresentedPreserveInputWeights;
-        let contract_id = contract_identity(&rules, covariance);
         Ok(Self {
             rules,
-            covariance,
-            contract_id,
+            covariance: ContinuumCovariancePolicy::NotRepresentedPreserveInputWeights,
         })
     }
 
@@ -218,12 +190,6 @@ impl SequentialContinuumTransform {
     pub const fn covariance(&self) -> ContinuumCovariancePolicy {
         self.covariance
     }
-
-    /// Return the canonical logical identity.
-    #[must_use]
-    pub const fn contract_id(&self) -> ContinuumTransformContractId {
-        self.contract_id
-    }
 }
 
 /// Invalid resolved continuum-transform contract.
@@ -235,32 +201,4 @@ pub enum ContinuumTransformContractError {
     /// No rule was supplied or one field/SPW pair occurred more than once.
     #[error("continuum-transform rules must contain unique field/SPW pairs")]
     DuplicateRule,
-}
-
-fn contract_identity(
-    rules: &[ContinuumFitRule],
-    covariance: ContinuumCovariancePolicy,
-) -> ContinuumTransformContractId {
-    let mut digest = Sha256::new();
-    digest.update(b"casa-rs-sequential-continuum-transform");
-    digest.update(1_u32.to_le_bytes());
-    digest.update((rules.len() as u64).to_le_bytes());
-    for rule in rules {
-        digest.update(rule.field_id.to_le_bytes());
-        digest.update(rule.spectral_window_id.to_le_bytes());
-        digest.update([rule.requested_order]);
-        digest.update((rule.channels.len() as u64).to_le_bytes());
-        for channel in &rule.channels {
-            digest.update(channel.channel_index.to_le_bytes());
-            digest.update([match channel.use_role {
-                ContinuumChannelUse::FitOnly => 0,
-                ContinuumChannelUse::ApplyOnly => 1,
-                ContinuumChannelUse::FitAndApply => 2,
-            }]);
-        }
-    }
-    digest.update([match covariance {
-        ContinuumCovariancePolicy::NotRepresentedPreserveInputWeights => 0,
-    }]);
-    ContinuumTransformContractId(digest.finalize().into())
 }

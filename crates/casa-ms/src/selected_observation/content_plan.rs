@@ -453,11 +453,11 @@ pub(crate) fn selected_content_requirements(
         let sample_count = covering_channels
             .checked_mul(correlations)
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-        let visibility_bytes = match source.generations().columns().visibility() {
+        let visibility_bytes = match source.columns().visibility() {
             VisibilityColumn::Data | VisibilityColumn::CorrectedData => 8,
             VisibilityColumn::FloatData => 4,
         };
-        let weight_values = match source.generations().columns().weights() {
+        let weight_values = match source.columns().weights() {
             WeightColumn::Weight => correlations,
             WeightColumn::WeightSpectrum => sample_count,
         };
@@ -554,7 +554,7 @@ pub(crate) fn selected_content_requirements(
     Ok(SelectedObservationContentRequirements {
         problem: problem.problem_id(),
         provenance: problem.inputs().observation_snapshot().provenance_id(),
-        source: source.identity(),
+        source: source.input_ordinal(),
         retained_bytes,
         initialization_scratch_bytes,
         initialization_scan_bytes_per_row,
@@ -608,12 +608,6 @@ fn retained_metadata_bytes(
     let manifest_bytes = source
         .selection()
         .retained_manifest_bytes()
-        .and_then(|bytes| {
-            source
-                .generations()
-                .retained_manifest_bytes()
-                .and_then(|generations| bytes.checked_add(generations))
-        })
         .and_then(|bytes| bytes.checked_add(source.provenance().retained_locator_bytes()))
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let predicate_bytes = CompiledRowPredicate::shared_retained_heap_bytes(source)

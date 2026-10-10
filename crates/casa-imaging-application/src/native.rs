@@ -155,7 +155,6 @@ fn run(
         .then(|| {
             Ok::<_, ApplicationError>(imaging::VisibilityWriteTarget {
                 path: PathBuf::from(input.observation.locator()),
-                expected: input.initial_access.source_state().clone(),
                 selection: visibility_write_selection(problem, input.observation.selection())?,
                 model_data: input.write_model_column,
                 corrected_data: input.write_corrected_data,

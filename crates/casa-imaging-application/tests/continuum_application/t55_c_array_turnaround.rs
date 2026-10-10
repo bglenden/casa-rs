@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! Opt-in, matched CASA natural/Clark C-array streaming-cube validation.
-//! The caller supplies an isolated owner-initialized MS, existing CASA user mask,
+//! The caller supplies an isolated MS copy, existing CASA user mask,
 //! fresh durable product directory, and the sampled aggregate 16-GiB RSS guard.
 
 use super::*;

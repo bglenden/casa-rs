@@ -1454,10 +1454,7 @@ real 1.145408
         self.assertIn("facets=facets,", bench)
         self.assertIn("stokes=stokes,", bench)
         self.assertIn("usepointing=usepointing,", bench)
-        self.assertIn(
-            'initialize_imaging_owner "$rust_ms_path"',
-            bench,
-        )
+        self.assertNotIn("initialize_imaging_owner", bench)
         self.assertIn('CASA_RS_BENCH_MS_PATH="$casa_ms_path"', bench)
         self.assertIn('casa_ms_path="$tmpdir/casa-benchmark.ms"', bench)
         self.assertIn('cp -R "$source_ms_path" "$casa_ms_path"', bench)

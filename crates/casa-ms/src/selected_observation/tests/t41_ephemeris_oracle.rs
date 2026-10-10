@@ -3,7 +3,7 @@
 use super::*;
 use crate::{
     SelectedObservationEphemeris, SelectedObservationResolutionRequest,
-    initialize_measurement_set_owner_manifest, resolve_selected_observation,
+    resolve_selected_observation,
 };
 use casa_imaging_model::AntennaBaseline;
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
@@ -50,7 +50,6 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
     let measurement_set = staging.path().join("alma_ephemobj_icrs.ms");
     MeasurementSet::open(&source)?.save_as(&measurement_set)?;
     copy_attached_ephemerides(&source, &measurement_set)?;
-    initialize_measurement_set_owner_manifest(&measurement_set)?;
 
     let ms = MeasurementSet::open(&measurement_set)?;
     let row_count = u64::try_from(ms.row_count())?;

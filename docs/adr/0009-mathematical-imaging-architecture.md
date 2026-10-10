@@ -126,24 +126,24 @@ scientific decision.
 ### Observation snapshot and side effects
 
 Selected Observation is evaluated against an immutable logical Observation
-Snapshot. The snapshot records source-table and selected-column consistency
-identities, exact row/channel/correlation selection semantics, relevant metadata
-generations, reference-data and ephemeris identities, and input-model identities.
-Bulk samples remain bounded streams; snapshot does not mean materialization.
+Snapshot. The snapshot records the selected columns, exact
+row/channel/correlation selection semantics, reference-data and ephemeris
+identities, and input-model identities. Bulk samples remain bounded streams;
+snapshot does not mean materialization. (Amended 2026-10-09 on owner direction:
+nothing of casa-rs's is stored in the MeasurementSet, so there are no source
+identities, generations or marker files; see ADR-0008.)
 
-Read and write sets are explicit. Execution detects disallowed mutation of
-selected data, flags, weights, or metadata before consuming mixed generations.
-Scientific products use their planned per-member publication protocol after
-final complete-data reconciliation. Optional `MODEL_DATA` follows ADR-0008 and
-is written in place during the single terminal replay under the standard
-incomplete marker. An explicit final-model preparation node first validates and
+Read and write sets are explicit. Scientific products use their planned
+per-member publication protocol after final complete-data reconciliation.
+Optional `MODEL_DATA` follows ADR-0008 and is written in place during the
+single terminal replay under casacore's table lock. An explicit final-model preparation node first validates and
 freezes the exact candidate generation without traversing the MeasurementSet.
 The terminal replay then predicts, emits residual-product samples, and writes
 `MODEL_DATA` from that same immutable candidate in one selected-data pass. Its
 I/O completion precedes the post-replay Major-Cycle reconciliation that commits
-model-completion authority and normal-state evidence. Successful writeback
-advances its owner generation; interruption may leave partial derived values
-but remains detectable and fail-closed. Imaging does not add a staging column,
+model-completion authority and normal-state evidence. Interruption may leave
+partial derived values, as in CASA; the next run recomputes them. Imaging does
+not add a staging column,
 backup generation, content digest, or rollback mechanism beyond CASA-compatible
 table behavior.
 
@@ -215,7 +215,7 @@ Positive:
   have distinct enforceable owners
 - continuum and line share infrastructure without claiming false semantic
   equivalence
-- products and MeasurementSet side effects become atomic and generation-safe
+- products become atomic; MeasurementSet side effects follow CASA (ADR-0008)
 - migrations have a same-merge ownership and deletion ratchet
 
 Negative:
@@ -243,7 +243,7 @@ Neutral / tradeoffs:
 
 This decision is enforced by:
 - tests: weighted-adjoint and linearity laws, spectral identity/nonidentity
-  cases, cycle invariants, detectable interrupted writes, product-generation
+  cases, cycle invariants, product-generation
   consistency, differential evidence, and versioned Acceptance Contracts
 - lint/import/dependency rules: CI rejects forbidden frontend, backend,
   observation, reconstruction, and product dependencies

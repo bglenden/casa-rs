@@ -2,8 +2,7 @@
 //! Bounded columnar MeasurementSet write planning and execution.
 
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
@@ -26,56 +25,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{MeasurementSet, MsError, MsResult, MsSelectionIoBudget};
-
-pub(crate) const INCOMPLETE_WRITE_MARKER: &str = ".casa-rs-write-incomplete";
-
-pub(crate) fn incomplete_write_marker(path: &Path) -> PathBuf {
-    path.join(INCOMPLETE_WRITE_MARKER)
-}
-
-pub(crate) fn begin_in_place_write(path: &Path) -> MsResult<Option<PathBuf>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let marker = incomplete_write_marker(path);
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&marker)
-        .map_err(|error| {
-            MsError::InvalidInput(format!(
-                "cannot begin MeasurementSet write at {}: incomplete marker {}: {error}",
-                path.display(),
-                marker.display()
-            ))
-        })?;
-    writeln!(file, "pid={}", std::process::id()).map_err(|error| {
-        MsError::InvalidInput(format!(
-            "cannot record MeasurementSet write marker {}: {error}",
-            marker.display()
-        ))
-    })?;
-    file.sync_all().map_err(|error| {
-        MsError::InvalidInput(format!(
-            "cannot flush MeasurementSet write marker {}: {error}",
-            marker.display()
-        ))
-    })?;
-    Ok(Some(marker))
-}
-
-pub(crate) fn complete_in_place_write(marker: Option<PathBuf>) -> MsResult<()> {
-    if let Some(marker) = marker {
-        fs::remove_file(&marker).map_err(|error| {
-            MsError::InvalidInput(format!(
-                "MeasurementSet data was written but incomplete marker {} could not be removed: {error}",
-                marker.display()
-            ))
-        })?;
-    }
-    Ok(())
-}
+use crate::{MeasurementSet, MsSelectionIoBudget};
 
 /// Resource inputs for a bounded writer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1199,7 +1149,6 @@ enum MeasurementSetWriteSessionState {
         started_at: Instant,
     },
     Mutation {
-        incomplete_marker: Option<PathBuf>,
         next_selected_row: usize,
         write_seconds: f64,
         bytes_written: usize,
@@ -1830,13 +1779,11 @@ impl MeasurementSetWriteSession {
                 "selected-row mapping contains a row outside MAIN".to_string(),
             ));
         }
-        let output = measurement_set.path().ok_or_else(|| {
-            MeasurementSetWriteError::InvalidPlan(
+        if measurement_set.path().is_none() {
+            return Err(MeasurementSetWriteError::InvalidPlan(
                 "selected-row mutation requires a disk-backed MeasurementSet".to_string(),
-            )
-        })?;
-        let incomplete_marker = begin_in_place_write(output)
-            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+            ));
+        }
         for column in &plan.columns {
             if column.mode == MeasurementSetColumnWriteMode::Create {
                 let already_persisted = measurement_set
@@ -1870,7 +1817,6 @@ impl MeasurementSetWriteSession {
         Ok(Self {
             plan,
             state: MeasurementSetWriteSessionState::Mutation {
-                incomplete_marker,
                 next_selected_row: 0,
                 write_seconds: 0.0,
                 bytes_written: 0,
@@ -2065,7 +2011,6 @@ impl MeasurementSetWriteSession {
     pub fn finish_mutation(self) -> Result<MeasurementSetWriteTelemetry, MeasurementSetWriteError> {
         let MeasurementSetWriteSession { plan, state } = self;
         let MeasurementSetWriteSessionState::Mutation {
-            incomplete_marker,
             next_selected_row,
             write_seconds,
             bytes_written,
@@ -2085,8 +2030,6 @@ impl MeasurementSetWriteSession {
         }
         let producer_window_seconds = started_at.elapsed().as_secs_f64();
         let finalize_started = Instant::now();
-        complete_in_place_write(incomplete_marker)
-            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
         let columns = plan
             .columns
             .iter()

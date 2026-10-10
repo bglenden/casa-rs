@@ -391,7 +391,6 @@ fn selected_row_write_session_persists_bounded_typed_batches() {
     let mut session =
         MeasurementSetWriteSession::start_selected_row_mutation(&mut measurement_set, plan)
             .expect("start mutation");
-    assert!(ms_path.join(".casa-rs-write-incomplete").exists());
     while !session
         .next_mutation_rows()
         .expect("next mutation rows")
@@ -437,8 +436,21 @@ fn selected_row_write_session_persists_bounded_typed_batches() {
     assert_eq!(telemetry.queue_wait_seconds, 0.0);
     assert!(telemetry.producer_seconds >= telemetry.write_seconds);
     assert!(telemetry.finalize_seconds >= 0.0);
-    assert!(!ms_path.join(".casa-rs-write-incomplete").exists());
     drop(measurement_set);
+    let entries = std::fs::read_dir(&ms_path)
+        .expect("list mutated MS")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        entries.iter().all(|name| !name.contains("casa-rs")),
+        "an in-place mutation left casa-rs files: {entries:?}"
+    );
 
     let reopened = MeasurementSet::open(&ms_path).expect("reopen mutated MS");
     for row in selected_rows {
@@ -471,7 +483,7 @@ fn selected_row_write_session_persists_bounded_typed_batches() {
 }
 
 #[test]
-fn interrupted_selected_row_write_remains_detectable_without_snapshot_state() {
+fn interrupted_selected_row_write_keeps_persisted_rows_and_reopens() {
     let dir = tempfile::tempdir().expect("tempdir");
     let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
     let mut measurement_set = MeasurementSet::open(&ms_path).expect("open fixture MS");
@@ -512,13 +524,9 @@ fn interrupted_selected_row_write_remains_detectable_without_snapshot_state() {
     drop(session);
     drop(measurement_set);
 
-    let error = match MeasurementSet::open(&ms_path) {
-        Ok(_) => panic!("marker must reject open"),
-        Err(error) => error,
-    };
-    assert!(error.to_string().contains("incomplete write marker"));
-    std::fs::remove_file(ms_path.join(".casa-rs-write-incomplete")).expect("remove test marker");
-    let reopened = MeasurementSet::open(&ms_path).expect("reopen after explicit marker removal");
+    // As after an interrupted CASA write, the MeasurementSet reopens with the
+    // rows persisted before the interruption.
+    let reopened = MeasurementSet::open(&ms_path).expect("reopen after an interrupted write");
     assert_eq!(
         reopened
             .main_table()

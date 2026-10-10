@@ -13,8 +13,7 @@ use casa_ms::{
     MeasurementSet, SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticAntenna,
     SyntheticCorruptionConfig, SyntheticField, SyntheticNoiseCorruption, SyntheticNoiseMode,
     SyntheticObservationRequest, SyntheticSkyModel, SyntheticSpectralSetup, VisibilityDataColumn,
-    generate_synthetic_observation_ms, initialize_measurement_set_owner_manifest,
-    tutorial_vla_a_antennas,
+    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
 };
 use casa_types::{ArrayValue, Complex32};
 use casars_imager::{ImagerArtifact, ImagerRunReport, ImagingParameters, resolve_request, run};
@@ -255,8 +254,6 @@ impl Observation {
             pointing: None,
         });
         let report = generate_synthetic_observation_ms(&request).expect("synthesise T1 MS");
-        initialize_measurement_set_owner_manifest(&measurement_set)
-            .expect("initialise T1 MS owner manifest");
         Self {
             phase_center_rad: request.phase_center_rad,
             channel_frequencies_hz: request.spectral_windows[0].channel_frequencies_hz(),

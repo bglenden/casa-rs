@@ -364,7 +364,7 @@ def install_controlled_point_extended_source(
         tool.close()
 
     # MODEL_DATA is derived state, not the controlled observed source. Reset
-    # it before owner initialization while retaining the predicted DATA.
+    # it while retaining the predicted DATA.
     clearcal(vis=str(ms_path), addmodel=True)
     rows = table_column_values(ms_path, "DATA")
     return sky, controlled_source_identity(rows)
@@ -728,13 +728,7 @@ def rust_case(
     *,
     iterations: int,
     save_model: bool,
-    initialize_owner: bool = True,
 ) -> str:
-    if initialize_owner:
-        run([
-            "cargo", "run", "--quiet", "-p", "casa-ms", "--example",
-            "initialize_imaging_owner", "--", str(ms_path),
-        ])
     gain = case.get("gain", 0.2)
     cycle_iterations = case.get("cycle_iterations", max(iterations, 1))
     nmajor = case.get("nmajor", 1)
@@ -1433,7 +1427,6 @@ def main() -> None:
                 minor_case,
                 iterations=case["cycle_iterations"],
                 save_model=False,
-                initialize_owner=False,
             ))
         rust_summary = None
         if not direct_controls_oracle:
@@ -1443,7 +1436,6 @@ def main() -> None:
                 case,
                 iterations=case["iterations"],
                 save_model=True,
-                initialize_owner=False,
             )
             rust_summary = json.loads(rust_stdout)
         if casa_summary is not None:

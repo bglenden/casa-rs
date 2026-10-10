@@ -27,10 +27,10 @@ pub use access::{
 pub use bound_observation::{
     BoundSelectedObservation, BoundSelectedObservationError, DeferredSelectedObservationAccess,
     ObservationSourceBinding, SelectedObservationBlockConsumer, SelectedObservationBlockSource,
-    SelectedObservationCompletion, SelectedObservationReplayAuthorization,
-    SelectedObservationReplayProof, SelectedObservationResidencyCertificate,
-    SelectedObservationTerminal, SelectedObservationTraversalError,
-    SelectedObservationTraversalMeasurements, SelectedObservationWindowCompletion,
+    SelectedObservationCompletion, SelectedObservationReplayProof,
+    SelectedObservationResidencyCertificate, SelectedObservationTerminal,
+    SelectedObservationTraversalError, SelectedObservationTraversalMeasurements,
+    SelectedObservationWindowCompletion,
 };
 pub use content_plan::{
     SelectedObservationContentBudget, SelectedObservationContentPlan,

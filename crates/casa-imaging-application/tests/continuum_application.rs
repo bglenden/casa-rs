@@ -20,7 +20,7 @@ use casa_imaging_model::{
 use casa_ms::{
     MeasurementSet, MeasurementSetBuilder, OptionalMainColumn, SubtableId, VisibilityDataColumn,
     column_def::{ColumnDef, ColumnKind},
-    initialize_measurement_set_owner_manifest, schema,
+    schema,
 };
 use casa_types::{
     ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,

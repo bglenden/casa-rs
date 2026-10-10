@@ -109,7 +109,6 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
     let staging = tempfile::tempdir()?;
     let measurement_set = staging.path().join("alma_ephemobj_icrs.ms");
     copy_tree(&source, &measurement_set)?;
-    casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
     set_mmap_io_environment();
     let rust_prefix = staging.path().join("rust-uranus-cubesource");
 

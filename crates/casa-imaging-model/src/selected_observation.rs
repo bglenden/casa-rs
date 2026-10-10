@@ -12,9 +12,9 @@ use crate::{
     geometry::CompiledGeometryId,
     measurement_equation::VisibilityInnerProduct,
     observation::{
-        CorrelationSelection, CorrelationType, DataDescriptionSelection, MeasurementSetIdentity,
-        ObservationSnapshotId, SelectedMainRow, SelectedRowSequenceAccumulator,
-        SelectedRowSequenceError, SpectralWindowSelection, VisibilityColumn, WeightColumn,
+        CorrelationSelection, CorrelationType, DataDescriptionSelection, ObservationSnapshotId,
+        SelectedMainRow, SelectedRowSequenceAccumulator, SelectedRowSequenceError,
+        SpectralWindowSelection, VisibilityColumn, WeightColumn,
     },
     selected_observation_sample::{
         SelectedObservationRunChannel, SelectedObservationRunCorrelation,
@@ -163,13 +163,13 @@ pub enum SelectedObservationInspectionError {
     #[error("selected physical MAIN rows do not match source {measurement_set}")]
     SelectedRowSequenceMismatch {
         /// Source whose physical row sequence differed.
-        measurement_set: MeasurementSetIdentity,
+        measurement_set: usize,
     },
     /// A reported DDID/SPW/polarization tuple contradicted the compiled catalog.
     #[error("selected DATA_DESCRIPTION coordinate does not match source {measurement_set}")]
     DataDescriptionCoordinateMismatch {
         /// Source containing the inconsistent coordinate.
-        measurement_set: MeasurementSetIdentity,
+        measurement_set: usize,
         /// Reported physical MAIN row.
         physical_row: u64,
     },
@@ -177,7 +177,7 @@ pub enum SelectedObservationInspectionError {
     #[error("selected sample is missing from source {measurement_set} row {physical_row}")]
     MissingSample {
         /// Source with incomplete sample coverage.
-        measurement_set: MeasurementSetIdentity,
+        measurement_set: usize,
         /// Incomplete physical MAIN row.
         physical_row: u64,
     },
@@ -185,7 +185,7 @@ pub enum SelectedObservationInspectionError {
     #[error("unexpected selected sample in source {measurement_set} row {physical_row}")]
     UnexpectedSample {
         /// Source containing the unexpected member.
-        measurement_set: MeasurementSetIdentity,
+        measurement_set: usize,
         /// Reported physical MAIN row.
         physical_row: u64,
     },
@@ -193,7 +193,7 @@ pub enum SelectedObservationInspectionError {
     #[error("duplicate selected sample in source {measurement_set} row {physical_row}")]
     DuplicateSample {
         /// Source containing the duplicated member.
-        measurement_set: MeasurementSetIdentity,
+        measurement_set: usize,
         /// Reported physical MAIN row.
         physical_row: u64,
     },
@@ -203,7 +203,7 @@ pub enum SelectedObservationInspectionError {
     )]
     NonCanonicalSampleOrder {
         /// Source observed out of order.
-        measurement_set: MeasurementSetIdentity,
+        measurement_set: usize,
         /// Physical row observed out of order.
         physical_row: u64,
     },
@@ -211,7 +211,7 @@ pub enum SelectedObservationInspectionError {
     #[error("prediction target does not match source {measurement_set} row {physical_row}")]
     PredictionTargetMismatch {
         /// Source containing the wrong prediction target.
-        measurement_set: MeasurementSetIdentity,
+        measurement_set: usize,
         /// Physical row containing the wrong prediction target.
         physical_row: u64,
     },
@@ -219,7 +219,7 @@ pub enum SelectedObservationInspectionError {
     #[error("visibility storage does not match source {measurement_set} row {physical_row}")]
     VisibilityStorageMismatch {
         /// Source containing the wrong visibility representation.
-        measurement_set: MeasurementSetIdentity,
+        measurement_set: usize,
         /// Physical MAIN row containing the wrong representation.
         physical_row: u64,
     },
@@ -229,7 +229,7 @@ pub enum SelectedObservationInspectionError {
     )]
     WeightBroadcastMismatch {
         /// Source containing inconsistent broadcast weights.
-        measurement_set: MeasurementSetIdentity,
+        measurement_set: usize,
         /// Physical MAIN row containing inconsistent weights.
         physical_row: u64,
     },
@@ -419,7 +419,7 @@ impl<'a> SelectedObservationInspection<'a> {
 
     fn advance_to_source(
         &mut self,
-        measurement_set: MeasurementSetIdentity,
+        measurement_set: usize,
         physical_row: u64,
     ) -> Result<(), SelectedObservationInspectionError> {
         while measurement_set != self.source.expected.measurement_set() {
@@ -471,7 +471,7 @@ impl<'a> SelectedObservationInspection<'a> {
 
 fn prediction_target(
     write_set: &ObservationWriteSet,
-    measurement_set: MeasurementSetIdentity,
+    measurement_set: usize,
 ) -> SelectedPredictionTarget {
     if write_set.visibility_columns().iter().any(|write| {
         write.column() == MsColumnKind::ModelData && write.measurement_set() == measurement_set
@@ -491,7 +491,7 @@ struct SourceInspection<'a> {
 
 #[derive(Clone, Copy)]
 struct InspectionRow {
-    measurement_set: MeasurementSetIdentity,
+    measurement_set: usize,
     physical_row: u64,
     data_description_id: i32,
     spectral_window_id: u32,
@@ -676,7 +676,7 @@ impl<'a> SourceInspection<'a> {
 }
 
 struct RowInspection<'a> {
-    measurement_set: MeasurementSetIdentity,
+    measurement_set: usize,
     physical_row: u64,
     data_description: DataDescriptionSelection,
     spectral_window: &'a SpectralWindowSelection,

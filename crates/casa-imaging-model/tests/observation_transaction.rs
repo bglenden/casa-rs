@@ -5,21 +5,20 @@ mod common;
 mod model_lifecycle_fixture;
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, ContinuumChannelRole, ContinuumChannelUse, ContinuumFitRule,
-    CorrectedDataWrite, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
-    DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
-    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
-    MeasurementEquationContract, MissingPointingPolicy, ModelColumnInitialization,
-    ModelColumnState, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity, MsColumnKind,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationSnapshot, ObservationSnapshotInput, ObservationTransactionRequirements,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, ProblemInput, ProblemInputIdentities, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
-    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
-    RestFrequency, RestoringBeamPolicy, ScientificContract, SelectedVisibilityColumnPrecondition,
-    SelectedVisibilityWriteDisposition, SequentialContinuumTransform, SkyDirection,
+    AxisOrder, CentreLaws, CompileProblemError, ContinuumChannelRole, ContinuumChannelUse,
+    ContinuumFitRule, CorrectedDataWrite, DeclaredInnerProducts, DelayCentreLaw,
+    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
+    FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
+    InstrumentResponse, MeasurementEquationContract, MissingPointingPolicy, ModelColumnWrite,
+    ModelInnerProduct, ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationPointingLaw, ObservationSnapshot, ObservationSnapshotInput,
+    ObservationTransactionCompileError, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    ProblemInput, ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
+    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
+    ReconstructionContract, ReconstructionControls, ReductionPolicy, RestFrequency,
+    RestoringBeamPolicy, ScientificContract, SequentialContinuumTransform, SkyDirection,
     SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
     WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
@@ -55,6 +54,15 @@ fn compile_transaction_with_transform(
     transaction: ObservationTransactionRequirements,
     transform: Option<SequentialContinuumTransform>,
 ) -> casa_imaging_model::CompiledProblem {
+    try_compile_transaction(snapshot, transaction, transform)
+        .expect("compile problem with observation transaction")
+}
+
+fn try_compile_transaction(
+    snapshot: ObservationSnapshot,
+    transaction: ObservationTransactionRequirements,
+    transform: Option<SequentialContinuumTransform>,
+) -> Result<casa_imaging_model::CompiledProblem, CompileProblemError> {
     let lifecycle = model_lifecycle_fixture::model_lifecycle(snapshot.model());
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -152,7 +160,6 @@ fn compile_transaction_with_transform(
         ProblemInputIdentities::new(snapshot),
         lifecycle,
     ))
-    .expect("compile problem with observation transaction")
 }
 
 #[test]
@@ -169,20 +176,12 @@ fn transaction_contract_derives_the_exact_snapshot_read_set() {
     assert_eq!(contract.observation_snapshot_id(), snapshot.snapshot_id());
     assert_eq!(contract.read_set().sources().len(), 1);
     let source = &contract.read_set().sources()[0];
-    assert_eq!(source.measurement_set(), snapshot.sources()[0].identity());
+    assert_eq!(
+        source.measurement_set(),
+        snapshot.sources()[0].input_ordinal()
+    );
     assert_eq!(source.selection(), snapshot.sources()[0].selection());
-    assert_eq!(
-        source.column_generations(),
-        snapshot.sources()[0].generations().columns().generations()
-    );
-    assert_eq!(
-        source.consistency_token(),
-        snapshot.sources()[0].generations().consistency_token()
-    );
-    assert_eq!(
-        source.metadata(),
-        snapshot.sources()[0].generations().metadata_generations()
-    );
+    assert_eq!(source.selected_columns(), snapshot.sources()[0].columns());
     assert!(contract.write_set().visibility_columns().is_empty());
 }
 
@@ -209,11 +208,14 @@ fn selected_model_column_writes_have_a_pinned_schema_three_identity() {
     );
     assert_eq!(
         writable.transaction_id().to_string(),
-        "ae6dee9cca924c8f3048b569efb1f00c19e662648141235517599c6b8d7ab998"
+        "8700e2ccd686d96a3aec77841f1bd0b904e037298b209f13ff5369e539737eab"
     );
     assert_eq!(writable.write_set().visibility_columns().len(), 1);
     let write = &writable.write_set().visibility_columns()[0];
-    assert_eq!(write.measurement_set(), snapshot.sources()[0].identity());
+    assert_eq!(
+        write.measurement_set(),
+        snapshot.sources()[0].input_ordinal()
+    );
     assert_eq!(write.selection(), snapshot.sources()[0].selection());
     assert_eq!(
         writable.read_set().sources()[0].selection().rows(),
@@ -226,96 +228,10 @@ fn selected_model_column_writes_have_a_pinned_schema_three_identity() {
         "MODEL_DATA write access must retain the compact row identity"
     );
     assert_eq!(write.column(), MsColumnKind::ModelData);
-    assert_eq!(
-        write.precondition(),
-        SelectedVisibilityColumnPrecondition::Absent
-    );
-    assert_eq!(
-        write.disposition(),
-        SelectedVisibilityWriteDisposition::CreateAndInitializeAllRows {
-            row_count: snapshot.sources()[0].selection().rows().source_row_count(),
-            initialization: ModelColumnInitialization::Zero,
-        }
-    );
-    assert_eq!(
-        write.expected_consistency_token(),
-        snapshot.sources()[0].generations().consistency_token()
-    );
 }
 
-#[test]
-fn model_write_preconditions_preserve_the_previous_generation() {
-    let previous_generation = common::identity(99);
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![common::observation_source_with_model_generation(
-            9,
-            Some(previous_generation),
-        )],
-        Vec::new(),
-        ModelStateIdentity::Empty,
-    ))
-    .expect("compile observation with MODEL_DATA");
-
-    let problem = compile_transaction(
-        snapshot.clone(),
-        ObservationTransactionRequirements::new(ModelColumnWrite::SelectedRows),
-    );
-    let contract = problem.observation_transaction();
-
-    assert_eq!(
-        contract.write_set().visibility_columns()[0].precondition(),
-        SelectedVisibilityColumnPrecondition::Generation(previous_generation)
-    );
-    assert_eq!(
-        contract.write_set().visibility_columns()[0].disposition(),
-        SelectedVisibilityWriteDisposition::ReplaceSelectedCells
-    );
-}
-
-#[test]
-fn output_only_model_columns_are_preconditioned_without_entering_the_read_set() {
-    let previous_generation = common::identity(98);
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![common::observation_source_with_model_state(
-            10,
-            ModelColumnState::Present(previous_generation),
-            None,
-        )],
-        Vec::new(),
-        ModelStateIdentity::Empty,
-    ))
-    .expect("compile observation with output-only MODEL_DATA");
-
-    let problem = compile_transaction(
-        snapshot.clone(),
-        ObservationTransactionRequirements::new(ModelColumnWrite::SelectedRows),
-    );
-    let contract = problem.observation_transaction();
-
-    assert!(
-        contract.read_set().sources()[0]
-            .column_generations()
-            .iter()
-            .all(|generation| generation.kind() != MsColumnKind::ModelData)
-    );
-    assert_eq!(
-        contract.write_set().visibility_columns()[0].precondition(),
-        SelectedVisibilityColumnPrecondition::Generation(previous_generation)
-    );
-}
-
-#[test]
-fn corrected_data_write_is_existing_generation_bound_and_output_role_only() {
-    let generation = common::identity(97);
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![common::observation_source_with_corrected_generation(
-            10, generation,
-        )],
-        Vec::new(),
-        ModelStateIdentity::Empty,
-    ))
-    .expect("compile observation with CORRECTED_DATA destination");
-    let transform = SequentialContinuumTransform::new(vec![
+fn one_channel_transform() -> SequentialContinuumTransform {
+    SequentialContinuumTransform::new(vec![
         ContinuumFitRule::new(
             0,
             0,
@@ -327,7 +243,40 @@ fn corrected_data_write_is_existing_generation_bound_and_output_role_only() {
         )
         .expect("one output-role fit rule"),
     ])
-    .expect("continuum transform");
+    .expect("continuum transform")
+}
+
+#[test]
+fn a_corrected_data_write_without_the_column_is_refused_at_compile() {
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![common::observation_source_with_corrected_data(10, false)],
+        Vec::new(),
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile observation without CORRECTED_DATA");
+
+    assert!(matches!(
+        try_compile_transaction(
+            snapshot,
+            ObservationTransactionRequirements::new(ModelColumnWrite::Disabled)
+                .with_corrected_data_write(CorrectedDataWrite::SelectedOutputRows),
+            Some(one_channel_transform()),
+        ),
+        Err(CompileProblemError::ObservationTransaction(
+            ObservationTransactionCompileError::MissingCorrectedDataDestination
+        ))
+    ));
+}
+
+#[test]
+fn corrected_data_write_needs_the_column_and_writes_output_role_channels_only() {
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![common::observation_source_with_corrected_data(10, true)],
+        Vec::new(),
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile observation with CORRECTED_DATA destination");
+    let transform = one_channel_transform();
     let problem = compile_transaction_with_transform(
         snapshot,
         ObservationTransactionRequirements::new(ModelColumnWrite::Disabled)
@@ -342,21 +291,13 @@ fn corrected_data_write_is_existing_generation_bound_and_output_role_only() {
     assert_eq!(writes.len(), 1);
     assert_eq!(writes[0].column(), MsColumnKind::CorrectedData);
     assert_eq!(
-        writes[0].precondition(),
-        SelectedVisibilityColumnPrecondition::Generation(generation)
-    );
-    assert_eq!(
-        writes[0].disposition(),
-        SelectedVisibilityWriteDisposition::ReplaceSelectedCells
-    );
-    assert_eq!(
         writes[0].selection().spectral_windows()[0].channel_indices(),
         &[0]
     );
 }
 
 #[test]
-fn multi_ms_read_and_write_sets_are_canonical() {
+fn multi_ms_read_and_write_sets_keep_request_order() {
     let snapshot = compile_observation(ObservationSnapshotInput::new(
         vec![
             common::observation_source(12),
@@ -365,18 +306,18 @@ fn multi_ms_read_and_write_sets_are_canonical() {
         Vec::new(),
         ModelStateIdentity::Empty,
     ))
-    .expect("compile reversed multi-MS observation");
+    .expect("compile multi-MS observation");
+    assert_eq!(
+        snapshot.sources()[0].provenance().locator(),
+        "fixture://observation/12"
+    );
 
     let problem = compile_transaction(
         snapshot.clone(),
         ObservationTransactionRequirements::new(ModelColumnWrite::SelectedRows),
     );
     let contract = problem.observation_transaction();
-    let canonical_sources = snapshot
-        .sources()
-        .iter()
-        .map(|source| source.identity())
-        .collect::<Vec<_>>();
+    let canonical_sources = vec![0, 1];
 
     assert_eq!(
         contract

@@ -8,7 +8,6 @@ fn t51_content_requirements_admit_the_exact_minimum_and_bound_live_blocks() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("requirements.ms");
     generate_fixture(&path);
-    initialize_measurement_set_owner_manifest(&path).unwrap();
     let (problem, access) = owner_problem_and_access(owner_resolution_request(&path, 2));
     let requirements = access.content_requirements(&problem).unwrap();
     let minimum = requirements.minimum_bytes(2).unwrap();
@@ -53,38 +52,12 @@ fn t51_content_requirements_admit_the_exact_minimum_and_bound_live_blocks() {
 }
 
 #[test]
-fn t51_content_requirements_release_locks_and_reject_stale_owner_state() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("stale-requirements.ms");
-    generate_fixture(&path);
-    initialize_measurement_set_owner_manifest(&path).unwrap();
-    let (problem, access) = owner_problem_and_access(owner_resolution_request(&path, 2));
-    let requirements = access.content_requirements(&problem).unwrap();
-    external_locked_keyword_mutation(&path);
-    let error = access.content_requirements(&problem).unwrap_err();
-    assert!(matches!(
-        error,
-        super::super::BoundSelectedObservationError::Source { .. }
-    ));
-    let budget =
-        SelectedObservationContentBudget::new(requirements.minimum_bytes(1).unwrap(), 1, 4);
-    let finalized = access
-        .with_content_budget(&problem, &requirements, budget)
-        .unwrap();
-    assert!(
-        finalized.into_deferred().open(&problem).is_err(),
-        "fresh execution validation must close the sizing/open mutation gap"
-    );
-}
-
-#[test]
 fn t51_content_requirements_cannot_finalize_another_source() {
     let directory = tempfile::tempdir().unwrap();
     let first = directory.path().join("first.ms");
     let second = directory.path().join("second.ms");
     for path in [&first, &second] {
         generate_fixture(path);
-        initialize_measurement_set_owner_manifest(path).unwrap();
     }
     let (first_problem, first_access) =
         owner_problem_and_access(owner_resolution_request(&first, 2));
@@ -104,7 +77,6 @@ fn t51_content_requirements_reject_equal_science_with_different_provenance() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("provenance.ms");
     generate_fixture(&path);
-    initialize_measurement_set_owner_manifest(&path).unwrap();
     let (first_problem, first_access) = owner_problem_and_access(
         owner_resolution_request_with_identity(&path, 2, identity(211)),
     );
