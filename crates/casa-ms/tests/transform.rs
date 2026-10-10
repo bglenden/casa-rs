@@ -536,3 +536,144 @@ fn interrupted_selected_row_write_keeps_persisted_rows_and_reopens() {
         &ScalarValue::Bool(true)
     );
 }
+
+/// Start a one-row `FLAG_ROW` mutation on `measurement_set`.
+fn start_flag_row_mutation(
+    measurement_set: &mut MeasurementSet,
+) -> Result<MeasurementSetWriteSession, casa_ms::MeasurementSetWriteError> {
+    let plan = MeasurementSetWritePlan::selected_row_mutation(
+        vec![0],
+        vec![MeasurementSetWriteColumnPlan {
+            name: "FLAG_ROW".to_string(),
+            bytes_per_row: 1,
+            mode: MeasurementSetColumnWriteMode::Replace,
+            storage_manager: MeasurementSetColumnStorage::Persisted,
+            tile_shape: None,
+            create_source_column: None,
+        }],
+        MeasurementSetWriteResources {
+            available_bytes: 1,
+            maximum_live_batches: 1,
+            tiled_column_buffer_bytes: 0,
+        },
+    )
+    .expect("mutation plan");
+    MeasurementSetWriteSession::start_selected_row_mutation(measurement_set, plan)
+}
+
+/// Write the one planned `FLAG_ROW` row and complete the session.
+fn finish_flag_row_mutation(
+    mut session: MeasurementSetWriteSession,
+    measurement_set: &mut MeasurementSet,
+) {
+    session
+        .write_mutation_batch(
+            measurement_set,
+            MeasurementSetMutationBatch {
+                row_indices: vec![0],
+                columns: vec![MeasurementSetMutationColumnBatch {
+                    name: "FLAG_ROW".to_string(),
+                    values: MeasurementSetMutationColumnValues::Scalars(vec![ScalarValue::Bool(
+                        true,
+                    )]),
+                }],
+            },
+        )
+        .expect("write FLAG_ROW");
+    session.finish_mutation().expect("finish mutation");
+}
+
+const WRITE_LOCK_PROBE_TABLE: &str = "CASA_RS_WRITE_LOCK_PROBE_TABLE";
+
+/// Child-process half of the write-lock test: tries casacore's write lock on
+/// the table named by the environment, as another process would, and
+/// reports the outcome. Without the environment variable it does nothing.
+#[test]
+fn write_lock_probe_from_another_process() {
+    let Some(table) = std::env::var_os(WRITE_LOCK_PROBE_TABLE) else {
+        return;
+    };
+    match casa_tables::TableWriteLock::acquire(&table, 1) {
+        Ok(_) => println!("write-lock-probe: acquired"),
+        Err(error) => println!("write-lock-probe: refused ({error})"),
+    }
+}
+
+/// Whether another process can take casacore's write lock on `table`.
+fn another_process_takes_the_write_lock(table: &std::path::Path) -> bool {
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "write_lock_probe_from_another_process",
+            "--exact",
+            "--nocapture",
+        ])
+        .env(WRITE_LOCK_PROBE_TABLE, table)
+        .output()
+        .expect("run the write-lock probe");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("write-lock-probe: "),
+        "the write-lock probe did not run: {stdout} {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    stdout.contains("write-lock-probe: acquired")
+}
+
+/// An in-place mutation holds casacore's write lock on MAIN from start to
+/// completion. A second writer is refused until the first completes, whether
+/// it is another handle in this process or another process, and opening and
+/// closing other handles on the MeasurementSet meanwhile does not drop it.
+#[test]
+fn selected_row_mutation_holds_the_table_write_lock_until_it_completes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let mut first = MeasurementSet::open(&ms_path).expect("open first handle");
+    let mut second = MeasurementSet::open(&ms_path).expect("open second handle");
+
+    let session = start_flag_row_mutation(&mut first).expect("first session starts");
+    let refused = start_flag_row_mutation(&mut second);
+    assert!(
+        matches!(
+            refused,
+            Err(casa_ms::MeasurementSetWriteError::WriteLock {
+                source: casa_tables::TableError::LockFailed { .. },
+                ..
+            })
+        ),
+        "a second in-place writer was admitted while the first session was live: {:?}",
+        refused.err()
+    );
+    assert!(matches!(
+        second.save_main_table_only(),
+        Err(casa_ms::MsError::Table(
+            casa_tables::TableError::LockFailed { .. }
+        ))
+    ));
+    drop(MeasurementSet::open(&ms_path).expect("open and close a third handle"));
+    assert!(
+        !another_process_takes_the_write_lock(&ms_path),
+        "another process took MAIN's write lock during the session"
+    );
+
+    finish_flag_row_mutation(session, &mut first);
+    assert!(another_process_takes_the_write_lock(&ms_path));
+    let session = start_flag_row_mutation(&mut second)
+        .expect("a new session is admitted once the first completes");
+    finish_flag_row_mutation(session, &mut second);
+}
+
+/// A session dropped before completion releases the lock, and the rows it
+/// persisted stay written.
+#[test]
+fn an_abandoned_selected_row_mutation_releases_the_table_write_lock() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let mut first = MeasurementSet::open(&ms_path).expect("open first handle");
+    let mut second = MeasurementSet::open(&ms_path).expect("open second handle");
+
+    let session = start_flag_row_mutation(&mut first).expect("first session starts");
+    drop(session);
+    let session = start_flag_row_mutation(&mut second)
+        .expect("a new session is admitted once the first is abandoned");
+    finish_flag_row_mutation(session, &mut second);
+}
