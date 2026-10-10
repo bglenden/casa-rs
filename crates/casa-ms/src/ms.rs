@@ -58,8 +58,12 @@ pub struct SelectedObservationRow {
 }
 
 impl SelectedObservationRow {
-    /// Exact bytes read from stored MAIN columns for each row.
-    pub const STORAGE_BYTES_PER_ROW: usize = 65;
+    /// Exact bytes read from stored MAIN columns for each row: one cell for
+    /// every field but the physical row index (`DATA_DESC_ID`, `FIELD_ID`,
+    /// `ANTENNA1`, `ANTENNA2`, `STATE_ID` and `OBSERVATION_ID`; `TIME` and
+    /// `TIME_CENTROID`; `FLAG_ROW`; `UVW`).
+    pub const STORAGE_BYTES_PER_ROW: usize =
+        6 * size_of::<i32>() + 2 * size_of::<f64>() + size_of::<bool>() + size_of::<[f64; 3]>();
 
     /// Return the physical MAIN row index.
     #[must_use]
@@ -1755,6 +1759,37 @@ mod tests {
         assert_eq!(last.state_id(), 64);
         assert_eq!(last.observation_id(), 74);
         assert_eq!(last.uvw_m(), [94.0, 104.0, 114.0]);
+
+        // The read plans size a row by STORAGE_BYTES_PER_ROW; it must be the
+        // row's stored cells. The pattern names every field, so a field
+        // added, removed or retyped fails here rather than desynchronising
+        // the plans.
+        let SelectedObservationRow {
+            physical_row: _,
+            data_description_id,
+            field_id,
+            antenna1,
+            antenna2,
+            time_mjd_seconds,
+            time_centroid_mjd_seconds,
+            state_id,
+            observation_id,
+            flag_row,
+            uvw_m,
+        } = last;
+        assert_eq!(
+            size_of_val(&data_description_id)
+                + size_of_val(&field_id)
+                + size_of_val(&antenna1)
+                + size_of_val(&antenna2)
+                + size_of_val(&time_mjd_seconds)
+                + size_of_val(&time_centroid_mjd_seconds)
+                + size_of_val(&state_id)
+                + size_of_val(&observation_id)
+                + size_of_val(&flag_row)
+                + size_of_val(&uvw_m),
+            SelectedObservationRow::STORAGE_BYTES_PER_ROW
+        );
     }
 
     #[cfg(unix)]
