@@ -96,8 +96,7 @@ struct Stream<'a> {
 /// Native rows of the selected observation, projected onto every image
 /// domain.
 ///
-/// The first traversal reads every selected channel, after which a
-/// restricted cube wave may read only the channels whose output-frame
+/// A restricted cube wave reads only the channels whose output-frame
 /// frequencies reach its planes (casa-ms keeps the straddling pair at each
 /// edge, so linear interpolation keeps both partners). A compiled continuum
 /// transform fits each whole row, so its traversals are never restricted.
@@ -114,7 +113,6 @@ pub(crate) struct MeasurementSetSource<'a> {
     dish_classes: Vec<AntennaResponseClass>,
     planes: u32,
     bounds: Option<PlaneBounds>,
-    proven: bool,
     traversal: Traversal<'a>,
     projections: Vec<DomainProjection>,
     values: Vec<Complex32>,
@@ -148,7 +146,6 @@ impl<'a> MeasurementSetSource<'a> {
             dish_classes,
             planes,
             bounds,
-            proven: false,
             traversal: Traversal::Idle(selected),
             projections: Vec::new(),
             values: Vec::new(),
@@ -295,7 +292,6 @@ impl BoundedSource for MeasurementSetSource<'_> {
             }
         };
         let window = (restrict
-            && self.proven
             && self.problem.visibility_transform().is_none()
             && planes != PlaneRange::new(0, self.planes))
         .then(|| self.bounds.as_ref().map(|bounds| bounds(planes)))
@@ -337,7 +333,6 @@ impl BoundedSource for MeasurementSetSource<'_> {
             geometry,
         } = &mut *stream;
         if !source.fill_next(block)? {
-            self.proven = true;
             self.traversal = Traversal::Idle(stream.source.complete()?);
             return Ok(false);
         }
