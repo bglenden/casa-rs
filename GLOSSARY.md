@@ -15,8 +15,8 @@ _Avoid_: CLI configuration, task request mirror
 
 **Compiled Problem**:
 An immutable logical-science description for one imaging run, bound to an
-Observation Snapshot, reference-data identities, reconstruction and coordinate
-contracts, required capabilities, numerical policy, and requested products.
+Observation Snapshot, reconstruction and coordinate contracts, required
+capabilities, numerical policy, and requested products.
 _Avoid_: Mode configuration, resolved execution plan
 
 **Compiled Geometry**:
@@ -37,21 +37,20 @@ the MeasurementSet, and nothing of it is hashed.
 _Avoid_: MeasurementSet clone, input path
 
 **Observation Transaction**:
-The snapshot-bound, compiler-derived read/write contract for one imaging run.
-It names exact per-MS selections and columns, the selected cells of an optional
-`MODEL_DATA` or `CORRECTED_DATA` write, typed physical observation-read nodes, and graph-owned product
-members with exact private staging completions. The sole `plan` entrypoint binds
-the declaration to the exact Compiled Problem and physical-work identity.
-MS-backed writes run under casacore's table lock, as in CASA.
-Generated-product publication reads or locks no MeasurementSet; its terminal
-gate follows all staging completions and triggers independent atomic replacement
-of each image. The output set is not a whole-set transaction: publication failure
-fails the run and requires rerunning, without rolling back replaced images.
+The compiler-derived MeasurementSet read and write sets of one imaging run. The
+read set names, for each snapshot source, its exact selection and the data,
+flag and weight columns read. The write set names the selected cells of an
+optional in-place `MODEL_DATA` write (the column is created when MAIN lacks
+it) and, under a Sequential Continuum Transform, the output-role cells of an
+optional `CORRECTED_DATA` write; compile refuses the latter when MAIN has no
+such column. Writes run under casacore's table lock, as in CASA; an interrupted
+write may leave partial derived values that the next run recomputes. Image
+products are not part of it: each is staged and replaced on its own.
 _Avoid_: Incremental output write, best-effort model save
 
 **Selected Observation**:
 The bounded stream evaluating an Observation Snapshot and compiled transform
-specifications into visibility samples, flags, weights, and per-sample
+specifications into visibility samples, flags, weights, and per-row
 coordinates. Chunking has no scientific identity.
 _Avoid_: Observation snapshot, input rows
 
@@ -117,10 +116,12 @@ approximation and returns a model update plus convergence evidence.
 _Avoid_: CLEAN loop, inner callback
 
 **Product Contract**:
-The compiler-owned product topology, axes, units, exact normalization,
-beam/restoration and validity policies, dependencies, backend-independent
-schema, exact publication members, and independently atomic per-image store
-protocol for an imaging problem.
+The compiler-owned product graph of an imaging problem: the normalization
+boundary from unnormalized normal state; one node per product with its role,
+axes and coordinates, unit, normalization, beam rule, validity rule, and
+stored mask, unit label and beam attachment; and the published members in
+order. Each member is staged and replaced on its own, so a member already
+replaced stays valid if a later one fails.
 _Avoid_: Output files, sidecars
 
 **Migration Obligation**:

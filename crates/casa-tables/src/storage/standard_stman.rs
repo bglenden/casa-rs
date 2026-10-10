@@ -1536,112 +1536,136 @@ pub(crate) fn read_ssm_array_column_rows(
         )));
     }
     let index = &indices[index_nr];
-    let first_row = selected_rows.iter().copied().min().unwrap_or(0);
-    let rows_to_read = selected_rows
-        .iter()
-        .copied()
-        .max()
-        .map(|row| row - first_row + 1)
-        .unwrap_or(0);
-
-    if is_ssm_array_file_indirect(col_desc) {
-        let offsets = read_column_from_buckets(
-            &mut file,
-            &header,
-            index,
-            column_offset,
-            CasacoreDataType::TpInt64,
-            0,
-            1,
-            first_row,
-            rows_to_read,
-        )?;
-        let offset_values = match offsets {
-            ColumnRawData::Int64(values) => values,
-            _ => {
-                return Err(StorageError::FormatMismatch(
-                    "SSM indirect array: expected Int64 offsets".to_string(),
-                ));
-            }
-        };
-
-        let dt = CasacoreDataType::from_primitive_type(col_desc.require_primitive_type()?, false);
-        let mut array_path = file_path.as_os_str().to_os_string();
-        array_path.push("i");
-        let array_path = std::path::PathBuf::from(array_path);
-        if !array_path.exists() {
-            if selected_rows
-                .iter()
-                .all(|&row| offset_values.get(row - first_row).copied().unwrap_or(0) == 0)
-            {
-                return Ok(Some(vec![None; selected_rows.len()]));
-            }
-            return Err(StorageError::FormatMismatch(
-                "SSM indirect array column but no array file found".to_string(),
-            ));
-        }
-
-        let mut reader = StManArrayFileReader::open(&array_path, header.big_endian)?;
-        let mut values = Vec::with_capacity(selected_rows.len());
-        for &row in selected_rows {
-            let offset = *offset_values.get(row - first_row).ok_or_else(|| {
-                StorageError::FormatMismatch(format!(
-                    "SSM indirect array column '{}' missing offset for row {row}",
-                    col_desc.col_name
-                ))
-            })?;
-            let value = reader.read_array_at(offset, dt).map_err(|err| {
-                StorageError::FormatMismatch(format!(
-                    "SSM indirect array column '{}' row {row} offset {offset} type {:?}: {err}",
-                    col_desc.col_name, dt
-                ))
-            })?;
-            values.push(match value {
-                Some(Value::Array(array)) => Some(array),
-                Some(other) => {
-                    return Err(StorageError::FormatMismatch(format!(
-                        "SSM indirect array column '{}' row {row} expected array value, found {:?}",
-                        col_desc.col_name,
-                        other.kind()
-                    )));
-                }
-                None => None,
-            });
-        }
-        return Ok(Some(values));
-    }
-
-    let nrelem = if col_desc.nrdim > 0 && !col_desc.shape.is_empty() {
+    let indirect = is_ssm_array_file_indirect(col_desc);
+    let nrelem = if indirect {
+        1
+    } else if col_desc.nrdim > 0 && !col_desc.shape.is_empty() {
         col_desc.shape.iter().map(|&s| s as usize).product()
     } else {
         return Ok(None);
     };
-    let raw = read_column_from_buckets(
-        &mut file,
-        &header,
-        index,
-        column_offset,
-        col_desc.data_type,
-        col_desc.max_length,
-        nrelem,
-        first_row,
-        rows_to_read,
-    )?;
-    let mut values = Vec::with_capacity(selected_rows.len());
-    for &row in selected_rows {
-        let value = extract_row_value(&raw, col_desc, row - first_row, rows_to_read)?;
-        values.push(match value {
-            Value::Array(array) => Some(array),
-            other => {
-                return Err(StorageError::FormatMismatch(format!(
-                    "SSM direct array column '{}' row {row} expected array value, found {:?}",
-                    col_desc.col_name,
-                    other.kind()
-                )));
-            }
-        });
+    let mut array_reader = if indirect {
+        let mut array_path = file_path.as_os_str().to_os_string();
+        array_path.push("i");
+        let array_path = std::path::PathBuf::from(array_path);
+        array_path
+            .exists()
+            .then(|| StManArrayFileReader::open(&array_path, header.big_endian))
+            .transpose()?
+    } else {
+        None
+    };
+    let indirect_type = if indirect {
+        Some(CasacoreDataType::from_primitive_type(
+            col_desc.require_primitive_type()?,
+            false,
+        ))
+    } else {
+        None
+    };
+
+    // Read bucket by bucket: each touched bucket once, keeping only the
+    // selected rows' cells, so a strided selection never stages the rows
+    // between them.
+    let mut requests = selected_rows
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(slot, row)| (row, slot))
+        .collect::<Vec<_>>();
+    requests.sort_unstable();
+    let mut values = vec![None; selected_rows.len()];
+    let mut start = 0;
+    while start < requests.len() {
+        let first_row = requests[start].0;
+        let (_, _, bucket_last_row) = index.find_bucket(first_row as u64).ok_or_else(|| {
+            StorageError::FormatMismatch(format!("SSM index has no bucket for row {first_row}"))
+        })?;
+        let end =
+            start + requests[start..].partition_point(|(row, _)| *row as u64 <= bucket_last_row);
+        let group = &requests[start..end];
+        let nrrow = group[group.len() - 1].0 - first_row + 1;
+        let raw = read_column_from_buckets(
+            &mut file,
+            &header,
+            index,
+            column_offset,
+            if indirect {
+                CasacoreDataType::TpInt64
+            } else {
+                col_desc.data_type
+            },
+            if indirect { 0 } else { col_desc.max_length },
+            nrelem,
+            first_row,
+            nrrow,
+        )?;
+        for &(row, slot) in group {
+            values[slot] = match indirect_type {
+                Some(data_type) => {
+                    let ColumnRawData::Int64(offsets) = &raw else {
+                        return Err(StorageError::FormatMismatch(
+                            "SSM indirect array: expected Int64 offsets".to_string(),
+                        ));
+                    };
+                    read_ssm_indirect_cell(
+                        array_reader.as_mut(),
+                        offsets[row - first_row],
+                        data_type,
+                        col_desc,
+                        row,
+                    )?
+                }
+                None => match extract_row_value(&raw, col_desc, row - first_row, nrrow)? {
+                    Value::Array(array) => Some(array),
+                    other => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "SSM direct array column '{}' row {row} expected array value, found {:?}",
+                            col_desc.col_name,
+                            other.kind()
+                        )));
+                    }
+                },
+            };
+        }
+        start = end;
     }
     Ok(Some(values))
+}
+
+/// One cell of an indirect SSM array column, read at `offset` of its array
+/// file. A table without an array file has only undefined cells.
+fn read_ssm_indirect_cell(
+    reader: Option<&mut StManArrayFileReader>,
+    offset: i64,
+    data_type: CasacoreDataType,
+    col_desc: &ColumnDescContents,
+    row: usize,
+) -> Result<Option<ArrayValue>, StorageError> {
+    let Some(reader) = reader else {
+        return if offset == 0 {
+            Ok(None)
+        } else {
+            Err(StorageError::FormatMismatch(
+                "SSM indirect array column but no array file found".to_string(),
+            ))
+        };
+    };
+    let value = reader.read_array_at(offset, data_type).map_err(|err| {
+        StorageError::FormatMismatch(format!(
+            "SSM indirect array column '{}' row {row} offset {offset} type {:?}: {err}",
+            col_desc.col_name, data_type
+        ))
+    })?;
+    match value {
+        Some(Value::Array(array)) => Ok(Some(array)),
+        Some(other) => Err(StorageError::FormatMismatch(format!(
+            "SSM indirect array column '{}' row {row} expected array value, found {:?}",
+            col_desc.col_name,
+            other.kind()
+        ))),
+        None => Ok(None),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

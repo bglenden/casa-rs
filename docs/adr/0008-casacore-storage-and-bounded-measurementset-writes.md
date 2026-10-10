@@ -46,9 +46,16 @@ typed cells, installs the planned columns, and reports rows, bytes, producer
 time, bounded-queue wait, assembly, physical-write, and finalization time.
 
 Creation uses a sibling staging directory and publishes it only after a
-complete interoperable table has been written. In-place mutation writes under
-casacore's table lock, as CASA does. casa-rs adds nothing of its own to a
-MeasurementSet: no table keywords, marker files, generations or identities.
+complete interoperable table has been written. In-place mutation holds
+casacore's table write lock from its first change until it completes or is
+abandoned, as CASA does. Unlike casacore, whose default is to wait for a held
+lock, casa-rs makes one attempt: a writer that finds the lock held, by another
+process or through another handle, is refused at once. On a file system
+without lock support (`fcntl` refused with `ENOLCK`, or `ENOTSUP` as on macOS
+SMB mounts) the table is used unlocked, with a warning, as casacore does for
+`ENOLCK`; there is then no cross-process exclusion. casa-rs adds nothing of its
+own to a MeasurementSet: no table keywords, marker files, generations or
+identities.
 An interrupted in-place write may leave cells partly written, as an
 interrupted CASA write does; rerunning the producing task recomputes them.
 
