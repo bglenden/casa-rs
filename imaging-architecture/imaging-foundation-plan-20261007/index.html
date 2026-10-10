@@ -1760,7 +1760,13 @@ mosaic (three overlapping fields), full Stokes (four correlations),
 W-projection (low declination, long baselines), MT-MFS (multi-SPW synthetic,
 two terms), Metal variants on macOS. Checks: recovered flux, position and beam
 within analytic tolerance, residual RMS bound, complete product inventory and
-WCS, worker invariance, bounded memory (planned ≤ observed peak RSS × 1.1).</p>
+WCS, worker invariance, bounded memory. R3 amended the memory check. Owned
+memory must fit its admission: every live phase is admitted, and the
+process's peak memory (macOS footprint or Linux high-water RSS, in bytes) is
+at most the largest total reservation plus a separately measured allowance for
+fixed process and allocator overhead. A separate check that admission does not
+grossly overestimate may stay. The earlier "planned ≤ observed peak RSS × 1.1"
+did not bound underestimation.</p>
 <p><strong>T1.5, CASA-paired small fixtures (local only; run before a ticket's
 review).</strong> Copies of casatestdata <code>refim_point</code>, <code>refim_point_withline</code>,
 <code>refim_twochan</code>, <code>refim_alma_mosaic</code>, <code>refim_mawproject</code>,
@@ -2026,7 +2032,10 @@ Philosophy of Software Design</em> (deep modules; define errors out of existence
 <li><strong>One owner per invariant.</strong> Each fact (worker count, memory budget, grid
    shape, channel map, weighting generation) is computed once, stored once and
    passed by reference or by value. Duplicated projections of the same fact
-   into receipts, evidence and identities are deleted, not synchronised.</li>
+   into receipts, evidence and identities are deleted, not synchronised.
+   R3 sharpened this for memory: the owner of an allocation charges what it
+   holds, which means retained capacities, overlapping temporaries and storage
+   read footprints, not lengths. One authoritative charge, no ledger of proofs.</li>
 <li><strong>Bookkeeping must not scale with data.</strong> Telemetry and summaries are O(1)
    per phase. Nothing serialises, hashes or walks whole plans, models, sample
    streams or historical records for progress reporting.</li>
@@ -2034,7 +2043,12 @@ Philosophy of Software Design</em> (deep modules; define errors out of existence
    factory that builds one thing, a wrapper that forwards every method, or a
    builder for a struct with public fields is removed. Keep a trait only where
    a second implementation exists in this plan (<code>GridBackend</code>: CPU/Metal;
-   <code>ConvolutionFunctionSet</code>: four; <code>Solver</code>: four).</li>
+   <code>ConvolutionFunctionSet</code>: four; <code>Solver</code>: four). R3 clarified the rule.
+   Production polymorphism needs two production implementations. A trait
+   that exists only to erase a type inside one owner, or to place an
+   implementation behind a dependency boundary, is allowed when its rustdoc
+   names that reason. Test doubles don't count as a second implementation.
+   Don't invent a dummy implementation to satisfy this rule.</li>
 <li><strong>Errors are types, not strings.</strong> No <code>io::Error::other(format!(..))</code> for
    domain failures. Each crate has one <code>Error</code> enum with variants a caller
    could act on; everything else is a bug and panics with the invariant named.
@@ -2055,7 +2069,14 @@ Philosophy of Software Design</em> (deep modules; define errors out of existence
 <li><strong>Tests test laws and contracts.</strong> Prefer adjoint identities, conservation,
     tolerance against a reference, and resource bounds over fixture-specific
     expected numbers. A test that asserts an implementation detail is deleted
-    unless that detail is a promised contract.</li>
+    unless that detail is a promised contract. R3 added two requirements:<ul>
+<li><strong>Resource-bound laws measure.</strong> They compare the charge with
+  independently measured allocations (<code>capacity()</code>, RSS or footprint),
+  not one formula with another.</li>
+<li><strong>Interop laws use an independent reader.</strong> Use a casacore reader in
+  its own process, held open across the write, not only a fresh open.</li>
+</ul>
+</li>
 <li><strong>No new mode, flag or route to preserve old machinery.</strong> If an existing
     mechanism cannot be expressed through section 5 types, the ticket records
     the gap in <code>## Deviations</code> for the next gate instead of keeping a second
@@ -2194,6 +2215,134 @@ commit 71a27e7cd4. Reviewers: OpenAI Astra (independent review of the PR at
   R4 close the same way: outcome section on <code>main</code>, PR merged.</li>
 </ul>
 <p>Gate closed: #662 marked ready and auto-merge armed on 2026-10-07.</p>
+<h2 id="gate-r3-outcome-2026-10-10">Gate R3 outcome — 2026-10-10<a class="headerlink" href="#gate-r3-outcome-2026-10-10" title="Permanent link">&para;</a></h2>
+<p><strong>Gate ticket:</strong> IF-7 (#656).
+<strong>PRs:</strong>
+- #683 (PR-A, the request surface);
+- #684 (PR-B, the MeasurementSet as CASA writes it, with casacore table locking);
+- #685–#688 (C1–C4);
+- #692 (per-plane minor-cycle normalisation, found during review);
+- follow-ups #689, #693 and #696;
+- #699, which fixes the held-open-reader notification.</p>
+<p><strong>Reviewers:</strong>
+- OpenAI Astra: independent reviews of every PR, three rounds on #684, and the gate review on #656. Posted under the owner's login.
+- Fable: structural reviews of #683–#688.
+- The owner: decision C, table locking waits as casacore does, the waiver of a fourth Astra pass on #684, and the admission routing below.
+- Claude (Opus): implementer.</p>
+<p><strong>This is a conditional closure.</strong> Admission is not correct for every live phase (question 9). By owner decision on 2026-10-10, its correction is IF-8's first change, not a further IF-7 PR.</p>
+<h3 id="inputs_1">Inputs<a class="headerlink" href="#inputs_1" title="Permanent link">&para;</a></h3>
+<p>All inputs are on #656: gate inputs, admission, review-round records and final evidence.</p>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PRs</td>
+<td>#683 +8,194 / −17,689; #684 +6,137 / −5,653; #685 +1,429 / −11,299; #686 +1,565 / −11,032; #687 +985 / −465; #688 +1,204 / −3,450; #692 +96 / −67</td>
+</tr>
+<tr>
+<td>Imaging non-test source</td>
+<td>47,044 lines at <code>25d4f32320</code>, against 70k (target) and 50k (stretch); see question 7 for the counting convention. 60,965 at IF-7's start, excluding <code>kernels.metal</code>.</td>
+</tr>
+<tr>
+<td>casa-ms non-test source</td>
+<td>65,412 → 58,758 (outside the target)</td>
+</tr>
+<tr>
+<td>T0 / T1</td>
+<td><code>just quick</code> at <code>25d4f32320</code>: 3,720 passed. Task CLI hosts (18 binaries) and GUI acceptance (7) pass. C++ locking interop: <code>tables_locking_interop</code> 5/5 and <code>ms_locking_vs_cpp</code> 3/3.</td>
+</tr>
+<tr>
+<td>T1.5</td>
+<td>All 21 rows equal the C4 head to rounding. Forced-paging rows are equal, with identical traversal counts and row-channels read.</td>
+</tr>
+<tr>
+<td>Pilot W4</td>
+<td>14.7–15.0 s at <code>f7575d9dc2</code> and 15.49 s at <code>25d4f32320</code>, against the 15.82 s checkpoint. Peak RSS is 4.73 GB.</td>
+</tr>
+<tr>
+<td>Deviations</td>
+<td>1–26 plus the review-round records on #656</td>
+</tr>
+<tr>
+<td>Implementer note</td>
+<td>in the gate inputs on #656</td>
+</tr>
+</tbody>
+</table>
+<h3 id="answers-to-the-r3-questions">Answers to the R3 questions<a class="headerlink" href="#answers-to-the-r3-questions" title="Permanent link">&para;</a></h3>
+<p>These summarise Astra's gate review on #656, which is the record.</p>
+<ol>
+<li><strong>Converging on §5 types: yes.</strong> <code>CompiledProblem</code>, <code>MeasurementOperator</code> and <code>MajorCyclePass</code> are the live route. <code>MajorCycle</code>/<code>PassAppender</code> owns the model and its accumulator, and one Measures provider is shared per run. What remains is ownership moves: the CASA writer into products (IF-8), and deleting the reconstruction crate (IF-11).</li>
+<li><strong>Surviving deletion rows: row 16 remains, and some old names.</strong></li>
+<li>Rows 1–15 are removed. Row 14, the product graph, is converted to a product list (normalisation boundary, nodes, publication) but keeps the <code>ProductGraph</code> name and "DAG" rustdoc.</li>
+<li>Row 16, the environment and <code>eprintln!</code> diagnostics, is pending IF-9: <code>products/taylor.rs:135</code> and <code>casa_product_sink.rs:199</code>.</li>
+<li><code>ObservationTransactionContract</code> stays as a storage-selection contract; it is not the deleted runtime transaction.</li>
+<li><strong>A second implementation for every new trait: no.</strong></li>
+<li><code>GridBackend</code>, <code>ConvolutionFunctionSet</code>, <code>Solver</code>, <code>GridScalar</code> and the model and normal storage traits meet the rule.</li>
+<li><code>ProductOutput</code>/<code>ProductWriter</code> and <code>BoundedSource</code> have one production implementation each. The private <code>BlockIo</code>/<code>BackendIo</code> traits are type erasure.</li>
+<li>Rule 7 is sharpened below.</li>
+<li><strong>Law-based tests: partly.</strong></li>
+<li>The review-round laws are sound: sparse selection, the selected-row count, borrow-enforced views and per-plane weights.</li>
+<li>Two classes of gap were found and fixed before closure: a held-open-reader notification law (#699), and a law comparing actual buffer capacities with the plan's charge (#686).</li>
+<li>The pruned-DDID preparation bug that Astra's probe found is fixed in #686, with laws for selections that remove whole DDIDs and an empty-selection control.</li>
+<li><strong>Repeated §10 violations: yes.</strong></li>
+<li>Resource accounting (rules 5 and 13) and one-implementation adapters (rule 7) are sharpened below.</li>
+<li>Invariant-style <code>ProblemShapeMismatch</code> returns (rule 8) go to IF-8, and environment diagnostics (rule 9) to IF-9.</li>
+<li>§7's bounded-memory inequality is corrected below.</li>
+<li><strong>Discoveries invalidating a §3 decision or §5 signature: none.</strong></li>
+<li>D1's re-traversal stands, and nothing argues for a replay cache.</li>
+<li>The recorded deviations stand: <code>ImagingRequest</code> in the application; availability taking backend and precision; the shared Measures provider; <code>MajorCycle</code>/<code>PassAppender</code>; the removed start model and selectors.</li>
+<li>The 16 GiB native ceiling stays. The evidence workstation has 32 GiB, so the ceiling is emulated by policy.</li>
+<li><strong>Line count against 70k: yes, 47,044 non-test lines, also under the 50k stretch.</strong></li>
+<li>Counted at <code>25d4f32320</code>: physical lines in every source language under <code>crates/casa-imaging-*/src</code> and <code>crates/casars-imager/src</code>.</li>
+<li>Excluded as test code: <code>tests.rs</code>, <code>*_tests.rs</code>, <code>tests/</code> and inline <code>#[cfg(test)]</code>.</li>
+<li>The gate input's 46,776 left out <code>kernels.metal</code> (268 lines). IF-11 recounts.</li>
+<li><strong>Run summary: partly.</strong></li>
+<li><code>image.summary.json</code> has the request, error, per-phase status, time and cumulative peak RSS, workers, backend, minor-cycle totals and products.</li>
+<li>It lacks admitted demand and capacity, the resolved precision and the stop reason.</li>
+<li>It loses completed counts when a later phase fails, and is not written on cancellation.</li>
+<li>Its "peak RSS" is the process high-water mark sampled at each phase end.</li>
+<li>The fix goes to IF-9.</li>
+<li><strong>Admission correct under the 16 GiB policy: no.</strong></li>
+<li>The source plan, paged cube state and major-cycle passes are admitted.</li>
+<li>Not admitted: the minor cycle (preparation and solver), and nonpaged model, normal, PSF and mask state that outlives its pass reservation.</li>
+<li>The pilot planned 3.81 GB against a 4.73 GB observed peak. The 512-channel cube planned 12.88 GB, its whole budget, against a 13.61 GB footprint.</li>
+<li>The fix is IF-8's first change; see the IF-8 replan.</li>
+<li><strong>Receipt, identity or evidence types back under new names: no.</strong><ul>
+<li><code>ModelGeneration</code>, <code>WeightingGeneration</code> and the product generations own data, <code>Epoch</code> is observing time, and <code>AutoMultithreshEvidence</code> holds algorithm statistics.</li>
+<li>Cleanup goes to IF-8: products' unused <code>sha2</code> dependency, and stale "lineage", "versioned generation" and "DAG" wording.</li>
+</ul>
+</li>
+<li><strong>The catalog as the single source of defaults: yes,</strong> for the supported request surface.</li>
+</ol>
+<h3 id="decisions_1">Decisions<a class="headerlink" href="#decisions_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Owner:</strong></li>
+<li>Decision C, nothing in an MS that CASA does not write (2026-10-09).</li>
+<li>In-place writes wait for a held table lock as casacore does, and refuse deadlocks. ADR-0008 is amended.</li>
+<li>
+<h1 id="684s-round-3-fixes-merge-without-a-fourth-astra-pass">684's round-3 fixes merge without a fourth Astra pass.<a class="headerlink" href="#684s-round-3-fixes-merge-without-a-fourth-astra-pass" title="Permanent link">&para;</a></h1>
+</li>
+<li>Admission correctness is IF-8's first change, so R3 closes conditionally.</li>
+<li><strong>Deviations</strong> 1–26 and the review-round records on #656 stand as recorded.</li>
+<li><strong>Fixed before closure:</strong> #699 (held-open-reader notification after a resync), #686 (buffer capacities charged; selections that remove whole DDIDs).</li>
+<li><strong>Follow-ups kept visible, outside IF-8–IF-10:</strong> #694 (release retained read locks on request), #695 (flag-version delete/rename while open elsewhere), #697 and #698 (pre-existing interop bugs). They are casa-ms and casa-tables storage correctness, not performance work.</li>
+</ul>
+<h3 id="replanning_1">Replanning<a class="headerlink" href="#replanning_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>§7 amended in place (marked R3):</strong> the bounded-memory check no longer reads "planned ≤ observed peak RSS × 1.1", which does not bound underestimation.</li>
+<li><strong>§10 rules 5, 7 and 13 sharpened in place (marked R3).</strong></li>
+<li><strong>Ticket bodies:</strong> IF-8 (#657), IF-9 (#658) and IF-10 (#659) each carry a "Gate R3 replan" section:</li>
+<li><strong>IF-8:</strong> admission correctness first, then the product scope. Also the <code>ProblemShapeMismatch</code> audit, removing writer indirection, products' <code>sha2</code>, and terminology. The deletion-row reference corrected to row 14, already converted.</li>
+<li><strong>IF-9:</strong> the run-summary and admission observability; the <code>taylor.rs</code> and <code>casa_product_sink.rs</code> switches. The deleted <code>t51_pair_driver.py</code> dropped.</li>
+<li><strong>IF-10:</strong> the full T2 list and bars kept. Admitted-versus-observed memory added for resident and paged runs. The three MAIN walks profiled first. Near-tie rows carried explicitly.</li>
+</ul>
+<p>Gate closed (conditional on IF-8's first change): #692 (carrying #686–#688) and #699 merged and this section reached <code>main</code> on 2026-10-10.</p>
 
 
 
