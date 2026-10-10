@@ -404,11 +404,8 @@ impl BoundObservationSource {
         window: Option<[f64; 2]>,
     ) -> Result<Option<BlockBinding>, BoundObservationSourceError> {
         loop {
-            let Some(coordinate_index) = self.fill_selected_row_group(
-                replay,
-                &mut block.request_rows,
-                &mut block.row_contexts,
-            )?
+            let Some(coordinate_index) =
+                self.fill_selected_row_group(replay, &mut block.selected_rows)?
             else {
                 return Ok(None);
             };
@@ -419,7 +416,7 @@ impl BoundObservationSource {
                         self,
                         problem,
                         coordinates,
-                        &block.row_contexts,
+                        &block.selected_rows,
                         bounds,
                     )?
                     else {
@@ -436,12 +433,11 @@ impl BoundObservationSource {
                     0..coordinates.channels.len(),
                 ),
             };
-            block.row_contexts.clear();
             self.measurement_set.fill_selected_observation_buffer(
                 &SelectedObservationBufferRequest::new(
                     selected_visibility(logical_source.selected_columns().visibility()),
                     selected_weight(logical_source.selected_columns().weights()),
-                    &block.request_rows,
+                    &block.selected_rows,
                     channel_range,
                 ),
                 &mut block.buffer,
@@ -496,34 +492,36 @@ impl BoundObservationSource {
         })
     }
 
+    /// Collect into `rows` the next consecutive selected rows of one
+    /// DATA_DESCRIPTION, at most a block's worth, and return the index of
+    /// their coordinates.
     fn fill_selected_row_group(
         &self,
         replay: &mut SelectedRowReplay,
-        physical_rows: &mut Vec<usize>,
-        row_contexts: &mut Vec<SelectedReplayRow>,
+        rows: &mut Vec<SelectedObservationRow>,
     ) -> Result<Option<usize>, BoundObservationSourceError> {
         let Some(first) = replay.next_selected(self)? else {
             return Ok(None);
         };
+        let data_description_id = u32::try_from(first.data_description_id()).map_err(|_| {
+            BoundObservationSourceError::DataDescriptionCoordinateMismatch {
+                data_description_id: u32::MAX,
+            }
+        })?;
         let coordinate_index = self
             .coordinates
             .iter()
             .position(|coordinates| {
-                coordinates.data_description.data_description_id() == first.data_description_id()
+                coordinates.data_description.data_description_id() == data_description_id
             })
             .ok_or(
                 BoundObservationSourceError::DataDescriptionCoordinateMismatch {
-                    data_description_id: first.data_description_id(),
+                    data_description_id,
                 },
             )?;
-        physical_rows.clear();
-        row_contexts.clear();
-        physical_rows.push(
-            usize::try_from(first.physical_row())
-                .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?,
-        );
-        row_contexts.push(first);
-        while physical_rows.len() < self.content_plan.rows_per_block() {
+        rows.clear();
+        rows.push(first);
+        while rows.len() < self.content_plan.rows_per_block() {
             let Some(row) = replay.next_selected(self)? else {
                 break;
             };
@@ -531,40 +529,9 @@ impl BoundObservationSource {
                 replay.pending = Some(row);
                 break;
             }
-            physical_rows.push(
-                usize::try_from(row.physical_row())
-                    .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?,
-            );
-            row_contexts.push(row);
+            rows.push(row);
         }
         Ok(Some(coordinate_index))
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct SelectedReplayRow {
-    physical_row: u64,
-    data_description_id: u32,
-    field_id: i32,
-    time_mjd_seconds: f64,
-}
-
-impl SelectedReplayRow {
-    fn new(physical_row: u64, data_description_id: u32, fact: SelectedObservationRow) -> Self {
-        Self {
-            physical_row,
-            data_description_id,
-            field_id: fact.field_id(),
-            time_mjd_seconds: fact.time_mjd_seconds(),
-        }
-    }
-
-    const fn physical_row(self) -> u64 {
-        self.physical_row
-    }
-
-    const fn data_description_id(self) -> u32 {
-        self.data_description_id
     }
 }
 
@@ -572,7 +539,7 @@ fn selected_channel_window(
     source: &BoundObservationSource,
     problem: &CompiledProblem,
     coordinates: &SelectedCoordinates,
-    rows: &[SelectedReplayRow],
+    rows: &[SelectedObservationRow],
     frequency_bounds_hz: [f64; 2],
 ) -> Result<Option<(VisibilityChannelReadRange, std::ops::Range<usize>)>, BoundObservationSourceError>
 {
@@ -729,7 +696,7 @@ mod selected_channel_window_tests {
 /// MAIN filtered by the compiled row predicate.
 pub(super) struct SelectedRowReplay {
     cursor: MainRowSelectionCursor,
-    pending: Option<SelectedReplayRow>,
+    pending: Option<SelectedObservationRow>,
     selected_rows: u64,
 }
 
@@ -743,25 +710,15 @@ impl SelectedRowReplay {
     fn next_selected(
         &mut self,
         source: &BoundObservationSource,
-    ) -> Result<Option<SelectedReplayRow>, BoundObservationSourceError> {
+    ) -> Result<Option<SelectedObservationRow>, BoundObservationSourceError> {
         if let Some(row) = self.pending.take() {
             return Ok(Some(row));
         }
-        while let Some(fact) = self.cursor.next(&source.measurement_set)? {
-            if !source.row_predicate.matches(fact) {
-                continue;
+        while let Some(row) = self.cursor.next(&source.measurement_set)? {
+            if source.row_predicate.matches(row) {
+                self.selected_rows += 1;
+                return Ok(Some(row));
             }
-            self.selected_rows += 1;
-            return Ok(Some(SelectedReplayRow::new(
-                u64::try_from(fact.physical_row())
-                    .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?,
-                u32::try_from(fact.data_description_id()).map_err(|_| {
-                    BoundObservationSourceError::DataDescriptionCoordinateMismatch {
-                        data_description_id: u32::MAX,
-                    }
-                })?,
-                fact,
-            )));
         }
         Ok(None)
     }
@@ -861,8 +818,9 @@ const fn project_run_channel(channel: SelectedChannel) -> SelectedObservationRun
 pub struct SelectedObservationBlock {
     buffer: SelectedObservationBuffer,
     row_geometry: Vec<EvaluatedRowGeometry>,
-    request_rows: Vec<usize>,
-    row_contexts: Vec<SelectedReplayRow>,
+    /// The stored rows of the group being filled, as the row walk read
+    /// them; the buffer copies their metadata rather than reading it again.
+    selected_rows: Vec<SelectedObservationRow>,
 }
 
 /// What one fill bound its block to: the source's coordinate catalog and
@@ -1021,8 +979,7 @@ impl SelectedObservationBlock {
         Self {
             buffer: SelectedObservationBuffer::default(),
             row_geometry: Vec::with_capacity(rows_per_block),
-            request_rows: Vec::with_capacity(rows_per_block),
-            row_contexts: Vec::with_capacity(rows_per_block),
+            selected_rows: Vec::with_capacity(rows_per_block),
         }
     }
 }

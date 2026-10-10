@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_tables::{
-    RequiredScalarColumnDestination, RequiredScalarColumnValues, RequiredScalarColumnValuesMut,
-    SelectedArray1DCellsMut, SelectedArray2DCellsMut,
-};
+use casa_tables::{SelectedArray1DCellsMut, SelectedArray2DCellsMut};
 
 use crate::{
-    MeasurementSet, MsError, MsResult, VisibilityChannelReadRange,
+    MeasurementSet, MsError, MsResult, SelectedObservationRow, VisibilityChannelReadRange,
     schema::main_table::VisibilityDataColumn,
 };
 
@@ -41,27 +38,28 @@ pub(crate) enum SelectedWeightColumn {
 }
 
 /// One closed bounded selected-observation storage read.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SelectedObservationBufferRequest<'a> {
     visibility: SelectedVisibilityColumn,
     weight: SelectedWeightColumn,
-    row_indices: &'a [usize],
+    rows: &'a [SelectedObservationRow],
     channel_range: VisibilityChannelReadRange,
 }
 
 impl<'a> SelectedObservationBufferRequest<'a> {
-    /// Construct one exact contiguous-channel storage request.
+    /// Construct one exact contiguous-channel storage request for `rows`,
+    /// the stored MAIN rows the row walk already read.
     #[must_use]
     pub(crate) const fn new(
         visibility: SelectedVisibilityColumn,
         weight: SelectedWeightColumn,
-        row_indices: &'a [usize],
+        rows: &'a [SelectedObservationRow],
         channel_range: VisibilityChannelReadRange,
     ) -> Self {
         Self {
             visibility,
             weight,
-            row_indices,
+            rows,
             channel_range,
         }
     }
@@ -120,16 +118,7 @@ pub(crate) struct SelectedObservationBuffer {
     time_centroid_mjd_seconds: Vec<f64>,
 }
 
-/// Heap residency of one selected-observation buffer and its fill operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SelectedObservationBufferResidency {
-    /// Bytes retained after a successful fill.
-    pub(crate) resident_bytes: usize,
-    /// Peak bytes while the request and all fill temporaries are simultaneously live.
-    pub(crate) fill_peak_bytes: usize,
-}
-
-/// Bytes the typed column reads of one buffer fill hold besides the buffer.
+/// Bytes the typed column reads of one block fill hold besides the buffer.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct SelectedObservationReadStaging {
     /// Held per selected row.
@@ -138,9 +127,10 @@ pub(crate) struct SelectedObservationReadStaging {
     pub(crate) fixed_bytes: usize,
 }
 
-/// Project what the column reads of [`MeasurementSet::fill_selected_observation_buffer`]
-/// hold besides the buffer, for MAIN cells of `correlations` x
-/// `stored_channels` samples.
+/// Project what the column reads of one block fill hold besides the buffer,
+/// for MAIN cells of `correlations` x `stored_channels` samples: the row
+/// walk's `UVW` read, then the visibility, `FLAG` and weight reads of
+/// [`MeasurementSet::fill_selected_observation_buffer`].
 ///
 /// A column its data manager streams holds nothing per row. A column read
 /// cell by cell holds the whole stored cells of the selected rows, all
@@ -202,13 +192,17 @@ pub(crate) fn selected_observation_read_staging(
     )
 }
 
-/// Project the allocations performed by [`MeasurementSet::fill_selected_observation_buffer`].
-pub(crate) fn selected_observation_buffer_residency(
+/// Project the bytes a buffer holds after
+/// [`MeasurementSet::fill_selected_observation_buffer`] fills it with `rows`
+/// rows. The fill copies the request's stored rows and reads the channelized
+/// columns straight into these vectors, so this is also its peak besides
+/// the read staging ([`selected_observation_read_staging`]).
+pub(crate) fn selected_observation_buffer_resident_bytes(
     rows: usize,
     packed_samples: usize,
     weight_values: usize,
     visibility_bytes: usize,
-) -> Option<SelectedObservationBufferResidency> {
+) -> Option<usize> {
     let row_indices = rows.checked_mul(size_of::<usize>())?;
     let visibility = packed_samples.checked_mul(visibility_bytes)?;
     let flags = packed_samples.checked_mul(size_of::<bool>())?;
@@ -216,46 +210,12 @@ pub(crate) fn selected_observation_buffer_residency(
     let scalar_payload =
         rows.checked_mul(4 * size_of::<i32>() + 2 * size_of::<f64>() + size_of::<bool>())?;
     let uvw = rows.checked_mul(size_of::<[f64; 3]>())?;
-    let resident_bytes = row_indices
+    row_indices
         .checked_add(visibility)?
         .checked_add(flags)?
         .checked_add(weights)?
         .checked_add(scalar_payload)?
-        .checked_add(uvw)?;
-
-    // The typed scalar batch owns seven named vectors until they move into the
-    // destination buffer. Hashbrown keeps at most 7/8 load, so derive the
-    // allocated bucket count from the actual column count rather than hiding a
-    // fixture-specific allowance.
-    const SCALAR_COLUMNS: [&str; 7] = [
-        "DATA_DESC_ID",
-        "FIELD_ID",
-        "ANTENNA1",
-        "ANTENNA2",
-        "TIME",
-        "TIME_CENTROID",
-        "FLAG_ROW",
-    ];
-    let minimum_buckets = SCALAR_COLUMNS
-        .len()
-        .checked_mul(8)?
-        .checked_add(6)?
-        .checked_div(7)?;
-    let scalar_buckets = minimum_buckets.checked_next_power_of_two()?;
-    let scalar_bucket_bytes = scalar_buckets.checked_mul(
-        size_of::<String>()
-            .checked_add(size_of::<RequiredScalarColumnValues>())?
-            .checked_add(1)?,
-    )?;
-    let scalar_map_bytes = scalar_bucket_bytes
-        .checked_add(SCALAR_COLUMNS.iter().map(|name| name.len()).sum::<usize>())?;
-    let fill_peak_bytes = resident_bytes
-        .checked_add(row_indices)?
-        .checked_add(scalar_map_bytes)?;
-    Some(SelectedObservationBufferResidency {
-        resident_bytes,
-        fill_peak_bytes,
-    })
+        .checked_add(uvw)
 }
 
 impl Default for SelectedObservationBuffer {
@@ -387,6 +347,11 @@ impl SelectedStoredRow {
 impl MeasurementSet {
     /// Fill one bounded block with the closed selected-observation storage column set.
     ///
+    /// The row metadata (`DATA_DESC_ID`, `FIELD_ID`, the antennas, `TIME`,
+    /// `TIME_CENTROID`, `FLAG_ROW` and `UVW`) is copied from the request's
+    /// stored rows, which the row walk read; only the visibility, `FLAG` and
+    /// weight columns are read here.
+    ///
     /// This selected-channel operation requires a lazily reopened disk-backed MeasurementSet with
     /// no pending array-cell writes. It never falls back to cloning complete array cells.
     pub(crate) fn fill_selected_observation_buffer(
@@ -395,9 +360,9 @@ impl MeasurementSet {
         buffer: &mut SelectedObservationBuffer,
     ) -> MsResult<()> {
         validate_request(self, request)?;
-        buffer.row_indices.clear();
-        buffer.row_indices.extend_from_slice(request.row_indices);
+        buffer.copy_stored_rows(request.rows);
         buffer.channel_range = request.channel_range;
+        let row_indices = buffer.row_indices.as_slice();
 
         let visibility_shape = match request.visibility {
             SelectedVisibilityColumn::FloatData => {
@@ -414,7 +379,7 @@ impl MeasurementSet {
                 self.main_table()
                     .column_accessor(request.visibility.name())?
                     .fill_array_cells_2d_channel_range_typed_uncached(
-                        request.row_indices,
+                        row_indices,
                         request.channel_range.start,
                         request.channel_range.count,
                         SelectedArray2DCellsMut::RowChannelFloat32(values),
@@ -441,7 +406,7 @@ impl MeasurementSet {
                 self.main_table()
                     .column_accessor(request.visibility.name())?
                     .fill_array_cells_2d_channel_range_typed_uncached(
-                        request.row_indices,
+                        row_indices,
                         request.channel_range.start,
                         request.channel_range.count,
                         SelectedArray2DCellsMut::RowChannelComplex32(values),
@@ -469,7 +434,7 @@ impl MeasurementSet {
             .main_table()
             .column_accessor("FLAG")?
             .fill_array_cells_2d_channel_range_typed_uncached(
-                request.row_indices,
+                row_indices,
                 request.channel_range.start,
                 request.channel_range.count,
                 SelectedArray2DCellsMut::RowChannelBool(&mut buffer.flags),
@@ -496,12 +461,10 @@ impl MeasurementSet {
                     .main_table()
                     .column_accessor("WEIGHT")?
                     .fill_array_cells_1d_typed_uncached(
-                        request.row_indices,
+                        row_indices,
                         SelectedArray1DCellsMut::Float32(values),
                     )?;
-                if shape.row_count != request.row_indices.len()
-                    || shape.axis0_count != correlation_count
-                {
+                if shape.row_count != row_indices.len() || shape.axis0_count != correlation_count {
                     return Err(invalid(
                         "MAIN WEIGHT shape differs from selected visibility shape",
                     ));
@@ -520,7 +483,7 @@ impl MeasurementSet {
                     self.main_table()
                         .column_accessor("WEIGHT_SPECTRUM")?
                         .fill_array_cells_2d_channel_range_typed_uncached(
-                            request.row_indices,
+                            row_indices,
                             request.channel_range.start,
                             request.channel_range.count,
                             SelectedArray2DCellsMut::RowChannelFloat32(values),
@@ -541,54 +504,35 @@ impl MeasurementSet {
                 correlation_count,
             )?;
         }
+        Ok(())
+    }
+}
 
-        {
-            let mut scalar_destinations = [
-                RequiredScalarColumnDestination::new(
-                    "DATA_DESC_ID",
-                    RequiredScalarColumnValuesMut::Int32(&mut buffer.data_description_ids),
-                ),
-                RequiredScalarColumnDestination::new(
-                    "FIELD_ID",
-                    RequiredScalarColumnValuesMut::Int32(&mut buffer.field_ids),
-                ),
-                RequiredScalarColumnDestination::new(
-                    "ANTENNA1",
-                    RequiredScalarColumnValuesMut::Int32(&mut buffer.antenna1),
-                ),
-                RequiredScalarColumnDestination::new(
-                    "ANTENNA2",
-                    RequiredScalarColumnValuesMut::Int32(&mut buffer.antenna2),
-                ),
-                RequiredScalarColumnDestination::new(
-                    "TIME",
-                    RequiredScalarColumnValuesMut::Float64(&mut buffer.time_mjd_seconds),
-                ),
-                RequiredScalarColumnDestination::new(
-                    "TIME_CENTROID",
-                    RequiredScalarColumnValuesMut::Float64(&mut buffer.time_centroid_mjd_seconds),
-                ),
-                RequiredScalarColumnDestination::new(
-                    "FLAG_ROW",
-                    RequiredScalarColumnValuesMut::Bool(&mut buffer.row_flag),
-                ),
-            ];
-            self.main_table().required_scalar_columns_for_rows_into(
-                request.row_indices,
-                &mut scalar_destinations,
-            )?;
+impl SelectedObservationBuffer {
+    /// Replace the row indices and row metadata with those of `rows`,
+    /// keeping the vectors' storage.
+    fn copy_stored_rows(&mut self, rows: &[SelectedObservationRow]) {
+        self.row_indices.clear();
+        self.data_description_ids.clear();
+        self.field_ids.clear();
+        self.antenna1.clear();
+        self.antenna2.clear();
+        self.time_mjd_seconds.clear();
+        self.time_centroid_mjd_seconds.clear();
+        self.row_flag.clear();
+        self.uvw_m.clear();
+        for row in rows {
+            self.row_indices.push(row.physical_row);
+            self.data_description_ids.push(row.data_description_id);
+            self.field_ids.push(row.field_id);
+            self.antenna1.push(row.antenna1);
+            self.antenna2.push(row.antenna2);
+            self.time_mjd_seconds.push(row.time_mjd_seconds);
+            self.time_centroid_mjd_seconds
+                .push(row.time_centroid_mjd_seconds);
+            self.row_flag.push(row.flag_row);
+            self.uvw_m.extend_from_slice(&row.uvw_m);
         }
-        let uvw_shape = self
-            .main_table()
-            .column_accessor("UVW")?
-            .fill_array_cells_1d_typed_uncached(
-                request.row_indices,
-                SelectedArray1DCellsMut::Float64(&mut buffer.uvw_m),
-            )?;
-        if uvw_shape.row_count != request.row_indices.len() || uvw_shape.axis0_count != 3 {
-            return Err(invalid("MAIN UVW shape must be exactly [row][3]"));
-        }
-        validate_buffer_lengths(buffer)
     }
 }
 
@@ -596,7 +540,7 @@ fn validate_request(
     ms: &MeasurementSet,
     request: &SelectedObservationBufferRequest<'_>,
 ) -> MsResult<()> {
-    if request.row_indices.is_empty() {
+    if request.rows.is_empty() {
         return Err(invalid(
             "selected-observation buffer requires at least one row",
         ));
@@ -606,7 +550,11 @@ fn validate_request(
             "selected-observation buffer requires at least one channel",
         ));
     }
-    if request.row_indices.iter().any(|row| *row >= ms.row_count()) {
+    if request
+        .rows
+        .iter()
+        .any(|row| row.physical_row >= ms.row_count())
+    {
         return Err(invalid("selected-observation buffer row lies outside MAIN"));
     }
     Ok(())
@@ -620,33 +568,13 @@ fn require_shape(
     request: &SelectedObservationBufferRequest<'_>,
     expected_correlations: usize,
 ) -> MsResult<()> {
-    if rows != request.row_indices.len()
+    if rows != request.rows.len()
         || channels != request.channel_range.count
         || correlations != expected_correlations
     {
         return Err(invalid(format!(
             "MAIN {column} shape differs from selected visibility shape"
         )));
-    }
-    Ok(())
-}
-
-fn validate_buffer_lengths(buffer: &SelectedObservationBuffer) -> MsResult<()> {
-    let rows = buffer.row_count();
-    let lengths = [
-        buffer.row_flag.len(),
-        buffer.data_description_ids.len(),
-        buffer.field_ids.len(),
-        buffer.antenna1.len(),
-        buffer.antenna2.len(),
-        buffer.time_mjd_seconds.len(),
-        buffer.time_centroid_mjd_seconds.len(),
-    ];
-    if lengths.into_iter().any(|length| length != rows) {
-        return Err(invalid("selected-observation scalar column lengths differ"));
-    }
-    if buffer.uvw_m.len() != rows.saturating_mul(3) {
-        return Err(invalid("selected-observation UVW length differs"));
     }
     Ok(())
 }
@@ -662,11 +590,32 @@ mod tests {
     use ndarray::ArrayD;
 
     use crate::{
-        MeasurementSet, MeasurementSetBuilder, OptionalMainColumn, SelectedNumericVisibility,
-        SelectedNumericWeights, SelectedObservationBuffer, SelectedObservationBufferRequest,
-        SelectedVisibilityColumn, SelectedWeightColumn, VisibilityChannelReadRange,
-        test_helpers::default_value,
+        MeasurementSet, MeasurementSetBuilder, MsReadPlan, MsSelectionIoBudget, OptionalMainColumn,
+        SelectedNumericVisibility, SelectedNumericWeights, SelectedObservationBuffer,
+        SelectedObservationBufferRequest, SelectedObservationRow, SelectedVisibilityColumn,
+        SelectedWeightColumn, VisibilityChannelReadRange, test_helpers::default_value,
     };
+
+    /// The stored MAIN rows at `physical_rows`, in that order, as the row
+    /// walk reads them.
+    fn stored_rows(ms: &MeasurementSet, physical_rows: &[usize]) -> Vec<SelectedObservationRow> {
+        let plan = MsReadPlan::new(
+            ms.row_count(),
+            MsSelectionIoBudget {
+                available_bytes: ms.row_count() * SelectedObservationRow::STORAGE_BYTES_PER_ROW,
+                maximum_live_blocks: 1,
+                requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
+                storage_alignment_rows: None,
+            },
+        )
+        .unwrap();
+        let mut cursor = ms.main_row_selection_cursor(plan).unwrap();
+        let mut rows = Vec::new();
+        while let Some(row) = cursor.next(ms).unwrap() {
+            rows.push(row);
+        }
+        physical_rows.iter().map(|row| rows[*row]).collect()
+    }
 
     #[test]
     fn selected_observation_buffer_reads_exact_closed_content_and_provenance() {
@@ -684,10 +633,11 @@ mod tests {
         ms.save().unwrap();
         drop(ms);
         let ms = MeasurementSet::open(&path).unwrap();
+        let rows = stored_rows(&ms, &[1, 0]);
         let request = SelectedObservationBufferRequest::new(
             SelectedVisibilityColumn::Data,
             SelectedWeightColumn::WeightSpectrum,
-            &[1, 0],
+            &rows,
             VisibilityChannelReadRange::new(1, 2),
         );
         let mut buffer = SelectedObservationBuffer::default();
@@ -757,10 +707,11 @@ mod tests {
         ms.save().unwrap();
         drop(ms);
         let ms = MeasurementSet::open(&path).unwrap();
+        let rows = stored_rows(&ms, &[1, 0]);
         let request = SelectedObservationBufferRequest::new(
             SelectedVisibilityColumn::Data,
             SelectedWeightColumn::WeightSpectrum,
-            &[1, 0],
+            &rows,
             VisibilityChannelReadRange::new(1, 2),
         );
         let mut buffer = SelectedObservationBuffer::default();
@@ -803,10 +754,11 @@ mod tests {
         ms.save().unwrap();
         drop(ms);
         let ms = MeasurementSet::open(&path).unwrap();
+        let rows = stored_rows(&ms, &[0]);
         let request = SelectedObservationBufferRequest::new(
             SelectedVisibilityColumn::Data,
             SelectedWeightColumn::WeightSpectrum,
-            &[0],
+            &rows,
             VisibilityChannelReadRange::new(0, 1),
         );
         let error = ms
@@ -863,10 +815,11 @@ mod tests {
             .unwrap();
         drop(ms);
         let ms = MeasurementSet::open(&path).unwrap();
+        let rows = stored_rows(&ms, &[0]);
         let request = SelectedObservationBufferRequest::new(
             SelectedVisibilityColumn::FloatData,
             SelectedWeightColumn::Weight,
-            &[0],
+            &rows,
             VisibilityChannelReadRange::new(1, 2),
         );
         let mut buffer = SelectedObservationBuffer::default();
