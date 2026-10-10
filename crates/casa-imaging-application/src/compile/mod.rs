@@ -4,6 +4,10 @@
 //! problem specification, geometry and model lifecycle that
 //! `casa_imaging_model::compile` turns into a `CompiledProblem`, with the
 //! observation request, the masks and the native run's deployment.
+//!
+//! Compiling only reads: the deployment's file-system effects (output
+//! directories, the AW cache) wait for [`Deployment::deploy`], after the
+//! availability check.
 
 mod direction;
 mod domains;
@@ -15,20 +19,23 @@ mod specification;
 mod spectral;
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_imaging_model::{
     CentreLaws, DelayCentreLaw, GeometryInput, ModelBounds, ModelInputCommitment,
-    ModelLifecycleRequirements, ModelStateIdentity, NumericPrecision, ProblemSpecification,
-    ReferenceDataKind, UncorrectedImageMaskPolicy, UvwCoordinateLaw,
-    WeightColumn as OwnerWeightColumn,
+    ModelLifecycleRequirements, ModelStateIdentity, NativeAwRequestInput, NumericPrecision,
+    ProblemSpecification, ReferenceDataKind, SequentialContinuumTransform,
+    UncorrectedImageMaskPolicy, UvwCoordinateLaw, WeightColumn as OwnerWeightColumn,
 };
+use casa_imaging_operator::{AwCatalog, AwIndexing};
 use casa_imaging_products::{AnalyticPrimaryBeamModel, ContinuumProductControls};
 use casa_imaging_reconstruction::{ImageDomainReconstructionMaskPlans, MinorCycleImageResponse};
+use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{
     MeasurementSet, SelectedObservationContentBudget, SelectedObservationResolutionRequest,
     SelectedObservationSpectralWindow,
 };
+use casa_types::measures::frame::MeasFrame;
 
 use crate::{
     ApplicationError, ApplicationNative, ApplicationPublication, ApplicationRuntime,
@@ -37,7 +44,7 @@ use crate::{
 };
 use direction::{Centre, ImageSpectralCoordinate};
 use domains::PreparedImageDomain;
-use selection::Survey;
+use selection::{Survey, WindowChannels};
 use specification::SpecificationInputs;
 use spectral::{FrameContext, PreparedSpectralAxis};
 
@@ -54,9 +61,18 @@ pub(crate) struct Prepared {
     pub(crate) observation: SelectedObservationResolutionRequest,
     pub(crate) write_model_column: bool,
     pub(crate) write_corrected_data: bool,
-    /// The native run's deployment; its failure is reported after the
-    /// availability check, since there is no other implementation.
-    pub(crate) native: Result<ApplicationNative, ApplicationError>,
+    /// What the native run deploys once the availability check passes.
+    pub(crate) deployment: Deployment,
+}
+
+/// The MeasurementSet as [`prepare`] surveyed it: the table, its geometry
+/// engine, the source budget, the selection survey and the spectral axis.
+struct Surveyed<'a> {
+    ms: &'a MeasurementSet,
+    engine: &'a MsCalEngine,
+    budget: SelectedObservationContentBudget,
+    survey: &'a Survey,
+    spectral: &'a PreparedSpectralAxis,
 }
 
 /// Compile `request` against its MeasurementSet.
@@ -66,7 +82,7 @@ pub(crate) fn prepare(
 ) -> Result<Prepared, ApplicationError> {
     let ms = MeasurementSet::open(&request.vis)?;
     let budget = casa_imaging_runtime::bootstrap_source_budget();
-    let engine = casa_ms::derived::engine::MsCalEngine::new(&ms)?;
+    let engine = MsCalEngine::new(&ms)?;
     let survey = selection::survey(request, &ms, budget, &engine)?;
     let centre = direction::resolve_centre(request, &ms, &survey, &engine, budget)?;
     let frame = FrameContext {
@@ -77,43 +93,17 @@ pub(crate) fn prepare(
         direction: centre.direction,
         engine: &engine,
     };
-    let moving_rest_frame = if request.specmode == SpecMode::Cubesource {
-        let ephemeris = centre
-            .ephemeris
-            .as_ref()
-            .ok_or_else(|| boxed("source-frame cube imaging requires a moving phase centre"))?;
-        let velocity = engine.ephemeris_radial_velocity(
-            frame.anchor_time_mjd_seconds,
-            frame.field_id,
-            ephemeris,
-        )?;
-        Some(
-            engine
-                .spectral_frame_observatory_direction(
-                    frame.anchor_time_mjd_seconds,
-                    centre.phase.clone(),
-                )?
-                .with_radial_velocity(velocity),
-        )
-    } else {
-        None
-    };
+    let moving_rest_frame = moving_rest_frame(request, &centre, &frame)?;
     let spectral =
         spectral::prepare_axis(request, &ms, &survey, &frame, moving_rest_frame.as_ref())?;
-    let (continuum_transform, channels) = match &request.fitspw {
-        Some(fitspw) => {
-            let window = selection::one_window(&survey.spectral_windows, "continuum subtraction")?;
-            let (transform, selected) = specification::continuum_transform(
-                fitspw,
-                request.fitorder,
-                i32::try_from(centre.field_id).map_err(|_| boxed("FIELD_ID exceeds i32"))?,
-                window,
-                &spectral.selected_source_channels[&window.spw_id],
-            )?;
-            (Some(transform), BTreeMap::from([(window.spw_id, selected)]))
-        }
-        None => (None, spectral.selected_source_channels.clone()),
+    let surveyed = Surveyed {
+        ms: &ms,
+        engine: &engine,
+        budget,
+        survey: &survey,
+        spectral: &spectral,
     };
+    let (continuum_transform, channels) = continuum_selection(request, &surveyed, &centre)?;
     let observation_info = direction::observation_info(&ms, &survey, &centre, &engine)?;
     let domains = domains::prepare_domains(
         request,
@@ -127,76 +117,35 @@ pub(crate) fn prepare(
         &observation_info,
     )?;
     let primary_beam = primary_beam_model(request, &ms)?;
-    let native = native_deployment(
-        request,
-        context,
-        &ms,
-        &survey,
-        &spectral,
-        &domains,
-        primary_beam,
-        &engine,
-    );
+    let deployment = deployment(request, context, &surveyed, &domains, primary_beam)?;
     let instrument = instrument::scientific_instrument_model(&request.gridder, &ms)?;
     let specification = specification::specification(
         request,
         &spectral,
-        SpecificationInputs {
-            instrument: instrument.map(|(model, _)| model),
-            uncorrected_mask: if primary_beam.is_some() && request.pblimit >= 0.0 {
-                UncorrectedImageMaskPolicy::PrimaryBeam
-            } else {
-                UncorrectedImageMaskPolicy::None
-            },
-            w_projection: match &request.gridder {
-                Gridder::Wproject { wprojplanes } => Some(specification::w_projection(
-                    *wprojplanes,
-                    &survey.spectral_windows,
-                    survey.w,
-                )?),
-                _ => None,
-            },
-            aw_projection: match &request.gridder {
-                Gridder::Awproject(aw) => Some(specification::aw_projection(
-                    aw,
-                    &survey.spectral_windows,
-                    survey.w,
-                )?),
-                _ => None,
-            },
-            cube_density_padding: cube_density_padding(
-                request, &ms, &survey, &spectral, &engine, budget,
-            )?,
+        specification_inputs(
+            request,
+            &surveyed,
+            instrument.map(|(model, _)| model),
+            primary_beam.is_some(),
             continuum_transform,
-        },
+        )?,
     )?;
     let reconstruction_planes = match request.deconvolver {
         Deconvolver::Mtmfs => request.nterms,
         _ => spectral.output_channels,
     };
     let model_samples = domains::model_samples(&domains, reconstruction_planes, &request.stokes)?;
-    let masks = domains::mask_plans(&domains)?;
-    let weight_column = if survey.weight_spectrum_complete {
-        OwnerWeightColumn::WeightSpectrum
-    } else {
-        OwnerWeightColumn::Weight
-    };
-    let visibility_column = selection::visibility_column(&ms, request.datacolumn)?;
     let geometry = geometry(request, &domains, &centre, &spectral);
-    let observation = SelectedObservationResolutionRequest::new(
-        request.vis.display().to_string(),
-        selection_request_identity(),
-        selection::observation_selection(&ms, survey, &channels)?,
-        visibility_column,
-        weight_column,
-        instrument
-            .map(|(_, reference)| vec![(ReferenceDataKind::Instrument, reference)])
-            .unwrap_or_default(),
-        ModelStateIdentity::Empty,
+    let instrument_reference = instrument.map(|(_, reference)| reference);
+    let observation = observation_request(
+        request,
+        &ms,
+        survey,
+        &channels,
+        instrument_reference,
+        centre,
         budget,
-        centre.measures,
-    )
-    .with_ephemeris(centre.ephemeris);
+    )?;
     Ok(Prepared {
         specification,
         geometry,
@@ -212,7 +161,7 @@ pub(crate) fn prepare(
             NumericPrecision::F64,
             ModelInputCommitment::Empty,
         ),
-        masks,
+        masks: domains::mask_plans(&domains)?,
         minor_cycle_image_response: match &request.gridder {
             Gridder::Mosaic { .. } | Gridder::Awproject(_) => Some(MinorCycleImageResponse::new(
                 specification::normalization(request),
@@ -223,8 +172,132 @@ pub(crate) fn prepare(
         observation,
         write_model_column: request.savemodel,
         write_corrected_data: request.save_continuum_residual,
-        native,
+        deployment,
     })
+}
+
+/// The rest frame of a moving source (`cubesource`): the observatory frame
+/// at the anchor time with the ephemeris's radial velocity.
+fn moving_rest_frame(
+    request: &ImagingRequest,
+    centre: &Centre,
+    frame: &FrameContext<'_>,
+) -> Result<Option<MeasFrame>, ApplicationError> {
+    if request.specmode != SpecMode::Cubesource {
+        return Ok(None);
+    }
+    let ephemeris = centre
+        .ephemeris
+        .as_ref()
+        .ok_or_else(|| boxed("source-frame cube imaging requires a moving phase centre"))?;
+    let velocity = frame.engine.ephemeris_radial_velocity(
+        frame.anchor_time_mjd_seconds,
+        frame.field_id,
+        ephemeris,
+    )?;
+    Ok(Some(
+        frame
+            .engine
+            .spectral_frame_observatory_direction(
+                frame.anchor_time_mjd_seconds,
+                centre.phase.clone(),
+            )?
+            .with_radial_velocity(velocity),
+    ))
+}
+
+/// The continuum transform of a `fitspw` request and the source channels
+/// the observation reads: the fit channels with the output channels, or
+/// the output channels alone.
+fn continuum_selection(
+    request: &ImagingRequest,
+    surveyed: &Surveyed<'_>,
+    centre: &Centre,
+) -> Result<(Option<SequentialContinuumTransform>, WindowChannels), ApplicationError> {
+    let Some(fitspw) = &request.fitspw else {
+        return Ok((None, surveyed.spectral.selected_source_channels.clone()));
+    };
+    let window = selection::one_window(&surveyed.survey.spectral_windows, "continuum subtraction")?;
+    let (transform, selected) = specification::continuum_transform(
+        fitspw,
+        request.fitorder,
+        i32::try_from(centre.field_id).map_err(|_| boxed("FIELD_ID exceeds i32"))?,
+        window,
+        &surveyed.spectral.selected_source_channels[&window.spw_id],
+    )?;
+    Ok((Some(transform), BTreeMap::from([(window.spw_id, selected)])))
+}
+
+/// The specification's inputs beyond the request: the instrument, the
+/// W and AW projections over the observed W range, the cube's density
+/// padding and the continuum transform.
+fn specification_inputs(
+    request: &ImagingRequest,
+    surveyed: &Surveyed<'_>,
+    instrument: Option<casa_imaging_model::InstrumentModel>,
+    primary_beam: bool,
+    continuum_transform: Option<SequentialContinuumTransform>,
+) -> Result<SpecificationInputs, ApplicationError> {
+    let windows = &surveyed.survey.spectral_windows;
+    Ok(SpecificationInputs {
+        instrument,
+        uncorrected_mask: if primary_beam && request.pblimit >= 0.0 {
+            UncorrectedImageMaskPolicy::PrimaryBeam
+        } else {
+            UncorrectedImageMaskPolicy::None
+        },
+        w_projection: match &request.gridder {
+            Gridder::Wproject { wprojplanes } => Some(specification::w_projection(
+                *wprojplanes,
+                windows,
+                surveyed.survey.w,
+            )?),
+            _ => None,
+        },
+        aw_projection: match &request.gridder {
+            Gridder::Awproject(aw) => Some(specification::aw_projection(
+                aw,
+                windows,
+                surveyed.survey.w,
+            )?),
+            _ => None,
+        },
+        cube_density_padding: cube_density_padding(request, surveyed)?,
+        continuum_transform,
+    })
+}
+
+/// The selected-observation request: the survey's rows and the channels
+/// read, the visibility and weight columns, the instrument reference data
+/// and the centre's ephemeris.
+fn observation_request(
+    request: &ImagingRequest,
+    ms: &MeasurementSet,
+    survey: Survey,
+    channels: &WindowChannels,
+    instrument_reference: Option<casa_imaging_model::LogicalIdentity>,
+    centre: Centre,
+    budget: SelectedObservationContentBudget,
+) -> Result<SelectedObservationResolutionRequest, ApplicationError> {
+    let weight_column = if survey.weight_spectrum_complete {
+        OwnerWeightColumn::WeightSpectrum
+    } else {
+        OwnerWeightColumn::Weight
+    };
+    Ok(SelectedObservationResolutionRequest::new(
+        request.vis.display().to_string(),
+        selection_request_identity(),
+        selection::observation_selection(ms, survey, channels)?,
+        selection::visibility_column(ms, request.datacolumn)?,
+        weight_column,
+        instrument_reference
+            .map(|reference| vec![(ReferenceDataKind::Instrument, reference)])
+            .unwrap_or_default(),
+        ModelStateIdentity::Empty,
+        budget,
+        centre.measures,
+    )
+    .with_ephemeris(centre.ephemeris))
 }
 
 /// The image geometry: the domains, the centre laws and the spectral axis.
@@ -276,117 +349,85 @@ fn primary_beam_model(
 /// cube with per-channel density.
 fn cube_density_padding(
     request: &ImagingRequest,
-    ms: &MeasurementSet,
-    survey: &Survey,
-    spectral: &PreparedSpectralAxis,
-    engine: &casa_ms::derived::engine::MsCalEngine,
-    budget: SelectedObservationContentBudget,
+    surveyed: &Surveyed<'_>,
 ) -> Result<Option<usize>, ApplicationError> {
+    let (survey, spectral) = (surveyed.survey, surveyed.spectral);
     if !specification::cube_density_padded(request, spectral) {
         return Ok(None);
     }
     let window = selection::one_window(&survey.spectral_windows, "cube density")?;
-    Ok(Some(ms.selected_observation_cube_density_padding(
-        &survey.row_selection,
-        SelectedObservationSpectralWindow::borrow_selected(
-            u32::try_from(window.spw_id).map_err(|_| boxed("SPW id exceeds u32"))?,
-            window.frequency_reference,
-            &window.frequencies_hz,
-            &window.channel_widths_hz,
-            &spectral.selected_source_channels[&window.spw_id],
-        ),
-        survey.fields.iter().copied(),
-        spectral.output_frequency_reference,
-        [
-            spectral.reference_frequency_hz,
-            spectral.reference_frequency_hz
-                + (spectral.output_channels - 1) as f64 * spectral.increment_hz,
-        ],
-        spectral.output_channels,
-        engine,
-        budget.row_io_budget(),
-    )?))
+    Ok(Some(
+        surveyed.ms.selected_observation_cube_density_padding(
+            &survey.row_selection,
+            SelectedObservationSpectralWindow::borrow_selected(
+                u32::try_from(window.spw_id).map_err(|_| boxed("SPW id exceeds u32"))?,
+                window.frequency_reference,
+                &window.frequencies_hz,
+                &window.channel_widths_hz,
+                &spectral.selected_source_channels[&window.spw_id],
+            ),
+            survey.fields.iter().copied(),
+            spectral.output_frequency_reference,
+            [
+                spectral.reference_frequency_hz,
+                spectral.reference_frequency_hz
+                    + (spectral.output_channels - 1) as f64 * spectral.increment_hz,
+            ],
+            spectral.output_channels,
+            surveyed.engine,
+            surveyed.budget.row_io_budget(),
+        )?,
+    ))
 }
 
-/// The native run's runtime, product publication and AW catalog. Every
-/// domain's output directory is created; the paged cube state lives
-/// beside the main image.
-#[allow(clippy::too_many_arguments)]
-fn native_deployment(
-    request: &ImagingRequest,
-    context: &RunContext,
-    ms: &MeasurementSet,
-    survey: &Survey,
-    spectral: &PreparedSpectralAxis,
-    domains: &[PreparedImageDomain],
-    primary_beam: Option<AnalyticPrimaryBeamModel>,
-    engine: &casa_ms::derived::engine::MsCalEngine,
-) -> Result<ApplicationNative, ApplicationError> {
-    for domain in domains {
-        std::fs::create_dir_all(domain.output.parent().unwrap_or_else(|| Path::new(".")))?;
-    }
-    let runtime = ApplicationRuntime {
-        host: context.host,
-        resource_policy: context.policy,
-        backend: request.backend,
-        grid_precision: request.gridprecision,
-        cancel: context.cancel.clone(),
-        spill_directory: request
-            .imagename
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .canonicalize()?,
-        summary: context.summary.clone(),
-    };
-    let mut controls = ContinuumProductControls::new(request.psfcutoff as f32)?;
-    if let Some(model) = primary_beam {
-        controls = controls.with_primary_beam_model(model);
-    }
-    let aw_catalog = match &request.gridder {
-        Gridder::Awproject(aw) => Some(aw_catalog(request, aw, ms, survey, spectral, engine)?),
-        _ => None,
-    };
-    Ok(ApplicationNative {
-        runtime,
-        publication: ApplicationPublication {
-            controls,
-            sink: CasaImageProductSink::for_domains(
-                domains.iter().map(PreparedImageDomain::output),
-            )?,
-        },
-        aw_catalog,
-    })
+/// The native run's runtime, product publication and AW catalog, still to
+/// be deployed: no directory exists and no AW cell is generated until
+/// [`Deployment::deploy`].
+pub(crate) struct Deployment {
+    /// The runtime; its spill directory is made canonical on deployment.
+    runtime: ApplicationRuntime,
+    publication: ApplicationPublication,
+    /// Every domain's output directory.
+    output_directories: Vec<PathBuf>,
+    aw: Option<AwPlan>,
 }
 
-/// The AW catalog: a CASA cache read as it is, or a native cache in
-/// CASA's format brought to the request's policy. Under every policy the
-/// request's cells are compared with the directory: reuse needs every one,
-/// generation fills in the absent ones, regeneration clears the cache
-/// first; the loader then checks each cell's sky increment against the
-/// image (plan section 5.6).
-fn aw_catalog(
-    request: &ImagingRequest,
-    aw: &AwProjection,
-    ms: &MeasurementSet,
-    survey: &Survey,
-    spectral: &PreparedSpectralAxis,
-    engine: &casa_ms::derived::engine::MsCalEngine,
-) -> Result<AwCatalogDeployment, ApplicationError> {
-    let root = match &aw.cf_source {
-        AwCfSource::CasaImport { cfcache } => cfcache.clone(),
-        AwCfSource::NativeEvla {
-            native_cf_cache,
-            native_cf_policy,
-            ..
-        } => {
-            let first_row = survey
-                .first_cross_row
-                .ok_or_else(|| boxed("native AW has no unflagged cross-correlation row"))?;
-            let input = native_aw::resolve(request, aw, ms, survey, spectral, first_row, engine)?;
-            input.validate()?;
-            let (present, expected) =
-                casa_imaging_operator::AwCatalog::native_cells_present(native_cf_cache, &input);
-            match native_cf_policy {
+/// The AW catalog a run opens and, for a native cache, the cells to bring
+/// to the request's policy.
+struct AwPlan {
+    root: PathBuf,
+    native: Option<(NativeAwCachePolicy, NativeAwRequestInput)>,
+    indexing: AwIndexing,
+    resident_bytes: usize,
+}
+
+impl Deployment {
+    /// Create every domain's output directory, settle the spill directory
+    /// beside the main image and bring a native AW cache to the request's
+    /// policy.
+    pub(crate) fn deploy(self) -> Result<ApplicationNative, ApplicationError> {
+        for directory in &self.output_directories {
+            std::fs::create_dir_all(directory)?;
+        }
+        let mut runtime = self.runtime;
+        runtime.spill_directory = runtime.spill_directory.canonicalize()?;
+        Ok(ApplicationNative {
+            runtime,
+            publication: self.publication,
+            aw_catalog: self.aw.map(AwPlan::deploy).transpose()?,
+        })
+    }
+}
+
+impl AwPlan {
+    /// Under every policy the request's cells are compared with the
+    /// directory: reuse needs every one, generation fills in the absent
+    /// ones, regeneration clears the cache first; the loader then checks
+    /// each cell's sky increment against the image (plan section 5.6).
+    fn deploy(self) -> Result<AwCatalogDeployment, ApplicationError> {
+        if let Some((policy, input)) = &self.native {
+            let (present, expected) = AwCatalog::native_cells_present(&self.root, input);
+            match policy {
                 NativeAwCachePolicy::ReuseOnly if present != expected => {
                     return Err(boxed(format!(
                         "native AW cache reuse found {present} of the {expected} cells the \
@@ -396,30 +437,97 @@ fn aw_catalog(
                 NativeAwCachePolicy::ReuseOnly => {}
                 NativeAwCachePolicy::GenerateMissing => {
                     if present != expected {
-                        casa_imaging_operator::AwCatalog::generate_native(
-                            native_cf_cache,
-                            &input,
-                            true,
-                        )?;
+                        AwCatalog::generate_native(&self.root, input, true)?;
                     }
                 }
                 NativeAwCachePolicy::Regenerate => {
-                    casa_imaging_operator::AwCatalog::clear_native(native_cf_cache)?;
-                    casa_imaging_operator::AwCatalog::generate_native(
-                        native_cf_cache,
-                        &input,
-                        false,
-                    )?;
+                    AwCatalog::clear_native(&self.root)?;
+                    AwCatalog::generate_native(&self.root, input, false)?;
                 }
             }
-            native_cf_cache.clone()
+        }
+        Ok(AwCatalogDeployment {
+            root: self.root,
+            indexing: self.indexing,
+            resident_bytes: self.resident_bytes,
+        })
+    }
+}
+
+/// The native run's deployment: the runtime with the paged cube state
+/// beside the main image, the product controls and sink, and the AW plan.
+fn deployment(
+    request: &ImagingRequest,
+    context: &RunContext,
+    surveyed: &Surveyed<'_>,
+    domains: &[PreparedImageDomain],
+    primary_beam: Option<AnalyticPrimaryBeamModel>,
+) -> Result<Deployment, ApplicationError> {
+    let parent = |path: &Path| {
+        path.parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf()
+    };
+    let mut controls = ContinuumProductControls::new(request.psfcutoff as f32)?;
+    if let Some(model) = primary_beam {
+        controls = controls.with_primary_beam_model(model);
+    }
+    Ok(Deployment {
+        runtime: ApplicationRuntime {
+            host: context.host,
+            resource_policy: context.policy,
+            backend: request.backend,
+            grid_precision: request.gridprecision,
+            cancel: context.cancel.clone(),
+            spill_directory: parent(&request.imagename),
+            summary: context.summary.clone(),
+        },
+        publication: ApplicationPublication {
+            controls,
+            sink: CasaImageProductSink::for_domains(
+                domains.iter().map(PreparedImageDomain::output),
+            )?,
+        },
+        output_directories: domains
+            .iter()
+            .map(|domain| parent(&domain.output))
+            .collect(),
+        aw: match &request.gridder {
+            Gridder::Awproject(aw) => Some(aw_plan(request, aw, surveyed)?),
+            _ => None,
+        },
+    })
+}
+
+/// The AW catalog to open: a CASA cache read as it is, or a native cache
+/// in CASA's format with the input its cells are generated from.
+fn aw_plan(
+    request: &ImagingRequest,
+    aw: &AwProjection,
+    surveyed: &Surveyed<'_>,
+) -> Result<AwPlan, ApplicationError> {
+    let (root, native) = match &aw.cf_source {
+        AwCfSource::CasaImport { cfcache } => (cfcache.clone(), None),
+        AwCfSource::NativeEvla {
+            native_cf_cache,
+            native_cf_policy,
+            ..
+        } => {
+            let first_row = surveyed
+                .survey
+                .first_cross_row
+                .ok_or_else(|| boxed("native AW has no unflagged cross-correlation row"))?;
+            let input = native_aw::resolve(request, aw, surveyed, first_row)?;
+            input.validate()?;
+            (native_cf_cache.clone(), Some((*native_cf_policy, input)))
         }
     };
-    Ok(AwCatalogDeployment {
+    Ok(AwPlan {
         root,
-        indexing: casa_imaging_operator::AwIndexing {
+        native,
+        indexing: AwIndexing {
             conjugate_beams: true,
-            image_reference_hz: spectral.reference_frequency_hz,
+            image_reference_hz: surveyed.spectral.reference_frequency_hz,
         },
         resident_bytes: aw
             .cf_resident_mb

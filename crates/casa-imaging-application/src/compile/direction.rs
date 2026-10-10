@@ -122,29 +122,14 @@ pub(super) fn resolve_centre(
         main_direction.latitude_rad(),
         DirectionRef::J2000,
     );
-    let image_centre = if ephemeris.is_some() {
-        let frame = engine.spectral_frame_observatory_direction(anchor_time, phase.clone())?;
-        phase.convert_to(DirectionRef::ICRS, &frame)?
-    } else if request.phasecenter.is_none()
-        && matches!(
-            stored_phase.refer(),
-            DirectionRef::J2000 | DirectionRef::ICRS | DirectionRef::B1950 | DirectionRef::GALACTIC
-        )
-    {
-        stored_phase
-    } else {
-        phase.clone()
-    };
-    let frame = if ephemeris.is_some() {
-        DirectionFrame::Icrs
-    } else {
-        match image_centre.refer() {
-            DirectionRef::ICRS => DirectionFrame::Icrs,
-            DirectionRef::B1950 => DirectionFrame::B1950,
-            DirectionRef::GALACTIC => DirectionFrame::Galactic,
-            _ => DirectionFrame::J2000,
-        }
-    };
+    let (image_centre, frame) = image_centre(
+        request,
+        engine,
+        anchor_time,
+        &phase,
+        stored_phase,
+        ephemeris.is_some(),
+    )?;
     let (longitude, latitude) = image_centre.as_angles();
     Ok(Centre {
         law,
@@ -155,6 +140,43 @@ pub(super) fn resolve_centre(
         field_id,
         measures,
     })
+}
+
+/// The image's reference direction and the frame it records: ICRS at the
+/// anchor time for a moving source, the field's stored direction in its
+/// own frame when the request names no centre, else the J2000 phase
+/// centre.
+fn image_centre(
+    request: &ImagingRequest,
+    engine: &casa_ms::derived::engine::MsCalEngine,
+    anchor_time: f64,
+    phase: &MDirection,
+    stored_phase: MDirection,
+    moving: bool,
+) -> Result<(MDirection, DirectionFrame), ApplicationError> {
+    if moving {
+        let frame = engine.spectral_frame_observatory_direction(anchor_time, phase.clone())?;
+        return Ok((
+            phase.convert_to(DirectionRef::ICRS, &frame)?,
+            DirectionFrame::Icrs,
+        ));
+    }
+    let centre = if request.phasecenter.is_none()
+        && matches!(
+            stored_phase.refer(),
+            DirectionRef::J2000 | DirectionRef::ICRS | DirectionRef::B1950 | DirectionRef::GALACTIC
+        ) {
+        stored_phase
+    } else {
+        phase.clone()
+    };
+    let frame = match centre.refer() {
+        DirectionRef::ICRS => DirectionFrame::Icrs,
+        DirectionRef::B1950 => DirectionFrame::B1950,
+        DirectionRef::GALACTIC => DirectionFrame::Galactic,
+        _ => DirectionFrame::J2000,
+    };
+    Ok((centre, frame))
 }
 
 /// A named ephemeris (or an external table), joined with the selected

@@ -260,6 +260,10 @@ pub fn execute(
         &context.host,
     )
     .map_err(ApplicationDispatchError::Unavailable)?;
+    let native = prepared
+        .deployment
+        .deploy()
+        .map_err(ApplicationDispatchError::Native)?;
     let input = NativeInput {
         observation: prepared.observation,
         initial_access: access,
@@ -268,7 +272,7 @@ pub fn execute(
         masks: prepared.masks,
         minor_cycle_image_response: prepared.minor_cycle_image_response,
     };
-    run_native(&problem, input, prepared.native).map_err(|error| match error {
+    run_native(&problem, input, native).map_err(|error| match error {
         NativeError::Admission(admission) => ApplicationDispatchError::Admission(admission),
         NativeError::Cancelled(_) => ApplicationDispatchError::Cancelled,
         NativeError::Other(error) => ApplicationDispatchError::Native(error),

@@ -527,6 +527,12 @@ impl AwProjection {
 /// The catalog's spelling of an unset optional value.
 const NONE: &str = "none";
 
+/// Whether `text` leaves an optional value unset: `none`, or blank, as a
+/// blank optional parameter always has.
+fn unset(text: &str) -> bool {
+    text == NONE || text.trim().is_empty()
+}
+
 /// Error on `value` for a field of type `expected`.
 fn unexpected<E: serde::de::Error>(value: &Value, expected: &str) -> E {
     E::custom(format!("expected {expected}, found {value}"))
@@ -540,7 +546,7 @@ where
     T::Err: fmt::Display,
 {
     match Value::deserialize(deserializer)? {
-        Value::String(text) if text == NONE => Ok(None),
+        Value::String(text) if unset(&text) => Ok(None),
         Value::String(text) => text.parse().map(Some).map_err(D::Error::custom),
         Value::Number(number) => number
             .to_string()
@@ -613,13 +619,13 @@ fn threshold_jy<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Er
     quantity(&Value::deserialize(deserializer)?, "Jy").map_err(D::Error::custom)
 }
 
-/// Comma-separated values; `"none"` is empty.
+/// Comma-separated values; an unset list is empty.
 fn comma_list<T>(text: &str) -> Result<Vec<T>, String>
 where
     T: FromStr,
     T::Err: fmt::Display,
 {
-    if text == NONE {
+    if unset(text) {
         return Ok(Vec::new());
     }
     text.split(',')
@@ -631,7 +637,7 @@ where
         .collect()
 }
 
-/// Comma-separated finite numbers; `"none"` is empty.
+/// Comma-separated finite numbers; an unset list is empty.
 fn list<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<f64>, D::Error> {
     let values = match Value::deserialize(deserializer)? {
         Value::String(text) => comma_list(&text).map_err(D::Error::custom)?,
@@ -647,7 +653,7 @@ fn list<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<f64>, D::Error
 
 fn field_ids<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<Vec<i32>>, D::Error> {
     match choice(deserializer)?.as_str() {
-        NONE => Ok(None),
+        text if unset(text) => Ok(None),
         text => casa_ms::parse_numeric_id_selector(text, "field")
             .map(Some)
             .map_err(D::Error::custom),
@@ -660,7 +666,7 @@ fn mask_boxes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<[usize; 
     let text = value
         .as_str()
         .ok_or_else(|| unexpected(&value, "pixel boxes"))?;
-    if text == NONE {
+    if unset(text) {
         return Ok(Vec::new());
     }
     text.split(';')
@@ -683,7 +689,7 @@ fn choice<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error
 
 fn save_model<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
     match choice(deserializer)?.as_str() {
-        NONE => Ok(false),
+        text if unset(text) => Ok(false),
         "modelcolumn" => Ok(true),
         other => Err(D::Error::custom(format!("savemodel {other:?}"))),
     }
@@ -767,7 +773,7 @@ fn interpolation<'de, D: Deserializer<'de>>(
 
 fn rest_frequency_hz<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<f64>, D::Error> {
     match choice(deserializer)?.as_str() {
-        NONE => Ok(None),
+        text if unset(text) => Ok(None),
         text => casa_ms::parse_rest_frequency_hz(text)
             .map(Some)
             .map_err(D::Error::custom),
@@ -778,7 +784,7 @@ fn restoring_beam<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<RestoringBeamPolicy, D::Error> {
     match choice(deserializer)?.as_str() {
-        NONE => Ok(RestoringBeamPolicy::PerPlane),
+        text if unset(text) => Ok(RestoringBeamPolicy::PerPlane),
         "common" => Ok(RestoringBeamPolicy::Common),
         other => Err(D::Error::custom(format!("restoringbeam {other:?}"))),
     }
@@ -933,6 +939,60 @@ pub(crate) mod tests {
             refusal(native),
             "native_cf_cache_bytes, native_cf_maximum_cells"
         );
+    }
+
+    /// Every parameter the catalog resolves is a required field of the
+    /// request, for every gridder and AW source: a binding the request does
+    /// not read would otherwise be dropped silently (the flattened gridder
+    /// rules out `deny_unknown_fields`).
+    #[test]
+    fn every_resolved_parameter_is_a_required_field() {
+        for overrides in [
+            json!({}),
+            json!({ "gridder": "wproject" }),
+            json!({ "gridder": "mosaic" }),
+            json!({ "gridder": "awproject", "cfcache": "cf" }),
+            json!({
+                "gridder": "awproject",
+                "aw_cf_source": "native-evla",
+                "native_cf_cache": "cache",
+                "evla_surface": "surface",
+                "native_cf_working_size": 64,
+                "native_cf_oversampling": 4,
+                "native_cf_cache_bytes": 1_048_576,
+                "native_cf_maximum_cells": 64,
+            }),
+        ] {
+            let values = resolved(overrides.clone()).expect("catalog values");
+            serde_json::from_value::<ImagingRequest>(Value::Object(values.clone()))
+                .unwrap_or_else(|error| panic!("{overrides}: {error}"));
+            for name in values.keys() {
+                let mut without = values.clone();
+                without.remove(name);
+                assert!(
+                    serde_json::from_value::<ImagingRequest>(Value::Object(without)).is_err(),
+                    "{overrides}: the request does not read {name}"
+                );
+            }
+        }
+    }
+
+    /// A blank optional parameter is unset, as it always was.
+    #[test]
+    fn blank_optional_values_are_unset() {
+        let blank = request(json!({
+            "datacolumn": "",
+            "phasecenter": "",
+            "mask_image": "",
+            "outlierfile": "",
+            "restfreq": "",
+            "scales": "",
+            "mask_box": "",
+            "field": "",
+            "spw": "",
+            "start": "",
+        }));
+        assert_eq!(blank, request(json!({})));
     }
 
     /// A parameter its gridder does not read is refused when set, and

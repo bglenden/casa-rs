@@ -107,9 +107,8 @@ impl From<std::io::Error> for NativeError {
 pub(crate) fn run_native(
     problem: &CompiledProblem,
     input: NativeInput,
-    native: Result<ApplicationNative, ApplicationError>,
+    native: ApplicationNative,
 ) -> Result<ImagingOutcome, NativeError> {
-    let native = native?;
     let target = native.runtime.summary.clone();
     let mut summary = RunSummary {
         backend: native.runtime.backend,

@@ -360,54 +360,25 @@ tools/perf/imager/run_workload.py --dry-run \
 
 ## Imaging runtime controls and telemetry
 
-`casars-imager` task protocol v9 carries the performance controls used by the
-current workload harness:
+`casars-imager` task protocol v12 takes the imager's catalog parameters (by
+name on `--json-run`, or as command-line flags). The execution controls are:
 
-- `parallel` selects normal planned local execution or the serial CPU
-  comparison surface. `parallel=false` forces CPU acceleration, one grid and
-  prepare worker, one live source block, FFTW product transforms, and no
-  Metal grouped-input cache.
-- `chanchunks` is the CASA-like top-level spectral channel chunk count. The
-  requested count establishes the minimum slab shape; it is not an exact worker
-  cap or a switch for shared-source concurrency. For every cube plan, the
-  planner derives active planes and workers from plane/channel geometry,
-  hardware capacity, exact source-cache bytes, per-plane working state, and the
-  memory target. It uses the ordinary route when all planes fit one slab. Any
-  selected multi-slab shape can reuse a bounded resident source cache when the
-  same formula proves that cache resident, independent of dataset identity or a
-  particular `chanchunks` value.
-- `imaging_memory_target_mb`, `imaging_prepare_buffer_mb`,
-  `imaging_row_block_rows`, and `imaging_prepare_workers` control the shared
-  source-stream plan.
-- `imaging_memory_pressure_policy` selects `auto`, `conservative-no-swap`,
-  `aggressive`, `oversubscribe`, `stage-aware`, or `hybrid`. `auto` remains the
-  safe resource-adaptive default and does not intentionally depend on swap.
-- `imaging_read_ahead_blocks` is the maximum number of live row blocks, not
-  queue capacity. It is currently capped at two. The two-block configuration
-  accounts for one producer-owned block and one consumer-owned block and uses
-  a zero-capacity rendezvous channel (`queue_capacity = max_live - 2`), so no
-  third block can wait in the queue. One block is synchronous. Full-slab
-  spectral modes default to one and reject the overlap plan when it would cost
-  modeled plane residency or row locality. Consumer failure cancels the
-  producer after any current bounded read, wakes a blocked rendezvous send, and
-  preserves the original consumer error.
-- `imaging_fft_precision` selects dirty/PSF/residual product transform precision
-  independently from visibility-grid acceleration. FFTW is the sole FFT backend.
-- `CASA_RS_FFT_THREADS` sets FFTW threads per transform (default 1). Benchmark
-  records must report it separately from imaging workers; choose their product
-  within the available CPU budget rather than multiplying both independently.
+- `parallel`: `true` runs the passes on the host's balanced worker team;
+  `false`, the default, runs one worker.
+- `backend`: `cpu` or `metal`. Metal grids the standard kernel set in `f32`;
+  W projection, mosaics and AW projection run on the CPU.
+- `gridprecision`: `auto` (on the CPU, channel-local cubes in `f32` and the
+  continuum and Taylor terms in `f64`; on Metal, `f32`), `f32` or `f64`.
+  Metal refuses `f64`.
 
-The shared source read-ahead path is used by standard MFS, mosaic MFS replay,
-the supported mosaic MT-MFS replay path, standard and mosaic cube slabs,
-cubedata preparation, and trace preparation. Its summary line reports mode,
-enabled state, max-live count, queue capacity, observed handoff high water,
-row blocks and rows per block, producer/consumer blocked time, measured overlap,
-source read/route/consumer time, source bytes, effective read bandwidth, and
-streamed samples. Protocol-v3 diagnostic progress also reports planned and
-tracked memory, worker/queue states, stage timings, GPU eligibility/selection,
-host/device bytes, command/kernel time, and CPU fallback reasons. The task
-protocol version is 3; its newline-delimited progress event schema is version 1
-and the embedded observability snapshot schema is version 2.
+Memory is not a parameter: each phase is admitted against the host's free
+memory, and a cube whose planes do not fit runs in waves. Each run writes
+`<imagename>.summary.json` with every phase's wall time and peak resident
+memory, the worker count, the backend, the minor-cycle totals and the
+products. `CASA_RS_FFT_THREADS` sets FFTW threads per transform (default 1).
+Benchmark records report it separately from the worker count; choose their
+product within the available CPU budget rather than multiplying both
+independently.
 
 ## Apple GPU product finishing
 

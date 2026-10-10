@@ -110,23 +110,7 @@ pub(super) fn specification(
         reconstruction_controls(request, &algorithm),
         PolarizationContract::new(request.stokes.clone()),
     );
-    let mut equation = MeasurementEquationContract::new(
-        if inputs.instrument.is_some() {
-            InstrumentResponse::PrimaryBeam
-        } else {
-            InstrumentResponse::Scalar
-        },
-        DeclaredInnerProducts::new(
-            ModelInnerProduct::HermitianEuclidean,
-            VisibilityInnerProduct::HermitianEuclidean,
-        ),
-    );
-    if let Some(contract) = inputs.w_projection {
-        equation = equation.with_w_projection(contract);
-    }
-    if let Some(contract) = inputs.aw_projection {
-        equation = equation.with_aw_projection(contract);
-    }
+    let equation = measurement_equation(&inputs);
     let common_beam = request.deconvolver == Deconvolver::Mtmfs
         || request.restoringbeam == RestoringBeamPolicy::Common;
     let mut science = ScientificContract::new(
@@ -153,11 +137,7 @@ pub(super) fn specification(
         reconstruction,
         weighting,
         ProductRequirements::new(
-            requested_products(
-                request,
-                minor_cycle,
-                direction_dependent || inputs.aw_projection.is_some(),
-            ),
+            requested_products(request, minor_cycle, direction_dependent),
             normalization(request),
             if common_beam {
                 RestoringBeamPolicy::Common
@@ -175,16 +155,7 @@ pub(super) fn specification(
             )
             .with_uncorrected_mask(inputs.uncorrected_mask),
         ),
-        ObservationTransactionRequirements::new(if request.savemodel {
-            ModelColumnWrite::SelectedRows
-        } else {
-            ModelColumnWrite::Disabled
-        })
-        .with_corrected_data_write(if request.save_continuum_residual {
-            CorrectedDataWrite::SelectedOutputRows
-        } else {
-            CorrectedDataWrite::Disabled
-        }),
+        transaction(request),
         NumericsContract::new(
             vec![NumericPrecision::F64],
             ReductionPolicy::UnorderedWithinBudget,
@@ -198,6 +169,44 @@ pub(super) fn specification(
     Ok(match inputs.continuum_transform {
         Some(transform) => specification.with_visibility_transform(transform),
         None => specification,
+    })
+}
+
+/// The measurement equation: the primary beam with an instrument model,
+/// else scalar, with the request's W or AW projection.
+fn measurement_equation(inputs: &SpecificationInputs) -> MeasurementEquationContract {
+    let mut equation = MeasurementEquationContract::new(
+        if inputs.instrument.is_some() {
+            InstrumentResponse::PrimaryBeam
+        } else {
+            InstrumentResponse::Scalar
+        },
+        DeclaredInnerProducts::new(
+            ModelInnerProduct::HermitianEuclidean,
+            VisibilityInnerProduct::HermitianEuclidean,
+        ),
+    );
+    if let Some(contract) = inputs.w_projection {
+        equation = equation.with_w_projection(contract);
+    }
+    if let Some(contract) = inputs.aw_projection {
+        equation = equation.with_aw_projection(contract);
+    }
+    equation
+}
+
+/// The writes to the observation: the model column and continuum-subtracted
+/// corrected data, when asked for.
+fn transaction(request: &ImagingRequest) -> ObservationTransactionRequirements {
+    ObservationTransactionRequirements::new(if request.savemodel {
+        ModelColumnWrite::SelectedRows
+    } else {
+        ModelColumnWrite::Disabled
+    })
+    .with_corrected_data_write(if request.save_continuum_residual {
+        CorrectedDataWrite::SelectedOutputRows
+    } else {
+        CorrectedDataWrite::Disabled
     })
 }
 

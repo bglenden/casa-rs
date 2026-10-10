@@ -16554,44 +16554,20 @@ fn build_workflow_sections(app_id: &str, fields: &[FormField]) -> Vec<FormSectio
             "pbcor",
             "pblimit",
         ];
-        let stage_parameters = fields
-            .iter()
-            .enumerate()
-            .filter(|(_, field)| field.schema.group == "Stage Parameters")
-            .map(|(index, _)| StaticFormItem::Field(index))
-            .collect::<Vec<_>>();
-        let advanced_wide_field = fields
-            .iter()
-            .enumerate()
-            .filter(|(_, field)| field.schema.group == "Advanced Wide-Field")
-            .map(|(index, _)| StaticFormItem::Field(index))
-            .collect::<Vec<_>>();
+        // Each section is its catalog group: the fields named here first, in
+        // workflow order, then the rest of the group in catalog order.
+        let section = |name: &str, ids: &[&str], collapsed: bool| FormSection {
+            name: name.to_string(),
+            content: FormSectionContent::Items(group_field_items(fields, name, ids)),
+            collapsed,
+        };
         return vec![
-            FormSection {
-                name: "Context".to_string(),
-                content: FormSectionContent::Items(collect_field_items(fields, &context_ids)),
-                collapsed: false,
-            },
-            FormSection {
-                name: "Products".to_string(),
-                content: FormSectionContent::Items(collect_field_items(fields, &product_ids)),
-                collapsed: false,
-            },
-            FormSection {
-                name: "Stages".to_string(),
-                content: FormSectionContent::Items(collect_field_items(fields, &stage_ids)),
-                collapsed: false,
-            },
-            FormSection {
-                name: "Stage Parameters".to_string(),
-                content: FormSectionContent::Items(stage_parameters),
-                collapsed: false,
-            },
-            FormSection {
-                name: "Advanced Wide-Field".to_string(),
-                content: FormSectionContent::Items(advanced_wide_field),
-                collapsed: true,
-            },
+            section("Context", &context_ids, false),
+            section("Products", &product_ids, false),
+            section("Stages", &stage_ids, false),
+            section("Stage Parameters", &[], false),
+            section("Continuum Subtraction", &[], true),
+            section("Advanced Wide-Field", &[], true),
         ];
     }
     if app_id != "calibrate" {
@@ -16706,6 +16682,22 @@ fn build_browser_sections(kind: Option<BrowserAppKind>, fields: &[FormField]) ->
             collapsed: true,
         },
     ]
+}
+
+/// The fields named by `ids`, in that order, then every other field of
+/// catalog group `group`, in catalog order.
+fn group_field_items(fields: &[FormField], group: &str, ids: &[&str]) -> Vec<StaticFormItem> {
+    let mut items = collect_field_items(fields, ids);
+    items.extend(
+        fields
+            .iter()
+            .enumerate()
+            .filter(|(_, field)| {
+                field.schema.group == group && !ids.contains(&field.schema.id.as_str())
+            })
+            .map(|(index, _)| StaticFormItem::Field(index)),
+    );
+    items
 }
 
 fn collect_field_items(fields: &[FormField], ids: &[&str]) -> Vec<StaticFormItem> {
@@ -20026,5 +20018,38 @@ mod tests {
         assert!(ids.contains(&"cfcache"));
         assert!(ids.contains(&"aw_cf_source"));
         assert!(ids.contains(&"normtype"));
+    }
+
+    /// Every imager parameter the form schema shows is in some rendered
+    /// section, so the TUI can set it.
+    #[test]
+    fn imager_sections_render_every_visible_parameter() {
+        let schema: UiCommandSchema =
+            serde_json::from_value(casa_provider_contracts::project_ui_form(
+                &casa_provider_contracts::builtin_surface_bundle("imager").unwrap(),
+            ))
+            .unwrap();
+        let fields = schema
+            .arguments
+            .iter()
+            .filter_map(FormField::from_schema)
+            .collect::<Vec<_>>();
+        let rendered = build_workflow_sections("imager", &fields)
+            .iter()
+            .flat_map(|section| {
+                let FormSectionContent::Items(items) = &section.content;
+                items.iter().filter_map(|item| match item {
+                    StaticFormItem::Field(index) => Some(fields[*index].schema.id.clone()),
+                    _ => None,
+                })
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        let missing = fields
+            .iter()
+            .filter(|field| !field.schema.hidden_in_tui)
+            .map(|field| field.schema.id.as_str())
+            .filter(|id| !rendered.contains(*id))
+            .collect::<Vec<_>>();
+        assert!(missing.is_empty(), "not rendered: {missing:?}");
     }
 }

@@ -39,6 +39,9 @@ pub(super) struct WRange {
     pub(super) rows: u64,
 }
 
+/// Selected source channels per spectral window id.
+pub(super) type WindowChannels = BTreeMap<usize, Vec<usize>>;
+
 /// What one pass over the selected rows establishes.
 pub(super) struct Survey {
     pub(super) row_selection: SelectedObservationRowSelection,
@@ -58,10 +61,7 @@ pub(super) struct Survey {
     pub(super) w: WRange,
     pub(super) weight_spectrum_complete: bool,
     /// A continuum run's selected channels per window and their envelope.
-    pub(super) continuum: Option<(
-        BTreeMap<usize, Vec<usize>>,
-        SelectedObservationSpectralEnvelope,
-    )>,
+    pub(super) continuum: Option<(WindowChannels, SelectedObservationSpectralEnvelope)>,
 }
 
 /// Per-row facts gathered by the pass.
@@ -78,6 +78,30 @@ struct RowFacts {
 }
 
 impl RowFacts {
+    /// Nothing observed yet, over `row_count` MAIN rows and `ddids`
+    /// candidate data descriptions.
+    fn new(row_count: usize, ddids: usize) -> Result<Self, ApplicationError> {
+        Ok(Self {
+            rows: SelectedRowsBuilder::with_data_description_capacity(
+                u64::try_from(row_count).map_err(|_| boxed("MS row count exceeds u64"))?,
+                ddids,
+            ),
+            rows_error: None,
+            ddids: BTreeSet::new(),
+            fields: BTreeSet::new(),
+            observation_ids: BTreeSet::new(),
+            first_time_mjd_seconds: None,
+            time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
+            first_cross_row: None,
+            w: WRange {
+                maximum_abs_m: 0.0,
+                minimum_abs_m: f64::INFINITY,
+                sum_squares_m2: 0.0,
+                rows: 0,
+            },
+        })
+    }
+
     fn observe(&mut self, row: SelectedObservationRow) {
         self.ddids.insert(row.data_description_id());
         self.fields.insert(row.field_id());
@@ -124,74 +148,30 @@ pub(super) fn survey(
         request.intent.as_deref(),
     )?;
     let mut spectral_windows = candidate_windows(ms, &data_description, &ddids)?;
-    let mut continuum_channels = (request.specmode == SpecMode::Mfs)
-        .then(|| {
-            spectral_windows
-                .iter()
-                .map(|window| {
-                    Ok((
-                        window.spw_id,
-                        selected_channels(request, window.spw_id, &window.frequencies_hz)?,
-                    ))
-                })
-                .collect::<Result<BTreeMap<_, _>, ApplicationError>>()
-        })
-        .transpose()?;
-    let mut envelope = continuum_channels
-        .as_ref()
-        .map(|selected| {
-            ms.selected_observation_spectral_envelope_reducer(
-                &row_selection,
-                spectral_windows.iter().map(|window| {
-                    SelectedObservationSpectralWindow::borrow_selected(
-                        u32::try_from(window.spw_id).expect("nonnegative i32 SPW fits u32"),
-                        window.frequency_reference,
-                        &window.frequencies_hz,
-                        &window.channel_widths_hz,
-                        selected
-                            .get(&window.spw_id)
-                            .expect("selected every candidate spectral window"),
-                    )
-                }),
-                FrequencyRef::LSRK,
-                frame_engine,
-                budget.available_bytes(),
-            )
-        })
-        .transpose()?;
+    let mut continuum = continuum_envelope(
+        request,
+        ms,
+        &row_selection,
+        &spectral_windows,
+        frame_engine,
+        budget,
+    )?;
     let mut io = budget.row_io_budget();
     io.available_bytes = io
         .available_bytes
-        .checked_sub(envelope.as_ref().map_or(
-            0,
-            SelectedObservationSpectralEnvelopeReducer::retained_bytes,
-        ))
+        .checked_sub(
+            continuum
+                .as_ref()
+                .map_or(0, |(_, reducer)| reducer.retained_bytes()),
+        )
         .ok_or_else(|| boxed("selected spectral envelope exhausts the row traversal budget"))?;
-    let mut facts = RowFacts {
-        rows: SelectedRowsBuilder::with_data_description_capacity(
-            u64::try_from(ms.row_count()).map_err(|_| boxed("MS row count exceeds u64"))?,
-            ddids.len(),
-        ),
-        rows_error: None,
-        ddids: BTreeSet::new(),
-        fields: BTreeSet::new(),
-        observation_ids: BTreeSet::new(),
-        first_time_mjd_seconds: None,
-        time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
-        first_cross_row: None,
-        w: WRange {
-            maximum_abs_m: 0.0,
-            minimum_abs_m: f64::INFINITY,
-            sum_squares_m2: 0.0,
-            rows: 0,
-        },
-    };
+    let mut facts = RowFacts::new(ms.row_count(), ddids.len())?;
     let main_table = ms.main_table();
     let mut weight_spectrum_complete = main_table.column_accessor("WEIGHT_SPECTRUM").is_ok();
     let mut row_error = None;
     ms.visit_selected_observation_rows(&row_selection, io, |row| {
         if row_error.is_none()
-            && let Some(reducer) = envelope.as_mut()
+            && let Some((_, reducer)) = continuum.as_mut()
         {
             row_error = reducer
                 .observe(row)
@@ -222,26 +202,20 @@ pub(super) fn survey(
     let bindings = facts
         .ddids
         .iter()
-        .map(|ddid| {
-            usize::try_from(*ddid)
-                .map_err(|_| boxed("selected DATA_DESC_ID is negative"))
-                .and_then(|ddid| data_description_binding(&data_description, ddid))
-        })
+        .map(|ddid| data_description_binding(&data_description, *ddid))
         .collect::<Result<Vec<_>, _>>()?;
     let spw_ids = bindings
         .iter()
         .map(|(spw_id, _)| *spw_id)
         .collect::<BTreeSet<_>>();
     spectral_windows.retain(|window| spw_ids.contains(&window.spw_id));
-    if let Some(selected) = continuum_channels.as_mut() {
-        selected.retain(|spw_id, _| spw_ids.contains(spw_id));
-    }
     let source_frequency_reference = one_source_frame(&spectral_windows)?;
-    let continuum = continuum_channels.zip(
-        envelope
-            .map(SelectedObservationSpectralEnvelopeReducer::finish)
-            .transpose()?,
-    );
+    let continuum = continuum
+        .map(|(mut selected, reducer)| {
+            selected.retain(|spw_id, _| spw_ids.contains(spw_id));
+            reducer.finish().map(|envelope| (selected, envelope))
+        })
+        .transpose()?;
     Ok(Survey {
         row_selection,
         rows,
@@ -261,6 +235,55 @@ pub(super) fn survey(
     })
 }
 
+/// A continuum run's selected channels per candidate window, with the
+/// reducer of their LSRK envelope that the row pass feeds; `None` for a
+/// cube.
+fn continuum_envelope<'a>(
+    request: &ImagingRequest,
+    ms: &'a MeasurementSet,
+    row_selection: &'a SelectedObservationRowSelection,
+    spectral_windows: &[SourceSpectralWindow],
+    frame_engine: &'a casa_ms::derived::engine::MsCalEngine,
+    budget: SelectedObservationContentBudget,
+) -> Result<
+    Option<(
+        WindowChannels,
+        SelectedObservationSpectralEnvelopeReducer<'a>,
+    )>,
+    ApplicationError,
+> {
+    if request.specmode != SpecMode::Mfs {
+        return Ok(None);
+    }
+    let selected = spectral_windows
+        .iter()
+        .map(|window| {
+            Ok((
+                window.spw_id,
+                selected_channels(request, window.spw_id, &window.frequencies_hz)?,
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, ApplicationError>>()?;
+    let reducer = ms.selected_observation_spectral_envelope_reducer(
+        row_selection,
+        spectral_windows.iter().map(|window| {
+            SelectedObservationSpectralWindow::borrow_selected(
+                u32::try_from(window.spw_id).expect("nonnegative i32 SPW fits u32"),
+                window.frequency_reference,
+                &window.frequencies_hz,
+                &window.channel_widths_hz,
+                selected
+                    .get(&window.spw_id)
+                    .expect("selected every candidate spectral window"),
+            )
+        }),
+        FrequencyRef::LSRK,
+        frame_engine,
+        budget.available_bytes(),
+    )?;
+    Ok(Some((selected, reducer)))
+}
+
 /// The spectral windows of the candidate data descriptions.
 fn candidate_windows(
     ms: &MeasurementSet,
@@ -270,12 +293,7 @@ fn candidate_windows(
     let spectral_window = ms.spectral_window()?;
     let spw_ids = ddids
         .iter()
-        .map(|ddid| {
-            usize::try_from(*ddid)
-                .map_err(|_| boxed("selected DATA_DESC_ID is negative"))
-                .and_then(|ddid| data_description_binding(data_description, ddid))
-                .map(|(spw_id, _)| spw_id)
-        })
+        .map(|ddid| data_description_binding(data_description, *ddid).map(|(spw_id, _)| spw_id))
         .collect::<Result<BTreeSet<_>, _>>()?;
     spw_ids
         .into_iter()
@@ -356,8 +374,9 @@ fn selected_data_descriptions(
 
 fn data_description_binding(
     table: &casa_ms::MsDataDescription<'_>,
-    ddid: usize,
+    ddid: i32,
 ) -> Result<(usize, usize), ApplicationError> {
+    let ddid = usize::try_from(ddid).map_err(|_| boxed("selected DATA_DESC_ID is negative"))?;
     let spw = table.spectral_window_id(ddid)?;
     let polarization = table.polarization_id(ddid)?;
     Ok((
@@ -417,7 +436,7 @@ pub(super) fn explicit_spw_channels(
 pub(super) fn observation_selection(
     ms: &MeasurementSet,
     survey: Survey,
-    channels: &BTreeMap<usize, Vec<usize>>,
+    channels: &WindowChannels,
 ) -> Result<ObservationSelection, ApplicationError> {
     let polarization = ms.polarization()?;
     let spectral_windows = channels

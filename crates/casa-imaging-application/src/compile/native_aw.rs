@@ -11,20 +11,17 @@ use casa_imaging_model::{
 use casa_ms::{MeasurementSet, SelectedObservationRow};
 use casa_types::ArrayValue;
 
-use super::boxed;
 use super::selection::Survey;
 use super::spectral::PreparedSpectralAxis;
+use super::{Surveyed, boxed};
 use crate::{AwCfSource, AwProjection, ImagingRequest};
 
 /// Bounded metadata acquisition; pixel generation remains in the admitted phase.
 pub(super) fn resolve(
     request: &ImagingRequest,
     aw: &AwProjection,
-    ms: &MeasurementSet,
-    survey: &Survey,
-    spectral: &PreparedSpectralAxis,
+    surveyed: &Surveyed<'_>,
     first_row: SelectedObservationRow,
-    geometry_engine: &casa_ms::derived::engine::MsCalEngine,
 ) -> Result<NativeAwRequestInput, crate::ApplicationError> {
     let AwCfSource::NativeEvla {
         evla_surface,
@@ -36,6 +33,60 @@ pub(super) fn resolve(
     else {
         unreachable!("native AW resolves only a native cache");
     };
+    let surface = evla_dish(surveyed.ms, first_row, evla_surface)?;
+    let frequencies = frequency_groups(surveyed.survey, surveyed.spectral)?;
+    let sky_cell = request.cell.to_radians() / 3600.0;
+    let (w_values, w_increment) = w_grid(
+        aw.wprojplanes
+            .expect("a validated AW request names its W planes")
+            .get(),
+        sky_cell,
+    )?;
+    let working_cell = sky_cell * *native_cf_oversampling as f64 * request.imsize as f64
+        / *native_cf_working_size as f64;
+    let pa = surveyed.engine.parallactic_angle(
+        first_row.time_mjd_seconds(),
+        first_row.field_id() as usize,
+        0,
+    )? as f32;
+    let feed_angle = receptor_zero_angle(
+        surveyed.ms,
+        first_row.time_mjd_seconds(),
+        frequencies[0].spectral_window,
+    )? as f32;
+    Ok(NativeAwRequestInput {
+        surface,
+        antenna_diameter_m: 25.0,
+        frequencies,
+        w_values,
+        w_increment,
+        pa_values: vec![f64::from(pa + feed_angle)],
+        mueller_elements: mueller_elements(&request.stokes)?,
+        reference_frequency_hz: surveyed.spectral.reference_frequency_hz,
+        grid: NativeAwGrid {
+            size: *native_cf_working_size,
+            sky_increment_rad: [-working_cell, working_cell],
+            oversampling: *native_cf_oversampling,
+        },
+        // The installed A-projection (see `specification::aw_projection`).
+        terms: NativeAwTerms {
+            aperture: true,
+            w_term: true,
+            prolate_spheroidal: false,
+            wideband: true,
+            conjugate_beams: true,
+        },
+        maximum_cells: *native_cf_maximum_cells,
+    })
+}
+
+/// The EVLA dish surface, after checking that the observation is EVLA with
+/// the homogeneous 25 m dishes the native model describes.
+fn evla_dish(
+    ms: &MeasurementSet,
+    first_row: SelectedObservationRow,
+    evla_surface: &std::path::Path,
+) -> Result<EvlaDishSurface, crate::ApplicationError> {
     let observation = ms.observation()?;
     if observation
         .string(first_row.observation_id() as usize, "TELESCOPE_NAME")?
@@ -65,7 +116,16 @@ pub(super) fn resolve(
             "native EVLA surface exceeds the 1 MiB reference-data bound",
         ));
     }
-    let surface = EvlaDishSurface::from_surface_text(std::str::from_utf8(&bytes)?)?;
+    Ok(EvlaDishSurface::from_surface_text(std::str::from_utf8(
+        &bytes,
+    )?)?)
+}
+
+/// One frequency group per selected SPW, in increasing CF frequency.
+fn frequency_groups(
+    survey: &Survey,
+    spectral: &PreparedSpectralAxis,
+) -> Result<Vec<NativeAwFrequencyGroup>, crate::ApplicationError> {
     let mut frequencies = survey
         .spectral_windows
         .iter()
@@ -98,13 +158,13 @@ pub(super) fn resolve(
         })
         .collect::<Result<Vec<_>, crate::ApplicationError>>()?;
     frequencies.sort_by(|left, right| left.cf_frequency_hz.total_cmp(&right.cf_frequency_hz));
-    let planes = aw
-        .wprojplanes
-        .expect("a validated AW request names its W planes")
-        .get();
-    let sky_cell = request.cell.to_radians() / 3600.0;
-    // CASA AWConvFunc derives its W grid from the requested field of view,
-    // not the observed W envelope: maxUVW=1/(4*sky_increment), w=i²/wScale.
+    Ok(frequencies)
+}
+
+/// The W values of `planes` planes and their increment. CASA AWConvFunc
+/// derives its W grid from the requested field of view, not the observed W
+/// envelope: maxUVW=1/(4*sky_increment), w=i²/wScale.
+fn w_grid(planes: usize, sky_cell: f64) -> Result<(Vec<f64>, f64), crate::ApplicationError> {
     let max_w = 1.0 / (sky_cell * 4.0);
     let w_increment = ((planes - 1)
         .checked_mul(planes - 1)
@@ -114,56 +174,24 @@ pub(super) fn resolve(
     let w_values = (0..planes)
         .map(|index| (index * index) as f64 / w_increment)
         .collect();
-    let working_cell = sky_cell * *native_cf_oversampling as f64 * request.imsize as f64
-        / *native_cf_working_size as f64;
-    let pa = geometry_engine.parallactic_angle(
-        first_row.time_mjd_seconds(),
-        first_row.field_id() as usize,
-        0,
-    )? as f32;
-    let feed_angle = receptor_zero_angle(
-        ms,
-        first_row.time_mjd_seconds(),
-        frequencies[0].spectral_window,
-    )? as f32;
-    let pa = f64::from(pa + feed_angle);
-    // The catalog routes each hand through its own element and, for the
-    // conjugate baseline, the opposite hand (`makeConjPolMap`), so a
-    // single-hand image still needs both diagonal elements.
-    let mueller_elements = match request.stokes.as_slice() {
+    Ok((w_values, w_increment))
+}
+
+/// The Mueller elements of the imaged polarization. The catalog routes
+/// each hand through its own element and, for the conjugate baseline, the
+/// opposite hand (`makeConjPolMap`), so a single-hand image still needs
+/// both diagonal elements.
+fn mueller_elements(
+    stokes: &[PolarizationCoordinate],
+) -> Result<Vec<usize>, crate::ApplicationError> {
+    match stokes {
         [PolarizationCoordinate::CircularRr]
         | [PolarizationCoordinate::CircularLl]
-        | [PolarizationCoordinate::StokesI] => vec![0, 15],
-        _ => {
-            return Err(boxed(
-                "native EVLA AW currently supports Stokes I or one circular parallel hand",
-            ));
-        }
-    };
-    Ok(NativeAwRequestInput {
-        surface,
-        antenna_diameter_m: 25.0,
-        frequencies,
-        w_values,
-        w_increment,
-        pa_values: vec![pa],
-        mueller_elements,
-        reference_frequency_hz: spectral.reference_frequency_hz,
-        grid: NativeAwGrid {
-            size: *native_cf_working_size,
-            sky_increment_rad: [-working_cell, working_cell],
-            oversampling: *native_cf_oversampling,
-        },
-        // The installed A-projection (see `specification::aw_projection`).
-        terms: NativeAwTerms {
-            aperture: true,
-            w_term: true,
-            prolate_spheroidal: false,
-            wideband: true,
-            conjugate_beams: true,
-        },
-        maximum_cells: *native_cf_maximum_cells,
-    })
+        | [PolarizationCoordinate::StokesI] => Ok(vec![0, 15]),
+        _ => Err(boxed(
+            "native EVLA AW currently supports Stokes I or one circular parallel hand",
+        )),
+    }
 }
 
 fn receptor_zero_angle(

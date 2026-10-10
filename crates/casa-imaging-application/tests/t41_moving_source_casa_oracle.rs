@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Focused T41 moving-source gate against a frozen CASA Uranus cube.
-//!
-//! The `mvc` (MT-MFS via cube) oracle gates were removed with the old route in
-//! IF-2 (#651); `mvc` always carries a primary beam and returns with the
-//! convolution-function sets of IF-3 (#652).
+//! Focused T41 moving-source gate against a frozen CASA Uranus cube, and the
+//! casa-ms Measures edge topology of the selected spectral range on the
+//! representative T41 observation.
 
 use std::{
     error::Error,

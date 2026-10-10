@@ -20,8 +20,7 @@ use serde::{Deserialize, Serialize};
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
 pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
-/// Protocol version advertised by `casars-imager --protocol-info`; 12 made
-/// the request the catalog's parameters.
+/// Protocol version advertised by `casars-imager --protocol-info`.
 pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 12;
 
 /// The imager's protocol descriptor.
@@ -176,7 +175,6 @@ impl ImagerRunTaskResult {
         outcome: &ImagingOutcome,
         elapsed: Duration,
     ) -> Self {
-        let stop = outcome.stop.map(ImagerCleanStopReason::from);
         Self {
             artifacts: artifacts(&request.imagename, &outcome.product_names()),
             request: parameters,
@@ -185,10 +183,7 @@ impl ImagerRunTaskResult {
                 major_cycles: outcome.major_cycle_count,
                 minor_iterations: outcome.total_minor_iterations,
                 actual_minor_iterations: outcome.total_actual_minor_iterations,
-                iterdone: outcome.total_minor_iterations,
-                nmajordone: outcome.major_cycle_count,
-                stopcode: stop.map_or(0, ImagerCleanStopReason::casa_stop_code),
-                clean_stop_reason: stop,
+                clean_stop_reason: outcome.stop.map(ImagerCleanStopReason::from),
                 minor_cycles: outcome
                     .minor_cycles
                     .iter()
@@ -217,12 +212,6 @@ pub struct ImagerRunReport {
     pub minor_iterations: usize,
     /// Minor-cycle components actually applied.
     pub actual_minor_iterations: usize,
-    /// CASA's `iterdone`.
-    pub iterdone: usize,
-    /// CASA's `nmajordone`.
-    pub nmajordone: usize,
-    /// CASA's `stopcode`.
-    pub stopcode: i32,
     /// Why cleaning stopped, when it ran.
     pub clean_stop_reason: Option<ImagerCleanStopReason>,
     /// Each minor cycle, in order.
@@ -275,20 +264,6 @@ impl From<CleanStop> for ImagerCleanStopReason {
             CleanStop::NoChange
             | CleanStop::DivergedFromPrevious
             | CleanStop::DivergedFromMinimum => Self::DivergenceDetected,
-        }
-    }
-}
-
-impl ImagerCleanStopReason {
-    /// CASA's `stopcode`.
-    #[must_use]
-    pub const fn casa_stop_code(self) -> i32 {
-        match self {
-            Self::IterationLimitReached => 1,
-            Self::GlobalThresholdReached | Self::NsigmaThresholdReached => 2,
-            Self::NoCleanablePixels => 7,
-            Self::MajorCycleLimitReached => 9,
-            Self::DivergenceDetected => 10,
         }
     }
 }
@@ -646,21 +621,5 @@ mod tests {
             "image.pbcor"
         );
         assert!(artifacts.iter().all(|artifact| !artifact.exists));
-    }
-
-    #[test]
-    fn stop_reasons_carry_casa_stop_codes() {
-        assert_eq!(
-            ImagerCleanStopReason::from(CleanStop::Iterations).casa_stop_code(),
-            1
-        );
-        assert_eq!(
-            ImagerCleanStopReason::from(CleanStop::NSigma).casa_stop_code(),
-            2
-        );
-        assert_eq!(
-            ImagerCleanStopReason::from(CleanStop::DivergedFromMinimum).casa_stop_code(),
-            10
-        );
     }
 }

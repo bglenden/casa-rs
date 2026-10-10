@@ -58,8 +58,8 @@ pub(crate) fn selected_correlations(
 
 /// The grid basis of the compiled reconstruction basis. A Taylor basis
 /// expands about the image's reference frequency. Taylor-via-channel-major
-/// (CASA `mvc`) always carries a primary-beam response and waits for the
-/// primary-beam operators (IF-3).
+/// (CASA `mvc`) has no pass implementation and no request names it; #656
+/// removes the basis.
 pub(crate) fn basis(problem: &CompiledProblem) -> Result<Basis, ImagingError> {
     Ok(match problem.reconstruction().basis() {
         ReconstructionBasis::Constant => Basis::Constant,
@@ -72,7 +72,7 @@ pub(crate) fn basis(problem: &CompiledProblem) -> Result<Basis, ImagingError> {
         },
         ReconstructionBasis::TaylorViaChannelMajor { .. } => {
             return Err(ImagingError::Unsupported {
-                reason: "Taylor terms via channel cubes need the primary-beam operators",
+                reason: "Taylor terms via channel cubes have no pass implementation",
             });
         }
     })

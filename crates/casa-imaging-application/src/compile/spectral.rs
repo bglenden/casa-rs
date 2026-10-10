@@ -22,12 +22,14 @@ use casa_types::measures::{
 };
 
 use super::boxed;
-use super::selection::{SourceSpectralWindow, Survey, explicit_spw_channels, one_window};
+use super::selection::{
+    SourceSpectralWindow, Survey, WindowChannels, explicit_spw_channels, one_window,
+};
 use crate::{ApplicationError, ImagingRequest, SpecMode};
 
 /// The compiled spectral axis and the source channels it reads.
 pub(super) struct PreparedSpectralAxis {
-    pub(super) selected_source_channels: BTreeMap<usize, Vec<usize>>,
+    pub(super) selected_source_channels: WindowChannels,
     pub(super) source_frame: FrequencyFrame,
     pub(super) output_frequency_reference: FrequencyRef,
     pub(super) output_frame: FrequencyFrame,
@@ -72,7 +74,7 @@ pub(super) struct FrameContext<'a> {
 
 /// The output axis of one spectral mode, before its frame anchor.
 struct AxisLaw {
-    selected_source_channels: BTreeMap<usize, Vec<usize>>,
+    selected_source_channels: WindowChannels,
     output_frequency_reference: FrequencyRef,
     reference_frequency_hz: f64,
     increment_hz: f64,

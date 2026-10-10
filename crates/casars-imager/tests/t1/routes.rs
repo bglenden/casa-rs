@@ -132,6 +132,9 @@ fn command_line_and_json_runs_resolve_one_request_and_write_the_same_products() 
             "{suffix} coordinates"
         );
         let (cli, json) = (cli.get().expect("read"), json.get().expect("read"));
+        // Two runs of one request may round differently: FFTW measures its
+        // plans (`casa_fft`'s `MEASURE`), so the transform algorithm can
+        // differ between processes.
         let (error, power) =
             cli.iter()
                 .zip(json.iter())
