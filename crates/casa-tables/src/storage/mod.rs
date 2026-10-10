@@ -4,6 +4,7 @@
 pub(crate) mod canonical;
 pub(crate) mod data_type;
 pub(crate) mod incremental_stman;
+mod selected_cells;
 pub(crate) mod standard_stman;
 pub(crate) mod stman_aipsio;
 pub(crate) mod stman_array_file;
@@ -1717,10 +1718,18 @@ impl CompositeStorage {
                             &mut outputs,
                         )?;
                     }
-                    other => {
-                        return Err(StorageError::FormatMismatch(format!(
-                            "required scalar reusable fills do not support data manager {other}"
-                        )));
+                    // StManAipsIO (and any other manager) through the
+                    // general selected-row reader, as casacore reads it.
+                    _ => {
+                        for (_, desc) in &requested {
+                            self.fill_required_scalar_column_rows_from_plain_reader(
+                                table_path,
+                                table_dat,
+                                &desc.col_name,
+                                selected_rows,
+                                &mut outputs,
+                            )?;
+                        }
                     }
                 }
                 loaded.extend(requested.iter().map(|(_, desc)| desc.col_name.as_str()));
@@ -1761,6 +1770,41 @@ impl CompositeStorage {
             }
         }
         fill_result
+    }
+
+    /// Fill one required scalar column's reusable buffer through the general
+    /// selected-row reader. A buffer keeps its type; a column whose stored
+    /// type differs is refused.
+    fn fill_required_scalar_column_rows_from_plain_reader(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        column: &str,
+        selected_rows: &[usize],
+        outputs: &mut HashMap<String, RequiredScalarColumnData>,
+    ) -> Result<(), StorageError> {
+        let values =
+            self.load_plain_scalar_column_rows(table_path, table_dat, column, selected_rows, None)?;
+        let Some(buffer) = outputs.get_mut(column) else {
+            return Ok(());
+        };
+        if values.is_empty() {
+            match buffer {
+                RequiredScalarColumnData::Bool(values) => values.clear(),
+                RequiredScalarColumnData::Int32(values) => values.clear(),
+                RequiredScalarColumnData::Float32(values) => values.clear(),
+                RequiredScalarColumnData::Float64(values) => values.clear(),
+            }
+            return Ok(());
+        }
+        let read = required_scalar_column_from_optional_scalars(&values, column)?;
+        if std::mem::discriminant(buffer) != std::mem::discriminant(&read) {
+            return Err(StorageError::FormatMismatch(format!(
+                "required selected-row column '{column}' has an incompatible stored type"
+            )));
+        }
+        *buffer = read;
+        Ok(())
     }
 
     pub(crate) fn load_array_column_with_row_hint(
@@ -3274,10 +3318,18 @@ impl CompositeStorage {
                 request.channel_start,
                 request.channel_count,
             ),
-            other => Err(StorageError::FormatMismatch(format!(
-                "typed selected 2-D channel reads for column '{}' require TiledShapeStMan, found {other}",
-                request.column
-            ))),
+            _ => selected_cells::load_2d(
+                column,
+                &self.load_plain_array_column_rows(
+                    table_path,
+                    table_dat,
+                    column,
+                    request.selected_rows,
+                    None,
+                )?,
+                request.channel_start,
+                request.channel_count,
+            ),
         }
     }
 
@@ -3355,10 +3407,19 @@ impl CompositeStorage {
                 request.channel_count,
                 destination,
             ),
-            other => Err(StorageError::FormatMismatch(format!(
-                "typed selected 2-D channel reads for column '{}' require TiledShapeStMan, found {other}",
-                request.column
-            ))),
+            _ => selected_cells::fill_2d(
+                column,
+                &self.load_plain_array_column_rows(
+                    table_path,
+                    table_dat,
+                    column,
+                    request.selected_rows,
+                    None,
+                )?,
+                request.channel_start,
+                request.channel_count,
+                destination,
+            ),
         }
     }
 
@@ -3447,10 +3508,16 @@ impl CompositeStorage {
                 desc_idx,
                 request.selected_rows,
             ),
-            other => Err(StorageError::FormatMismatch(format!(
-                "typed selected 1-D reads for column '{}' do not support {other}",
-                request.column
-            ))),
+            _ => selected_cells::load_1d(
+                column,
+                &self.load_plain_array_column_rows(
+                    table_path,
+                    table_dat,
+                    column,
+                    request.selected_rows,
+                    None,
+                )?,
+            ),
         }
     }
 
@@ -3552,10 +3619,17 @@ impl CompositeStorage {
                 request.selected_rows,
                 destination,
             ),
-            other => Err(StorageError::FormatMismatch(format!(
-                "typed selected 1-D reads for column '{}' do not support {other}",
-                request.column
-            ))),
+            _ => selected_cells::fill_1d(
+                column,
+                &self.load_plain_array_column_rows(
+                    table_path,
+                    table_dat,
+                    column,
+                    request.selected_rows,
+                    None,
+                )?,
+                destination,
+            ),
         }
     }
 
