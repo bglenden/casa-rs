@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
 //! Imaging execution (plan section 5.4): host resources and per-phase
-//! admission, the major-cycle pass on the bounded worker team, cooperative
+//! admission, the process allocator that keeps the footprint to what is
+//! admitted, the major-cycle pass on the bounded worker team, cooperative
 //! cancellation, the paged cube state, the minor-cycle adapter and the run
 //! summary.
 
+mod allocator;
 mod cube_state;
 mod managed_cube_blocks;
 mod managed_model;
@@ -15,6 +17,7 @@ mod resources;
 mod source_access;
 mod summary;
 
+pub use allocator::{RETURNED_BLOCK_BYTES, ReturningAllocator};
 pub use cube_state::CubeState;
 pub use minor::{
     MinorCycleOutcome, MinorCycleRunError, MinorCycleSetup, MinorCycleSummary, PreparedMinorCycle,

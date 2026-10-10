@@ -22,7 +22,8 @@ pub use casa_imaging_model::{
 pub use casa_imaging_operator::GridPrecision;
 pub use casa_imaging_runtime::pass::{BackendChoice, Cancel};
 pub use casa_imaging_runtime::{
-    Admission, HostResources, Phase, ResourcePolicy, RunSummary, SummaryTarget, TracedComponent,
+    Admission, HostResources, Phase, ResourcePolicy, ReturningAllocator, RunSummary, SummaryTarget,
+    TracedComponent,
 };
 pub use casa_product_sink::{CasaImageDomainOutput, CasaImageProductSink};
 pub use compile::{OutlierProblem, PrepareError};
