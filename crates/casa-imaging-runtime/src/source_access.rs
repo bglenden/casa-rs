@@ -52,7 +52,7 @@ pub fn finalize_source_access(
         .source_binding()
         .content_budget()
         .maximum_live_blocks();
-    let minimum = requirements.minimum_bytes(maximum_live_blocks)?;
+    let minimum = requirements.minimum_bytes()?;
     let free = usize::try_from(free_memory(host, policy)).unwrap_or(usize::MAX);
     let growth = bootstrap_source_budget()
         .available_bytes()

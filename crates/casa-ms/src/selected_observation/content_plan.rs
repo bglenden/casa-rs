@@ -61,7 +61,8 @@ impl SelectedObservationSharedBytes {
     }
 }
 
-/// Explicit memory available to simultaneously live selected-content blocks.
+/// Explicit memory available to one selected source: its retained metadata
+/// and the one content block its stream holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectedObservationContentBudget {
     available_bytes: usize,
@@ -94,7 +95,7 @@ impl SelectedObservationContentBudget {
         }
     }
 
-    /// Return bytes available across every simultaneously live content block.
+    /// Return the bytes available to the source.
     #[must_use]
     pub const fn available_bytes(self) -> usize {
         self.available_bytes
@@ -108,7 +109,8 @@ impl SelectedObservationContentBudget {
         }
     }
 
-    /// Return the exact maximum simultaneously live content blocks.
+    /// Return the live-block allowance of metadata row walks
+    /// ([`Self::row_io_budget`]); the content stream holds one block.
     #[must_use]
     pub const fn maximum_live_blocks(self) -> usize {
         self.maximum_live_blocks
@@ -159,7 +161,6 @@ pub struct SelectedObservationContentPlan {
     resident_bytes_per_block: usize,
     preparation_bytes_per_block: usize,
     maximum_resident_bytes: usize,
-    maximum_live_blocks: usize,
     maximum_pointing_polynomial_terms: usize,
 }
 
@@ -216,12 +217,6 @@ impl SelectedObservationContentPlan {
     #[must_use]
     pub const fn maximum_resident_bytes(self) -> usize {
         self.maximum_resident_bytes
-    }
-
-    /// Exact maximum simultaneously live content blocks.
-    #[must_use]
-    pub const fn maximum_live_blocks(self) -> usize {
-        self.maximum_live_blocks
     }
 
     /// Return the maximum accepted POINTING polynomial coefficient count per axis.

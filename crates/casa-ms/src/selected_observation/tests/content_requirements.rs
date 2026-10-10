@@ -4,13 +4,13 @@ use super::*;
 use crate::SelectedObservationContentPlanError;
 
 #[test]
-fn t51_content_requirements_admit_the_exact_minimum_and_bound_live_blocks() {
+fn t51_content_requirements_admit_the_exact_minimum() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("requirements.ms");
     generate_fixture(&path);
     let (problem, access) = owner_problem_and_access(owner_resolution_request(&path, 2));
     let requirements = access.content_requirements(&problem).unwrap();
-    let minimum = requirements.minimum_bytes(2).unwrap();
+    let minimum = requirements.minimum_bytes().unwrap();
     assert!(
         requirements
             .plan(SelectedObservationContentBudget::new(minimum - 1, 2, 4))
@@ -21,16 +21,11 @@ fn t51_content_requirements_admit_the_exact_minimum_and_bound_live_blocks() {
     assert!(plan.rows_per_block() >= 1);
     assert_eq!(plan.maximum_resident_bytes(), minimum);
     assert_eq!(
-        requirements.bytes_for_rows(usize::MAX, 2).unwrap(),
-        requirements.bytes_for_rows(2, 2).unwrap()
+        requirements.bytes_for_rows(usize::MAX).unwrap(),
+        requirements.bytes_for_rows(2).unwrap()
     );
-    assert!(requirements.minimum_bytes(3).unwrap() >= minimum);
     assert!(matches!(
-        requirements.bytes_for_rows(0, 2),
-        Err(SelectedObservationContentPlanError::InvalidBudget)
-    ));
-    assert!(matches!(
-        requirements.minimum_bytes(0),
+        requirements.bytes_for_rows(0),
         Err(SelectedObservationContentPlanError::InvalidBudget)
     ));
     assert!(matches!(
@@ -70,14 +65,14 @@ fn t51_content_requirements_catalog_budget_charges_shared_source_plan_once() {
             .unwrap()
     };
     assert_eq!(
-        requirements(with_source).minimum_bytes(2).unwrap()
-            - requirements(base).minimum_bytes(2).unwrap(),
+        requirements(with_source).minimum_bytes().unwrap()
+            - requirements(base).minimum_bytes().unwrap(),
         4096
     );
     assert!(
-        requirements(base).minimum_bytes(2).unwrap()
+        requirements(base).minimum_bytes().unwrap()
             > requirements(SelectedObservationSharedBytes::NONE)
-                .minimum_bytes(2)
+                .minimum_bytes()
                 .unwrap()
     );
 }

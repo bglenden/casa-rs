@@ -1432,7 +1432,7 @@ fn frontend_row_projection_uses_the_canonical_bounded_observation_evaluator() {
 }
 
 #[test]
-fn selected_observation_residency_is_cardinality_independent_and_schedule_invariant() {
+fn selected_observation_residency_is_cardinality_independent() {
     let directory = tempfile::tempdir().expect("temporary residency fixtures");
     let small_path = directory.path().join("small.ms");
     let large_path = directory.path().join("large.ms");
@@ -1442,38 +1442,17 @@ fn selected_observation_residency_is_cardinality_independent_and_schedule_invari
     let small_problem = compiled_problem(&small_path, 4);
     let small_source = &small_problem.inputs().observation_snapshot().sources()[0];
     let synchronous_budget = content_budget_for_rows(&small_problem, small_source, 1, 1);
-    let double_buffered_budget = content_budget_for_rows(&small_problem, small_source, 1, 2);
     let synchronous =
         BoundObservationSource::open(&small_problem, small_source, synchronous_budget)
             .expect("bind synchronous selected observation");
-    let double_buffered =
-        BoundObservationSource::open(&small_problem, small_source, double_buffered_budget)
-            .expect("bind double-buffered selected observation");
     assert_eq!(synchronous.content_plan().rows_per_block(), 1);
-    assert_eq!(double_buffered.content_plan().rows_per_block(), 1);
-    assert_eq!(synchronous.content_plan().maximum_live_blocks(), 1);
-    assert_eq!(double_buffered.content_plan().maximum_live_blocks(), 2);
     assert!(
         synchronous.content_plan().maximum_resident_bytes() <= synchronous_budget.available_bytes()
     );
-    assert!(
-        double_buffered.content_plan().maximum_resident_bytes()
-            <= double_buffered_budget.available_bytes()
-    );
-
-    let synchronous_observation =
-        open_observation(&small_problem, small_source, synchronous_budget)
-            .expect("bind synchronous owner traversal");
-    let (_, synchronous_samples) =
-        stream(&small_problem, synchronous_observation).expect("read synchronous replay");
-    let double_buffered_observation =
-        open_observation(&small_problem, small_source, double_buffered_budget)
-            .expect("bind double-buffered owner traversal");
-    let (_, double_buffered_samples) =
-        stream(&small_problem, double_buffered_observation).expect("read double-buffered replay");
     assert_eq!(
-        synchronous_samples, double_buffered_samples,
-        "the live-block allowance is absent from the selected samples"
+        content_budget_for_rows(&small_problem, small_source, 1, 2).available_bytes(),
+        synchronous_budget.available_bytes(),
+        "the stream holds one block whatever the live-block allowance"
     );
 
     let large_problem = compiled_problem(&large_path, 64);
