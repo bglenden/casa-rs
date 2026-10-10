@@ -68,79 +68,30 @@ run/model/weighting/replay/coverage associations, and do not hash or reread full
 owned arrays just to assign completion authority. Routine telemetry stays
 indexed in memory and persists a useful final summary, not full-plan checkpoints
 at each work/fence event or scans of historical receipts during admission.
-`casa-imaging-runtime` owns execution-resource contracts introduced by ADR-0010
-and depends inward on the model plus reconstruction's opaque executable-problem
-brand. That reconstruction edge is limited to admitting owner-prepared model
-inputs at the execution and receipt boundary; runtime does not own or invoke
-reprojection algorithms. It owns the major-cycle pass, its worker team and
-bounded source stream, and the paged cube state (see Imaging execution). Metal
-runs inside the pass: with `backend = metal` every owner grids through its
-own `casa_imaging_metal::MetalBackend`, and the execution scheduler refuses
-Metal work nodes. Runtime also
-owns content-addressed prepared implementation artifacts: an exact artifact
-identity, a separate cache identity, bounded generation or load, integrity
-validation, private atomic caching, and deterministic eviction. Artifact
-identity commits to the registry/catalog owner, implementation version,
-compiled scientific commitments, artifact kind, and canonical named layout;
-`CacheIdentity` separately commits to the canonical private root and full cache
-policy. Neither identity includes an execution-local source path. The selected
-implementation owner derives artifact identity from exact `CompiledProblem`
-commitments, an owner-derived per-cell scientific key, named segment semantics,
-and the registry owner; it derives cache identity from that owner, the canonical
-private root, and the full cache policy. The plan-selected operation
-implementation identity is domain-separated and length-prefixed; its owner
-registry is checked against the actual plan and running implementation registry,
-so caller-authored metadata cannot substitute a registry entry. Cold generation,
-cold load, and warm reuse have distinct plan node, implementation, and
-artifact-role bindings; their canonical measurements reach the immutable
-execution receipt, including `RejectedStale` evidence for a missing,
-incomplete, incompatible, corrupt, or nonfinite warm candidate. Rejection
-evidence uses the existing typed observed-identity field and records the actual
-cache operations and bytes inspected. Successful `PreparedArtifact` handles
-are identity-only values with no payload access or file descriptors; the cache
-node closes every descriptor before returning its measurements. Store I/O
-evidence covers the private-store operation through
-final validation; later consumer copies are separately owned. Opening the store
-canonicalizes and checks the private root before creating anything, and performs
-no hidden lookup, integrity work, or eviction. That private casa-rs cache is not
-Product Graph authority or a CASA-visible persisted format. Existing CASA
-CFS/WTCFS directories remain read-only interoperability inputs supplied through
-the validated import adapter; the runtime neither mutates them nor creates
-sidecars. Cold load accepts only bounded absolute regular-file source
-descriptors through a content-committed source artifact listed in the canonical
-plan, owned by an exact predecessor/import node, and retained in that
-predecessor's receipt. Generation is pathless: the selected generator supplies
-bytes through the store-owned bounded buffer, with zero source reads or
-source-descriptor residency and a two-file-descriptor peak. Cold load opens at
-most one source while the execution lease is live, rejects CASA image,
-MeasurementSet, or table ancestry, verifies source digests while its lease is
-live, and reserves the source-read ceiling, source-descriptor residency, and
-three-file-descriptor peak. Reuse reserves two descriptors and no source reads.
-Source descriptors, the canonicalized source path, and the shared streaming
-buffer are charged inside one
-`StorageManager`-backed physical-memory allocation rather than a duplicate
-`SourceReadAhead` slot. Every `WorkImplementation` also states its failure
-measurement policy explicitly; there is no default that can silently discard
-completed I/O or mutation evidence.
+`casa-imaging-runtime` owns imaging execution (see Imaging execution): host
+resources and the admission of each phase's memory, the major-cycle pass on its
+worker team and bounded source stream, cooperative cancellation, the paged cube
+state, the minor-cycle adapter and the run summary. It depends inward on the
+model, reconstruction, deconvolution, products, the operator and the Metal
+backend; it
+does not own reprojection algorithms. Metal runs inside the pass: with
+`backend = metal` every owner grids through its own
+`casa_imaging_metal::MetalBackend`.
 
-Native EVLA paired A/W cells use that same private store. From IF-2 until IF-3
-(#652) no imaging run consumes them: AW projection is typed unavailable, and
-the preparation below is kept, unused, for the convolution-function set IF-3
-installs in the major-cycle pass. `casa-imaging-model` owns the immutable,
-content-identified dish model and complete frequency/W/PA/Mueller/term request.
-`casa-imaging-reconstruction` owns aperture evaluation, shared float FFT,
-support selection and sampled-area normalization without filesystem or runtime
-dependencies. After admission, the application adapter reuses one bounded
-six-plane workspace and streams each realized pair through the ordinary writer.
-Runtime binds the predeclared logical request to its validated exact cropped
-descriptor and content; it rebinds reusable cells to the current execution
-without granting persisted metadata execution authority. Missing or rejected
-members never form a complete catalog. Explicit generate/regenerate operations
-may retain a validated prefix for restart; reuse performs no beam generation.
-The first provider is EVLA-specific, not evidence of general telescope support.
-Its surface data is an explicit input, never discovered in an installed CASA
-runtime. Native cache files are private schema-7 implementation artifacts, not
-CASA-readable CF tables; existing CASA caches remain read-only import inputs.
+AW projection reads its convolution functions from one catalog of CASA
+`CFS_*`/`WTCFS_*` images (`casa_imaging_operator::aw`), opened header-first and
+read cell by cell into a cache bounded by `cf_resident_mb`. The catalog is
+either an existing CASA cache, read as it is and never modified, or a native
+EVLA cache that casa-rs generates in the same CASA format
+(`AWConvFunc::makeConvFunction2`, `CFCell::makePersistent`). Before the run the
+application compares the request's cells with the cache directory
+(`NativeAwCachePolicy`): reuse needs every cell, generation fills in the absent
+ones, and regeneration clears the cache first. The loader then checks each
+cell's sky increment against the image. A cell is reused because its file
+exists; there are no artifact or cache identities and no content hashes. The
+native generator is EVLA-specific, not evidence of general telescope support,
+and its dish surface data is an explicit input (`evla_surface`), never
+discovered in an installed CASA runtime.
 
 `casa-imaging-application` owns production composition across
 MeasurementSet observation authority, reconstruction, products, and physical
