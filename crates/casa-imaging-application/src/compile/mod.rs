@@ -21,6 +21,7 @@ mod spectral;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use casa_imaging_model::{
     CentreLaws, GeometryInput, ModelBounds, ModelLifecycleRequirements, NativeAwRequestInput,
@@ -32,10 +33,10 @@ use casa_imaging_products::{AnalyticPrimaryBeamModel, ContinuumProductControls};
 use casa_imaging_reconstruction::{ImageDomainReconstructionMaskPlans, MinorCycleImageResponse};
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{
-    MeasurementSet, SelectedObservationContentBudget, SelectedObservationResolutionRequest,
-    SelectedObservationSpectralWindow,
+    MeasurementSet, SelectedObservationContentBudget, SelectedObservationEphemeris,
+    SelectedObservationResolutionRequest, SelectedObservationSpectralWindow,
 };
-use casa_types::measures::frame::MeasFrame;
+use casa_types::measures::{MeasuresProvider, frame::MeasFrame};
 
 use crate::{
     ApplicationNative, ApplicationPublication, ApplicationRuntime, AwCatalogDeployment, AwCfSource,
@@ -83,7 +84,10 @@ pub(crate) fn prepare(
 ) -> Result<Prepared, PrepareError> {
     let ms = MeasurementSet::open(&request.vis)?;
     let budget = casa_imaging_runtime::bootstrap_source_budget();
-    let engine = MsCalEngine::new(&ms)?;
+    // The one Measures provider of the run: compile's geometry and the bound
+    // observation's both evaluate with it.
+    let measures = casa_ms::open_measures_runtime()?;
+    let engine = MsCalEngine::with_measures(&ms, Arc::clone(&measures))?;
     let survey = selection::survey(request, &ms, budget, &engine)?;
     let centre = direction::resolve_centre(request, &ms, &survey, &engine, budget)?;
     let frame = FrameContext {
@@ -137,7 +141,15 @@ pub(crate) fn prepare(
     };
     let model_samples = domains::model_samples(&domains, reconstruction_planes, &request.stokes)?;
     let geometry = geometry(request, &domains, &centre, &spectral);
-    let observation = observation_request(request, &ms, survey, &channels, centre, budget)?;
+    let observation = observation_request(
+        request,
+        &ms,
+        survey,
+        &channels,
+        measures,
+        centre.ephemeris,
+        budget,
+    )?;
     Ok(Prepared {
         specification,
         geometry,
@@ -252,14 +264,15 @@ fn specification_inputs(
 }
 
 /// The selected-observation request: the survey's rows and the channels
-/// read, the visibility and weight columns, and the centre's Measures and
-/// ephemeris.
+/// read, the visibility and weight columns, and the Measures provider and
+/// centre ephemeris compile evaluated with.
 fn observation_request(
     request: &ImagingRequest,
     ms: &MeasurementSet,
     survey: Survey,
     channels: &WindowChannels,
-    centre: Centre,
+    measures: Arc<dyn MeasuresProvider>,
+    ephemeris: Option<SelectedObservationEphemeris>,
     budget: SelectedObservationContentBudget,
 ) -> Result<SelectedObservationResolutionRequest, PrepareError> {
     let weight_column = if survey.weight_spectrum_complete {
@@ -273,9 +286,9 @@ fn observation_request(
         selection::visibility_column(ms, request.datacolumn)?,
         weight_column,
         budget,
-        centre.measures,
+        measures,
     )
-    .with_ephemeris(centre.ephemeris))
+    .with_ephemeris(ephemeris))
 }
 
 /// The image geometry: the domains, the centre laws and the spectral axis.

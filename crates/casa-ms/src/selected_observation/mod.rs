@@ -19,7 +19,8 @@ mod tests;
 pub use crate::ms::SelectedObservationRow;
 pub(crate) use access::BoundObservationSource;
 pub use access::{
-    BoundObservationSourceError, SelectedObservationBlock, SelectedObservationNumericGeometry,
+    BoundObservationSourceError, FilledObservationBlock, ProjectedObservationBlock,
+    SelectedObservationBlock, SelectedObservationNumericGeometry,
 };
 pub use bound_observation::{
     BoundSelectedObservation, BoundSelectedObservationError, DeferredSelectedObservationAccess,

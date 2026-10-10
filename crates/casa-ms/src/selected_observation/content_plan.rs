@@ -2,11 +2,12 @@
 
 use crate::{
     MeasurementSet, MsError, PointingDirectionBracket, PointingDirectionQuery,
-    SelectedPointingCatalogMeasurements, derived::engine::MsCalEngine,
+    SelectedObservationRow, SelectedPointingCatalogMeasurements, SelectedPointingQueryDomain,
+    derived::engine::MsCalEngine,
 };
 use crate::{
     selected_observation_buffer::{
-        selected_observation_buffer_residency, selected_observation_read_staging,
+        selected_observation_buffer_resident_bytes, selected_observation_read_staging,
     },
     selected_pointing::selected_pointing_preparation_peak_bytes,
     subtables::SubTable,
@@ -20,7 +21,7 @@ use thiserror::Error;
 
 use super::access::{
     BoundObservationSource, BufferedObservationBlock, EvaluatedRowGeometry, SelectedChannel,
-    SelectedCoordinates, SelectedReplayRow, selected_visibility, selected_weight,
+    SelectedCoordinates, selected_visibility, selected_weight,
 };
 use super::row_selection::CompiledRowPredicate;
 
@@ -28,10 +29,28 @@ use super::row_selection::CompiledRowPredicate;
 /// coordinate arrays charged by size: one subtable cell at a time from
 /// ANTENNA, FIELD, OBSERVATION and POINTING, the predicate's DATA_DESCRIPTION
 /// table, the binding and source-slot vectors and the POINTING query domain.
-/// Each is at most a few kilobytes; the slack covers them without reading
-/// every subtable row to size them. It is charged to traversal as well, so
-/// it never decides which phase bounds a block.
+/// The two that grow with the observation are bounded by its stations and
+/// selected DATA_DESCRIPTION rows: a 512-station array's query domain is
+/// 512 × 40 B = 20 KiB, and the predicate's table holds 16 B per selected
+/// DATA_DESCRIPTION row, so 1,024 rows add 16 KiB. The slack covers them
+/// without reading every subtable row to size them, and
+/// [`construction_scratch_fits_slack`] checks that in debug builds. It is
+/// charged to traversal as well, so it never decides which phase bounds a
+/// block.
 const CONSTRUCTION_SLACK_BYTES: usize = 64 << 10;
+
+/// Whether the construction scratch that grows with the observation, the
+/// POINTING query domain and the predicate's DATA_DESCRIPTION table, fits
+/// [`CONSTRUCTION_SLACK_BYTES`].
+pub(super) fn construction_scratch_fits_slack(
+    source: &ObservationSource,
+    pointing_query_domain: Option<&SelectedPointingQueryDomain>,
+) -> bool {
+    let domain_bytes = pointing_query_domain.map_or(0, SelectedPointingQueryDomain::heap_bytes);
+    let data_description_bytes =
+        source.selection().data_descriptions().len() * size_of::<(u32, f64)>();
+    domain_bytes + data_description_bytes <= CONSTRUCTION_SLACK_BYTES
+}
 
 mod requirements;
 pub use requirements::SelectedObservationContentRequirements;
@@ -369,8 +388,8 @@ pub(crate) fn selected_content_requirements(
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let row_replay_fixed_bytes = BoundObservationSource::row_replay_fixed_bytes();
     let traversal_base_bytes = retained_bytes
-        // The generation encoder may retain the final row's shared projection
-        // payload while its source block is recycled.
+        // A margin of one row's shared projection payload over the per-row
+        // charges below.
         .checked_add(domain_projection_payload_bytes)
         .and_then(|bytes| bytes.checked_add(row_replay_fixed_bytes))
         .and_then(|bytes| bytes.checked_add(CONSTRUCTION_SLACK_BYTES))
@@ -381,9 +400,6 @@ pub(crate) fn selected_content_requirements(
     let mut fill_bytes_per_row = 0_usize;
     let mut preparation_bytes_per_row = 0_usize;
     let mut read_staging_fixed_bytes = 0_usize;
-    let empty_fill = selected_observation_buffer_residency(0, 0, 0, 0)
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    let fill_fixed_bytes = empty_fill.fill_peak_bytes;
     let pointing_direction_column = match problem.geometry().centres().pointing() {
         PointingCentreLaw::Observation(law) => Some(match law.direction_column() {
             casa_imaging_model::PointingDirectionColumn::Direction => {
@@ -432,25 +448,24 @@ pub(crate) fn selected_content_requirements(
             WeightColumn::Weight => correlations,
             WeightColumn::WeightSpectrum => sample_count,
         };
-        let buffer =
-            selected_observation_buffer_residency(1, sample_count, weight_values, visibility_bytes)
-                .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+        let buffer = selected_observation_buffer_resident_bytes(
+            1,
+            sample_count,
+            weight_values,
+            visibility_bytes,
+        )
+        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
         let resident = buffer
-            .resident_bytes
             .checked_add(size_of::<EvaluatedRowGeometry>())
-            .and_then(|bytes| {
-                bytes.checked_add(size_of::<SelectedReplayRow>() + size_of::<usize>())
-            })
+            .and_then(|bytes| bytes.checked_add(size_of::<SelectedObservationRow>()))
             .and_then(|bytes| bytes.checked_add(domain_projection_payload_bytes))
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-        // A recycled block keeps its row geometry, request indices and frequency-window
+        // A recycled block keeps its row geometry, selected rows and frequency-window
         // metadata allocations while refilling storage and preparing POINTING output.
         // Charge their capacity during preparation as well as completed handoff.
         let retained_geometry = size_of::<EvaluatedRowGeometry>()
             .checked_add(domain_projection_payload_bytes)
-            .and_then(|bytes| {
-                bytes.checked_add(size_of::<SelectedReplayRow>() + size_of::<usize>())
-            })
+            .and_then(|bytes| bytes.checked_add(size_of::<SelectedObservationRow>()))
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
         // A column its data manager reads cell by cell holds each selected
         // row's whole stored cell, every channel of the spectral window, while
@@ -471,17 +486,12 @@ pub(crate) fn selected_content_requirements(
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
         read_staging_fixed_bytes = read_staging_fixed_bytes.max(read_staging.fixed_bytes);
         let fill = buffer
-            .fill_peak_bytes
-            .checked_sub(fill_fixed_bytes)
-            .and_then(|bytes| bytes.checked_add(retained_geometry))
+            .checked_add(retained_geometry)
             .and_then(|bytes| bytes.checked_add(read_staging.bytes_per_row))
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
         let geometry_build = buffer
-            .resident_bytes
             .checked_add(size_of::<EvaluatedRowGeometry>())
-            .and_then(|bytes| {
-                bytes.checked_add(size_of::<SelectedReplayRow>() + size_of::<usize>())
-            })
+            .and_then(|bytes| bytes.checked_add(size_of::<SelectedObservationRow>()))
             // Vec-to-Arc construction can hold source and destination payloads
             // simultaneously for the row currently being arranged.
             .and_then(|bytes| {
@@ -514,7 +524,6 @@ pub(crate) fn selected_content_requirements(
                 .ok_or(SelectedObservationContentPlanError::ByteOverflow)?
             };
             buffer
-                .resident_bytes
                 .checked_add(retained_geometry)
                 .and_then(|bytes| bytes.checked_add(pointing_scratch))
                 .ok_or(SelectedObservationContentPlanError::ByteOverflow)?
@@ -544,9 +553,7 @@ pub(crate) fn selected_content_requirements(
         resident_bytes_per_row,
         fill_bytes_per_row,
         preparation_bytes_per_row,
-        fill_fixed_bytes: fill_fixed_bytes
-            .checked_add(read_staging_fixed_bytes)
-            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
+        fill_fixed_bytes: read_staging_fixed_bytes,
         selected_rows,
         maximum_pointing_polynomial_terms,
     })

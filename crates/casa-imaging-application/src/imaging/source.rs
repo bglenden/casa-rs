@@ -11,8 +11,8 @@ use casa_imaging_runtime::pass::{
     BoundedSource, DomainProjection, NativeBlock, NativeRowHeader, RowAddress, SourceError,
 };
 use casa_ms::{
-    BoundSelectedObservation, SelectedObservationBlock, SelectedObservationBlockSource,
-    SelectedObservationNumericGeometry,
+    BoundSelectedObservation, ProjectedObservationBlock, SelectedObservationBlock,
+    SelectedObservationBlockSource, SelectedObservationNumericGeometry,
 };
 use num_complex::Complex32;
 
@@ -156,12 +156,11 @@ impl<'a> MeasurementSetSource<'a> {
 
     fn convert(
         &mut self,
-        block: &SelectedObservationBlock,
-        geometry: &SelectedObservationNumericGeometry,
+        block: &ProjectedObservationBlock<'_>,
         out: &mut NativeBlock,
     ) -> Result<(), SourceError> {
-        let rows = geometry.row_count();
-        let first = block.numeric_row(geometry, 0)?;
+        let rows = block.row_count();
+        let first = block.numeric_row(0);
         let channel_indices = first
             .channels
             .iter()
@@ -180,7 +179,7 @@ impl<'a> MeasurementSetSource<'a> {
             FiniteValuePolicy::RejectAll
         );
         for row in 0..rows {
-            let numeric = block.numeric_row(geometry, row)?;
+            let numeric = block.numeric_row(row);
             let metadata = &numeric.row.metadata;
             let coordinates = &numeric.row.coordinates;
             self.projections.clear();
@@ -273,7 +272,7 @@ impl<'a> MeasurementSetSource<'a> {
             out.push_row(
                 header,
                 &self.projections,
-                &geometry.frequencies_hz()[row * channels..(row + 1) * channels],
+                &block.frequencies_hz()[row * channels..(row + 1) * channels],
                 &self.values,
                 &self.weights,
                 &self.flags,
@@ -332,12 +331,12 @@ impl BoundedSource for MeasurementSetSource<'_> {
             block,
             geometry,
         } = &mut *stream;
-        if !source.fill_next(block)? {
+        let Some(filled) = source.fill_next(block)? else {
             self.traversal = Traversal::Idle(stream.source.complete()?);
             return Ok(false);
-        }
-        block.project_numeric_geometry(self.problem, geometry)?;
-        self.convert(block, geometry, out)?;
+        };
+        let projected = filled.project_numeric_geometry(self.problem, geometry)?;
+        self.convert(&projected, out)?;
         self.traversal = Traversal::Streaming(stream);
         Ok(true)
     }
