@@ -1650,32 +1650,30 @@ gate. The instrumented 10.229-second observation does not relax the original
 9.910949-second discriminator: the candidate must complete in at most
 8.919854 seconds with the exact checksum, one worker, one partition, unchanged
 pass/copy/residency evidence, and zero later-pass proof bytes.</p>
-<p>The approved seam retains an opaque proof, not an MS lock. Its exact retained
-heap is charged in the cross-plan frozen-weighting reservation. <code>casa-ms</code>
-mints it only after the first exhaustive traversal and owns the only rebind
-operation. (Superseded 2026-10-09: the owner manifest and rebind were removed;
-a retained access replays its proof only in process. See ADR-0008.) The pass still consumes every bounded block, validates canonical
-order, reaches the terminal poll, and checks exact sample and block counts.
-<code>casa-imaging-runtime</code> carries the proof beside frozen weighting and otherwise
-keeps the existing per-plan leases and cancellation. Reconstruction derives
-later coverage from the rebound selected proof, frozen weighting generation,
-transform identity, and deterministic completion. The application only
-composes the opaque continuation.</p>
-<p>This rejects whole-run read-lock retention because it would block external
-writers and change the concurrency contract. It also rejects direct runtime
-comparison of public source state, reuse of an access-bound completion, a
-second same-MS lock permit, deferred terminal writes requiring materialization
-or another pass, and a compatibility fallback. Terminal visibility writes
-continue to stream during the final traversal; their worker must flush,
-publish, unlock, and join before the single logical terminal-MS permit is
-released, including cancellation and failure paths.</p>
+<p>The approved seam retained an opaque proof, not an MS lock: <code>casa-ms</code> minted
+it after the first exhaustive traversal and owned the only rebind,
+<code>casa-imaging-runtime</code> carried it beside frozen weighting, and reconstruction
+derived later coverage from it.</p>
+<p>Superseded (ADR-0008, ADR-0015 and ADR-0016 rule 5): the owner manifest,
+rebind, proof and terminal poll are deleted. A run opens one retained access,
+<code>BoundSelectedObservation</code>, which holds a casacore auto-locking read lock on
+each of its tables for as long as the run keeps it. Each pass turns it into
+one ordered block stream (<code>into_block_stream</code>, or <code>into_windowed_block_stream</code>
+for a restricted wave); <code>SelectedObservationBlockSource::fill_next</code> walks MAIN
+in physical order, applies the compiled row predicate and fills one reusable
+block; <code>complete</code> refuses a stream that is not exhausted or whose walk
+selected a different number of rows than the compiled selection counted, and
+returns the access for the next pass. No proof or identity carries from one pass to the
+next. In the final pass a <code>VisibilityWriter</code> takes the MeasurementSet's write
+lock, writes each block during the pass, and its <code>complete</code> flushes and
+releases the lock.</p>
 <p>The full candidate and automatic falsifier are recorded in
 <code>tools/perf/imager/evidence/artifacts/20260828-issue540-proof-derivation-candidate.json</code>.
 Issue #540 explicitly approved this seam. Its first discriminator attempt
 failed before timing with <code>ContentPlan(ByteOverflow)</code>: the proof-eligible
 fresh-lock open reached physical owner validation before the retained-read
 scalar cache had been initialized by <code>selected_content_plan</code>, so the cache's
-zero sentinel was misclassified as overflow. The bounded mechanical fix derives
+zero sentinel was misclassified as overflow. The bounded mechanical fix derived
 the content plan under the same fresh retained locks before physical owner
 validation. The owner-open reproducer then passed in 0.93 seconds without
 adding a pass or fallback.</p>

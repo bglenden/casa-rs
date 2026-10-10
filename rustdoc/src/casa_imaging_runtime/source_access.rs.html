@@ -52,7 +52,7 @@
 <a href=#52 id=52 data-nosnippet>52</a>        .source_binding()
 <a href=#53 id=53 data-nosnippet>53</a>        .content_budget()
 <a href=#54 id=54 data-nosnippet>54</a>        .maximum_live_blocks();
-<a href=#55 id=55 data-nosnippet>55</a>    <span class="kw">let </span>minimum = requirements.minimum_bytes(maximum_live_blocks)<span class="question-mark">?</span>;
+<a href=#55 id=55 data-nosnippet>55</a>    <span class="kw">let </span>minimum = requirements.minimum_bytes()<span class="question-mark">?</span>;
 <a href=#56 id=56 data-nosnippet>56</a>    <span class="kw">let </span>free = usize::try_from(free_memory(host, policy)).unwrap_or(usize::MAX);
 <a href=#57 id=57 data-nosnippet>57</a>    <span class="kw">let </span>growth = bootstrap_source_budget()
 <a href=#58 id=58 data-nosnippet>58</a>        .available_bytes()
@@ -65,23 +65,27 @@
 <a href=#65 id=65 data-nosnippet>65</a>        requirements.maximum_pointing_polynomial_terms(),
 <a href=#66 id=66 data-nosnippet>66</a>    );
 <a href=#67 id=67 data-nosnippet>67</a>    <span class="kw">let </span>planned = requirements.plan(budget)<span class="question-mark">?</span>;
-<a href=#68 id=68 data-nosnippet>68</a>    <span class="kw">let </span>reservation = admit(
-<a href=#69 id=69 data-nosnippet>69</a>        host,
-<a href=#70 id=70 data-nosnippet>70</a>        policy,
-<a href=#71 id=71 data-nosnippet>71</a>        <span class="kw-2">&amp;</span>Demand {
-<a href=#72 id=72 data-nosnippet>72</a>            phase: <span class="string">"selected-observation source"</span>,
-<a href=#73 id=73 data-nosnippet>73</a>            memory: u64::try_from(planned.maximum_resident_bytes())
-<a href=#74 id=74 data-nosnippet>74</a>                .map_err(|<span class="kw">_</span>| SourceAccessError::Overflow)<span class="question-mark">?</span>,
-<a href=#75 id=75 data-nosnippet>75</a>        },
-<a href=#76 id=76 data-nosnippet>76</a>    )<span class="question-mark">?</span>;
-<a href=#77 id=77 data-nosnippet>77</a>    <span class="kw">let </span>budget = SelectedObservationContentBudget::new(
-<a href=#78 id=78 data-nosnippet>78</a>        planned.maximum_resident_bytes(),
-<a href=#79 id=79 data-nosnippet>79</a>        maximum_live_blocks,
-<a href=#80 id=80 data-nosnippet>80</a>        requirements.maximum_pointing_polynomial_terms(),
-<a href=#81 id=81 data-nosnippet>81</a>    );
-<a href=#82 id=82 data-nosnippet>82</a>    <span class="prelude-val">Ok</span>((
-<a href=#83 id=83 data-nosnippet>83</a>        access.with_content_budget(problem, <span class="kw-2">&amp;</span>requirements, budget)<span class="question-mark">?</span>,
-<a href=#84 id=84 data-nosnippet>84</a>        reservation,
-<a href=#85 id=85 data-nosnippet>85</a>    ))
-<a href=#86 id=86 data-nosnippet>86</a>}
+<a href=#68 id=68 data-nosnippet>68</a>    <span class="macro">tracing::info!</span>(
+<a href=#69 id=69 data-nosnippet>69</a>        rows_per_block = planned.rows_per_block(),
+<a href=#70 id=70 data-nosnippet>70</a>        envelope_bytes = planned.maximum_resident_bytes(),
+<a href=#71 id=71 data-nosnippet>71</a>        minimum_bytes = minimum,
+<a href=#72 id=72 data-nosnippet>72</a>        live_blocks = maximum_live_blocks,
+<a href=#73 id=73 data-nosnippet>73</a>        <span class="string">"selected-observation source plan"
+<a href=#74 id=74 data-nosnippet>74</a>    </span>);
+<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">let </span>reservation = admit(
+<a href=#76 id=76 data-nosnippet>76</a>        host,
+<a href=#77 id=77 data-nosnippet>77</a>        policy,
+<a href=#78 id=78 data-nosnippet>78</a>        <span class="kw-2">&amp;</span>Demand {
+<a href=#79 id=79 data-nosnippet>79</a>            phase: <span class="string">"selected-observation source"</span>,
+<a href=#80 id=80 data-nosnippet>80</a>            memory: u64::try_from(planned.maximum_resident_bytes())
+<a href=#81 id=81 data-nosnippet>81</a>                .map_err(|<span class="kw">_</span>| SourceAccessError::Overflow)<span class="question-mark">?</span>,
+<a href=#82 id=82 data-nosnippet>82</a>        },
+<a href=#83 id=83 data-nosnippet>83</a>    )<span class="question-mark">?</span>;
+<a href=#84 id=84 data-nosnippet>84</a>    <span class="kw">let </span>budget = SelectedObservationContentBudget::new(
+<a href=#85 id=85 data-nosnippet>85</a>        planned.maximum_resident_bytes(),
+<a href=#86 id=86 data-nosnippet>86</a>        maximum_live_blocks,
+<a href=#87 id=87 data-nosnippet>87</a>        requirements.maximum_pointing_polynomial_terms(),
+<a href=#88 id=88 data-nosnippet>88</a>    );
+<a href=#89 id=89 data-nosnippet>89</a>    <span class="prelude-val">Ok</span>((access.with_content_budget(budget), reservation))
+<a href=#90 id=90 data-nosnippet>90</a>}
 </code></pre></div></section></main></body></html>
