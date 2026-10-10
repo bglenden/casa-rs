@@ -232,6 +232,14 @@ impl Solver for Clark {
         self.refresh.set(Some(state.refresh));
         Ok(end)
     }
+
+    /// The refresh ([`LinearRefresh::bytes`]) and the active list, which
+    /// grows to at most every pixel: an upper bound, since the list holds
+    /// only the supported pixels above the cycle's flux limit.
+    fn working_bytes(&self, shape: PlaneShape, _terms: usize) -> u64 {
+        let active = shape.len().next_power_of_two() * size_of::<Active>();
+        LinearRefresh::bytes(shape) + active as u64
+    }
 }
 
 impl ClarkState {

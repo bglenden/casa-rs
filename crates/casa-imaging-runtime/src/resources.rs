@@ -168,6 +168,21 @@ impl Reservation {
         self.memory = memory;
     }
 
+    /// Move `memory` of the held bytes into a reservation of their own, for
+    /// state that outlives the phase that admitted it.
+    ///
+    /// # Panics
+    ///
+    /// When `memory` exceeds the bytes held.
+    pub fn split(&mut self, memory: u64) -> Self {
+        assert!(
+            memory <= self.memory,
+            "a reservation splits off at most what it holds"
+        );
+        self.memory -= memory;
+        Self { memory }
+    }
+
     /// Hold `other`'s bytes too, until this reservation drops.
     pub fn join(&mut self, mut other: Self) {
         self.memory += std::mem::take(&mut other.memory);

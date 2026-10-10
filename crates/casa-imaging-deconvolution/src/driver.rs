@@ -4,6 +4,7 @@
 
 use crate::Error;
 use crate::controller::{CycleControls, PlaneControl, PlaneStatistics, PlaneStop};
+use crate::plane::PlaneShape;
 use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver};
 
 /// One model term of one accepted component, for diagnostics: a multi-term
@@ -41,6 +42,30 @@ pub struct PlaneOutcome {
     pub trace: Vec<Component>,
     /// Exact whole-plane residual refreshes.
     pub refreshes: usize,
+}
+
+/// Heap bytes a [`Delta`] entry costs at most: one `(index, flux)` pair in a
+/// B-tree map, whose nodes are at least half full.
+const DELTA_ENTRY_BYTES: u64 = 48;
+
+/// Heap bytes [`run_plane`] holds at most for one plane of `shape` with
+/// `terms` residual terms that places up to `components` components and
+/// traces `trace` of them: its residual copy, the cycle's and the step's
+/// updates, the trace, and the solver's working state
+/// ([`Solver::working_bytes`]).
+#[must_use]
+pub fn solve_bytes<S: Solver>(
+    solver: &S,
+    shape: PlaneShape,
+    terms: usize,
+    components: usize,
+    trace: usize,
+) -> u64 {
+    let entries = 2 * components as u64 * terms as u64;
+    (terms * shape.len() * size_of::<f64>()) as u64
+        + entries * DELTA_ENTRY_BYTES
+        + (trace.next_power_of_two() * size_of::<Component>()) as u64
+        + solver.working_bytes(shape, terms)
 }
 
 /// Run one plane's minor cycle.

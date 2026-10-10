@@ -525,10 +525,16 @@ impl<T: FftScalar> RealFft2<T> {
     }
 
     fn from_fft(mut fft: Fft2<T>) -> Result<Self, FftError> {
-        fft.elements = fft.shape[0]
-            .checked_mul(fft.shape[1] / 2 + 1)
-            .ok_or(FftError::InvalidShape)?;
+        fft.elements = Self::spectrum_len(fft.shape).ok_or(FftError::InvalidShape)?;
         Ok(Self { fft })
+    }
+
+    /// Complex values of the shared real/spectrum allocation of a `shape`
+    /// transform ([`Self::storage_len`]), for sizing one before it exists;
+    /// `None` when the count overflows.
+    #[must_use]
+    pub const fn spectrum_len(shape: [usize; 2]) -> Option<usize> {
+        shape[0].checked_mul(shape[1] / 2 + 1)
     }
 
     /// Number of complex values required by the shared real/spectrum allocation.

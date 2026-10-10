@@ -4,7 +4,7 @@
 
 use crate::Error;
 use crate::patch::subtract_shifted;
-use crate::plane::{first_peak, peak_magnitude};
+use crate::plane::{PlaneShape, first_peak, peak_magnitude};
 use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd};
 
 /// Högbom's point CLEAN on one plane.
@@ -103,5 +103,10 @@ impl Solver for Hogbom {
             peak: peak_magnitude(&residual[0], view.support),
             refreshes: 0,
         })
+    }
+
+    /// Nothing: Högbom works in the driver's residual copy.
+    fn working_bytes(&self, _shape: PlaneShape, _terms: usize) -> u64 {
+        0
     }
 }

@@ -29,8 +29,8 @@ use casa_imaging_runtime::pass::{
 };
 use casa_imaging_runtime::{
     CubeState, Demand, HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache, Reservation,
-    ResourcePolicy, RunSummary, admit, free_memory, prepare_minor_cycle, run_minor_cycle,
-    run_phase,
+    ResourcePolicy, RunSummary, admit, free_memory, mask_bytes, prepare_bytes, prepare_minor_cycle,
+    run_bytes, run_minor_cycle, run_phase,
 };
 use casa_ms::ResolvedSelectedObservationAccess;
 
@@ -160,7 +160,20 @@ pub(crate) fn run(
     }
     let mut controller = Controller::new(&controls);
     let mut cache = PsfCache::default();
+    // What outlives each minor cycle: the masks it forms (the latest, and the
+    // one an automatic mask evolves from) and a Clark refresh it caches.
+    let mut held = run.admit("reconstruction masks", 2 * mask_bytes(&outcome.scientific))?;
     loop {
+        let preparing = run.admit(
+            "minor-cycle preparation",
+            prepare_bytes(
+                &outcome.scientific,
+                &mask_plans,
+                &setup,
+                &cache,
+                run.team.workers(),
+            ),
+        )?;
         let prepared = prepare_minor_cycle(
             &outcome.scientific,
             &mask_plans,
@@ -168,6 +181,7 @@ pub(crate) fn run(
             &mut cache,
             run.team,
         )?;
+        drop(preparing);
         let statistics = prepared.statistics;
         if let Some(stop) = controller.clean_complete(&statistics) {
             tracing::info!("imaging stopped: {stop:?} (stopcode {})", stop.code());
@@ -180,6 +194,17 @@ pub(crate) fn run(
         let cycle_controls = controller.cycle_controls(&statistics);
         let started = Instant::now();
         let name = format!("minor cycle {}", outcome.minor_cycles.len() + 1);
+        let cached = cache.refresh_bytes(&outcome.scientific);
+        let mut solving = run.admit(
+            "minor cycle",
+            run_bytes(
+                &outcome.scientific,
+                &setup,
+                &cycle_controls,
+                &cache,
+                run.team.workers(),
+            ),
+        )?;
         let minor = run_phase(name, &cancel, summary, || {
             Ok::<_, ImagingError>(run_minor_cycle(
                 prepared,
@@ -190,6 +215,11 @@ pub(crate) fn run(
                 run.team,
             )?)
         })?;
+        let refresh = cache.refresh_bytes(&outcome.scientific);
+        if refresh > cached {
+            held.join(solving.split(refresh - cached));
+        }
+        drop(solving);
         let global_threshold = controls
             .threshold_jy_per_beam()
             .max(statistics.nsigma_threshold);
@@ -206,6 +236,16 @@ pub(crate) fn run(
         if minor.summary.iterations == 0 {
             // tclean skips the major cycle, updates the mask and still asks
             // `hasConverged` for the stop it reports.
+            let _preparing = run.admit(
+                "minor-cycle preparation",
+                prepare_bytes(
+                    &outcome.scientific,
+                    &mask_plans,
+                    &setup,
+                    &cache,
+                    run.team.workers(),
+                ),
+            )?;
             let prepared = prepare_minor_cycle(
                 &outcome.scientific,
                 &mask_plans,
@@ -234,6 +274,7 @@ pub(crate) fn run(
     }
     outcome.planes_per_wave = run.planes_per_wave;
     outcome.retained = std::mem::replace(&mut run.retained, Reservation::none());
+    outcome.retained.join(held);
     Ok(outcome)
 }
 
@@ -451,6 +492,11 @@ impl<'a> Run<'a> {
         let major = self.reconcile(cycle, false, last, residency)?;
         self.retain(&major, pass)?;
         Ok(major)
+    }
+
+    /// Admit `memory` bytes for `phase` under the run's policy.
+    fn admit(&self, phase: &'static str, memory: u64) -> Result<Reservation, ImagingError> {
+        Ok(admit(&self.host, &self.policy, &Demand { phase, memory })?)
     }
 
     /// Hand the pass's charge on to what `major` holds resident: join it to

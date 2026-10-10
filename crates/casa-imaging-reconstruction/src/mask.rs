@@ -464,6 +464,31 @@ impl ImageDomainReconstructionMaskPlans {
         Self::new(plans)
     }
 
+    /// Heap bytes [`Self::materialize`] holds at most against `normal`: each
+    /// domain's support, and for an automatic mask its working planes
+    /// ([`AUTO_MULTITHRESH_BYTES_PER_CELL`]) with the model support it reads.
+    #[must_use]
+    pub fn materialize_bytes(&self, normal: &FinalNormalState) -> u64 {
+        self.plans
+            .iter()
+            .enumerate()
+            .map(|(ordinal, plan)| {
+                let cells = normal
+                    .domain_shape(ordinal)
+                    .map_or(0, |[width, height]| (width * height) as u64);
+                let working = match plan {
+                    ReconstructionMaskPlan::AutoMultithresh { .. } => {
+                        AUTO_MULTITHRESH_BYTES_PER_CELL
+                            + size_of::<casa_imaging_model::ModelSample>() as u64
+                            + 1
+                    }
+                    _ => 0,
+                };
+                cells * (size_of::<bool>() as u64 + working)
+            })
+            .sum()
+    }
+
     /// Materialize every domain support against one shared Normal State;
     /// `beam` is the primary PSF's, required by an automatic mask.
     pub fn materialize(
@@ -706,6 +731,14 @@ pub struct AutoMultithreshEvidence {
     /// Whether later cycles should stop evolving this plane.
     pub channel_stopped: bool,
 }
+
+/// Heap bytes per pixel [`auto_multithresh`] holds at most: the normalised
+/// residual, its deviations and one sorted copy for a median (`f64` each);
+/// region pruning's component list and queue, grown by pushes (`usize`
+/// each, twice for growth); the smoothed plane (`f64`); and its five
+/// `bool` planes.
+pub const AUTO_MULTITHRESH_BYTES_PER_CELL: u64 =
+    3 * size_of::<f64>() as u64 + 4 * size_of::<usize>() as u64 + size_of::<f64>() as u64 + 5;
 
 /// Generate a new auto-multithreshold mask from immutable Normal State, with
 /// `beam` the PSF's fitted main lobe and sidelobe level.

@@ -96,6 +96,165 @@ pub struct PsfCache {
     clark: Option<LinearRefresh>,
 }
 
+impl PsfCache {
+    /// Heap bytes the cached Clark refresh holds, which outlives each minor
+    /// cycle ([`LinearRefresh::bytes`]); zero when none is cached.
+    #[must_use]
+    pub fn refresh_bytes(&self, completion: &MajorCycleCompletion) -> u64 {
+        self.clark.as_ref().map_or(0, |_| {
+            let [nx, ny] = completion.normal_state().shape();
+            LinearRefresh::bytes(PlaneShape::new(nx, ny))
+        })
+    }
+}
+
+/// Heap bytes one loaded plane holds ([`load`]): its residual and PSF terms
+/// (`f64`), its support and validity, its sensitivity under a response, and
+/// what it is read through (the normal state's windows as `Complex64`, one
+/// model plane).
+fn load_bytes(cells: u64, residual_terms: u64, psf_terms: u64, response: bool) -> u64 {
+    let terms = residual_terms + psf_terms;
+    cells
+        * (terms * size_of::<f64>() as u64
+            + 2 * size_of::<bool>() as u64
+            + if response { size_of::<f64>() as u64 } else { 0 }
+            + terms * size_of::<num_complex::Complex64>() as u64
+            + size_of::<casa_imaging_model::ModelSample>() as u64)
+}
+
+/// The planes a minor cycle of `normal` loads, their largest cell count and
+/// their residual and PSF term counts.
+fn plane_layout(normal: &FinalNormalState) -> (Vec<PlaneKey>, u64, u64, u64) {
+    let taylor = is_taylor(normal);
+    let keys = plane_keys(normal, taylor);
+    let cells = keys
+        .iter()
+        .map(|key| plane_shape(normal, *key).len() as u64)
+        .max()
+        .unwrap_or(0);
+    let (residual, psf) = if taylor {
+        (
+            normal.coefficient_term_count() as u64,
+            normal.normal_moment_count() as u64,
+        )
+    } else {
+        (1, 1)
+    };
+    (keys, cells, residual, psf)
+}
+
+/// Heap bytes [`prepare_minor_cycle`] holds at most: the masks it
+/// materializes, and on each of the planes loaded at once on `workers`, the
+/// load and its measurement (the robust noise's two copies under `nsigma`,
+/// the PSF fit's single-precision copies for a plane not yet in `cache`).
+#[must_use]
+pub fn prepare_bytes(
+    completion: &MajorCycleCompletion,
+    mask_plans: &ImageDomainReconstructionMaskPlans,
+    setup: &MinorCycleSetup,
+    cache: &PsfCache,
+    workers: usize,
+) -> u64 {
+    let normal = completion.normal_state();
+    let (keys, cells, residual, psf) = plane_layout(normal);
+    let fits = keys.iter().any(|key| !cache.summaries.contains_key(key));
+    let measure = cells
+        * if setup.nsigma > 0.0 {
+            2 * size_of::<f64>() as u64
+        } else {
+            0
+        }
+        .max(if fits { 2 * size_of::<f32>() as u64 } else { 0 });
+    let concurrent = workers.min(keys.len()).max(1) as u64;
+    mask_plans.materialize_bytes(normal)
+        + concurrent * (load_bytes(cells, residual, psf, setup.response.is_some()) + measure)
+}
+
+/// Heap bytes the masks a minor cycle forms keep while the cycle runs and
+/// after it: one support per image domain.
+#[must_use]
+pub fn mask_bytes(completion: &MajorCycleCompletion) -> u64 {
+    let normal = completion.normal_state();
+    (0..normal.domain_count())
+        .filter_map(|domain| normal.domain_shape(domain))
+        .map(|[width, height]| (width * height * size_of::<bool>()) as u64)
+        .sum()
+}
+
+/// Heap bytes [`run_minor_cycle`] holds at most under `controls`: on each of
+/// the planes solved at once on `workers` (one when a single plane spreads
+/// over the team), the load and the solve
+/// ([`casa_imaging_deconvolution::solve_bytes`]). A Clark refresh already in
+/// `cache` is charged with the cache, not here.
+#[must_use]
+pub fn run_bytes(
+    completion: &MajorCycleCompletion,
+    setup: &MinorCycleSetup,
+    controls: &CycleControls,
+    cache: &PsfCache,
+    workers: usize,
+) -> u64 {
+    let normal = completion.normal_state();
+    let (keys, cells, residual, psf) = plane_layout(normal);
+    let shape = keys
+        .iter()
+        .map(|key| plane_shape(normal, *key))
+        .max_by_key(|shape| shape.len())
+        .unwrap_or(PlaneShape::new(0, 0));
+    let terms = residual as usize;
+    let components = controls.iterations + 1;
+    let solve = match &setup.algorithm {
+        ReconstructionAlgorithm::Hogbom => casa_imaging_deconvolution::solve_bytes(
+            &Hogbom::new(false),
+            shape,
+            terms,
+            components,
+            TRACE,
+        ),
+        ReconstructionAlgorithm::Clark => {
+            let solve = casa_imaging_deconvolution::solve_bytes(
+                &Clark::new(None),
+                shape,
+                terms,
+                components,
+                TRACE,
+            );
+            if keys.len() == 1 {
+                solve.saturating_sub(cache.refresh_bytes(completion))
+            } else {
+                solve
+            }
+        }
+        ReconstructionAlgorithm::Multiscale {
+            scales_px,
+            small_scale_bias,
+        } => casa_imaging_deconvolution::solve_bytes(
+            &Multiscale::new(scales_px.clone(), *small_scale_bias),
+            shape,
+            terms,
+            components,
+            TRACE,
+        ),
+        ReconstructionAlgorithm::Mtmfs {
+            scales_px,
+            small_scale_bias,
+        } => casa_imaging_deconvolution::solve_bytes(
+            &Taylor::new(terms, scales_px.clone(), *small_scale_bias),
+            shape,
+            terms,
+            components,
+            TRACE,
+        ),
+        _ => 0,
+    };
+    let concurrent = if keys.len() == 1 {
+        1
+    } else {
+        workers.min(keys.len()) as u64
+    };
+    concurrent * (load_bytes(cells, residual, psf, setup.response.is_some()) + solve)
+}
+
 /// One minor cycle's masks and plane measurements.
 pub struct PreparedMinorCycle {
     masks: ImageDomainReconstructionMasks,

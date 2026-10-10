@@ -18,7 +18,8 @@ mod summary;
 pub use cube_state::CubeState;
 pub use minor::{
     MinorCycleOutcome, MinorCycleRunError, MinorCycleSetup, MinorCycleSummary, PreparedMinorCycle,
-    PsfCache, TracedComponent, prepare_minor_cycle, run_minor_cycle,
+    PsfCache, TracedComponent, mask_bytes, prepare_bytes, prepare_minor_cycle, run_bytes,
+    run_minor_cycle,
 };
 pub use resources::{
     Admission, Demand, HostError, HostResources, Reservation, ResourcePolicy, admit, free_memory,
