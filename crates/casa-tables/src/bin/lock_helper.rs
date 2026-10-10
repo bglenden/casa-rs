@@ -41,8 +41,17 @@
 //!   Opens with AutoLocking, which holds a read lock, creates `ready_file`,
 //!   waits for `go_file`, then adds a row, which upgrades to a write lock
 //!   and waits for it. Prints `acquired` or `refused: <error>`.
+//!
+//! - `held_reader` —
+//!   Opens with UserLocking, holds the table open and prints `ready`. For
+//!   each `read` line on stdin it takes a read lock, reads the Int32 cell
+//!   `id` of row 0, releases the lock without closing the table and prints
+//!   `id <value> counter <modify counter>`. What it read stays cached, so a
+//!   later read sees another process's write only when that write raised the
+//!   modify counter. Exits at end of input.
 use std::env;
 use std::fs;
+use std::io::BufRead;
 use std::path::Path;
 use std::process;
 use std::thread;
@@ -238,6 +247,51 @@ fn main() {
             ])) {
                 Ok(()) => println!("acquired"),
                 Err(error) => println!("refused: {error}"),
+            }
+        }
+
+        "held_reader" => {
+            let mut table = Table::open_with_lock(opts, lock_opts).unwrap_or_else(|e| {
+                eprintln!("open_with_lock failed: {e}");
+                process::exit(3);
+            });
+            println!("ready");
+            for line in std::io::stdin().lock().lines() {
+                let line = line.unwrap_or_else(|e| {
+                    eprintln!("read stdin failed: {e}");
+                    process::exit(3);
+                });
+                if line.trim() != "read" {
+                    eprintln!("unknown held_reader request {line:?}");
+                    process::exit(2);
+                }
+                match table.lock(LockType::Read, 1) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        eprintln!("read lock was not acquired");
+                        process::exit(3);
+                    }
+                    Err(e) => {
+                        eprintln!("lock failed: {e}");
+                        process::exit(3);
+                    }
+                }
+                let id = match table.cell_accessor(0, "id").and_then(|cell| cell.scalar()) {
+                    Ok(ScalarValue::Int32(id)) => *id,
+                    other => {
+                        eprintln!("row 0 has no Int32 id: {other:?}");
+                        process::exit(3);
+                    }
+                };
+                let counter = table.locked_modify_counter().unwrap_or_else(|e| {
+                    eprintln!("modify counter failed: {e}");
+                    process::exit(3);
+                });
+                table.unlock().unwrap_or_else(|e| {
+                    eprintln!("unlock failed: {e}");
+                    process::exit(3);
+                });
+                println!("id {id} counter {counter}");
             }
         }
 

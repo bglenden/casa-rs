@@ -238,6 +238,7 @@ impl Table {
             rows = self.inner.row_count(),
             "saving CASA table"
         );
+        self.note_persisted_write(&options.path);
         let storage = CompositeStorage;
         storage
             .save_borrowed(
@@ -296,6 +297,7 @@ impl Table {
             dm_info: self.dm_info.clone(),
             retained_read_metadata: None,
         };
+        self.note_persisted_write(&options.path);
         let storage = CompositeStorage;
         storage.save_metadata_only(&options.path, &snapshot)?;
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
@@ -382,6 +384,7 @@ impl Table {
                 )),
             );
         }
+        self.note_persisted_write(&options.path);
         let storage = CompositeStorage;
         storage
             .save_with_bindings_borrowed(
@@ -465,6 +468,7 @@ impl Table {
                 )),
             );
         }
+        self.note_persisted_write(&options.path);
         let storage = CompositeStorage;
         storage
             .save_with_bindings_and_column_overrides_borrowed(
@@ -614,6 +618,7 @@ impl Table {
             );
         }
 
+        self.note_persisted_write(source_path);
         for group in affected_groups {
             let data_path = source_path.join(format!(
                 "{}{}",
@@ -1102,6 +1107,7 @@ impl Table {
                 .map(|dm| dm.seq_nr)
                 .max()
                 .map_or(0, |seq| seq + 1);
+            self.note_persisted_write(&source_path);
             crate::storage::tiled_stman::clone_tiled_manager_files(
                 &source_path,
                 source_plain_column.dm_seq_nr,
@@ -1224,6 +1230,7 @@ impl Table {
                 .map(|dm| dm.seq_nr)
                 .max()
                 .map_or(0, |seq| seq + 1);
+            self.note_persisted_write(&source_path);
             let pending_values = self.inner.pending_array_cells(column);
             if changed_rows.is_empty() && pending_values.is_none_or(|values| values.is_empty()) {
                 crate::storage::tiled_stman::save_empty_tiled_shape_column(
@@ -1524,6 +1531,10 @@ impl Table {
     /// [`path`](Table::path) is `Some`. Returns an error if no source path
     /// is set.
     ///
+    /// On a table opened with locking that holds the write lock, the write
+    /// is published in the lock file's sync data when the lock is released
+    /// (see [`unlock`](Table::unlock)).
+    ///
     /// This is the Rust equivalent of the C++ `Table::flush()` call.
     pub fn flush(&self) -> Result<(), TableError> {
         let path = self
@@ -1539,6 +1550,11 @@ impl Table {
     /// The table must have a source path (set by [`open`](Table::open) or
     /// [`save`](Table::save)). After resync the in-memory state matches the
     /// on-disk state exactly.
+    ///
+    /// A table opened with locking keeps any write it made to the disk under
+    /// the write lock it holds: releasing the lock still publishes it, so
+    /// other processes holding the table open re-read it. Only changes that
+    /// never reached the disk are discarded without a trace.
     ///
     /// # C++ equivalent
     ///
@@ -1556,7 +1572,8 @@ impl Table {
         self.virtual_bindings = std::mem::take(&mut reloaded.virtual_bindings);
         self.table_info = std::mem::take(&mut reloaded.table_info);
         // Preserve source_path, kind, marked_for_delete, and lock_state. The
-        // reloaded state is what is on disk, so a lock has nothing to flush.
+        // reloaded state is what is on disk, so a lock has nothing to flush;
+        // a write already persisted under it stays to be published.
         #[cfg(unix)]
         if let Some(state) = self.lock_state.as_mut() {
             state.flushed_generation = self.inner.generation();
@@ -1644,6 +1661,7 @@ impl Table {
             dm_info: vec![],
             retained_read_metadata: None,
         };
+        self.note_persisted_write(&opts.path);
         let storage = CompositeStorage;
         storage.save(
             &opts.path,
