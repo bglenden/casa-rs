@@ -824,3 +824,70 @@ fn an_in_place_save_waits_for_a_held_subtable_without_holding_main() {
     assert!(main_free, "the save held MAIN while it waited for ANTENNA");
     saved.expect("the save completes once ANTENNA is released");
 }
+
+/// FLAG_ROW of row 0 in the table at `table`, read without locking.
+fn flag_row_0(table: &std::path::Path) -> bool {
+    let table = casa_tables::Table::open(casa_tables::TableOptions::new(table))
+        .expect("open the flag version");
+    match table
+        .cell_accessor(0, "FLAG_ROW")
+        .and_then(|cell| cell.scalar())
+        .expect("FLAG_ROW")
+    {
+        ScalarValue::Bool(value) => *value,
+        other => panic!("unexpected FLAG_ROW {other:?}"),
+    }
+}
+
+/// Saving into an existing flag version is an in-place write: it holds the
+/// version table's write lock from before it reads the version until the
+/// version is saved. While another process holds the lock, the save waits in
+/// the request list and the version is unchanged; it completes once the
+/// lock is released.
+#[test]
+fn saving_into_an_existing_flag_version_waits_for_its_write_lock() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open MeasurementSet");
+    casa_ms::save_flag_version(&measurement_set, "v1", "seed", casa_ms::FlagMerge::Replace)
+        .expect("create the flag version");
+    let version = std::path::PathBuf::from(format!("{}.flagversions/flags.v1", ms_path.display()));
+    let saved_flag_row = flag_row_0(&version);
+    measurement_set
+        .main_table_mut()
+        .cell_accessor_mut(0, "FLAG_ROW")
+        .expect("FLAG_ROW cell")
+        .set(casa_types::Value::Scalar(ScalarValue::Bool(
+            !saved_flag_row,
+        )))
+        .expect("change FLAG_ROW");
+
+    let signal = dir.path().join("holder-locked.signal");
+    let release = dir.path().join("holder-release.signal");
+    let mut holder = hold_the_write_lock_in_another_process(&version, &signal, &release);
+    let releaser = {
+        let version = version.clone();
+        std::thread::spawn(move || {
+            let requested = this_process_requests_the_lock(&version);
+            let unchanged = flag_row_0(&version) == saved_flag_row;
+            std::fs::write(&release, "release").expect("release the holder");
+            (requested, unchanged)
+        })
+    };
+    let saved = casa_ms::save_flag_version(
+        &measurement_set,
+        "v1",
+        "replace",
+        casa_ms::FlagMerge::Replace,
+    );
+    let (requested, unchanged) = releaser.join().expect("releaser thread");
+    assert!(holder.wait().expect("holder exits").success());
+
+    assert!(requested, "the save was not in the version's request list");
+    assert!(
+        unchanged,
+        "the version changed while another process held it"
+    );
+    saved.expect("the save completes once the version is released");
+    assert_eq!(flag_row_0(&version), !saved_flag_row);
+}

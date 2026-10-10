@@ -15,7 +15,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use casa_tables::{ColumnBinding, ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
+use casa_tables::{
+    ColumnBinding, ColumnSchema, DataManagerKind, Table, TableError, TableOptions, TableSchema,
+    TableWriteLock,
+};
 use casa_types::{
     ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
@@ -3043,12 +3046,26 @@ where
     })
 }
 
+/// Take casacore's write lock on an existing flag-version table before it is
+/// read and merged, waiting for another process as every in-place writer
+/// does. The table is read only once the lock is held, so a write another
+/// process published while this one waited is not stale here: the refusal
+/// [`TableWriteLock`] gives for it is answered by taking the lock again.
+fn lock_existing_flag_version(version_path: &Path) -> Result<TableWriteLock, TableError> {
+    TableWriteLock::acquire(version_path, 0).or_else(|_| TableWriteLock::acquire(version_path, 0))
+}
+
 fn merge_flags_into_existing_version(
     ms: &MeasurementSet,
     version_path: &Path,
     merge: FlagMerge,
 ) -> Result<(), FlaggingError> {
     let path = ms_path(ms)?.to_path_buf();
+    let mut lock =
+        lock_existing_flag_version(version_path).map_err(|source| FlaggingError::FlagVersion {
+            path: path.display().to_string(),
+            reason: format!("lock existing flag version: {source}"),
+        })?;
     let mut table = Table::open(TableOptions::new(version_path)).map_err(|source| {
         FlaggingError::FlagVersion {
             path: path.display().to_string(),
@@ -3085,12 +3102,19 @@ fn merge_flags_into_existing_version(
                 reason: format!("write existing FLAG_ROW row {row}: {source}"),
             })?;
     }
+    // Recorded before the save, so an interrupted save still tells other
+    // processes to re-read the version.
+    lock.record_write(&table);
     table
         .save(TableOptions::new(version_path))
         .map_err(|source| FlaggingError::FlagVersion {
             path: path.display().to_string(),
             reason: format!("save existing flag version: {source}"),
-        })
+        })?;
+    lock.release().map_err(|source| FlaggingError::FlagVersion {
+        path: path.display().to_string(),
+        reason: format!("release existing flag version: {source}"),
+    })
 }
 
 fn merge_bool(source: bool, dest: bool, merge: FlagMerge) -> bool {
