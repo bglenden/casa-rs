@@ -1370,6 +1370,64 @@ fn a_stream_whose_main_walk_finds_other_than_the_compiled_rows_does_not_complete
 }
 
 #[test]
+fn a_sparse_selection_streams_exactly_its_rows_and_their_samples() {
+    const ROWS: usize = 5;
+    const LAST: u64 = ROWS as u64 - 1;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("sparse.ms");
+    generate_fixture_with_rows(&path, ROWS);
+    let dense = stream_rows(&compiled_problem(&path, ROWS), 1)
+        .into_iter()
+        .filter(|sample| matches!(sample.row.physical_row, 0 | LAST))
+        .collect::<Vec<_>>();
+    assert!(!dense.is_empty());
+
+    // The interior rows move to a DATA_DESCRIPTION the selection does not
+    // name, so the predicate admits only the first and last physical rows.
+    let mut main = Table::open(TableOptions::new(&path)).expect("open fixture MAIN");
+    for row in 1..ROWS - 1 {
+        main.row_accessor_mut()
+            .set_cell(row, "DATA_DESC_ID", Value::Scalar(ScalarValue::Int32(7)))
+            .expect("move an interior row out of the selection");
+    }
+    main.flush().expect("persist the sparse fixture");
+    drop(main);
+    let selected_rows = SelectedRows::from_ordered_main_rows(
+        ROWS as u64,
+        [SelectedMainRow::new(0, 0), SelectedMainRow::new(LAST, 0)],
+    )
+    .expect("sparse selected-row manifest");
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![fixture_source_input(
+        &path,
+        fixture_selection(
+            selected_rows,
+            RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
+        ),
+    )]))
+    .expect("compile the sparse selection");
+    let problem = compile(ProblemInput::new(
+        specification(),
+        geometry(),
+        snapshot,
+        model_lifecycle(),
+    ))
+    .expect("compile the sparse problem");
+
+    // With two rows per block both selected rows share one fill, whose
+    // physical rows are not contiguous.
+    for rows_per_block in [1, 2] {
+        let sparse = stream_rows(&problem, rows_per_block);
+        let mut rows = sparse
+            .iter()
+            .map(|sample| sample.row.physical_row)
+            .collect::<Vec<_>>();
+        rows.dedup();
+        assert_eq!(rows, [0, LAST], "{rows_per_block} rows per block");
+        assert_eq!(sparse, dense, "{rows_per_block} rows per block");
+    }
+}
+
+#[test]
 fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("numeric-chunks.ms");
