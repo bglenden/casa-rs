@@ -4,22 +4,17 @@ use std::mem::size_of;
 
 use crate::{MainRowSelectionFact, SelectedStoredRow};
 use casa_imaging_model::{
-    AntennaSelection, DataDescriptionSelection, IdSelection, IntentSelection, ObservationSource,
-    RowSelection, SelectionBound, TimeSelection, UvDistanceUnit, UvSelection,
+    DataDescriptionSelection, IdSelection, IntentSelection, ObservationSource, RowSelection,
+    SelectionBound, UvDistanceUnit, UvSelection,
 };
 use thiserror::Error;
 
+/// The MAIN columns the row predicate reads.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct StoredMainRow {
     pub(crate) data_description_id: i32,
     pub(crate) field_id: i32,
-    pub(crate) antenna1: i32,
-    pub(crate) antenna2: i32,
-    pub(crate) time_mjd_seconds: f64,
-    pub(crate) scan_number: i32,
     pub(crate) state_id: i32,
-    pub(crate) observation_id: i32,
-    pub(crate) array_id: i32,
     pub(crate) uvw_m: [f64; 3],
 }
 
@@ -28,13 +23,7 @@ impl From<MainRowSelectionFact> for StoredMainRow {
         Self {
             data_description_id: fact.data_description_id(),
             field_id: fact.field_id(),
-            antenna1: fact.antenna1(),
-            antenna2: fact.antenna2(),
-            time_mjd_seconds: fact.time_mjd_seconds(),
-            scan_number: fact.scan_number(),
             state_id: fact.state_id(),
-            observation_id: fact.observation_id(),
-            array_id: fact.array_id(),
             uvw_m: fact.uvw_m(),
         }
     }
@@ -45,13 +34,7 @@ impl From<SelectedStoredRow> for StoredMainRow {
         Self {
             data_description_id: sample.data_description_id(),
             field_id: sample.field_id(),
-            antenna1: sample.antenna1(),
-            antenna2: sample.antenna2(),
-            time_mjd_seconds: sample.time_mjd_seconds(),
-            scan_number: sample.scan_number(),
             state_id: sample.state_id(),
-            observation_id: sample.observation_id(),
-            array_id: sample.array_id(),
             uvw_m: sample.uvw_m(),
         }
     }
@@ -174,18 +157,13 @@ impl CompiledRowPredicate {
             .iter()
             .any(|description| description.data_description_id() == data_description_id)
             && id_matches(selection.fields(), row.field_id)
-            && time_matches(selection.times(), row.time_mjd_seconds)
             && uv_matches(
                 selection.uv_distances(),
                 row.uvw_m,
                 data_description_id,
                 &self.wavelengths_by_ddid,
             )
-            && antenna_matches(selection.antennas(), row.antenna1, row.antenna2)
-            && id_matches(selection.scans(), row.scan_number)
-            && id_matches(selection.observations(), row.observation_id)
             && intent_matches(selection.intents(), row.state_id)
-            && id_matches(selection.arrays(), row.array_id)
     }
 }
 
@@ -199,18 +177,6 @@ fn id_matches(selection: &IdSelection, value: i32) -> bool {
         IdSelection::Only(ids) => u32::try_from(value)
             .ok()
             .is_some_and(|value| ids.binary_search(&value).is_ok()),
-    }
-}
-
-fn time_matches(selection: &TimeSelection, value: f64) -> bool {
-    match selection {
-        TimeSelection::All => true,
-        TimeSelection::Ranges(ranges) => {
-            value.is_finite()
-                && ranges.iter().any(|range| {
-                    lower_matches(range.lower(), value) && upper_matches(range.upper(), value)
-                })
-        }
     }
 }
 
@@ -264,26 +230,6 @@ fn upper_matches(bound: Option<SelectionBound>, value: f64) -> bool {
     })
 }
 
-fn antenna_matches(selection: &AntennaSelection, antenna1: i32, antenna2: i32) -> bool {
-    match selection {
-        AntennaSelection::All => true,
-        AntennaSelection::Only(baselines) => {
-            let (Ok(antenna1), Ok(antenna2)) = (u32::try_from(antenna1), u32::try_from(antenna2))
-            else {
-                return false;
-            };
-            let pair = if antenna1 <= antenna2 {
-                [antenna1, antenna2]
-            } else {
-                [antenna2, antenna1]
-            };
-            baselines
-                .binary_search_by_key(&pair, |baseline| baseline.antennas())
-                .is_ok()
-        }
-    }
-}
-
 fn intent_matches(selection: &IntentSelection, state_id: i32) -> bool {
     match selection {
         IntentSelection::All => true,
@@ -298,9 +244,8 @@ fn intent_matches(selection: &IntentSelection, state_id: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use casa_imaging_model::{
-        AntennaBaseline, AntennaSelection, DataDescriptionSelection, IdSelection, IntentSelection,
-        ResolvedIntent, RowSelection, SelectionBound, TimeRange, TimeSelection, UvDistanceRange,
-        UvDistanceUnit, UvSelection,
+        DataDescriptionSelection, IdSelection, IntentSelection, ResolvedIntent, RowSelection,
+        SelectionBound, UvDistanceRange, UvDistanceUnit, UvSelection,
     };
 
     use super::{CompiledRowPredicate, RowSelectionEvaluationError, StoredMainRow};
@@ -308,16 +253,8 @@ mod tests {
     fn exact_selection(uv_distances: UvSelection) -> RowSelection {
         RowSelection::new(
             IdSelection::Only(vec![3]),
-            TimeSelection::Ranges(vec![TimeRange::new(
-                Some(SelectionBound::inclusive(10.0)),
-                Some(SelectionBound::exclusive(20.0)),
-            )]),
             uv_distances,
-            AntennaSelection::Only(vec![AntennaBaseline::new(1, 4)]),
-            IdSelection::Only(vec![7]),
-            IdSelection::Only(vec![9]),
             IntentSelection::Only(vec![ResolvedIntent::new(5, "CALIBRATE_PHASE".to_string())]),
-            IdSelection::Only(vec![2]),
         )
     }
 
@@ -325,13 +262,7 @@ mod tests {
         StoredMainRow {
             data_description_id: 6,
             field_id: 3,
-            antenna1: 4,
-            antenna2: 1,
-            time_mjd_seconds: 15.0,
-            scan_number: 7,
             state_id: 5,
-            observation_id: 9,
-            array_id: 2,
             uvw_m: [3.0, 4.0, 12.0],
         }
     }
@@ -355,21 +286,7 @@ mod tests {
                 ..row
             },
             StoredMainRow { field_id: 4, ..row },
-            StoredMainRow { antenna2: 2, ..row },
-            StoredMainRow {
-                time_mjd_seconds: 20.0,
-                ..row
-            },
-            StoredMainRow {
-                scan_number: 8,
-                ..row
-            },
             StoredMainRow { state_id: 6, ..row },
-            StoredMainRow {
-                observation_id: 8,
-                ..row
-            },
-            StoredMainRow { array_id: 1, ..row },
             StoredMainRow {
                 uvw_m: [6.0, 0.0, 0.0],
                 ..row
@@ -405,21 +322,11 @@ mod tests {
     }
 
     #[test]
-    fn unconstrained_time_and_uv_do_not_filter_unreadable_values() {
+    fn unconstrained_uv_does_not_filter_unreadable_values() {
         let descriptions = [DataDescriptionSelection::new(6, 8, 10)];
-        let selection = RowSelection::new(
-            IdSelection::All,
-            TimeSelection::All,
-            UvSelection::All,
-            AntennaSelection::All,
-            IdSelection::All,
-            IdSelection::All,
-            IntentSelection::All,
-            IdSelection::All,
-        );
+        let selection = RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All);
         let predicate = CompiledRowPredicate::new(&selection, &descriptions, |_| None).unwrap();
         assert!(predicate.matches(StoredMainRow {
-            time_mjd_seconds: f64::NAN,
             uvw_m: [f64::NAN; 3],
             ..matching_row()
         }));

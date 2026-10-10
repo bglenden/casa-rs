@@ -104,9 +104,7 @@ impl PlannedContinuumGeneration {
         inputs: &ContinuumProductInputs<'_>,
         storage_plan: ProductStoragePlan,
     ) -> Result<ContinuumGenerationDemand, ProductsError> {
-        if inputs.problem().problem_id() != self.problem_id()
-            || inputs.problem().product_graph().graph_id() != self.graph_id()
-            || inputs.major_cycle_completion() != self.major_cycle_completion()
+        if inputs.major_cycle_completion() != self.major_cycle_completion()
             || inputs.normal_state_completion() != self.normal_state_completion()
             || inputs.final_model().generation_id() != self.final_model_generation()
             || inputs.reconstruction_mask_generation() != self.reconstruction_mask_generation()

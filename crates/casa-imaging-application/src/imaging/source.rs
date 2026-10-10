@@ -303,7 +303,7 @@ impl BoundedSource for MeasurementSetSource<'_> {
         let block = source.create_storage();
         let channels = self
             .problem
-            .selected_observation()
+            .observation_transaction()
             .read_set()
             .sources()
             .iter()

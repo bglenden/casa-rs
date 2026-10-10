@@ -2,7 +2,6 @@
 
 //! The record of visibilities written back by the final major-cycle pass.
 
-use casa_imaging_model::CompiledProblemId;
 use casa_imaging_reconstruction::{ModelGenerationId, WeightingGenerationId};
 
 /// Completed visibility write: its association and the number of cells
@@ -13,7 +12,6 @@ use casa_imaging_reconstruction::{ModelGenerationId, WeightingGenerationId};
 /// visits each selected row once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisibilityProductCompletion {
-    problem: CompiledProblemId,
     final_model: ModelGenerationId,
 
     weighting_generation: WeightingGenerationId,
@@ -21,28 +19,21 @@ pub struct VisibilityProductCompletion {
 }
 
 impl VisibilityProductCompletion {
-    /// The record of `sample_count` visibilities written for `problem` from
-    /// `final_model` under `weighting_generation`.
+    /// The record of `sample_count` visibilities written from `final_model`
+    /// under `weighting_generation`.
     #[must_use]
     pub const fn new(
-        problem: CompiledProblemId,
         final_model: ModelGenerationId,
         weighting_generation: WeightingGenerationId,
         sample_count: u64,
     ) -> Self {
         Self {
-            problem,
             final_model,
             weighting_generation,
             sample_count,
         }
     }
 
-    /// Return the compiled problem identity.
-    #[must_use]
-    pub const fn problem_id(self) -> CompiledProblemId {
-        self.problem
-    }
     /// Return the exact final model generation.
     #[must_use]
     pub const fn final_model(self) -> ModelGenerationId {

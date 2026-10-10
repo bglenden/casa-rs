@@ -5,9 +5,9 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use casa_imaging_model::{
-    CompiledProblemId, LogicalIdentity, ModelCell, ModelContractError, ModelDeltaTerm,
-    ModelExecutionAttemptId, ModelInputCommitment, ModelLifecycleContract, ModelSample,
-    ModelSourceShape, ModelSupport, ModelValue,
+    CompiledProblem, LogicalIdentity, ModelCell, ModelContractError, ModelDeltaTerm,
+    ModelExecutionAttemptId, ModelLifecycleContract, ModelSample, ModelSourceShape, ModelSupport,
+    ModelValue,
 };
 use thiserror::Error;
 
@@ -15,9 +15,8 @@ use crate::{
     identity::{
         AUTHORITY_DOMAIN, AUTHORITY_VERSION, Encoder, FINAL_COMPLETION_DOMAIN,
         FINAL_COMPLETION_VERSION, FinalModelCompletionId, GENERATION_DOMAIN, GENERATION_VERSION,
-        ModelDeltaId, ModelGenerationId, ModelReprojectionId, NEXT_MODEL_DELTA,
+        ModelDeltaId, ModelGenerationId, NEXT_MODEL_DELTA,
     },
-    model_reprojection::{ExecutableModelProblem, PreparedReprojectedSeed},
     model_storage::{ModelSampleUpdate, ModelSamples, ModelStoragePlan},
 };
 
@@ -38,15 +37,8 @@ static NEXT_AUTHORITY_SEAL: AtomicU64 = AtomicU64::new(1);
 /// Owner-recorded origin of one named model generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelGenerationOrigin {
-    /// The compiled problem explicitly began from an empty model.
+    /// The lifecycle's empty initial model.
     Empty,
-    /// An identified source artifact was ingested, with optional reprojection.
-    Ingested {
-        /// External source artifact identity.
-        source: LogicalIdentity,
-        /// Exact reprojection identity, or `None` for aligned ingest.
-        reprojection: Option<ModelReprojectionId>,
-    },
     /// A base-bound Model Delta produced this generation.
     Delta {
         /// Parent generation.
@@ -162,7 +154,6 @@ impl ModelDelta {
 pub struct FinalModelCompletion {
     completion_id: FinalModelCompletionId,
     seal: AuthoritySeal,
-    problem: CompiledProblemId,
     attempt: ModelExecutionAttemptId,
     epoch: u64,
     base: ModelGenerationId,
@@ -175,12 +166,6 @@ impl FinalModelCompletion {
     #[must_use]
     pub const fn completion_id(&self) -> FinalModelCompletionId {
         self.completion_id
-    }
-
-    /// Return the exact compiled problem.
-    #[must_use]
-    pub const fn problem(&self) -> CompiledProblemId {
-        self.problem
     }
 
     /// Return the execution attempt that owns the completion.
@@ -313,13 +298,12 @@ impl FinalModelUpdate {
 
 /// Solver-independent owner of one compiled model lifecycle.
 ///
-/// This authority is deliberately not `Clone`. Generation IDs bind the complete
-/// problem, attempt, epoch, and unique owner instance, without hashing content.
+/// This authority is deliberately not `Clone`. Generation IDs bind the
+/// attempt, epoch, and unique owner instance, without hashing content.
 /// The private instance binding rejects values minted by another owner. Its final
 /// completion authority is consumed by the first finalization attempt.
 #[derive(Debug)]
 pub struct ModelLifecycle {
-    problem: CompiledProblemId,
     contract: ModelLifecycleContract,
     attempt: ModelExecutionAttemptId,
     epoch: u64,
@@ -327,7 +311,6 @@ pub struct ModelLifecycle {
     seal: AuthoritySeal,
     final_authority: Option<FinalAuthority>,
     continuation: Option<ContinuationAuthority>,
-    prepared: Option<PreparedReprojectedSeed>,
     storage: ModelStoragePlan,
     next_generation: AtomicU64,
 }
@@ -335,7 +318,7 @@ pub struct ModelLifecycle {
 impl ModelLifecycle {
     /// Bind the Compiled Problem to one non-zero execution attempt and epoch.
     pub fn bind(
-        problem: ExecutableModelProblem,
+        problem: &CompiledProblem,
         attempt: ModelExecutionAttemptId,
         epoch: u64,
         storage: ModelStoragePlan,
@@ -343,24 +326,15 @@ impl ModelLifecycle {
         if attempt.identity().as_bytes() == [0; 32] || epoch == 0 {
             return Err(ModelLifecycleError::InvalidExecutionBinding);
         }
-        let authority = lifecycle_authority(
-            problem.problem_id(),
-            problem.model_lifecycle(),
-            attempt,
-            epoch,
-        );
         let seal = next_authority_seal();
-        let ExecutableModelProblem { problem, prepared } = problem;
         Ok(Self {
-            problem: problem.problem_id(),
             contract: problem.model_lifecycle().clone(),
             attempt,
             epoch,
-            authority,
+            authority: lifecycle_authority(attempt, epoch),
             seal,
             final_authority: Some(FinalAuthority(seal)),
             continuation: None,
-            prepared,
             storage,
             next_generation: AtomicU64::new(1),
         })
@@ -370,10 +344,10 @@ impl ModelLifecycle {
     ///
     /// This is the sole cross-attempt model handoff. The previous completion
     /// and generation stay inseparable until this method validates their
-    /// problem, generation, and private owner binding. The returned generation is
+    /// generation and private owner binding. The returned generation is
     /// accepted only by this newly bound lifecycle and remains affine.
     pub fn continue_from(
-        problem: ExecutableModelProblem,
+        problem: &CompiledProblem,
         attempt: ModelExecutionAttemptId,
         epoch: u64,
         continuation: FinalModelContinuation,
@@ -384,15 +358,13 @@ impl ModelLifecycle {
         lifecycle.validate_generation_shape_and_bounds(&generation)?;
         let completion_identity = final_completion_id(
             generation.authority,
-            completion.problem,
             completion.attempt,
             completion.epoch,
             completion.base,
             completion.delta,
             completion.generation,
         );
-        if completion.problem != lifecycle.problem
-            || completion.generation != generation.generation_id
+        if completion.generation != generation.generation_id
             || completion.seal != generation.seal
             || completion_identity != completion.completion_id
             || generation.shape != *lifecycle.contract.target()
@@ -415,12 +387,6 @@ impl ModelLifecycle {
         &self.contract
     }
 
-    /// Return the exact compiled problem this lifecycle is bound to.
-    #[must_use]
-    pub const fn problem(&self) -> CompiledProblemId {
-        self.problem
-    }
-
     /// Return the bound execution attempt.
     #[must_use]
     pub const fn attempt(&self) -> ModelExecutionAttemptId {
@@ -436,19 +402,16 @@ impl ModelLifecycle {
     /// Return the stable lifecycle authority behind every owner-minted ID.
     ///
     /// Unlike the per-instance process-local seal, this identity binds the
-    /// compiled problem, lifecycle commitment, attempt, and epoch. Generation
-    /// identities additionally bind the unique process-local owner instance.
+    /// attempt and epoch. Generation identities additionally bind the unique
+    /// process-local owner instance.
     #[must_use]
     pub(crate) const fn authority(&self) -> LogicalIdentity {
         self.authority
     }
 
-    /// Establish the compiled empty initial generation.
+    /// Establish the empty initial generation every lifecycle begins from.
     pub fn initial_empty(&self) -> Result<ModelGeneration, ModelLifecycleError> {
         self.ensure_open()?;
-        if !matches!(self.contract.input(), ModelInputCommitment::Empty) {
-            return Err(ModelLifecycleError::InitialModelKindMismatch);
-        }
         let zero = ModelValue::new(0.0)?;
         let mut samples = self.storage.create(self.contract.target().sample_count())?;
         let window = vec![ModelSample::valid(zero); samples.window_samples()];
@@ -456,111 +419,6 @@ impl ModelLifecycle {
             samples.write(start, &window[..window.len().min(samples.len() - start)])?;
         }
         self.mint_stored_generation(samples, ModelGenerationOrigin::Empty)
-    }
-
-    /// Consume one fallible aligned seed stream in exact canonical target order.
-    ///
-    /// The outer result preserves a source-reader failure. The inner result
-    /// reports the lifecycle contract failure after the source stream has been
-    /// consumed. Only the resulting generation buffer is retained; no complete
-    /// source array, coverage bitmap, or canonicalization copy is allocated.
-    pub fn ingest_aligned<E>(
-        &self,
-        source: LogicalIdentity,
-        source_shape: &ModelSourceShape,
-        samples: impl IntoIterator<Item = Result<ModelSample, E>>,
-    ) -> Result<Result<ModelGeneration, ModelLifecycleError>, E> {
-        if let Err(error) = self.ensure_open() {
-            return Ok(Err(error));
-        }
-        let ModelInputCommitment::AlignedSeed {
-            source: expected_source,
-            support,
-        } = self.contract.input()
-        else {
-            return Ok(Err(ModelLifecycleError::InitialModelKindMismatch));
-        };
-        if source != *expected_source || source_shape != self.contract.target() {
-            return Ok(Err(ModelLifecycleError::SourceProvenanceMismatch));
-        }
-        let storage = match self.storage.create(self.contract.target().sample_count()) {
-            Ok(storage) => storage,
-            Err(error) => return Ok(Err(error)),
-        };
-        let (samples, actual_support) = match store_exact_samples(
-            samples,
-            storage,
-            self.contract.bounds().max_absolute_model_value(),
-        )? {
-            Ok(samples) => samples,
-            Err(error) => return Ok(Err(error)),
-        };
-        Ok((|| {
-            if actual_support != *support {
-                return Err(ModelLifecycleError::SupportIdentityMismatch);
-            }
-            self.mint_stored_generation(
-                samples,
-                ModelGenerationOrigin::Ingested {
-                    source,
-                    reprojection: None,
-                },
-            )
-        })())
-    }
-
-    /// Consume one reconstruction-derived reprojection after checking its compiled evidence.
-    pub fn initial_reprojected(&mut self) -> Result<ModelGeneration, ModelLifecycleError> {
-        self.ensure_open()?;
-        let prepared = self
-            .prepared
-            .take()
-            .ok_or(ModelLifecycleError::OwnerPreparationRequired)?;
-        let ModelInputCommitment::ReprojectedSeed(commitment) = self.contract.input() else {
-            return Err(ModelLifecycleError::InitialModelKindMismatch);
-        };
-        if prepared.projection.source() != commitment.source()
-            || prepared.projection.source_shape() != commitment.source_shape()
-            || prepared.target_shape != *self.contract.target()
-            || prepared.projection.preparation_contract() != commitment.preparation_contract()
-            || prepared.bounds != self.contract.bounds()
-            || prepared.precision != self.contract.arithmetic_precision()
-        {
-            return Err(ModelLifecycleError::SourceProvenanceMismatch);
-        }
-        if prepared.projection != *commitment {
-            return Err(ModelLifecycleError::ReprojectionIdentityMismatch);
-        }
-        let source = prepared.projection.source();
-        let reprojection = ModelReprojectionId(prepared.projection.reprojection());
-        self.mint_generation(
-            prepared.samples.into_vec(),
-            ModelGenerationOrigin::Ingested {
-                source,
-                reprojection: Some(reprojection),
-            },
-        )
-    }
-
-    /// Adopt the exact generation named by the compiled input.
-    pub fn resume(
-        &self,
-        mut generation: ModelGeneration,
-    ) -> Result<ModelGeneration, ModelLifecycleError> {
-        self.ensure_open()?;
-        let ModelInputCommitment::Generation(expected) = self.contract.input() else {
-            return Err(ModelLifecycleError::InitialModelKindMismatch);
-        };
-        self.validate_generation_shape_and_bounds(&generation)?;
-        if generation.shape != *self.contract.target()
-            || generation.generation_id.identity() != *expected
-        {
-            return Err(ModelLifecycleError::GenerationIdentityMismatch);
-        }
-        generation
-            .samples
-            .record_validated_bound(self.contract.bounds().max_absolute_model_value());
-        Ok(generation)
     }
 
     /// Validate and name one canonical sparse Model Delta.
@@ -794,7 +652,6 @@ impl ModelLifecycle {
         let generation_id = prepared.generation.generation_id;
         let completion_id = final_completion_id(
             self.authority,
-            self.problem,
             self.attempt,
             self.epoch,
             prepared.base,
@@ -808,7 +665,6 @@ impl ModelLifecycle {
         let completion = FinalModelCompletion {
             completion_id,
             seal: final_authority.0,
-            problem: self.problem,
             attempt: self.attempt,
             epoch: self.epoch,
             base: prepared.base,
@@ -914,13 +770,6 @@ impl ModelLifecycle {
             continuation.seal == generation.seal
                 && continuation.generation == generation.generation_id
         }) {
-            return Ok(());
-        }
-        if matches!(
-            self.contract.input(),
-            ModelInputCommitment::Generation(expected)
-                if generation.generation_id.identity() == *expected
-        ) {
             Ok(())
         } else {
             Err(ModelLifecycleError::ForeignModelLifecycle)
@@ -957,24 +806,6 @@ impl ModelLifecycle {
             Ok(())
         })?;
         Ok(())
-    }
-
-    fn mint_generation(
-        &self,
-        samples: Vec<ModelSample>,
-        origin: ModelGenerationOrigin,
-    ) -> Result<ModelGeneration, ModelLifecycleError> {
-        if samples.len() != self.contract.target().sample_count() {
-            return Err(ModelLifecycleError::SampleCountMismatch {
-                expected: self.contract.target().sample_count(),
-                actual: samples.len(),
-            });
-        }
-        let mut stored = self.storage.create(samples.len())?;
-        for (index, window) in samples.chunks(stored.window_samples()).enumerate() {
-            stored.write(index * stored.window_samples(), window)?;
-        }
-        self.mint_stored_generation(stored, origin)
     }
 
     fn mint_stored_generation(
@@ -1022,19 +853,13 @@ pub enum ModelLifecycleError {
     /// An admitted model backing or window could not be accessed.
     #[error("model storage: {0}")]
     Storage(String),
-    /// A raw reprojected compiler projection was presented without owner preparation.
-    #[error("reprojected model execution requires reconstruction-owned preparation")]
-    OwnerPreparationRequired,
     /// A model schema value was invalid.
     #[error(transparent)]
     Contract(#[from] ModelContractError),
     /// The execution attempt identity or generation epoch was zero.
     #[error("model lifecycle requires a non-zero execution attempt and epoch")]
     InvalidExecutionBinding,
-    /// The requested initialization path differed from the compiled input commitment.
-    #[error("model initialization does not match the compiled input commitment")]
-    InitialModelKindMismatch,
-    /// A source stream length differed from its shape.
+    /// A sample stream length differed from its shape.
     #[error("model stream requires {expected} samples but received {actual}")]
     SampleCountMismatch {
         /// Shape-derived sample count.
@@ -1042,41 +867,12 @@ pub enum ModelLifecycleError {
         /// Supplied sample count.
         actual: usize,
     },
-    /// Source validity evidence differed from the Compiled Problem.
-    #[error("model source validity evidence differs from the Compiled Problem")]
-    SupportIdentityMismatch,
-    /// Source artifact or typed coordinate/coefficient-space provenance differed.
-    #[error("model source provenance differs from the Compiled Problem")]
-    SourceProvenanceMismatch,
-    /// A cell lay outside its typed source or target shape.
+    /// A cell lay outside its typed shape.
     #[error("model cell lies outside its declared shape")]
     CellOutsideShape,
-    /// Source and target image-domain inventories cannot be paired exactly.
-    #[error("model reprojection requires matching canonical image-domain inventories")]
-    UnsupportedDomainMapping,
-    /// Source and target direction laws require an unsupported frame or tangent-point conversion.
-    #[error("model reprojection supports exact affine mapping within one direction tangent plane")]
+    /// Two image domains' direction laws require an unsupported frame or tangent-point conversion.
+    #[error("model domains overlap only through an exact affine mapping within one tangent plane")]
     UnsupportedDirectionConversion,
-    /// Source and target spectral coefficient bases cannot be mapped exactly.
-    #[error("model reprojection cannot convert between the declared coefficient bases")]
-    UnsupportedBasisConversion,
-    /// A requested target polarization coordinate is absent from the source.
-    #[error("model reprojection cannot derive the requested polarization coordinate")]
-    UnsupportedPolarizationConversion,
-    /// The mapping exceeded its compiled term ceiling.
-    #[error("model reprojection has {terms} terms, exceeding bound {bound}")]
-    ReprojectionTermBoundExceeded {
-        /// Exact term count.
-        terms: usize,
-        /// Compiled term ceiling.
-        bound: usize,
-    },
-    /// Reprojection weights did not sum to one in the committed arithmetic precision.
-    #[error("reprojection stencil weights must sum to one")]
-    UnnormalizedReprojectionStencil,
-    /// Applied mapping evidence differed from the Compiled Problem.
-    #[error("model reprojection identity differs from the Compiled Problem")]
-    ReprojectionIdentityMismatch,
     /// A model value exceeded the lifecycle ceiling.
     #[error("model value exceeds the compiled lifecycle bound")]
     ModelValueBoundExceeded,
@@ -1132,24 +928,15 @@ fn next_authority_seal() -> AuthoritySeal {
     AuthoritySeal(seal)
 }
 
-fn lifecycle_authority(
-    problem: CompiledProblemId,
-    contract: &ModelLifecycleContract,
-    attempt: ModelExecutionAttemptId,
-    epoch: u64,
-) -> LogicalIdentity {
+fn lifecycle_authority(attempt: ModelExecutionAttemptId, epoch: u64) -> LogicalIdentity {
     let mut encoder = Encoder::new(AUTHORITY_DOMAIN, AUTHORITY_VERSION);
-    encoder.identity(problem.as_bytes());
-    encoder.identity(contract.contract_id().as_bytes());
     encoder.identity(attempt.identity().as_bytes());
     encoder.u64(epoch);
     LogicalIdentity::from_bytes(encoder.finish())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn final_completion_id(
     authority: LogicalIdentity,
-    problem: CompiledProblemId,
     attempt: ModelExecutionAttemptId,
     epoch: u64,
     base: ModelGenerationId,
@@ -1158,7 +945,6 @@ fn final_completion_id(
 ) -> FinalModelCompletionId {
     let mut encoder = Encoder::new(FINAL_COMPLETION_DOMAIN, FINAL_COMPLETION_VERSION);
     encoder.identity(authority.as_bytes());
-    encoder.identity(problem.as_bytes());
     encoder.identity(attempt.identity().as_bytes());
     encoder.u64(epoch);
     encoder.identity(base.as_bytes());
@@ -1171,62 +957,6 @@ fn final_completion_id(
     }
     encoder.identity(generation.as_bytes());
     FinalModelCompletionId(LogicalIdentity::from_bytes(encoder.finish()))
-}
-
-fn store_exact_samples<E>(
-    samples: impl IntoIterator<Item = Result<ModelSample, E>>,
-    mut storage: ModelSamples,
-    bound: f64,
-) -> Result<Result<(ModelSamples, LogicalIdentity), ModelLifecycleError>, E> {
-    let expected = storage.len();
-    let mut support = casa_imaging_model::ModelSourceSupportInspection::new();
-    let mut values = Vec::with_capacity(storage.window_samples());
-    let mut written = 0;
-    let mut iterator = samples.into_iter();
-    for index in 0..expected {
-        let sample = match iterator.next() {
-            None => {
-                return Ok(Err(ModelLifecycleError::SampleCountMismatch {
-                    expected,
-                    actual: index,
-                }));
-            }
-            Some(Err(error)) => return Err(error),
-            Some(Ok(sample)) => sample,
-        };
-        if sample.support() == ModelSupport::Valid {
-            if let Err(error) = validate_model_value(sample.value(), bound) {
-                return Ok(Err(error));
-            }
-        } else if sample.value().value() != 0.0 {
-            return Ok(Err(ModelLifecycleError::InvalidSupportPayload));
-        }
-        support.push(sample.support());
-        values.push(sample);
-        if values.len() == storage.window_samples() {
-            if let Err(error) = storage.write(written, &values) {
-                return Ok(Err(error));
-            }
-            written += values.len();
-            values.clear();
-        }
-    }
-    match iterator.next() {
-        None => {}
-        Some(Err(error)) => return Err(error),
-        Some(Ok(_)) => {
-            return Ok(Err(ModelLifecycleError::SampleCountMismatch {
-                expected,
-                actual: expected + 1,
-            }));
-        }
-    }
-    if !values.is_empty()
-        && let Err(error) = storage.write(written, &values)
-    {
-        return Ok(Err(error));
-    }
-    Ok(Ok((storage, support.finish())))
 }
 
 pub(crate) fn validate_model_value(

@@ -9,7 +9,7 @@
 
 use std::{collections::VecDeque, fmt};
 
-use casa_imaging_model::{CompiledProblemId, DirectionCoordinateSpec, LogicalIdentity};
+use casa_imaging_model::{DirectionCoordinateSpec, LogicalIdentity};
 use thiserror::Error;
 
 use crate::{Encoder, FinalNormalState, FinalNormalStateCompletionId, ModelGenerationId};
@@ -264,17 +264,15 @@ impl ReconstructionMaskPlan {
         normal: &FinalNormalState,
         beam: Option<AutoMaskBeam>,
     ) -> Result<(ReconstructionMask, Option<AutoMultithreshEvidence>), MaskError> {
-        let problem = normal.problem_id();
         let model_generation = base.generation_id();
         let shape = normal.shape();
         match self {
             Self::FullPlane { coordinate } => Ok((
-                ReconstructionMask::full_plane(problem, model_generation, *coordinate, shape)?,
+                ReconstructionMask::full_plane(model_generation, *coordinate, shape)?,
                 None,
             )),
             Self::Boxes { coordinate, boxes } => Ok((
                 ReconstructionMask::from_boxes(
-                    problem,
                     model_generation,
                     *coordinate,
                     shape,
@@ -289,7 +287,6 @@ impl ReconstructionMaskPlan {
                 support,
             } => Ok((
                 ReconstructionMask::from_reprojected_support(
-                    problem,
                     model_generation,
                     *coordinate,
                     shape,
@@ -316,7 +313,6 @@ impl ReconstructionMaskPlan {
                     .map(|sample| sample.support() == casa_imaging_model::ModelSupport::Valid)
                     .collect::<Vec<_>>();
                 let (mask, evidence) = auto_multithresh(
-                    problem,
                     model_generation,
                     *coordinate,
                     normal,
@@ -392,7 +388,6 @@ impl MaskBox {
 #[derive(Debug, Clone)]
 pub struct ReconstructionMask {
     generation: ReconstructionMaskGenerationId,
-    problem: CompiledProblemId,
     model_generation: ModelGenerationId,
     normal_state: Option<FinalNormalStateCompletionId>,
     coordinate: DirectionCoordinateSpec,
@@ -404,7 +399,7 @@ pub struct ReconstructionMask {
 ///
 /// Plan ordinal is the compiled image-domain ordinal. Construction rejects an
 /// empty collection; materialization additionally proves exact cardinality,
-/// shape, problem, model-generation, and Normal-State lineage.
+/// shape, model-generation, and Normal-State lineage.
 #[derive(Debug, Clone)]
 pub struct ImageDomainReconstructionMaskPlans {
     plans: Box<[ReconstructionMaskPlan]>,
@@ -542,18 +537,16 @@ impl ImageDomainReconstructionMaskPlans {
         }
         let mut masks = Vec::with_capacity(self.plans.len());
         for (ordinal, plan) in self.plans.iter().enumerate() {
-            let problem = normal.problem_id();
             let model_generation = base.generation_id();
             let shape = normal
                 .domain_shape(ordinal)
                 .ok_or(MaskError::DomainCardinalityMismatch)?;
             let mask = match plan {
                 ReconstructionMaskPlan::FullPlane { coordinate } => {
-                    ReconstructionMask::full_plane(problem, model_generation, *coordinate, shape)?
+                    ReconstructionMask::full_plane(model_generation, *coordinate, shape)?
                 }
                 ReconstructionMaskPlan::Boxes { coordinate, boxes } => {
                     ReconstructionMask::from_boxes(
-                        problem,
                         model_generation,
                         *coordinate,
                         shape,
@@ -566,7 +559,6 @@ impl ImageDomainReconstructionMaskPlans {
                     source_shape,
                     support,
                 } => ReconstructionMask::from_reprojected_support(
-                    problem,
                     model_generation,
                     *coordinate,
                     shape,
@@ -618,8 +610,7 @@ impl ImageDomainReconstructionMasks {
             return Err(MaskError::DomainCardinalityMismatch);
         };
         if masks.iter().any(|mask| {
-            mask.problem != primary.problem
-                || mask.model_generation != primary.model_generation
+            mask.model_generation != primary.model_generation
                 || mask.normal_state != primary.normal_state
         }) {
             return Err(MaskError::ShapeMismatch);
@@ -677,14 +668,12 @@ impl ImageDomainReconstructionMasks {
 impl ReconstructionMask {
     /// Mint the all-valid default support for one exact model grid.
     pub fn full_plane(
-        problem: CompiledProblemId,
         model_generation: ModelGenerationId,
         coordinate: DirectionCoordinateSpec,
         shape: [usize; 2],
     ) -> Result<Self, MaskError> {
         validate_shape(shape)?;
         Self::mint(
-            problem,
             model_generation,
             None,
             coordinate,
@@ -697,7 +686,6 @@ impl ReconstructionMask {
 
     /// Compile target-grid pixel boxes into one static mask generation.
     pub fn from_boxes(
-        problem: CompiledProblemId,
         model_generation: ModelGenerationId,
         coordinate: DirectionCoordinateSpec,
         shape: [usize; 2],
@@ -718,22 +706,11 @@ impl ReconstructionMask {
         if !support.iter().any(|value| *value) {
             return Err(MaskError::EmptyMask);
         }
-        Self::mint(
-            problem,
-            model_generation,
-            None,
-            coordinate,
-            shape,
-            support,
-            0,
-            &[],
-        )
+        Self::mint(model_generation, None, coordinate, shape, support, 0, &[])
     }
 
     /// Mint exact target-grid support already reprojected by the geometry owner.
-    #[allow(clippy::too_many_arguments)]
     pub fn from_reprojected_support(
-        problem: CompiledProblemId,
         model_generation: ModelGenerationId,
         target_coordinate: DirectionCoordinateSpec,
         target_shape: [usize; 2],
@@ -754,7 +731,6 @@ impl ReconstructionMask {
         source_identity.usize(source_shape[1]);
         encode_coordinate(&mut source_identity, source_coordinate);
         Self::mint(
-            problem,
             model_generation,
             None,
             target_coordinate,
@@ -769,12 +745,6 @@ impl ReconstructionMask {
     #[must_use]
     pub const fn generation_id(&self) -> ReconstructionMaskGenerationId {
         self.generation
-    }
-
-    /// Return the compiled problem whose model grid this mask constrains.
-    #[must_use]
-    pub const fn problem_id(&self) -> CompiledProblemId {
-        self.problem
     }
 
     /// Return the exact model generation constrained by this mask.
@@ -815,9 +785,7 @@ impl ReconstructionMask {
             && self.support[pixel[0] * self.shape[1] + pixel[1]]
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn mint(
-        problem: CompiledProblemId,
         model_generation: ModelGenerationId,
         normal_state: Option<FinalNormalStateCompletionId>,
         coordinate: DirectionCoordinateSpec,
@@ -827,7 +795,6 @@ impl ReconstructionMask {
         source_identity: &[u8],
     ) -> Result<Self, MaskError> {
         let generation = mask_identity(
-            problem,
             model_generation,
             normal_state,
             coordinate,
@@ -837,7 +804,6 @@ impl ReconstructionMask {
         );
         Ok(Self {
             generation,
-            problem,
             model_generation,
             normal_state,
             coordinate,
@@ -895,7 +861,6 @@ pub struct AutoMultithreshEvidence {
 /// `beam` the PSF's fitted main lobe and sidelobe level.
 #[allow(clippy::too_many_arguments)]
 pub fn auto_multithresh(
-    problem: CompiledProblemId,
     model_generation: ModelGenerationId,
     coordinate: DirectionCoordinateSpec,
     normal: &FinalNormalState,
@@ -914,9 +879,7 @@ pub fn auto_multithresh(
     validate_auto_controls(controls, beam.area_pixels)?;
     let shape = normal.shape();
     if valid_support.len() != shape[0] * shape[1]
-        || previous.is_some_and(|mask| {
-            mask.problem != problem || mask.shape != shape || mask.coordinate != coordinate
-        })
+        || previous.is_some_and(|mask| mask.shape != shape || mask.coordinate != coordinate)
     {
         return Err(MaskError::ShapeMismatch);
     }
@@ -1049,7 +1012,6 @@ pub fn auto_multithresh(
     }
     source.usize(controls.grow_iterations);
     let mask = ReconstructionMask::mint(
-        problem,
         model_generation,
         Some(normal.completion_id()),
         coordinate,
@@ -1281,9 +1243,7 @@ fn offset_mask_pixel(
     (x < shape[0] && y < shape[1]).then_some([x, y])
 }
 
-#[allow(clippy::too_many_arguments)]
 fn mask_identity(
-    problem: CompiledProblemId,
     model_generation: ModelGenerationId,
     normal: Option<FinalNormalStateCompletionId>,
     coordinate: DirectionCoordinateSpec,
@@ -1292,7 +1252,6 @@ fn mask_identity(
     source_identity: &[u8],
 ) -> ReconstructionMaskGenerationId {
     let mut encoder = Encoder::new(MASK_DOMAIN, MASK_VERSION);
-    encoder.identity(problem.as_bytes());
     encoder.identity(model_generation.as_bytes());
     match normal {
         None => encoder.u8(0),

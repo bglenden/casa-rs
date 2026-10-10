@@ -22,9 +22,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_imaging_model::{
-    CentreLaws, DelayCentreLaw, GeometryInput, ModelBounds, ModelInputCommitment,
-    ModelLifecycleRequirements, ModelStateIdentity, NativeAwRequestInput, NumericPrecision,
-    ProblemSpecification, ReferenceDataKind, SequentialContinuumTransform,
+    CentreLaws, DelayCentreLaw, GeometryInput, ModelBounds, ModelLifecycleRequirements,
+    NativeAwRequestInput, NumericPrecision, ProblemSpecification, SequentialContinuumTransform,
     UncorrectedImageMaskPolicy, UvwCoordinateLaw, WeightColumn as OwnerWeightColumn,
 };
 use casa_imaging_operator::{AwCatalog, AwIndexing};
@@ -125,7 +124,7 @@ pub(crate) fn prepare(
         specification_inputs(
             request,
             &surveyed,
-            instrument.map(|(model, _)| model),
+            instrument,
             primary_beam.is_some(),
             continuum_transform,
         )?,
@@ -136,30 +135,13 @@ pub(crate) fn prepare(
     };
     let model_samples = domains::model_samples(&domains, reconstruction_planes, &request.stokes)?;
     let geometry = geometry(request, &domains, &centre, &spectral);
-    let instrument_reference = instrument.map(|(_, reference)| reference);
-    let observation = observation_request(
-        request,
-        &ms,
-        survey,
-        &channels,
-        instrument_reference,
-        centre,
-        budget,
-    )?;
+    let observation = observation_request(request, &ms, survey, &channels, centre, budget)?;
     Ok(Prepared {
         specification,
         geometry,
         model_lifecycle: ModelLifecycleRequirements::new(
-            ModelBounds::new(
-                model_samples,
-                spectral.output_channels,
-                spectral.output_channels,
-                model_samples,
-                f64::MAX,
-                f64::MAX,
-            )?,
+            ModelBounds::new(model_samples, model_samples, f64::MAX, f64::MAX)?,
             NumericPrecision::F64,
-            ModelInputCommitment::Empty,
         ),
         masks: domains::mask_plans(&domains)?,
         minor_cycle_image_response: match &request.gridder {
@@ -268,14 +250,13 @@ fn specification_inputs(
 }
 
 /// The selected-observation request: the survey's rows and the channels
-/// read, the visibility and weight columns, the instrument reference data
-/// and the centre's ephemeris.
+/// read, the visibility and weight columns, and the centre's Measures and
+/// ephemeris.
 fn observation_request(
     request: &ImagingRequest,
     ms: &MeasurementSet,
     survey: Survey,
     channels: &WindowChannels,
-    instrument_reference: Option<casa_imaging_model::LogicalIdentity>,
     centre: Centre,
     budget: SelectedObservationContentBudget,
 ) -> Result<SelectedObservationResolutionRequest, ApplicationError> {
@@ -286,14 +267,9 @@ fn observation_request(
     };
     Ok(SelectedObservationResolutionRequest::new(
         request.vis.display().to_string(),
-        selection_request_identity(),
         selection::observation_selection(ms, survey, channels)?,
         selection::visibility_column(ms, request.datacolumn)?,
         weight_column,
-        instrument_reference
-            .map(|reference| vec![(ReferenceDataKind::Instrument, reference)])
-            .unwrap_or_default(),
-        ModelStateIdentity::Empty,
         budget,
         centre.measures,
     )
@@ -534,17 +510,6 @@ fn aw_plan(
             .checked_mul(1 << 20)
             .ok_or_else(|| boxed("cf_resident_mb exceeds addressable memory"))?,
     })
-}
-
-/// The identity of one prepared selection request: unique in the process,
-/// since a request is identified by who owns it, not by its content.
-fn selection_request_identity() -> casa_imaging_model::LogicalIdentity {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    let mut identity = [0_u8; 32];
-    identity[0] = 2;
-    identity[24..].copy_from_slice(&NEXT.fetch_add(1, Ordering::Relaxed).to_be_bytes());
-    casa_imaging_model::LogicalIdentity::from_bytes(identity)
 }
 
 fn boxed(message: impl Into<String>) -> ApplicationError {

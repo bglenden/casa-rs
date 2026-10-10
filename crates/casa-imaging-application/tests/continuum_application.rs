@@ -408,7 +408,6 @@ fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contra
     let result = execute(&imaging).expect("native Taylor metadata execution");
     let planned = &result.planned_products;
     let published = &result.products;
-    assert_eq!(planned.graph_id(), published.graph_id());
     assert_eq!(planned.members().len(), published.members().len());
     for (planned, published) in planned.members().iter().zip(published.members()) {
         assert_eq!(
@@ -1043,8 +1042,8 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
             .collect::<Vec<_>>()
     );
     assert_eq!(
-        result.planned_products.graph_id(),
-        result.products.graph_id(),
+        result.planned_products.members().len(),
+        result.products.members().len(),
         "publication must retain the canonical domain inventory"
     );
     for (planned, published) in result

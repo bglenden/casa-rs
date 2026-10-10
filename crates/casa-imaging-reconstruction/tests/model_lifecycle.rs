@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, CompileProblemError, CompiledProblem, DeclaredInnerProducts,
-    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout,
-    FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, InstrumentResponse, LogicalIdentity, MeasurementEquationContract, ModelBounds,
-    ModelCell, ModelColumnWrite, ModelContractError, ModelDeltaTerm, ModelExecutionAttemptId,
-    ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements, ModelSample,
-    ModelSourceShape, ModelStateIdentity, ModelSupport, ModelValue, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInput, ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts, DelayCentreLaw,
+    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
+    FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
+    InstrumentResponse, LogicalIdentity, MeasurementEquationContract, ModelBounds, ModelCell,
+    ModelColumnWrite, ModelDeltaTerm, ModelExecutionAttemptId, ModelInnerProduct,
+    ModelLifecycleRequirements, ModelSample, ModelValue, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw,
+    PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput,
+    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
     ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
     ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
     ReductionPolicy, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
@@ -20,9 +19,7 @@ use casa_imaging_model::{
     WeightingContract, WeightingScheme, compile,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, FinalModelCompletionId, ModelGenerationId, ModelGenerationOrigin,
-    ModelLifecycle, ModelLifecycleError, ModelReprojectionError, ModelReprojectionId,
-    ModelSourceReader, PreparedReprojectedSeed, model_support_identity, prepare_reprojected_seed,
+    FinalModelCompletionId, ModelGenerationId, ModelLifecycle, ModelLifecycleError,
 };
 
 #[path = "../../casa-imaging-model/tests/common/mod.rs"]
@@ -34,11 +31,11 @@ fn identity(byte: u8) -> LogicalIdentity {
 }
 
 fn bounds() -> ModelBounds {
-    ModelBounds::new(16, 16, 32, 8, 1.0e30, 1.0e30).expect("valid bounds")
+    ModelBounds::new(16, 8, 1.0e30, 1.0e30).expect("valid bounds")
 }
 
 fn empty_requirements(precision: NumericPrecision) -> ModelLifecycleRequirements {
-    ModelLifecycleRequirements::new(bounds(), precision, ModelInputCommitment::Empty)
+    ModelLifecycleRequirements::new(bounds(), precision)
 }
 
 fn product_validity() -> ProductValidityPolicies {
@@ -60,49 +57,10 @@ fn product_validity() -> ProductValidityPolicies {
 }
 
 fn geometry(width: usize) -> GeometryInput {
-    geometry_with_direction(width, 1.0, [0.0, 0.0])
-}
-
-fn geometry_with_longitude(width: usize, longitude: f64) -> GeometryInput {
-    geometry_with_direction(width, longitude, [0.0, 0.0])
-}
-
-fn geometry_with_reference_pixel(width: usize, reference_pixel: [f64; 2]) -> GeometryInput {
-    geometry_with_direction(width, 1.0, reference_pixel)
-}
-
-fn geometry_with_direction(
-    width: usize,
-    longitude: f64,
-    reference_pixel: [f64; 2],
-) -> GeometryInput {
-    geometry_with_direction_and_spectral(
-        width,
-        longitude,
-        reference_pixel,
-        SpectralWcs::Linear {
-            channels: 1,
-            reference_pixel: 0.0,
-            reference_frequency_hz: 1.4e9,
-            increment_hz: 1.0e6,
-        },
-    )
-}
-
-fn geometry_with_spectral(width: usize, wcs: SpectralWcs) -> GeometryInput {
-    geometry_with_direction_and_spectral(width, 1.0, [0.0, 0.0], wcs)
-}
-
-fn geometry_with_direction_and_spectral(
-    width: usize,
-    longitude: f64,
-    reference_pixel: [f64; 2],
-    spectral_wcs: SpectralWcs,
-) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
-        SkyDirection::new(DirectionFrame::J2000, longitude, -0.5),
-        reference_pixel,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        [0.0, 0.0],
         [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
         [[1.0, 0.0], [0.0, 1.0]],
         [180.0, 0.0],
@@ -130,7 +88,12 @@ fn geometry_with_direction_and_spectral(
             FrequencyFrame::Topocentric,
             FrequencyFrame::Topocentric,
             SpectralFrameAnchor::NotApplicable,
-            spectral_wcs,
+            SpectralWcs::Linear {
+                channels: 1,
+                reference_pixel: 0.0,
+                reference_frequency_hz: 1.4e9,
+                increment_hz: 1.0e6,
+            },
             RestFrequency::NotApplicable,
             DopplerConvention::NotApplicable,
         ),
@@ -196,69 +159,18 @@ fn overlapping_geometry(width: usize, domains: usize) -> GeometryInput {
 fn problem(
     observation: u8,
     width: usize,
-    model: ModelStateIdentity,
     lifecycle: ModelLifecycleRequirements,
     precision: NumericPrecision,
-) -> casa_imaging_model::CompiledProblem {
-    problem_with_geometry(observation, geometry(width), model, lifecycle, precision)
+) -> CompiledProblem {
+    problem_with_geometry(observation, geometry(width), lifecycle, precision)
 }
 
 fn problem_with_geometry(
     observation: u8,
     geometry: GeometryInput,
-    model: ModelStateIdentity,
     lifecycle: ModelLifecycleRequirements,
     precision: NumericPrecision,
-) -> casa_imaging_model::CompiledProblem {
-    problem_with_polarizations(
-        observation,
-        geometry,
-        model,
-        lifecycle,
-        precision,
-        vec![PolarizationCoordinate::StokesI],
-    )
-}
-
-fn problem_with_polarizations(
-    observation: u8,
-    geometry: GeometryInput,
-    model: ModelStateIdentity,
-    lifecycle: ModelLifecycleRequirements,
-    precision: NumericPrecision,
-    polarizations: Vec<PolarizationCoordinate>,
-) -> casa_imaging_model::CompiledProblem {
-    problem_with_contract(
-        observation,
-        geometry,
-        model,
-        lifecycle,
-        precision,
-        ReconstructionBasis::Constant,
-        ReconstructionAlgorithm::Dirty,
-        polarizations,
-        vec![ProductKind::Psf],
-    )
-    .expect("compile model lifecycle problem")
-}
-
-#[allow(clippy::too_many_arguments)]
-fn problem_with_contract(
-    observation: u8,
-    geometry: GeometryInput,
-    model: ModelStateIdentity,
-    lifecycle: ModelLifecycleRequirements,
-    precision: NumericPrecision,
-    basis: ReconstructionBasis,
-    algorithm: ReconstructionAlgorithm,
-    polarizations: Vec<PolarizationCoordinate>,
-    products: Vec<ProductKind>,
-) -> Result<CompiledProblem, CompileProblemError> {
-    let controls = if matches!(algorithm, ReconstructionAlgorithm::Dirty) {
-        ReconstructionControls::new(0, 1.0, 0.0)
-    } else {
-        ReconstructionControls::new(100, 0.1, 0.0)
-    };
+) -> CompiledProblem {
     let specification = ProblemSpecification::new(
         ScientificContract::new(
             SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
@@ -271,14 +183,14 @@ fn problem_with_contract(
             ),
         ),
         ReconstructionContract::new(
-            basis,
-            algorithm,
-            controls,
-            PolarizationContract::new(polarizations),
+            ReconstructionBasis::Constant,
+            ReconstructionAlgorithm::Dirty,
+            ReconstructionControls::new(0, 1.0, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
         WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
         ProductRequirements::new(
-            products,
+            vec![ProductKind::Psf],
             ProductNormalization::UnitResponse,
             RestoringBeamPolicy::None,
             product_validity(),
@@ -297,9 +209,10 @@ fn problem_with_contract(
     compile(ProblemInput::new(
         specification,
         geometry,
-        common::problem_inputs(observation, Vec::new(), model),
+        common::observation_snapshot(observation),
         lifecycle,
     ))
+    .expect("compile model lifecycle problem")
 }
 
 fn cell(x: usize) -> ModelCell {
@@ -320,7 +233,7 @@ fn bind_direct(
     epoch: u64,
 ) -> ModelLifecycle {
     ModelLifecycle::bind(
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("direct executable problem"),
+        problem,
         attempt,
         epoch,
         casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
@@ -329,96 +242,31 @@ fn bind_direct(
     .expect("bind model lifecycle")
 }
 
-struct SliceModelSource<'a> {
-    source: LogicalIdentity,
-    shape: &'a ModelSourceShape,
-    samples: &'a [ModelSample],
-    reads: usize,
-    fail_at: Option<ModelCell>,
-}
-
-impl<'a> SliceModelSource<'a> {
-    fn new(
-        source: LogicalIdentity,
-        shape: &'a ModelSourceShape,
-        samples: &'a [ModelSample],
-    ) -> Self {
-        Self {
-            source,
-            shape,
-            samples,
-            reads: 0,
-            fail_at: None,
-        }
-    }
-}
-
-impl ModelSourceReader for SliceModelSource<'_> {
-    type Error = &'static str;
-
-    fn source_identity(&self) -> LogicalIdentity {
-        self.source
-    }
-
-    fn source_shape(&self) -> &ModelSourceShape {
-        self.shape
-    }
-
-    fn read_sample(&mut self, cell: ModelCell) -> Result<ModelSample, Self::Error> {
-        self.reads += 1;
-        if self.fail_at == Some(cell) {
-            return Err("injected source failure");
-        }
-        self.samples
-            .get(
-                self.shape
-                    .flat_index(cell)
-                    .ok_or("source cell outside shape")?,
-            )
-            .copied()
-            .ok_or("source sample missing")
-    }
-}
-
-fn prepare_seed(
-    source: LogicalIdentity,
-    source_shape: &ModelSourceShape,
-    target_problem: &CompiledProblem,
-    samples: &[ModelSample],
-) -> PreparedReprojectedSeed {
-    let mut reader = SliceModelSource::new(source, source_shape, samples);
-    prepare_reprojected_seed(&mut reader, target_problem)
-        .expect("prepare owner-derived reprojection")
-}
-
 #[test]
 fn compiled_commitment_binds_problem_input_numerics_and_bounds() {
     let first = problem(
         1,
         2,
-        ModelStateIdentity::Empty,
         empty_requirements(NumericPrecision::F64),
         NumericPrecision::F64,
     );
     let other_observation = problem(
         2,
         2,
-        ModelStateIdentity::Empty,
         empty_requirements(NumericPrecision::F64),
         NumericPrecision::F64,
     );
     let f32_problem = problem(
         1,
         2,
-        ModelStateIdentity::Empty,
         empty_requirements(NumericPrecision::F32),
         NumericPrecision::F32,
     );
 
-    assert_ne!(first.problem_id(), other_observation.problem_id());
+    assert_ne!(first.observation(), other_observation.observation());
     assert_ne!(
-        first.model_lifecycle().contract_id(),
-        f32_problem.model_lifecycle().contract_id()
+        first.model_lifecycle().arithmetic_precision(),
+        f32_problem.model_lifecycle().arithmetic_precision()
     );
     assert_eq!(
         first.model_lifecycle().bounds().max_delta_terms(),
@@ -433,17 +281,11 @@ fn compiled_commitment_binds_problem_input_numerics_and_bounds() {
 #[test]
 fn non_power_of_two_delta_bound_uses_the_explicit_canonical_capacity() {
     const TERMS: usize = 65;
-    let bounded = ModelBounds::new(TERMS, TERMS, TERMS, TERMS, 1.0e30, 1.0e30)
-        .expect("non-power-of-two bounds");
+    let bounded = ModelBounds::new(TERMS, TERMS, 1.0e30, 1.0e30).expect("non-power-of-two bounds");
     let compiled = problem(
         3,
         TERMS,
-        ModelStateIdentity::Empty,
-        ModelLifecycleRequirements::new(
-            bounded,
-            NumericPrecision::F64,
-            ModelInputCommitment::Empty,
-        ),
+        ModelLifecycleRequirements::new(bounded, NumericPrecision::F64),
         NumericPrecision::F64,
     );
     let owner = bind_direct(&compiled, attempt(89), 1);
@@ -463,7 +305,6 @@ fn final_model_restores_highest_ordinal_domain_across_overlaps() {
     let compiled = problem_with_geometry(
         3,
         overlapping_geometry(3, 3),
-        ModelStateIdentity::Empty,
         empty_requirements(NumericPrecision::F64),
         NumericPrecision::F64,
     );
@@ -504,7 +345,6 @@ fn t55_model_windows_preserve_values_and_support_with_owner_scoped_identities() 
     let compiled = problem_with_geometry(
         1,
         geometry(5),
-        ModelStateIdentity::Empty,
         empty_requirements(NumericPrecision::F64),
         NumericPrecision::F64,
     );
@@ -512,7 +352,7 @@ fn t55_model_windows_preserve_values_and_support_with_owner_scoped_identities() 
     let mut identities = std::collections::BTreeSet::new();
     for window in [5, 1, 2, 3] {
         let mut owner = ModelLifecycle::bind(
-            ExecutableModelProblem::from_compiled(compiled.clone()).unwrap(),
+            &compiled,
             attempt(90),
             1,
             casa_imaging_reconstruction::ModelStoragePlan::resident(window).unwrap(),
@@ -635,13 +475,12 @@ fn sparse_delta_reuses_owned_storage_and_does_not_touch_unchanged_windows() {
     let compiled = problem(
         1,
         8,
-        ModelStateIdentity::Empty,
         empty_requirements(NumericPrecision::F32),
         NumericPrecision::F32,
     );
     let counts = Arc::new(ModelIoCounts::default());
     let mut owner = ModelLifecycle::bind(
-        ExecutableModelProblem::from_compiled(compiled).unwrap(),
+        &compiled,
         attempt(90),
         1,
         casa_imaging_reconstruction::ModelStoragePlan::new(
@@ -689,13 +528,12 @@ fn owned_model_handoffs_do_not_read_contents_and_scientific_reads_remain_fallibl
     let compiled = problem(
         1,
         8,
-        ModelStateIdentity::Empty,
         empty_requirements(NumericPrecision::F64),
         NumericPrecision::F64,
     );
     let counts = Arc::new(ModelIoCounts::default());
     let mut owner = ModelLifecycle::bind(
-        ExecutableModelProblem::from_compiled(compiled.clone()).unwrap(),
+        &compiled,
         attempt(90),
         1,
         casa_imaging_reconstruction::ModelStoragePlan::new(
@@ -716,22 +554,7 @@ fn owned_model_handoffs_do_not_read_contents_and_scientific_reads_remain_fallibl
         "mint, handoff and completion must not inspect owned contents"
     );
     let (base, _) = update.into_parts();
-    let id = base.generation_id();
-    let resumed_problem = problem(
-        1,
-        8,
-        ModelStateIdentity::Generation(id.identity()),
-        ModelLifecycleRequirements::new(
-            bounds(),
-            NumericPrecision::F64,
-            ModelInputCommitment::Generation(id.identity()),
-        ),
-        NumericPrecision::F64,
-    );
-    let resumed = bind_direct(&resumed_problem, attempt(91), 2);
-    let base = resumed.resume(base).unwrap();
-    assert_eq!(counts.reads.load(Relaxed), 0);
-    let _delta = resumed
+    let _delta = owner
         .compile_delta(&base, [ModelDeltaTerm::new(cell(0), value(1.0))])
         .unwrap();
     assert_eq!(
@@ -740,13 +563,13 @@ fn owned_model_handoffs_do_not_read_contents_and_scientific_reads_remain_fallibl
         "sparse delta checks only its affected support"
     );
     counts.fail_reads.store(true, Relaxed);
-    resumed.validate_named_generation(&base).unwrap();
+    owner.validate_named_generation(&base).unwrap();
     assert!(matches!(
         base.read_samples(0..1),
         Err(ModelLifecycleError::Storage(_))
     ));
     assert!(matches!(
-        resumed.compile_delta(&base, [ModelDeltaTerm::new(cell(1), value(1.0))]),
+        owner.compile_delta(&base, [ModelDeltaTerm::new(cell(1), value(1.0))]),
         Err(ModelLifecycleError::Storage(_))
     ));
 }
@@ -756,7 +579,6 @@ fn generations_are_distinct_and_finalization_is_affine() {
     let compiled = problem(
         1,
         2,
-        ModelStateIdentity::Empty,
         empty_requirements(NumericPrecision::F64),
         NumericPrecision::F64,
     );
@@ -764,7 +586,6 @@ fn generations_are_distinct_and_finalization_is_affine() {
     let base = owner.initial_empty().expect("empty generation");
     let replay_base = owner.initial_empty().expect("second pre-final base");
     assert_eq!(ModelGenerationId::SCHEMA_VERSION, 4);
-    assert_eq!(ModelReprojectionId::SCHEMA_VERSION, 3);
     assert_eq!(FinalModelCompletionId::SCHEMA_VERSION, 2);
     assert_ne!(base.generation_id(), replay_base.generation_id());
 
@@ -806,815 +627,11 @@ fn generations_are_distinct_and_finalization_is_affine() {
 }
 
 #[test]
-fn named_resume_preserves_new_scientific_value_bounds() {
-    use std::sync::{Arc, atomic::Ordering::Relaxed};
-    for maximum in [0.5, 2.0] {
-        let compiled = problem(
-            1,
-            2,
-            ModelStateIdentity::Empty,
-            empty_requirements(NumericPrecision::F64),
-            NumericPrecision::F64,
-        );
-        let counts = Arc::new(ModelIoCounts::default());
-        let owner = ModelLifecycle::bind(
-            ExecutableModelProblem::from_compiled(compiled).unwrap(),
-            attempt(90),
-            1,
-            casa_imaging_reconstruction::ModelStoragePlan::new(
-                Arc::new(CountedModelFactory(counts.clone())),
-                2,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        let base = owner.initial_empty().unwrap();
-        let delta = owner
-            .compile_delta(&base, [ModelDeltaTerm::new(cell(0), value(1.0))])
-            .unwrap();
-        let generation = owner.apply_delta(base, delta).unwrap();
-        generation.read_samples(0..1).unwrap();
-        assert_eq!(
-            counts.updated.load(Relaxed),
-            1,
-            "complete the pending scientific update"
-        );
-        let id = generation.generation_id();
-        let tighter = problem(
-            1,
-            2,
-            ModelStateIdentity::Generation(id.identity()),
-            ModelLifecycleRequirements::new(
-                ModelBounds::new(16, 16, 32, 8, maximum, 1.0e30).unwrap(),
-                NumericPrecision::F64,
-                ModelInputCommitment::Generation(id.identity()),
-            ),
-            NumericPrecision::F64,
-        );
-        let resumed = bind_direct(&tighter, attempt(91), 2);
-        counts.reads.store(0, Relaxed);
-        if maximum < 1.0 {
-            assert!(matches!(
-                resumed.resume(generation),
-                Err(ModelLifecycleError::ModelValueBoundExceeded)
-            ));
-            assert!(
-                counts.reads.load(Relaxed) > 0,
-                "new narrower scientific constraint is validated"
-            );
-        } else {
-            resumed.resume(generation).unwrap();
-            assert_eq!(
-                counts.reads.load(Relaxed),
-                0,
-                "known value range satisfies new bound without a reread"
-            );
-        }
-    }
-}
-
-#[test]
-fn tighter_bound_after_overlap_decrease_is_checked_only_at_owned_introduction() {
-    use std::sync::{Arc, atomic::Ordering::Relaxed};
-    let compiled = problem_with_geometry(
-        3,
-        overlapping_geometry(3, 3),
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let counts = Arc::new(ModelIoCounts::default());
-    let mut owner = ModelLifecycle::bind(
-        ExecutableModelProblem::from_compiled(compiled).unwrap(),
-        attempt(90),
-        1,
-        casa_imaging_reconstruction::ModelStoragePlan::new(
-            Arc::new(CountedModelFactory(counts.clone())),
-            3,
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    let base = owner.initial_empty().unwrap();
-    let delta = owner
-        .compile_delta(
-            &base,
-            [
-                ModelDeltaTerm::new(ModelCell::new(0, 0, 0, [0, 0]), value(10.0)),
-                ModelDeltaTerm::new(ModelCell::new(2, 0, 0, [2, 0]), value(1.0)),
-            ],
-        )
-        .unwrap();
-    let (generation, _) = owner.apply_final_delta(base, delta).unwrap().into_parts();
-    let id = generation.generation_id();
-    let tighter = problem_with_geometry(
-        3,
-        overlapping_geometry(3, 3),
-        ModelStateIdentity::Generation(id.identity()),
-        ModelLifecycleRequirements::new(
-            ModelBounds::new(16, 16, 32, 8, 2.0, 1.0e30).unwrap(),
-            NumericPrecision::F64,
-            ModelInputCommitment::Generation(id.identity()),
-        ),
-        NumericPrecision::F64,
-    );
-    let mut resumed = bind_direct(&tighter, attempt(91), 2);
-    counts.reads.store(0, Relaxed);
-    let generation = resumed.resume(generation).unwrap();
-    assert_eq!(
-        counts.reads.load(Relaxed),
-        9,
-        "new bound is checked once after overlap lowered the old maximum"
-    );
-    counts.reads.store(0, Relaxed);
-    resumed.validate_named_generation(&generation).unwrap();
-    resumed.validate_named_generation(&generation).unwrap();
-    assert_eq!(counts.reads.load(Relaxed), 0);
-    resumed
-        .compile_delta(
-            &generation,
-            [ModelDeltaTerm::new(
-                ModelCell::new(0, 0, 0, [2, 0]),
-                value(0.5),
-            )],
-        )
-        .unwrap();
-    assert_eq!(
-        counts.reads.load(Relaxed),
-        1,
-        "only affected support is read"
-    );
-    counts.reads.store(0, Relaxed);
-    let prepared = resumed.prepare_final_model(generation, None).unwrap();
-    // Four overlapping pixels each need target support and source value.
-    assert_eq!(
-        counts.reads.load(Relaxed),
-        8,
-        "preparation reads only the scientific overlap inputs"
-    );
-    counts.reads.store(0, Relaxed);
-    resumed.commit_final_model(prepared).unwrap();
-    assert_eq!(counts.reads.load(Relaxed), 0);
-}
-
-#[test]
-fn aligned_ingest_preserves_support_and_rejects_wrong_evidence() {
-    let seed = identity(7);
-    let samples = [ModelSample::valid(value(2.0)), ModelSample::invalid()];
-    let support = model_support_identity(samples.iter().map(|sample| sample.support()));
-    let compiled = problem(
-        1,
-        2,
-        ModelStateIdentity::Seed(seed),
-        ModelLifecycleRequirements::new(
-            bounds(),
-            NumericPrecision::F64,
-            ModelInputCommitment::AlignedSeed {
-                source: seed,
-                support,
-            },
-        ),
-        NumericPrecision::F64,
-    );
-    let owner = bind_direct(&compiled, attempt(91), 1);
-    let target_shape = owner.contract().target().clone();
-    let generation = owner
-        .ingest_aligned(seed, &target_shape, samples.into_iter().map(Ok::<_, ()>))
-        .expect("aligned source stream")
-        .expect("ingest aligned seed");
-    assert_eq!(
-        generation
-            .read_samples(0..generation.sample_count())
-            .expect("read fixture model")[1]
-            .support(),
-        ModelSupport::Invalid
-    );
-    assert_eq!(
-        generation
-            .read_samples(0..generation.sample_count())
-            .expect("read fixture model")[1]
-            .value()
-            .value(),
-        0.0
-    );
-
-    let other_space = problem_with_geometry(
-        1,
-        geometry_with_longitude(2, 1.25),
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    assert_eq!(
-        target_shape.sample_count(),
-        other_space.model_lifecycle().target().sample_count()
-    );
-    assert_ne!(target_shape, *other_space.model_lifecycle().target());
-    assert!(matches!(
-        owner
-            .ingest_aligned(
-                seed,
-                other_space.model_lifecycle().target(),
-                samples.into_iter().map(Ok::<_, ()>),
-            )
-            .expect("aligned source stream"),
-        Err(ModelLifecycleError::SourceProvenanceMismatch)
-    ));
-
-    let wrong = [
-        ModelSample::valid(value(2.0)),
-        ModelSample::valid(value(0.0)),
-    ];
-    assert!(matches!(
-        owner
-            .ingest_aligned(seed, &target_shape, wrong.into_iter().map(Ok::<_, ()>))
-            .expect("aligned source stream"),
-        Err(ModelLifecycleError::SupportIdentityMismatch)
-    ));
-}
-
-#[test]
-fn aligned_ingest_checks_external_support_without_reading_back_owned_storage() {
-    use std::sync::{Arc, atomic::Ordering::Relaxed};
-    let seed = identity(73);
-    let samples = [ModelSample::valid(value(2.0)), ModelSample::invalid()];
-    let support = model_support_identity(samples.iter().map(|sample| sample.support()));
-    let compiled = problem(
-        1,
-        2,
-        ModelStateIdentity::Seed(seed),
-        ModelLifecycleRequirements::new(
-            bounds(),
-            NumericPrecision::F64,
-            ModelInputCommitment::AlignedSeed {
-                source: seed,
-                support,
-            },
-        ),
-        NumericPrecision::F64,
-    );
-    let counts = Arc::new(ModelIoCounts::default());
-    let owner = ModelLifecycle::bind(
-        ExecutableModelProblem::from_compiled(compiled).unwrap(),
-        attempt(126),
-        1,
-        casa_imaging_reconstruction::ModelStoragePlan::new(
-            Arc::new(CountedModelFactory(counts.clone())),
-            1,
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    counts.fail_reads.store(true, Relaxed);
-    let generation = owner
-        .ingest_aligned(
-            seed,
-            owner.contract().target(),
-            samples.into_iter().map(Ok::<_, ()>),
-        )
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        counts.reads.load(Relaxed),
-        0,
-        "external support is checked during ingestion, not by rereading storage"
-    );
-    counts.fail_reads.store(false, Relaxed);
-    assert_eq!(
-        generation.read_samples(0..1).unwrap().as_ref(),
-        &samples[..1]
-    );
-    assert_eq!(
-        generation.read_samples(1..2).unwrap().as_ref(),
-        &samples[1..]
-    );
-}
-
-#[test]
-fn aligned_ingest_preserves_a_terminal_source_error() {
-    let seed = identity(72);
-    let samples = [ModelSample::valid(value(2.0)), ModelSample::invalid()];
-    let support = model_support_identity(samples.iter().map(|sample| sample.support()));
-    let compiled = problem(
-        1,
-        2,
-        ModelStateIdentity::Seed(seed),
-        ModelLifecycleRequirements::new(
-            bounds(),
-            NumericPrecision::F64,
-            ModelInputCommitment::AlignedSeed {
-                source: seed,
-                support,
-            },
-        ),
-        NumericPrecision::F64,
-    );
-    let owner = bind_direct(&compiled, attempt(125), 1);
-    let stream = samples
-        .into_iter()
-        .map(Ok)
-        .chain([Err("terminal source failure")]);
-
-    assert!(matches!(
-        owner.ingest_aligned(seed, owner.contract().target(), stream),
-        Err("terminal source failure")
-    ));
-}
-
-#[test]
-fn reprojection_is_owner_derived_streamed_and_support_aware() {
-    let source_problem = problem(
-        3,
-        2,
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let target_shell = problem_with_geometry(
-        4,
-        geometry_with_reference_pixel(2, [-0.75, 0.0]),
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let source_shape = source_problem.model_lifecycle().target().clone();
-    let seed = identity(8);
-    let source = [
-        ModelSample::valid(value(2.0)),
-        ModelSample::valid(value(6.0)),
-    ];
-    let mut reader = SliceModelSource::new(seed, &source_shape, &source);
-    let prepared = prepare_reprojected_seed(&mut reader, &target_shell)
-        .expect("derive reprojection from source geometry and samples");
-    assert_eq!(reader.reads, 2, "only the current derived stencil is read");
-    let mapping_id = prepared.reprojection_id();
-    assert_eq!(
-        mapping_id.identity(),
-        casa_imaging_model::model_reprojected_seed_mapping_identity(
-            LogicalIdentity::from_bytes(target_shell.model_lifecycle().contract_id().as_bytes()),
-            source_shape.identity(),
-            target_shell.model_lifecycle().target().identity(),
-        )
-    );
-    let compiled = problem_with_geometry(
-        4,
-        geometry_with_reference_pixel(2, [-0.75, 0.0]),
-        ModelStateIdentity::Seed(seed),
-        prepared.lifecycle_requirements(),
-        NumericPrecision::F64,
-    );
-    assert!(matches!(
-        ExecutableModelProblem::from_compiled(compiled.clone()),
-        Err(ModelLifecycleError::OwnerPreparationRequired)
-    ));
-    let executable = prepared
-        .bind_compiled_problem(compiled)
-        .expect("bind owner-derived preparation");
-    let mut owner = ModelLifecycle::bind(
-        executable,
-        attempt(92),
-        1,
-        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
-            .expect("positive model window"),
-    )
-    .expect("bind owner");
-    let generation = owner
-        .initial_reprojected()
-        .expect("consume derived reprojection");
-    assert_eq!(
-        generation
-            .read_samples(0..generation.sample_count())
-            .expect("read fixture model")[0]
-            .value()
-            .value(),
-        5.0
-    );
-    assert_eq!(
-        generation
-            .read_samples(0..generation.sample_count())
-            .expect("read fixture model")[1]
-            .support(),
-        ModelSupport::Invalid
-    );
-
-    let wrong_source_space = problem_with_geometry(
-        3,
-        geometry_with_longitude(2, 1.25),
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let wrong_source_shape = wrong_source_space.model_lifecycle().target().clone();
-    let mut wrong_reader = SliceModelSource::new(seed, &wrong_source_shape, &source);
-    assert!(matches!(
-        prepare_reprojected_seed(&mut wrong_reader, &target_shell,),
-        Err(ModelReprojectionError::Lifecycle(
-            ModelLifecycleError::UnsupportedDirectionConversion
-        ))
-    ));
-    assert_eq!(wrong_reader.reads, 0);
-
-    let other_target = problem_with_geometry(
-        4,
-        geometry_with_reference_pixel(2, [-0.25, 0.0]),
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let mut other_reader = SliceModelSource::new(seed, &source_shape, &source);
-    let other_prepared = prepare_reprojected_seed(&mut other_reader, &other_target)
-        .expect("derive other target mapping");
-    assert_ne!(
-        mapping_id,
-        other_prepared.reprojection_id(),
-        "target coordinate law must change owner-derived evidence"
-    );
-
-    let mut failing_reader = SliceModelSource::new(seed, &source_shape, &source);
-    failing_reader.fail_at = Some(cell(1));
-    assert!(matches!(
-        prepare_reprojected_seed(&mut failing_reader, &target_shell,),
-        Err(ModelReprojectionError::Source("injected source failure"))
-    ));
-}
-
-#[test]
-fn reprojected_seed_preserves_projected_values_and_geometry() {
-    let source_problem = problem(
-        3,
-        2,
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let target = problem_with_geometry(
-        4,
-        geometry_with_reference_pixel(2, [-0.75, 0.0]),
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let other_stencil = problem_with_geometry(
-        4,
-        geometry_with_reference_pixel(2, [-0.25, 0.0]),
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let source_shape = source_problem.model_lifecycle().target().clone();
-    let seed = identity(201);
-    let values = [
-        ModelSample::valid(value(2.0)),
-        ModelSample::valid(value(6.0)),
-    ];
-    let changed_values = [
-        ModelSample::valid(value(3.0)),
-        ModelSample::valid(value(6.0)),
-    ];
-
-    let original = prepare_seed(seed, &source_shape, &target, &values);
-    let value_changed = prepare_seed(seed, &source_shape, &target, &changed_values);
-    let stencil_changed = prepare_seed(seed, &source_shape, &other_stencil, &values);
-
-    let project = |prepared: PreparedReprojectedSeed, geometry| {
-        let compiled = problem_with_geometry(
-            4,
-            geometry,
-            ModelStateIdentity::Seed(seed),
-            prepared.lifecycle_requirements(),
-            NumericPrecision::F64,
-        );
-        let executable = prepared.bind_compiled_problem(compiled).unwrap();
-        let mut owner = ModelLifecycle::bind(
-            executable,
-            attempt(93),
-            1,
-            casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX).unwrap(),
-        )
-        .unwrap();
-        let generation = owner.initial_reprojected().unwrap();
-        generation
-            .read_samples(0..generation.sample_count())
-            .unwrap()
-            .to_vec()
-    };
-    let original = project(original, geometry_with_reference_pixel(2, [-0.75, 0.0]));
-    let changed = project(
-        value_changed,
-        geometry_with_reference_pixel(2, [-0.75, 0.0]),
-    );
-    let shifted = project(
-        stencil_changed,
-        geometry_with_reference_pixel(2, [-0.25, 0.0]),
-    );
-    assert_eq!(original[0].value().value(), 5.0);
-    assert_eq!(changed[0].value().value(), 5.25);
-    assert_eq!(shifted[0].value().value(), 3.0);
-    assert_eq!(original[1].support(), ModelSupport::Invalid);
-    assert_eq!(changed[1].support(), ModelSupport::Invalid);
-}
-
-#[test]
-fn reprojection_converts_taylor_coefficients_to_channel_coordinates() {
-    let spectral = SpectralWcs::Linear {
-        channels: 2,
-        reference_pixel: 0.0,
-        reference_frequency_hz: 1.5e9,
-        increment_hz: 1.0e9,
-    };
-    let source_problem = problem_with_contract(
-        9,
-        geometry_with_spectral(1, spectral.clone()),
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-        ReconstructionBasis::Taylor { terms: 2 },
-        ReconstructionAlgorithm::Mtmfs {
-            scales_px: vec![0.0],
-            small_scale_bias: 0.0,
-        },
-        vec![PolarizationCoordinate::StokesI],
-        vec![ProductKind::Psf],
-    )
-    .expect("compile Taylor source space");
-    let target_shell = problem_with_contract(
-        10,
-        geometry_with_spectral(1, spectral.clone()),
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-        ReconstructionBasis::ChannelLocal { channels: 2 },
-        ReconstructionAlgorithm::Dirty,
-        vec![PolarizationCoordinate::StokesI],
-        vec![ProductKind::Psf],
-    )
-    .expect("compile channel-local target space");
-    let source_shape = source_problem.model_lifecycle().target().clone();
-    let seed = identity(81);
-    let samples = [
-        ModelSample::valid(value(2.0)),
-        ModelSample::valid(value(4.0)),
-    ];
-    let mut reader = SliceModelSource::new(seed, &source_shape, &samples);
-    let prepared = prepare_reprojected_seed(&mut reader, &target_shell)
-        .expect("derive channel values from the Taylor polynomial");
-    assert_eq!(reader.reads, 4, "each channel evaluates both Taylor terms");
-    let compiled = problem_with_contract(
-        10,
-        geometry_with_spectral(1, spectral),
-        ModelStateIdentity::Seed(seed),
-        prepared.lifecycle_requirements(),
-        NumericPrecision::F64,
-        ReconstructionBasis::ChannelLocal { channels: 2 },
-        ReconstructionAlgorithm::Dirty,
-        vec![PolarizationCoordinate::StokesI],
-        vec![ProductKind::Psf],
-    )
-    .expect("bind channel-local reprojection evidence");
-    let executable = prepared
-        .bind_compiled_problem(compiled)
-        .expect("bind owner-derived preparation");
-    let generation = ModelLifecycle::bind(
-        executable,
-        attempt(124),
-        1,
-        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
-            .expect("positive model window"),
-    )
-    .expect("bind basis-conversion owner")
-    .initial_reprojected()
-    .expect("consume owner-derived basis conversion");
-    assert_eq!(
-        generation
-            .read_samples(0..generation.sample_count())
-            .expect("read fixture model")
-            .iter()
-            .map(|sample| sample.value().value())
-            .collect::<Vec<_>>(),
-        vec![1.0, 3.0]
-    );
-}
-
-#[test]
-fn reprojection_converts_stokes_to_linear_parallel_hands() {
-    let source_problem = problem_with_polarizations(
-        9,
-        geometry(1),
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-        vec![
-            PolarizationCoordinate::StokesI,
-            PolarizationCoordinate::StokesQ,
-        ],
-    );
-    let target_shell = problem_with_polarizations(
-        10,
-        geometry(1),
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-        vec![
-            PolarizationCoordinate::LinearXx,
-            PolarizationCoordinate::LinearYy,
-        ],
-    );
-    let source_shape = source_problem.model_lifecycle().target().clone();
-    let seed = identity(82);
-    let samples = [
-        ModelSample::valid(value(10.0)),
-        ModelSample::valid(value(2.0)),
-    ];
-    let mut reader = SliceModelSource::new(seed, &source_shape, &samples);
-    let prepared = prepare_reprojected_seed(&mut reader, &target_shell)
-        .expect("derive linear parallel hands from Stokes I and Q");
-    assert_eq!(reader.reads, 4, "each target hand consumes Stokes I and Q");
-    let compiled = problem_with_polarizations(
-        10,
-        geometry(1),
-        ModelStateIdentity::Seed(seed),
-        prepared.lifecycle_requirements(),
-        NumericPrecision::F64,
-        vec![
-            PolarizationCoordinate::LinearXx,
-            PolarizationCoordinate::LinearYy,
-        ],
-    );
-    let executable = prepared
-        .bind_compiled_problem(compiled)
-        .expect("bind owner-derived preparation");
-    let generation = ModelLifecycle::bind(
-        executable,
-        attempt(126),
-        1,
-        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
-            .expect("positive model window"),
-    )
-    .expect("bind polarization owner")
-    .initial_reprojected()
-    .expect("consume owner-derived polarization conversion");
-    assert_eq!(
-        generation
-            .read_samples(0..generation.sample_count())
-            .expect("read fixture model")
-            .iter()
-            .map(|sample| sample.value().value())
-            .collect::<Vec<_>>(),
-        vec![12.0, 8.0]
-    );
-}
-
-#[test]
-fn reprojected_seed_rejects_a_different_product_contract() {
-    let source_problem = problem(
-        11,
-        2,
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let target_geometry = geometry_with_reference_pixel(2, [-0.75, 0.0]);
-    let target_shell = problem_with_geometry(
-        12,
-        target_geometry.clone(),
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let source_shape = source_problem.model_lifecycle().target().clone();
-    let seed = identity(83);
-    let samples = [
-        ModelSample::valid(value(2.0)),
-        ModelSample::valid(value(6.0)),
-    ];
-    let prepared = prepare_seed(seed, &source_shape, &target_shell, &samples);
-
-    assert!(matches!(
-        problem_with_contract(
-            12,
-            target_geometry,
-            ModelStateIdentity::Seed(seed),
-            prepared.lifecycle_requirements(),
-            NumericPrecision::F64,
-            ReconstructionBasis::Constant,
-            ReconstructionAlgorithm::Dirty,
-            vec![PolarizationCoordinate::StokesI],
-            vec![ProductKind::Weight],
-        ),
-        Err(CompileProblemError::ModelLifecycle(
-            ModelContractError::ReprojectionContractMismatch
-        ))
-    ));
-}
-
-#[test]
-fn reprojected_ingest_carries_owned_support_and_rejects_foreign_source() {
-    let source_problem = problem(
-        3,
-        2,
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let target_shell = problem_with_geometry(
-        4,
-        geometry_with_reference_pixel(2, [-0.75, 0.0]),
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let source_shape = source_problem.model_lifecycle().target().clone();
-    let seed = identity(8);
-    let source = [
-        ModelSample::valid(value(2.0)),
-        ModelSample::valid(value(6.0)),
-    ];
-    let invalid_source = [ModelSample::valid(value(2.0)), ModelSample::invalid()];
-    let expected = prepare_seed(seed, &source_shape, &target_shell, &source);
-
-    let support_claim = problem_with_geometry(
-        4,
-        geometry_with_reference_pixel(2, [-0.75, 0.0]),
-        ModelStateIdentity::Seed(seed),
-        prepare_seed(seed, &source_shape, &target_shell, &invalid_source).lifecycle_requirements(),
-        NumericPrecision::F64,
-    );
-    let executable = expected
-        .bind_compiled_problem(support_claim)
-        .expect("the compact contract does not attest prepared support contents");
-    let mut owner = ModelLifecycle::bind(
-        executable,
-        attempt(93),
-        1,
-        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX).unwrap(),
-    )
-    .unwrap();
-    let generation = owner.initial_reprojected().unwrap();
-    assert_eq!(
-        generation.read_samples(0..1).unwrap()[0].support(),
-        ModelSupport::Valid
-    );
-
-    assert!(matches!(
-        problem_with_contract(
-            4,
-            geometry_with_reference_pixel(2, [-0.75, 0.0]),
-            ModelStateIdentity::Seed(seed),
-            prepare_seed(seed, &source_shape, &target_shell, &source).lifecycle_requirements(),
-            NumericPrecision::F64,
-            ReconstructionBasis::Constant,
-            ReconstructionAlgorithm::Dirty,
-            vec![PolarizationCoordinate::StokesI],
-            vec![ProductKind::Weight],
-        ),
-        Err(CompileProblemError::ModelLifecycle(
-            ModelContractError::ReprojectionContractMismatch
-        ))
-    ));
-
-    let correct = problem_with_geometry(
-        4,
-        geometry_with_reference_pixel(2, [-0.75, 0.0]),
-        ModelStateIdentity::Seed(seed),
-        prepare_seed(seed, &source_shape, &target_shell, &source).lifecycle_requirements(),
-        NumericPrecision::F64,
-    );
-    assert!(matches!(
-        prepare_seed(identity(88), &source_shape, &target_shell, &source)
-            .bind_compiled_problem(correct.clone()),
-        Err(ModelLifecycleError::SourceProvenanceMismatch)
-    ));
-
-    let invalid_prepared = prepare_seed(seed, &source_shape, &target_shell, &invalid_source);
-    assert_eq!(
-        invalid_prepared.reprojection_id(),
-        prepare_seed(seed, &source_shape, &target_shell, &source).reprojection_id()
-    );
-    let executable = invalid_prepared.bind_compiled_problem(correct).unwrap();
-    let mut owner = ModelLifecycle::bind(
-        executable,
-        attempt(94),
-        1,
-        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX).unwrap(),
-    )
-    .unwrap();
-    let generation = owner.initial_reprojected().unwrap();
-    assert_eq!(
-        generation
-            .read_samples(0..generation.sample_count())
-            .unwrap()[0]
-            .support(),
-        ModelSupport::Invalid
-    );
-}
-
-#[test]
-fn owner_rejects_zero_noncanonical_unsupported_and_foreign_deltas() {
-    assert!(ModelBounds::new(1, 1, 1, 0, 1.0, 1.0).is_err());
+fn owner_rejects_zero_noncanonical_and_foreign_deltas() {
+    assert!(ModelBounds::new(1, 0, 1.0, 1.0).is_err());
     let compiled = problem(
         5,
         2,
-        ModelStateIdentity::Empty,
         empty_requirements(NumericPrecision::F64),
         NumericPrecision::F64,
     );
@@ -1639,37 +656,6 @@ fn owner_rejects_zero_noncanonical_unsupported_and_foreign_deltas() {
         duplicate.compile_delta(&base, [ModelDeltaTerm::new(cell(0), value(1.0))]),
         Err(ModelLifecycleError::ForeignModelLifecycle)
     ));
-
-    let seed = identity(9);
-    let aligned = [ModelSample::valid(value(1.0)), ModelSample::invalid()];
-    let support = model_support_identity(aligned.iter().map(|sample| sample.support()));
-    let seeded = problem(
-        5,
-        2,
-        ModelStateIdentity::Seed(seed),
-        ModelLifecycleRequirements::new(
-            bounds(),
-            NumericPrecision::F64,
-            ModelInputCommitment::AlignedSeed {
-                source: seed,
-                support,
-            },
-        ),
-        NumericPrecision::F64,
-    );
-    let seeded_owner = bind_direct(&seeded, attempt(94), 1);
-    let seeded_base = seeded_owner
-        .ingest_aligned(
-            seed,
-            seeded_owner.contract().target(),
-            aligned.into_iter().map(Ok::<_, ()>),
-        )
-        .expect("aligned source stream")
-        .expect("seed generation");
-    assert!(matches!(
-        seeded_owner.compile_delta(&seeded_base, [ModelDeltaTerm::new(cell(1), value(1.0))],),
-        Err(ModelLifecycleError::DeltaOutsideValidSupport)
-    ));
 }
 
 #[test]
@@ -1677,14 +663,12 @@ fn compiled_precision_governs_delta_arithmetic() {
     let f32_problem = problem(
         6,
         1,
-        ModelStateIdentity::Empty,
         empty_requirements(NumericPrecision::F32),
         NumericPrecision::F32,
     );
     let f64_problem = problem(
         6,
         1,
-        ModelStateIdentity::Empty,
         empty_requirements(NumericPrecision::F64),
         NumericPrecision::F64,
     );
@@ -1745,7 +729,6 @@ fn identical_lifecycle_bindings_cannot_substitute_a_different_owners_generation(
     let initial_problem = problem(
         7,
         2,
-        ModelStateIdentity::Empty,
         empty_requirements(NumericPrecision::F64),
         NumericPrecision::F64,
     );
@@ -1765,82 +748,9 @@ fn identical_lifecycle_bindings_cannot_substitute_a_different_owners_generation(
     assert_ne!(first.generation_id(), other.generation_id());
     assert_eq!(first.read_samples(0..1).unwrap()[0].value().value(), 1.0);
     assert_eq!(other.read_samples(0..1).unwrap()[0].value().value(), 2.0);
-    let id = first.generation_id();
-    let resume_problem = problem(
-        7,
-        2,
-        ModelStateIdentity::Generation(id.identity()),
-        ModelLifecycleRequirements::new(
-            bounds(),
-            NumericPrecision::F64,
-            ModelInputCommitment::Generation(id.identity()),
-        ),
-        NumericPrecision::F64,
-    );
-    let resumed = bind_direct(&resume_problem, attempt(97), 2);
     assert!(matches!(
-        resumed.resume(other),
-        Err(ModelLifecycleError::GenerationIdentityMismatch)
+        first_owner.validate_named_generation(&other),
+        Err(ModelLifecycleError::ForeignModelLifecycle)
     ));
-    assert_eq!(resumed.resume(first).unwrap().generation_id(), id);
-}
-
-#[test]
-fn resume_preserves_named_generation_then_enters_new_owner() {
-    let initial_problem = problem(
-        7,
-        2,
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let initial = bind_direct(&initial_problem, attempt(96), 1);
-    let generation = initial.initial_empty().expect("initial generation");
-    let generation_id = generation.generation_id();
-    let resume_problem = problem(
-        7,
-        2,
-        ModelStateIdentity::Generation(generation_id.identity()),
-        ModelLifecycleRequirements::new(
-            bounds(),
-            NumericPrecision::F64,
-            ModelInputCommitment::Generation(generation_id.identity()),
-        ),
-        NumericPrecision::F64,
-    );
-    let resumed_owner = bind_direct(&resume_problem, attempt(97), 2);
-    let resumed = resumed_owner.resume(generation).expect("resume generation");
-    assert_eq!(resumed.generation_id(), generation_id);
-    let delta = resumed_owner
-        .compile_delta(&resumed, [ModelDeltaTerm::new(cell(0), value(1.0))])
-        .expect("compile resumed delta");
-    let next = resumed_owner
-        .apply_delta(resumed, delta)
-        .expect("apply resumed delta");
-    assert_eq!(
-        next.read_samples(0..next.sample_count())
-            .expect("read fixture model")[0]
-            .value()
-            .value(),
-        1.0
-    );
-    assert!(matches!(
-        next.origin(),
-        ModelGenerationOrigin::Delta { base, .. } if base == generation_id
-    ));
-
-    let foreign_problem = problem(
-        8,
-        2,
-        ModelStateIdentity::Empty,
-        empty_requirements(NumericPrecision::F64),
-        NumericPrecision::F64,
-    );
-    let foreign = bind_direct(&foreign_problem, attempt(98), 1)
-        .initial_empty()
-        .expect("foreign generation");
-    assert!(matches!(
-        resumed_owner.resume(foreign),
-        Err(ModelLifecycleError::GenerationIdentityMismatch)
-    ));
+    first_owner.validate_named_generation(&first).unwrap();
 }

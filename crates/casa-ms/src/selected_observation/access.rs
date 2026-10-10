@@ -160,7 +160,6 @@ impl BoundObservationSource {
         content_budget: SelectedObservationContentBudget,
         reference_data: BoundObservationReferenceData<'_>,
     ) -> Result<Self, BoundObservationSourceError> {
-        measures.validate_problem(problem)?;
         let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())?;
         Self::from_locked_measurement_set(
             problem,
@@ -179,10 +178,8 @@ impl BoundObservationSource {
         problem: &CompiledProblem,
         source: &ObservationSource,
         binding: &super::ObservationSourceBinding,
-        measures: &SelectedObservationMeasures,
         shared_bytes: SelectedObservationSharedBytes,
     ) -> Result<SelectedObservationContentRequirements, BoundObservationSourceError> {
-        measures.validate_problem(problem)?;
         let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())?;
         Self::requirements_for_locked_source(
             &measurement_set,
@@ -356,7 +353,7 @@ impl BoundObservationSource {
         source: &ObservationSource,
         content_budget: SelectedObservationContentBudget,
     ) -> Result<Self, BoundObservationSourceError> {
-        let measures = super::measures::test_selected_observation_measures(problem)?;
+        let measures = super::measures::test_selected_observation_measures()?;
         let pointing_query_domain = if matches!(
             problem.geometry().centres().pointing(),
             PointingCentreLaw::Observation(_)

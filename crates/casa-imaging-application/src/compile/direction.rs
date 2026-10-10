@@ -15,10 +15,7 @@ use casa_imaging_model::{
     DirectionCoordinateSpec, DirectionFrame, PhaseCentreLaw, PolarizationCoordinate, Projection,
     SkyDirection,
 };
-use casa_ms::{
-    MeasurementSet, SelectedObservationContentBudget, SelectedObservationEphemeris,
-    SelectedObservationMeasures,
-};
+use casa_ms::{MeasurementSet, SelectedObservationContentBudget, SelectedObservationEphemeris};
 use casa_types::measures::{
     MeasuresProvider,
     direction::{DirectionRef, MDirection},
@@ -108,7 +105,7 @@ pub(super) fn resolve_centre(
             )
         }
         Some(text) => {
-            let ephemeris = named_ephemeris(text, ms, survey, &measures, budget)?;
+            let ephemeris = named_ephemeris(text, ms, survey, budget)?;
             let direction = ephemeris_direction(text, &ephemeris)?;
             (
                 PhaseCentreLaw::Ephemeris(text.to_string()),
@@ -185,18 +182,13 @@ fn named_ephemeris(
     text: &str,
     ms: &MeasurementSet,
     survey: &Survey,
-    measures: &Arc<dyn MeasuresProvider>,
     budget: SelectedObservationContentBudget,
 ) -> Result<SelectedObservationEphemeris, ApplicationError> {
     let budget = budget.reference_data_budget();
     let mut ephemeris = if Path::new(text).is_dir() {
         SelectedObservationEphemeris::external(text, budget)?
     } else {
-        SelectedObservationEphemeris::named(
-            text,
-            SelectedObservationMeasures::new(Arc::clone(measures))?.identity(),
-            budget,
-        )?
+        SelectedObservationEphemeris::named(text, budget)?
     };
     let field = ms.field()?;
     let mut attached = Vec::new();

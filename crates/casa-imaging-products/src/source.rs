@@ -31,19 +31,12 @@ pub struct ContinuumProductInputs<'a> {
 }
 
 impl<'a> ContinuumProductInputs<'a> {
-    /// Bind the borrowed payloads of one released join.
-    ///
-    /// # Errors
-    ///
-    /// Rejects joins whose normal state belongs to another compiled problem.
-    pub fn from_major_cycle(
+    /// Bind the borrowed payloads of one released join of `problem`.
+    pub const fn from_major_cycle(
         problem: &'a CompiledProblem,
         join: &'a MajorCycleCompletion,
-    ) -> Result<Self, ProductsError> {
-        if join.normal_state().problem_id() != problem.problem_id() {
-            return Err(ProductsError::SourceLineageMismatch);
-        }
-        Ok(Self {
+    ) -> Self {
+        Self {
             problem,
             major_cycle_completion: join.completion_id(),
             normal_state_completion: join.normal_state().completion_id(),
@@ -51,19 +44,17 @@ impl<'a> ContinuumProductInputs<'a> {
             final_model: join.final_model(),
             reconstruction_mask: None,
             domain_reconstruction_masks: None,
-        })
+        }
     }
 
     /// Bind the exact reconstruction mask used by the final bounded solve.
     ///
-    /// The mask must belong to this problem and model-grid shape.
+    /// The mask must have the model-grid shape.
     pub fn with_reconstruction_mask(
         mut self,
         mask: &'a ReconstructionMask,
     ) -> Result<Self, ProductsError> {
-        if mask.problem_id() != self.problem.problem_id()
-            || mask.shape() != self.normal_state.shape()
-        {
+        if mask.shape() != self.normal_state.shape() {
             return Err(ProductsError::SourceLineageMismatch);
         }
         self.reconstruction_mask = Some(mask);
@@ -83,8 +74,7 @@ impl<'a> ContinuumProductInputs<'a> {
                 .iter()
                 .zip(self.problem.geometry().domains())
                 .any(|(mask, domain)| {
-                    mask.problem_id() != self.problem.problem_id()
-                        || mask.shape() != domain.shape().pixels()
+                    mask.shape() != domain.shape().pixels()
                         || mask.coordinate() != domain.direction()
                 })
         {

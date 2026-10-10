@@ -50,17 +50,15 @@ pub(crate) struct MainRowSelectionFact {
     antenna2: i32,
     time_mjd_seconds: f64,
     time_centroid_mjd_seconds: f64,
-    scan_number: i32,
     state_id: i32,
     observation_id: i32,
-    array_id: i32,
     flag_row: bool,
     uvw_m: [f64; 3],
 }
 
 impl MainRowSelectionFact {
     /// Exact bytes read from stored MAIN columns for each row.
-    pub(crate) const STORAGE_BYTES_PER_ROW: usize = 73;
+    pub(crate) const STORAGE_BYTES_PER_ROW: usize = 65;
 
     /// Return the physical MAIN row index.
     #[must_use]
@@ -97,11 +95,6 @@ impl MainRowSelectionFact {
     pub(crate) fn time_centroid_mjd_seconds(self) -> f64 {
         self.time_centroid_mjd_seconds
     }
-    /// Return the stored `SCAN_NUMBER`.
-    #[must_use]
-    pub(crate) fn scan_number(self) -> i32 {
-        self.scan_number
-    }
     /// Return the stored `STATE_ID`.
     #[must_use]
     pub(crate) fn state_id(self) -> i32 {
@@ -111,11 +104,6 @@ impl MainRowSelectionFact {
     #[must_use]
     pub(crate) fn observation_id(self) -> i32 {
         self.observation_id
-    }
-    /// Return the stored `ARRAY_ID`.
-    #[must_use]
-    pub(crate) fn array_id(self) -> i32 {
-        self.array_id
     }
     /// Return the stored row-level flag.
     #[must_use]
@@ -139,10 +127,8 @@ pub(crate) struct MainRowSelectionBlock {
     antenna2: Vec<i32>,
     times_mjd_seconds: Vec<f64>,
     time_centroids_mjd_seconds: Vec<f64>,
-    scan_numbers: Vec<i32>,
     state_ids: Vec<i32>,
     observation_ids: Vec<i32>,
-    array_ids: Vec<i32>,
     flag_rows: Vec<bool>,
     uvw_m: Vec<f64>,
 }
@@ -160,10 +146,8 @@ impl MainRowSelectionBlock {
             antenna2: Vec::with_capacity(rows),
             times_mjd_seconds: Vec::with_capacity(rows),
             time_centroids_mjd_seconds: Vec::with_capacity(rows),
-            scan_numbers: Vec::with_capacity(rows),
             state_ids: Vec::with_capacity(rows),
             observation_ids: Vec::with_capacity(rows),
-            array_ids: Vec::with_capacity(rows),
             flag_rows: Vec::with_capacity(rows),
             uvw_m: Vec::with_capacity(uvw_values),
         })
@@ -186,10 +170,8 @@ impl MainRowSelectionBlock {
             antenna2: self.antenna2[offset],
             time_mjd_seconds: self.times_mjd_seconds[offset],
             time_centroid_mjd_seconds: self.time_centroids_mjd_seconds[offset],
-            scan_number: self.scan_numbers[offset],
             state_id: self.state_ids[offset],
             observation_id: self.observation_ids[offset],
-            array_id: self.array_ids[offset],
             flag_row: self.flag_rows[offset],
             uvw_m: [
                 self.uvw_m[offset * 3],
@@ -287,20 +269,12 @@ fn fill_main_row_selection_block(
                 RequiredScalarColumnValuesMut::Float64(&mut block.time_centroids_mjd_seconds),
             ),
             RequiredScalarColumnDestination::new(
-                "SCAN_NUMBER",
-                RequiredScalarColumnValuesMut::Int32(&mut block.scan_numbers),
-            ),
-            RequiredScalarColumnDestination::new(
                 "STATE_ID",
                 RequiredScalarColumnValuesMut::Int32(&mut block.state_ids),
             ),
             RequiredScalarColumnDestination::new(
                 "OBSERVATION_ID",
                 RequiredScalarColumnValuesMut::Int32(&mut block.observation_ids),
-            ),
-            RequiredScalarColumnDestination::new(
-                "ARRAY_ID",
-                RequiredScalarColumnValuesMut::Int32(&mut block.array_ids),
             ),
             RequiredScalarColumnDestination::new(
                 "FLAG_ROW",
@@ -331,10 +305,8 @@ fn fill_main_row_selection_block(
         block.antenna2.len(),
         block.times_mjd_seconds.len(),
         block.time_centroids_mjd_seconds.len(),
-        block.scan_numbers.len(),
         block.state_ids.len(),
         block.observation_ids.len(),
-        block.array_ids.len(),
         block.flag_rows.len(),
         block.uvw_m.len() / 3,
     ];
@@ -1608,10 +1580,10 @@ mod tests {
 
     #[test]
     fn main_row_selection_blocks_follow_the_explicit_read_plan_and_reuse_storage() {
-        assert_eq!(MainRowSelectionFact::STORAGE_BYTES_PER_ROW, 73);
+        assert_eq!(MainRowSelectionFact::STORAGE_BYTES_PER_ROW, 65);
         assert_eq!(
             MainRowSelectionCursor::retained_bytes_per_row(),
-            73 + size_of::<usize>()
+            65 + size_of::<usize>()
         );
         let mut ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
         let schema = ms.main_table().schema().unwrap().clone();
@@ -1694,10 +1666,8 @@ mod tests {
         assert_eq!(last.antenna2(), 34);
         assert_eq!(last.time_mjd_seconds(), 44.5);
         assert_eq!(last.time_centroid_mjd_seconds(), 49.5);
-        assert_eq!(last.scan_number(), 54);
         assert_eq!(last.state_id(), 64);
         assert_eq!(last.observation_id(), 74);
-        assert_eq!(last.array_id(), 84);
         assert_eq!(last.uvw_m(), [94.0, 104.0, 114.0]);
     }
 

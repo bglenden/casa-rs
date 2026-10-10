@@ -366,7 +366,7 @@ fn t55_signed_primary_beam_limit_separates_pixels_search_support_and_stored_mask
             let image_stem = format!("signed-pb-{weighting}-{cell_arcsec}");
             let negative_image_name = root.path().join(format!("{image_stem}-negative"));
             let mut positive_pixels = None;
-            let mut positive_graph = None;
+            let mut positive_storage = None;
             for pblimit in [0.2, -0.2] {
                 let image_name = if pblimit > 0.0 {
                     root.path().join(format!("{image_stem}-positive"))
@@ -514,16 +514,21 @@ fn t55_signed_primary_beam_limit_separates_pixels_search_support_and_stored_mask
                         )
                     })
                     .collect::<Vec<_>>();
-                let graph = outcome.planned_products.graph_id();
+                let storage = outcome
+                    .planned_products
+                    .members()
+                    .iter()
+                    .map(|member| member.storage())
+                    .collect::<Vec<_>>();
                 if let Some(positive) = &positive_pixels {
                     assert_eq!(
                         positive, &pixels,
                         "pblimit sign must not change numerical products"
                     );
-                    assert_ne!(positive_graph, Some(graph));
+                    assert_ne!(positive_storage, Some(storage));
                 } else {
                     positive_pixels = Some(pixels);
-                    positive_graph = Some(graph);
+                    positive_storage = Some(storage);
                     for suffix in &product_names {
                         std::fs::rename(
                             PathBuf::from(format!("{}{suffix}", image_name.display())),

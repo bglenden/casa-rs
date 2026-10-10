@@ -2,45 +2,9 @@
 
 //! Immutable celestial, UVW, image-domain, and spectral coordinate laws.
 
-use std::{cmp::Ordering, collections::BTreeSet, f64::consts::TAU, fmt};
+use std::{cmp::Ordering, collections::BTreeSet, f64::consts::TAU};
 
 use thiserror::Error;
-
-use crate::compiled_problem::{
-    CanonicalEncoder, LogicalIdentity, ProblemInputIdentities, ReferenceDataKind,
-};
-
-const COMPILED_GEOMETRY_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-geometry";
-const COMPILED_GEOMETRY_IDENTITY_VERSION: u32 = 3;
-
-/// Stable compiler-derived identity of immutable compiled geometry.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CompiledGeometryId(LogicalIdentity);
-
-impl CompiledGeometryId {
-    /// Identity schema version used by the canonical encoder.
-    pub const SCHEMA_VERSION: u32 = COMPILED_GEOMETRY_IDENTITY_VERSION;
-
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0.as_bytes()
-    }
-}
-
-impl fmt::Debug for CompiledGeometryId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("CompiledGeometryId(")?;
-        write_hex(formatter, &self.as_bytes())?;
-        formatter.write_str(")")
-    }
-}
-
-impl fmt::Display for CompiledGeometryId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_hex(formatter, &self.as_bytes())
-    }
-}
 
 /// Celestial reference frame attached to a sky direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1206,22 +1170,13 @@ impl CompiledImageDomain {
 /// Immutable compiler-owned geometry accepted by planning and execution.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompiledGeometry {
-    geometry_id: CompiledGeometryId,
     domains: Box<[CompiledImageDomain]>,
     centres: CentreLaws,
     uvw: UvwCoordinateLaw,
     spectral: SpectralCoordinateSpec,
-    measures_reference: Option<LogicalIdentity>,
-    ephemeris_reference: Option<LogicalIdentity>,
 }
 
 impl CompiledGeometry {
-    /// Return the compiler-derived canonical identity.
-    #[must_use]
-    pub const fn geometry_id(&self) -> CompiledGeometryId {
-        self.geometry_id
-    }
-
     /// Return canonical domains: main first, then named outliers.
     #[must_use]
     pub const fn domains(&self) -> &[CompiledImageDomain] {
@@ -1244,18 +1199,6 @@ impl CompiledGeometry {
     #[must_use]
     pub const fn spectral(&self) -> &SpectralCoordinateSpec {
         &self.spectral
-    }
-
-    /// Return the bound Measures snapshot used by frame transformation.
-    #[must_use]
-    pub const fn measures_reference(&self) -> Option<LogicalIdentity> {
-        self.measures_reference
-    }
-
-    /// Return the bound ephemeris snapshot used by a moving centre law.
-    #[must_use]
-    pub const fn ephemeris_reference(&self) -> Option<LogicalIdentity> {
-        self.ephemeris_reference
     }
 }
 
@@ -1310,12 +1253,6 @@ pub enum CompileGeometryError {
     /// The selected POINTING column and declared meaning disagree.
     #[error("POINTING DIRECTION is antenna boresight and TARGET is the tracking target")]
     InconsistentPointingDirection,
-    /// A moving centre law lacked a bound ephemeris snapshot.
-    #[error("an ephemeris centre law requires bound ephemeris reference data")]
-    MissingEphemerisReference,
-    /// A spectral frame transform lacked a bound Measures snapshot.
-    #[error("a spectral frame transform requires bound measures reference data")]
-    MissingMeasuresReference,
     /// A frame transform omitted its anchor or an identity law supplied one.
     #[error("spectral frame anchors are required exactly when source and output frames differ")]
     InconsistentSpectralAnchor,
@@ -1337,7 +1274,6 @@ pub enum CompileGeometryError {
 
 pub(crate) fn compile_geometry(
     mut input: GeometryInput,
-    inputs: &ProblemInputIdentities,
 ) -> Result<CompiledGeometry, CompileGeometryError> {
     let main_count = input
         .domains
@@ -1387,36 +1323,13 @@ pub(crate) fn compile_geometry(
     }
 
     canonicalize_centres(&mut input.centres)?;
-    let ephemeris_reference =
-        if matches!(input.centres.phase_tracking, PhaseCentreLaw::Ephemeris(_)) {
-            Some(
-                reference_identity(inputs, ReferenceDataKind::Ephemeris)
-                    .ok_or(CompileGeometryError::MissingEphemerisReference)?,
-            )
-        } else {
-            None
-        };
     canonicalize_spectral(&mut input.spectral)?;
-    let measures_reference = if input.spectral.source_frame != input.spectral.output_frame {
-        Some(
-            reference_identity(inputs, ReferenceDataKind::Measures)
-                .ok_or(CompileGeometryError::MissingMeasuresReference)?,
-        )
-    } else {
-        None
-    };
-
-    let mut compiled = CompiledGeometry {
-        geometry_id: CompiledGeometryId(LogicalIdentity::from_bytes([0; 32])),
+    Ok(CompiledGeometry {
         domains: domains.into_boxed_slice(),
         centres: input.centres,
         uvw: input.uvw,
         spectral: input.spectral,
-        measures_reference,
-        ephemeris_reference,
-    };
-    compiled.geometry_id = canonical_geometry_id(&compiled);
-    Ok(compiled)
+    })
 }
 
 fn compile_facets(
@@ -1712,239 +1625,6 @@ fn f64_ulp(value: f64) -> f64 {
     }
 }
 
-fn reference_identity(
-    inputs: &ProblemInputIdentities,
-    wanted: ReferenceDataKind,
-) -> Option<LogicalIdentity> {
-    inputs
-        .reference_data()
-        .iter()
-        .find_map(|(kind, identity)| (*kind == wanted).then_some(*identity))
-}
-
-fn canonical_geometry_id(geometry: &CompiledGeometry) -> CompiledGeometryId {
-    let mut encoder = CanonicalEncoder::new();
-    encoder.bytes(COMPILED_GEOMETRY_IDENTITY_DOMAIN);
-    encoder.u32(COMPILED_GEOMETRY_IDENTITY_VERSION);
-    encoder.usize(geometry.domains.len());
-    for domain in &geometry.domains {
-        match &domain.role {
-            ImageDomainRole::Main => encoder.u8(0),
-            ImageDomainRole::Outlier(name) => {
-                encoder.u8(1);
-                encoder.bytes(name.as_bytes());
-            }
-        }
-        encoder.usize(domain.shape.width);
-        encoder.usize(domain.shape.height);
-        encode_direction_coordinate(&mut encoder, domain.direction);
-        encode_sky_direction(&mut encoder, domain.psf_phase_centre);
-        encoder.usize(domain.facets.len());
-        for facet in &domain.facets {
-            for value in facet.origin.into_iter().chain(facet.end_exclusive) {
-                encoder.usize(value);
-            }
-            encode_direction_coordinate(&mut encoder, facet.direction);
-            encode_sky_direction(&mut encoder, facet.phase_centre);
-        }
-        for axis in domain.axes.positions {
-            encoder.u8(image_axis_tag(axis));
-        }
-    }
-    encode_centres(&mut encoder, &geometry.centres);
-    encoder.u8(match geometry.uvw {
-        UvwCoordinateLaw::PhaseTrackingCentre => 0,
-        UvwCoordinateLaw::MosaicPhaseTrackingCentre => 1,
-    });
-    encode_spectral(&mut encoder, &geometry.spectral);
-    encode_optional_identity(&mut encoder, geometry.measures_reference);
-    encode_optional_identity(&mut encoder, geometry.ephemeris_reference);
-    CompiledGeometryId(LogicalIdentity::from_bytes(encoder.finish()))
-}
-
-fn encode_direction_coordinate(encoder: &mut CanonicalEncoder, direction: DirectionCoordinateSpec) {
-    encoder.u8(match direction.projection {
-        Projection::Sin => 0,
-    });
-    encode_sky_direction(encoder, direction.reference_direction);
-    for value in direction
-        .reference_pixel
-        .into_iter()
-        .chain(direction.increment_rad)
-        .chain(direction.pc.into_iter().flatten())
-        .chain(direction.pole_deg)
-    {
-        encoder.f64(value);
-    }
-}
-
-pub(crate) fn encode_sky_direction(encoder: &mut CanonicalEncoder, direction: SkyDirection) {
-    encoder.u8(direction_frame_tag(direction.frame));
-    encoder.f64(direction.longitude_rad);
-    encoder.f64(direction.latitude_rad);
-}
-
-fn encode_centres(encoder: &mut CanonicalEncoder, centres: &CentreLaws) {
-    match &centres.phase_tracking {
-        PhaseCentreLaw::Observation => encoder.u8(0),
-        PhaseCentreLaw::Fixed(direction) => {
-            encoder.u8(1);
-            encode_sky_direction(encoder, *direction);
-        }
-        PhaseCentreLaw::Ephemeris(target) => {
-            encoder.u8(2);
-            encoder.bytes(target.as_bytes());
-        }
-    }
-    match centres.delay {
-        DelayCentreLaw::PhaseTrackingCentre => encoder.u8(0),
-        DelayCentreLaw::Observation => encoder.u8(1),
-        DelayCentreLaw::Fixed(direction) => {
-            encoder.u8(2);
-            encode_sky_direction(encoder, direction);
-        }
-    }
-    match centres.pointing {
-        PointingCentreLaw::PhaseTrackingCentre => encoder.u8(0),
-        PointingCentreLaw::FieldCentre => encoder.u8(3),
-        PointingCentreLaw::Observation(law) => {
-            encoder.u8(1);
-            encoder.u8(match law.direction_column {
-                PointingDirectionColumn::Direction => 0,
-                PointingDirectionColumn::Target => 1,
-            });
-            encoder.u8(match law.direction_semantic {
-                PointingDirectionSemantic::AntennaBoresight => 0,
-                PointingDirectionSemantic::TrackingTarget => 1,
-            });
-            encoder.u8(match law.time_sampling {
-                PointingTimeSampling::VisibilityTime => 0,
-                PointingTimeSampling::VisibilityTimeCentroid => 1,
-            });
-            encoder.u8(match law.interpolation {
-                PointingInterpolation::Nearest => 0,
-                PointingInterpolation::GreatCircleShortestArc => 1,
-            });
-            encoder.u8(match law.extrapolation {
-                PointingExtrapolation::Reject => 0,
-                PointingExtrapolation::HoldNearest => 1,
-            });
-            encoder.u8(match law.missing {
-                MissingPointingPolicy::Reject => 0,
-                MissingPointingPolicy::UsePhaseTrackingCentre => 1,
-            });
-        }
-        PointingCentreLaw::Fixed(direction) => {
-            encoder.u8(2);
-            encode_sky_direction(encoder, direction);
-        }
-    }
-}
-
-fn encode_spectral(encoder: &mut CanonicalEncoder, spectral: &SpectralCoordinateSpec) {
-    encoder.u8(frequency_frame_tag(spectral.source_frame));
-    encoder.u8(frequency_frame_tag(spectral.output_frame));
-    match spectral.anchor {
-        SpectralFrameAnchor::NotApplicable => encoder.u8(0),
-        SpectralFrameAnchor::Conversion {
-            epoch,
-            direction,
-            observatory_position,
-        } => {
-            encoder.u8(1);
-            encoder.f64(epoch.mjd_days);
-            encoder.u8(match epoch.scale {
-                TimeScale::Utc => 0,
-                TimeScale::Tai => 1,
-                TimeScale::Tt => 2,
-                TimeScale::Tdb => 3,
-            });
-            encode_sky_direction(encoder, direction);
-            for value in observatory_position.metres {
-                encoder.f64(value);
-            }
-        }
-    }
-    match &spectral.wcs {
-        SpectralWcs::Linear {
-            channels,
-            reference_pixel,
-            reference_frequency_hz,
-            increment_hz,
-        } => {
-            encoder.u8(0);
-            encoder.usize(*channels);
-            encoder.f64(*reference_pixel);
-            encoder.f64(*reference_frequency_hz);
-            encoder.f64(*increment_hz);
-        }
-        SpectralWcs::Tabular {
-            channel_centres_hz,
-            channel_boundaries_hz,
-        } => {
-            encoder.u8(1);
-            encoder.usize(channel_centres_hz.len());
-            for frequency in channel_centres_hz {
-                encoder.f64(*frequency);
-            }
-            encoder.usize(channel_boundaries_hz.len());
-            for frequency in channel_boundaries_hz {
-                encoder.f64(*frequency);
-            }
-        }
-    }
-    match spectral.rest_frequency {
-        RestFrequency::NotApplicable => encoder.u8(0),
-        RestFrequency::Line { hertz } => {
-            encoder.u8(1);
-            encoder.f64(hertz);
-        }
-    }
-    encoder.u8(match spectral.doppler_convention {
-        DopplerConvention::NotApplicable => 0,
-        DopplerConvention::Radio => 1,
-        DopplerConvention::Optical => 2,
-        DopplerConvention::Relativistic => 3,
-    });
-}
-
-fn encode_optional_identity(encoder: &mut CanonicalEncoder, identity: Option<LogicalIdentity>) {
-    match identity {
-        None => encoder.u8(0),
-        Some(identity) => {
-            encoder.u8(1);
-            encoder.identity(identity);
-        }
-    }
-}
-
-fn image_axis_tag(axis: ImageAxis) -> u8 {
-    match axis {
-        ImageAxis::DirectionLongitude => 0,
-        ImageAxis::DirectionLatitude => 1,
-        ImageAxis::Polarization => 2,
-        ImageAxis::Spectral => 3,
-    }
-}
-
-fn direction_frame_tag(frame: DirectionFrame) -> u8 {
-    match frame {
-        DirectionFrame::Icrs => 0,
-        DirectionFrame::J2000 => 1,
-        DirectionFrame::B1950 => 2,
-        DirectionFrame::Galactic => 3,
-    }
-}
-
-pub(crate) fn frequency_frame_tag(frame: FrequencyFrame) -> u8 {
-    match frame {
-        FrequencyFrame::Topocentric => 0,
-        FrequencyFrame::Barycentric => 1,
-        FrequencyFrame::Lsrk => 2,
-        FrequencyFrame::Rest => 3,
-    }
-}
-
 fn canonical_longitude(longitude: f64) -> f64 {
     canonical_zero(longitude.rem_euclid(TAU))
 }
@@ -1961,11 +1641,4 @@ fn canonicalize_f64_slice(values: &mut [f64]) {
     for value in values {
         *value = canonical_zero(*value);
     }
-}
-
-fn write_hex(formatter: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
-    for byte in bytes {
-        write!(formatter, "{byte:02x}")?;
-    }
-    Ok(())
 }

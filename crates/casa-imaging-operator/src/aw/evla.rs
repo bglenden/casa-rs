@@ -473,14 +473,8 @@ mod tests {
     }
 
     #[test]
-    fn t52_surface_rejects_invalid_samples_and_identity_covers_content() {
+    fn t52_surface_rejects_invalid_samples() {
         let model = parabola();
-        let mut changed = model.surface.samples().to_vec();
-        changed[100][1] += 0.001;
-        assert_ne!(
-            model.surface.content_identity(),
-            EvlaDishSurface::new(changed).unwrap().content_identity()
-        );
         let mut invalid = model.surface.samples().to_vec();
         invalid[12][0] += 0.005;
         assert!(matches!(

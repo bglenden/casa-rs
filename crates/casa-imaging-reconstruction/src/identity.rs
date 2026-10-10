@@ -11,7 +11,6 @@ pub(crate) const AUTHORITY_DOMAIN: &[u8] = b"casa-rs-model-lifecycle-authority";
 pub(crate) const AUTHORITY_VERSION: u32 = 2;
 pub(crate) const GENERATION_DOMAIN: &[u8] = b"casa-rs-model-generation";
 pub(crate) const GENERATION_VERSION: u32 = 4;
-const REPROJECTION_VERSION: u32 = 3;
 pub(crate) const FINAL_COMPLETION_DOMAIN: &[u8] = b"casa-rs-final-model-completion";
 pub(crate) const FINAL_COMPLETION_VERSION: u32 = 2;
 pub(crate) const FINAL_NORMAL_STATE_DOMAIN: &[u8] = b"casa-rs-final-normal-state";
@@ -76,11 +75,6 @@ impl ModelDeltaId {
 
 pub(crate) static NEXT_MODEL_DELTA: AtomicU64 = AtomicU64::new(1);
 
-lifecycle_identity!(
-    ModelReprojectionId,
-    REPROJECTION_VERSION,
-    "Stable identity of one validated canonical reprojection."
-);
 lifecycle_identity!(
     FinalModelCompletionId,
     FINAL_COMPLETION_VERSION,

@@ -168,7 +168,7 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
         assert json.loads(invocation.stdin or "null") == expected["request"]
 
 
-IMAGER_TASK_PROTOCOL_VERSION = 12
+IMAGER_TASK_PROTOCOL_VERSION = 13
 
 NATIVE_AW = {
     "gridder": "awproject",

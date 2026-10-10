@@ -10,18 +10,18 @@ use casa_imaging_model::{
     DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
     FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
     InstrumentResponse, MeasurementEquationContract, MissingPointingPolicy, ModelColumnWrite,
-    ModelInnerProduct, ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationPointingLaw, ObservationSnapshot, ObservationSnapshotInput,
+    ModelInnerProduct, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationPointingLaw, ObservationSnapshot, ObservationSnapshotInput,
     ObservationTransactionCompileError, ObservationTransactionRequirements, PhaseCentreLaw,
     PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
-    ProblemInput, ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
-    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, RestFrequency,
-    RestoringBeamPolicy, ScientificContract, SequentialContinuumTransform, SkyDirection,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
+    ProblemInput, ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy,
+    ScientificContract, SequentialContinuumTransform, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
+    WeightingContract, WeightingScheme, compile, compile_observation,
 };
 
 fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
@@ -63,7 +63,7 @@ fn try_compile_transaction(
     transaction: ObservationTransactionRequirements,
     transform: Option<SequentialContinuumTransform>,
 ) -> Result<casa_imaging_model::CompiledProblem, CompileProblemError> {
-    let lifecycle = model_lifecycle_fixture::model_lifecycle(snapshot.model());
+    let lifecycle = model_lifecycle_fixture::model_lifecycle();
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -157,15 +157,14 @@ fn try_compile_transaction(
     compile(ProblemInput::new(
         specification,
         geometry,
-        ProblemInputIdentities::new(snapshot),
+        snapshot,
         lifecycle,
     ))
 }
 
 #[test]
 fn transaction_contract_derives_the_exact_snapshot_read_set() {
-    let snapshot =
-        common::observation_snapshot(7, Vec::new(), casa_imaging_model::ModelStateIdentity::Empty);
+    let snapshot = common::observation_snapshot(7);
 
     let problem = compile_transaction(
         snapshot.clone(),
@@ -173,7 +172,6 @@ fn transaction_contract_derives_the_exact_snapshot_read_set() {
     );
     let contract = problem.observation_transaction();
 
-    assert_eq!(contract.observation_snapshot_id(), snapshot.snapshot_id());
     assert_eq!(contract.read_set().sources().len(), 1);
     let source = &contract.read_set().sources()[0];
     assert_eq!(
@@ -186,14 +184,8 @@ fn transaction_contract_derives_the_exact_snapshot_read_set() {
 }
 
 #[test]
-fn selected_model_column_writes_have_a_pinned_schema_three_identity() {
-    let snapshot =
-        common::observation_snapshot(8, Vec::new(), casa_imaging_model::ModelStateIdentity::Empty);
-    let read_only_problem = compile_transaction(
-        snapshot.clone(),
-        ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
-    );
-    let read_only = read_only_problem.observation_transaction();
+fn selected_model_column_writes_target_the_selected_rows() {
+    let snapshot = common::observation_snapshot(8);
 
     let writable_problem = compile_transaction(
         snapshot.clone(),
@@ -201,15 +193,6 @@ fn selected_model_column_writes_have_a_pinned_schema_three_identity() {
     );
     let writable = writable_problem.observation_transaction();
 
-    assert_ne!(read_only.transaction_id(), writable.transaction_id());
-    assert_eq!(
-        casa_imaging_model::ObservationTransactionId::SCHEMA_VERSION,
-        3
-    );
-    assert_eq!(
-        writable.transaction_id().to_string(),
-        "8700e2ccd686d96a3aec77841f1bd0b904e037298b209f13ff5369e539737eab"
-    );
     assert_eq!(writable.write_set().visibility_columns().len(), 1);
     let write = &writable.write_set().visibility_columns()[0];
     assert_eq!(
@@ -220,12 +203,12 @@ fn selected_model_column_writes_have_a_pinned_schema_three_identity() {
     assert_eq!(
         writable.read_set().sources()[0].selection().rows(),
         snapshot.sources()[0].selection().rows(),
-        "the transaction read contract must retain the compact row identity"
+        "the transaction read contract must retain the compact row manifest"
     );
     assert_eq!(
         write.selection().rows(),
         snapshot.sources()[0].selection().rows(),
-        "MODEL_DATA write access must retain the compact row identity"
+        "MODEL_DATA write access must retain the compact row manifest"
     );
     assert_eq!(write.column(), MsColumnKind::ModelData);
 }
@@ -248,11 +231,9 @@ fn one_channel_transform() -> SequentialContinuumTransform {
 
 #[test]
 fn a_corrected_data_write_without_the_column_is_refused_at_compile() {
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![common::observation_source_with_corrected_data(10, false)],
-        Vec::new(),
-        ModelStateIdentity::Empty,
-    ))
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![
+        common::observation_source_with_corrected_data(10, false),
+    ]))
     .expect("compile observation without CORRECTED_DATA");
 
     assert!(matches!(
@@ -270,11 +251,9 @@ fn a_corrected_data_write_without_the_column_is_refused_at_compile() {
 
 #[test]
 fn corrected_data_write_needs_the_column_and_writes_output_role_channels_only() {
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![common::observation_source_with_corrected_data(10, true)],
-        Vec::new(),
-        ModelStateIdentity::Empty,
-    ))
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![
+        common::observation_source_with_corrected_data(10, true),
+    ]))
     .expect("compile observation with CORRECTED_DATA destination");
     let transform = one_channel_transform();
     let problem = compile_transaction_with_transform(
@@ -298,14 +277,10 @@ fn corrected_data_write_needs_the_column_and_writes_output_role_channels_only() 
 
 #[test]
 fn multi_ms_read_and_write_sets_keep_request_order() {
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![
-            common::observation_source(12),
-            common::observation_source(11),
-        ],
-        Vec::new(),
-        ModelStateIdentity::Empty,
-    ))
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![
+        common::observation_source(12),
+        common::observation_source(11),
+    ]))
     .expect("compile multi-MS observation");
     assert_eq!(
         snapshot.sources()[0].provenance().locator(),

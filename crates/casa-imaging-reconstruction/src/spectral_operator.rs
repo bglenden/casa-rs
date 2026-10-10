@@ -10,10 +10,7 @@ pub use pass_state::{PassImages, PassNormalState};
 
 use std::mem::size_of;
 
-use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblemId, ImageDomainRole, LogicalIdentity, NumericsContractId,
-    WeightingCommitmentId,
-};
+use casa_imaging_model::{ImageDomainRole, LogicalIdentity};
 use num_complex::Complex64;
 use thiserror::Error;
 
@@ -338,10 +335,6 @@ pub enum SpectralPrimitiveCatalog {
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct CompleteDataOwnerCompletion {
-    pub(crate) problem: CompiledProblemId,
-    pub(crate) geometry: CompiledGeometryId,
-    pub(crate) numerics: NumericsContractId,
-    pub(crate) weighting_commitment: WeightingCommitmentId,
     pub(crate) weighting_generation: WeightingGenerationId,
     pub(crate) replay: WeightingReplayId,
 
@@ -352,30 +345,6 @@ pub struct CompleteDataOwnerCompletion {
 }
 
 impl CompleteDataOwnerCompletion {
-    /// Return the exact Compiled Problem executed by this operator.
-    #[must_use]
-    pub const fn problem_id(&self) -> CompiledProblemId {
-        self.problem
-    }
-
-    /// Return the compiled geometry/operator coordinate commitment.
-    #[must_use]
-    pub const fn geometry_id(&self) -> CompiledGeometryId {
-        self.geometry
-    }
-
-    /// Return the exact numerical contract.
-    #[must_use]
-    pub const fn numerics_id(&self) -> NumericsContractId {
-        self.numerics
-    }
-
-    /// Return the compiler-owned weighting commitment.
-    #[must_use]
-    pub const fn weighting_commitment_id(&self) -> WeightingCommitmentId {
-        self.weighting_commitment
-    }
-
     /// Return the imaging-weight generation every pass used.
     #[must_use]
     pub const fn weighting_generation(&self) -> WeightingGenerationId {

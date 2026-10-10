@@ -19,10 +19,10 @@ use std::process::Command;
 use std::time::Instant;
 
 use casa_imaging_model::{
-    AntennaSelection, CorrelationProduct, CorrelationSelection, CorrelationType,
-    DataDescriptionSelection, IdSelection, IntentSelection, LogicalIdentity, ModelStateIdentity,
-    MsColumnKind, ObservationSelection, RowSelection, SelectedMainRow, SelectedRows,
-    SpectralWindowSelection, TimeSelection, UvSelection, VisibilityColumn, WeightColumn,
+    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
+    IdSelection, IntentSelection, MsColumnKind, ObservationSelection, RowSelection,
+    SelectedMainRow, SelectedRows, SpectralWindowSelection, UvSelection, VisibilityColumn,
+    WeightColumn,
 };
 use casa_ms::OptionalMainColumn;
 use casa_ms::SubTable;
@@ -1050,16 +1050,7 @@ fn model_data_write_read_interoperability_matrix() {
             (0_u32..6).map(|row| SelectedMainRow::new(u64::from(row), 0)),
         )
         .unwrap(),
-        RowSelection::new(
-            IdSelection::All,
-            TimeSelection::All,
-            UvSelection::All,
-            AntennaSelection::All,
-            IdSelection::All,
-            IdSelection::All,
-            IntentSelection::All,
-            IdSelection::All,
-        ),
+        RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
         vec![DataDescriptionSelection::new(0, 0, 0)],
         vec![SpectralWindowSelection::new(0, (0..16).collect())],
         vec![CorrelationSelection::new(
@@ -1074,12 +1065,9 @@ fn model_data_write_read_interoperability_matrix() {
     );
     let request = SelectedObservationResolutionRequest::new(
         ms_path.display().to_string(),
-        LogicalIdentity::from_bytes([2; 32]),
         selection,
         VisibilityColumn::Data,
         WeightColumn::Weight,
-        Vec::new(),
-        ModelStateIdentity::Empty,
         SelectedObservationContentBudget::new(1 << 20, 6, 64),
         casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
     );
@@ -1143,16 +1131,7 @@ fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
             [SelectedMainRow::new(0, 0), SelectedMainRow::new(1, 1)],
         )
         .expect("two heterogeneous rows"),
-        RowSelection::new(
-            IdSelection::All,
-            TimeSelection::All,
-            UvSelection::All,
-            AntennaSelection::All,
-            IdSelection::All,
-            IdSelection::All,
-            IntentSelection::All,
-            IdSelection::All,
-        ),
+        RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
         vec![
             DataDescriptionSelection::new(0, 0, 0),
             DataDescriptionSelection::new(1, 1, 0),
@@ -1173,12 +1152,9 @@ fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
     );
     let request = SelectedObservationResolutionRequest::new(
         path.display().to_string(),
-        LogicalIdentity::from_bytes([82; 32]),
         selection.clone(),
         VisibilityColumn::Data,
         WeightColumn::Weight,
-        Vec::new(),
-        ModelStateIdentity::Empty,
         SelectedObservationContentBudget::new(1 << 20, 2, 64),
         casa_test_support::deterministic_measures_provider_for_identity([91; 32]),
     );

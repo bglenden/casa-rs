@@ -1,28 +1,26 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The loop of major and minor cycles on the major-cycle pass.
 //!
-//! The initial pass grids the data and the PSF (the residual of a start
-//! model when there is one); each later pass grids the residual `V − A·m`
-//! of the model the preceding minor cycle produced. Imaging weights are
-//! generated once, before the initial pass, and reused by every pass. The
-//! final pass also writes the model column when the run asks for it.
+//! The initial pass grids the data and the PSF; each later pass grids the
+//! residual `V − A·m` of the model the preceding minor cycle produced.
+//! Imaging weights are generated once, before the initial pass, and reused
+//! by every pass. The final pass also writes the model column when the run
+//! asks for it.
 
 use std::path::Path;
 use std::time::Instant;
 
 use casa_imaging_deconvolution::{CleanStop, Controller, CycleControls};
-use casa_imaging_model::{
-    CompiledProblem, ModelDeltaTerm, ModelInputCommitment, SpectralWcs, WeightingScheme,
-};
+use casa_imaging_model::{CompiledProblem, ModelDeltaTerm, SpectralWcs, WeightingScheme};
 use casa_imaging_operator::{
     BandwidthTaper, Basis, GridPrecision, ModeSet, PlaneRange, WeightingGeneration,
 };
 use casa_imaging_products::VisibilityProductCompletion;
 use casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan;
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks,
-    MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation, MinorCycleImageResponse,
-    ModelGeneration, ModelLifecycle, ModelStoragePlan, PassNormalState, ReconstructionMaskPlan,
+    ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MajorCycleCompletion,
+    MajorCycleOwner, MajorCyclePreparation, MinorCycleImageResponse, ModelGeneration,
+    ModelLifecycle, ModelStoragePlan, PassNormalState, ReconstructionMaskPlan,
     ReconstructionMaskSet, WeightingGenerationId,
 };
 use casa_imaging_runtime::pass::{
@@ -395,7 +393,7 @@ impl<'a> Run<'a> {
             let (modes, with_model) = if cleaning {
                 (ModeSet::DATA, true)
             } else {
-                (run.initial_modes(), start_model(problem))
+                (run.initial_modes(), false)
             };
             if run.admit_pass(modes, with_model)?.0 != Residency::All {
                 return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
@@ -404,23 +402,14 @@ impl<'a> Run<'a> {
         Ok(run)
     }
 
-    /// The initial major cycle: data and PSF, from the start model when the
-    /// problem has one; it writes visibilities when it is also final.
+    /// The initial major cycle: data and PSF, from an empty model; it writes
+    /// visibilities when it is also final.
     fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
-        let mut lifecycle = ModelLifecycle::bind(
-            ExecutableModelProblem::from_compiled(self.problem.clone())?,
-            self.next_attempt(),
-            1,
-            self.model_storage()?,
-        )?;
-        let start_model = !matches!(lifecycle.contract().input(), ModelInputCommitment::Empty);
-        let named = if start_model {
-            lifecycle.initial_reprojected()?
-        } else {
-            lifecycle.initial_empty()?
-        };
+        let lifecycle =
+            ModelLifecycle::bind(self.problem, self.next_attempt(), 1, self.model_storage()?)?;
+        let named = lifecycle.initial_empty()?;
         let preparation = MajorCyclePreparation::prepare(&lifecycle, named, None)?;
-        let (residency, _pass) = self.admit_pass(self.initial_modes(), start_model)?;
+        let (residency, _pass) = self.admit_pass(self.initial_modes(), false)?;
         let state = PassNormalState::initial(
             self.problem,
             self.weighting_id,
@@ -442,7 +431,7 @@ impl<'a> Run<'a> {
         let (normal_state, continuation) = completion.into_continuation();
         let attempt = self.next_attempt();
         let (lifecycle, named) = ModelLifecycle::continue_from(
-            ExecutableModelProblem::from_compiled(self.problem.clone())?,
+            self.problem,
             attempt,
             1,
             continuation,
@@ -464,8 +453,7 @@ impl<'a> Run<'a> {
     }
 
     /// Run one pass into `state` and reconcile it with the prepared model.
-    /// The initial pass grids the start model's residual only when there is
-    /// a start model; every refresh grids the residual.
+    /// The initial pass grids the data; every refresh grids the residual.
     fn reconcile(
         &mut self,
         mut lifecycle: ModelLifecycle,
@@ -481,8 +469,7 @@ impl<'a> Run<'a> {
         } else {
             ModeSet::DATA
         };
-        let with_model = !initial || start_model(self.problem);
-        let model = with_model.then(|| preparation.final_model());
+        let model = (!initial).then(|| preparation.final_model());
         let transform = self.problem.visibility_transform();
         let mut writer = self
             .visibility_write
@@ -513,12 +500,7 @@ impl<'a> Run<'a> {
             .transpose()
             .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?
             .map(|samples| {
-                VisibilityProductCompletion::new(
-                    self.problem.problem_id(),
-                    final_model,
-                    self.weighting_id,
-                    samples,
-                )
+                VisibilityProductCompletion::new(final_model, self.weighting_id, samples)
             });
         let normal = state.finish(summary.samples, summary.blocks)?;
         let mut owner = MajorCycleOwner::from_complete_data(normal, preparation)?;
@@ -677,14 +659,6 @@ fn pass_domains(domains: &[DomainOperator], workers: usize) -> Vec<PassDomain<'_
             },
         })
         .collect()
-}
-
-/// Whether `problem` starts from a model (CASA `startmodel`).
-fn start_model(problem: &CompiledProblem) -> bool {
-    !matches!(
-        problem.model_lifecycle().input(),
-        ModelInputCommitment::Empty
-    )
 }
 
 /// The next cycle's mask plans: automask evolves from the masks just used,

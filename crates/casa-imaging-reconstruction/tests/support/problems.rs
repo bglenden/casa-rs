@@ -11,29 +11,28 @@
 )]
 
 use casa_imaging_model::{
-    AntennaSelection, AxisOrder, CentreLaws, CompiledProblem, CorrelationProduct,
-    CorrelationSelection, CorrelationType, DataDescriptionSelection, DeclaredInnerProducts,
-    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout,
-    FiniteValuePolicy, FlagPolicy, FrequencyFrame, GeometryInput, IdSelection, ImageAxis,
-    ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse, IntentSelection,
-    LogicalIdentity, MeasurementEquationContract, ModelBounds, ModelColumnWrite,
-    ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
-    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput, ProblemInputIdentities,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    AxisOrder, CentreLaws, CompiledProblem, CorrelationProduct, CorrelationSelection,
+    CorrelationType, DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw,
+    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy,
+    FlagPolicy, FrequencyFrame, GeometryInput, IdSelection, ImageAxis, ImageDomainRole,
+    ImageDomainSpec, ImageShape, InstrumentResponse, IntentSelection, LogicalIdentity,
+    MeasurementEquationContract, ModelBounds, ModelColumnWrite, ModelExecutionAttemptId,
+    ModelInnerProduct, ModelLifecycleRequirements, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
+    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
+    ProblemInput, ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
     ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
     ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
     ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract,
     SelectedColumns, SelectedMainRow, SelectedRows, SkyDirection, SpectralContract,
     SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
     SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
-    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
-    compile, compile_observation,
+    TaylorValidityPolicy, UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct,
+    WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    compile_observation,
 };
-use casa_imaging_reconstruction::{ExecutableModelProblem, ModelLifecycle};
+use casa_imaging_reconstruction::ModelLifecycle;
 
 pub fn identity(seed: u8, scope: u8) -> LogicalIdentity {
     let mut bytes = [seed; 32];
@@ -47,10 +46,7 @@ pub fn attempt(byte: u8) -> ModelExecutionAttemptId {
 
 pub fn source(seed: u8) -> ObservationSourceInput {
     ObservationSourceInput::new(
-        ObservationSourceProvenance::new(
-            format!("fixture://major-cycle/{seed}"),
-            identity(seed, 2),
-        ),
+        ObservationSourceProvenance::new(format!("fixture://major-cycle/{seed}")),
         ObservationSelection::new(
             // The seed sets the MeasurementSet's row count, so sources from
             // different seeds are different observations.
@@ -59,16 +55,7 @@ pub fn source(seed: u8) -> ObservationSourceInput {
                 [SelectedMainRow::new(0, 0), SelectedMainRow::new(2, 1)],
             )
             .expect("two selected rows"),
-            RowSelection::new(
-                IdSelection::All,
-                TimeSelection::All,
-                UvSelection::All,
-                AntennaSelection::All,
-                IdSelection::All,
-                IdSelection::All,
-                IntentSelection::All,
-                IdSelection::All,
-            ),
+            RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
             vec![
                 DataDescriptionSelection::new(0, 0, 0),
                 DataDescriptionSelection::new(1, 1, 0),
@@ -159,12 +146,8 @@ pub fn reconstruction_problem(
             DopplerConvention::NotApplicable,
         ),
     );
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source(observation)],
-        Vec::new(),
-        ModelStateIdentity::Empty,
-    ))
-    .expect("compile observation snapshot");
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![source(observation)]))
+        .expect("compile observation snapshot");
     compile(ProblemInput::new(
         ProblemSpecification::new(
             ScientificContract::new(
@@ -202,11 +185,10 @@ pub fn reconstruction_problem(
             ),
         ),
         geometry,
-        ProblemInputIdentities::new(snapshot),
+        snapshot,
         ModelLifecycleRequirements::new(
-            ModelBounds::new(4_096, 4_096, 4_096, 4_096, 1.0e30, 1.0e30).expect("valid bounds"),
+            ModelBounds::new(4_096, 4_096, 1.0e30, 1.0e30).expect("valid bounds"),
             NumericPrecision::F64,
-            ModelInputCommitment::Empty,
         ),
     ))
     .expect("compile T20 reconciliation problem")
@@ -217,7 +199,7 @@ pub fn bind_lifecycle(
     attempt: ModelExecutionAttemptId,
 ) -> ModelLifecycle {
     ModelLifecycle::bind(
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("direct executable problem"),
+        problem,
         attempt,
         7,
         casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)

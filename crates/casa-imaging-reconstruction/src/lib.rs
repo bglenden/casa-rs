@@ -4,10 +4,8 @@
 //! Authoritative solver-independent model-state lifecycle.
 //!
 //! The model crate supplies only closed commitments and value schemas. This
-//! crate owns ingest, reprojection, delta application, and opaque completion
-//! evidence without importing storage, execution, product, or solver APIs.
-
-pub use casa_imaging_model::model_support_identity;
+//! crate owns the model, delta application, and opaque completion evidence
+//! without importing storage, execution, product, or solver APIs.
 
 mod block_normal;
 mod continuum_transform;
@@ -18,7 +16,6 @@ mod normal_values;
 pub use normal_values::{NormalValues, SensitivityValues};
 mod mask;
 mod model_lifecycle;
-mod model_reprojection;
 mod model_storage;
 mod spectral_operator;
 mod weighting_identity;
@@ -57,7 +54,7 @@ pub(crate) use identity::{
 };
 pub use identity::{
     FinalModelCompletionId, FinalNormalStateCompletionId, MajorCycleCompletionId, ModelDeltaId,
-    ModelGenerationId, ModelReprojectionId,
+    ModelGenerationId,
 };
 pub use major_cycle::{
     FinalNormalDomainState, FinalNormalState, FinalNormalStateCoefficientTerm,
@@ -75,11 +72,6 @@ pub(crate) use model_lifecycle::validate_model_value;
 pub use model_lifecycle::{
     FinalModelCompletion, FinalModelContinuation, FinalModelUpdate, ModelDelta, ModelGeneration,
     ModelGenerationOrigin, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
-};
-pub(crate) use model_reprojection::add_with_precision;
-pub use model_reprojection::{
-    ExecutableModelProblem, ModelReprojectionError, ModelSourceReader, PreparedReprojectedSeed,
-    prepare_reprojected_seed,
 };
 pub use spectral_operator::normal_storage::FinalNormalPlaneReader;
 pub use weighting_identity::{WeightingGenerationId, WeightingReplayId};

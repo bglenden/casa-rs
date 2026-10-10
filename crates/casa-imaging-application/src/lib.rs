@@ -34,7 +34,7 @@ use std::{error::Error, fmt, io, path::PathBuf, sync::Arc};
 
 use casa_imaging_model::{
     CompileProblemError, CompiledProblem, ObservationSelection, ProblemInput,
-    ProblemInputIdentities, SpectralWindowSelection, compile, compile_observation,
+    SpectralWindowSelection, compile, compile_observation,
 };
 use casa_imaging_products::{
     ContinuumProductControls, PlannedContinuumGeneration, PublishedContinuumGeneration,
@@ -249,7 +249,7 @@ pub fn execute(
     let problem = compile(ProblemInput::new(
         prepared.specification,
         prepared.geometry,
-        ProblemInputIdentities::new(observation),
+        observation,
         prepared.model_lifecycle,
     ))
     .map_err(ApplicationDispatchError::Compile)?;

@@ -50,7 +50,7 @@ fn t51_content_requirements_catalog_budget_charges_shared_source_plan_once() {
     let path = directory.path().join("shared-source-plan.ms");
     generate_fixture(&path);
     let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source = &problem.observation().sources()[0];
     let measurement_set = MeasurementSet::open_retained_read(&path).unwrap();
     let budget = SelectedObservationContentBudget::new(1 << 20, 2, 4);
     let base = SelectedObservationSharedBytes::new(97, 31);

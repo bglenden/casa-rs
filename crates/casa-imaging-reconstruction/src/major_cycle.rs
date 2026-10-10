@@ -15,10 +15,7 @@
 
 use std::fmt;
 
-use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblemId, ImageDomainRole, LogicalIdentity, NumericsContractId,
-    WeightingCommitmentId,
-};
+use casa_imaging_model::{ImageDomainRole, LogicalIdentity};
 
 use crate::{
     Encoder, FINAL_NORMAL_STATE_DOMAIN, FINAL_NORMAL_STATE_VERSION, FinalModelCompletion,
@@ -89,10 +86,6 @@ pub enum NormalStateCatalog {
 #[derive(Debug)]
 pub struct FinalNormalState {
     completion_id: FinalNormalStateCompletionId,
-    problem: CompiledProblemId,
-    geometry: CompiledGeometryId,
-    numerics: NumericsContractId,
-    weighting_commitment: WeightingCommitmentId,
     weighting_generation: WeightingGenerationId,
     replay: WeightingReplayId,
 
@@ -169,30 +162,6 @@ impl FinalNormalState {
     #[must_use]
     pub const fn completion_id(&self) -> FinalNormalStateCompletionId {
         self.completion_id
-    }
-
-    /// Return the exact Compiled Problem reconciled by this Major Cycle.
-    #[must_use]
-    pub const fn problem_id(&self) -> CompiledProblemId {
-        self.problem
-    }
-
-    /// Return the compiled geometry/operator coordinate commitment.
-    #[must_use]
-    pub const fn geometry_id(&self) -> CompiledGeometryId {
-        self.geometry
-    }
-
-    /// Return the exact numerical contract governing the state arithmetic.
-    #[must_use]
-    pub const fn numerics_id(&self) -> NumericsContractId {
-        self.numerics
-    }
-
-    /// Return the compiler-owned weighting commitment bound to the frozen W.
-    #[must_use]
-    pub const fn weighting_commitment_id(&self) -> WeightingCommitmentId {
-        self.weighting_commitment
     }
 
     /// Return the frozen T18 weighting generation behind the state.
@@ -960,10 +929,6 @@ impl MajorCycleCompletion {
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct MajorCycleOwner {
-    problem: CompiledProblemId,
-    geometry: CompiledGeometryId,
-    numerics: NumericsContractId,
-    weighting_commitment: WeightingCommitmentId,
     weighting_generation: WeightingGenerationId,
     replay: WeightingReplayId,
 
@@ -1000,10 +965,6 @@ impl MajorCycleOwner {
             .require_residual_model(preparation.final_model_generation())
             .map_err(MajorCycleError::Residual)?;
         Ok(Self {
-            problem: completion.problem_id(),
-            geometry: completion.geometry_id(),
-            numerics: completion.numerics_id(),
-            weighting_commitment: completion.weighting_commitment_id(),
             weighting_generation: completion.weighting_generation(),
             replay: completion.replay_id(),
 
@@ -1021,12 +982,6 @@ impl MajorCycleOwner {
     #[must_use]
     pub const fn weighting_generation(&self) -> WeightingGenerationId {
         self.weighting_generation
-    }
-
-    /// Return the exact compiled problem behind the retained T19 evidence.
-    #[must_use]
-    pub const fn problem_id(&self) -> CompiledProblemId {
-        self.problem
     }
 
     /// Return the exhaustive selected-sample count of the retained evidence.
@@ -1061,16 +1016,12 @@ impl MajorCycleOwner {
     ///
     /// # Errors
     ///
-    /// Stale problem evidence, foreign generations or deltas, non-exhaustive
-    /// coverage, and generated-nonfinite residuals all fail closed with no
-    /// partial record.
+    /// Foreign generations or deltas, non-exhaustive coverage, and
+    /// generated-nonfinite residuals all fail closed with no partial record.
     pub fn reconcile(
         self,
         lifecycle: &mut ModelLifecycle,
     ) -> Result<MajorCycleCompletion, MajorCycleError> {
-        if lifecycle.problem() != self.problem {
-            return Err(MajorCycleError::StaleModelEvidence);
-        }
         let update = lifecycle.commit_final_model(self.preparation.model)?;
         let (final_model, model_completion) = update.into_parts();
         let input_model_generation = model_completion.base();
@@ -1089,10 +1040,6 @@ impl MajorCycleOwner {
                 final_model_generation,
                 self.image_domain_mask_generation,
             ),
-            problem: self.problem,
-            geometry: self.geometry,
-            numerics: self.numerics,
-            weighting_commitment: self.weighting_commitment,
             weighting_generation: self.weighting_generation,
             replay: self.replay,
 
@@ -1187,8 +1134,6 @@ fn major_cycle_completion_id(
 /// Exact reason a Major-Cycle reconciliation failed closed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MajorCycleError {
-    /// The model lifecycle belongs to another compiled problem than the T19 evidence.
-    StaleModelEvidence,
     /// The T19 evidence did not prove exhaustive weighted coverage.
     IncompleteCoverage,
     /// The model owner rejected the named generation or pending delta.
@@ -1202,9 +1147,6 @@ pub enum MajorCycleError {
 impl fmt::Display for MajorCycleError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::StaleModelEvidence => {
-                formatter.write_str("model lifecycle does not bind the reconciled problem")
-            }
             Self::IncompleteCoverage => {
                 formatter.write_str("complete-data evidence lacks exhaustive coverage")
             }

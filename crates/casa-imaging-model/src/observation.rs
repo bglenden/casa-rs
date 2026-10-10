@@ -2,80 +2,9 @@
 
 //! Immutable observation manifests and exact resolved selection semantics.
 
-use std::{cmp::Ordering, collections::BTreeSet, fmt, sync::Arc};
+use std::{cmp::Ordering, collections::BTreeSet, sync::Arc};
 
 use thiserror::Error;
-
-use crate::compiled_problem::{
-    CanonicalEncoder, LogicalIdentity, ModelStateIdentity, ReferenceDataKind,
-};
-
-const OBSERVATION_SNAPSHOT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-observation-snapshot";
-const OBSERVATION_SNAPSHOT_IDENTITY_VERSION: u32 = 6;
-const OBSERVATION_PROVENANCE_IDENTITY_DOMAIN: &[u8] = b"casa-rs-observation-provenance";
-const OBSERVATION_PROVENANCE_IDENTITY_VERSION: u32 = 1;
-const SELECTED_ROW_SEQUENCE_IDENTITY_DOMAIN: &[u8] = b"casa-rs-selected-row-sequence";
-const SELECTED_ROW_SEQUENCE_IDENTITY_VERSION: u32 = 3;
-
-/// Stable compiler-derived identity of one immutable observation snapshot.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ObservationSnapshotId(LogicalIdentity);
-
-impl ObservationSnapshotId {
-    /// Identity schema version used by the canonical encoder.
-    pub const SCHEMA_VERSION: u32 = OBSERVATION_SNAPSHOT_IDENTITY_VERSION;
-
-    /// Return the wrapped logical identity.
-    #[must_use]
-    pub const fn identity(self) -> LogicalIdentity {
-        self.0
-    }
-
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0.as_bytes()
-    }
-}
-
-impl fmt::Debug for ObservationSnapshotId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "ObservationSnapshotId({})", self.0)
-    }
-}
-
-impl fmt::Display for ObservationSnapshotId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
-
-/// Stable compiler-derived identity of snapshot origin and request provenance.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ObservationProvenanceId(LogicalIdentity);
-
-impl ObservationProvenanceId {
-    /// Identity schema version used by the canonical encoder.
-    pub const SCHEMA_VERSION: u32 = OBSERVATION_PROVENANCE_IDENTITY_VERSION;
-
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0.as_bytes()
-    }
-}
-
-impl fmt::Debug for ObservationProvenanceId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "ObservationProvenanceId({})", self.0)
-    }
-}
-
-impl fmt::Display for ObservationProvenanceId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
 
 /// A resolved non-negative MeasurementSet identifier selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,42 +84,6 @@ impl SelectionBound {
     }
 }
 
-/// One resolved interval in MeasurementSet `TIME` MJD seconds.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TimeRange {
-    lower: Option<SelectionBound>,
-    upper: Option<SelectionBound>,
-}
-
-impl TimeRange {
-    /// Construct a possibly one-sided time interval.
-    #[must_use]
-    pub const fn new(lower: Option<SelectionBound>, upper: Option<SelectionBound>) -> Self {
-        Self { lower, upper }
-    }
-
-    /// Return the lower boundary, if bounded.
-    #[must_use]
-    pub const fn lower(self) -> Option<SelectionBound> {
-        self.lower
-    }
-
-    /// Return the upper boundary, if bounded.
-    #[must_use]
-    pub const fn upper(self) -> Option<SelectionBound> {
-        self.upper
-    }
-}
-
-/// Exact resolved time-selection union.
-#[derive(Debug, Clone, PartialEq)]
-pub enum TimeSelection {
-    /// Select every time.
-    All,
-    /// Select the union of these intervals.
-    Ranges(Vec<TimeRange>),
-}
-
 /// Unit in which a UV-distance predicate is evaluated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum UvDistanceUnit {
@@ -247,43 +140,6 @@ pub enum UvSelection {
     Ranges(Vec<UvDistanceRange>),
 }
 
-/// One unordered antenna pair admitted by a resolved baseline selector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AntennaBaseline {
-    first: u32,
-    second: u32,
-}
-
-impl AntennaBaseline {
-    /// Construct an unordered antenna pair.
-    #[must_use]
-    pub const fn new(first: u32, second: u32) -> Self {
-        if first <= second {
-            Self { first, second }
-        } else {
-            Self {
-                first: second,
-                second: first,
-            }
-        }
-    }
-
-    /// Return the canonical ascending antenna pair.
-    #[must_use]
-    pub const fn antennas(self) -> [u32; 2] {
-        [self.first, self.second]
-    }
-}
-
-/// Exact resolved antenna/baseline selection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AntennaSelection {
-    /// Select every baseline.
-    All,
-    /// Select exactly these unordered antenna pairs.
-    Only(Vec<AntennaBaseline>),
-}
-
 /// One intent pattern resolved to an exact `STATE_ID` and `OBS_MODE` value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedIntent {
@@ -324,41 +180,28 @@ pub enum IntentSelection {
 }
 
 /// Exact row-level predicates applied conjunctively to one MeasurementSet.
+///
+/// These are the MeasurementSet selections the imager exposes: field, UV
+/// distance and scan intent.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RowSelection {
     fields: IdSelection,
-    times: TimeSelection,
     uv_distances: UvSelection,
-    antennas: AntennaSelection,
-    scans: IdSelection,
-    observations: IdSelection,
     intents: IntentSelection,
-    arrays: IdSelection,
 }
 
 impl RowSelection {
     /// Construct exact resolved row predicates.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         fields: IdSelection,
-        times: TimeSelection,
         uv_distances: UvSelection,
-        antennas: AntennaSelection,
-        scans: IdSelection,
-        observations: IdSelection,
         intents: IntentSelection,
-        arrays: IdSelection,
     ) -> Self {
         Self {
             fields,
-            times,
             uv_distances,
-            antennas,
-            scans,
-            observations,
             intents,
-            arrays,
         }
     }
 
@@ -368,34 +211,10 @@ impl RowSelection {
         &self.fields
     }
 
-    /// Return exact MJD-second interval semantics.
-    #[must_use]
-    pub const fn times(&self) -> &TimeSelection {
-        &self.times
-    }
-
     /// Return exact UV-distance interval semantics.
     #[must_use]
     pub const fn uv_distances(&self) -> &UvSelection {
         &self.uv_distances
-    }
-
-    /// Return exact resolved baselines.
-    #[must_use]
-    pub const fn antennas(&self) -> &AntennaSelection {
-        &self.antennas
-    }
-
-    /// Return resolved scan identifiers.
-    #[must_use]
-    pub const fn scans(&self) -> &IdSelection {
-        &self.scans
-    }
-
-    /// Return resolved observation identifiers.
-    #[must_use]
-    pub const fn observations(&self) -> &IdSelection {
-        &self.observations
     }
 
     /// Return resolved scan intents.
@@ -404,29 +223,9 @@ impl RowSelection {
         &self.intents
     }
 
-    /// Return resolved array identifiers.
-    #[must_use]
-    pub const fn arrays(&self) -> &IdSelection {
-        &self.arrays
-    }
-
     fn canonicalize(&mut self) -> Result<(), CompileObservationError> {
         self.fields.canonicalize("field")?;
-        self.scans.canonicalize("scan")?;
-        self.observations.canonicalize("observation")?;
-        self.arrays.canonicalize("array")?;
-        canonicalize_time_selection(&mut self.times)?;
         canonicalize_uv_selection(&mut self.uv_distances)?;
-        match &mut self.antennas {
-            AntennaSelection::All => {}
-            AntennaSelection::Only(baselines) => {
-                baselines.sort_unstable();
-                baselines.dedup();
-                if baselines.is_empty() {
-                    return Err(CompileObservationError::EmptyBaselineSelection);
-                }
-            }
-        }
         match &mut self.intents {
             IntentSelection::All => {}
             IntentSelection::Only(intents) => {
@@ -448,30 +247,6 @@ impl RowSelection {
             }
         }
         Ok(())
-    }
-}
-
-/// Stable storage-owner-reproducible identity of selected MAIN row coordinates.
-///
-/// There is deliberately no constructor from raw digest bytes. The identity
-/// can only be minted by validating and hashing the exact ordered row sequence.
-///
-/// ```compile_fail
-/// use casa_imaging_model::SelectedRowSequenceId;
-///
-/// let _ = SelectedRowSequenceId::from_bytes([0; 32]);
-/// ```
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SelectedRowSequenceId(LogicalIdentity);
-
-impl SelectedRowSequenceId {
-    /// Identity schema version used by the canonical encoder.
-    pub const SCHEMA_VERSION: u32 = SELECTED_ROW_SEQUENCE_IDENTITY_VERSION;
-
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0.as_bytes()
     }
 }
 
@@ -505,34 +280,12 @@ impl SelectedMainRow {
     }
 }
 
-impl fmt::Debug for SelectedRowSequenceId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "SelectedRowSequenceId({})", self.0)
-    }
-}
-
-impl fmt::Display for SelectedRowSequenceId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
-
-/// Failure to create a canonical selected-row sequence manifest.
+/// Failure to record a canonical selected-row manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum SelectedRowSequenceError {
-    /// The iterator's declared or observed row count cannot be represented canonically.
+    /// The observed row count cannot be represented canonically.
     #[error("selected physical MAIN row count exceeds the canonical u64 domain")]
     RowCountOverflow,
-    /// An iterator yielded a different number of rows than its exact-size contract declared.
-    #[error(
-        "selected physical MAIN row iterator declared {declared_row_count} rows but yielded {observed_row_count}"
-    )]
-    DeclaredRowCountMismatch {
-        /// Count declared by the exact-size iterator.
-        declared_row_count: u64,
-        /// Count actually observed while hashing rows.
-        observed_row_count: u64,
-    },
     /// A physical row lies outside the captured MAIN row population.
     #[error("physical MAIN row {row} lies outside source row count {source_row_count}")]
     PhysicalRowOutOfRange {
@@ -557,106 +310,29 @@ pub enum SelectedRowSequenceError {
     },
 }
 
-/// Failure to reproduce a compiled selected-row manifest from a storage replay.
-#[derive(Debug, Error)]
-pub enum SelectedRowManifestValidationError<E>
-where
-    E: std::error::Error + 'static,
-{
-    /// The retained storage source could not produce the next row coordinate.
-    #[error("selected MAIN row replay failed")]
-    Source(#[source] E),
-    /// The replay produced an intrinsically invalid row sequence.
-    #[error(transparent)]
-    InvalidSequence(#[from] SelectedRowSequenceError),
-    /// The replay was valid but did not reproduce the compiled compact manifest.
-    #[error(
-        "selected MAIN row replay produced {observed_row_count} rows with sequence {observed_sequence_id}, expected {expected_row_count} rows with sequence {expected_sequence_id}"
-    )]
-    ManifestMismatch {
-        /// Compiled selected-row count.
-        expected_row_count: u64,
-        /// Replayed selected-row count.
-        observed_row_count: u64,
-        /// Compiled row/DDID sequence identity.
-        expected_sequence_id: SelectedRowSequenceId,
-        /// Replayed row/DDID sequence identity.
-        observed_sequence_id: SelectedRowSequenceId,
-    },
-}
-
-/// Compact identity of selected MAIN row/DDID coordinates in physical row order.
+/// Count and DATA_DESCRIPTION identifiers of the selected MAIN rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectedRows {
     source_row_count: u64,
     selected_row_count: u64,
-    sequence_id: SelectedRowSequenceId,
     used_data_description_ids: Arc<[u32]>,
 }
 
 impl SelectedRows {
-    /// Validate and identify the canonical MAIN row/DDID coordinates without retaining them.
+    /// Record canonical MAIN row/DDID coordinates without retaining them.
     ///
-    /// Validation reports the first encountered invalid row.
     /// Each row is checked for range, then adjacent duplication, then descending
     /// order. A non-adjacent repetition necessarily encounters descending order
     /// first, so validation needs no separate selection-sized duplicate set.
-    pub fn from_ordered_main_rows<I>(
+    pub fn from_ordered_main_rows(
         source_row_count: u64,
-        rows: I,
-    ) -> Result<Self, SelectedRowSequenceError>
-    where
-        I: IntoIterator<Item = SelectedMainRow>,
-        I::IntoIter: ExactSizeIterator,
-    {
-        let rows = rows.into_iter();
-        let declared_row_count =
-            u64::try_from(rows.len()).map_err(|_| SelectedRowSequenceError::RowCountOverflow)?;
+        rows: impl IntoIterator<Item = SelectedMainRow>,
+    ) -> Result<Self, SelectedRowSequenceError> {
         let mut builder = SelectedRowsBuilder::new(source_row_count);
         for row in rows {
             builder.push(row)?;
         }
-        let selected = builder.finish();
-        if selected.selected_row_count != declared_row_count {
-            return Err(SelectedRowSequenceError::DeclaredRowCountMismatch {
-                declared_row_count,
-                observed_row_count: selected.selected_row_count,
-            });
-        }
-        Ok(selected)
-    }
-
-    /// Validate a fallible storage replay against this exact row/DDID manifest.
-    ///
-    /// The replay is inspected in one pass and is not retained. This operation
-    /// establishes only equality with the compiled row manifest; it does not
-    /// mint selected-observation completion or storage-consistency authority.
-    pub fn validate_ordered_main_rows<I, E>(
-        &self,
-        rows: I,
-    ) -> Result<(), SelectedRowManifestValidationError<E>>
-    where
-        I: IntoIterator<Item = Result<SelectedMainRow, E>>,
-        E: std::error::Error + 'static,
-    {
-        let mut accumulator = SelectedRowSequenceAccumulator::new(self.source_row_count);
-        for row in rows {
-            accumulator
-                .push(row.map_err(SelectedRowManifestValidationError::Source)?)
-                .map_err(SelectedRowManifestValidationError::InvalidSequence)?;
-        }
-        let (observed_row_count, observed_sequence_id, _) = accumulator.finish();
-        if observed_row_count != self.selected_row_count()
-            || observed_sequence_id != self.sequence_id
-        {
-            return Err(SelectedRowManifestValidationError::ManifestMismatch {
-                expected_row_count: self.selected_row_count(),
-                observed_row_count,
-                expected_sequence_id: self.sequence_id,
-                observed_sequence_id,
-            });
-        }
-        Ok(())
+        Ok(builder.finish())
     }
 
     /// Return the source MAIN row count at capture.
@@ -671,42 +347,17 @@ impl SelectedRows {
         self.selected_row_count
     }
 
-    /// Return heap bytes owned by the shared canonical row/DDID manifest.
+    /// Return heap bytes owned by the shared DATA_DESCRIPTION identifiers.
     ///
-    /// Cloning [`SelectedRows`] shares these immutable allocations. A retained
-    /// storage owner can therefore charge this value once instead of assuming
-    /// every transaction and commitment clone owns another full row vector.
+    /// Cloning [`SelectedRows`] shares this immutable allocation, so a retained
+    /// storage owner charges it once.
     #[must_use]
     pub fn retained_manifest_bytes(&self) -> Option<usize> {
-        self.additional_retained_manifest_bytes(std::iter::empty::<&Self>())
-    }
-
-    fn additional_retained_manifest_bytes<'a>(
-        &self,
-        already_accounted: impl IntoIterator<Item = &'a Self>,
-    ) -> Option<usize> {
-        let mut used_data_description_ids_accounted = false;
-        for rows in already_accounted {
-            used_data_description_ids_accounted |= Arc::ptr_eq(
-                &self.used_data_description_ids,
-                &rows.used_data_description_ids,
-            );
-        }
-        let mut bytes = 0_usize;
-        if !used_data_description_ids_accounted {
-            bytes = bytes.checked_add(2 * size_of::<usize>())?.checked_add(
-                self.used_data_description_ids
-                    .len()
-                    .checked_mul(size_of::<u32>())?,
-            )?;
-        }
-        Some(bytes)
-    }
-
-    /// Return the canonical identity of selected row/DDID coordinates in MAIN order.
-    #[must_use]
-    pub const fn sequence_id(&self) -> SelectedRowSequenceId {
-        self.sequence_id
+        (2 * size_of::<usize>()).checked_add(
+            self.used_data_description_ids
+                .len()
+                .checked_mul(size_of::<u32>())?,
+        )
     }
 
     fn used_data_description_ids(&self) -> &[u32] {
@@ -716,7 +367,10 @@ impl SelectedRows {
 
 /// Streaming builder for one compact selected-row manifest.
 pub struct SelectedRowsBuilder {
-    accumulator: SelectedRowSequenceAccumulator,
+    source_row_count: u64,
+    selected_row_count: u64,
+    previous_row: Option<u64>,
+    used_data_description_ids: Vec<u32>,
 }
 
 impl SelectedRowsBuilder {
@@ -733,69 +387,18 @@ impl SelectedRowsBuilder {
         data_description_capacity: usize,
     ) -> Self {
         Self {
-            accumulator: SelectedRowSequenceAccumulator::with_data_description_capacity(
-                source_row_count,
-                data_description_capacity,
-            ),
-        }
-    }
-
-    /// Add one selected MAIN row in canonical physical order.
-    pub fn push(&mut self, row: SelectedMainRow) -> Result<(), SelectedRowSequenceError> {
-        self.accumulator.push(row)
-    }
-
-    /// Finish the compact manifest without retaining the captured row corpus.
-    #[must_use]
-    pub fn finish(self) -> SelectedRows {
-        let source_row_count = self.accumulator.source_row_count;
-        let (selected_row_count, sequence_id, used_data_description_ids) =
-            self.accumulator.finish();
-        SelectedRows {
             source_row_count,
-            selected_row_count,
-            sequence_id,
-            used_data_description_ids: used_data_description_ids.into(),
-        }
-    }
-}
-
-pub(crate) struct SelectedRowSequenceAccumulator {
-    source_row_count: u64,
-    encoder: CanonicalEncoder,
-    observed_row_count: u64,
-    previous_row: Option<u64>,
-    used_data_description_ids: Vec<u32>,
-}
-
-impl SelectedRowSequenceAccumulator {
-    pub(crate) fn new(source_row_count: u64) -> Self {
-        Self::with_data_description_capacity(source_row_count, 0)
-    }
-
-    fn with_data_description_capacity(
-        source_row_count: u64,
-        data_description_capacity: usize,
-    ) -> Self {
-        let mut encoder = CanonicalEncoder::new();
-        encoder.bytes(SELECTED_ROW_SEQUENCE_IDENTITY_DOMAIN);
-        encoder.u32(SELECTED_ROW_SEQUENCE_IDENTITY_VERSION);
-        Self {
-            source_row_count,
-            encoder,
-            observed_row_count: 0,
+            selected_row_count: 0,
             previous_row: None,
             used_data_description_ids: Vec::with_capacity(data_description_capacity),
         }
     }
 
-    pub(crate) fn push(
-        &mut self,
-        selected: SelectedMainRow,
-    ) -> Result<(), SelectedRowSequenceError> {
+    /// Add one selected MAIN row in canonical physical order.
+    pub fn push(&mut self, selected: SelectedMainRow) -> Result<(), SelectedRowSequenceError> {
         let row = selected.physical_row;
-        self.observed_row_count = self
-            .observed_row_count
+        self.selected_row_count = self
+            .selected_row_count
             .checked_add(1)
             .ok_or(SelectedRowSequenceError::RowCountOverflow)?;
         if row >= self.source_row_count {
@@ -812,8 +415,6 @@ impl SelectedRowSequenceAccumulator {
         {
             return Err(SelectedRowSequenceError::DescendingPhysicalRow { previous_row, row });
         }
-        self.encoder.u64(row);
-        self.encoder.u32(selected.data_description_id);
         if !self
             .used_data_description_ids
             .contains(&selected.data_description_id)
@@ -825,14 +426,15 @@ impl SelectedRowSequenceAccumulator {
         Ok(())
     }
 
-    pub(crate) fn finish(mut self) -> (u64, SelectedRowSequenceId, Vec<u32>) {
-        self.encoder.u64(self.observed_row_count);
+    /// Finish the compact manifest without retaining the captured row corpus.
+    #[must_use]
+    pub fn finish(mut self) -> SelectedRows {
         self.used_data_description_ids.sort_unstable();
-        (
-            self.observed_row_count,
-            SelectedRowSequenceId(LogicalIdentity::from_bytes(self.encoder.finish())),
-            self.used_data_description_ids.into_iter().collect(),
-        )
+        SelectedRows {
+            source_row_count: self.source_row_count,
+            selected_row_count: self.selected_row_count,
+            used_data_description_ids: self.used_data_description_ids.into(),
+        }
     }
 }
 
@@ -1208,26 +810,12 @@ impl ObservationSelection {
             IdSelection::All => Some(0),
             IdSelection::Only(ids) => ids.capacity().checked_mul(size_of::<u32>()),
         };
-        bytes = bytes
-            .checked_add(id_selection_bytes(&self.rows_filter.fields)?)?
-            .checked_add(id_selection_bytes(&self.rows_filter.scans)?)?
-            .checked_add(id_selection_bytes(&self.rows_filter.observations)?)?
-            .checked_add(id_selection_bytes(&self.rows_filter.arrays)?)?;
-        if let TimeSelection::Ranges(ranges) = &self.rows_filter.times {
-            bytes = bytes.checked_add(ranges.capacity().checked_mul(size_of::<TimeRange>())?)?;
-        }
+        bytes = bytes.checked_add(id_selection_bytes(&self.rows_filter.fields)?)?;
         if let UvSelection::Ranges(ranges) = &self.rows_filter.uv_distances {
             bytes = bytes.checked_add(
                 ranges
                     .capacity()
                     .checked_mul(size_of::<UvDistanceRange>())?,
-            )?;
-        }
-        if let AntennaSelection::Only(baselines) = &self.rows_filter.antennas {
-            bytes = bytes.checked_add(
-                baselines
-                    .capacity()
-                    .checked_mul(size_of::<AntennaBaseline>())?,
             )?;
         }
         if let IntentSelection::Only(intents) = &self.rows_filter.intents {
@@ -1559,33 +1147,23 @@ impl SelectedColumns {
     }
 }
 
-/// Non-scientific origin facts retained separately from snapshot content identity.
+/// Where one MeasurementSet source lives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservationSourceProvenance {
     locator: String,
-    selection_request: LogicalIdentity,
 }
 
 impl ObservationSourceProvenance {
-    /// Construct source-location and original-request provenance.
+    /// Construct the source location.
     #[must_use]
-    pub const fn new(locator: String, selection_request: LogicalIdentity) -> Self {
-        Self {
-            locator,
-            selection_request,
-        }
+    pub const fn new(locator: String) -> Self {
+        Self { locator }
     }
 
-    /// Return the source locator captured for diagnostics and reproduction.
+    /// Return the source locator.
     #[must_use]
     pub fn locator(&self) -> &str {
         &self.locator
-    }
-
-    /// Return the identity of the original selection request.
-    #[must_use]
-    pub const fn selection_request_identity(&self) -> LogicalIdentity {
-        self.selection_request
     }
 
     /// Return heap bytes retained by the source locator string.
@@ -1598,7 +1176,7 @@ impl ObservationSourceProvenance {
         if self.locator.trim().is_empty() {
             return Err(CompileObservationError::EmptySourceLocator);
         }
-        require_identity(self.selection_request, "selection request")
+        Ok(())
     }
 }
 
@@ -1681,68 +1259,30 @@ impl ObservationSource {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObservationSnapshotInput {
     sources: Vec<ObservationSourceInput>,
-    reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
-    model: ModelStateIdentity,
 }
 
 impl ObservationSnapshotInput {
-    /// Construct a multi-MS snapshot manifest and its external input identities.
+    /// Construct a multi-MS snapshot manifest.
     #[must_use]
-    pub const fn new(
-        sources: Vec<ObservationSourceInput>,
-        reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
-        model: ModelStateIdentity,
-    ) -> Self {
-        Self {
-            sources,
-            reference_data,
-            model,
-        }
+    pub const fn new(sources: Vec<ObservationSourceInput>) -> Self {
+        Self { sources }
     }
 }
 
-/// Immutable logical identity and consistency generation of selected observation data.
+/// The selected observation data of one imaging problem.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObservationSnapshot {
-    snapshot_id: ObservationSnapshotId,
-    provenance_id: ObservationProvenanceId,
     sources: Vec<ObservationSource>,
-    reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
-    model: ModelStateIdentity,
 }
 
 // Compilation rejects non-finite ranges, so snapshot equality is reflexive.
 impl Eq for ObservationSnapshot {}
 
 impl ObservationSnapshot {
-    /// Return the canonical content identity of the complete logical manifest.
-    #[must_use]
-    pub const fn snapshot_id(&self) -> ObservationSnapshotId {
-        self.snapshot_id
-    }
-
-    /// Return the identity of source locators and original request order.
-    #[must_use]
-    pub const fn provenance_id(&self) -> ObservationProvenanceId {
-        self.provenance_id
-    }
-
     /// Return sources in request order.
     #[must_use]
     pub fn sources(&self) -> &[ObservationSource] {
         &self.sources
-    }
-
-    /// Return external reference identities in canonical family order.
-    #[must_use]
-    pub fn reference_data(&self) -> &[(ReferenceDataKind, LogicalIdentity)] {
-        &self.reference_data
-    }
-
-    /// Return the exact aggregate initial-model identity.
-    #[must_use]
-    pub const fn model(&self) -> ModelStateIdentity {
-        self.model
     }
 }
 
@@ -1755,12 +1295,6 @@ pub enum CompileObservationError {
     /// No source contributed any selected row.
     #[error("observation selection contains no rows")]
     EmptySelection,
-    /// A caller-supplied identity used the reserved all-zero sentinel.
-    #[error("{scope} identity is not established")]
-    UnidentifiedInput {
-        /// Stable identity scope.
-        scope: &'static str,
-    },
     /// Source provenance did not name an origin.
     #[error("observation source locator is empty")]
     EmptySourceLocator,
@@ -1770,15 +1304,12 @@ pub enum CompileObservationError {
         /// Selector family.
         selector: &'static str,
     },
-    /// A time or UV range was unbounded, non-finite, or inverted.
+    /// A UV range was unbounded, non-finite, or inverted.
     #[error("selection range is unbounded, non-finite, or inverted")]
     InvalidScalarRange,
     /// A UV-distance range used a negative bound.
     #[error("UV-distance selection bounds must be non-negative")]
     NegativeUvDistance,
-    /// Explicit baseline semantics contained no baseline.
-    #[error("explicit antenna selection contains no baseline")]
-    EmptyBaselineSelection,
     /// Resolved intent metadata was empty.
     #[error("resolved intent must contain a non-empty OBS_MODE value")]
     InvalidIntent,
@@ -1888,12 +1419,6 @@ pub enum CompileObservationError {
         /// Orphan `POLARIZATION_ID`.
         polarization_id: u32,
     },
-    /// More than one identity was supplied for one external reference-data family.
-    #[error("duplicate reference-data identity for {kind:?}")]
-    DuplicateReferenceData {
-        /// Duplicated reference-data family.
-        kind: ReferenceDataKind,
-    },
 }
 
 /// Compile and validate one immutable logical observation snapshot.
@@ -1925,49 +1450,7 @@ pub fn compile_observation(
     if !has_selected_rows {
         return Err(CompileObservationError::EmptySelection);
     }
-
-    let mut reference_data = input.reference_data;
-    reference_data.sort_unstable_by_key(|(kind, _)| *kind);
-    if let Some(kind) = reference_data
-        .windows(2)
-        .find_map(|pair| (pair[0].0 == pair[1].0).then_some(pair[0].0))
-    {
-        return Err(CompileObservationError::DuplicateReferenceData { kind });
-    }
-    for (_, identity) in &reference_data {
-        require_identity(*identity, "reference data")?;
-    }
-    match input.model {
-        ModelStateIdentity::Empty => {}
-        ModelStateIdentity::Seed(identity) | ModelStateIdentity::Generation(identity) => {
-            require_identity(identity, "input model")?;
-        }
-    }
-
-    let snapshot_id = canonical_snapshot_id(&sources, &reference_data, input.model);
-    let provenance_id = canonical_provenance_id(snapshot_id, &sources);
-    Ok(ObservationSnapshot {
-        snapshot_id,
-        provenance_id,
-        sources,
-        reference_data,
-        model: input.model,
-    })
-}
-
-fn canonicalize_time_selection(
-    selection: &mut TimeSelection,
-) -> Result<(), CompileObservationError> {
-    if let TimeSelection::Ranges(ranges) = selection {
-        if ranges.is_empty() {
-            return Err(CompileObservationError::InvalidScalarRange);
-        }
-        for range in ranges.iter_mut() {
-            canonicalize_bounds(&mut range.lower, &mut range.upper, false)?;
-        }
-        merge_time_ranges(ranges);
-    }
-    Ok(())
+    Ok(ObservationSnapshot { sources })
 }
 
 fn canonicalize_uv_selection(selection: &mut UvSelection) -> Result<(), CompileObservationError> {
@@ -2024,21 +1507,6 @@ fn canonicalize_bounds(
     Ok(())
 }
 
-fn merge_time_ranges(ranges: &mut Vec<TimeRange>) {
-    ranges.sort_unstable_by(|left, right| compare_lower(left.lower, right.lower));
-    let mut merged: Vec<TimeRange> = Vec::with_capacity(ranges.len());
-    for range in ranges.drain(..) {
-        if let Some(last) = merged.last_mut()
-            && ranges_overlap(last.upper, range.lower)
-        {
-            last.upper = union_upper(last.upper, range.upper);
-        } else {
-            merged.push(range);
-        }
-    }
-    *ranges = merged;
-}
-
 fn compare_uv_ranges(left: &UvDistanceRange, right: &UvDistanceRange) -> Ordering {
     left.unit
         .cmp(&right.unit)
@@ -2084,268 +1552,6 @@ fn union_upper(
     }
 }
 
-fn require_identity(
-    identity: LogicalIdentity,
-    scope: &'static str,
-) -> Result<(), CompileObservationError> {
-    if identity.as_bytes() == [0; 32] {
-        Err(CompileObservationError::UnidentifiedInput { scope })
-    } else {
-        Ok(())
-    }
-}
-
 const fn canonical_zero(value: f64) -> f64 {
     if value == 0.0 { 0.0 } else { value }
-}
-
-fn canonical_snapshot_id(
-    sources: &[ObservationSource],
-    reference_data: &[(ReferenceDataKind, LogicalIdentity)],
-    model: ModelStateIdentity,
-) -> ObservationSnapshotId {
-    let mut encoder = CanonicalEncoder::new();
-    encoder.bytes(OBSERVATION_SNAPSHOT_IDENTITY_DOMAIN);
-    encoder.u32(OBSERVATION_SNAPSHOT_IDENTITY_VERSION);
-    encoder.usize(sources.len());
-    for source in sources {
-        encode_selection(&mut encoder, &source.selection);
-        encoder.u8(visibility_column_tag(source.columns.visibility));
-        encoder.u8(flag_policy_tag(source.columns.flags));
-        encoder.u8(weight_column_tag(source.columns.weights));
-        encoder.u8(u8::from(source.corrected_data_present));
-    }
-    encoder.usize(reference_data.len());
-    for (kind, identity) in reference_data {
-        encoder.u8(reference_data_tag(*kind));
-        encoder.identity(*identity);
-    }
-    encode_model(&mut encoder, model);
-    ObservationSnapshotId(LogicalIdentity::from_bytes(encoder.finish()))
-}
-
-fn canonical_provenance_id(
-    snapshot_id: ObservationSnapshotId,
-    sources: &[ObservationSource],
-) -> ObservationProvenanceId {
-    let mut by_request_order = sources.iter().collect::<Vec<_>>();
-    by_request_order.sort_unstable_by_key(|source| source.input_ordinal);
-    let mut encoder = CanonicalEncoder::new();
-    encoder.bytes(OBSERVATION_PROVENANCE_IDENTITY_DOMAIN);
-    encoder.u32(OBSERVATION_PROVENANCE_IDENTITY_VERSION);
-    encoder.identity(snapshot_id.0);
-    encoder.usize(by_request_order.len());
-    for source in by_request_order {
-        encoder.usize(source.input_ordinal);
-        encoder.bytes(source.provenance.locator.as_bytes());
-        encoder.identity(source.provenance.selection_request);
-    }
-    ObservationProvenanceId(LogicalIdentity::from_bytes(encoder.finish()))
-}
-
-fn encode_selection(encoder: &mut CanonicalEncoder, selection: &ObservationSelection) {
-    encoder.u64(selection.rows.source_row_count);
-    encoder.u64(selection.rows.selected_row_count());
-    encoder.digest(selection.rows.sequence_id.as_bytes());
-    encode_id_selection(encoder, &selection.rows_filter.fields);
-    encode_time_selection(encoder, &selection.rows_filter.times);
-    encode_uv_selection(encoder, &selection.rows_filter.uv_distances);
-    match &selection.rows_filter.antennas {
-        AntennaSelection::All => encoder.u8(0),
-        AntennaSelection::Only(baselines) => {
-            encoder.u8(1);
-            encoder.usize(baselines.len());
-            for baseline in baselines {
-                encoder.u32(baseline.first);
-                encoder.u32(baseline.second);
-            }
-        }
-    }
-    encode_id_selection(encoder, &selection.rows_filter.scans);
-    encode_id_selection(encoder, &selection.rows_filter.observations);
-    match &selection.rows_filter.intents {
-        IntentSelection::All => encoder.u8(0),
-        IntentSelection::Only(intents) => {
-            encoder.u8(1);
-            encoder.usize(intents.len());
-            for intent in intents {
-                encoder.u32(intent.state_id);
-                encoder.bytes(intent.observation_mode.as_bytes());
-            }
-        }
-    }
-    encode_id_selection(encoder, &selection.rows_filter.arrays);
-
-    encoder.usize(selection.data_descriptions.len());
-    for data_description in &selection.data_descriptions {
-        encoder.u32(data_description.data_description_id);
-        encoder.u32(data_description.spectral_window_id);
-        encoder.u32(data_description.polarization_id);
-    }
-    encoder.usize(selection.spectral_windows.len());
-    for spectral_window in &selection.spectral_windows {
-        encoder.u32(spectral_window.spectral_window_id);
-        encoder.usize(spectral_window.channel_indices.len());
-        for channel in &spectral_window.channel_indices {
-            encoder.u32(*channel);
-        }
-        match &spectral_window.coordinate_catalog {
-            Some(catalog) => {
-                encoder.u8(1);
-                encoder.usize(catalog.channel_frequencies_hz.len());
-                for frequency_hz in catalog.channel_frequencies_hz.iter().copied() {
-                    encoder.f64(frequency_hz);
-                }
-                encoder.f64(catalog.first_channel_width_hz);
-            }
-            None => encoder.u8(0),
-        }
-    }
-    encoder.usize(selection.correlations.len());
-    for correlation in &selection.correlations {
-        encoder.u32(correlation.polarization_id);
-        encoder.usize(correlation.products.len());
-        for product in &correlation.products {
-            encoder.u32(product.correlation_index);
-            encoder.u8(correlation_type_tag(product.correlation_type));
-        }
-    }
-}
-
-fn encode_id_selection(encoder: &mut CanonicalEncoder, selection: &IdSelection) {
-    match selection {
-        IdSelection::All => encoder.u8(0),
-        IdSelection::Only(ids) => {
-            encoder.u8(1);
-            encoder.usize(ids.len());
-            for id in ids {
-                encoder.u32(*id);
-            }
-        }
-    }
-}
-
-fn encode_time_selection(encoder: &mut CanonicalEncoder, selection: &TimeSelection) {
-    match selection {
-        TimeSelection::All => encoder.u8(0),
-        TimeSelection::Ranges(ranges) => {
-            encoder.u8(1);
-            encoder.usize(ranges.len());
-            for range in ranges {
-                encode_bound(encoder, range.lower);
-                encode_bound(encoder, range.upper);
-            }
-        }
-    }
-}
-
-fn encode_uv_selection(encoder: &mut CanonicalEncoder, selection: &UvSelection) {
-    match selection {
-        UvSelection::All => encoder.u8(0),
-        UvSelection::Ranges(ranges) => {
-            encoder.u8(1);
-            encoder.usize(ranges.len());
-            for range in ranges {
-                encoder.u8(match range.unit {
-                    UvDistanceUnit::Meters => 0,
-                    UvDistanceUnit::Wavelengths => 1,
-                });
-                encode_bound(encoder, range.lower);
-                encode_bound(encoder, range.upper);
-            }
-        }
-    }
-}
-
-fn encode_bound(encoder: &mut CanonicalEncoder, bound: Option<SelectionBound>) {
-    match bound {
-        None => encoder.u8(0),
-        Some(bound) => {
-            encoder.u8(1);
-            encoder.f64(bound.value);
-            encoder.u8(u8::from(bound.inclusive));
-        }
-    }
-}
-
-fn encode_model(encoder: &mut CanonicalEncoder, model: ModelStateIdentity) {
-    match model {
-        ModelStateIdentity::Empty => encoder.u8(0),
-        ModelStateIdentity::Seed(identity) => {
-            encoder.u8(1);
-            encoder.identity(identity);
-        }
-        ModelStateIdentity::Generation(identity) => {
-            encoder.u8(2);
-            encoder.identity(identity);
-        }
-    }
-}
-
-const fn reference_data_tag(kind: ReferenceDataKind) -> u8 {
-    match kind {
-        ReferenceDataKind::Measures => 0,
-        ReferenceDataKind::Ephemeris => 1,
-        ReferenceDataKind::Observatory => 2,
-        ReferenceDataKind::SpectralLines => 3,
-        ReferenceDataKind::Instrument => 4,
-    }
-}
-
-const fn visibility_column_tag(column: VisibilityColumn) -> u8 {
-    match column {
-        VisibilityColumn::Data => 0,
-        VisibilityColumn::CorrectedData => 1,
-        VisibilityColumn::FloatData => 2,
-    }
-}
-
-const fn flag_policy_tag(policy: FlagPolicy) -> u8 {
-    match policy {
-        FlagPolicy::FlagOrFlagRow => 0,
-    }
-}
-
-const fn weight_column_tag(column: WeightColumn) -> u8 {
-    match column {
-        WeightColumn::Weight => 0,
-        WeightColumn::WeightSpectrum => 1,
-    }
-}
-
-pub(crate) const fn correlation_type_tag(correlation: CorrelationType) -> u8 {
-    match correlation {
-        CorrelationType::StokesI => 0,
-        CorrelationType::StokesQ => 1,
-        CorrelationType::StokesU => 2,
-        CorrelationType::StokesV => 3,
-        CorrelationType::CircularRr => 4,
-        CorrelationType::CircularRl => 5,
-        CorrelationType::CircularLr => 6,
-        CorrelationType::CircularLl => 7,
-        CorrelationType::LinearXx => 8,
-        CorrelationType::LinearXy => 9,
-        CorrelationType::LinearYx => 10,
-        CorrelationType::LinearYy => 11,
-        CorrelationType::MixedRx => 12,
-        CorrelationType::MixedRy => 13,
-        CorrelationType::MixedLx => 14,
-        CorrelationType::MixedLy => 15,
-        CorrelationType::MixedXr => 16,
-        CorrelationType::MixedXl => 17,
-        CorrelationType::MixedYr => 18,
-        CorrelationType::MixedYl => 19,
-        CorrelationType::QuasiOrthogonalPp => 20,
-        CorrelationType::QuasiOrthogonalPq => 21,
-        CorrelationType::QuasiOrthogonalQp => 22,
-        CorrelationType::QuasiOrthogonalQq => 23,
-        CorrelationType::RightCircular => 24,
-        CorrelationType::LeftCircular => 25,
-        CorrelationType::Linear => 26,
-        CorrelationType::PolarizedIntensity => 27,
-        CorrelationType::LinearPolarizedIntensity => 28,
-        CorrelationType::FractionalPolarizedIntensity => 29,
-        CorrelationType::FractionalLinearPolarizedIntensity => 30,
-        CorrelationType::PolarizationAngle => 31,
-    }
 }

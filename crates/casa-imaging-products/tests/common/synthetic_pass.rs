@@ -29,10 +29,9 @@ use casa_imaging_model::{
     SpectralWcs,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, FinalNormalState, MajorCycleCompletion, MajorCycleOwner,
-    MajorCyclePreparation, ModelGeneration, ModelLifecycle, ModelStoragePlan, PassImages,
-    PassNormalState, ReconstructionMaskSet, WeightingGenerationId,
-    runtime_adapter::NormalStoragePlan,
+    FinalNormalState, MajorCycleCompletion, MajorCycleOwner, MajorCyclePreparation,
+    ModelGeneration, ModelLifecycle, ModelStoragePlan, PassImages, PassNormalState,
+    ReconstructionMaskSet, WeightingGenerationId, runtime_adapter::NormalStoragePlan,
 };
 
 /// Traversal counts every synthetic pass reports; any positive pair proves
@@ -305,9 +304,8 @@ pub fn two_cycle_round(
     attempt: ModelExecutionAttemptId,
     delta: Vec<ModelDeltaTerm>,
 ) -> MajorCycleCompletion {
-    let mut lifecycle =
-        ModelLifecycle::bind(executable(problem), attempt, INITIAL_EPOCH, model_storage())
-            .expect("initial model lifecycle");
+    let mut lifecycle = ModelLifecycle::bind(problem, attempt, INITIAL_EPOCH, model_storage())
+        .expect("initial model lifecycle");
     let empty = lifecycle.initial_empty().expect("empty model");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, empty, None).expect("initial preparation");
@@ -317,7 +315,7 @@ pub fn two_cycle_round(
     }
     let (normal, continuation) = initial.into_continuation();
     let (mut lifecycle, named) = ModelLifecycle::continue_from(
-        executable(problem),
+        problem,
         attempt,
         INITIAL_EPOCH + 1,
         continuation,
@@ -343,21 +341,12 @@ pub fn continue_round(
     masks: Option<&ReconstructionMaskSet>,
 ) -> MajorCycleCompletion {
     let (normal, continuation) = prior.into_continuation();
-    let (mut lifecycle, named) = ModelLifecycle::continue_from(
-        executable(problem),
-        attempt,
-        epoch,
-        continuation,
-        model_storage(),
-    )
-    .expect("continue model lifecycle");
+    let (mut lifecycle, named) =
+        ModelLifecycle::continue_from(problem, attempt, epoch, continuation, model_storage())
+            .expect("continue model lifecycle");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, named, None).expect("prepare continuation");
     scene.reconcile_refresh(problem, &mut lifecycle, normal, preparation, masks)
-}
-
-fn executable(problem: &CompiledProblem) -> ExecutableModelProblem {
-    ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem")
 }
 
 fn model_storage() -> ModelStoragePlan {

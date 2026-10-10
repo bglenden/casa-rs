@@ -27,14 +27,13 @@ not owned by geometry.
 _Avoid_: Gridder configuration, sample coordinate cache
 
 **Observation Snapshot**:
-The immutable logical description of selected MS data, reference tables,
-ephemerides, and input models. It is a manifest, not a materialized copy of
-bulk samples. Its compiler canonicalizes exact per-MS row, SPW/channel, and
-correlation semantics plus the selected data, flag, and weight columns and
-whether MAIN has `CORRECTED_DATA`. Selected rows are retained only as counts
-and an ordered row-sequence digest. Sources keep request order; content
-identity ignores source location, which a separate provenance identity
-preserves. Nothing of it is stored in the MeasurementSet.
+The immutable logical description of selected MS data. It is a manifest, not
+a materialized copy of bulk samples. Its compiler canonicalizes exact per-MS
+row, SPW/channel, and correlation semantics plus the selected data, flag, and
+weight columns and whether MAIN has `CORRECTED_DATA`. Selected rows are
+retained only as counts and the DATA_DESCRIPTION identifiers they use.
+Sources keep request order and their locations. Nothing of it is stored in
+the MeasurementSet, and nothing of it is hashed.
 _Avoid_: MeasurementSet clone, input path
 
 **Observation Transaction**:

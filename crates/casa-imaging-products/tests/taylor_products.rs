@@ -6,7 +6,7 @@
 //! explicit synthetic pass planes (`common::synthetic_pass`), not gridded.
 
 mod common;
-use common::observation::{attempt, identity, source};
+use common::observation::{attempt, source};
 use common::synthetic_pass::{Scene, two_cycle_round};
 use common::{GeneratedMember, GeneratedProducts, MemoryProductOutput, full_window};
 
@@ -15,17 +15,17 @@ use casa_imaging_model::{
     DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
     GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
     MeasurementEquationContract, ModelBounds, ModelCell, ModelColumnWrite, ModelDeltaTerm,
-    ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity,
-    ModelValue, NumericPrecision, NumericalStage, NumericsContract, ObservationSnapshotInput,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
-    PolarizationCoordinate, ProblemInput, ProblemInputIdentities, ProblemSpecification,
-    ProductKind, ProductNormalization, ProductRequirements, ProductRole, ProductSchema,
-    ProductTerm, ProductUnit, ProductValidityPolicies, ProductValidityRule, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
-    SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
+    ModelInnerProduct, ModelLifecycleRequirements, ModelValue, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, ProblemInput,
+    ProblemSpecification, ProductKind, ProductNormalization, ProductRequirements, ProductRole,
+    ProductSchema, ProductTerm, ProductUnit, ProductValidityPolicies, ProductValidityRule,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy,
+    ScientificContract, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw,
+    VisibilityInnerProduct, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    compile_observation,
 };
 use casa_imaging_products::{
     AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
@@ -123,17 +123,8 @@ fn taylor_problem_with_fraction(
             DopplerConvention::NotApplicable,
         ),
     );
-    let references = if response == InstrumentResponse::Scalar {
-        Vec::new()
-    } else {
-        vec![(ReferenceDataKind::Instrument, identity(seed, 90))]
-    };
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source(seed, "t44")],
-        references,
-        ModelStateIdentity::Empty,
-    ))
-    .expect("observation snapshot");
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![source(seed, "t44")]))
+        .expect("observation snapshot");
     compile(ProblemInput::new(
         ProblemSpecification::new(
             ScientificContract::new(
@@ -177,11 +168,10 @@ fn taylor_problem_with_fraction(
             ),
         ),
         geometry,
-        ProblemInputIdentities::new(snapshot),
+        snapshot,
         ModelLifecycleRequirements::new(
-            ModelBounds::new(4_096, 4_096, 4_096, 4_096, 1.0e30, 1.0e30).expect("model bounds"),
+            ModelBounds::new(4_096, 4_096, 1.0e30, 1.0e30).expect("model bounds"),
             NumericPrecision::F64,
-            ModelInputCommitment::Empty,
         ),
     ))
     .expect("compile Taylor problem")
@@ -249,7 +239,7 @@ fn generate_with_controls(
     join: &MajorCycleCompletion,
     controls: ContinuumProductControls,
 ) -> GeneratedProducts {
-    let inputs = ContinuumProductInputs::from_major_cycle(problem, join).expect("Taylor inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(problem, join);
     let planned = PlannedContinuumGeneration::new(&inputs, &controls).expect("T44 Taylor plan");
     let output = MemoryProductOutput::default();
     let produced =
@@ -533,7 +523,7 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
     );
 
     let join = run_round(&problem, 206);
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join).expect("PB inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join);
     assert_eq!(
         PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
             .expect_err("requested PB needs a bound model at planning"),
@@ -712,7 +702,7 @@ fn t51_weight_derived_mtmfs_plan_matches_casa_eighteen_member_inventory() {
 fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
     let problem = taylor_problem(209, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar);
     let join = run_round(&problem, 210);
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join).expect("Taylor inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join);
     let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
         .expect("Taylor plan");
     let demand = planned

@@ -5,13 +5,13 @@
 //! two spectral windows, Stokes I only.
 
 use casa_imaging_model::{
-    AntennaSelection, CorrelationProduct, CorrelationSelection, CorrelationType,
-    DataDescriptionSelection, FlagPolicy, IdSelection, IntentSelection, LogicalIdentity,
-    ModelExecutionAttemptId, ObservationSelection, ObservationSourceInput,
-    ObservationSourceProvenance, PrimaryBeamValidityPolicy, ProductBlankingPolicy,
-    ProductSupportComparison, ProductValidityPolicies, RowSelection, SelectedColumns,
-    SelectedMainRow, SelectedRows, SpectralWindowSelection, TaylorSupportReference,
-    TaylorValidityPolicy, TimeSelection, UvSelection, VisibilityColumn, WeightColumn,
+    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
+    FlagPolicy, IdSelection, IntentSelection, LogicalIdentity, ModelExecutionAttemptId,
+    ObservationSelection, ObservationSourceInput, ObservationSourceProvenance,
+    PrimaryBeamValidityPolicy, ProductBlankingPolicy, ProductSupportComparison,
+    ProductValidityPolicies, RowSelection, SelectedColumns, SelectedMainRow, SelectedRows,
+    SpectralWindowSelection, TaylorSupportReference, TaylorValidityPolicy, UvSelection,
+    VisibilityColumn, WeightColumn,
 };
 
 /// A deterministic logical identity distinguished by `seed` and `scope`.
@@ -30,7 +30,7 @@ pub fn attempt(seed: u8) -> ModelExecutionAttemptId {
 /// spectral window, with provenance `fixture://<label>/<seed>`.
 pub fn source(seed: u8, label: &str) -> ObservationSourceInput {
     ObservationSourceInput::new(
-        ObservationSourceProvenance::new(format!("fixture://{label}/{seed}"), identity(seed, 2)),
+        ObservationSourceProvenance::new(format!("fixture://{label}/{seed}")),
         ObservationSelection::new(
             // The seed sets the MeasurementSet's row count, so sources from
             // different seeds are different observations.
@@ -39,16 +39,7 @@ pub fn source(seed: u8, label: &str) -> ObservationSourceInput {
                 [SelectedMainRow::new(0, 0), SelectedMainRow::new(2, 1)],
             )
             .expect("two selected rows"),
-            RowSelection::new(
-                IdSelection::All,
-                TimeSelection::All,
-                UvSelection::All,
-                AntennaSelection::All,
-                IdSelection::All,
-                IdSelection::All,
-                IntentSelection::All,
-                IdSelection::All,
-            ),
+            RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
             vec![
                 DataDescriptionSelection::new(0, 0, 0),
                 DataDescriptionSelection::new(1, 1, 0),

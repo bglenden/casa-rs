@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 
 use casa_imaging_model::{
-    InstrumentModel, LogicalIdentity, MissingPointingPolicy, ObservationPointingLaw,
-    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    InstrumentModel, MissingPointingPolicy, ObservationPointingLaw, PointingCentreLaw,
+    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling,
 };
 use casa_imaging_products::AnalyticPrimaryBeamModel;
@@ -92,19 +92,18 @@ fn analytic_primary_beam_model_for_telescopes(
     }
 }
 
-/// The instrument response of a direction-dependent gridder and its
-/// reference identity, a constant per model; `None` for the others.
+/// The instrument response of a direction-dependent gridder; `None` for the
+/// others.
 pub(super) fn scientific_instrument_model(
     gridder: &Gridder,
     ms: &MeasurementSet,
-) -> Result<Option<(InstrumentModel, LogicalIdentity)>, ApplicationError> {
-    let (model, reference, dishes): (_, u8, fn(f64) -> bool) = match gridder {
-        Gridder::Awproject(_) => (InstrumentModel::CasaEvlaWidebandAwV1, 1, |diameter| {
+) -> Result<Option<InstrumentModel>, ApplicationError> {
+    let (model, dishes): (_, fn(f64) -> bool) = match gridder {
+        Gridder::Awproject(_) => (InstrumentModel::CasaEvlaWidebandAwV1, |diameter| {
             (diameter - 25.0).abs() < 1.0
         }),
         Gridder::Mosaic { .. } => (
             InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
-            2,
             |diameter| (diameter - 12.0).abs() < 0.5 || (diameter - 7.0).abs() < 1.0,
         ),
         Gridder::Standard | Gridder::Wproject { .. } => return Ok(None),
@@ -134,10 +133,7 @@ pub(super) fn scientific_instrument_model(
             )));
         }
     }
-    let mut identity = [0_u8; 32];
-    identity[0] = 3;
-    identity[31] = reference;
-    Ok(Some((model, LogicalIdentity::from_bytes(identity))))
+    Ok(Some(model))
 }
 
 /// Where each row points: the POINTING table under tclean `usepointing`

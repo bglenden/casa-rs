@@ -116,10 +116,7 @@ fn reconciliation_applies_one_pending_delta_through_the_model_owner() {
         normal_state.completion_id().as_bytes()
     );
 
-    // The Normal State record names the full T17/T18/T19 lineage and both models.
-    assert_eq!(normal_state.problem_id(), problem.problem_id());
-    assert_eq!(normal_state.geometry_id(), problem.geometry().geometry_id());
-    assert_eq!(normal_state.numerics_id(), problem.numerics_id());
+    // The Normal State record names the T19 evidence and both models.
     assert_eq!(normal_state.sample_count(), sample_count);
     assert_eq!(normal_state.block_count(), block_count);
     assert_eq!(
@@ -225,7 +222,7 @@ fn empty_origin_residual_refresh_reproduces_the_initial_content() {
         .unwrap();
     let (initial_normal, continuation) = initial_join.into_continuation();
     let (mut continued_lifecycle, carried_model) = ModelLifecycle::continue_from(
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("continued problem"),
+        &problem,
         attempt(74),
         2,
         continuation,
@@ -273,8 +270,7 @@ fn chained_no_delta_final_major_cycles_reauthorize_the_carried_generation() {
     let (initial_normal, initial_continuation) = initial_join.into_continuation();
 
     let (mut first_lifecycle, first_named) = ModelLifecycle::continue_from(
-        ExecutableModelProblem::from_compiled(problem.clone())
-            .expect("first continued executable problem"),
+        &problem,
         attempt(24),
         8,
         initial_continuation,
@@ -308,8 +304,7 @@ fn chained_no_delta_final_major_cycles_reauthorize_the_carried_generation() {
     let (first_normal, first_continuation) = first_join.into_continuation();
 
     let (mut second_lifecycle, second_named) = ModelLifecycle::continue_from(
-        ExecutableModelProblem::from_compiled(problem.clone())
-            .expect("second continued executable problem"),
+        &problem,
         attempt(25),
         9,
         first_continuation,
@@ -343,7 +338,7 @@ fn chained_no_delta_final_major_cycles_reauthorize_the_carried_generation() {
     let (_, second_continuation) = second_join.into_continuation();
 
     let (_, third_named) = ModelLifecycle::continue_from(
-        ExecutableModelProblem::from_compiled(problem).expect("third continued executable problem"),
+        &problem,
         attempt(26),
         10,
         second_continuation,
@@ -447,7 +442,6 @@ fn completion_ids_distinguish_owners_while_science_and_replay_remain_stable() {
     );
     let first_normal = first_join.normal_state();
     let second_normal = second_join.normal_state();
-    assert_eq!(first_normal.problem_id(), second_normal.problem_id());
     assert_ne!(
         first_normal.weighting_generation(),
         second_normal.weighting_generation()
@@ -484,23 +478,7 @@ fn completion_ids_distinguish_owners_while_science_and_replay_remain_stable() {
 #[test]
 fn reconciliation_fails_atomically_and_leaves_both_authorities_intact() {
     let problem = t19_compatible_problem(13);
-    let other_problem = t19_compatible_problem(14);
     let scene = scene(&problem);
-
-    // A lifecycle bound to another compiled problem is stale model evidence.
-    let mut foreign_problem_lifecycle = bind_lifecycle(&other_problem, attempt(23));
-    let foreign_named = foreign_problem_lifecycle
-        .initial_empty()
-        .expect("foreign empty generation");
-    let foreign_preparation =
-        MajorCyclePreparation::prepare(&foreign_problem_lifecycle, foreign_named, None)
-            .expect("prepare foreign problem model");
-    let foreign_complete = scene.initial(&problem, &foreign_preparation);
-    let stale_problem = MajorCycleOwner::from_complete_data(foreign_complete, foreign_preparation)
-        .expect("T20 owner from T19")
-        .reconcile(&mut foreign_problem_lifecycle)
-        .expect_err("stale model evidence must fail closed");
-    assert!(matches!(stale_problem, MajorCycleError::StaleModelEvidence));
 
     let mut lifecycle = bind_lifecycle(&problem, attempt(23));
 
@@ -668,7 +646,6 @@ fn incomplete_or_inconsistent_passes_cannot_become_a_major_cycle_owner() {
 
     // The residual must belong to the prepared final model.
     let complete = scene.initial(&problem, &preparation);
-    assert_eq!(complete.completion().problem_id(), problem.problem_id());
     assert!(complete.completion().sample_count() > 0 && complete.completion().block_count() > 0);
     assert!(matches!(
         MajorCycleOwner::from_complete_data(complete, prepare()),
@@ -698,9 +675,8 @@ fn incomplete_or_inconsistent_passes_cannot_become_a_major_cycle_owner() {
     ));
 
     // A refresh keeps the previous PSF and sumwt, so it carries the
-    // weighting generation they were formed with, must place the samples the
-    // previous state placed, and refreshes only the previous state's own
-    // problem.
+    // weighting generation they were formed with and must place the samples
+    // the previous state placed.
     let previous_state = || {
         let mut lifecycle = bind_lifecycle(&problem, attempt(18));
         let named = lifecycle.initial_empty().expect("previous generation");
@@ -736,16 +712,4 @@ fn incomplete_or_inconsistent_passes_cannot_become_a_major_cycle_owner() {
     let (refresh, weighting, samples) = refreshed();
     let complete = refresh.finish(samples, 2).expect("a complete refresh");
     assert_eq!(complete.completion().weighting_generation(), weighting);
-    assert_eq!(complete.completion().problem_id(), problem.problem_id());
-    let other_problem = t19_compatible_problem(16);
-    assert_ne!(other_problem.problem_id(), problem.problem_id());
-    assert!(matches!(
-        PassNormalState::refresh(
-            &other_problem,
-            previous_state(),
-            preparation.final_model_generation(),
-            NormalStoragePlan::resident(1).expect("resident normal storage"),
-        ),
-        Err(SpectralOperatorError::ReusableNormalStateMismatch)
-    ));
 }

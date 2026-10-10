@@ -16,9 +16,9 @@ use casa_imaging_model::{
     ReconstructionControls,
 };
 use casa_imaging_reconstruction::{
-    ExecutableModelProblem, MajorCycleError, MajorCycleOwner, MajorCyclePreparation,
-    ModelLifecycle, ModelLifecycleError, PassNormalState, SpectralOperatorError,
-    WeightingGenerationId, runtime_adapter::NormalStoragePlan,
+    MajorCycleError, MajorCycleOwner, MajorCyclePreparation, ModelLifecycle, ModelLifecycleError,
+    PassNormalState, SpectralOperatorError, WeightingGenerationId,
+    runtime_adapter::NormalStoragePlan,
 };
 
 #[path = "support/synthetic_pass.rs"]

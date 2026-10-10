@@ -301,8 +301,6 @@ impl GeneratedMember {
 /// Test-owned generation result assembled from the direct output collector.
 #[derive(Debug, Clone)]
 pub struct GeneratedProducts {
-    problem_id: casa_imaging_model::CompiledProblemId,
-    graph_id: casa_imaging_model::ProductGraphId,
     fitted_beams: Box<[Option<RestoringBeam>]>,
     restoring_beams: Box<[Option<RestoringBeam>]>,
     members: Box<[GeneratedMember]>,
@@ -332,22 +330,10 @@ impl GeneratedProducts {
             .collect::<Vec<_>>()
             .into_boxed_slice();
         Self {
-            problem_id: generation.problem_id(),
-            graph_id: generation.graph_id(),
             fitted_beams: generation.fitted_beams().to_vec().into_boxed_slice(),
             restoring_beams: generation.restoring_beams().to_vec().into_boxed_slice(),
             members,
         }
-    }
-
-    #[must_use]
-    pub const fn problem_id(&self) -> casa_imaging_model::CompiledProblemId {
-        self.problem_id
-    }
-
-    #[must_use]
-    pub const fn graph_id(&self) -> casa_imaging_model::ProductGraphId {
-        self.graph_id
     }
 
     #[must_use]

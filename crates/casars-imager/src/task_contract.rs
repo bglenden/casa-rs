@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
 pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
 /// Protocol version advertised by `casars-imager --protocol-info`.
-pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 12;
+pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 13;
 
 /// The imager's protocol descriptor.
 pub fn imager_protocol_descriptor() -> ProviderProtocolDescriptor {
@@ -191,7 +191,6 @@ impl ImagerRunTaskResult {
                     .collect(),
                 visibility_products: outcome.visibility_products.as_ref().map(|completion| {
                     ImagerVisibilityProductDiagnostic {
-                        final_model_generation: hex(completion.final_model().as_bytes()),
                         sample_count: completion.sample_count(),
                     }
                 }),
@@ -222,17 +221,11 @@ pub struct ImagerRunReport {
     pub elapsed_ns: u64,
 }
 
-/// The final model a run predicted written visibilities from.
+/// The visibilities a run predicted and wrote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ImagerVisibilityProductDiagnostic {
-    /// The final model generation.
-    pub final_model_generation: String,
     /// Selected visibility samples predicted.
     pub sample_count: u64,
-}
-
-fn hex(bytes: [u8; 32]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Why cleaning stopped.

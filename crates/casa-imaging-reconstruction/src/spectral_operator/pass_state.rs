@@ -10,10 +10,7 @@
 
 use std::ops::Range;
 
-use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblem, CompiledProblemId, NumericsContractId,
-    ReconstructionBasis, SpectralWcs, WeightingCommitmentId,
-};
+use casa_imaging_model::{CompiledProblem, ReconstructionBasis, SpectralWcs};
 use num_complex::Complex64;
 
 use super::normal_storage::{
@@ -81,21 +78,12 @@ enum DomainState {
     },
 }
 
-/// The problem, numerics and weighting a normal state is formed for; a
-/// finished state carries them as its completion.
-#[derive(Clone, Copy, Debug)]
-struct Formed {
-    problem: CompiledProblemId,
-    geometry: CompiledGeometryId,
-    numerics: NumericsContractId,
-    weighting_commitment: WeightingCommitmentId,
-    weighting_generation: WeightingGenerationId,
-}
-
 /// A normal state being assembled domain by domain and, for a
 /// channel-local basis, channel range by channel range in order.
 pub struct PassNormalState {
-    formed: Formed,
+    /// The imaging weights the state is formed with; a finished state
+    /// carries them in its completion.
+    weighting: WeightingGenerationId,
     basis: SpectralBasisPlan,
     total_channels: usize,
     polarizations: usize,
@@ -122,13 +110,7 @@ impl PassNormalState {
     ) -> Result<Self, SpectralOperatorError> {
         let domains = problem.geometry().domains();
         Ok(Self {
-            formed: Formed {
-                problem: problem.problem_id(),
-                geometry: problem.geometry().geometry_id(),
-                numerics: problem.numerics_id(),
-                weighting_commitment: problem.weighting().commitment_id(),
-                weighting_generation: weighting,
-            },
+            weighting,
             basis: basis_plan(problem)?,
             total_channels: problem.geometry().spectral().output_channels(),
             polarizations: problem.reconstruction().polarization().coordinates().len(),
@@ -150,20 +132,12 @@ impl PassNormalState {
     /// validity carry over; every residual plane must be appended again,
     /// and [`Self::finish`] requires the refresh to have placed the samples
     /// `previous` placed.
-    ///
-    /// `previous` must be a state of the same problem and weighting
-    /// commitment.
     pub fn refresh(
         problem: &CompiledProblem,
         previous: FinalNormalState,
         model: ModelGenerationId,
         storage: NormalStoragePlan,
     ) -> Result<Self, SpectralOperatorError> {
-        if previous.problem_id() != problem.problem_id()
-            || previous.weighting_commitment_id() != problem.weighting().commitment_id()
-        {
-            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
-        }
         let mut state = Self::initial(problem, previous.weighting_generation(), model, storage)?;
         state.refreshed_samples = Some(previous.sample_count());
         match previous.primitives() {
@@ -301,11 +275,7 @@ impl PassNormalState {
         Ok(CompleteDataNormalState {
             primitives,
             completion: CompleteDataOwnerCompletion {
-                problem: self.formed.problem,
-                geometry: self.formed.geometry,
-                numerics: self.formed.numerics,
-                weighting_commitment: self.formed.weighting_commitment,
-                weighting_generation: self.formed.weighting_generation,
+                weighting_generation: self.weighting,
                 replay: WeightingReplayId::next(),
                 primitives: catalog,
                 sample_count: samples,

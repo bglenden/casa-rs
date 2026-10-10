@@ -13,5 +13,4 @@ workspace = true
 
 [dependencies]
 num-complex.workspace = true
-sha2 = "0.10"
 thiserror.workspace = true

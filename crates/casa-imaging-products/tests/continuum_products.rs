@@ -143,12 +143,9 @@ fn generate_for(
 fn planned_generation_binds_the_exact_graph_and_run_associations() {
     let problem = continuum_problem(81, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem, 82);
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join)
-        .expect("direct product inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
         .expect("planned generation");
-    assert_eq!(planned.problem_id(), problem.problem_id());
-    assert_eq!(planned.graph_id(), problem.product_graph().graph_id());
     assert_eq!(
         planned.major_cycle_completion(),
         inputs.major_cycle_completion()
@@ -189,8 +186,6 @@ fn planned_generation_binds_the_exact_graph_and_run_associations() {
 
     let replanned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
         .expect("replanned");
-    assert_eq!(planned.problem_id(), replanned.problem_id());
-    assert_eq!(planned.graph_id(), replanned.graph_id());
     assert_eq!(planned.members().len(), replanned.members().len());
     assert_eq!(
         planned
@@ -207,12 +202,10 @@ fn planned_generation_binds_the_exact_graph_and_run_associations() {
 
     let other = continuum_problem(83, &CONTINUUM_PRODUCTS);
     let other_round = run_continuum_round(&other, 84);
-    let other_inputs =
-        ContinuumProductInputs::from_major_cycle(&other, &other_round.join).expect("other inputs");
+    let other_inputs = ContinuumProductInputs::from_major_cycle(&other, &other_round.join);
     let other_planned =
         PlannedContinuumGeneration::new(&other_inputs, &ContinuumProductControls::default())
             .expect("other planned");
-    assert_ne!(planned.problem_id(), other_planned.problem_id());
     assert_ne!(
         planned.major_cycle_completion(),
         other_planned.major_cycle_completion()
@@ -223,8 +216,7 @@ fn planned_generation_binds_the_exact_graph_and_run_associations() {
 fn direct_generation_writes_the_exact_member_set_once() {
     let problem = continuum_problem(85, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem, 86);
-    let inputs =
-        ContinuumProductInputs::from_major_cycle(&problem, &round.join).expect("product inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
         .expect("planned");
     let output = MemoryProductOutput::default();
@@ -336,12 +328,10 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
     );
     assert!(matches!(
         ContinuumProductInputs::from_major_cycle(&problem, &round.join)
-            .expect("alternate inputs")
             .with_domain_reconstruction_masks(&alternate_masks),
         Err(ProductsError::SourceLineageMismatch)
     ));
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join)
-        .expect("two-domain inputs")
         .with_domain_reconstruction_masks(&masks)
         .expect("domain-mask inputs");
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
@@ -449,7 +439,6 @@ fn direct_generation_rejects_same_problem_with_foreign_completions() {
     let second_round = rerun_two_domain_with_masks(&problem, 147, 8, first_round, &masks);
     let planned = {
         let second_inputs = ContinuumProductInputs::from_major_cycle(&problem, &second_round.join)
-            .expect("second inputs")
             .with_domain_reconstruction_masks(&masks)
             .expect("second mask-bound inputs");
         planned_for(&second_inputs, &ContinuumProductControls::default())
@@ -457,10 +446,8 @@ fn direct_generation_rejects_same_problem_with_foreign_completions() {
 
     let third_round = rerun_two_domain_with_masks(&problem, 148, 9, second_round, &masks);
     let third_inputs = ContinuumProductInputs::from_major_cycle(&problem, &third_round.join)
-        .expect("third inputs")
         .with_domain_reconstruction_masks(&masks)
         .expect("third mask-bound inputs");
-    assert_eq!(planned.problem_id(), third_inputs.problem().problem_id());
     assert_ne!(
         planned.final_model_generation(),
         third_inputs.final_model().generation_id(),
@@ -492,15 +479,13 @@ fn direct_generation_rejects_same_problem_with_foreign_completions() {
 fn direct_generation_publishes_metadata_without_payload_residency() {
     let problem = continuum_problem(92, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem, 93);
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join).expect("inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
         .expect("planned");
     let output = MemoryProductOutput::default();
     let generated =
         produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &output)
             .expect("generated");
-    assert_eq!(generated.problem_id(), problem.problem_id());
-    assert_eq!(generated.graph_id(), problem.product_graph().graph_id());
     assert_eq!(generated.members().len(), planned.members().len());
     let collected = GeneratedProducts::from_output(&generated, &output);
     for (member, planned_member) in collected.members().iter().zip(planned.members()) {
@@ -534,7 +519,7 @@ fn direct_generation_counts_bounded_windows_and_finishes_each_member() {
         2,
     );
     let round = run_continuum_round(&problem, 97);
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join).expect("inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
     let output = MemoryProductOutput::default();
     let storage_plan = ProductStoragePlan::new(1, 1).expect("one-channel output bound");
@@ -653,7 +638,7 @@ impl casa_imaging_products::ProductWindowExecutor for ReversedWindowCompletion {
 fn output_errors_fail_generation_without_a_completion_receipt() {
     let problem = continuum_problem(98, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem, 99);
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join).expect("inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
 
     let write_failure = MemoryProductOutput::failing_write();
@@ -689,7 +674,7 @@ fn output_errors_fail_generation_without_a_completion_receipt() {
 fn single_window_restoration_admits_inner_fft_workers_without_replica_buffers() {
     let problem = continuum_problem(119, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem, 120);
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join).unwrap();
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
     let serial = planned
         .demand(&inputs, ProductStoragePlan::new(1, 1).unwrap())
@@ -747,8 +732,7 @@ fn generic_generation_demand_charges_exact_owned_arrays() {
     ];
     let problem = continuum_problem_with_policy(94, &products, RestoringBeamPolicy::None);
     let round = run_continuum_round(&problem, 95);
-    let inputs =
-        ContinuumProductInputs::from_major_cycle(&problem, &round.join).expect("product inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
     let demand = planned
         .demand(&inputs, full_window(&planned))
@@ -839,7 +823,7 @@ fn cube_generation_demand_retains_channel_beams_and_charges_common_fit_scratch()
             2,
         );
         let round = run_continuum_round(&problem, 190 + offset as u8);
-        let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join).unwrap();
+        let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
         let planned = planned_for(&inputs, &ContinuumProductControls::default());
         let demand = planned
             .demand(&inputs, ProductStoragePlan::new(1, 1).unwrap())
@@ -950,7 +934,7 @@ fn weight_products_plan_and_produce_the_exact_normal_state_sensitivity_plane() {
         ],
     );
     let round = run_continuum_round(&problem, 108);
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join).expect("inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
     let generated = generate_for(&planned, &inputs);
     let weight = generated
@@ -994,7 +978,7 @@ fn standard_products_publish_the_selected_analytic_primary_beam() {
     let round = run_continuum_round(&problem, 110);
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join).expect("inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = planned_for(&inputs, &controls);
     let generated = generate_for(&planned, &inputs);
     let pb = generated
@@ -1041,7 +1025,7 @@ fn primary_beam_plan_rejects_a_cube_crossing_the_vla_band_boundary() {
         )],
     );
     let round = run_continuum_round(&problem, 112);
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join).expect("inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaVlaBand);
     let error = PlannedContinuumGeneration::new(&inputs, &controls)
@@ -1078,7 +1062,7 @@ fn standard_cube_products_publish_analytic_primary_beams_per_output_channel() {
     let round = run_continuum_round(&problem, 112);
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join).expect("inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = planned_for(&inputs, &controls);
     let generated = generate_for(&planned, &inputs);
     let pb = generated
@@ -1104,17 +1088,14 @@ fn clean_mask_product_is_the_committed_reconstruction_support() {
     let normal = round.join.normal_state();
     let direction = problem.geometry().domains()[0].direction();
     let mask = ReconstructionMask::from_boxes(
-        problem.problem_id(),
         normal.input_model_generation(),
         direction,
         SHAPE,
         [MaskBox::new([2, 3], [4, 5]).expect("mask box")],
     )
     .expect("reconstruction mask");
-    let unbound_inputs =
-        ContinuumProductInputs::from_major_cycle(&problem, &round.join).expect("unbound inputs");
+    let unbound_inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join)
-        .expect("mask-bound base inputs")
         .with_reconstruction_mask(&mask)
         .expect("mask-bound inputs");
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
@@ -1156,7 +1137,7 @@ fn restoration_adds_the_published_residual_without_scaling_the_convolved_model()
     let round = run_continuum_round(&problem, 106);
 
     // A nonzero final model: apply the round's delta through a fresh owner.
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join).expect("inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
     let generated = generate_for(&planned, &inputs);
 
@@ -1230,7 +1211,7 @@ fn generated_members_carry_the_complete_graph_contract() {
     // rule, and dependencies - not just name and payload.
     let problem = continuum_problem(111, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem, 112);
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join).expect("inputs");
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
     let generated = generate_for(&planned, &inputs);
 

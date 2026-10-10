@@ -3,9 +3,8 @@
 use crate::subtables::SubTable;
 use crate::{MeasurementSet, MsError, MsReadPlan, MsResult, MsSelectionIoBudget};
 use casa_imaging_model::{
-    AntennaSelection, DataDescriptionSelection, IdSelection, IntentSelection, ObservationSelection,
-    ResolvedIntent, RowSelection, SelectionBound, TimeSelection, UvDistanceRange, UvDistanceUnit,
-    UvSelection,
+    DataDescriptionSelection, IdSelection, IntentSelection, ObservationSelection, ResolvedIntent,
+    RowSelection, SelectionBound, UvDistanceRange, UvDistanceUnit, UvSelection,
 };
 
 use super::row_selection::{CompiledRowPredicate, RowSelectionEvaluationError, StoredMainRow};
@@ -61,7 +60,7 @@ pub struct SelectedObservationRow {
 
 impl SelectedObservationRow {
     /// Exact stored bytes read per MAIN row while evaluating the canonical predicate.
-    pub const STORAGE_BYTES_PER_ROW: usize = 73;
+    pub const STORAGE_BYTES_PER_ROW: usize = crate::MainRowSelectionFact::STORAGE_BYTES_PER_ROW;
 
     /// Return the physical MAIN row index.
     #[must_use]
@@ -202,16 +201,7 @@ impl MeasurementSet {
             None => IntentSelection::All,
         };
         Ok(SelectedObservationRowSelection {
-            rows: RowSelection::new(
-                fields,
-                TimeSelection::All,
-                uv_distances,
-                AntennaSelection::All,
-                IdSelection::All,
-                IdSelection::All,
-                intents,
-                IdSelection::All,
-            ),
+            rows: RowSelection::new(fields, uv_distances, intents),
             data_descriptions: selected_descriptions,
         })
     }

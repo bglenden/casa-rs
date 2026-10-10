@@ -10,10 +10,9 @@
 use std::{path::Path, sync::Arc};
 
 use casa_imaging_model::{
-    FlagPolicy, LogicalIdentity, ModelStateIdentity, MsColumnKind, ObservationSelection,
-    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
-    ReferenceDataKind, SelectedColumns, SpectralWindowCoordinateCatalog, SpectralWindowSelection,
-    VisibilityColumn, WeightColumn,
+    FlagPolicy, MsColumnKind, ObservationSelection, ObservationSnapshotInput,
+    ObservationSourceInput, ObservationSourceProvenance, SelectedColumns,
+    SpectralWindowCoordinateCatalog, SpectralWindowSelection, VisibilityColumn, WeightColumn,
 };
 use casa_tables::{ColumnSchema, LockType, Table};
 use casa_types::{
@@ -40,12 +39,9 @@ const VISIBILITY_WRITE_BATCH_ROWS: u64 = 10_000;
 #[derive(Clone)]
 pub struct SelectedObservationResolutionRequest {
     locator: String,
-    selection_request: LogicalIdentity,
     selection: Arc<ObservationSelection>,
     visibility: VisibilityColumn,
     weights: WeightColumn,
-    reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
-    model: ModelStateIdentity,
     content_budget: SelectedObservationContentBudget,
     measures_provider: Arc<dyn MeasuresProvider>,
     ephemeris: Option<SelectedObservationEphemeris>,
@@ -60,27 +56,20 @@ impl SelectedObservationResolutionRequest {
     }
 
     /// Construct one single-source production observation resolution.
-    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new(
         locator: impl Into<String>,
-        selection_request: LogicalIdentity,
         selection: ObservationSelection,
         visibility: VisibilityColumn,
         weights: WeightColumn,
-        reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
-        model: ModelStateIdentity,
         content_budget: SelectedObservationContentBudget,
         measures_provider: Arc<dyn MeasuresProvider>,
     ) -> Self {
         Self {
             locator: locator.into(),
-            selection_request,
             selection: Arc::new(selection),
             visibility,
             weights,
-            reference_data,
-            model,
             content_budget,
             measures_provider,
             ephemeris: None,
@@ -458,14 +447,6 @@ impl ResolvedSelectedObservationAccess {
 pub fn resolve_selected_observation(
     request: SelectedObservationResolutionRequest,
 ) -> Result<ResolvedSelectedObservation, ObservationOwnerError> {
-    if request.reference_data.iter().any(|(kind, _)| {
-        matches!(
-            kind,
-            ReferenceDataKind::Measures | ReferenceDataKind::Ephemeris
-        )
-    }) {
-        return Err(ObservationOwnerError::MeasuresReferenceIsOwnerSupplied);
-    }
     let measurement_set = MeasurementSet::open_retained_read(&request.locator)?;
     let schema = measurement_set.main_table().schema().ok_or_else(|| {
         MsError::InvalidInput("MeasurementSet MAIN table has no schema".to_string())
@@ -493,7 +474,7 @@ pub fn resolve_selected_observation(
     let pointing_query_domain =
         selected_pointing_query_domain(&measurement_set, &selection, request.content_budget)?;
     let source = ObservationSourceInput::new(
-        ObservationSourceProvenance::new(request.locator, request.selection_request),
+        ObservationSourceProvenance::new(request.locator),
         selection,
         SelectedColumns::new(
             request.visibility,
@@ -503,12 +484,7 @@ pub fn resolve_selected_observation(
         corrected_data_present,
     );
     let measures = SelectedObservationMeasures::new(request.measures_provider)?;
-    let mut reference_data = request.reference_data;
-    reference_data.push((ReferenceDataKind::Measures, measures.identity()));
-    if let Some(ephemeris) = request.ephemeris.as_ref() {
-        reference_data.push((ReferenceDataKind::Ephemeris, ephemeris.identity()));
-    }
-    let snapshot_input = ObservationSnapshotInput::new(vec![source], reference_data, request.model);
+    let snapshot_input = ObservationSnapshotInput::new(vec![source]);
     // The one resolved source is the snapshot's first.
     let binding = ObservationSourceBinding::new(0, request.content_budget)
         .with_ephemeris(request.ephemeris)
@@ -630,11 +606,6 @@ pub enum ObservationOwnerError {
         /// Total source content budget.
         available_bytes: usize,
     },
-    /// Measures identity is always injected by the acquired provider.
-    #[error(
-        "reference_data must not include Measures; the storage owner injects it from the acquired provider"
-    )]
-    MeasuresReferenceIsOwnerSupplied,
     /// The MAIN write lock could not be acquired.
     #[error("could not acquire the MeasurementSet MAIN write lock")]
     WriteLockUnavailable,
@@ -768,18 +739,13 @@ mod tests {
         test_helpers::default_value_for_def,
     };
     use casa_imaging_model::{
-        AntennaSelection, CorrelationProduct, CorrelationSelection, CorrelationType,
-        DataDescriptionSelection, IdSelection, IntentSelection, PointingTimeSampling, RowSelection,
-        SelectedMainRow, SelectedRows, SpectralWindowSelection, TimeSelection, UvSelection,
-        compile_observation,
+        CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
+        IdSelection, IntentSelection, PointingTimeSampling, RowSelection, SelectedMainRow,
+        SelectedRows, SpectralWindowSelection, UvSelection, compile_observation,
     };
     use casa_tables::TableOptions;
     use casa_types::{ArrayValue, Complex32, RecordField, RecordValue};
     use ndarray::ArrayD;
-
-    fn identity(byte: u8) -> LogicalIdentity {
-        LogicalIdentity::from_bytes([byte; 32])
-    }
 
     fn one_row_selection() -> ObservationSelection {
         one_row_selection_with_channels(vec![0])
@@ -799,16 +765,7 @@ mod tests {
         ObservationSelection::new(
             SelectedRows::from_ordered_main_rows(total_rows as u64, rows)
                 .expect("ordered selection manifest"),
-            RowSelection::new(
-                IdSelection::All,
-                TimeSelection::All,
-                UvSelection::All,
-                AntennaSelection::All,
-                IdSelection::All,
-                IdSelection::All,
-                IntentSelection::All,
-                IdSelection::All,
-            ),
+            RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
             vec![DataDescriptionSelection::new(0, 0, 0)],
             vec![SpectralWindowSelection::new(0, channel_indices)],
             vec![CorrelationSelection::new(
@@ -834,12 +791,9 @@ mod tests {
         );
         let request = SelectedObservationResolutionRequest::new(
             path.display().to_string(),
-            identity(2),
             one_row_selection_with_channels(vec![1, 3]),
             VisibilityColumn::Data,
             WeightColumn::Weight,
-            Vec::new(),
-            ModelStateIdentity::Empty,
             SelectedObservationContentBudget::new(1 << 20, 1, 4),
             casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
         );
@@ -887,12 +841,9 @@ mod tests {
     fn request(path: &Path) -> SelectedObservationResolutionRequest {
         SelectedObservationResolutionRequest::new(
             path.display().to_string(),
-            identity(2),
             one_row_selection(),
             VisibilityColumn::Data,
             WeightColumn::Weight,
-            Vec::new(),
-            ModelStateIdentity::Empty,
             SelectedObservationContentBudget::new(1 << 20, 1, 4),
             casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
         )
@@ -1252,10 +1203,6 @@ mod tests {
             )
         );
         assert!(!source.corrected_data_present());
-        assert_eq!(
-            snapshot.reference_data(),
-            &[(ReferenceDataKind::Measures, identity(90))]
-        );
         assert_eq!(persisted_state(&path), before);
     }
 
@@ -1267,12 +1214,9 @@ mod tests {
         create_ms(&path, false);
         let request = SelectedObservationResolutionRequest::new(
             path.display().to_string(),
-            identity(2),
             one_row_selection(),
             VisibilityColumn::CorrectedData,
             WeightColumn::Weight,
-            Vec::new(),
-            ModelStateIdentity::Empty,
             SelectedObservationContentBudget::new(1 << 20, 1, 4),
             casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
         );
@@ -1369,13 +1313,8 @@ mod tests {
                 .expect("selected row manifest"),
             RowSelection::new(
                 IdSelection::Only(vec![0]),
-                TimeSelection::All,
                 UvSelection::All,
-                AntennaSelection::All,
-                IdSelection::All,
-                IdSelection::All,
                 IntentSelection::All,
-                IdSelection::All,
             ),
             vec![DataDescriptionSelection::new(0, 0, 0)],
             vec![SpectralWindowSelection::new(0, vec![0])],
@@ -1386,12 +1325,9 @@ mod tests {
         );
         let request = SelectedObservationResolutionRequest::new(
             path.display().to_string(),
-            identity(2),
             selection,
             VisibilityColumn::Data,
             WeightColumn::Weight,
-            Vec::new(),
-            ModelStateIdentity::Empty,
             SelectedObservationContentBudget::new(1 << 20, 1, 4),
             casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
         );

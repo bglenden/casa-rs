@@ -69,10 +69,7 @@ owned arrays just to assign completion authority. Routine telemetry stays
 indexed in memory and persists a useful final summary, not full-plan checkpoints
 at each work/fence event or scans of historical receipts during admission.
 `casa-imaging-runtime` owns execution-resource contracts introduced by ADR-0010
-and depends inward on the model plus reconstruction's opaque executable-problem
-brand. That reconstruction edge is limited to admitting owner-prepared model
-inputs at the execution and receipt boundary; runtime does not own or invoke
-reprojection algorithms. It owns the major-cycle pass, its worker team and
+and depends inward on the model and reconstruction. It owns the major-cycle pass, its worker team and
 bounded source stream, and the paged cube state (see Imaging execution). Metal
 runs inside the pass: with `backend = metal` every owner grids through its
 own `casa_imaging_metal::MetalBackend`, and the execution scheduler refuses

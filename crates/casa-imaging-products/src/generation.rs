@@ -8,10 +8,10 @@
 //! association for publication without hashing or rereading product content.
 
 use casa_imaging_model::{
-    AxisOrder, CompiledProblem, CompiledProblemId, ImageAxis, ImageDomainRole, ProductAxes,
-    ProductBeamRule, ProductGraphId, ProductNodeId, ProductNormalization, ProductPixelMask,
-    ProductRole, ProductSchema, ProductStorageContract, ProductSupportComparison, ProductUnit,
-    ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy,
+    AxisOrder, CompiledProblem, ImageAxis, ImageDomainRole, ProductAxes, ProductBeamRule,
+    ProductNodeId, ProductNormalization, ProductPixelMask, ProductRole, ProductSchema,
+    ProductStorageContract, ProductSupportComparison, ProductUnit, ProductValidityRule,
+    ReconstructionBasis, RestoringBeamPolicy,
 };
 use casa_imaging_reconstruction::{
     FinalNormalPlaneReader, ModelGeneration, NormalStateCatalog, SpectralChannelValidity,
@@ -182,8 +182,6 @@ fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
 /// continuum generation.
 #[derive(Debug)]
 pub struct PlannedContinuumGeneration {
-    problem_id: CompiledProblemId,
-    graph_id: ProductGraphId,
     major_cycle_completion: casa_imaging_reconstruction::MajorCycleCompletionId,
     normal_state_completion: casa_imaging_reconstruction::FinalNormalStateCompletionId,
     psf_cutoff: f32,
@@ -246,8 +244,6 @@ impl PlannedContinuumGeneration {
             });
         }
         Ok(Self {
-            problem_id: inputs.problem().problem_id(),
-            graph_id: graph.graph_id(),
             major_cycle_completion: inputs.major_cycle_completion(),
             normal_state_completion: inputs.normal_state_completion(),
             psf_cutoff: controls.psf_cutoff(),
@@ -256,18 +252,6 @@ impl PlannedContinuumGeneration {
             final_model_generation: inputs.final_model().generation_id(),
             reconstruction_mask_generation: inputs.reconstruction_mask_generation(),
         })
-    }
-
-    /// Return the exact compiled problem this generation was planned for.
-    #[must_use]
-    pub const fn problem_id(&self) -> CompiledProblemId {
-        self.problem_id
-    }
-
-    /// Return the exact compiler-owned Product Graph this generation realizes.
-    #[must_use]
-    pub const fn graph_id(&self) -> ProductGraphId {
-        self.graph_id
     }
 
     /// Return the released Major-Cycle run association.
@@ -508,9 +492,7 @@ pub fn produce_continuum_members(
     execution: &impl crate::ProductWindowExecutor,
     output: &dyn ProductOutput,
 ) -> Result<PublishedContinuumGeneration, ProductsError> {
-    if inputs.problem().problem_id() != planned.problem_id
-        || inputs.problem().product_graph().graph_id() != planned.graph_id
-        || inputs.major_cycle_completion() != planned.major_cycle_completion
+    if inputs.major_cycle_completion() != planned.major_cycle_completion
         || inputs.normal_state_completion() != planned.normal_state_completion
         || inputs.final_model().generation_id() != planned.final_model_generation
     {
@@ -1482,8 +1464,6 @@ fn published_generation(
         });
     }
     Ok(PublishedContinuumGeneration {
-        problem_id: planned.problem_id,
-        graph_id: planned.graph_id,
         major_cycle_completion: planned.major_cycle_completion,
         normal_state_completion: planned.normal_state_completion,
         fitted_beams,
@@ -1539,8 +1519,6 @@ impl PublishedMember {
 /// Payload-free metadata for one generated continuum run.
 #[derive(Debug, Clone)]
 pub struct PublishedContinuumGeneration {
-    problem_id: CompiledProblemId,
-    graph_id: ProductGraphId,
     major_cycle_completion: casa_imaging_reconstruction::MajorCycleCompletionId,
     normal_state_completion: casa_imaging_reconstruction::FinalNormalStateCompletionId,
     fitted_beams: Box<[Option<RestoringBeam>]>,
@@ -1549,18 +1527,6 @@ pub struct PublishedContinuumGeneration {
 }
 
 impl PublishedContinuumGeneration {
-    /// Return the exact compiled problem for this generated run.
-    #[must_use]
-    pub const fn problem_id(&self) -> CompiledProblemId {
-        self.problem_id
-    }
-
-    /// Return the exact compiler-owned Product Graph realized by this run.
-    #[must_use]
-    pub const fn graph_id(&self) -> ProductGraphId {
-        self.graph_id
-    }
-
     /// Return the released Major-Cycle run association.
     #[must_use]
     pub const fn major_cycle_completion(

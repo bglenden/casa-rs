@@ -4,7 +4,7 @@ import XCTest
 @testable import CasarsMacCore
 
 /// Mirrors `IMAGER_TASK_PROTOCOL_VERSION` in `crates/casars-imager/src/task_contract.rs`.
-private let imagerTaskProtocolVersion: UInt32 = 12
+private let imagerTaskProtocolVersion: UInt32 = 13
 
 final class WorkbenchStoreTests: XCTestCase {
     func testAssistantContextsUseEachTaskTabSessionAndPreserveUserSelection() throws {
