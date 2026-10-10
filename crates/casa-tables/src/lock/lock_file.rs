@@ -44,6 +44,14 @@
 //! holder reads only the count. A wait is reported once when it starts, every
 //! ten seconds while it lasts, and once more when the lock is acquired.
 //!
+//! An indefinite wait blocks in the kernel (`F_SETLKW`), as casacore's
+//! `FileLocker` does, so that the kernel detects deadlocks between waiting
+//! processes, such as two processes upgrading their read locks: the request
+//! that would close the cycle fails with `EDEADLK`. The process mutex is not
+//! held while a thread is blocked; the granted lock is claimed afterwards
+//! under the mutex, and no handle claims the write lock while a thread of the
+//! process is blocked for a read lock, whose grant would replace it.
+//!
 //! # File systems without locking
 //!
 //! casacore counts a lock refused with `ENOLCK` ("locking over a network
@@ -82,8 +90,9 @@ const SIZEREQID: usize = (1 + 2 * NRREQID) * SIZEINT;
 /// Lock file name within a table directory.
 pub(crate) const LOCK_FILE_NAME: &str = "table.lock";
 
-/// Interval between attempts while waiting indefinitely for another process.
-const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// Pause before a lock the kernel granted to a blocked wait is claimed again,
+/// when another thread of this process changed the process's lock first.
+const GRANT_RECLAIM_INTERVAL: Duration = Duration::from_millis(1);
 
 /// Interval between progress reports while waiting for another process.
 const WAIT_REPORT_INTERVAL: Duration = Duration::from_secs(10);
@@ -115,7 +124,7 @@ impl SharedLockFd {
     fn granted(&self, outcome: io::Result<FcntlOutcome>) -> io::Result<bool> {
         Ok(match outcome? {
             FcntlOutcome::Granted => true,
-            FcntlOutcome::Held => false,
+            FcntlOutcome::Held | FcntlOutcome::Deadlock => false,
             FcntlOutcome::Unsupported(errno) => {
                 report_unsupported_locking(&self.path, errno);
                 true
@@ -153,6 +162,10 @@ struct ProcessLockState {
     readers: usize,
     /// The handle holding the write lock.
     writer: Option<u64>,
+    /// Threads of this process blocked in the kernel for a read lock. While
+    /// any is, no handle claims the write lock: the read lock the kernel
+    /// grants such a thread replaces the process's write lock.
+    blocked_readers: usize,
     /// Length of the in-use read lock at byte 1 (2 under permanent locking).
     in_use_len: i64,
 }
@@ -208,6 +221,11 @@ pub(crate) enum LockOutcome {
     /// Another process holds a conflicting lock, still after the attempts
     /// the request allowed.
     HeldByAnotherProcess,
+    /// Waiting would deadlock: the kernel refused the blocking request
+    /// (`EDEADLK`) because the holder waits, directly or through others, for
+    /// a lock this process holds. casacore's blocking wait gives up the same
+    /// way.
+    Deadlock,
 }
 
 impl LockOutcome {
@@ -234,6 +252,11 @@ impl LockOutcome {
                     attempts => format!("{held}, still after {attempts} attempts one second apart"),
                 }
             }
+            Self::Deadlock => format!(
+                "waiting for the {} lock would deadlock with another process waiting for this \
+                 table: it holds a lock this request needs and waits for a lock this process holds",
+                lock_name(lock_type)
+            ),
         }
     }
 }
@@ -398,11 +421,18 @@ impl LockFile {
     /// conflicting lock and `nattempts` is not 1, this process's id is added
     /// to the lock file's request list (when the file is writable), so that a
     /// casacore holder using `AutoLocking` releases its lock at its next
-    /// inspection, and the attempts continue: with `nattempts == 0` every
-    /// 50 ms until the lock is acquired, however long that takes, and
-    /// otherwise once a second up to `nattempts` attempts in all. The id is
-    /// removed from the request list when the wait ends. A wait is logged
-    /// when it starts, every ten seconds while it lasts and when it succeeds.
+    /// inspection, and the request waits: with `nattempts == 0` blocked in
+    /// the kernel (`F_SETLKW`) until the lock is granted, as casacore's
+    /// `FileLocker` waits, and otherwise retrying once a second up to
+    /// `nattempts` attempts in all. The id is removed from the request list
+    /// when the wait ends. A wait is logged when it starts, every ten seconds
+    /// while it lasts and when it succeeds.
+    ///
+    /// A blocking wait lets the kernel detect a deadlock, such as two
+    /// processes that each hold a read lock and wait to upgrade it to a write
+    /// lock: the request that would close the cycle is refused with
+    /// [`LockOutcome::Deadlock`], and the other is granted once the refused
+    /// process releases its lock.
     ///
     /// A write lock another handle in this process holds is never waited for,
     /// whatever `nattempts` is: that handle may belong to the waiting thread.
@@ -411,7 +441,7 @@ impl LockFile {
     /// # Errors
     ///
     /// Returns an I/O error when `fcntl` fails for a reason other than a held
-    /// lock or missing lock support.
+    /// lock, a deadlock or missing lock support.
     pub fn acquire(&mut self, lock_type: LockType, nattempts: u32) -> io::Result<LockOutcome> {
         let first = self.try_acquire(lock_type)?;
         let result = if first == LockOutcome::HeldByAnotherProcess && nattempts != 1 {
@@ -429,9 +459,9 @@ impl LockFile {
         result
     }
 
-    /// Repeat the attempt while another process holds a conflicting lock:
-    /// indefinitely for `nattempts == 0`, otherwise up to `nattempts`
-    /// attempts in all, one second apart.
+    /// Wait while another process holds a conflicting lock: blocked in the
+    /// kernel for `nattempts == 0`, otherwise up to `nattempts` attempts in
+    /// all, one second apart. The wait is logged.
     fn wait_for_other_process(
         &mut self,
         lock_type: LockType,
@@ -439,14 +469,33 @@ impl LockFile {
     ) -> io::Result<LockOutcome> {
         let table = self.path.parent().unwrap_or(&self.path).to_path_buf();
         let lock = lock_name(lock_type);
-        let (interval, mut attempts_left) = if nattempts == 0 {
+        let started = Instant::now();
+        let outcome = if nattempts == 0 {
             tracing::warn!(
                 table = %table.display(),
                 lock,
                 "the table is locked by another process; waiting until it is released, \
                  as casacore does"
             );
-            (WAIT_POLL_INTERVAL, None)
+            let (stop, stopped) = std::sync::mpsc::channel::<()>();
+            std::thread::scope(|scope| {
+                let table = table.as_path();
+                scope.spawn(move || {
+                    while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+                        stopped.recv_timeout(WAIT_REPORT_INTERVAL)
+                    {
+                        tracing::info!(
+                            table = %table.display(),
+                            lock,
+                            waited_s = started.elapsed().as_secs_f64(),
+                            "still waiting for the table lock another process holds"
+                        );
+                    }
+                });
+                let outcome = self.wait_blocking(lock_type);
+                drop(stop);
+                outcome
+            })?
         } else {
             tracing::warn!(
                 table = %table.display(),
@@ -454,41 +503,107 @@ impl LockFile {
                 attempts = nattempts,
                 "the table is locked by another process; retrying once a second"
             );
-            (Duration::from_secs(1), Some(nattempts - 1))
+            self.retry_once_a_second(lock_type, nattempts - 1)?
         };
-        let started = Instant::now();
-        let mut next_report = started + WAIT_REPORT_INTERVAL;
+        match outcome {
+            LockOutcome::Acquired => tracing::info!(
+                table = %table.display(),
+                lock,
+                waited_s = started.elapsed().as_secs_f64(),
+                "acquired the table lock another process held"
+            ),
+            LockOutcome::Deadlock => tracing::warn!(
+                table = %table.display(),
+                lock,
+                waited_s = started.elapsed().as_secs_f64(),
+                "gave up waiting for the table lock: waiting would deadlock with another \
+                 process that waits for a lock this process holds (EDEADLK)"
+            ),
+            LockOutcome::HeldInProcess | LockOutcome::HeldByAnotherProcess => {}
+        }
+        Ok(outcome)
+    }
+
+    /// Up to `retries` more attempts, one second apart.
+    fn retry_once_a_second(
+        &mut self,
+        lock_type: LockType,
+        retries: u32,
+    ) -> io::Result<LockOutcome> {
+        for _ in 0..retries {
+            std::thread::sleep(Duration::from_secs(1));
+            let outcome = self.try_acquire(lock_type)?;
+            if outcome != LockOutcome::HeldByAnotherProcess {
+                return Ok(outcome);
+            }
+        }
+        Ok(LockOutcome::HeldByAnotherProcess)
+    }
+
+    /// Wait in the kernel (`F_SETLKW`) until the lock is granted, then claim
+    /// it for this handle.
+    ///
+    /// The process mutex is not held while the thread is blocked, so other
+    /// handles of this process keep working. The kernel grants the process's
+    /// lock; the claim is then re-validated under the mutex with a
+    /// non-blocking attempt, because meanwhile another handle may have taken
+    /// the write lock (the request is then [`LockOutcome::HeldInProcess`]) or
+    /// changed the process's lock, in which case the request waits again. A
+    /// thread blocked for a read lock is counted, and no handle claims the
+    /// write lock until it returns: the read lock the kernel grants it would
+    /// replace the process's write lock.
+    fn wait_blocking(&mut self, lock_type: LockType) -> io::Result<LockOutcome> {
         loop {
-            if let Some(left) = attempts_left.as_mut() {
-                if *left == 0 {
-                    return Ok(LockOutcome::HeldByAnotherProcess);
+            let fcntl_type = match lock_type {
+                LockType::Write => libc::F_WRLCK,
+                LockType::Read => {
+                    let mut state = self.shared.state();
+                    if state.writer.is_some() || state.readers > 0 {
+                        // Another handle's lock covers reading now.
+                        drop(state);
+                        match self.try_acquire(lock_type)? {
+                            LockOutcome::HeldByAnotherProcess => continue,
+                            outcome => return Ok(outcome),
+                        }
+                    }
+                    state.blocked_readers += 1;
+                    libc::F_RDLCK
                 }
-                *left -= 1;
+            };
+            let blocked = fcntl_lock_wait(self.shared.fd, fcntl_type as i32, 0, 1);
+            if lock_type == LockType::Read {
+                self.shared.state().blocked_readers -= 1;
             }
-            std::thread::sleep(interval);
-            match self.try_acquire(lock_type)? {
-                LockOutcome::HeldByAnotherProcess => {}
-                LockOutcome::Acquired => {
-                    tracing::info!(
-                        table = %table.display(),
-                        lock,
-                        waited_s = started.elapsed().as_secs_f64(),
-                        "acquired the table lock another process held"
-                    );
-                    return Ok(LockOutcome::Acquired);
+            match blocked {
+                Ok(FcntlOutcome::Deadlock) => return Ok(LockOutcome::Deadlock),
+                Ok(_) => {}
+                Err(error) => {
+                    self.settle_unclaimed_grant();
+                    return Err(error);
                 }
-                LockOutcome::HeldInProcess => return Ok(LockOutcome::HeldInProcess),
             }
-            let now = Instant::now();
-            if now >= next_report {
-                tracing::info!(
-                    table = %table.display(),
-                    lock,
-                    waited_s = now.duration_since(started).as_secs_f64(),
-                    "still waiting for the table lock another process holds"
-                );
-                next_report = now + WAIT_REPORT_INTERVAL;
+            match self.try_acquire(lock_type) {
+                Ok(LockOutcome::HeldByAnotherProcess) => std::thread::sleep(GRANT_RECLAIM_INTERVAL),
+                Ok(outcome) => return Ok(outcome),
+                Err(error) => {
+                    self.settle_unclaimed_grant();
+                    return Err(error);
+                }
             }
+        }
+    }
+
+    /// Return the process's lock to the strongest lock its handles hold,
+    /// after the kernel granted a lock that this handle did not claim.
+    fn settle_unclaimed_grant(&self) {
+        let state = self.shared.state();
+        if state.writer.is_none() {
+            let held = if state.readers > 0 {
+                libc::F_RDLCK
+            } else {
+                libc::F_UNLCK
+            };
+            let _ = self.shared.set_lock(held as i32, 0, 1);
         }
     }
 
@@ -504,7 +619,10 @@ impl LockFile {
                     Some(_) => return Ok(LockOutcome::HeldInProcess),
                     None => {}
                 }
-                if !shared.set_lock(libc::F_WRLCK as i32, 0, 1)? {
+                // A thread of this process blocked for a read lock waits for
+                // another process's write lock, and its grant would replace
+                // this one.
+                if state.blocked_readers > 0 || !shared.set_lock(libc::F_WRLCK as i32, 0, 1)? {
                     return Ok(LockOutcome::HeldByAnotherProcess);
                 }
                 if self.held == Some(LockType::Read) {
@@ -859,19 +977,23 @@ enum FcntlOutcome {
     Granted,
     /// Another process holds a conflicting lock.
     Held,
+    /// A blocking request would deadlock (`EDEADLK`).
+    Deadlock,
     /// The file system does not support `fcntl` locking; carries the errno.
     Unsupported(i32),
 }
 
 /// Classify a failed `fcntl` lock request by its errno.
 ///
-/// `EAGAIN`/`EACCES` mean another process holds the lock. `ENOLCK` is what
-/// NFS returns when locking over the network is not working (casacore's
-/// `FileLocker` counts it as acquired), and macOS `smbfs` returns
-/// `ENOTSUP`/`EOPNOTSUPP` for the same condition. Any other errno is an error.
+/// `EAGAIN`/`EACCES` mean another process holds the lock, and `EDEADLK` that
+/// a blocking request would deadlock. `ENOLCK` is what NFS returns when
+/// locking over the network is not working (casacore's `FileLocker` counts it
+/// as acquired), and macOS `smbfs` returns `ENOTSUP`/`EOPNOTSUPP` for the
+/// same condition. Any other errno is an error.
 fn outcome_of_failed_lock(error: io::Error) -> io::Result<FcntlOutcome> {
     match error.raw_os_error() {
         Some(libc::EAGAIN | libc::EACCES) => Ok(FcntlOutcome::Held),
+        Some(libc::EDEADLK) => Ok(FcntlOutcome::Deadlock),
         Some(errno)
             if errno == libc::ENOLCK || errno == libc::ENOTSUP || errno == libc::EOPNOTSUPP =>
         {
@@ -894,6 +1016,30 @@ fn fcntl_lock(fd: RawFd, lock_type: i32, start: i64, len: i64) -> io::Result<Fcn
         outcome_of_failed_lock(io::Error::last_os_error())
     } else {
         Ok(FcntlOutcome::Granted)
+    }
+}
+
+/// Perform a blocking `fcntl` lock operation (`F_SETLKW`): wait until the
+/// lock is granted, or until the kernel finds that waiting would deadlock.
+/// An interrupted wait is resumed.
+///
+/// C++ equivalent: `FileLocker::acquire` with `nattempts == 0`.
+fn fcntl_lock_wait(fd: RawFd, lock_type: i32, start: i64, len: i64) -> io::Result<FcntlOutcome> {
+    loop {
+        let mut flock = libc::flock {
+            l_type: lock_type as i16,
+            l_whence: libc::SEEK_SET as i16,
+            l_start: start,
+            l_len: len,
+            l_pid: 0,
+        };
+        if unsafe { libc::fcntl(fd, libc::F_SETLKW, &mut flock) } != -1 {
+            return Ok(FcntlOutcome::Granted);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return outcome_of_failed_lock(error);
+        }
     }
 }
 
@@ -1054,6 +1200,7 @@ mod tests {
         for errno in [libc::EAGAIN, libc::EACCES] {
             assert_eq!(outcome(errno).unwrap(), FcntlOutcome::Held);
         }
+        assert_eq!(outcome(libc::EDEADLK).unwrap(), FcntlOutcome::Deadlock);
         assert!(outcome(libc::EBADF).is_err());
     }
 
@@ -1144,7 +1291,9 @@ mod tests {
         let bounded = LockOutcome::HeldByAnotherProcess.refusal(LockType::Read, 5);
         assert!(bounded.contains("another process holds the write lock"));
         assert!(bounded.contains("5 attempts"));
-        for message in [in_process, once, bounded] {
+        let deadlock = LockOutcome::Deadlock.refusal(LockType::Write, 0);
+        assert!(deadlock.contains("would deadlock with another process waiting for this table"));
+        for message in [in_process, once, bounded, deadlock] {
             assert!(!message.contains("write-locked"), "{message}");
         }
     }

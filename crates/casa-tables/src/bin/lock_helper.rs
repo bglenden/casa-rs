@@ -33,6 +33,11 @@
 //! - `read_row_count` —
 //!   Opens with UserLocking, acquires read lock, prints row count to
 //!   stdout, unlocks. Exits 0 on success.
+//!
+//! - `auto_locked_write_row <id> <ready_file> <go_file>` —
+//!   Opens with AutoLocking, which holds a read lock, creates `ready_file`,
+//!   waits for `go_file`, then adds a row, which upgrades to a write lock
+//!   and waits for it. Prints `acquired` or `refused: <error>`.
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -194,6 +199,38 @@ fn main() {
                 eprintln!("unlock failed: {e}");
                 process::exit(3);
             });
+        }
+
+        "auto_locked_write_row" => {
+            if args.len() < 6 {
+                eprintln!(
+                    "Usage: lock_helper <table_dir> auto_locked_write_row <id> <ready_file> <go_file>"
+                );
+                process::exit(2);
+            }
+            let id: i32 = args[3].parse().unwrap();
+            let ready_file = &args[4];
+            let go_file = &args[5];
+
+            let mut table = Table::open_with_lock(opts, LockOptions::new(LockMode::AutoLocking))
+                .unwrap_or_else(|e| {
+                    eprintln!("open_with_lock failed: {e}");
+                    process::exit(3);
+                });
+            fs::write(ready_file, "read-locked").unwrap();
+            for _ in 0..200 {
+                if Path::new(go_file).exists() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            match table.add_row(RecordValue::new(vec![
+                RecordField::new("id", Value::Scalar(ScalarValue::Int32(id))),
+                RecordField::new("name", Value::Scalar(ScalarValue::String("upgrade".into()))),
+            ])) {
+                Ok(()) => println!("acquired"),
+                Err(error) => println!("refused: {error}"),
+            }
         }
 
         _ => {

@@ -75,8 +75,10 @@ impl TableWriteLock {
     /// waiting, more retries once a second, and 0 waits indefinitely for
     /// another process, as casacore's default `AutoLocking` does. While it
     /// waits, this process's id is in the lock file's request list, and the
-    /// wait is logged when it starts, every ten seconds and when it ends. A
-    /// holder in this process is never waited for.
+    /// wait is logged when it starts, every ten seconds and when it ends. An
+    /// indefinite wait blocks in the kernel, which refuses it when it would
+    /// deadlock with another waiting process. A holder in this process is
+    /// never waited for.
     ///
     /// A writer that had to wait checks the lock file's sync data once it
     /// holds the lock. When another process published a write to the table
@@ -88,8 +90,9 @@ impl TableWriteLock {
     ///
     /// [`TableError::LockFailed`] when another handle in this process holds
     /// the write lock, when another process still holds a conflicting lock
-    /// after `nattempts` (never with 0), or when another process wrote the
-    /// table while this writer waited; and [`TableError::LockIo`] when
+    /// after `nattempts` (never with 0), when waiting would deadlock, or when
+    /// another process wrote the table while this writer waited; and
+    /// [`TableError::LockIo`] when
     /// `table.lock` cannot be opened or `fcntl` fails for a reason other than
     /// a held lock or missing lock support.
     pub fn acquire(table_dir: impl AsRef<Path>, nattempts: u32) -> Result<Self, TableError> {

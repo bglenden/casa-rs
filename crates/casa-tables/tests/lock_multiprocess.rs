@@ -307,6 +307,79 @@ fn table_write_lock_refuses_a_table_written_while_it_waited() {
     assert!(TableWriteLock::acquire(opts.path(), 1).is_ok());
 }
 
+/// Wait for `child` until `deadline`; kill it and return `None` after that.
+fn output_before(mut child: std::process::Child, deadline: std::time::Instant) -> Option<String> {
+    while std::time::Instant::now() < deadline {
+        if child.try_wait().expect("poll the helper").is_some() {
+            let output = child.wait_with_output().expect("helper output");
+            return Some(String::from_utf8_lossy(&output.stdout).into_owned());
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    None
+}
+
+/// Two processes that each hold a read lock and wait to upgrade it to a
+/// write lock would wait for each other forever. The waits block in the
+/// kernel, as casacore's do, so the kernel refuses the request that closes
+/// the cycle (`EDEADLK`); that process gives up and releases its read lock,
+/// and the other then acquires the write lock.
+#[test]
+fn competing_read_lock_upgrades_do_not_deadlock() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let opts = create_test_table(tmp.path());
+    let helper = helper_binary();
+    let table_dir = opts.path().to_str().unwrap();
+    let go_file = tmp.path().join("go.signal");
+
+    let upgraders = [2, 3].map(|id| {
+        let ready_file = tmp.path().join(format!("ready-{id}.signal"));
+        let child = Command::new(&helper)
+            .args([
+                table_dir,
+                "auto_locked_write_row",
+                &id.to_string(),
+                ready_file.to_str().unwrap(),
+                go_file.to_str().unwrap(),
+            ])
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn upgrader");
+        assert!(
+            wait_for_file(&ready_file, Duration::from_secs(10)),
+            "upgrader {id} did not take its read lock"
+        );
+        child
+    });
+    fs::write(&go_file, "go").unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let outputs = upgraders.map(|child| output_before(child, deadline));
+    let outputs: Vec<String> = outputs
+        .into_iter()
+        .map(|output| output.expect("competing upgrades deadlocked"))
+        .collect();
+
+    assert_eq!(
+        outputs
+            .iter()
+            .filter(|out| out.contains("acquired"))
+            .count(),
+        1,
+        "{outputs:?}"
+    );
+    assert!(
+        outputs
+            .iter()
+            .any(|out| out.contains("refused") && out.contains("would deadlock")),
+        "{outputs:?}"
+    );
+    let mut table = Table::open_with_lock(opts, LockOptions::new(LockMode::UserLocking)).unwrap();
+    assert!(table.lock(LockType::Read, 1).unwrap());
+    assert_eq!(table.row_count(), 2, "the winner's row is written");
+}
+
 #[test]
 fn cross_process_write_then_read() {
     let tmp = tempfile::TempDir::new().unwrap();

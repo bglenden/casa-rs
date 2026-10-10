@@ -57,7 +57,10 @@ in-place mutation waits for it, as casacore does by default: the waiter adds
 its process id to the request list in `table.lock`, so that a holder using
 casacore's `AutoLocking` releases its lock at its next inspection, and the
 wait is logged when it starts, periodically while it lasts, and when it ends.
-A writer that finds another process wrote the table while it waited is
+The wait blocks in the kernel, as casacore's does, so the kernel refuses a
+wait that would deadlock, such as the second of two processes upgrading their
+read locks, and that writer fails. A writer whose table was opened without
+locking and that finds another process wrote the table while it waited is
 refused, because what it read beforehand is stale. A save that locks several
 tables of a MeasurementSet never waits while it holds another table's lock.
 A conflicting handle in the same process is refused at once, because it may
@@ -65,9 +68,7 @@ belong to the waiting thread. casa-rs does not yet release a lock it holds
 when another process requests it
 ([#694](https://github.com/bglenden/casa-rs/issues/694)); a waiter, CASA's or
 casa-rs's, waits until a casa-rs holder, such as an imaging run with its
-retained read locks, finishes, and the imaging writer of
-`MODEL_DATA` and `CORRECTED_DATA`, which upgrades a read lock it holds, still
-makes one attempt for the write lock. On a file system
+retained read locks, finishes. On a file system
 without lock support (`fcntl` refused with `ENOLCK`, or `ENOTSUP` as on macOS
 SMB mounts) the table is used unlocked, with a warning, as casacore does for
 `ENOLCK`; there is then no cross-process exclusion. casa-rs adds nothing of its

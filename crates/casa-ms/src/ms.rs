@@ -486,8 +486,9 @@ impl MeasurementSet {
     /// # Errors
     ///
     /// [`MsError::Table`] with [`TableError::LockFailed`] when another handle
-    /// in this process holds the write lock on MAIN or a subtable, or when
-    /// another process wrote such a table while the save waited for it.
+    /// in this process holds the write lock on MAIN or a subtable, when
+    /// another process wrote such a table while the save waited for it, or
+    /// when the wait would deadlock.
     pub fn save(&mut self) -> MsResult<()> {
         let path = self
             .path
@@ -533,11 +534,11 @@ impl MeasurementSet {
     ///
     /// A lock another process holds is waited for, but never while this save
     /// holds another table's lock: a process waiting for a lock the save holds
-    /// may hold the one the save waits for, and polling for a lock cannot
-    /// detect that deadlock as a blocking `fcntl` would. On the first table
-    /// that is held, every lock taken so far is released, unrecorded, the
-    /// save waits for that table alone and keeps it, and then tries the rest
-    /// again.
+    /// may hold the one the save waits for. The kernel would refuse that wait
+    /// as a deadlock and fail the save; releasing first lets the save complete
+    /// once the other process is done. On the first table that is held, every
+    /// lock taken so far is released, unrecorded, the save waits for that
+    /// table alone and keeps it, and then tries the rest again.
     fn lock_tables_for_in_place_save(
         &self,
         path: &Path,
