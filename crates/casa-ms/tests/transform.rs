@@ -1021,3 +1021,51 @@ fn saving_into_an_existing_flag_version_waits_for_its_write_lock() {
     saved.expect("the save completes once the version is released");
     assert_eq!(flag_row_0(&version), !saved_flag_row);
 }
+
+/// Restoring a flag version reads the version under its read lock, so a
+/// version another process is writing is never read half written. While
+/// another process holds the version's write lock, the restore waits in the
+/// version's request list and MAIN is unchanged; it completes once the lock
+/// is released.
+#[test]
+fn restoring_a_flag_version_waits_for_its_write_lock() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open MeasurementSet");
+    casa_ms::save_flag_version(&measurement_set, "v1", "seed", casa_ms::FlagMerge::Replace)
+        .expect("create the flag version");
+    let version = std::path::PathBuf::from(format!("{}.flagversions/flags.v1", ms_path.display()));
+    assert!(!flag_row_0(&version), "the fixture starts unflagged");
+    let session = start_flag_row_mutation(&mut measurement_set).expect("flag row 0");
+    finish_flag_row_mutation(session, &mut measurement_set);
+    assert!(flag_row_0(&ms_path));
+
+    let signal = dir.path().join("holder-locked.signal");
+    let release = dir.path().join("holder-release.signal");
+    let mut holder = hold_the_write_lock_in_another_process(&version, &signal, &release);
+    let releaser = {
+        let version = version.clone();
+        let ms_path = ms_path.clone();
+        std::thread::spawn(move || {
+            let requested = this_process_requests_the_lock(&version);
+            let main_unchanged = flag_row_0(&ms_path);
+            std::fs::write(&release, "release").expect("release the holder");
+            (requested, main_unchanged)
+        })
+    };
+    let restored =
+        casa_ms::restore_flag_version(&mut measurement_set, "v1", casa_ms::FlagMerge::Replace);
+    let (requested, main_unchanged) = releaser.join().expect("releaser thread");
+    assert!(holder.wait().expect("holder exits").success());
+
+    assert!(
+        requested,
+        "the restore was not in the version's request list"
+    );
+    assert!(
+        main_unchanged,
+        "MAIN changed while another process held the version"
+    );
+    restored.expect("the restore completes once the version is released");
+    assert!(!flag_row_0(&ms_path), "the version was restored");
+}

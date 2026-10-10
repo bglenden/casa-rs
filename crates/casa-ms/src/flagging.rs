@@ -19,6 +19,8 @@ use casa_tables::{
     ColumnBinding, ColumnSchema, DataManagerKind, Table, TableError, TableOptions, TableSchema,
     TableWriteLock,
 };
+#[cfg(unix)]
+use casa_tables::{LockMode, LockOptions};
 use casa_types::{
     ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
@@ -2769,7 +2771,8 @@ pub fn restore_flag_version(
     validate_version_name(ms, versionname)?;
     let path = ms_path(ms)?.to_path_buf();
     let version_path = flag_version_table_path(&path, versionname);
-    let table = Table::open(TableOptions::new(&version_path)).map_err(|source| {
+    // The version is read under its read lock, held until the restore ends.
+    let table = open_flag_version_for_reading(&version_path).map_err(|source| {
         FlaggingError::FlagVersion {
             path: path.display().to_string(),
             reason: format!("open flag version {versionname:?}: {source}"),
@@ -3044,6 +3047,25 @@ where
         path: path.display().to_string(),
         reason: format!("write FLAG_VERSION_LIST: {source}"),
     })
+}
+
+/// Open a flag-version table to read it, holding casacore's read lock until
+/// the table is dropped. The open waits, as a casacore `AutoLocking` open
+/// does, while another process (casacore's flagmanager or casa-rs) holds the
+/// version's write lock, so a version being written is never read half
+/// written; the table is read only once the lock is held.
+fn open_flag_version_for_reading(version_path: &Path) -> Result<Table, TableError> {
+    #[cfg(unix)]
+    {
+        Table::open_with_lock(
+            TableOptions::new(version_path),
+            LockOptions::new(LockMode::AutoLocking),
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        Table::open(TableOptions::new(version_path))
+    }
 }
 
 /// Take casacore's write lock on an existing flag-version table before it is
