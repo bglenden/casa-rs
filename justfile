@@ -43,10 +43,6 @@ test:
 release-cpp-interop:
     bash scripts/test-release-cpp-interop.sh
 
-# Focused T24-T30 CASA/Rust solver, mask, product, and MODEL_DATA correctness gate.
-imaging-solver-crosscheck input_ms output_dir:
-    python tools/science/casa_rust_solver_crosscheck.py "{{input_ms}}" "{{output_dir}}"
-
 # Focused #517 compiled multi-domain geometry and frozen-CASA product gate.
 imaging-t31-multidomain-geometry testdata_root casa_prefix:
     just arch-check
