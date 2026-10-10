@@ -50,7 +50,6 @@ use casa_types::measures::{
 };
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
-use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 
 #[cfg(unix)]
@@ -1102,11 +1101,7 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
     let source = &problem.inputs().observation_snapshot().sources()[0];
 
     let baseline_measures = test_measures(&problem);
-    let baseline_shared_bytes = selected_observation_shared_bytes(
-        &baseline_measures,
-        BoundObservationSource::retained_source_slot_bytes(),
-        0,
-    );
+    let baseline_shared_bytes = selected_observation_shared_bytes(&baseline_measures);
     let baseline_budget =
         content_budget_for_rows_with_shared_bytes(&problem, source, baseline_shared_bytes, 1, 1);
     let baseline = BoundObservationSource::open_with_measures(
@@ -1123,11 +1118,7 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
     let erased_provider: Arc<dyn MeasuresProvider> = large_provider;
     let large_measures = super::SelectedObservationMeasures::new(erased_provider)
         .expect("account large provider residency");
-    let large_shared_bytes = selected_observation_shared_bytes(
-        &large_measures,
-        BoundObservationSource::retained_source_slot_bytes(),
-        0,
-    );
+    let large_shared_bytes = selected_observation_shared_bytes(&large_measures);
     assert!(matches!(
         BoundObservationSource::open_with_measures(
             &problem,
@@ -1160,185 +1151,6 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
         "the shared provider allocation must have one exact retained owner"
     );
     assert!(large.content_plan().maximum_resident_bytes() <= large_budget.available_bytes());
-}
-
-#[test]
-fn retained_source_slots_are_charged_once_and_rejected_under_a_tight_budget() {
-    let directory = tempfile::tempdir().expect("temporary source-slot budget fixture");
-    let path = directory.path().join("source-slot-budget.ms");
-    generate_fixture(&path);
-    let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let slot_allocation_bytes = Vec::<BoundObservationSource>::with_capacity(1)
-        .capacity()
-        .checked_mul(BoundObservationSource::retained_source_slot_bytes())
-        .expect("finite source-slot allocation");
-
-    let omitted_measures = test_measures(&problem);
-    let omitted_shared_bytes = selected_observation_shared_bytes(
-        &omitted_measures,
-        0,
-        single_binding_graph_initialization_bytes(source),
-    );
-    let omitted_budget =
-        content_budget_for_rows_with_shared_bytes(&problem, source, omitted_shared_bytes, 1, 1);
-    let omitted_error = match BoundSelectedObservation::open(
-        &problem,
-        omitted_measures,
-        vec![ObservationSourceBinding::new(
-            source_ordinal(source),
-            omitted_budget,
-        )],
-    ) {
-        Ok(_) => panic!("a budget omitting the source-slot allocation must be rejected"),
-        Err(error) => error,
-    };
-    assert!(matches!(
-        omitted_error,
-        super::BoundSelectedObservationError::Source { error, .. }
-            if matches!(
-                *error,
-                super::BoundObservationSourceError::ContentPlan(
-                    super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
-                        | super::content_plan::SelectedObservationContentPlanError::InsufficientBudget { .. }
-                )
-            )
-    ));
-
-    let admitted_measures = test_measures(&problem);
-    let measures_retained_bytes = admitted_measures.retained_bytes();
-    let admitted_shared_bytes = selected_observation_shared_bytes(
-        &admitted_measures,
-        slot_allocation_bytes,
-        single_binding_graph_initialization_bytes(source),
-    );
-    let admitted_budget =
-        content_budget_for_rows_with_shared_bytes(&problem, source, admitted_shared_bytes, 1, 1);
-    let admitted = BoundSelectedObservation::open(
-        &problem,
-        admitted_measures,
-        vec![ObservationSourceBinding::new(
-            source_ordinal(source),
-            admitted_budget,
-        )],
-    )
-    .expect("bind an exactly admitted source-slot allocation");
-    assert_eq!(
-        admitted.source_slot_allocation_bytes(),
-        slot_allocation_bytes,
-        "the projection must use the retained Vec's actual slot capacity"
-    );
-
-    let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())
-        .expect("open fixture for source-slot accounting comparison");
-    let without_slots = super::content_plan::selected_content_plan(
-        &measurement_set,
-        &problem,
-        source,
-        super::content_plan::SelectedObservationSharedBytes::new(measures_retained_bytes, 0, 0, 0),
-        admitted_budget,
-    )
-    .expect("plan the same retained state without the source-slot owner");
-    let bound_plan = admitted
-        .source_content_plan(0)
-        .expect("bound source content plan");
-    assert_eq!(
-        bound_plan.retained_bytes() - without_slots.retained_bytes(),
-        slot_allocation_bytes,
-        "source identity, owner headers, content plan, and inline padding are charged once"
-    );
-    assert!(bound_plan.maximum_resident_bytes() <= admitted_budget.available_bytes());
-}
-
-#[test]
-fn consumed_binding_graph_is_charged_once_at_actual_capacity_under_a_tight_budget() {
-    let directory = tempfile::tempdir().expect("temporary binding-graph budget fixture");
-    let path = directory.path().join("binding-graph-budget.ms");
-    generate_fixture(&path);
-    let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let source_slot_bytes = Vec::<BoundObservationSource>::with_capacity(1)
-        .capacity()
-        .checked_mul(BoundObservationSource::retained_source_slot_bytes())
-        .expect("finite source-slot allocation");
-
-    let mut omitted_bindings = Vec::<ObservationSourceBinding>::with_capacity(4_096);
-    let omitted_state = source_ordinal(source);
-    let omitted_binding_graph_bytes =
-        expected_binding_graph_initialization_bytes(omitted_bindings.capacity());
-    let omitted_measures = test_measures(&problem);
-    let omitted_shared_bytes =
-        selected_observation_shared_bytes(&omitted_measures, source_slot_bytes, 0);
-    let omitted_budget =
-        content_budget_for_rows_with_shared_bytes(&problem, source, omitted_shared_bytes, 1, 1);
-    omitted_bindings.push(ObservationSourceBinding::new(omitted_state, omitted_budget));
-    let omitted_error =
-        match BoundSelectedObservation::open(&problem, omitted_measures, omitted_bindings) {
-            Ok(_) => panic!("a tight budget omitting the live binding graph must be rejected"),
-            Err(error) => error,
-        };
-    assert!(matches!(
-        omitted_error,
-        super::BoundSelectedObservationError::Source { error, .. }
-            if matches!(
-                *error,
-                super::BoundObservationSourceError::ContentPlan(
-                    super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
-                )
-            )
-    ));
-
-    let mut admitted_bindings = Vec::<ObservationSourceBinding>::with_capacity(4_096);
-    let admitted_state = source_ordinal(source);
-    let binding_graph_bytes =
-        expected_binding_graph_initialization_bytes(admitted_bindings.capacity());
-    assert_eq!(binding_graph_bytes, omitted_binding_graph_bytes);
-    let admitted_measures = test_measures(&problem);
-    let measures_retained_bytes = admitted_measures.retained_bytes();
-    let admitted_shared_bytes = selected_observation_shared_bytes(
-        &admitted_measures,
-        source_slot_bytes,
-        binding_graph_bytes,
-    );
-    let admitted_budget =
-        content_budget_for_rows_with_shared_bytes(&problem, source, admitted_shared_bytes, 1, 1);
-    admitted_bindings.push(ObservationSourceBinding::new(
-        admitted_state,
-        admitted_budget,
-    ));
-    let admitted = BoundSelectedObservation::open(&problem, admitted_measures, admitted_bindings)
-        .expect("bind an exactly admitted oversized binding graph");
-
-    let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())
-        .expect("open fixture for binding-slot accounting comparison");
-    let without_binding_graph = super::content_plan::selected_content_plan(
-        &measurement_set,
-        &problem,
-        source,
-        super::content_plan::SelectedObservationSharedBytes::new(
-            measures_retained_bytes,
-            0,
-            source_slot_bytes,
-            0,
-        ),
-        admitted_budget,
-    )
-    .expect("plan the same initialization without the consumed binding graph");
-    let bound_plan = admitted
-        .source_content_plan(0)
-        .expect("bound source content plan");
-    assert_eq!(
-        bound_plan.initialization_scratch_bytes()
-            - without_binding_graph.initialization_scratch_bytes(),
-        binding_graph_bytes,
-        "the complete consumed binding graph must be charged exactly once"
-    );
-    assert_eq!(
-        bound_plan.retained_bytes(),
-        without_binding_graph.retained_bytes(),
-        "the consumed binding graph is not retained after initialization"
-    );
-    assert!(bound_plan.maximum_resident_bytes() <= admitted_budget.available_bytes());
 }
 
 #[test]
@@ -1440,11 +1252,6 @@ fn retained_opened_table_metadata_is_charged_once_for_oversized_variable_referen
         inflated_storage_bytes - baseline_storage_bytes,
         "the opened MeasurementSet object graph must be the sole retained owner of persisted MEASINFO"
     );
-    assert_eq!(
-        inflated.content_plan().pointing_reference_scratch_bytes(),
-        "DIRECTION_REF".len() + size_of::<Option<ScalarValue>>(),
-        "borrowed TabRefTypes and TabRefCodes leave only the selected integer cell as scratch"
-    );
     assert!(inflated.content_plan().maximum_resident_bytes() <= inflated_budget.available_bytes());
     drop(inflated);
     let inflated = open_observation(&problem, source, inflated_budget)
@@ -1460,7 +1267,7 @@ fn retained_opened_table_metadata_is_charged_once_for_oversized_variable_referen
 }
 
 #[test]
-fn variable_pointing_reference_string_scratch_is_charged_once_per_peak() {
+fn variable_pointing_string_references_are_read_without_retaining_table_state() {
     let directory = tempfile::tempdir().expect("temporary variable-reference fixture");
     let path = directory.path().join("variable-reference.ms");
     generate_fixture(&path);
@@ -1515,50 +1322,7 @@ fn variable_pointing_reference_string_scratch_is_charged_once_per_peak() {
         ),
     );
     let source = &problem.inputs().observation_snapshot().sources()[0];
-    let one_row_budget = content_budget_for_rows(&problem, source, 1, 1);
     let two_row_budget = content_budget_for_rows(&problem, source, 2, 1);
-    let one_row = BoundObservationSource::open(&problem, source, one_row_budget)
-        .expect("bind one-row variable-reference source");
-    let two_rows = BoundObservationSource::open(&problem, source, two_row_budget)
-        .expect("bind two-row variable-reference source");
-    let expected_scratch = reference_column
-        .len()
-        .checked_add("J2000".len())
-        .and_then(|bytes| bytes.checked_add(size_of::<Option<ScalarValue>>()))
-        .expect("variable-reference scratch fits usize");
-    assert_eq!(
-        one_row.content_plan().pointing_reference_scratch_bytes(),
-        expected_scratch
-    );
-    assert_eq!(
-        two_rows.content_plan().pointing_reference_scratch_bytes(),
-        expected_scratch,
-        "one-at-a-time string scratch must not be multiplied by block rows"
-    );
-    for plan in [one_row.content_plan(), two_rows.content_plan()] {
-        assert_eq!(
-            plan.preparation_bytes_per_block(),
-            plan.rows_per_block() * plan.preparation_bytes_per_row(),
-            "the separately charged reference scratch must not leak into per-row payload"
-        );
-    }
-    assert!(matches!(
-        BoundObservationSource::open(
-            &problem,
-            source,
-            SelectedObservationContentBudget::new(
-                one_row_budget.available_bytes() - expected_scratch,
-                1,
-                4,
-            ),
-        ),
-        Err(super::BoundObservationSourceError::ContentPlan(
-            super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
-                | super::content_plan::SelectedObservationContentPlanError::InsufficientBudget { .. }
-        ))
-    ));
-    assert!(two_rows.content_plan().maximum_resident_bytes() <= two_row_budget.available_bytes());
-    drop(two_rows);
     let two_rows = open_observation(&problem, source, two_row_budget)
         .expect("open variable-string reference observation");
     let retained_storage_bytes = two_rows
@@ -2031,13 +1795,6 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
     generate_fixture(&second_path);
     let problem = compiled_problem_with_sources(&[(&first_path, 1, 2), (&second_path, 2, 2)]);
     let sources = problem.inputs().observation_snapshot().sources();
-    let source_slot_allocation_bytes = Vec::<BoundObservationSource>::with_capacity(sources.len())
-        .capacity()
-        .checked_mul(BoundObservationSource::retained_source_slot_bytes())
-        .expect("finite source-slot allocation");
-    let binding_capacity = Vec::<ObservationSourceBinding>::with_capacity(sources.len()).capacity();
-    let binding_graph_initialization_bytes =
-        expected_binding_graph_initialization_bytes(binding_capacity);
     let one_row_measures = test_measures(&problem);
     let one_row_bindings: Vec<_> = sources
         .iter()
@@ -2049,11 +1806,7 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
                     &problem,
                     source,
                     if source_index == 0 {
-                        selected_observation_shared_bytes(
-                            &one_row_measures,
-                            source_slot_allocation_bytes,
-                            binding_graph_initialization_bytes,
-                        )
+                        selected_observation_shared_bytes(&one_row_measures)
                     } else {
                         super::content_plan::SelectedObservationSharedBytes::NONE
                     },
@@ -2074,11 +1827,7 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
                     &problem,
                     source,
                     if source_index == 0 {
-                        selected_observation_shared_bytes(
-                            &two_row_measures,
-                            source_slot_allocation_bytes,
-                            binding_graph_initialization_bytes,
-                        )
+                        selected_observation_shared_bytes(&two_row_measures)
                     } else {
                         super::content_plan::SelectedObservationSharedBytes::NONE
                     },
@@ -2112,11 +1861,11 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
         assert_eq!(
             bound.retained_bytes() - uncharged.retained_bytes(),
             if source_index == 0 {
-                shared_measures_bytes + one_row.source_slot_allocation_bytes()
+                shared_measures_bytes
             } else {
                 0
             },
-            "the provider and source-slot allocation must be charged only to the first canonical source"
+            "the provider must be charged only to the first canonical source"
         );
     }
 
@@ -3120,40 +2869,16 @@ fn content_budget_for_rows(
     content_budget_for_rows_with_shared_bytes(
         problem,
         source,
-        selected_observation_shared_bytes(
-            &measures,
-            BoundObservationSource::retained_source_slot_bytes(),
-            single_binding_graph_initialization_bytes(source),
-        ),
+        selected_observation_shared_bytes(&measures),
         target_rows_per_block,
         maximum_live_blocks,
     )
 }
 
-fn single_binding_graph_initialization_bytes(_source: &ObservationSource) -> usize {
-    expected_binding_graph_initialization_bytes(
-        Vec::<ObservationSourceBinding>::with_capacity(1).capacity(),
-    )
-}
-
-/// The binding slots; a binding without a POINTING query domain owns no heap.
-fn expected_binding_graph_initialization_bytes(binding_capacity: usize) -> usize {
-    binding_capacity
-        .checked_mul(size_of::<ObservationSourceBinding>())
-        .expect("finite binding slot allocation")
-}
-
 fn selected_observation_shared_bytes(
     measures: &super::SelectedObservationMeasures,
-    source_slots_retained_bytes: usize,
-    binding_graph_initialization_bytes: usize,
 ) -> super::content_plan::SelectedObservationSharedBytes {
-    super::content_plan::SelectedObservationSharedBytes::new(
-        measures.retained_bytes(),
-        0,
-        source_slots_retained_bytes,
-        binding_graph_initialization_bytes,
-    )
+    super::content_plan::SelectedObservationSharedBytes::new(measures.retained_bytes(), 0)
 }
 
 fn content_budget_for_rows_with_shared_bytes(

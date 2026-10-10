@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{CompiledProblem, LogicalIdentity};
-use std::{mem::size_of, sync::Arc};
+use std::sync::Arc;
 use thiserror::Error;
 
 use crate::selected_pointing::SelectedPointingQueryDomain;
@@ -128,12 +128,6 @@ impl ObservationSourceBinding {
         self.pointing_query_domain.as_ref()
     }
 
-    fn additional_retained_heap_bytes(&self) -> usize {
-        self.pointing_query_domain
-            .as_ref()
-            .map_or(0, SelectedPointingQueryDomain::retained_bytes)
-    }
-
     /// Return the exact ephemeris allocation retained by this source binding.
     #[must_use]
     pub fn reference_data_bytes(&self) -> usize {
@@ -222,8 +216,7 @@ impl BoundSelectedObservation {
                 measurement_set: source.input_ordinal(),
             });
         }
-        // Resolved access opens with vec![binding] and one prospective source slot.
-        let shared = Self::shared_bytes(measures, std::slice::from_ref(binding), 1, 1)?;
+        let shared = Self::shared_bytes(measures, std::slice::from_ref(binding))?;
         BoundObservationSource::content_requirements(problem, source, binding, measures, shared)
             .map_err(|error| BoundSelectedObservationError::Source {
                 measurement_set: source.input_ordinal(),
@@ -231,37 +224,21 @@ impl BoundSelectedObservation {
             })
     }
 
+    /// The Measures provider and every binding's reference data, charged
+    /// once, to the first source.
     fn shared_bytes(
         measures: &SelectedObservationMeasures,
         bindings: &[ObservationSourceBinding],
-        binding_capacity: usize,
-        source_capacity: usize,
     ) -> Result<SelectedObservationSharedBytes, BoundSelectedObservationError> {
-        let binding_slot_bytes = binding_capacity
-            .checked_mul(size_of::<ObservationSourceBinding>())
-            .ok_or(BoundSelectedObservationError::BindingGraphByteOverflow)?;
-        let binding_graph_initialization_bytes =
-            bindings
-                .iter()
-                .try_fold(binding_slot_bytes, |bytes, binding| {
-                    bytes
-                        .checked_add(binding.additional_retained_heap_bytes())
-                        .ok_or(BoundSelectedObservationError::BindingGraphByteOverflow)
-                })?;
         let reference_data_retained_bytes =
             bindings.iter().try_fold(0_usize, |bytes, binding| {
                 bytes
                     .checked_add(binding.reference_data_bytes())
                     .ok_or(BoundSelectedObservationError::ReferenceDataByteOverflow)
             })?;
-        let source_slots_retained_bytes = source_capacity
-            .checked_mul(BoundObservationSource::retained_source_slot_bytes())
-            .ok_or(BoundSelectedObservationError::SourceSlotByteOverflow)?;
         Ok(SelectedObservationSharedBytes::new(
             measures.retained_bytes(),
             reference_data_retained_bytes,
-            source_slots_retained_bytes,
-            binding_graph_initialization_bytes,
         ))
     }
 
@@ -284,12 +261,7 @@ impl BoundSelectedObservation {
             check_reference_data(problem, source_binding(&bindings, source.input_ordinal())?)?;
         }
         let mut sources = Vec::with_capacity(expected.len());
-        let first_source_shared_bytes = Self::shared_bytes(
-            &measures,
-            &bindings,
-            bindings.capacity(),
-            sources.capacity(),
-        )?;
+        let first_source_shared_bytes = Self::shared_bytes(&measures, &bindings)?;
         for (source_index, source) in expected.iter().enumerate() {
             let measurement_set = source.input_ordinal();
             let binding = source_binding(&bindings, measurement_set)?;
@@ -332,11 +304,6 @@ impl BoundSelectedObservation {
     #[cfg(test)]
     pub(crate) fn source(&self, source_index: usize) -> &BoundObservationSource {
         &self.sources[source_index]
-    }
-
-    #[cfg(test)]
-    pub(crate) fn source_slot_allocation_bytes(&self) -> usize {
-        self.sources.capacity() * BoundObservationSource::retained_source_slot_bytes()
     }
 
     /// Stream every selected row of every source, in canonical compiler order,
@@ -514,12 +481,6 @@ pub enum BoundSelectedObservationError {
         #[source]
         error: Box<BoundObservationSourceError>,
     },
-    /// The retained source-slot allocation exceeded the host byte domain.
-    #[error("selected-observation source-slot byte projection overflowed")]
-    SourceSlotByteOverflow,
-    /// The consumed source-binding graph exceeded the host byte domain.
-    #[error("selected-observation binding-graph byte projection overflowed")]
-    BindingGraphByteOverflow,
     /// Aggregate retained reference data exceeded the host byte domain.
     #[error("selected-observation reference-data residency projection overflowed")]
     ReferenceDataByteOverflow,

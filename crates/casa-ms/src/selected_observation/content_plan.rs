@@ -2,8 +2,7 @@
 
 use crate::{
     MeasurementSet, MsError, PointingDirectionBracket, PointingDirectionQuery,
-    SelectedPointingCatalogMeasurements,
-    derived::engine::{MsCalEngine, selected_direction_reference_column},
+    SelectedPointingCatalogMeasurements, derived::engine::MsCalEngine,
 };
 use crate::{
     selected_observation_buffer::selected_observation_buffer_residency,
@@ -11,8 +10,8 @@ use crate::{
 };
 use casa_imaging_model::{
     CompiledProblem, CorrelationProduct, ObservationSource, PointingCentreLaw,
-    SelectedImageDomainProjections, SelectedObservationRunCorrelation, SelectedPointingDirections,
-    SelectedSpectralEvaluation, SkyDirection, VisibilityColumn, WeightColumn,
+    SelectedImageDomainProjections, SelectedPointingDirections, SkyDirection, VisibilityColumn,
+    WeightColumn,
 };
 use thiserror::Error;
 
@@ -22,17 +21,14 @@ use super::access::{
 };
 use super::row_selection::CompiledRowPredicate;
 
-fn maximum_selected_correlations(problem: &CompiledProblem) -> usize {
-    problem
-        .selected_observation()
-        .read_set()
-        .sources()
-        .iter()
-        .flat_map(|source| source.selection().correlations())
-        .map(|selection| selection.products().len())
-        .max()
-        .unwrap_or(0)
-}
+/// Transient scratch while a source is constructed, beyond the spectral
+/// coordinate arrays charged by size: one subtable cell at a time from
+/// ANTENNA, FIELD, OBSERVATION and POINTING, the predicate's DATA_DESCRIPTION
+/// table, the binding and source-slot vectors and the POINTING query domain.
+/// Each is at most a few kilobytes; the slack covers them without reading
+/// every subtable row to size them. It is charged to traversal as well, so
+/// it never decides which phase bounds a block.
+const CONSTRUCTION_SLACK_BYTES: usize = 64 << 10;
 
 mod requirements;
 pub use requirements::SelectedObservationContentRequirements;
@@ -42,25 +38,19 @@ pub use requirements::SelectedObservationContentRequirements;
 pub(crate) struct SelectedObservationSharedBytes {
     shared_measures_retained_bytes: usize,
     shared_reference_data_retained_bytes: usize,
-    shared_source_slots_retained_bytes: usize,
-    shared_binding_graph_initialization_bytes: usize,
     shared_source_plan_retained_bytes: usize,
 }
 
 impl SelectedObservationSharedBytes {
-    pub(crate) const NONE: Self = Self::new(0, 0, 0, 0);
+    pub(crate) const NONE: Self = Self::new(0, 0);
 
     pub(crate) const fn new(
         shared_measures_retained_bytes: usize,
         shared_reference_data_retained_bytes: usize,
-        shared_source_slots_retained_bytes: usize,
-        shared_binding_graph_initialization_bytes: usize,
     ) -> Self {
         Self {
             shared_measures_retained_bytes,
             shared_reference_data_retained_bytes,
-            shared_source_slots_retained_bytes,
-            shared_binding_graph_initialization_bytes,
             shared_source_plan_retained_bytes: 0,
         }
     }
@@ -163,7 +153,6 @@ impl SelectedObservationReferenceDataBudget {
 pub struct SelectedObservationContentPlan {
     retained_bytes: usize,
     initialization_scratch_bytes: usize,
-    pointing_reference_scratch_bytes: usize,
     resident_bytes_per_row: usize,
     preparation_bytes_per_row: usize,
     rows_per_block: usize,
@@ -187,13 +176,6 @@ impl SelectedObservationContentPlan {
     #[cfg(test)]
     pub const fn initialization_scratch_bytes(self) -> usize {
         self.initialization_scratch_bytes
-    }
-
-    /// Maximum one-at-a-time variable POINTING reference read scratch.
-    #[must_use]
-    #[cfg(test)]
-    pub const fn pointing_reference_scratch_bytes(self) -> usize {
-        self.pointing_reference_scratch_bytes
     }
 
     /// Maximum bytes retained by one selected MAIN row after preparation.
@@ -306,21 +288,19 @@ pub(crate) fn selected_content_plan(
 
 pub(crate) fn selected_pointing_catalog_budget(
     measurement_set: &MeasurementSet,
-    problem: &CompiledProblem,
     source: &ObservationSource,
     shared_bytes: SelectedObservationSharedBytes,
     budget: SelectedObservationContentBudget,
 ) -> Result<usize, SelectedObservationContentPlanError> {
-    let (retained_bytes, _, pointing_reference_scratch_bytes) =
-        retained_source_bytes(measurement_set, problem, source, shared_bytes)?;
+    let (retained_bytes, _) = retained_source_bytes(measurement_set, source, shared_bytes)?;
     budget
         .available_bytes
         .checked_sub(retained_bytes)
-        .and_then(|bytes| bytes.checked_sub(pointing_reference_scratch_bytes))
+        .and_then(|bytes| bytes.checked_sub(CONSTRUCTION_SLACK_BYTES))
         .ok_or(
             SelectedObservationContentPlanError::InsufficientRetainedBudget {
                 required_bytes: retained_bytes
-                    .checked_add(pointing_reference_scratch_bytes)
+                    .checked_add(CONSTRUCTION_SLACK_BYTES)
                     .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
                 available_bytes: budget.available_bytes,
             },
@@ -359,32 +339,23 @@ pub(crate) fn selected_content_requirements(
     if maximum_pointing_polynomial_terms == 0 {
         return Err(SelectedObservationContentPlanError::InvalidBudget);
     }
-    let (
-        noncatalog_retained_bytes,
-        coordinate_construction_scratch_bytes,
-        pointing_reference_scratch_bytes,
-    ) = retained_source_bytes(measurement_set, problem, source, shared_bytes)?;
+    let (noncatalog_retained_bytes, coordinate_construction_scratch_bytes) =
+        retained_source_bytes(measurement_set, source, shared_bytes)?;
     let retained_bytes = noncatalog_retained_bytes
         .checked_add(pointing_catalog.map_or(0, |catalog| catalog.retained_bytes()))
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    let noncatalog_initialization_scratch_bytes = coordinate_construction_scratch_bytes
-        .checked_add(shared_bytes.shared_binding_graph_initialization_bytes)
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let catalog_initialization_scratch_bytes = pointing_catalog
         .map(|catalog| {
             catalog
                 .construction_peak_bytes()
                 .checked_sub(catalog.retained_bytes())
-                .and_then(|bytes| bytes.checked_add(pointing_reference_scratch_bytes))
                 .ok_or(SelectedObservationContentPlanError::ByteOverflow)
         })
         .transpose()?
         .unwrap_or(0);
-    let initialization_scratch_bytes =
-        noncatalog_initialization_scratch_bytes.max(catalog_initialization_scratch_bytes);
-    let inspection_bytes = problem
-        .selected_observation()
-        .inspection_scratch_bytes()
+    let initialization_scratch_bytes = coordinate_construction_scratch_bytes
+        .max(catalog_initialization_scratch_bytes)
+        .checked_add(CONSTRUCTION_SLACK_BYTES)
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let domain_projection_payload_bytes =
         SelectedImageDomainProjections::retained_heap_bytes_for_len(
@@ -398,21 +369,13 @@ pub(crate) fn selected_content_requirements(
                 .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
         )
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    let run_scratch_bytes = maximum_selected_correlations(problem)
-        .checked_mul(
-            size_of::<SelectedObservationRunCorrelation>()
-                .checked_add(size_of::<SelectedSpectralEvaluation>())
-                .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
-        )
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let row_replay_fixed_bytes = BoundObservationSource::row_replay_fixed_bytes();
     let traversal_base_bytes = retained_bytes
-        .checked_add(inspection_bytes)
         // The generation encoder may retain the final row's shared projection
         // payload while its source block is recycled.
-        .and_then(|bytes| bytes.checked_add(domain_projection_payload_bytes))
-        .and_then(|bytes| bytes.checked_add(run_scratch_bytes))
+        .checked_add(domain_projection_payload_bytes)
         .and_then(|bytes| bytes.checked_add(row_replay_fixed_bytes))
+        .and_then(|bytes| bytes.checked_add(CONSTRUCTION_SLACK_BYTES))
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let polarization = measurement_set.polarization()?;
     let mut resident_bytes_per_row = 0_usize;
@@ -554,18 +517,11 @@ pub(crate) fn selected_content_requirements(
     if selected_rows == 0 {
         return Err(SelectedObservationContentPlanError::InvalidCoordinateShape);
     }
-    let traversal_pointing_reference_scratch_bytes = if pointing_catalog.is_some() {
-        0
-    } else {
-        pointing_reference_scratch_bytes
-    };
     Ok(SelectedObservationContentRequirements {
         retained_bytes,
         initialization_scratch_bytes,
         initialization_scan_bytes_per_row,
-        pointing_reference_scratch_bytes,
         traversal_base_bytes,
-        traversal_pointing_reference_scratch_bytes,
         resident_bytes_per_row,
         fill_bytes_per_row,
         preparation_bytes_per_row,
@@ -575,37 +531,13 @@ pub(crate) fn selected_content_requirements(
     })
 }
 
+/// The bytes a bound source retains, and the largest spectral-coordinate
+/// scratch of its construction (one SPW's CHAN_FREQ and CHAN_WIDTH).
 fn retained_source_bytes(
     measurement_set: &MeasurementSet,
-    problem: &CompiledProblem,
     source: &ObservationSource,
     shared_bytes: SelectedObservationSharedBytes,
-) -> Result<(usize, usize, usize), SelectedObservationContentPlanError> {
-    let (retained, construction, pointing) = retained_metadata_bytes(
-        measurement_set,
-        problem,
-        source,
-        shared_bytes.shared_measures_retained_bytes,
-        shared_bytes.shared_reference_data_retained_bytes,
-        shared_bytes.shared_source_slots_retained_bytes,
-    )?;
-    Ok((
-        retained
-            .checked_add(shared_bytes.shared_source_plan_retained_bytes)
-            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
-        construction,
-        pointing,
-    ))
-}
-
-fn retained_metadata_bytes(
-    measurement_set: &MeasurementSet,
-    problem: &CompiledProblem,
-    source: &ObservationSource,
-    shared_measures_retained_bytes: usize,
-    shared_reference_data_retained_bytes: usize,
-    shared_source_slots_retained_bytes: usize,
-) -> Result<(usize, usize, usize), SelectedObservationContentPlanError> {
+) -> Result<(usize, usize), SelectedObservationContentPlanError> {
     let storage_bytes = measurement_set
         .retained_read_metadata_heap_bytes()
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
@@ -618,17 +550,13 @@ fn retained_metadata_bytes(
     let predicate_bytes = CompiledRowPredicate::shared_retained_heap_bytes(source)
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let spectral_windows = measurement_set.spectral_window()?;
-    let polarizations = measurement_set.polarization()?;
     let mut coordinate_bytes = source
         .selection()
         .data_descriptions()
         .len()
         .checked_mul(size_of::<SelectedCoordinates>())
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    let pointing_reference_scratch_bytes =
-        selected_pointing_reference_scratch_bytes(measurement_set, problem)?;
-    let mut maximum_scratch_bytes = selected_geometry_construction_scratch_bytes(measurement_set)?
-        .max(pointing_reference_scratch_bytes);
+    let mut spectral_scratch_bytes = 0_usize;
     for description in source.selection().data_descriptions() {
         let spectral_window = source
             .selection()
@@ -669,70 +597,25 @@ fn retained_metadata_bytes(
             selected_f64_array_len(spectral_windows.table(), "CHAN_WIDTH", spectral_window_row)?
                 .filter(|count| *count > 0)
                 .ok_or(SelectedObservationContentPlanError::InvalidCoordinateShape)?;
-        let spectral_scratch_bytes = frequency_count
-            .checked_add(width_count)
-            .and_then(|values| values.checked_mul(size_of::<f64>()))
-            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-        let polarization_row = usize::try_from(description.polarization_id())
-            .map_err(|_| SelectedObservationContentPlanError::InvalidCoordinateShape)?;
-        let full_correlation_count =
-            selected_i32_array_len(polarizations.table(), "CORR_TYPE", polarization_row)?
-                .filter(|count| *count > 0)
-                .ok_or(SelectedObservationContentPlanError::InvalidCoordinateShape)?;
-        let correlation_scratch_bytes = full_correlation_count
-            .checked_mul(size_of::<i32>())
-            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-        // Frequency and width arrays are released before CORR_TYPE is loaded.
-        // Charge the larger payload plus the transient dynamic-array metadata.
-        let coordinate_scratch_bytes = spectral_scratch_bytes
-            .max(correlation_scratch_bytes)
-            // Three dynamic 1-D ndarrays retain one shape and one stride word
-            // each; CHAN_FREQ and CHAN_WIDTH are the simultaneous pair.
-            .checked_add(4 * size_of::<usize>())
-            // One selected-cell wrapper and its accessor name are transient
-            // while the already extracted array payloads remain live.
-            .and_then(|bytes| bytes.checked_add(size_of::<Option<casa_types::ArrayValue>>()))
-            .and_then(|bytes| {
-                ["CHAN_FREQ", "CHAN_WIDTH", "CORR_TYPE"]
-                    .iter()
-                    .map(|name| name.len())
-                    .max()
-                    .and_then(|name| bytes.checked_add(name))
-            })
-            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-        maximum_scratch_bytes = maximum_scratch_bytes.max(coordinate_scratch_bytes);
+        // CHAN_FREQ and CHAN_WIDTH of one SPW are live together.
+        spectral_scratch_bytes = spectral_scratch_bytes.max(
+            frequency_count
+                .checked_add(width_count)
+                .and_then(|values| values.checked_mul(size_of::<f64>()))
+                .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
+        );
     }
-    // validate_data_descriptions retains one temporary DDID/wavelength vector
-    // while CompiledRowPredicate shares the compiler-owned predicate catalog.
-    let predicate_construction_scratch = source
-        .selection()
-        .data_descriptions()
-        .len()
-        .checked_mul(size_of::<(u32, f64)>())
-        .and_then(|bytes| bytes.checked_add(size_of::<Option<casa_types::ScalarValue>>()))
-        .and_then(|bytes| {
-            ["SPECTRAL_WINDOW_ID", "POLARIZATION_ID", "REF_FREQUENCY"]
-                .iter()
-                .map(|name| name.len())
-                .max()
-                .and_then(|name| bytes.checked_add(name))
-        })
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    maximum_scratch_bytes = maximum_scratch_bytes.max(predicate_construction_scratch);
-    let retained_bytes = shared_source_slots_retained_bytes
-        .checked_add(shared_measures_retained_bytes)
-        .and_then(|bytes| bytes.checked_add(shared_reference_data_retained_bytes))
+    let retained_bytes = shared_bytes
+        .shared_measures_retained_bytes
+        .checked_add(shared_bytes.shared_reference_data_retained_bytes)
+        .and_then(|bytes| bytes.checked_add(shared_bytes.shared_source_plan_retained_bytes))
         .and_then(|bytes| bytes.checked_add(storage_bytes))
         .and_then(|bytes| bytes.checked_add(geometry_bytes))
         .and_then(|bytes| bytes.checked_add(manifest_bytes))
         .and_then(|bytes| bytes.checked_add(predicate_bytes))
         .and_then(|bytes| bytes.checked_add(coordinate_bytes))
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    Ok((
-        retained_bytes,
-        maximum_scratch_bytes,
-        pointing_reference_scratch_bytes,
-    ))
+    Ok((retained_bytes, spectral_scratch_bytes))
 }
 
 fn selected_f64_array_len(
@@ -753,161 +636,6 @@ fn selected_f64_array_len(
             _ => None,
         },
     )
-}
-
-fn selected_geometry_construction_scratch_bytes(
-    measurement_set: &MeasurementSet,
-) -> Result<usize, SelectedObservationContentPlanError> {
-    let antenna = measurement_set.antenna()?;
-    let mut maximum = 0_usize;
-    for row in 0..antenna.row_count() {
-        maximum = maximum
-            .max(selected_f64_array_scratch_bytes(
-                antenna.table(),
-                "POSITION",
-                row,
-            )?)
-            .max(selected_string_scratch_bytes(
-                antenna.table(),
-                "MOUNT",
-                row,
-            )?);
-    }
-    let field = measurement_set.field()?;
-    let direction_reference_column =
-        selected_direction_reference_column(field.table(), "PHASE_DIR");
-    for row in 0..field.row_count() {
-        maximum = maximum.max(selected_f64_array_scratch_bytes(
-            field.table(),
-            "PHASE_DIR",
-            row,
-        )?);
-        if let Some(reference_column) = direction_reference_column {
-            maximum = maximum.max(selected_scalar_scratch_bytes(
-                field.table(),
-                reference_column,
-                row,
-            )?);
-        }
-    }
-    if let Ok(observation) = measurement_set.observation() {
-        for row in 0..observation.row_count() {
-            if let Ok(bytes) =
-                selected_string_scratch_bytes(observation.table(), "TELESCOPE_NAME", row)
-            {
-                maximum = maximum.max(bytes);
-            }
-        }
-    }
-    Ok(maximum)
-}
-
-fn selected_pointing_reference_scratch_bytes(
-    measurement_set: &MeasurementSet,
-    problem: &CompiledProblem,
-) -> Result<usize, SelectedObservationContentPlanError> {
-    let PointingCentreLaw::Observation(law) = problem.geometry().centres().pointing() else {
-        return Ok(0);
-    };
-    let Ok(pointing) = measurement_set.pointing() else {
-        return Ok(0);
-    };
-    let column = match law.direction_column() {
-        casa_imaging_model::PointingDirectionColumn::Direction => "DIRECTION",
-        casa_imaging_model::PointingDirectionColumn::Target => "TARGET",
-    };
-    let Some(reference_column) = selected_direction_reference_column(pointing.table(), column)
-    else {
-        return Ok(0);
-    };
-    (0..pointing.row_count()).try_fold(0_usize, |maximum, row| {
-        Ok(maximum.max(selected_scalar_scratch_bytes(
-            pointing.table(),
-            reference_column,
-            row,
-        )?))
-    })
-}
-
-fn selected_f64_array_scratch_bytes(
-    table: &casa_tables::Table,
-    column: &str,
-    row: usize,
-) -> Result<usize, SelectedObservationContentPlanError> {
-    let value = table
-        .column_accessor(column)
-        .map_err(MsError::from)?
-        .array_cells_owned_uncached(&[row])
-        .map_err(MsError::from)?
-        .pop()
-        .flatten()
-        .ok_or(SelectedObservationContentPlanError::InvalidCoordinateShape)?;
-    let casa_types::ArrayValue::Float64(values) = value else {
-        return Err(SelectedObservationContentPlanError::InvalidCoordinateShape);
-    };
-    values
-        .len()
-        .checked_mul(size_of::<f64>())
-        .and_then(|bytes| {
-            values
-                .ndim()
-                .checked_mul(2 * size_of::<usize>())
-                .and_then(|dimensions| bytes.checked_add(dimensions))
-        })
-        .and_then(|bytes| bytes.checked_add(size_of::<Option<casa_types::ArrayValue>>()))
-        .and_then(|bytes| bytes.checked_add(column.len()))
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)
-}
-
-fn selected_string_scratch_bytes(
-    table: &casa_tables::Table,
-    column: &str,
-    row: usize,
-) -> Result<usize, SelectedObservationContentPlanError> {
-    let value = selected_scalar_scratch_value(table, column, row)?;
-    if !matches!(value, casa_types::ScalarValue::String(_)) {
-        return Err(SelectedObservationContentPlanError::InvalidCoordinateShape);
-    }
-    scalar_scratch_bytes(&value, column)
-}
-
-fn selected_scalar_scratch_bytes(
-    table: &casa_tables::Table,
-    column: &str,
-    row: usize,
-) -> Result<usize, SelectedObservationContentPlanError> {
-    let value = selected_scalar_scratch_value(table, column, row)?;
-    scalar_scratch_bytes(&value, column)
-}
-
-fn selected_scalar_scratch_value(
-    table: &casa_tables::Table,
-    column: &str,
-    row: usize,
-) -> Result<casa_types::ScalarValue, SelectedObservationContentPlanError> {
-    let value = table
-        .column_accessor(column)
-        .map_err(MsError::from)?
-        .scalar_cells_owned_for_rows(&[row])
-        .map_err(MsError::from)?
-        .pop()
-        .flatten()
-        .ok_or(SelectedObservationContentPlanError::InvalidCoordinateShape)?;
-    Ok(value)
-}
-
-fn scalar_scratch_bytes(
-    value: &casa_types::ScalarValue,
-    column: &str,
-) -> Result<usize, SelectedObservationContentPlanError> {
-    let dynamic_bytes = match value {
-        casa_types::ScalarValue::String(value) => value.capacity(),
-        _ => 0,
-    };
-    dynamic_bytes
-        .checked_add(size_of::<Option<casa_types::ScalarValue>>())
-        .and_then(|bytes| bytes.checked_add(column.len()))
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)
 }
 
 fn selected_i32_array_len(

@@ -1670,17 +1670,6 @@ fn borrowed_measure_reference<'a>(
     }
 }
 
-pub(crate) fn selected_direction_reference_column<'a>(
-    table: &'a Table,
-    column: &str,
-) -> Option<&'a str> {
-    match borrowed_measure_reference(table, column) {
-        Some(BorrowedMeasureReference::VariableInt { ref_column, .. })
-        | Some(BorrowedMeasureReference::VariableString { ref_column }) => Some(ref_column),
-        Some(BorrowedMeasureReference::Fixed(_)) | None => None,
-    }
-}
-
 fn detect_time_reference(ms: &MeasurementSet) -> EpochRef {
     detect_epoch_reference(ms.main_table(), "TIME", EpochRef::UTC)
 }

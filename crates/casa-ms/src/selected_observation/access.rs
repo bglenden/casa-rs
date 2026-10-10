@@ -150,10 +150,6 @@ impl BoundObservationSource {
         self.content_plan.rows_per_block()
     }
 
-    pub(crate) const fn retained_source_slot_bytes() -> usize {
-        size_of::<Self>()
-    }
-
     /// Open the source locator under retained read locks without traversing MAIN rows.
     #[cfg(unix)]
     pub(crate) fn open_with_measures(
@@ -266,7 +262,6 @@ impl BoundObservationSource {
             };
             let catalog_budget = selected_pointing_catalog_budget(
                 &measurement_set,
-                problem,
                 source,
                 shared_bytes,
                 content_budget,
@@ -382,12 +377,7 @@ impl BoundObservationSource {
             problem,
             source,
             &measures,
-            SelectedObservationSharedBytes::new(
-                measures.retained_bytes(),
-                0,
-                Self::retained_source_slot_bytes(),
-                0,
-            ),
+            SelectedObservationSharedBytes::new(measures.retained_bytes(), 0),
             content_budget,
             BoundObservationReferenceData::new(None, pointing_query_domain.as_ref()),
         )

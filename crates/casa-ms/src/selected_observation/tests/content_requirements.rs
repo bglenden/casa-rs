@@ -58,13 +58,12 @@ fn t51_content_requirements_catalog_budget_charges_shared_source_plan_once() {
     let source = &problem.inputs().observation_snapshot().sources()[0];
     let measurement_set = MeasurementSet::open_retained_read(&path).unwrap();
     let budget = SelectedObservationContentBudget::new(1 << 20, 2, 4);
-    let base = SelectedObservationSharedBytes::new(97, 31, 211, 79);
+    let base = SelectedObservationSharedBytes::new(97, 31);
     let with_source = base.with_source_plan_retained_bytes(4096);
     let unreserved =
-        selected_pointing_catalog_budget(&measurement_set, &problem, source, base, budget).unwrap();
+        selected_pointing_catalog_budget(&measurement_set, source, base, budget).unwrap();
     let reserved =
-        selected_pointing_catalog_budget(&measurement_set, &problem, source, with_source, budget)
-            .unwrap();
+        selected_pointing_catalog_budget(&measurement_set, source, with_source, budget).unwrap();
     assert_eq!(unreserved - reserved, 4096);
     let requirements = |shared| {
         selected_content_requirements(&measurement_set, &problem, source, shared, 4, None, 0)

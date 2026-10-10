@@ -97,11 +97,6 @@ impl SelectedPointingQueryDomain {
             PointingTimeSampling::VisibilityTimeCentroid => Some(antenna.centroid_time_bounds),
         }
     }
-
-    #[must_use]
-    pub(crate) fn retained_bytes(&self) -> usize {
-        self.antennas.len() * size_of::<AntennaPointingQueryDomain>()
-    }
 }
 
 /// One-pass selected MAIN metadata accumulator for POINTING preparation.

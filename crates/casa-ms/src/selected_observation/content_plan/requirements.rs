@@ -15,9 +15,7 @@ pub struct SelectedObservationContentRequirements {
     pub(super) retained_bytes: usize,
     pub(super) initialization_scratch_bytes: usize,
     pub(super) initialization_scan_bytes_per_row: usize,
-    pub(super) pointing_reference_scratch_bytes: usize,
     pub(super) traversal_base_bytes: usize,
-    pub(super) traversal_pointing_reference_scratch_bytes: usize,
     pub(super) resident_bytes_per_row: usize,
     pub(super) fill_bytes_per_row: usize,
     pub(super) preparation_bytes_per_row: usize,
@@ -69,7 +67,6 @@ impl SelectedObservationContentRequirements {
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
         let prepare = rows
             .checked_mul(prepare_per_row)
-            .and_then(|bytes| bytes.checked_add(self.traversal_pointing_reference_scratch_bytes))
             .and_then(|bytes| bytes.checked_add(base))
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
         let initialization = rows
@@ -149,7 +146,6 @@ impl SelectedObservationContentRequirements {
                 .checked_mul(rows)
                 .and_then(|bytes| bytes.checked_add(self.initialization_scratch_bytes))
                 .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
-            pointing_reference_scratch_bytes: self.pointing_reference_scratch_bytes,
             resident_bytes_per_row: self.resident_bytes_per_row,
             preparation_bytes_per_row: self.preparation_bytes_per_row,
             rows_per_block: rows,
