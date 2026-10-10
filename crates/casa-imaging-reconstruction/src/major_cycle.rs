@@ -71,8 +71,8 @@ pub enum NormalStateCatalog {
 
 /// Reconstruction-owned proof that the final Normal State generation exists.
 ///
-/// The record names exact lineage, the authoritative observation generation,
-/// and the owned model-dependent unnormalized residual; it
+/// The record names exact lineage and the owned model-dependent
+/// unnormalized residual; it
 /// makes no promise that the state is fully resident, dense, or
 /// shift-invariant. It is not a Product Graph artifact and mints no
 /// publication authority.
