@@ -11,28 +11,27 @@
 )]
 
 use casa_imaging_model::{
-    AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, CompiledProblem, ConsistencyToken,
-    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
-    DopplerConvention, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame, GeometryInput,
-    IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
-    IntentSelection, LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity,
-    MetadataGeneration, MetadataTableKind, ModelBounds, ModelColumnState, ModelColumnWrite,
+    AntennaSelection, AxisOrder, CentreLaws, CompiledProblem, CorrelationProduct,
+    CorrelationSelection, CorrelationType, DataDescriptionSelection, DeclaredInnerProducts,
+    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FacetLayout,
+    FiniteValuePolicy, FlagPolicy, FrequencyFrame, GeometryInput, IdSelection, ImageAxis,
+    ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse, IntentSelection,
+    LogicalIdentity, MeasurementEquationContract, ModelBounds, ModelColumnWrite,
     ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInput, ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
-    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
-    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
-    ScientificContract, SelectedColumns, SelectedMainRow, SelectedRows, SkyDirection,
-    SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeSelection, UvSelection,
-    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, compile_observation,
+    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
+    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput, ProblemInputIdentities,
+    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract,
+    SelectedColumns, SelectedMainRow, SelectedRows, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
+    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
+    compile, compile_observation,
 };
 use casa_imaging_reconstruction::{ExecutableModelProblem, ModelLifecycle};
 
@@ -47,55 +46,16 @@ pub fn attempt(byte: u8) -> ModelExecutionAttemptId {
 }
 
 pub fn source(seed: u8) -> ObservationSourceInput {
-    let columns = [
-        MsColumnKind::Data,
-        MsColumnKind::Flag,
-        MsColumnKind::FlagRow,
-        MsColumnKind::Weight,
-        MsColumnKind::Uvw,
-        MsColumnKind::Time,
-        MsColumnKind::TimeCentroid,
-        MsColumnKind::Interval,
-        MsColumnKind::Exposure,
-        MsColumnKind::FieldId,
-        MsColumnKind::DataDescriptionId,
-        MsColumnKind::Antenna1,
-        MsColumnKind::Antenna2,
-        MsColumnKind::Feed1,
-        MsColumnKind::Feed2,
-        MsColumnKind::ScanNumber,
-        MsColumnKind::StateId,
-        MsColumnKind::ObservationId,
-        MsColumnKind::ArrayId,
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(index, kind)| ColumnGeneration::new(kind, identity(seed, 20 + index as u8)))
-    .collect();
-    let metadata = [
-        MetadataTableKind::Antenna,
-        MetadataTableKind::DataDescription,
-        MetadataTableKind::Feed,
-        MetadataTableKind::Field,
-        MetadataTableKind::Observation,
-        MetadataTableKind::Pointing,
-        MetadataTableKind::Polarization,
-        MetadataTableKind::SpectralWindow,
-        MetadataTableKind::State,
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(index, kind)| MetadataGeneration::new(kind, identity(seed, 60 + index as u8)))
-    .collect();
     ObservationSourceInput::new(
-        MeasurementSetIdentity::new(identity(seed, 1)),
         ObservationSourceProvenance::new(
             format!("fixture://major-cycle/{seed}"),
             identity(seed, 2),
         ),
         ObservationSelection::new(
+            // The seed sets the MeasurementSet's row count, so sources from
+            // different seeds are different observations.
             SelectedRows::from_ordered_main_rows(
-                3,
+                3 + u64::from(seed),
                 [SelectedMainRow::new(0, 0), SelectedMainRow::new(2, 1)],
             )
             .expect("two selected rows"),
@@ -122,17 +82,12 @@ pub fn source(seed: u8) -> ObservationSourceInput {
                 vec![CorrelationProduct::new(0, CorrelationType::StokesI)],
             )],
         ),
-        SourceGenerations::new(
-            ConsistencyToken::new(identity(seed, 3)),
-            SelectedColumns::new(
-                VisibilityColumn::Data,
-                FlagPolicy::FlagOrFlagRow,
-                WeightColumn::Weight,
-                columns,
-            ),
-            metadata,
-            ModelColumnState::Absent,
+        SelectedColumns::new(
+            VisibilityColumn::Data,
+            FlagPolicy::FlagOrFlagRow,
+            WeightColumn::Weight,
         ),
+        false,
     )
 }
 

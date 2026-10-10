@@ -156,9 +156,18 @@ Additional constraints:
   existing table; heterogeneous `TiledShapeStMan` rows share one hypercube per
   distinct shape. MeasurementSet producers use one bounded plan/session whose
   memory ceiling includes every owned scalar and array sink. New tables publish
-  from staging, while in-place changes use only an incomplete marker; general
-  rollback, snapshots, journaling, and copy-on-write generations are not part
-  of the persistence contract.
+  from staging; in-place changes hold casacore's table write lock for the whole
+  change and add nothing CASA would not write (no keywords, marker files,
+  generations or identities). A lock another process holds is waited for, as
+  casacore waits, blocked in the kernel so that a deadlocking wait is refused,
+  with the waiter in the lock file's request list so that a casacore
+  `AutoLocking` holder releases it at its next inspection; a conflicting
+  handle in the same process is refused at once, and casa-rs does not yet
+  release on request (#694). On a file system without lock support
+  (`ENOLCK`, or `ENOTSUP` on macOS SMB) tables are used unlocked with a
+  warning, as casacore does for `ENOLCK`. General rollback, snapshots,
+  journaling, and copy-on-write generations are not part of the persistence
+  contract.
 - Versioned provider bundles are boundary contracts; UI projections are derived
   views, not separate truth sources.
 - `casa-provider-contracts::ApplicationCatalog` is the sole application
@@ -211,8 +220,8 @@ spectral transforms remain unevaluated. `compile_observation` is the sole
 constructor of Observation Snapshot identity. It canonicalizes each resolved
 MeasurementSet field/time/UV/baseline/scan/observation/intent/array predicate,
 SPW/DDID/channel selection, correlation coordinate, selected data/flag/weight
-column, coordinate and metadata generation, independent optional `MODEL_DATA`
-state, consistency token, reference-data identity, and input-model identity.
+column, whether MAIN has `CORRECTED_DATA`, reference-data identity, and
+input-model identity.
 Selected MAIN rows retain source and selected counts, the exact used-DDID set,
 and the content-derived identity of the canonical ordered
 `(physical row, DATA_DESC_ID)` sequence. They do not retain the row corpus.
@@ -222,14 +231,12 @@ order, validates the resulting sequence against that compact commitment, and
 keeps only the current bounded source block; a sparse selection therefore reads
 but never materializes the intervening physical row span. The snapshot is the
 storage owner's logical-manifest commitment, not an intrinsic digest of all
-MeasurementSet science bytes. Its identity is independent of source location
-and request order, while a separate provenance identity retains both.
+MeasurementSet science bytes. Sources keep request order; the identity is
+independent of source location, which a separate provenance identity retains.
 
 T17/#503 adds the native bounded Selected Observation path. `casa-ms` owns the
 retained read capability, canonical one-pass traversal, per-sample validation,
-and owner-minted terminal completion. Binding first reconciles the freshly
-probed selected-row, column, metadata, model-column, and consistency generations
-exactly with the compiled source snapshot. Its sole content plan may then read
+and owner-minted terminal completion. Its sole content plan may read
 ahead into the explicitly charged live-block count and rotates those blocks in
 canonical consumer order; block size, read-ahead, and buffer slot are absent
 from content identity. The source budget charges the full retained lazy,
@@ -249,12 +256,8 @@ padding; nested projections therefore charge only their heap allocations.
 While that owner is being built, it projects the complete live
 `Vec<ObservationSourceBinding>` graph before removing any binding. The
 first-source initialization peak charges the outer allocation at its actual
-capacity, every binding-owned `SourceGenerations` vector capacity, and each
-selected-row Arc allocation not already shared with a compiled source or an
-earlier binding. Outer slots already contain the inline source state, so
-per-source equality validation is allocation-free and does not recharge inline
-state or its manifests. The whole graph is charged once and is absent from
-retained residency after construction.
+capacity and each binding's POINTING query domain. The whole graph is charged
+once and is absent from retained residency after construction.
 Retained geometry and coordinate arrays use fixed boxed slices, including the
 mount-flag slice, so their payload is the exact immutable element count rather
 than a guessed collection capacity.
@@ -328,9 +331,9 @@ MeasurementSet/image persistence, runner, or model-column writer changes in
 T28.
 
 The Compiled Problem also derives one Observation Transaction: the canonical
-read set of every consumed per-MS selection, selected MAIN column generation,
-metadata generation and consistency token, and the exact selected-cell scope
-and absent-or-generation precondition of an optional `MODEL_DATA` write. No
+read set of every consumed per-MS selection and selected columns, and the
+exact selected-cell scope of an optional `MODEL_DATA` or `CORRECTED_DATA`
+write. No
 runtime plan binds it (IF-6 deleted the plan, its binder and the receipts):
 the application resolves the selected observation once, every pass reads it
 through the bounded source, and the final major-cycle pass writes the
@@ -344,10 +347,9 @@ incomplete set that must be regenerated, without rollback or a resumable
 per-member recovery ledger.
 `MODEL_DATA` and `CORRECTED_DATA` follow ADR-0008: the final major-cycle
 pass writes selected cells in place through casa-ms's selected-visibility
-writer under its lock and a small incomplete-write marker, then
-updates the owner generation and removes the marker only after a successful
-flush. Interruption may leave partial derived values, as in CASA, but the marker
-makes that state fail closed until explicit recovery or recomputation. No
+writer under casacore's table lock, creating `MODEL_DATA` when MAIN lacks it,
+as CASA does. Interruption may leave partial derived values, as in CASA; the
+next run recomputes them. No
 backup column, full-column staging copy, content digest, rollback, snapshot, or
 copy-on-write generation is part of this path. Users may retain or delete
 conventional products independently; `MODEL_DATA` remains a distinct

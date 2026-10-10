@@ -1338,6 +1338,7 @@ impl Table {
     ///
     /// `Table::tableInfo()` (mutable overload) followed by `Table::flushTableInfo()`.
     pub fn set_info(&mut self, info: TableInfo) {
+        self.inner.note_change();
         self.table_info = info;
     }
 
@@ -1353,6 +1354,40 @@ impl Table {
     /// `Table::dataManagerInfo()`.
     pub fn data_manager_info(&self) -> &[crate::storage::DataManagerInfo] {
         &self.dm_info
+    }
+
+    /// What the typed selected 2-D channel-range readers hold for `column`
+    /// besides their packed output; see [`SelectedReadFootprint`].
+    ///
+    /// Only `TiledShapeStMan` streams the selected channels. A column with no
+    /// stored data manager (a table held in memory) counts as streamed.
+    #[must_use]
+    pub fn selected_channel_read_footprint(&self, column: &str) -> SelectedReadFootprint {
+        self.column_data_manager(column)
+            .map_or(SelectedReadFootprint::Streamed, |manager| {
+                crate::storage::channel_read_footprint(manager)
+            })
+    }
+
+    /// What the typed selected 1-D readers hold for `column` besides their
+    /// packed output; see [`SelectedReadFootprint`].
+    ///
+    /// `IncrementalStMan`, `TiledColumnStMan` and `TiledShapeStMan` stream the
+    /// selected rows. A column with no stored data manager (a table held in
+    /// memory) counts as streamed.
+    #[must_use]
+    pub fn selected_cell_read_footprint(&self, column: &str) -> SelectedReadFootprint {
+        self.column_data_manager(column)
+            .map_or(SelectedReadFootprint::Streamed, |manager| {
+                crate::storage::cell_read_footprint(manager)
+            })
+    }
+
+    fn column_data_manager(&self, column: &str) -> Option<&str> {
+        self.dm_info
+            .iter()
+            .find(|manager| manager.columns.iter().any(|name| name == column))
+            .map(|manager| manager.dm_type.as_str())
     }
 
     /// Returns the channel-axis tile width for a tiled rank-2 array column.
@@ -1520,7 +1555,12 @@ impl Table {
         self.virtual_columns = std::mem::take(&mut reloaded.virtual_columns);
         self.virtual_bindings = std::mem::take(&mut reloaded.virtual_bindings);
         self.table_info = std::mem::take(&mut reloaded.table_info);
-        // Preserve source_path, kind, marked_for_delete, and lock_state.
+        // Preserve source_path, kind, marked_for_delete, and lock_state. The
+        // reloaded state is what is on disk, so a lock has nothing to flush.
+        #[cfg(unix)]
+        if let Some(state) = self.lock_state.as_mut() {
+            state.flushed_generation = self.inner.generation();
+        }
         Ok(())
     }
 

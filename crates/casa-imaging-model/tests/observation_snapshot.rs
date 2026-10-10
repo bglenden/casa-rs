@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    AntennaBaseline, AntennaSelection, ColumnGeneration, CompileObservationError, ConsistencyToken,
-    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    FlagPolicy, IdSelection, IntentSelection, LogicalIdentity, MeasurementSetIdentity,
-    MetadataGeneration, MetadataTableKind, ModelColumnState, ModelStateIdentity, MsColumnKind,
-    ObservationConsistencyError, ObservationSelection, ObservationSnapshot, ObservationSnapshotId,
-    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
-    ObservationSourceState, ObservationState, ReferenceDataKind, ResolvedIntent, RowSelection,
-    SelectedColumns, SelectedMainRow, SelectedRowManifestValidationError, SelectedRowSequenceError,
-    SelectedRowSequenceId, SelectedRows, SelectionBound, SourceGenerations,
-    SpectralWindowCoordinateCatalog, SpectralWindowSelection, TimeRange, TimeSelection,
-    UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn,
-    compile_observation,
+    AntennaBaseline, AntennaSelection, CompileObservationError, CorrelationProduct,
+    CorrelationSelection, CorrelationType, DataDescriptionSelection, FlagPolicy, IdSelection,
+    IntentSelection, LogicalIdentity, ModelStateIdentity, ObservationSelection,
+    ObservationSnapshot, ObservationSnapshotId, ObservationSnapshotInput, ObservationSourceInput,
+    ObservationSourceProvenance, ReferenceDataKind, ResolvedIntent, RowSelection, SelectedColumns,
+    SelectedMainRow, SelectedRowManifestValidationError, SelectedRowSequenceError,
+    SelectedRowSequenceId, SelectedRows, SelectionBound, SpectralWindowCoordinateCatalog,
+    SpectralWindowSelection, TimeRange, TimeSelection, UvDistanceRange, UvDistanceUnit,
+    UvSelection, VisibilityColumn, WeightColumn, compile_observation,
 };
 
 fn identity(byte: u8) -> LogicalIdentity {
@@ -237,65 +234,12 @@ fn selected_row_sequence_rejects_inexact_iterator_length() {
     );
 }
 
-fn columns(seed: u8, reverse: bool) -> SelectedColumns {
-    let kinds = [
-        MsColumnKind::CorrectedData,
-        MsColumnKind::Flag,
-        MsColumnKind::FlagRow,
-        MsColumnKind::WeightSpectrum,
-        MsColumnKind::Uvw,
-        MsColumnKind::Time,
-        MsColumnKind::TimeCentroid,
-        MsColumnKind::Interval,
-        MsColumnKind::Exposure,
-        MsColumnKind::FieldId,
-        MsColumnKind::DataDescriptionId,
-        MsColumnKind::Antenna1,
-        MsColumnKind::Antenna2,
-        MsColumnKind::Feed1,
-        MsColumnKind::Feed2,
-        MsColumnKind::ScanNumber,
-        MsColumnKind::StateId,
-        MsColumnKind::ObservationId,
-        MsColumnKind::ArrayId,
-    ];
-    let mut generations = kinds
-        .into_iter()
-        .enumerate()
-        .map(|(offset, kind)| ColumnGeneration::new(kind, identity(seed + offset as u8)))
-        .collect::<Vec<_>>();
-    if reverse {
-        generations.reverse();
-    }
+fn columns() -> SelectedColumns {
     SelectedColumns::new(
         VisibilityColumn::CorrectedData,
         FlagPolicy::FlagOrFlagRow,
         WeightColumn::WeightSpectrum,
-        generations,
     )
-}
-
-fn metadata(seed: u8, reverse: bool) -> Vec<MetadataGeneration> {
-    let kinds = [
-        MetadataTableKind::Antenna,
-        MetadataTableKind::DataDescription,
-        MetadataTableKind::Feed,
-        MetadataTableKind::Field,
-        MetadataTableKind::Observation,
-        MetadataTableKind::Pointing,
-        MetadataTableKind::Polarization,
-        MetadataTableKind::SpectralWindow,
-        MetadataTableKind::State,
-    ];
-    let mut generations = kinds
-        .into_iter()
-        .enumerate()
-        .map(|(offset, kind)| MetadataGeneration::new(kind, identity(seed + offset as u8)))
-        .collect::<Vec<_>>();
-    if reverse {
-        generations.reverse();
-    }
-    generations
 }
 
 fn selection(row_digest: u8, reverse: bool) -> ObservationSelection {
@@ -370,48 +314,21 @@ fn selection(row_digest: u8, reverse: bool) -> ObservationSelection {
     )
 }
 
-fn source(
-    source_id: u8,
-    row_digest: u8,
-    generation_seed: u8,
-    locator: &str,
-    reverse: bool,
-) -> ObservationSourceInput {
-    source_with_model_column(
-        source_id,
-        row_digest,
-        generation_seed,
-        locator,
-        reverse,
-        ModelColumnState::Absent,
-    )
-}
-
-fn source_with_model_column(
-    source_id: u8,
-    row_digest: u8,
-    generation_seed: u8,
-    locator: &str,
-    reverse: bool,
-    model_column: ModelColumnState,
-) -> ObservationSourceInput {
+fn source(source_id: u8, row_digest: u8, locator: &str, reverse: bool) -> ObservationSourceInput {
     ObservationSourceInput::new(
-        MeasurementSetIdentity::new(identity(source_id)),
         ObservationSourceProvenance::new(locator.to_string(), identity(source_id + 40)),
         selection(row_digest, reverse),
-        SourceGenerations::new(
-            ConsistencyToken::new(identity(source_id + 50)),
-            columns(generation_seed, reverse),
-            metadata(generation_seed + 24, reverse),
-            model_column,
-        ),
+        columns(),
+        false,
     )
 }
 
 fn snapshot(reverse: bool, left_locator: &str, right_locator: &str) -> ObservationSnapshot {
-    let mut sources = vec![
-        source(11, 31, 60, left_locator, reverse),
-        source(12, 32, 100, right_locator, reverse),
+    // Sources keep request order; `reverse` reorders only what compilation
+    // canonicalizes.
+    let sources = vec![
+        source(11, 31, left_locator, reverse),
+        source(12, 32, right_locator, reverse),
     ];
     let mut references = vec![
         (ReferenceDataKind::Observatory, identity(201)),
@@ -419,7 +336,6 @@ fn snapshot(reverse: bool, left_locator: &str, right_locator: &str) -> Observati
         (ReferenceDataKind::Measures, identity(203)),
     ];
     if reverse {
-        sources.reverse();
         references.reverse();
     }
     compile_observation(ObservationSnapshotInput::new(
@@ -492,18 +408,13 @@ fn all_defined_measurement_set_correlation_coordinates_are_lossless() {
     );
     let compiled = compile_observation(ObservationSnapshotInput::new(
         vec![ObservationSourceInput::new(
-            MeasurementSetIdentity::new(identity(11)),
             ObservationSourceProvenance::new(
                 "/archive/all-correlations.ms".to_string(),
                 identity(51),
             ),
             exact_selection,
-            SourceGenerations::new(
-                ConsistencyToken::new(identity(61)),
-                columns(60, false),
-                metadata(84, false),
-                ModelColumnState::Absent,
-            ),
+            columns(),
+            false,
         )],
         Vec::new(),
         ModelStateIdentity::Empty,
@@ -550,18 +461,13 @@ fn data_description_catalog_binds_spw_and_polarization_pairing() {
         data_descriptions.sort_unstable_by_key(|entry| entry.data_description_id());
         let snapshot = compile_observation(ObservationSnapshotInput::new(
             vec![ObservationSourceInput::new(
-                MeasurementSetIdentity::new(identity(11)),
                 ObservationSourceProvenance::new(
                     "/archive/data-description.ms".to_string(),
                     identity(51),
                 ),
                 selected,
-                SourceGenerations::new(
-                    ConsistencyToken::new(identity(61)),
-                    columns(60, false),
-                    metadata(84, false),
-                    ModelColumnState::Absent,
-                ),
+                columns(),
+                false,
             )],
             Vec::new(),
             ModelStateIdentity::Empty,
@@ -597,8 +503,8 @@ fn data_description_catalog_binds_spw_and_polarization_pairing() {
     assert_eq!(
         expected.snapshot_id().as_bytes(),
         [
-            235, 9, 231, 239, 74, 183, 74, 129, 12, 69, 191, 215, 54, 24, 221, 146, 181, 248, 204,
-            0, 241, 44, 189, 63, 100, 33, 92, 43, 8, 27, 152, 238,
+            11, 113, 28, 252, 184, 105, 157, 61, 36, 246, 243, 167, 120, 60, 167, 182, 139, 81,
+            176, 173, 82, 171, 15, 33, 252, 150, 64, 3, 214, 236, 213, 35,
         ]
     );
 }
@@ -619,18 +525,13 @@ fn data_description_catalog_rejects_duplicate_ddid() {
     assert_eq!(
         compile_observation(ObservationSnapshotInput::new(
             vec![ObservationSourceInput::new(
-                MeasurementSetIdentity::new(identity(11)),
                 ObservationSourceProvenance::new(
                     "/archive/duplicate-ddid.ms".to_string(),
                     identity(51),
                 ),
                 invalid,
-                SourceGenerations::new(
-                    ConsistencyToken::new(identity(61)),
-                    columns(60, false),
-                    metadata(84, false),
-                    ModelColumnState::Absent,
-                ),
+                columns(),
+                false,
             )],
             Vec::new(),
             ModelStateIdentity::Empty,
@@ -681,15 +582,10 @@ fn full_spectral_coordinate_catalog_is_exact_identity_bearing_selection_state() 
         );
         compile_observation(ObservationSnapshotInput::new(
             vec![ObservationSourceInput::new(
-                MeasurementSetIdentity::new(identity(11)),
                 ObservationSourceProvenance::new("/archive/full-spw.ms".to_string(), identity(51)),
                 exact,
-                SourceGenerations::new(
-                    ConsistencyToken::new(identity(61)),
-                    columns(60, false),
-                    metadata(84, false),
-                    ModelColumnState::Absent,
-                ),
+                columns(),
+                false,
             )],
             Vec::new(),
             ModelStateIdentity::Empty,
@@ -744,15 +640,10 @@ fn selected_channel_must_exist_in_its_full_coordinate_catalog() {
     assert!(matches!(
         compile_observation(ObservationSnapshotInput::new(
             vec![ObservationSourceInput::new(
-                MeasurementSetIdentity::new(identity(11)),
                 ObservationSourceProvenance::new("/archive/short-spw.ms".to_string(), identity(51),),
                 invalid,
-                SourceGenerations::new(
-                    ConsistencyToken::new(identity(61)),
-                    columns(60, false),
-                    metadata(84, false),
-                    ModelColumnState::Absent,
-                ),
+                columns(),
+                false,
             )],
             Vec::new(),
             ModelStateIdentity::Empty,
@@ -780,18 +671,13 @@ fn selected_main_row_manifest_must_reference_the_compiled_catalog() {
     assert!(matches!(
         compile_observation(ObservationSnapshotInput::new(
             vec![ObservationSourceInput::new(
-                MeasurementSetIdentity::new(identity(11)),
                 ObservationSourceProvenance::new(
                     "/archive/inconsistent-row-ddid.ms".to_string(),
                     identity(51),
                 ),
                 invalid,
-                SourceGenerations::new(
-                    ConsistencyToken::new(identity(61)),
-                    columns(60, false),
-                    metadata(84, false),
-                    ModelColumnState::Absent,
-                ),
+                columns(),
+                false,
             )],
             Vec::new(),
             ModelStateIdentity::Empty,
@@ -808,7 +694,6 @@ fn data_description_catalog_rejects_missing_and_unresolved_joins() {
     let compile = |data_descriptions| {
         compile_observation(ObservationSnapshotInput::new(
             vec![ObservationSourceInput::new(
-                MeasurementSetIdentity::new(identity(11)),
                 ObservationSourceProvenance::new(
                     "/archive/inexact-data-description.ms".to_string(),
                     identity(51),
@@ -820,12 +705,8 @@ fn data_description_catalog_rejects_missing_and_unresolved_joins() {
                     base.spectral_windows().to_vec(),
                     base.correlations().to_vec(),
                 ),
-                SourceGenerations::new(
-                    ConsistencyToken::new(identity(61)),
-                    columns(60, false),
-                    metadata(84, false),
-                    ModelColumnState::Absent,
-                ),
+                columns(),
+                false,
             )],
             Vec::new(),
             ModelStateIdentity::Empty,
@@ -886,65 +767,26 @@ fn data_description_catalog_rejects_missing_and_unresolved_joins() {
 }
 
 #[test]
-fn model_column_state_is_snapshot_identity_bearing() {
-    let compile = |state| {
+fn corrected_data_presence_is_snapshot_identity_bearing() {
+    let compile = |corrected_data_present| {
         compile_observation(ObservationSnapshotInput::new(
-            vec![source_with_model_column(
-                11,
-                31,
-                60,
-                "/archive/a.ms",
-                false,
-                state,
+            vec![ObservationSourceInput::new(
+                ObservationSourceProvenance::new("/archive/a.ms".to_string(), identity(51)),
+                selection(31, false),
+                columns(),
+                corrected_data_present,
             )],
             Vec::new(),
             ModelStateIdentity::Empty,
         ))
-        .expect("compile explicit MODEL_DATA state")
+        .expect("compile explicit CORRECTED_DATA presence")
     };
 
-    let absent = compile(ModelColumnState::Absent);
-    let present = compile(ModelColumnState::Present(identity(210)));
+    let absent = compile(false);
+    let present = compile(true);
 
     assert_ne!(absent.snapshot_id(), present.snapshot_id());
-    assert_eq!(
-        present.sources()[0].generations().model_column(),
-        ModelColumnState::Present(identity(210))
-    );
-}
-
-#[test]
-fn model_column_state_must_match_a_consumed_model_generation() {
-    let mut selected = columns(60, false).generations().to_vec();
-    selected.push(ColumnGeneration::new(
-        MsColumnKind::ModelData,
-        identity(210),
-    ));
-    let source = ObservationSourceInput::new(
-        MeasurementSetIdentity::new(identity(11)),
-        ObservationSourceProvenance::new("/archive/a.ms".to_string(), identity(51)),
-        selection(31, false),
-        SourceGenerations::new(
-            ConsistencyToken::new(identity(61)),
-            SelectedColumns::new(
-                VisibilityColumn::CorrectedData,
-                FlagPolicy::FlagOrFlagRow,
-                WeightColumn::WeightSpectrum,
-                selected,
-            ),
-            metadata(84, false),
-            ModelColumnState::Present(identity(211)),
-        ),
-    );
-
-    assert_eq!(
-        compile_observation(ObservationSnapshotInput::new(
-            vec![source],
-            Vec::new(),
-            ModelStateIdentity::Empty,
-        )),
-        Err(CompileObservationError::InconsistentModelColumnState)
-    );
+    assert!(present.sources()[0].corrected_data_present());
 }
 
 #[test]
@@ -954,16 +796,15 @@ fn content_identity_is_canonical_but_provenance_retains_origin_and_request_order
 
     assert_eq!(first.snapshot_id(), reordered.snapshot_id());
     assert_ne!(first.provenance_id(), reordered.provenance_id());
+    for snapshot in [&first, &reordered] {
+        assert_eq!(snapshot.sources()[0].input_ordinal(), 0);
+        assert_eq!(snapshot.sources()[1].input_ordinal(), 1);
+    }
     assert_eq!(
-        first.sources()[0].identity(),
-        MeasurementSetIdentity::new(identity(11))
+        first.sources()[1].provenance().locator(),
+        "/archive/b.ms",
+        "sources keep their request order"
     );
-    assert_eq!(
-        first.sources()[1].identity(),
-        MeasurementSetIdentity::new(identity(12))
-    );
-    assert_eq!(first.sources()[0].input_ordinal(), 0);
-    assert_eq!(reordered.sources()[0].input_ordinal(), 1);
     assert_eq!(casa_imaging_model::ObservationSnapshotId::SCHEMA_VERSION, 6);
 }
 
@@ -1031,74 +872,17 @@ fn snapshot_exposes_exact_selection_and_generation_semantics_without_bulk_sample
         CorrelationProduct::new(0, CorrelationType::CircularRr)
     );
 
-    let columns = source.generations().columns();
+    let columns = source.columns();
     assert_eq!(columns.visibility(), VisibilityColumn::CorrectedData);
     assert_eq!(columns.flags(), FlagPolicy::FlagOrFlagRow);
     assert_eq!(columns.weights(), WeightColumn::WeightSpectrum);
-    assert!(columns.generation(MsColumnKind::Flag).is_some());
-    assert!(columns.generation(MsColumnKind::FlagRow).is_some());
-    assert!(columns.generation(MsColumnKind::Uvw).is_some());
-    assert!(
-        source
-            .generations()
-            .metadata(MetadataTableKind::Feed)
-            .is_some()
-    );
-    assert!(
-        source
-            .generations()
-            .metadata(MetadataTableKind::Antenna)
-            .is_some()
-    );
-    assert!(
-        source
-            .generations()
-            .metadata(MetadataTableKind::Pointing)
-            .is_some()
-    );
     assert_eq!(compiled.reference_data().len(), 3);
     assert_eq!(compiled.model(), ModelStateIdentity::Seed(identity(204)));
 }
 
 #[test]
-fn compilation_fails_closed_on_incomplete_or_ambiguous_manifests() {
-    let incomplete_columns = SelectedColumns::new(
-        VisibilityColumn::CorrectedData,
-        FlagPolicy::FlagOrFlagRow,
-        WeightColumn::WeightSpectrum,
-        columns(60, false)
-            .generations()
-            .iter()
-            .filter(|generation| generation.kind() != MsColumnKind::Flag)
-            .copied()
-            .collect(),
-    );
-    let invalid_source = ObservationSourceInput::new(
-        MeasurementSetIdentity::new(identity(11)),
-        ObservationSourceProvenance::new("/archive/a.ms".to_string(), identity(51)),
-        selection(31, false),
-        SourceGenerations::new(
-            ConsistencyToken::new(identity(61)),
-            incomplete_columns,
-            metadata(84, false),
-            ModelColumnState::Absent,
-        ),
-    );
-
-    assert!(matches!(
-        compile_observation(ObservationSnapshotInput::new(
-            vec![invalid_source],
-            vec![],
-            ModelStateIdentity::Empty,
-        )),
-        Err(CompileObservationError::MissingColumnGeneration {
-            column: MsColumnKind::Flag,
-            ..
-        })
-    ));
-
+fn compilation_fails_closed_on_an_empty_selection() {
     let empty_source = ObservationSourceInput::new(
-        MeasurementSetIdentity::new(identity(11)),
         ObservationSourceProvenance::new("/archive/a.ms".to_string(), identity(51)),
         ObservationSelection::new(
             SelectedRows::from_ordered_main_rows(100, main_rows([]))
@@ -1108,12 +892,8 @@ fn compilation_fails_closed_on_incomplete_or_ambiguous_manifests() {
             selection(31, false).spectral_windows().to_vec(),
             selection(31, false).correlations().to_vec(),
         ),
-        SourceGenerations::new(
-            ConsistencyToken::new(identity(61)),
-            columns(60, false),
-            metadata(84, false),
-            ModelColumnState::Absent,
-        ),
+        columns(),
+        false,
     );
     assert!(matches!(
         compile_observation(ObservationSnapshotInput::new(
@@ -1123,193 +903,4 @@ fn compilation_fails_closed_on_incomplete_or_ambiguous_manifests() {
         )),
         Err(CompileObservationError::EmptySelection)
     ));
-}
-
-#[test]
-fn consistency_validation_attributes_disallowed_input_mutation() {
-    let compiled = snapshot(false, "/archive/a.ms", "/archive/b.ms");
-    let current_sources = compiled
-        .sources()
-        .iter()
-        .map(|source| {
-            ObservationSourceState::new(
-                source.identity(),
-                source.selection().rows().clone(),
-                source.generations().clone(),
-            )
-        })
-        .collect::<Vec<_>>();
-    let current = ObservationState::new(
-        current_sources.clone(),
-        compiled.reference_data().to_vec(),
-        compiled.model(),
-    );
-    compiled
-        .validate_consistency(current)
-        .expect("unchanged inputs remain valid");
-
-    let mut changed_sources = current_sources.clone();
-    changed_sources[0] = ObservationSourceState::new(
-        changed_sources[0].identity(),
-        selected_rows(249),
-        changed_sources[0].generations().clone(),
-    );
-    assert!(matches!(
-        compiled.validate_consistency(ObservationState::new(
-            changed_sources,
-            compiled.reference_data().to_vec(),
-            compiled.model(),
-        )),
-        Err(ObservationConsistencyError::SelectedRowsChanged { .. })
-    ));
-
-    let changed_columns = SelectedColumns::new(
-        VisibilityColumn::CorrectedData,
-        FlagPolicy::FlagOrFlagRow,
-        WeightColumn::WeightSpectrum,
-        columns(60, false)
-            .generations()
-            .iter()
-            .map(|generation| {
-                if generation.kind() == MsColumnKind::Flag {
-                    ColumnGeneration::new(MsColumnKind::Flag, identity(250))
-                } else {
-                    *generation
-                }
-            })
-            .collect(),
-    );
-    let mut changed_sources = current_sources.clone();
-    changed_sources[0] = ObservationSourceState::new(
-        changed_sources[0].identity(),
-        changed_sources[0].selected_rows().clone(),
-        SourceGenerations::new(
-            changed_sources[0].generations().consistency_token(),
-            changed_columns,
-            changed_sources[0]
-                .generations()
-                .metadata_generations()
-                .to_vec(),
-            changed_sources[0].generations().model_column(),
-        ),
-    );
-    assert!(matches!(
-        compiled.validate_consistency(ObservationState::new(
-            changed_sources,
-            compiled.reference_data().to_vec(),
-            compiled.model(),
-        )),
-        Err(ObservationConsistencyError::ColumnGenerationChanged {
-            column: MsColumnKind::Flag,
-            ..
-        })
-    ));
-
-    let mut changed_sources = current_sources.clone();
-    changed_sources[0] = ObservationSourceState::new(
-        changed_sources[0].identity(),
-        changed_sources[0].selected_rows().clone(),
-        SourceGenerations::new(
-            changed_sources[0].generations().consistency_token(),
-            changed_sources[0].generations().columns().clone(),
-            changed_sources[0]
-                .generations()
-                .metadata_generations()
-                .to_vec(),
-            ModelColumnState::Present(identity(253)),
-        ),
-    );
-    assert!(matches!(
-        compiled.validate_consistency(ObservationState::new(
-            changed_sources,
-            compiled.reference_data().to_vec(),
-            compiled.model(),
-        )),
-        Err(ObservationConsistencyError::ModelColumnStateChanged { .. })
-    ));
-
-    let mut changed_sources = current_sources.clone();
-    let changed_metadata = changed_sources[0]
-        .generations()
-        .metadata_generations()
-        .iter()
-        .map(|generation| {
-            if generation.kind() == MetadataTableKind::Field {
-                MetadataGeneration::new(MetadataTableKind::Field, identity(250))
-            } else {
-                *generation
-            }
-        })
-        .collect();
-    changed_sources[0] = ObservationSourceState::new(
-        changed_sources[0].identity(),
-        changed_sources[0].selected_rows().clone(),
-        SourceGenerations::new(
-            changed_sources[0].generations().consistency_token(),
-            changed_sources[0].generations().columns().clone(),
-            changed_metadata,
-            changed_sources[0].generations().model_column(),
-        ),
-    );
-    assert!(matches!(
-        compiled.validate_consistency(ObservationState::new(
-            changed_sources,
-            compiled.reference_data().to_vec(),
-            compiled.model(),
-        )),
-        Err(ObservationConsistencyError::MetadataGenerationChanged {
-            table: MetadataTableKind::Field,
-            ..
-        })
-    ));
-
-    let mut changed_sources = current_sources.clone();
-    changed_sources[0] = ObservationSourceState::new(
-        changed_sources[0].identity(),
-        changed_sources[0].selected_rows().clone(),
-        SourceGenerations::new(
-            ConsistencyToken::new(identity(251)),
-            changed_sources[0].generations().columns().clone(),
-            changed_sources[0]
-                .generations()
-                .metadata_generations()
-                .to_vec(),
-            changed_sources[0].generations().model_column(),
-        ),
-    );
-    assert!(matches!(
-        compiled.validate_consistency(ObservationState::new(
-            changed_sources,
-            compiled.reference_data().to_vec(),
-            compiled.model(),
-        )),
-        Err(ObservationConsistencyError::ConsistencyTokenChanged { .. })
-    ));
-
-    let mut changed_references = compiled.reference_data().to_vec();
-    changed_references[0].1 = identity(252);
-    assert_eq!(
-        compiled.validate_consistency(ObservationState::new(
-            current_sources.clone(),
-            changed_references,
-            compiled.model(),
-        )),
-        Err(ObservationConsistencyError::ReferenceDataChanged)
-    );
-    assert_eq!(
-        compiled.validate_consistency(ObservationState::new(
-            current_sources.clone(),
-            compiled.reference_data().to_vec(),
-            ModelStateIdentity::Generation(identity(253)),
-        )),
-        Err(ObservationConsistencyError::ModelStateChanged)
-    );
-    assert_eq!(
-        compiled.validate_consistency(ObservationState::new(
-            current_sources[..1].to_vec(),
-            compiled.reference_data().to_vec(),
-            compiled.model(),
-        )),
-        Err(ObservationConsistencyError::SourceSetChanged)
-    );
 }

@@ -2865,7 +2865,17 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
     match visibility_transform {
         Some(transform) => {
             encoder.u8(1);
-            encoder.digest(transform.contract_id().as_bytes());
+            encoder.usize(transform.rules().len());
+            for rule in transform.rules() {
+                encoder.u32(rule.field_id().cast_unsigned());
+                encoder.u32(rule.spectral_window_id());
+                encoder.u8(rule.requested_order());
+                encoder.usize(rule.channels().len());
+                for channel in rule.channels() {
+                    encoder.u32(channel.channel_index());
+                    encoder.u8(channel.use_role() as u8);
+                }
+            }
         }
         None => encoder.u8(0),
     }
@@ -3135,7 +3145,7 @@ fn encode_prepared_operator(
     encoder.identity(compiled_weighting.snapshot().identity());
     encoder.usize(compiled_weighting.sources().len());
     for source in compiled_weighting.sources() {
-        encoder.identity(source.source().identity());
+        encoder.usize(source.source());
         encoder.u8(match source.flags() {
             FlagPolicy::FlagOrFlagRow => 0,
         });
@@ -3143,9 +3153,6 @@ fn encode_prepared_operator(
             WeightColumn::Weight => 0,
             WeightColumn::WeightSpectrum => 1,
         });
-        encoder.identity(source.flag_generation());
-        encoder.identity(source.flag_row_generation());
-        encoder.identity(source.input_weight_generation());
     }
     encoder.u8(match normal_equation.output().normalization() {
         NormalStateNormalization::Unnormalized => 0,

@@ -776,7 +776,7 @@ casacore::Array<casacore::Complex> make_data_array(size_t row, casacore::uInt ch
     casacore::Array<casacore::Complex> data(shape);
     const float offset = static_cast<float>(row * kNumCorr * kNumChan);
     size_t i = 0;
-    for (casacore::uInt chan = 0; chan < kNumChan; ++chan) {
+    for (casacore::uInt chan = 0; chan < channels; ++chan) {
         for (casacore::uInt corr = 0; corr < kNumCorr; ++corr) {
             const float value = offset + static_cast<float>(i);
             data(casacore::IPosition(2, corr, chan)) =

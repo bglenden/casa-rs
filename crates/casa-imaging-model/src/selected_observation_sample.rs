@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 
 use crate::{
     geometry::{Epoch, FrequencyFrame, SkyDirection, UvwCoordinateLaw},
-    observation::{CorrelationType, MeasurementSetIdentity},
+    observation::CorrelationType,
 };
 
 /// Reported source position and spectral/polarization coordinate of one sample.
@@ -18,8 +18,8 @@ use crate::{
 /// validation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SelectedSampleAddress {
-    /// Logical MeasurementSet identity from the compiled observation commitment.
-    pub measurement_set: MeasurementSetIdentity,
+    /// The MeasurementSet's position in the compiled observation snapshot.
+    pub measurement_set: usize,
     /// Physical MAIN row number.
     pub physical_row: u64,
     /// MAIN `DATA_DESC_ID`.
@@ -436,8 +436,8 @@ pub struct SelectedSampleMetadata {
 /// every scalar sample.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectedObservationRunRow {
-    /// Logical MeasurementSet identity from the compiled observation commitment.
-    pub measurement_set: MeasurementSetIdentity,
+    /// The MeasurementSet's position in the compiled observation snapshot.
+    pub measurement_set: usize,
     /// Physical MAIN row number.
     pub physical_row: u64,
     /// MAIN `DATA_DESC_ID`.
@@ -662,7 +662,7 @@ impl SelectedSpectralInterval {
 /// traversal owns its provenance.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SelectedRowSpectralGeometry {
-    measurement_set: MeasurementSetIdentity,
+    measurement_set: usize,
     physical_row: u64,
     data_description_id: i32,
     spectral_window_id: u32,

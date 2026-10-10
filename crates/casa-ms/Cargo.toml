@@ -25,7 +25,6 @@ casa-task-runtime = { path = "../casa-task-runtime" }
 casa-simulation-synthesis = { path = "../casa-simulation-synthesis" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
-getrandom = "0.3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 libc = "0.2"
 libm = "0.2"
@@ -91,6 +90,11 @@ required-features = ["cpp-interop-tests"]
 [[test]]
 name = "ms_full_verify_vs_cpp"
 path = "tests/ms_full_verify_vs_cpp.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
+name = "ms_locking_vs_cpp"
+path = "tests/ms_locking_vs_cpp.rs"
 required-features = ["cpp-interop-tests"]
 
 [[test]]

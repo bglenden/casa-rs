@@ -6,6 +6,13 @@ Date: 2026-07-18
 
 Reaffirmed: 2026-08-26
 
+Amended: 2026-10-09, on owner direction: casa-rs writes nothing into a
+MeasurementSet that CASA does not write.
+
+Amended: 2026-10-10, on owner direction: in-place mutation waits for a table
+lock another process holds, as casacore does, instead of being refused at
+once.
+
 ## Context
 
 CASA interoperability depends on the casacore table data model and persisted
@@ -43,25 +50,54 @@ typed cells, installs the planned columns, and reports rows, bytes, producer
 time, bounded-queue wait, assembly, physical-write, and finalization time.
 
 Creation uses a sibling staging directory and publishes it only after a
-complete interoperable table has been written. In-place mutation creates a
-small incomplete-write marker before the first physical change and removes it
-after successful finalization. An interrupted mutation is detectable and is
-not presented as complete.
+complete interoperable table has been written. In-place mutation holds
+casacore's table write lock from its first change until it completes or is
+abandoned, as CASA does. When another process holds a lock on the table,
+in-place mutation waits for it, as casacore does by default: the waiter adds
+its process id to the request list in `table.lock`, so that a holder using
+casacore's `AutoLocking` releases its lock at its next inspection, and the
+wait is logged when it starts, periodically while it lasts, and when it ends.
+casacore throttles those inspections, so a holder that uses the table only
+lightly may keep its lock until it closes the table.
+The wait blocks in the kernel, as casacore's does, so the kernel refuses a
+wait that would deadlock, such as the second of two processes upgrading their
+read locks, and that writer fails. A writer whose table was opened without
+locking and that finds another process wrote the table while it waited is
+refused, because what it read beforehand is stale. A save that locks several
+tables of a MeasurementSet never waits while it holds another table's lock,
+and is refused before writing when another process wrote a table it released
+to wait. A released write lock publishes the table as persisted (rows,
+columns and one change counter per data manager, read from `table.dat`).
+An in-place writer publishes every table it started to write, so a write
+interrupted part way is announced; a locked table handle publishes only
+when it changed, as casacore's `PlainTable::putFile` does.
+A conflicting handle in the same process is refused at once, because it may
+belong to the waiting thread. casa-rs does not yet release a lock it holds
+when another process requests it
+([#694](https://github.com/bglenden/casa-rs/issues/694)); a waiter, CASA's or
+casa-rs's, waits until a casa-rs holder, such as an imaging run with its
+retained read locks, finishes. On a file system
+without lock support (`fcntl` refused with `ENOLCK`, or `ENOTSUP` as on macOS
+SMB mounts) the table is used unlocked, with a warning, as casacore does for
+`ENOLCK`; there is then no cross-process exclusion. casa-rs adds nothing of its
+own to a MeasurementSet: no table keywords, marker files, generations or
+identities.
+An interrupted in-place write may leave cells partly written, as an
+interrupted CASA write does; rerunning the producing task recomputes them.
 
 The persistence layer does not provide rollback, snapshot generations,
 journaling, or copy-on-write recovery. Such a feature requires a new concrete
 product requirement and a separate architecture decision.
 
-This applies explicitly to imaging `MODEL_DATA`. Prediction writes selected
-cells in place under the exact source-scoped table lock and incomplete-write
-marker. The writer retains at most one array cell, persists that cell through
+This applies explicitly to imaging `MODEL_DATA` and `CORRECTED_DATA`.
+Prediction writes selected cells in place under the exact source-scoped table
+lock. The writer retains at most one array cell, persists that cell through
 the selected-row/selected-column table seam, and discards its cache entry before
 accepting another row; it does not materialize MAIN rows or the full column.
 Unrelated MeasurementSets may therefore progress concurrently while two live
 writers for the same source remain mutually exclusive. Successful completion
-flushes the column, advances its owner generation, and removes the marker. An
-interrupted write may leave partial derived values and must be recovered or
-recomputed explicitly. Full-column staging copies, backup columns, content
+flushes the column and releases the lock. An interrupted write may leave
+partial derived values, which the next run recomputes. Full-column staging copies, backup columns, content
 digests, and rollback are prohibited unless a later concrete requirement
 demonstrates that CASA-compatible in-place behavior is inadequate and
 separately accounts for the I/O and storage cost.
@@ -73,7 +109,9 @@ separately accounts for the I/O and storage cost.
 - Memory use is planned from the real column shapes and writer buffers rather
   than a fixed row-count heuristic.
 - New-output failure is isolated before publication. In-place failure may have
-  written some cells, but the marker prevents silent acceptance as complete.
+  written some cells, as in CASA; rerunning the task recomputes them.
+- A MeasurementSet written by casa-rs carries only what CASA would write, so
+  CASA and casa-rs can each open the other's output without preparation.
 - Flag-version tables remain an explicit domain feature of `flagmanager`; they
   are not a transaction or rollback mechanism for general table writes.
 - Storage changes require Rust-read/Rust-write and C++-read/C++-write

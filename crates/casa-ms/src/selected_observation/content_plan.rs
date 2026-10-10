@@ -6,8 +6,11 @@ use crate::{
     derived::engine::{MsCalEngine, selected_direction_reference_column},
 };
 use crate::{
-    selected_observation_buffer::selected_observation_buffer_residency,
-    selected_pointing::selected_pointing_preparation_peak_bytes, subtables::SubTable,
+    selected_observation_buffer::{
+        selected_observation_buffer_residency, selected_observation_read_staging,
+    },
+    selected_pointing::selected_pointing_preparation_peak_bytes,
+    subtables::SubTable,
 };
 use casa_imaging_model::{
     CompiledProblem, CorrelationProduct, ObservationSource, PointingCentreLaw,
@@ -18,7 +21,7 @@ use thiserror::Error;
 
 use super::access::{
     BoundObservationSource, BufferedObservationBlock, EvaluatedRowGeometry, SelectedChannel,
-    SelectedCoordinates, SelectedReplayRow,
+    SelectedCoordinates, SelectedReplayRow, selected_visibility, selected_weight,
 };
 use super::maximum_selected_correlations;
 use super::row_selection::CompiledRowPredicate;
@@ -407,9 +410,11 @@ pub(crate) fn selected_content_requirements(
         .and_then(|bytes| bytes.checked_add(row_replay_fixed_bytes))
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let polarization = measurement_set.polarization()?;
+    let spectral_window = measurement_set.spectral_window()?;
     let mut resident_bytes_per_row = 0_usize;
     let mut fill_bytes_per_row = 0_usize;
     let mut preparation_bytes_per_row = 0_usize;
+    let mut read_staging_fixed_bytes = 0_usize;
     let empty_fill = selected_observation_buffer_residency(0, 0, 0, 0)
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let fill_fixed_bytes = empty_fill.fill_peak_bytes;
@@ -453,11 +458,11 @@ pub(crate) fn selected_content_requirements(
         let sample_count = covering_channels
             .checked_mul(correlations)
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-        let visibility_bytes = match source.generations().columns().visibility() {
+        let visibility_bytes = match source.columns().visibility() {
             VisibilityColumn::Data | VisibilityColumn::CorrectedData => 8,
             VisibilityColumn::FloatData => 4,
         };
-        let weight_values = match source.generations().columns().weights() {
+        let weight_values = match source.columns().weights() {
             WeightColumn::Weight => correlations,
             WeightColumn::WeightSpectrum => sample_count,
         };
@@ -481,10 +486,35 @@ pub(crate) fn selected_content_requirements(
                 bytes.checked_add(size_of::<SelectedReplayRow>() + size_of::<usize>())
             })
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+        // A column its data manager reads cell by cell holds each selected
+        // row's whole stored cell, every channel of the spectral window, while
+        // the covering channels are packed.
+        let spectral_window_row = usize::try_from(description.spectral_window_id())
+            .map_err(|_| SelectedObservationContentPlanError::InvalidCoordinateShape)?;
+        let casa_types::ScalarValue::Int32(stored_channels) = selected_scalar_scratch_value(
+            spectral_window.table(),
+            "NUM_CHAN",
+            spectral_window_row,
+        )?
+        else {
+            return Err(SelectedObservationContentPlanError::InvalidCoordinateShape);
+        };
+        let stored_channels = usize::try_from(stored_channels)
+            .map_err(|_| SelectedObservationContentPlanError::InvalidCoordinateShape)?;
+        let read_staging = selected_observation_read_staging(
+            measurement_set.main_table(),
+            selected_visibility(source.columns().visibility()),
+            selected_weight(source.columns().weights()),
+            correlations,
+            stored_channels,
+        )
+        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+        read_staging_fixed_bytes = read_staging_fixed_bytes.max(read_staging.fixed_bytes);
         let fill = buffer
             .fill_peak_bytes
             .checked_sub(fill_fixed_bytes)
             .and_then(|bytes| bytes.checked_add(retained_geometry))
+            .and_then(|bytes| bytes.checked_add(read_staging.bytes_per_row))
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
         let geometry_build = buffer
             .resident_bytes
@@ -554,7 +584,7 @@ pub(crate) fn selected_content_requirements(
     Ok(SelectedObservationContentRequirements {
         problem: problem.problem_id(),
         provenance: problem.inputs().observation_snapshot().provenance_id(),
-        source: source.identity(),
+        source: source.input_ordinal(),
         retained_bytes,
         initialization_scratch_bytes,
         initialization_scan_bytes_per_row,
@@ -564,7 +594,9 @@ pub(crate) fn selected_content_requirements(
         resident_bytes_per_row,
         fill_bytes_per_row,
         preparation_bytes_per_row,
-        fill_fixed_bytes,
+        fill_fixed_bytes: fill_fixed_bytes
+            .checked_add(read_staging_fixed_bytes)
+            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
         selected_rows,
         maximum_pointing_polynomial_terms,
     })
@@ -608,12 +640,6 @@ fn retained_metadata_bytes(
     let manifest_bytes = source
         .selection()
         .retained_manifest_bytes()
-        .and_then(|bytes| {
-            source
-                .generations()
-                .retained_manifest_bytes()
-                .and_then(|generations| bytes.checked_add(generations))
-        })
         .and_then(|bytes| bytes.checked_add(source.provenance().retained_locator_bytes()))
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let predicate_bytes = CompiledRowPredicate::shared_retained_heap_bytes(source)

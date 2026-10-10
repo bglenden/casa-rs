@@ -5,15 +5,13 @@
 //! two spectral windows, Stokes I only.
 
 use casa_imaging_model::{
-    AntennaSelection, ColumnGeneration, ConsistencyToken, CorrelationProduct, CorrelationSelection,
-    CorrelationType, DataDescriptionSelection, FlagPolicy, IdSelection, IntentSelection,
-    LogicalIdentity, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
-    ModelColumnState, ModelExecutionAttemptId, MsColumnKind, ObservationSelection,
-    ObservationSourceInput, ObservationSourceProvenance, PrimaryBeamValidityPolicy,
-    ProductBlankingPolicy, ProductSupportComparison, ProductValidityPolicies, RowSelection,
-    SelectedColumns, SelectedMainRow, SelectedRows, SourceGenerations, SpectralWindowSelection,
-    TaylorSupportReference, TaylorValidityPolicy, TimeSelection, UvSelection, VisibilityColumn,
-    WeightColumn,
+    AntennaSelection, CorrelationProduct, CorrelationSelection, CorrelationType,
+    DataDescriptionSelection, FlagPolicy, IdSelection, IntentSelection, LogicalIdentity,
+    ModelExecutionAttemptId, ObservationSelection, ObservationSourceInput,
+    ObservationSourceProvenance, PrimaryBeamValidityPolicy, ProductBlankingPolicy,
+    ProductSupportComparison, ProductValidityPolicies, RowSelection, SelectedColumns,
+    SelectedMainRow, SelectedRows, SpectralWindowSelection, TaylorSupportReference,
+    TaylorValidityPolicy, TimeSelection, UvSelection, VisibilityColumn, WeightColumn,
 };
 
 /// A deterministic logical identity distinguished by `seed` and `scope`.
@@ -28,55 +26,16 @@ pub fn attempt(seed: u8) -> ModelExecutionAttemptId {
     ModelExecutionAttemptId::new(identity(seed, 0))
 }
 
-/// One measurement set selecting rows 0 and 2 of three, each in its own
+/// One measurement set selecting rows 0 and 2 of `3 + seed`, each in its own
 /// spectral window, with provenance `fixture://<label>/<seed>`.
 pub fn source(seed: u8, label: &str) -> ObservationSourceInput {
-    let columns = [
-        MsColumnKind::Data,
-        MsColumnKind::Flag,
-        MsColumnKind::FlagRow,
-        MsColumnKind::Weight,
-        MsColumnKind::Uvw,
-        MsColumnKind::Time,
-        MsColumnKind::TimeCentroid,
-        MsColumnKind::Interval,
-        MsColumnKind::Exposure,
-        MsColumnKind::FieldId,
-        MsColumnKind::DataDescriptionId,
-        MsColumnKind::Antenna1,
-        MsColumnKind::Antenna2,
-        MsColumnKind::Feed1,
-        MsColumnKind::Feed2,
-        MsColumnKind::ScanNumber,
-        MsColumnKind::StateId,
-        MsColumnKind::ObservationId,
-        MsColumnKind::ArrayId,
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(index, kind)| ColumnGeneration::new(kind, identity(seed, 20 + index as u8)))
-    .collect();
-    let metadata = [
-        MetadataTableKind::Antenna,
-        MetadataTableKind::DataDescription,
-        MetadataTableKind::Feed,
-        MetadataTableKind::Field,
-        MetadataTableKind::Observation,
-        MetadataTableKind::Pointing,
-        MetadataTableKind::Polarization,
-        MetadataTableKind::SpectralWindow,
-        MetadataTableKind::State,
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(index, kind)| MetadataGeneration::new(kind, identity(seed, 60 + index as u8)))
-    .collect();
     ObservationSourceInput::new(
-        MeasurementSetIdentity::new(identity(seed, 1)),
         ObservationSourceProvenance::new(format!("fixture://{label}/{seed}"), identity(seed, 2)),
         ObservationSelection::new(
+            // The seed sets the MeasurementSet's row count, so sources from
+            // different seeds are different observations.
             SelectedRows::from_ordered_main_rows(
-                3,
+                3 + u64::from(seed),
                 [SelectedMainRow::new(0, 0), SelectedMainRow::new(2, 1)],
             )
             .expect("two selected rows"),
@@ -103,17 +62,12 @@ pub fn source(seed: u8, label: &str) -> ObservationSourceInput {
                 vec![CorrelationProduct::new(0, CorrelationType::StokesI)],
             )],
         ),
-        SourceGenerations::new(
-            ConsistencyToken::new(identity(seed, 3)),
-            SelectedColumns::new(
-                VisibilityColumn::Data,
-                FlagPolicy::FlagOrFlagRow,
-                WeightColumn::Weight,
-                columns,
-            ),
-            metadata,
-            ModelColumnState::Absent,
+        SelectedColumns::new(
+            VisibilityColumn::Data,
+            FlagPolicy::FlagOrFlagRow,
+            WeightColumn::Weight,
         ),
+        false,
     )
 }
 

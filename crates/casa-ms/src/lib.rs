@@ -114,13 +114,11 @@ pub use msexplore::{
 };
 pub use observation_owner::{
     ObservationOwnerError, ResolvedSelectedObservation, ResolvedSelectedObservationAccess,
-    SelectedObservationResolutionRequest, initialize_measurement_set_owner_manifest,
-    resolve_selected_observation,
+    SelectedObservationResolutionRequest, resolve_selected_observation,
 };
 #[cfg(unix)]
 pub use observation_owner::{
-    SelectedVisibilityStoragePlan, SelectedVisibilityWrite, SelectedVisibilityWriteGenerations,
-    SelectedVisibilityWriteTargets,
+    SelectedVisibilityStoragePlan, SelectedVisibilityWrite, SelectedVisibilityWriteTargets,
 };
 pub use plot::{
     ListObsPlotExportFormat as MeasurementSetPlotExportFormat,
@@ -156,9 +154,8 @@ pub use selected_observation::{
     SelectedObservationIndexedBlock, SelectedObservationMeasures, SelectedObservationMeasuresError,
     SelectedObservationNumericBlock, SelectedObservationNumericGeometry,
     SelectedObservationProjector, SelectedObservationReferenceDataBudget,
-    SelectedObservationReplayAuthorization, SelectedObservationReplayProof,
-    SelectedObservationResidencyCertificate, SelectedObservationRow,
-    SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
+    SelectedObservationReplayProof, SelectedObservationResidencyCertificate,
+    SelectedObservationRow, SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
     SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralRange,
     SelectedObservationSpectralRangeMeasurements, SelectedObservationSpectralWindow,
     SelectedObservationTerminal, SelectedObservationTraversalError,

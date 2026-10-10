@@ -27,23 +27,23 @@ not owned by geometry.
 _Avoid_: Gridder configuration, sample coordinate cache
 
 **Observation Snapshot**:
-The immutable logical identity and consistency generation of selected MS data,
-metadata, reference tables, ephemerides, and input models. It is a manifest,
-not a materialized copy of bulk samples. Its compiler canonicalizes exact
-per-MS row, SPW/channel, and correlation semantics plus selected column and
-metadata generations and the independent existence/generation of the optional
-`MODEL_DATA` column. Selected rows are retained only as counts and an ordered
-row-sequence digest. Content identity ignores source location and request
-order; a separate provenance identity preserves them.
+The immutable logical description of selected MS data, reference tables,
+ephemerides, and input models. It is a manifest, not a materialized copy of
+bulk samples. Its compiler canonicalizes exact per-MS row, SPW/channel, and
+correlation semantics plus the selected data, flag, and weight columns and
+whether MAIN has `CORRECTED_DATA`. Selected rows are retained only as counts
+and an ordered row-sequence digest. Sources keep request order; content
+identity ignores source location, which a separate provenance identity
+preserves. Nothing of it is stored in the MeasurementSet.
 _Avoid_: MeasurementSet clone, input path
 
 **Observation Transaction**:
 The snapshot-bound, compiler-derived read/write contract for one imaging run.
-It names exact per-MS selections and generations, optional `MODEL_DATA` write
-preconditions, typed physical observation-read nodes, and graph-owned product
+It names exact per-MS selections and columns, the selected cells of an optional
+`MODEL_DATA` or `CORRECTED_DATA` write, typed physical observation-read nodes, and graph-owned product
 members with exact private staging completions. The sole `plan` entrypoint binds
 the declaration to the exact Compiled Problem and physical-work identity.
-MS-backed transactions revalidate read/write preconditions under source locks.
+MS-backed writes run under casacore's table lock, as in CASA.
 Generated-product publication reads or locks no MeasurementSet; its terminal
 gate follows all staging completions and triggers independent atomic replacement
 of each image. The output set is not a whole-set transaction: publication failure

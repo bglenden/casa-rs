@@ -209,7 +209,20 @@ fn continuum_residual_persistence_overwrites_only_output_roles_in_the_terminal_p
             .cloned(),
         weights_before
     );
-    assert!(!measurement_set.join(".casa-rs-write-incomplete").exists());
+    let entries = std::fs::read_dir(&measurement_set)
+        .expect("list written MS")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        entries.iter().all(|name| !name.contains("casa-rs")),
+        "the visibility write left casa-rs files: {entries:?}"
+    );
 }
 
 #[test]

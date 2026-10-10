@@ -126,7 +126,6 @@ def preflight():
     t.open(str(INPUT), nomodify=True)
     try:
         assert t.nrows() == 4212000
-        assert "CASA_RS_IMAGING_OWNER_MANIFEST" in t.keywordnames()
         assert "DATA" in t.colnames() and "CORRECTED_DATA" not in t.colnames()
         cell = t.getcell("DATA", 0)
         assert list(cell.shape) == [2, 512], cell.shape
@@ -145,32 +144,6 @@ def preflight():
         t.done()
     save(ROOT / "input-preflight.json", main)
     print(json.dumps(main, default=str), flush=True)
-
-
-def repair_input():
-    """Preserve the failed native metadata write; use CASA for this fixture keyword."""
-    from casatools import table
-    t = table()
-    t.open(str(INPUT), nomodify=True)
-    try:
-        manifest = t.getkeyword("CASA_RS_IMAGING_OWNER_MANIFEST")
-    finally:
-        t.done()
-    save(ROOT / "owner-manifest.json", json.loads(manifest))
-    failed = OUTPUT / "input-native-metadata-failed.ms"
-    assert not failed.exists()
-    INPUT.rename(failed)
-    subprocess.run(["/bin/cp", "-cR", str(ORIGINAL), str(INPUT)], check=True)
-    t.open(str(INPUT), nomodify=False)
-    try:
-        assert "CASA_RS_IMAGING_OWNER_MANIFEST" not in t.keywordnames()
-        t.putkeyword("CASA_RS_IMAGING_OWNER_MANIFEST", manifest)
-        t.flush()
-    finally:
-        t.done()
-    save(ROOT / "input-repair.json", dict(failed_preserved=str(failed),
-         replacement=str(INPUT), change="CASA writes the same native owner manifest keyword",
-         original_unchanged=True, visibility_or_scientific_metadata_changes=False))
 
 
 def comparison(label):
@@ -214,7 +187,6 @@ def run(resume=False):
             assert json.loads((ROOT / "build-application-resource.json").read_text())["complete"]
             assert json.loads((ROOT / "connected-application-resource.json").read_text())["complete"]
             binary = ROOT / "continuum_application"
-            stage("repair-input-v2", [CASA, str(SCRIPT), "repair-input"])
             stage("input-preflight-v2", [CASA, str(SCRIPT), "preflight-v2"])
             observations(binary)
             return
@@ -223,10 +195,6 @@ def run(resume=False):
               "--release", "--locked", "-p", "casa-imaging-application", "--test",
               "continuum_application", "--no-run", "--message-format=json"], cwd=REPO)
         binary = artifact("build-application", "continuum_application")
-        stage("build-owner", ["cargo", "build", "--manifest-path", str(REPO / "Cargo.toml"),
-              "--release", "--locked", "-p", "casa-ms", "--example",
-              "initialize_imaging_owner", "--message-format=json"], cwd=REPO)
-        owner = artifact("build-owner", "initialize_imaging_owner")
         links = {str(p): p.read_text() for p in (REPO / "target/release/build").glob("casa-fft-*/output")
                  if f"cargo:rustc-link-search=native={FFTW}/lib" in p.read_text()}
         assert links and any("static=fftw3f" in value and "static=fftw3" in value for value in links.values()), "retained static SIMD-v2 FFTW linkage missing"
@@ -235,7 +203,6 @@ def run(resume=False):
               "--exact", "--nocapture", "--test-threads=1"])
         assert not INPUT.exists()
         stage("clone-input", ["/bin/cp", "-cR", str(ORIGINAL), str(INPUT)])
-        stage("initialize-owner", [str(owner), str(INPUT)])
         stage("input-preflight", [CASA, str(SCRIPT), "preflight"])
         observations(binary)
     except BaseException as error:
@@ -292,7 +259,7 @@ def resume_native(binary, attempt):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("run", "resume", "resume-native", "casa", "preflight", "preflight-v2", "repair-input", "compare"))
+    parser.add_argument("action", choices=("run", "resume", "resume-native", "casa", "preflight", "preflight-v2", "compare"))
     parser.add_argument("--label")
     parser.add_argument("--binary")
     parser.add_argument("--attempt")
@@ -310,11 +277,10 @@ if __name__ == "__main__":
         t.open(str(INPUT), nomodify=False)
         try:
             assert t.nrows() == 4212000
-            assert "CASA_RS_IMAGING_OWNER_MANIFEST" in t.keywordnames()
             assert list(t.getcell("DATA", 0).shape) == [2, 512]
         finally:
             t.done()
         save(ROOT / "input-preflight-v2.json", dict(rows=4212000, channels=512,
              casa_update_open_and_close=True))
     else:
-        {"run": run, "casa": casa, "preflight": preflight, "repair-input": repair_input}[args.action]()
+        {"run": run, "casa": casa, "preflight": preflight}[args.action]()

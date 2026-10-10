@@ -27,16 +27,15 @@ use casa_coordinates::{
 use casa_imaging_model::{
     CompiledProblem, CorrelationProduct, CorrelationType, DataDescriptionSelection, DelayCentreLaw,
     DirectionFrame, Epoch, FrequencyFrame, InstrumentModel, MeasurementSetReadAccess,
-    MissingPointingPolicy, ObservationSelection, ObservationSource, ObservationSourceState,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingExtrapolation,
-    PointingInterpolation, PointingTimeSampling, Projection as ModelProjection,
-    SelectedAntennaResponses, SelectedImageDomainProjection, SelectedImageDomainProjections,
-    SelectedInputWeightGroup, SelectedMainRow, SelectedObservationRunChannel,
-    SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
-    SelectedObservationSampleView, SelectedPhaseCentreProjection, SelectedPointingDirections,
-    SelectedPredictionTarget, SelectedRowsBuilder, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection, TimeScale, VisibilityColumn,
-    WeightColumn,
+    MissingPointingPolicy, ObservationSelection, ObservationSource, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingExtrapolation, PointingInterpolation,
+    PointingTimeSampling, Projection as ModelProjection, SelectedAntennaResponses,
+    SelectedImageDomainProjection, SelectedImageDomainProjections, SelectedInputWeightGroup,
+    SelectedMainRow, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
+    SelectedObservationRunRow, SelectedObservationSample, SelectedObservationSampleView,
+    SelectedPhaseCentreProjection, SelectedPointingDirections, SelectedPredictionTarget,
+    SelectedRowsBuilder, SelectedSampleCoordinates, SelectedSampleMetadata,
+    SelectedVisibilitySample, SkyDirection, TimeScale, VisibilityColumn, WeightColumn,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use ndarray::arr2;
@@ -101,8 +100,7 @@ impl<'a> BoundObservationReferenceData<'a> {
 /// content buffers. The sole MAIN traversal happens when samples are consumed: that pass both
 /// validates the compact compiler-owned manifest and produces the selected values.
 pub(crate) struct BoundObservationSource {
-    source_identity: casa_imaging_model::MeasurementSetIdentity,
-    selected_read_state: ObservationSourceState,
+    source_ordinal: usize,
     measurement_set: MeasurementSet,
     geometry_engine: Arc<MsCalEngine>,
     row_predicate: CompiledRowPredicate,
@@ -147,12 +145,9 @@ impl BoundObservationSource {
         MainRowSelectionCursor::retained_bytes_per_row()
     }
 
-    pub(super) const fn source_identity(&self) -> casa_imaging_model::MeasurementSetIdentity {
-        self.source_identity
-    }
-
-    pub(super) const fn selected_read_state(&self) -> &ObservationSourceState {
-        &self.selected_read_state
+    /// The source's position in the compiled snapshot.
+    pub(super) const fn source_ordinal(&self) -> usize {
+        self.source_ordinal
     }
 
     pub(super) fn geometry_engine(&self) -> &MsCalEngine {
@@ -180,7 +175,6 @@ impl BoundObservationSource {
     pub(crate) fn open_with_measures(
         problem: &CompiledProblem,
         source: &ObservationSource,
-        current_state: &ObservationSourceState,
         measures: &SelectedObservationMeasures,
         shared_bytes: SelectedObservationSharedBytes,
         content_budget: SelectedObservationContentBudget,
@@ -188,11 +182,9 @@ impl BoundObservationSource {
     ) -> Result<Self, BoundObservationSourceError> {
         measures.validate_problem(problem)?;
         let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())?;
-        validate_current_state(source, current_state)?;
         Self::from_locked_measurement_set(
             problem,
             source,
-            current_state.clone(),
             measures,
             shared_bytes,
             content_budget,
@@ -200,114 +192,6 @@ impl BoundObservationSource {
             reference_data.ephemeris,
             reference_data.pointing_query_domain,
         )
-    }
-
-    /// Reopen a source under fresh retained locks and validate the prior
-    /// selected-read state before constructing any block source.
-    #[cfg(unix)]
-    pub(crate) fn rebind_with_measures(
-        problem: &CompiledProblem,
-        source: &ObservationSource,
-        states: (&ObservationSourceState, &ObservationSourceState),
-        measures: &SelectedObservationMeasures,
-        shared_bytes: SelectedObservationSharedBytes,
-        content_budget: SelectedObservationContentBudget,
-        reference_data: BoundObservationReferenceData<'_>,
-    ) -> Result<Self, BoundObservationSourceError> {
-        let (current_state, prior_state) = states;
-        measures.validate_problem(problem)?;
-        validate_current_state(source, current_state)?;
-        let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())?;
-        let (fresh_state, fresh_pointing_query_domain) =
-            crate::observation_owner::validate_reopened_selected_observation_source(
-                &measurement_set,
-                source,
-                content_budget,
-            )
-            .map_err(|error| BoundObservationSourceError::OwnerState(Box::new(error)))?;
-        validate_current_state(source, &fresh_state)?;
-        validate_rebound_state(prior_state, &fresh_state)?;
-        validate_pointing_query_domain(
-            reference_data.pointing_query_domain,
-            &fresh_pointing_query_domain,
-        )?;
-        Self::from_locked_measurement_set(
-            problem,
-            source,
-            fresh_state,
-            measures,
-            shared_bytes,
-            content_budget,
-            measurement_set,
-            reference_data.ephemeris,
-            Some(&fresh_pointing_query_domain),
-        )
-    }
-
-    /// Open the initial proof root under fresh retained locks and rederive all
-    /// owner-controlled state before constructing a block source.
-    #[cfg(unix)]
-    pub(crate) fn open_owner_validated_with_measures(
-        problem: &CompiledProblem,
-        source: &ObservationSource,
-        current_state: &ObservationSourceState,
-        measures: &SelectedObservationMeasures,
-        shared_bytes: SelectedObservationSharedBytes,
-        content_budget: SelectedObservationContentBudget,
-        reference_data: BoundObservationReferenceData<'_>,
-    ) -> Result<Self, BoundObservationSourceError> {
-        let (measurement_set, fresh_state, fresh_pointing_query_domain) =
-            Self::validated_owner_measurement_set(
-                problem,
-                source,
-                current_state,
-                measures,
-                content_budget,
-                reference_data.pointing_query_domain,
-            )?;
-        Self::from_locked_measurement_set(
-            problem,
-            source,
-            fresh_state,
-            measures,
-            shared_bytes,
-            content_budget,
-            measurement_set,
-            reference_data.ephemeris,
-            Some(&fresh_pointing_query_domain),
-        )
-    }
-
-    #[cfg(unix)]
-    fn validated_owner_measurement_set(
-        problem: &CompiledProblem,
-        source: &ObservationSource,
-        current_state: &ObservationSourceState,
-        measures: &SelectedObservationMeasures,
-        content_budget: SelectedObservationContentBudget,
-        pointing_query_domain: Option<&SelectedPointingQueryDomain>,
-    ) -> Result<
-        (
-            MeasurementSet,
-            ObservationSourceState,
-            SelectedPointingQueryDomain,
-        ),
-        BoundObservationSourceError,
-    > {
-        measures.validate_problem(problem)?;
-        validate_current_state(source, current_state)?;
-        let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())?;
-        let (fresh_state, fresh_pointing_query_domain) =
-            crate::observation_owner::validate_reopened_selected_observation_source(
-                &measurement_set,
-                source,
-                content_budget,
-            )
-            .map_err(|error| BoundObservationSourceError::OwnerState(Box::new(error)))?;
-        validate_current_state(source, &fresh_state)?;
-        validate_rebound_state(current_state, &fresh_state)?;
-        validate_pointing_query_domain(pointing_query_domain, &fresh_pointing_query_domain)?;
-        Ok((measurement_set, fresh_state, fresh_pointing_query_domain))
     }
 
     #[cfg(unix)]
@@ -318,21 +202,15 @@ impl BoundObservationSource {
         measures: &SelectedObservationMeasures,
         shared_bytes: SelectedObservationSharedBytes,
     ) -> Result<SelectedObservationContentRequirements, BoundObservationSourceError> {
-        let (measurement_set, _, domain) = Self::validated_owner_measurement_set(
-            problem,
-            source,
-            binding.current_state(),
-            measures,
-            binding.content_budget(),
-            binding.pointing_query_domain(),
-        )?;
+        measures.validate_problem(problem)?;
+        let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())?;
         let requirements = Self::requirements_for_locked_source(
             &measurement_set,
             problem,
             source,
             shared_bytes,
             binding.content_budget().maximum_pointing_polynomial_terms(),
-            Some(&domain),
+            binding.pointing_query_domain(),
         )?;
         measures.verify_state()?;
         Ok(requirements)
@@ -377,7 +255,6 @@ impl BoundObservationSource {
     fn from_locked_measurement_set(
         problem: &CompiledProblem,
         source: &ObservationSource,
-        selected_read_state: ObservationSourceState,
         measures: &SelectedObservationMeasures,
         shared_bytes: SelectedObservationSharedBytes,
         content_budget: SelectedObservationContentBudget,
@@ -448,7 +325,6 @@ impl BoundObservationSource {
         )?;
         let mut bound = Self::from_planned_locked_measurement_set(
             source,
-            selected_read_state,
             measures,
             content_plan,
             measurement_set,
@@ -473,7 +349,6 @@ impl BoundObservationSource {
 
     fn from_planned_locked_measurement_set(
         source: &ObservationSource,
-        selected_read_state: ObservationSourceState,
         measures: &SelectedObservationMeasures,
         content_plan: SelectedObservationContentPlan,
         measurement_set: MeasurementSet,
@@ -498,8 +373,7 @@ impl BoundObservationSource {
         )?);
         geometry_engine.verify_selected_observation_measures()?;
         Ok(Self {
-            source_identity: source.identity(),
-            selected_read_state,
+            source_ordinal: source.input_ordinal(),
             source_row_count_matches: usize::try_from(source.selection().rows().source_row_count())
                 .ok()
                 == Some(measurement_set.row_count()),
@@ -517,7 +391,6 @@ impl BoundObservationSource {
     pub(crate) fn open(
         problem: &CompiledProblem,
         source: &ObservationSource,
-        current_state: &ObservationSourceState,
         content_budget: SelectedObservationContentBudget,
     ) -> Result<Self, BoundObservationSourceError> {
         let measures = super::measures::test_selected_observation_measures(problem)?;
@@ -537,19 +410,15 @@ impl BoundObservationSource {
         } else {
             None
         };
-        let current_state_heap_bytes = current_state
-            .additional_retained_heap_bytes([source.selection().rows()])
-            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
         Self::open_with_measures(
             problem,
             source,
-            current_state,
             &measures,
             SelectedObservationSharedBytes::new(
                 measures.retained_bytes(),
                 0,
                 Self::retained_source_slot_bytes(),
-                current_state_heap_bytes,
+                0,
             ),
             content_budget,
             BoundObservationReferenceData::new(None, pointing_query_domain.as_ref()),
@@ -595,7 +464,7 @@ impl BoundObservationSource {
             .read_set()
             .sources()
             .iter()
-            .find(|candidate| candidate.measurement_set() == self.source_identity)
+            .find(|candidate| candidate.measurement_set() == self.source_ordinal)
             .ok_or(BoundObservationSourceError::ProblemSourceMismatch)?;
         let replay = self.selected_row_replay()?;
         Ok(BoundObservationSamples {
@@ -2423,8 +2292,8 @@ pub enum BoundObservationSourceError {
     /// The MeasurementSet could not be opened or read under the admitted content budget.
     #[error(transparent)]
     Storage(#[from] MsError),
-    /// Fresh retained locks contradicted the owner manifest or physical selected state.
-    #[error("fresh selected-observation owner validation failed: {0}")]
+    /// The physical selected rows could not be resolved.
+    #[error("selected-observation resolution failed: {0}")]
     OwnerState(#[source] Box<ObservationOwnerError>),
     /// Physical traversal counters exceeded their diagnostics domain.
     #[error("selected-observation traversal measurements overflowed")]
@@ -2451,21 +2320,12 @@ pub enum BoundObservationSourceError {
     /// Observation-pointing evaluation lacks its owner-derived selected-time domain.
     #[error("observation-pointing evaluation requires an owner-derived selected-time domain")]
     MissingPointingQueryDomain,
-    /// Fresh selected rows produced a different observation-pointing query domain.
-    #[error("fresh selected rows differ from the bound observation-pointing query domain")]
-    StalePointingQueryDomain,
     /// The retained source is not one exact member of the supplied compiled problem.
     #[error("retained observation source does not match the compiled selected observation")]
     ProblemSourceMismatch,
-    /// The fresh source-state probe names a different logical MeasurementSet.
-    #[error("current source-state probe names a different MeasurementSet")]
-    CurrentSourceIdentityMismatch,
     /// Re-evaluated selected rows differ from the compiled row/DDID manifest.
     #[error("current selected rows differ from the compiled source manifest")]
     StaleSelectedRows,
-    /// A selected column, metadata, model-column, or consistency generation changed.
-    #[error("current source generations differ from the compiled source snapshot")]
-    StaleSourceGenerations,
     /// This first native slice does not yet implement the compiled centre laws.
     #[error(
         "compiled centre laws require a selected-observation geometry evaluator not yet migrated"
@@ -3654,7 +3514,7 @@ fn require_fixed_j2000(
     Ok(direction)
 }
 
-const fn selected_visibility(visibility: VisibilityColumn) -> SelectedVisibilityColumn {
+pub(super) const fn selected_visibility(visibility: VisibilityColumn) -> SelectedVisibilityColumn {
     match visibility {
         VisibilityColumn::Data => SelectedVisibilityColumn::Data,
         VisibilityColumn::CorrectedData => SelectedVisibilityColumn::CorrectedData,
@@ -3662,7 +3522,7 @@ const fn selected_visibility(visibility: VisibilityColumn) -> SelectedVisibility
     }
 }
 
-const fn selected_weight(weight: WeightColumn) -> SelectedWeightColumn {
+pub(super) const fn selected_weight(weight: WeightColumn) -> SelectedWeightColumn {
     match weight {
         WeightColumn::Weight => SelectedWeightColumn::Weight,
         WeightColumn::WeightSpectrum => SelectedWeightColumn::WeightSpectrum,
@@ -3727,71 +3587,6 @@ const fn correlation_type(code: i32) -> Option<CorrelationType> {
         32 => CorrelationType::PolarizationAngle,
         _ => return None,
     })
-}
-
-fn validate_current_state(
-    expected: &ObservationSource,
-    current: &ObservationSourceState,
-) -> Result<(), BoundObservationSourceError> {
-    validate_selected_read_state(
-        expected.identity(),
-        expected.selection().rows(),
-        expected.generations(),
-        current,
-    )
-}
-
-fn validate_rebound_state(
-    expected: &ObservationSourceState,
-    current: &ObservationSourceState,
-) -> Result<(), BoundObservationSourceError> {
-    validate_selected_read_state(
-        expected.identity(),
-        expected.selected_rows(),
-        expected.generations(),
-        current,
-    )
-}
-
-fn validate_pointing_query_domain(
-    expected: Option<&SelectedPointingQueryDomain>,
-    current: &SelectedPointingQueryDomain,
-) -> Result<(), BoundObservationSourceError> {
-    match expected {
-        Some(expected) if expected == current => Ok(()),
-        Some(_) => Err(BoundObservationSourceError::StalePointingQueryDomain),
-        None => Err(BoundObservationSourceError::MissingPointingQueryDomain),
-    }
-}
-
-fn validate_selected_read_state(
-    expected_identity: casa_imaging_model::MeasurementSetIdentity,
-    expected_rows: &casa_imaging_model::SelectedRows,
-    expected_generations: &casa_imaging_model::SourceGenerations,
-    current: &ObservationSourceState,
-) -> Result<(), BoundObservationSourceError> {
-    if current.identity() != expected_identity {
-        return Err(BoundObservationSourceError::CurrentSourceIdentityMismatch);
-    }
-    if current.selected_rows() != expected_rows {
-        return Err(BoundObservationSourceError::StaleSelectedRows);
-    }
-    let current_generations = current.generations();
-    let model_changed = current_generations.model_column() != expected_generations.model_column();
-    let corrected_data_changed =
-        current_generations.corrected_data_column() != expected_generations.corrected_data_column();
-    let consistency_changed =
-        current_generations.consistency_token() != expected_generations.consistency_token();
-    // MODEL_DATA and output-only CORRECTED_DATA are write preconditions, not
-    // selected-observation reads. Their owner update may complete between
-    // scientific traversal and publication without invalidating the read set.
-    if current_generations.columns() != expected_generations.columns()
-        || current_generations.metadata_generations() != expected_generations.metadata_generations()
-        || (model_changed || corrected_data_changed) != consistency_changed
-    {
-        return Err(BoundObservationSourceError::StaleSourceGenerations);
-    }
-    Ok(())
 }
 
 fn selected_row_predicate(

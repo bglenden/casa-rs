@@ -11,42 +11,39 @@ use crate::subtables::SubTable;
 use crate::{
     MeasurementSet, MsSelectionIoBudget, ResolvedSelectedObservationAccess,
     SelectedObservationResolutionRequest, SyntheticObservationRequest, SyntheticSpectralSetup,
-    SyntheticWorkerPolicy, generate_synthetic_observation_ms,
-    initialize_measurement_set_owner_manifest, resolve_selected_observation,
+    SyntheticWorkerPolicy, generate_synthetic_observation_ms, resolve_selected_observation,
     tutorial_vla_a_antennas,
 };
 use casa_imaging_model::{
-    AntennaResponseClass, AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration,
-    ConsistencyToken, CorrelationProduct, CorrelationSelection, CorrelationType,
-    DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
-    DirectionFrame, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
-    GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    InstrumentModel, InstrumentResponse, IntentSelection, ItrfPosition, LogicalIdentity,
-    MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
-    MissingPointingPolicy, ModelBounds, ModelColumnState, ModelColumnWrite, ModelInnerProduct,
-    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, MsColumnKind,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    AntennaResponseClass, AntennaSelection, AxisOrder, CentreLaws, CorrelationProduct,
+    CorrelationSelection, CorrelationType, DataDescriptionSelection, DeclaredInnerProducts,
+    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, Epoch, FacetLayout, FiniteValuePolicy,
+    FlagPolicy, FrequencyFrame, GeometryInput, IdSelection, ImageAxis, ImageDomainRole,
+    ImageDomainSpec, ImageShape, InstrumentModel, InstrumentResponse, IntentSelection,
+    ItrfPosition, LogicalIdentity, MeasurementEquationContract, MissingPointingPolicy, ModelBounds,
+    ModelColumnWrite, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
+    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
     ObservationSelection, ObservationSnapshotInput, ObservationSource, ObservationSourceInput,
-    ObservationSourceProvenance, ObservationSourceState, ObservationTransactionRequirements,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput, ProblemInputIdentities,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
-    PsfPhaseCentreLaw, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
-    RowSelection, ScientificContract, SelectedColumns, SelectedInputWeightGroup, SelectedMainRow,
+    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
+    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
+    PrimaryBeamValidityPolicy, ProblemInput, ProblemInputIdentities, ProblemSpecification,
+    ProductBlankingPolicy, ProductKind, ProductNormalization, ProductRequirements,
+    ProductSupportComparison, ProductValidityPolicies, Projection, PsfPhaseCentreLaw,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, RowSelection,
+    ScientificContract, SelectedColumns, SelectedInputWeightGroup, SelectedMainRow,
     SelectedObservationInspectionError, SelectedObservationPassError,
     SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
     SelectedObservationSample, SelectedRows, SelectedSpectralEvaluation, SelectedVisibilitySample,
-    SelectionBound, SkyDirection, SourceGenerations, SpectralContract, SpectralCoordinateSpec,
-    SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs,
-    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
-    TimeRange, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
-    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
-    compile, compile_observation,
+    SelectionBound, SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeRange, TimeScale,
+    TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct,
+    WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    compile_observation,
 };
-use casa_tables::{ColumnSchema, LockMode, LockOptions, LockType, Table, TableOptions};
+use casa_tables::{ColumnSchema, Table, TableOptions};
 use casa_types::measures::{
     EopValues, MeasuresProvider, MeasuresProviderState,
     direction::{DirectionRef, MDirection},
@@ -178,12 +175,10 @@ fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
     let source = &problem.inputs().observation_snapshot().sources()[0];
     let one_row_budget = content_budget_for_rows(&problem, source, 1, 1);
     let two_row_budget = content_budget_for_rows(&problem, source, 2, 1);
-    let one_row =
-        BoundObservationSource::open(&problem, source, &source_state(source), one_row_budget)
-            .expect("bind one-row physical blocks");
-    let two_rows =
-        BoundObservationSource::open(&problem, source, &source_state(source), two_row_budget)
-            .expect("bind two-row physical blocks");
+    let one_row = BoundObservationSource::open(&problem, source, one_row_budget)
+        .expect("bind one-row physical blocks");
+    let two_rows = BoundObservationSource::open(&problem, source, two_row_budget)
+        .expect("bind two-row physical blocks");
     assert_eq!(
         one_row.content_plan().rows_per_block(),
         1,
@@ -322,7 +317,6 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
     let ordinary = BoundObservationSource::open(
         &ordinary_problem,
         ordinary_source,
-        &source_state(ordinary_source),
         content_budget_for_rows(&ordinary_problem, ordinary_source, 37, 1),
     )
     .unwrap();
@@ -362,7 +356,6 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
     let bound = BoundObservationSource::open(
         &problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&problem, source, 37, 1),
     )
     .expect("bind non-toy T33 traversal");
@@ -449,7 +442,7 @@ fn facet_chart_projections_are_domain_major_and_block_partition_invariant() {
             &problem,
             test_measures(&problem),
             vec![ObservationSourceBinding::new(
-                source_state(source),
+                source_ordinal(source),
                 bound_content_budget_for_rows(&problem, source, rows_per_block, 1),
             )],
         )
@@ -568,7 +561,6 @@ fn selected_projection_preserves_cell_flags_and_derives_parallel_hand_group_flag
     let bound = BoundObservationSource::open(
         &problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&problem, source, 1, 1),
     )
     .expect("bind paired-flag fixture");
@@ -631,7 +623,7 @@ fn block_traversal_reports_one_canonical_unequal_parallel_hand_weight_group() {
         &problem,
         test_measures(&problem),
         vec![ObservationSourceBinding::new(
-            source_state(logical_source),
+            source_ordinal(logical_source),
             bound_content_budget_for_rows(&problem, logical_source, 2, 1),
         )],
     )
@@ -799,7 +791,6 @@ fn sparse_manifest_reads_only_selected_physical_rows() {
     let samples = BoundObservationSource::open(
         &problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&problem, source, 2, 1),
     )
     .expect("bind sparse selected observation")
@@ -847,7 +838,6 @@ fn unconditional_sparse_manifest_is_rejected_without_scanning_intervening_rows()
         BoundObservationSource::open(
             &problem,
             source,
-            &source_state(source),
             content_budget_for_rows(&problem, source, 2, 1),
         ),
         Err(super::BoundObservationSourceError::IncompleteUnconditionalRowManifest)
@@ -864,7 +854,6 @@ fn retained_metadata_is_rejected_before_content_blocks_are_planned() {
     let error = match BoundObservationSource::open(
         &problem,
         source,
-        &source_state(source),
         SelectedObservationContentBudget::new(1, 1, 4),
     ) {
         Ok(_) => {
@@ -899,7 +888,7 @@ fn selected_observation_rejects_opaque_foreign_and_mutated_measures_providers() 
     ))
     .expect("acquire foreign provider state");
     let foreign_binding = ObservationSourceBinding::new(
-        source_state(source),
+        source_ordinal(source),
         content_budget_for_rows(&problem, source, 1, 1),
     );
     assert!(matches!(
@@ -915,7 +904,7 @@ fn selected_observation_rejects_opaque_foreign_and_mutated_measures_providers() 
         .expect("acquire mutable provider before mutation");
     mutable_provider.mutate_science(92, 0.25);
     let mutated_binding = ObservationSourceBinding::new(
-        source_state(source),
+        source_ordinal(source),
         content_budget_for_rows(&problem, source, 1, 1),
     );
     assert!(matches!(
@@ -946,7 +935,7 @@ fn selected_observation_rejects_missing_substituted_and_unexpected_ephemeris_bef
         &moving,
         test_measures(&moving),
         vec![ObservationSourceBinding::new(
-            source_state(moving_source),
+            source_ordinal(moving_source),
             budget,
         )],
     )
@@ -958,7 +947,7 @@ fn selected_observation_rejects_missing_substituted_and_unexpected_ephemeris_bef
             measurement_set,
             expected: Some(expected),
             actual: None,
-        } if measurement_set == moving_source.identity() && expected == identity(90)
+        } if measurement_set == moving_source.input_ordinal() && expected == identity(90)
     ));
 
     let substituted = crate::SelectedObservationEphemeris::named(
@@ -971,7 +960,7 @@ fn selected_observation_rejects_missing_substituted_and_unexpected_ephemeris_bef
         &moving,
         test_measures(&moving),
         vec![
-            ObservationSourceBinding::new(source_state(moving_source), budget)
+            ObservationSourceBinding::new(source_ordinal(moving_source), budget)
                 .with_ephemeris(Some(substituted)),
         ],
     )
@@ -983,7 +972,7 @@ fn selected_observation_rejects_missing_substituted_and_unexpected_ephemeris_bef
             measurement_set,
             expected: Some(expected),
             actual: Some(actual),
-        } if measurement_set == moving_source.identity()
+        } if measurement_set == moving_source.input_ordinal()
             && expected == identity(90)
             && actual == identity(91)
     ));
@@ -1000,7 +989,7 @@ fn selected_observation_rejects_missing_substituted_and_unexpected_ephemeris_bef
         &fixed,
         test_measures(&fixed),
         vec![
-            ObservationSourceBinding::new(source_state(fixed_source), budget)
+            ObservationSourceBinding::new(source_ordinal(fixed_source), budget)
                 .with_ephemeris(Some(unexpected)),
         ],
     )
@@ -1012,7 +1001,7 @@ fn selected_observation_rejects_missing_substituted_and_unexpected_ephemeris_bef
             measurement_set,
             expected: None,
             actual: Some(actual),
-        } if measurement_set == fixed_source.identity() && actual == identity(90)
+        } if measurement_set == fixed_source.input_ordinal() && actual == identity(90)
     ));
 }
 
@@ -1038,25 +1027,16 @@ fn selected_observation_accepts_exact_ephemeris_and_certifies_its_retained_charg
         budget.reference_data_budget(),
     )
     .expect("admit exact ephemeris fixture");
-    let binding =
-        ObservationSourceBinding::new(source_state(source), budget).with_ephemeris(Some(ephemeris));
+    let binding = ObservationSourceBinding::new(source_ordinal(source), budget)
+        .with_ephemeris(Some(ephemeris));
     let reference_data_bytes = binding.reference_data_bytes();
     let certificate =
         BoundSelectedObservation::certify_residency(&problem, std::slice::from_ref(&binding))
             .expect("certify exact ephemeris binding");
 
-    assert_eq!(
-        certificate.replay_proof_retained_heap_bytes(),
-        BoundSelectedObservation::replay_proof_retained_heap_bytes(
-            &problem,
-            std::slice::from_ref(&binding)
-        )
-        .expect("same selected-read reservation"),
-    );
-
     assert!(reference_data_bytes > 0);
     assert_eq!(
-        certificate.reference_data_bytes(source.identity()),
+        certificate.reference_data_bytes(source.input_ordinal()),
         Some(reference_data_bytes)
     );
     assert_eq!(
@@ -1089,7 +1069,10 @@ fn measures_provider_growth_during_traversal_prevents_owner_completion() {
     let mut observation = BoundSelectedObservation::open(
         &problem,
         measures,
-        vec![ObservationSourceBinding::new(source_state(source), budget)],
+        vec![ObservationSourceBinding::new(
+            source_ordinal(source),
+            budget,
+        )],
     )
     .expect("bind provider before mutation");
     let mut mutated = false;
@@ -1131,7 +1114,7 @@ fn real_ms_cube_traversal_reports_source_backed_cubic_evaluations() {
         &problem,
         test_measures(&problem),
         vec![ObservationSourceBinding::new(
-            source_state(source),
+            source_ordinal(source),
             content_budget_for_rows(&problem, source, 1, 1),
         )],
     )
@@ -1201,7 +1184,7 @@ fn t35_source_backed_identity_and_nonidentity_traversals_report_native_evaluatio
             problem,
             test_measures(problem),
             vec![ObservationSourceBinding::new(
-                source_state(source),
+                source_ordinal(source),
                 content_budget_for_rows(problem, source, 1, 1),
             )],
         )
@@ -1285,7 +1268,6 @@ fn selected_row_spectral_geometry_uses_exact_selected_centres_including_flagged_
         let selection = source.selection();
         let snapshot = compile_observation(ObservationSnapshotInput::new(
             vec![ObservationSourceInput::new(
-                source.identity(),
                 source.provenance().clone(),
                 ObservationSelection::new(
                     selection.rows().clone(),
@@ -1294,7 +1276,8 @@ fn selected_row_spectral_geometry_uses_exact_selected_centres_including_flagged_
                     vec![SpectralWindowSelection::new(0, selected.clone())],
                     selection.correlations().to_vec(),
                 ),
-                source.generations().clone(),
+                source.columns(),
+                source.corrected_data_present(),
             )],
             vec![(ReferenceDataKind::Measures, identity(90))],
             ModelStateIdentity::Empty,
@@ -1309,7 +1292,7 @@ fn selected_row_spectral_geometry_uses_exact_selected_centres_including_flagged_
         .expect("compile geometry problem");
         let source = &problem.inputs().observation_snapshot().sources()[0];
         let binding = ObservationSourceBinding::new(
-            source_state(source),
+            source_ordinal(source),
             content_budget_for_rows(&problem, source, 1, 1),
         );
         let mut observation = BoundSelectedObservation::open(
@@ -1434,7 +1417,6 @@ fn real_ms_cube_traversal_uses_the_native_field_frame_for_output_conversion() {
     let expected_source = BoundObservationSource::open_with_measures(
         &problem,
         source,
-        &source_state(source),
         &expected_measures,
         expected_shared_bytes,
         expected_budget,
@@ -1450,7 +1432,7 @@ fn real_ms_cube_traversal_uses_the_native_field_frame_for_output_conversion() {
         &problem,
         test_measures(&problem),
         vec![ObservationSourceBinding::new(
-            source_state(source),
+            source_ordinal(source),
             content_budget_for_rows(&problem, source, 1, 1),
         )],
     )
@@ -1583,7 +1565,7 @@ fn real_ms_cubedata_traversal_reports_source_backed_native_evaluations() {
         &problem,
         test_measures(&problem),
         vec![ObservationSourceBinding::new(
-            source_state(source),
+            source_ordinal(source),
             content_budget_for_rows(&problem, source, 1, 1),
         )],
     )
@@ -1636,7 +1618,6 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
     let baseline = BoundObservationSource::open_with_measures(
         &problem,
         source,
-        &source_state(source),
         &baseline_measures,
         baseline_shared_bytes,
         baseline_budget,
@@ -1657,7 +1638,6 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
         BoundObservationSource::open_with_measures(
             &problem,
             source,
-            &source_state(source),
             &large_measures,
             large_shared_bytes,
             baseline_budget,
@@ -1674,7 +1654,6 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
     let large = BoundObservationSource::open_with_measures(
         &problem,
         source,
-        &source_state(source),
         &large_measures,
         large_shared_bytes,
         large_budget,
@@ -1722,7 +1701,7 @@ fn retained_source_slots_are_charged_once_and_rejected_under_a_tight_budget() {
         &problem,
         omitted_measures,
         vec![ObservationSourceBinding::new(
-            source_state(source),
+            source_ordinal(source),
             omitted_budget,
         )],
     ) {
@@ -1754,7 +1733,7 @@ fn retained_source_slots_are_charged_once_and_rejected_under_a_tight_budget() {
         &problem,
         admitted_measures,
         vec![ObservationSourceBinding::new(
-            source_state(source),
+            source_ordinal(source),
             admitted_budget,
         )],
     )
@@ -1799,12 +1778,9 @@ fn consumed_binding_graph_is_charged_once_at_actual_capacity_under_a_tight_budge
         .expect("finite source-slot allocation");
 
     let mut omitted_bindings = Vec::<ObservationSourceBinding>::with_capacity(4_096);
-    let omitted_state = source_state(source);
-    let omitted_binding_graph_bytes = expected_binding_graph_initialization_bytes(
-        std::slice::from_ref(source),
-        std::slice::from_ref(&omitted_state),
-        omitted_bindings.capacity(),
-    );
+    let omitted_state = source_ordinal(source);
+    let omitted_binding_graph_bytes =
+        expected_binding_graph_initialization_bytes(omitted_bindings.capacity());
     let omitted_measures = test_measures(&problem);
     let omitted_shared_bytes =
         selected_observation_shared_bytes(&omitted_measures, source_slot_bytes, 0);
@@ -1828,12 +1804,9 @@ fn consumed_binding_graph_is_charged_once_at_actual_capacity_under_a_tight_budge
     ));
 
     let mut admitted_bindings = Vec::<ObservationSourceBinding>::with_capacity(4_096);
-    let admitted_state = source_state(source);
-    let binding_graph_bytes = expected_binding_graph_initialization_bytes(
-        std::slice::from_ref(source),
-        std::slice::from_ref(&admitted_state),
-        admitted_bindings.capacity(),
-    );
+    let admitted_state = source_ordinal(source);
+    let binding_graph_bytes =
+        expected_binding_graph_initialization_bytes(admitted_bindings.capacity());
     assert_eq!(binding_graph_bytes, omitted_binding_graph_bytes);
     let admitted_measures = test_measures(&problem);
     let measures_retained_bytes = admitted_measures.retained_bytes();
@@ -1884,160 +1857,6 @@ fn consumed_binding_graph_is_charged_once_at_actual_capacity_under_a_tight_budge
 }
 
 #[test]
-fn later_binding_generation_allocations_are_included_in_the_once_only_graph_peak() {
-    let directory = tempfile::tempdir().expect("temporary multi-binding graph fixture");
-    let first_path = directory.path().join("first-binding-graph.ms");
-    let second_path = directory.path().join("second-binding-graph.ms");
-    generate_fixture(&first_path);
-    generate_fixture(&second_path);
-    let problem = compiled_problem_with_sources(&[(&first_path, 1, 2), (&second_path, 2, 2)]);
-    let sources = problem.inputs().observation_snapshot().sources();
-    let source_slot_bytes = Vec::<BoundObservationSource>::with_capacity(sources.len())
-        .capacity()
-        .checked_mul(BoundObservationSource::retained_source_slot_bytes())
-        .expect("finite multi-source slot allocation");
-
-    let first_omitted_state = source_state(&sources[0]);
-    let (second_omitted_state, second_generation_bytes) =
-        source_state_with_generation_capacity(&sources[1], 8_192);
-    let omitted_states = [first_omitted_state, second_omitted_state];
-    let mut omitted_bindings = Vec::<ObservationSourceBinding>::with_capacity(sources.len());
-    let full_binding_graph_bytes = expected_binding_graph_initialization_bytes(
-        sources,
-        &omitted_states,
-        omitted_bindings.capacity(),
-    );
-    let graph_without_second_generations = full_binding_graph_bytes
-        .checked_sub(second_generation_bytes)
-        .expect("second generation allocations belong to the live graph");
-    assert!(
-        second_generation_bytes
-            > sources[1]
-                .generations()
-                .retained_manifest_bytes()
-                .expect("compiled second-source generation manifest"),
-        "the second binding must retain deliberately oversized generation capacities"
-    );
-
-    let omitted_measures = test_measures(&problem);
-    let first_omitted_budget = content_budget_for_rows_with_shared_bytes(
-        &problem,
-        &sources[0],
-        selected_observation_shared_bytes(
-            &omitted_measures,
-            source_slot_bytes,
-            graph_without_second_generations,
-        ),
-        1,
-        1,
-    );
-    let second_omitted_budget = content_budget_for_rows_with_shared_bytes(
-        &problem,
-        &sources[1],
-        super::content_plan::SelectedObservationSharedBytes::NONE,
-        1,
-        1,
-    );
-    let [first_omitted_state, second_omitted_state] = omitted_states;
-    omitted_bindings.push(ObservationSourceBinding::new(
-        first_omitted_state,
-        first_omitted_budget,
-    ));
-    omitted_bindings.push(ObservationSourceBinding::new(
-        second_omitted_state,
-        second_omitted_budget,
-    ));
-    let omitted_error =
-        match BoundSelectedObservation::open(&problem, omitted_measures, omitted_bindings) {
-            Ok(_) => panic!("uncharged later-binding generation capacity must be rejected"),
-            Err(error) => error,
-        };
-    assert!(matches!(
-        omitted_error,
-        super::BoundSelectedObservationError::Source {
-            measurement_set,
-            error,
-        } if measurement_set == sources[0].identity()
-            && matches!(
-                *error,
-                super::BoundObservationSourceError::ContentPlan(
-                    super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
-                )
-            )
-    ));
-
-    let first_admitted_state = source_state(&sources[0]);
-    let (second_admitted_state, admitted_second_generation_bytes) =
-        source_state_with_generation_capacity(&sources[1], 8_192);
-    assert_eq!(admitted_second_generation_bytes, second_generation_bytes);
-    let admitted_states = [first_admitted_state, second_admitted_state];
-    let mut admitted_bindings = Vec::<ObservationSourceBinding>::with_capacity(sources.len());
-    let admitted_graph_bytes = expected_binding_graph_initialization_bytes(
-        sources,
-        &admitted_states,
-        admitted_bindings.capacity(),
-    );
-    assert_eq!(admitted_graph_bytes, full_binding_graph_bytes);
-    let admitted_measures = test_measures(&problem);
-    let measures_retained_bytes = admitted_measures.retained_bytes();
-    let first_admitted_budget = content_budget_for_rows_with_shared_bytes(
-        &problem,
-        &sources[0],
-        selected_observation_shared_bytes(
-            &admitted_measures,
-            source_slot_bytes,
-            admitted_graph_bytes,
-        ),
-        1,
-        1,
-    );
-    let second_admitted_budget = content_budget_for_rows_with_shared_bytes(
-        &problem,
-        &sources[1],
-        super::content_plan::SelectedObservationSharedBytes::NONE,
-        1,
-        1,
-    );
-    let [first_admitted_state, second_admitted_state] = admitted_states;
-    admitted_bindings.push(ObservationSourceBinding::new(
-        first_admitted_state,
-        first_admitted_budget,
-    ));
-    admitted_bindings.push(ObservationSourceBinding::new(
-        second_admitted_state,
-        second_admitted_budget,
-    ));
-    let admitted = BoundSelectedObservation::open(&problem, admitted_measures, admitted_bindings)
-        .expect("admit the complete multi-binding graph exactly once");
-
-    let measurement_set = MeasurementSet::open_retained_read(sources[0].provenance().locator())
-        .expect("open first source for graph accounting comparison");
-    let without_binding_graph = super::content_plan::selected_content_plan(
-        &measurement_set,
-        &problem,
-        &sources[0],
-        super::content_plan::SelectedObservationSharedBytes::new(
-            measures_retained_bytes,
-            0,
-            source_slot_bytes,
-            0,
-        ),
-        first_admitted_budget,
-    )
-    .expect("plan the first source without the shared binding graph");
-    let bound_plan = admitted
-        .source_content_plan(0)
-        .expect("bound first-source content plan");
-    assert_eq!(
-        bound_plan.initialization_scratch_bytes()
-            - without_binding_graph.initialization_scratch_bytes(),
-        admitted_graph_bytes,
-        "outer slots and every nested binding allocation are charged once at the first peak"
-    );
-    assert!(bound_plan.maximum_resident_bytes() <= first_admitted_budget.available_bytes());
-}
-
-#[test]
 fn retained_opened_table_metadata_is_charged_once_for_oversized_variable_references() {
     let directory = tempfile::tempdir().expect("temporary oversized-MEASINFO fixture");
     let path = directory.path().join("oversized-measinfo.ms");
@@ -2057,13 +1876,9 @@ fn retained_opened_table_metadata_is_charged_once_for_oversized_variable_referen
     let baseline_problem = compiled_problem_with_centres(&path, 2, centres.clone());
     let baseline_source = &baseline_problem.inputs().observation_snapshot().sources()[0];
     let baseline_budget = content_budget_for_rows(&baseline_problem, baseline_source, 1, 1);
-    let baseline = BoundObservationSource::open(
-        &baseline_problem,
-        baseline_source,
-        &source_state(baseline_source),
-        baseline_budget,
-    )
-    .expect("bind baseline POINTING source");
+    let baseline =
+        BoundObservationSource::open(&baseline_problem, baseline_source, baseline_budget)
+            .expect("bind baseline POINTING source");
     let baseline_retained_bytes = baseline.content_plan().retained_bytes();
     drop(baseline);
     let baseline_storage_bytes = MeasurementSet::open_retained_read(&path)
@@ -2121,7 +1936,7 @@ fn retained_opened_table_metadata_is_charged_once_for_oversized_variable_referen
     let problem = compiled_problem_with_centres(&path, 2, centres);
     let source = &problem.inputs().observation_snapshot().sources()[0];
     assert!(matches!(
-        BoundObservationSource::open(&problem, source, &source_state(source), baseline_budget,),
+        BoundObservationSource::open(&problem, source, baseline_budget,),
         Err(super::BoundObservationSourceError::ContentPlan(
             super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
                 | super::content_plan::SelectedObservationContentPlanError::InsufficientBudget { .. }
@@ -2129,9 +1944,8 @@ fn retained_opened_table_metadata_is_charged_once_for_oversized_variable_referen
     ));
 
     let inflated_budget = content_budget_for_rows(&problem, source, 1, 1);
-    let inflated =
-        BoundObservationSource::open(&problem, source, &source_state(source), inflated_budget)
-            .expect("bind oversized variable-reference source");
+    let inflated = BoundObservationSource::open(&problem, source, inflated_budget)
+        .expect("bind oversized variable-reference source");
     let inflated_storage_bytes = MeasurementSet::open_retained_read(&path)
         .expect("open inflated retained MeasurementSet")
         .retained_read_metadata_bytes()
@@ -2218,12 +2032,10 @@ fn variable_pointing_reference_string_scratch_is_charged_once_per_peak() {
     let source = &problem.inputs().observation_snapshot().sources()[0];
     let one_row_budget = content_budget_for_rows(&problem, source, 1, 1);
     let two_row_budget = content_budget_for_rows(&problem, source, 2, 1);
-    let one_row =
-        BoundObservationSource::open(&problem, source, &source_state(source), one_row_budget)
-            .expect("bind one-row variable-reference source");
-    let two_rows =
-        BoundObservationSource::open(&problem, source, &source_state(source), two_row_budget)
-            .expect("bind two-row variable-reference source");
+    let one_row = BoundObservationSource::open(&problem, source, one_row_budget)
+        .expect("bind one-row variable-reference source");
+    let two_rows = BoundObservationSource::open(&problem, source, two_row_budget)
+        .expect("bind two-row variable-reference source");
     let expected_scratch = reference_column
         .len()
         .checked_add("J2000".len())
@@ -2249,7 +2061,6 @@ fn variable_pointing_reference_string_scratch_is_charged_once_per_peak() {
         BoundObservationSource::open(
             &problem,
             source,
-            &source_state(source),
             SelectedObservationContentBudget::new(
                 one_row_budget.available_bytes() - expected_scratch,
                 1,
@@ -2288,7 +2099,6 @@ fn retained_predicate_catalog_is_charged_before_construction() {
     let admitted = BoundObservationSource::open(
         &problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&problem, source, 1, 1),
     )
     .expect("bind source with predicate allowance");
@@ -2305,230 +2115,11 @@ fn retained_predicate_catalog_is_charged_before_construction() {
         BoundObservationSource::open(
             &problem,
             source,
-            &source_state(source),
             SelectedObservationContentBudget::new(old_unaccounted_budget, 1, 4),
         ),
         Err(super::BoundObservationSourceError::ContentPlan(
             super::content_plan::SelectedObservationContentPlanError::InsufficientBudget { .. }
         ))
-    ));
-}
-
-#[test]
-fn post_compile_source_generation_changes_are_rejected_before_planning_or_streaming() {
-    let directory = tempfile::tempdir().expect("temporary stale-generation fixture");
-    let path = directory.path().join("stale-generations.ms");
-    generate_fixture(&path);
-    let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let changed_generation = identity(201);
-    let changes = [
-        (
-            "DATA",
-            generations_with_changed_column(source, MsColumnKind::Data, changed_generation),
-        ),
-        (
-            "FLAG",
-            generations_with_changed_column(source, MsColumnKind::Flag, changed_generation),
-        ),
-        (
-            "WEIGHT",
-            generations_with_changed_column(source, MsColumnKind::Weight, changed_generation),
-        ),
-        (
-            "POINTING metadata",
-            generations_with_changed_metadata(
-                source,
-                MetadataTableKind::Pointing,
-                changed_generation,
-            ),
-        ),
-        (
-            "consistency token",
-            SourceGenerations::new(
-                ConsistencyToken::new(changed_generation),
-                source.generations().columns().clone(),
-                source.generations().metadata_generations().to_vec(),
-                source.generations().model_column(),
-            ),
-        ),
-    ];
-
-    for (changed, generations) in changes {
-        let current = ObservationSourceState::new(
-            source.identity(),
-            source.selection().rows().clone(),
-            generations,
-        );
-        let error = match BoundObservationSource::open(
-            &problem,
-            source,
-            &current,
-            SelectedObservationContentBudget::new(1, 1, 4),
-        ) {
-            Ok(_) => panic!("a post-compile generation change must fail before budget admission"),
-            Err(error) => error,
-        };
-        assert!(
-            matches!(
-                error,
-                super::BoundObservationSourceError::StaleSourceGenerations
-            ),
-            "{changed} change returned {error:?}"
-        );
-    }
-}
-
-#[test]
-fn completed_model_data_write_does_not_stale_selected_observation_reads() {
-    let directory = tempfile::tempdir().expect("temporary model-generation fixture");
-    let path = directory.path().join("advanced-model-generation.ms");
-    generate_fixture(&path);
-    let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let changed_generation = identity(204);
-    let current = ObservationSourceState::new(
-        source.identity(),
-        source.selection().rows().clone(),
-        SourceGenerations::new(
-            ConsistencyToken::new(changed_generation),
-            source.generations().columns().clone(),
-            source.generations().metadata_generations().to_vec(),
-            ModelColumnState::Present(changed_generation),
-        ),
-    );
-
-    BoundObservationSource::open(
-        &problem,
-        source,
-        &current,
-        content_budget_for_rows(&problem, source, 1, 1),
-    )
-    .expect("MODEL_DATA is a write precondition, not a selected-observation input");
-}
-
-#[test]
-fn post_compile_flag_storage_mutation_with_fresh_generation_is_rejected() {
-    let directory = tempfile::tempdir().expect("temporary mutated-FLAG fixture");
-    let path = directory.path().join("mutated-flag.ms");
-    generate_fixture(&path);
-    let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-
-    let mut measurement_set = MeasurementSet::open(&path).expect("open fixture for FLAG mutation");
-    let mut flags = match measurement_set
-        .main_table()
-        .cell_accessor(0, "FLAG")
-        .and_then(|cell| cell.array())
-        .expect("read compiled FLAG cell")
-        .clone()
-    {
-        ArrayValue::Bool(flags) => flags,
-        other => panic!("FLAG must be Bool, found {:?}", other.primitive_type()),
-    };
-    let first = flags.iter_mut().next().expect("nonempty FLAG cell");
-    *first = !*first;
-    measurement_set
-        .main_table_mut()
-        .cell_accessor_mut(0, "FLAG")
-        .expect("open FLAG cell for mutation")
-        .set(Value::Array(ArrayValue::Bool(flags)))
-        .expect("mutate FLAG after compilation");
-    measurement_set
-        .save()
-        .expect("persist post-compile FLAG mutation");
-    drop(measurement_set);
-
-    let current = ObservationSourceState::new(
-        source.identity(),
-        source.selection().rows().clone(),
-        generations_with_changed_column(source, MsColumnKind::Flag, identity(202)),
-    );
-    let error = match BoundObservationSource::open(
-        &problem,
-        source,
-        &current,
-        SelectedObservationContentBudget::new(1, 1, 4),
-    ) {
-        Ok(_) => panic!("fresh FLAG generation must reject mutated storage before planning"),
-        Err(error) => error,
-    };
-
-    assert!(matches!(
-        error,
-        super::BoundObservationSourceError::StaleSourceGenerations
-    ));
-}
-
-#[test]
-fn post_compile_pointing_storage_mutation_with_fresh_generation_is_rejected() {
-    let directory = tempfile::tempdir().expect("temporary mutated-POINTING fixture");
-    let path = directory.path().join("mutated-pointing.ms");
-    generate_fixture(&path);
-    let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-
-    let mut measurement_set =
-        MeasurementSet::open(&path).expect("open fixture for POINTING mutation");
-    measurement_set
-        .pointing_mut()
-        .expect("POINTING subtable")
-        .set_array(0, "DIRECTION", direction_array([0.125, -0.25]))
-        .expect("mutate POINTING after compilation");
-    measurement_set
-        .save()
-        .expect("persist post-compile POINTING mutation");
-    drop(measurement_set);
-
-    let current = ObservationSourceState::new(
-        source.identity(),
-        source.selection().rows().clone(),
-        generations_with_changed_metadata(source, MetadataTableKind::Pointing, identity(203)),
-    );
-    let error = match BoundObservationSource::open(
-        &problem,
-        source,
-        &current,
-        SelectedObservationContentBudget::new(1, 1, 4),
-    ) {
-        Ok(_) => panic!("fresh POINTING generation must reject mutated metadata before planning"),
-        Err(error) => error,
-    };
-
-    assert!(matches!(
-        error,
-        super::BoundObservationSourceError::StaleSourceGenerations
-    ));
-}
-
-#[test]
-fn post_compile_selected_row_change_is_rejected_before_streaming() {
-    let directory = tempfile::tempdir().expect("temporary stale-row fixture");
-    let path = directory.path().join("stale-rows.ms");
-    generate_fixture(&path);
-    let problem = compiled_problem(&path, 2);
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-    let changed_rows = SelectedRows::from_ordered_main_rows(2, [SelectedMainRow::new(0, 0)])
-        .expect("changed current row manifest");
-    let current = ObservationSourceState::new(
-        source.identity(),
-        changed_rows,
-        source.generations().clone(),
-    );
-
-    let error = match BoundObservationSource::open(
-        &problem,
-        source,
-        &current,
-        SelectedObservationContentBudget::new(1, 1, 4),
-    ) {
-        Ok(_) => panic!("a post-compile selection change must fail before budget admission"),
-        Err(error) => error,
-    };
-
-    assert!(matches!(
-        error,
-        super::BoundObservationSourceError::StaleSelectedRows
     ));
 }
 
@@ -2600,7 +2191,6 @@ fn terminal_poll_failure_prevents_owner_minted_completion() {
     let bound = BoundObservationSource::open(
         &problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&problem, source, 2, 1),
     )
     .expect("bind terminal-poll source");
@@ -2629,14 +2219,13 @@ fn terminal_poll_failure_prevents_owner_minted_completion() {
 
 #[test]
 #[cfg(unix)]
-fn owner_rebound_requires_exhaustive_proof_and_fresh_locked_state() {
-    let directory = tempfile::tempdir().expect("temporary owner-rebound fixture");
-    let path = directory.path().join("owner-rebound.ms");
+fn replay_proof_requires_one_exhaustive_traversal_and_replays_it() {
+    let directory = tempfile::tempdir().expect("temporary replay-proof fixture");
+    let path = directory.path().join("replay-proof.ms");
     generate_fixture(&path);
-    initialize_measurement_set_owner_manifest(&path).expect("initialize selected owner");
     let request = owner_resolution_request(&path, 2);
-    let (problem, access) = owner_problem_and_access(request.clone());
-    let mut selected = access.open(&problem).expect("open owner-validated source");
+    let (problem, access) = owner_problem_and_access(request);
+    let mut selected = access.open(&problem).expect("open resolved source");
     let mut consumed = 0_usize;
 
     let partial = selected
@@ -2653,50 +2242,15 @@ fn owner_rebound_requires_exhaustive_proof_and_fresh_locked_state() {
 
     let initial = selected
         .traverse(&problem, |_| Ok::<_, Infallible>(()))
-        .expect("exhaustive owner traversal");
-    let proof = initial
+        .expect("exhaustive traversal");
+    initial
         .replay_proof()
-        .expect("exhaustive owner traversal mints replay proof");
-    assert!(
-        proof.authorize_rebound_completion(&initial).is_none(),
-        "the durable proof alone cannot authorize its original completion"
-    );
-    drop(selected);
-
-    let (fresh_problem, fresh_access) = owner_problem_and_access(request.clone());
-    assert_eq!(fresh_problem.problem_id(), problem.problem_id());
-    let mut rebound = fresh_access
-        .rebind(&problem, &proof)
-        .expect("fresh locked owner state authorizes the opaque proof");
-    assert!(
-        !rebound.can_resume_after(&initial),
-        "rebind must mint a fresh attempt-local access binding"
-    );
-    let rebound_completion = rebound
+        .expect("an exhaustive traversal mints the replay proof");
+    let replayed = selected
         .traverse(&problem, |_| Ok::<_, Infallible>(()))
-        .expect("freshly rebound traversal remains exhaustive");
-    assert!(!initial.same_access_binding(&rebound_completion));
-    let authorization = proof
-        .authorize_rebound_completion(&rebound_completion)
-        .expect("only the freshly rebound terminal completion authorizes generation and count");
-    assert_eq!(authorization.sample_count(), initial.sample_count());
-    assert_eq!(authorization.sample_count(), initial.sample_count());
-    drop(rebound);
-
-    let (_, stale_access) = owner_problem_and_access(request);
-    external_locked_keyword_mutation(&path);
-    let error = match stale_access.rebind(&problem, &proof) {
-        Ok(_) => panic!("fresh-lock rebind must close the resolve/open mutation gap"),
-        Err(error) => error,
-    };
-    let super::BoundSelectedObservationError::Source { error, .. } = error else {
-        panic!("unexpected rebound failure: {error:?}")
-    };
-    assert!(matches!(
-        error.as_ref(),
-        super::BoundObservationSourceError::OwnerState(owner)
-            if matches!(owner.as_ref(), crate::ObservationOwnerError::ModificationCounterMismatch { table, .. } if table == "MAIN")
-    ));
+        .expect("replayed traversal remains exhaustive");
+    assert!(initial.precedes(&replayed));
+    assert_eq!(replayed.sample_count(), initial.sample_count());
 }
 
 #[test]
@@ -2741,7 +2295,7 @@ fn row_manifest_validation_occurs_in_the_sole_value_traversal() {
     .expect("compile one-pass problem");
     let source = &problem.inputs().observation_snapshot().sources()[0];
     let binding = ObservationSourceBinding::new(
-        source_state(source),
+        source_ordinal(source),
         bound_content_budget_for_rows(&problem, source, 1, 1),
     );
 
@@ -2780,20 +2334,12 @@ fn selected_observation_residency_is_cardinality_independent_and_schedule_invari
     let small_source = &small_problem.inputs().observation_snapshot().sources()[0];
     let synchronous_budget = content_budget_for_rows(&small_problem, small_source, 1, 1);
     let double_buffered_budget = content_budget_for_rows(&small_problem, small_source, 1, 2);
-    let synchronous = BoundObservationSource::open(
-        &small_problem,
-        small_source,
-        &source_state(small_source),
-        synchronous_budget,
-    )
-    .expect("bind synchronous selected observation");
-    let double_buffered = BoundObservationSource::open(
-        &small_problem,
-        small_source,
-        &source_state(small_source),
-        double_buffered_budget,
-    )
-    .expect("bind double-buffered selected observation");
+    let synchronous =
+        BoundObservationSource::open(&small_problem, small_source, synchronous_budget)
+            .expect("bind synchronous selected observation");
+    let double_buffered =
+        BoundObservationSource::open(&small_problem, small_source, double_buffered_budget)
+            .expect("bind double-buffered selected observation");
     assert_eq!(synchronous.content_plan().rows_per_block(), 1);
     assert_eq!(double_buffered.content_plan().rows_per_block(), 1);
     assert_eq!(synchronous.content_plan().maximum_live_blocks(), 1);
@@ -2857,11 +2403,11 @@ fn selected_observation_residency_is_cardinality_independent_and_schedule_invari
     );
 
     let synchronous_plan = ObservationSourceBinding::new(
-        source_state(small_source),
+        source_ordinal(small_source),
         bound_content_budget_for_rows(&small_problem, small_source, 1, 1),
     );
     let double_buffered_plan = ObservationSourceBinding::new(
-        source_state(small_source),
+        source_ordinal(small_source),
         bound_content_budget_for_rows(&small_problem, small_source, 1, 2),
     );
     let mut synchronous_observation = BoundSelectedObservation::open(
@@ -2895,13 +2441,8 @@ fn selected_observation_residency_is_cardinality_independent_and_schedule_invari
     let large_problem = compiled_problem(&large_path, 64);
     let large_source = &large_problem.inputs().observation_snapshot().sources()[0];
     let large_budget = content_budget_for_rows(&large_problem, large_source, 1, 1);
-    let large = BoundObservationSource::open(
-        &large_problem,
-        large_source,
-        &source_state(large_source),
-        large_budget,
-    )
-    .expect("bind large selected observation");
+    let large = BoundObservationSource::open(&large_problem, large_source, large_budget)
+        .expect("bind large selected observation");
     assert_eq!(
         large.content_plan().bytes_per_row(),
         synchronous.content_plan().bytes_per_row(),
@@ -2939,13 +2480,9 @@ fn selected_observation_residency_is_cardinality_independent_and_schedule_invari
         synchronous_budget.available_bytes()
     );
     assert!(large.content_plan().maximum_resident_bytes() <= large_budget.available_bytes());
-    let large_with_small_budget = BoundObservationSource::open(
-        &large_problem,
-        large_source,
-        &source_state(large_source),
-        synchronous_budget,
-    )
-    .expect("compact selection admits the larger source under the same one-row budget");
+    let large_with_small_budget =
+        BoundObservationSource::open(&large_problem, large_source, synchronous_budget)
+            .expect("compact selection admits the larger source under the same one-row budget");
     assert_eq!(
         large_with_small_budget.content_plan().rows_per_block(),
         synchronous.content_plan().rows_per_block()
@@ -2968,7 +2505,7 @@ fn numeric_block_consumption_preserves_v10_without_unused_pa_and_rejects_failed_
     let problem = compiled_problem(&path, 4);
     let source = &problem.inputs().observation_snapshot().sources()[0];
     let binding = ObservationSourceBinding::new(
-        source_state(source),
+        source_ordinal(source),
         bound_content_budget_for_rows(&problem, source, 1, 1),
     );
     let open = || {
@@ -3044,7 +2581,7 @@ fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
     let problem = compiled_problem(&path, 17);
     let source = &problem.inputs().observation_snapshot().sources()[0];
     let binding = ObservationSourceBinding::new(
-        source_state(source),
+        source_ordinal(source),
         bound_content_budget_for_rows(&problem, source, 17, 1),
     );
     let selected =
@@ -3160,7 +2697,7 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
     let problem = compiled_problem(&path, 4);
     let source = &problem.inputs().observation_snapshot().sources()[0];
     let binding = ObservationSourceBinding::new(
-        source_state(source),
+        source_ordinal(source),
         bound_content_budget_for_rows(&problem, source, 1, 1),
     );
     let mut scalar =
@@ -3292,7 +2829,6 @@ fn windowed_block_stream_exhausts_rows_without_reading_disjoint_payload() {
     let directory = tempfile::tempdir().expect("temporary disjoint-window fixture");
     let path = directory.path().join("disjoint-window.ms");
     generate_fixture_with_rows(&path, 4);
-    initialize_measurement_set_owner_manifest(&path).expect("initialize disjoint-window owner");
     let (problem, access) = owner_problem_and_access(owner_resolution_request(&path, 4));
     let observation = access
         .open(&problem)
@@ -3428,7 +2964,6 @@ fn windowed_index_ranges_bound_rows_by_the_actual_channel_window() {
     let directory = tempfile::tempdir().expect("temporary indexed-window fixture");
     let path = directory.path().join("indexed-window-row-bound.ms");
     generate_fixture_with_rows(&path, 6);
-    initialize_measurement_set_owner_manifest(&path).expect("initialize indexed-window owner");
     let (problem, access) = owner_problem_and_access(owner_resolution_request_with_channels(
         &path,
         6,
@@ -3524,7 +3059,7 @@ fn borrowed_and_indexed_run_windows_preserve_complete_groups_across_row_splits_a
     let problem = compiled_problem(&path, 5);
     let source = &problem.inputs().observation_snapshot().sources()[0];
     let binding = ObservationSourceBinding::new(
-        source_state(source),
+        source_ordinal(source),
         bound_content_budget_for_rows(&problem, source, 5, 1),
     );
     let observation =
@@ -3657,7 +3192,7 @@ fn borrowed_source_ranges_reject_invalid_windows_and_propagate_consumer_failure(
     let problem = compiled_problem(&path, 2);
     let snapshot_source = &problem.inputs().observation_snapshot().sources()[0];
     let binding = ObservationSourceBinding::new(
-        source_state(snapshot_source),
+        source_ordinal(snapshot_source),
         bound_content_budget_for_rows(&problem, snapshot_source, 2, 1),
     );
     let observation =
@@ -3738,19 +3273,12 @@ fn borrowed_source_inspection_preserves_rebound_sample_counts_and_completion() {
     let directory = tempfile::tempdir().expect("borrowed rebound fixture");
     let path = directory.path().join("borrowed-rebound.ms");
     generate_fixture_with_rows(&path, 3);
-    initialize_measurement_set_owner_manifest(&path).expect("initialize borrowed rebound owner");
     let request = owner_resolution_request(&path, 3);
-    let (problem, access) = owner_problem_and_access(request.clone());
+    let (problem, access) = owner_problem_and_access(request);
     let mut observation = access.open(&problem).expect("open borrowed rebound source");
     let initial = observation
         .traverse(&problem, |_| Ok::<_, Infallible>(()))
         .expect("initial exhaustive source inspection");
-    let proof = initial.replay_proof().expect("initial replay proof");
-    drop(observation);
-    let (_, access) = owner_problem_and_access(request);
-    let observation = access
-        .rebind(&problem, &proof)
-        .expect("rebind selected source");
     let (mut source, mut consumer) = observation
         .into_block_stream(&problem)
         .expect("split borrowed rebound source");
@@ -3770,11 +3298,7 @@ fn borrowed_source_inspection_preserves_rebound_sample_counts_and_completion() {
     let (_, completion) = consumer
         .complete(source.complete().expect("rebound terminal"))
         .expect("complete borrowed rebound source");
-    let authorization = proof
-        .authorize_rebound_completion(&completion)
-        .expect("ordered borrowed windows preserve rebound authorization");
-    assert_eq!(authorization.sample_count(), initial.sample_count());
-    assert_eq!(authorization.sample_count(), initial.sample_count());
+    assert_eq!(completion.sample_count(), initial.sample_count());
 }
 
 fn collect_indexed_samples(
@@ -3887,17 +3411,16 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
         .capacity()
         .checked_mul(BoundObservationSource::retained_source_slot_bytes())
         .expect("finite source-slot allocation");
-    let binding_states: Vec<_> = sources.iter().map(source_state).collect();
     let binding_capacity = Vec::<ObservationSourceBinding>::with_capacity(sources.len()).capacity();
     let binding_graph_initialization_bytes =
-        expected_binding_graph_initialization_bytes(sources, &binding_states, binding_capacity);
+        expected_binding_graph_initialization_bytes(binding_capacity);
     let one_row_measures = test_measures(&problem);
     let one_row_bindings: Vec<_> = sources
         .iter()
         .enumerate()
         .map(|(source_index, source)| {
             ObservationSourceBinding::new(
-                source_state(source),
+                source_ordinal(source),
                 content_budget_for_rows_with_shared_bytes(
                     &problem,
                     source,
@@ -3929,7 +3452,7 @@ fn retained_selected_observation_owns_canonical_multi_source_order() {
         .enumerate()
         .map(|(source_index, source)| {
             ObservationSourceBinding::new(
-                source_state(source),
+                source_ordinal(source),
                 content_budget_for_rows_with_shared_bytes(
                     &problem,
                     source,
@@ -4125,7 +3648,6 @@ fn retained_observation_cannot_be_rebound_to_equivalent_cross_provenance_problem
         .expect("selected provenance-test rows");
         let source = source_input_with_selected_rows_filter_and_request(
             &path,
-            1,
             selected_rows,
             RowSelection::new(
                 IdSelection::All,
@@ -4173,7 +3695,7 @@ fn retained_observation_cannot_be_rebound_to_equivalent_cross_provenance_problem
     );
     let source = &first_problem.inputs().observation_snapshot().sources()[0];
     let binding = ObservationSourceBinding::new(
-        source_state(source),
+        source_ordinal(source),
         bound_content_budget_for_rows(&first_problem, source, 2, 1),
     );
     let mut retained = BoundSelectedObservation::open(
@@ -4221,7 +3743,6 @@ fn retained_selected_samples_evaluate_fixed_centres_and_uvw_coordinates() {
     let bound = BoundObservationSource::open(
         &problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&problem, source, 2, 1),
     )
     .expect("bind fixed-centre source");
@@ -4270,7 +3791,6 @@ fn retained_mosaic_projection_uses_girar_uvw_with_adjoint_phase_sign() {
     let bound = BoundObservationSource::open(
         &problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&problem, source, 2, 1),
     )
     .expect("bind mosaic-projection source");
@@ -4323,7 +3843,6 @@ fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
     let samples = BoundObservationSource::open(
         &problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&problem, source, 1, 1),
     )
     .expect("bind moving-centre source")
@@ -4410,14 +3929,12 @@ fn retained_selected_samples_preserve_bounded_per_antenna_pointing_directions() 
     let one_row = BoundObservationSource::open(
         &problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&problem, source, 1, 1),
     )
     .expect("bind one-row POINTING stream");
     let two_rows = BoundObservationSource::open(
         &problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&problem, source, 2, 1),
     )
     .expect("bind two-row POINTING stream");
@@ -4490,7 +4007,6 @@ fn observation_pointing_missing_policy_is_explicit_and_fail_closed() {
     let fallback = BoundObservationSource::open(
         &fallback_problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&fallback_problem, source, 2, 1),
     )
     .expect("bind fallback POINTING source")
@@ -4522,7 +4038,6 @@ fn observation_pointing_missing_policy_is_explicit_and_fail_closed() {
     let error = BoundObservationSource::open(
         &rejecting_problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&rejecting_problem, source, 2, 1),
     )
     .expect("bind rejecting POINTING source")
@@ -4618,7 +4133,6 @@ fn observation_pointing_interpolates_each_antenna_on_the_shortest_arc() {
     let samples = BoundObservationSource::open(
         &problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&problem, source, 2, 1),
     )
     .expect("bind interpolated POINTING source")
@@ -4730,7 +4244,6 @@ fn selected_rows_pair_owner_derived_heterogeneous_apertures_with_antenna_pointin
     let samples = BoundObservationSource::open(
         &problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&problem, source, 2, 1),
     )
     .expect("bind heterogeneous source")
@@ -4776,14 +4289,12 @@ fn multi_spw_selection_is_block_invariant_across_prediction_and_residual_replays
     let one_row = BoundObservationSource::open(
         &problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&problem, source, 1, 1),
     )
     .expect("bind one-row multi-SPW stream");
     let three_rows = BoundObservationSource::open(
         &problem,
         source,
-        &source_state(source),
         content_budget_for_rows(&problem, source, 3, 1),
     )
     .expect("bind three-row multi-SPW stream");
@@ -5131,25 +4642,6 @@ fn owner_problem_and_access(
     (problem, access)
 }
 
-#[cfg(unix)]
-fn external_locked_keyword_mutation(path: &std::path::Path) {
-    let mut table = Table::open_with_lock(
-        TableOptions::new(path),
-        LockOptions::new(LockMode::UserLocking),
-    )
-    .expect("open external owner writer");
-    assert!(
-        table
-            .lock(LockType::Write, 0)
-            .expect("acquire external owner write lock")
-    );
-    table.keywords_mut().upsert(
-        "EXTERNAL_OWNER_REBOUND_MUTATION",
-        Value::Scalar(ScalarValue::Bool(true)),
-    );
-    table.unlock().expect("commit external owner mutation");
-}
-
 fn main_time_mjd_seconds(measurement_set: &MeasurementSet, row: usize) -> f64 {
     match measurement_set
         .main_table()
@@ -5165,55 +4657,9 @@ fn main_time_mjd_seconds(measurement_set: &MeasurementSet, row: usize) -> f64 {
     }
 }
 
-fn source_state(source: &ObservationSource) -> ObservationSourceState {
-    ObservationSourceState::new(
-        source.identity(),
-        source.selection().rows().clone(),
-        source.generations().clone(),
-    )
-}
-
-fn source_state_with_generation_capacity(
-    source: &ObservationSource,
-    capacity: usize,
-) -> (ObservationSourceState, usize) {
-    let source_generations = source.generations();
-    let selected_columns = source_generations.columns();
-    let mut column_generations = Vec::with_capacity(capacity);
-    column_generations.extend_from_slice(selected_columns.generations());
-    let mut metadata_generations = Vec::with_capacity(capacity);
-    metadata_generations.extend_from_slice(source_generations.metadata_generations());
-    let retained_generation_bytes = column_generations
-        .capacity()
-        .checked_mul(size_of::<ColumnGeneration>())
-        .and_then(|bytes| {
-            metadata_generations
-                .capacity()
-                .checked_mul(size_of::<MetadataGeneration>())
-                .and_then(|metadata| bytes.checked_add(metadata))
-        })
-        .expect("finite oversized generation allocations");
-    let state = ObservationSourceState::new(
-        source.identity(),
-        source.selection().rows().clone(),
-        SourceGenerations::new(
-            source_generations.consistency_token(),
-            SelectedColumns::new(
-                selected_columns.visibility(),
-                selected_columns.flags(),
-                selected_columns.weights(),
-                column_generations,
-            ),
-            metadata_generations,
-            source_generations.model_column(),
-        ),
-    );
-    assert_eq!(
-        state.additional_retained_heap_bytes([source.selection().rows()]),
-        Some(retained_generation_bytes),
-        "the compact row manifest is shared while generation vectors remain binding-owned"
-    );
-    (state, retained_generation_bytes)
+/// The snapshot position a binding names for `source`.
+fn source_ordinal(source: &ObservationSource) -> usize {
+    source.input_ordinal()
 }
 
 fn test_measures(
@@ -5263,42 +4709,17 @@ fn bound_content_budget_for_rows(
     )
 }
 
-fn single_binding_graph_initialization_bytes(source: &ObservationSource) -> usize {
-    let state = source_state(source);
+fn single_binding_graph_initialization_bytes(_source: &ObservationSource) -> usize {
     expected_binding_graph_initialization_bytes(
-        std::slice::from_ref(source),
-        std::slice::from_ref(&state),
         Vec::<ObservationSourceBinding>::with_capacity(1).capacity(),
     )
 }
 
-fn expected_binding_graph_initialization_bytes(
-    sources: &[ObservationSource],
-    states: &[ObservationSourceState],
-    binding_capacity: usize,
-) -> usize {
-    assert_eq!(sources.len(), states.len());
-    let binding_slot_bytes = binding_capacity
+/// The binding slots; a binding without a POINTING query domain owns no heap.
+fn expected_binding_graph_initialization_bytes(binding_capacity: usize) -> usize {
+    binding_capacity
         .checked_mul(size_of::<ObservationSourceBinding>())
-        .expect("finite binding slot allocation");
-    states
-        .iter()
-        .enumerate()
-        .try_fold(binding_slot_bytes, |bytes, (state_index, state)| {
-            state
-                .additional_retained_heap_bytes(
-                    sources
-                        .iter()
-                        .map(|source| source.selection().rows())
-                        .chain(
-                            states[..state_index]
-                                .iter()
-                                .map(ObservationSourceState::selected_rows),
-                        ),
-                )
-                .and_then(|additional| bytes.checked_add(additional))
-        })
-        .expect("finite binding graph allocation")
+        .expect("finite binding slot allocation")
 }
 
 fn selected_observation_shared_bytes(
@@ -5581,7 +5002,6 @@ fn source_input_with_selected_rows_and_filter(
 ) -> ObservationSourceInput {
     source_input_with_selected_rows_filter_and_request(
         path,
-        source,
         selected_rows,
         rows_filter,
         scoped_identity(source, 2),
@@ -5590,67 +5010,32 @@ fn source_input_with_selected_rows_and_filter(
 
 fn source_input_with_selected_rows_filter_and_request(
     path: &std::path::Path,
-    source: u8,
     selected_rows: SelectedRows,
     rows_filter: RowSelection,
     selection_request: LogicalIdentity,
 ) -> ObservationSourceInput {
-    let selection = fixture_selection(selected_rows, rows_filter);
-    let columns = [
-        MsColumnKind::Data,
-        MsColumnKind::Flag,
-        MsColumnKind::FlagRow,
-        MsColumnKind::Weight,
-        MsColumnKind::Uvw,
-        MsColumnKind::Time,
-        MsColumnKind::TimeCentroid,
-        MsColumnKind::Interval,
-        MsColumnKind::Exposure,
-        MsColumnKind::FieldId,
-        MsColumnKind::DataDescriptionId,
-        MsColumnKind::Antenna1,
-        MsColumnKind::Antenna2,
-        MsColumnKind::Feed1,
-        MsColumnKind::Feed2,
-        MsColumnKind::ScanNumber,
-        MsColumnKind::StateId,
-        MsColumnKind::ObservationId,
-        MsColumnKind::ArrayId,
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(index, kind)| ColumnGeneration::new(kind, scoped_identity(source, 10 + index as u8)))
-    .collect();
-    let metadata = [
-        MetadataTableKind::Antenna,
-        MetadataTableKind::DataDescription,
-        MetadataTableKind::Feed,
-        MetadataTableKind::Field,
-        MetadataTableKind::Observation,
-        MetadataTableKind::Pointing,
-        MetadataTableKind::Polarization,
-        MetadataTableKind::SpectralWindow,
-        MetadataTableKind::State,
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(index, kind)| MetadataGeneration::new(kind, scoped_identity(source, 40 + index as u8)))
-    .collect();
+    fixture_source_input(
+        path,
+        fixture_selection(selected_rows, rows_filter),
+        selection_request,
+    )
+}
+
+/// A fixture source reading `DATA` and `WEIGHT`, with no `CORRECTED_DATA`.
+fn fixture_source_input(
+    path: &std::path::Path,
+    selection: ObservationSelection,
+    selection_request: LogicalIdentity,
+) -> ObservationSourceInput {
     ObservationSourceInput::new(
-        MeasurementSetIdentity::new(scoped_identity(source, 1)),
         ObservationSourceProvenance::new(path.display().to_string(), selection_request),
         selection,
-        SourceGenerations::new(
-            ConsistencyToken::new(scoped_identity(source, 3)),
-            SelectedColumns::new(
-                VisibilityColumn::Data,
-                FlagPolicy::FlagOrFlagRow,
-                WeightColumn::Weight,
-                columns,
-            ),
-            metadata,
-            ModelColumnState::Absent,
+        SelectedColumns::new(
+            VisibilityColumn::Data,
+            FlagPolicy::FlagOrFlagRow,
+            WeightColumn::Weight,
         ),
+        false,
     )
 }
 
@@ -5678,64 +5063,6 @@ fn fixture_selection_with_channels(
                 CorrelationProduct::new(1, CorrelationType::CircularLl),
             ],
         )],
-    )
-}
-
-fn generations_with_changed_column(
-    source: &ObservationSource,
-    changed: MsColumnKind,
-    generation: LogicalIdentity,
-) -> SourceGenerations {
-    let expected = source.generations();
-    let columns = expected
-        .columns()
-        .generations()
-        .iter()
-        .copied()
-        .map(|current| {
-            if current.kind() == changed {
-                ColumnGeneration::new(changed, generation)
-            } else {
-                current
-            }
-        })
-        .collect();
-    SourceGenerations::new(
-        expected.consistency_token(),
-        SelectedColumns::new(
-            expected.columns().visibility(),
-            expected.columns().flags(),
-            expected.columns().weights(),
-            columns,
-        ),
-        expected.metadata_generations().to_vec(),
-        expected.model_column(),
-    )
-}
-
-fn generations_with_changed_metadata(
-    source: &ObservationSource,
-    changed: MetadataTableKind,
-    generation: LogicalIdentity,
-) -> SourceGenerations {
-    let expected = source.generations();
-    let metadata = expected
-        .metadata_generations()
-        .iter()
-        .copied()
-        .map(|current| {
-            if current.kind() == changed {
-                MetadataGeneration::new(changed, generation)
-            } else {
-                current
-            }
-        })
-        .collect();
-    SourceGenerations::new(
-        expected.consistency_token(),
-        expected.columns().clone(),
-        metadata,
-        expected.model_column(),
     )
 }
 
@@ -5778,62 +5105,7 @@ fn multi_spw_source_input(path: &std::path::Path, source: u8) -> ObservationSour
             ],
         )],
     );
-    let columns = [
-        MsColumnKind::Data,
-        MsColumnKind::Flag,
-        MsColumnKind::FlagRow,
-        MsColumnKind::Weight,
-        MsColumnKind::Uvw,
-        MsColumnKind::Time,
-        MsColumnKind::TimeCentroid,
-        MsColumnKind::Interval,
-        MsColumnKind::Exposure,
-        MsColumnKind::FieldId,
-        MsColumnKind::DataDescriptionId,
-        MsColumnKind::Antenna1,
-        MsColumnKind::Antenna2,
-        MsColumnKind::Feed1,
-        MsColumnKind::Feed2,
-        MsColumnKind::ScanNumber,
-        MsColumnKind::StateId,
-        MsColumnKind::ObservationId,
-        MsColumnKind::ArrayId,
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(index, kind)| ColumnGeneration::new(kind, scoped_identity(source, 10 + index as u8)))
-    .collect();
-    let metadata = [
-        MetadataTableKind::Antenna,
-        MetadataTableKind::DataDescription,
-        MetadataTableKind::Feed,
-        MetadataTableKind::Field,
-        MetadataTableKind::Observation,
-        MetadataTableKind::Pointing,
-        MetadataTableKind::Polarization,
-        MetadataTableKind::SpectralWindow,
-        MetadataTableKind::State,
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(index, kind)| MetadataGeneration::new(kind, scoped_identity(source, 40 + index as u8)))
-    .collect();
-    ObservationSourceInput::new(
-        MeasurementSetIdentity::new(scoped_identity(source, 1)),
-        ObservationSourceProvenance::new(path.display().to_string(), scoped_identity(source, 2)),
-        selection,
-        SourceGenerations::new(
-            ConsistencyToken::new(scoped_identity(source, 3)),
-            SelectedColumns::new(
-                VisibilityColumn::Data,
-                FlagPolicy::FlagOrFlagRow,
-                WeightColumn::Weight,
-                columns,
-            ),
-            metadata,
-            ModelColumnState::Absent,
-        ),
-    )
+    fixture_source_input(path, selection, scoped_identity(source, 2))
 }
 
 fn identity(byte: u8) -> LogicalIdentity {

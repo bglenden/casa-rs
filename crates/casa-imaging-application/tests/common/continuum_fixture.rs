@@ -235,11 +235,6 @@ pub(super) fn measurement_set_fixture(
     measurement_set
         .save_as(&output)
         .expect("persist fixture with production tiled bindings");
-    initialize_measurement_set_owner_manifest(&output).expect("initialize MS owner manifest");
-    MeasurementSet::open(&output)
-        .expect("reopen owned fixture")
-        .save()
-        .expect("preserve owner manifest and production bindings");
 
     let persisted = MeasurementSet::open(&output).expect("inspect persisted fixture");
     for column in ["DATA", "FLAG", "WEIGHT"] {

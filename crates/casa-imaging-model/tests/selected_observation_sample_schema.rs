@@ -1,20 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    CorrelationType, DirectionFrame, Epoch, FrequencyFrame, MeasurementSetIdentity,
-    SelectedImageDomainProjection, SelectedImageDomainProjections, SelectedObservationSample,
-    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedSampleAddress,
-    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection,
-    TimeScale, UvwCoordinateLaw,
+    CorrelationType, DirectionFrame, Epoch, FrequencyFrame, SelectedImageDomainProjection,
+    SelectedImageDomainProjections, SelectedObservationSample, SelectedPhaseCentreProjection,
+    SelectedPredictionTarget, SelectedSampleAddress, SelectedSampleCoordinates,
+    SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection, TimeScale, UvwCoordinateLaw,
 };
-
-mod common;
-
-use common::identity;
 
 #[test]
 fn selected_observation_sample_schema_carries_exact_science_and_provenance() {
-    let measurement_set = MeasurementSetIdentity::new(identity(1));
+    let measurement_set = 1;
     let coordinates = SelectedSampleCoordinates {
         raw_uvw_m: [12.0, -4.0, 2.0],
         density_uvw_m: [12.5, -4.25, 2.25],

@@ -6,23 +6,16 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use casa_imaging_model::{
-    LogicalIdentity, MsColumnKind, ObservationSelection, ObservationSourceState,
-    SequentialContinuumTransform,
-};
-use casa_imaging_reconstruction::ModelGenerationId;
+use casa_imaging_model::{MsColumnKind, ObservationSelection, SequentialContinuumTransform};
 use casa_imaging_runtime::pass::{NativeBlock, SourceError};
-use casa_ms::{
-    SelectedVisibilityWrite, SelectedVisibilityWriteGenerations, SelectedVisibilityWriteTargets,
-};
+use casa_ms::{SelectedVisibilityWrite, SelectedVisibilityWriteTargets};
 use num_complex::Complex32;
 
-/// Where the visibilities go: the selected MeasurementSet, the source state
-/// its readers saw, the selection whose cells are written, and the columns.
+/// Where the visibilities go: the selected MeasurementSet, the selection
+/// whose cells are written, and the columns.
 #[derive(Clone)]
 pub(crate) struct VisibilityWriteTarget {
     pub(crate) path: PathBuf,
-    pub(crate) expected: ObservationSourceState,
     pub(crate) selection: Arc<ObservationSelection>,
     pub(crate) model_data: bool,
     pub(crate) corrected_data: bool,
@@ -42,8 +35,8 @@ pub(crate) struct VisibilityWriter<'a> {
 }
 
 impl<'a> VisibilityWriter<'a> {
-    /// Take the MeasurementSet's write lock and create the columns when
-    /// absent (casa-ms owner rules). `CORRECTED_DATA` holds the output of
+    /// Take the MeasurementSet's write lock; `MODEL_DATA` is created when
+    /// absent, as CASA does. `CORRECTED_DATA` holds the output of
     /// `transform`, so it needs one.
     pub(crate) fn begin(
         target: &VisibilityWriteTarget,
@@ -55,8 +48,6 @@ impl<'a> VisibilityWriter<'a> {
         Ok(Self {
             writer: SelectedVisibilityWrite::begin(
                 &target.path,
-                &target.expected,
-                &target.selection,
                 SelectedVisibilityWriteTargets::new(target.model_data, target.corrected_data),
             )?,
             model_data: target.model_data,
@@ -159,17 +150,9 @@ impl<'a> VisibilityWriter<'a> {
         Ok(())
     }
 
-    /// Flush, record `final_model` as `MODEL_DATA`'s generation and the
-    /// transform contract as `CORRECTED_DATA`'s, and release the lock;
-    /// returns the number of cells written.
-    pub(crate) fn complete(self, final_model: ModelGenerationId) -> Result<u64, SourceError> {
-        self.writer.complete(SelectedVisibilityWriteGenerations {
-            model_data: self.model_data.then(|| final_model.identity()),
-            corrected_data: self
-                .transform
-                .filter(|_| self.corrected_data)
-                .map(|transform| LogicalIdentity::from_bytes(transform.contract_id().as_bytes())),
-        })?;
+    /// Flush and release the lock; returns the number of cells written.
+    pub(crate) fn complete(self) -> Result<u64, SourceError> {
+        self.writer.complete()?;
         Ok(self.samples)
     }
 }

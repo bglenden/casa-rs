@@ -4,6 +4,7 @@
 pub(crate) mod canonical;
 pub(crate) mod data_type;
 pub(crate) mod incremental_stman;
+mod selected_cells;
 pub(crate) mod standard_stman;
 pub(crate) mod stman_aipsio;
 pub(crate) mod stman_array_file;
@@ -46,7 +47,7 @@ use crate::table::{
     ColumnOverride, ColumnOverrides, GeneratedScalarColumn, GeneratedScalarValueRun,
     RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, SelectedArray1DCells,
     SelectedArray1DCellsMut, SelectedArray1DShape, SelectedArray2DCells, SelectedArray2DCellsMut,
-    SelectedArray2DShape, StreamedScalarColumn, StreamedScalarType,
+    SelectedArray2DShape, SelectedReadFootprint, StreamedScalarColumn, StreamedScalarType,
 };
 
 use self::data_type::CasacoreDataType;
@@ -56,6 +57,7 @@ use self::incremental_stman::{
     read_ism_scalar_column_rows, write_ism_file, write_ism_file_indexed,
     write_ism_file_scalar_column_sources,
 };
+pub(crate) use self::selected_cells::{cell_read_footprint, channel_read_footprint};
 use self::standard_stman::{
     read_ssm_array_column_rows, read_ssm_file, read_ssm_file_columns,
     read_ssm_required_scalar_columns_rows, read_ssm_required_scalar_columns_rows_reusing,
@@ -1717,10 +1719,18 @@ impl CompositeStorage {
                             &mut outputs,
                         )?;
                     }
-                    other => {
-                        return Err(StorageError::FormatMismatch(format!(
-                            "required scalar reusable fills do not support data manager {other}"
-                        )));
+                    // StManAipsIO (and any other manager) through the
+                    // general selected-row reader, as casacore reads it.
+                    _ => {
+                        for (_, desc) in &requested {
+                            self.fill_required_scalar_column_rows_from_plain_reader(
+                                table_path,
+                                table_dat,
+                                &desc.col_name,
+                                selected_rows,
+                                &mut outputs,
+                            )?;
+                        }
                     }
                 }
                 loaded.extend(requested.iter().map(|(_, desc)| desc.col_name.as_str()));
@@ -1761,6 +1771,49 @@ impl CompositeStorage {
             }
         }
         fill_result
+    }
+
+    /// Fill one required scalar column's reusable buffer through the general
+    /// selected-row reader. A buffer keeps its type; a column whose stored
+    /// type differs is refused.
+    ///
+    /// The caller prepares a buffer for every requested column, matched by
+    /// the name the column was stored under (casacore's `ColumnSet` original
+    /// name). A column renamed since it was stored has a different current
+    /// name and no buffer under it, and is refused rather than skipped.
+    fn fill_required_scalar_column_rows_from_plain_reader(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        column: &str,
+        selected_rows: &[usize],
+        outputs: &mut HashMap<String, RequiredScalarColumnData>,
+    ) -> Result<(), StorageError> {
+        let Some(buffer) = outputs.get_mut(column) else {
+            return Err(StorageError::FormatMismatch(format!(
+                "required selected-row column '{column}' has no destination: it is stored \
+                 under another name"
+            )));
+        };
+        let values =
+            self.load_plain_scalar_column_rows(table_path, table_dat, column, selected_rows, None)?;
+        if values.is_empty() {
+            match buffer {
+                RequiredScalarColumnData::Bool(values) => values.clear(),
+                RequiredScalarColumnData::Int32(values) => values.clear(),
+                RequiredScalarColumnData::Float32(values) => values.clear(),
+                RequiredScalarColumnData::Float64(values) => values.clear(),
+            }
+            return Ok(());
+        }
+        let read = required_scalar_column_from_optional_scalars(&values, column)?;
+        if std::mem::discriminant(buffer) != std::mem::discriminant(&read) {
+            return Err(StorageError::FormatMismatch(format!(
+                "required selected-row column '{column}' has an incompatible stored type"
+            )));
+        }
+        *buffer = read;
+        Ok(())
     }
 
     pub(crate) fn load_array_column_with_row_hint(
@@ -2972,6 +3025,40 @@ impl CompositeStorage {
         if selected_rows.is_empty() {
             return Ok(Vec::new());
         }
+        if let Some(values) =
+            self.load_selected_array_cells(table_path, table_dat, column, selected_rows)?
+        {
+            return Ok(values);
+        }
+        // A virtual column, or a layout its data manager cannot read row by
+        // row, is read as a whole column.
+        let values = if table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .any(|dm| is_virtual_engine(&dm.type_name))
+        {
+            let snapshot = self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
+            array_column_from_snapshot(&snapshot, column)?
+        } else {
+            self.load_plain_array_column(table_path, table_dat, column, row_hint)?
+        };
+        Ok(select_array_rows(&values, selected_rows))
+    }
+
+    /// Read the whole stored cells of `selected_rows`, row by row.
+    ///
+    /// `None` when only a whole-column read can serve them: a virtual column,
+    /// or a layout its data manager cannot read row by row (an unparsed
+    /// `StManAipsIO` layout, a `StandardStMan` string or record array, or any
+    /// other manager).
+    fn load_selected_array_cells(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        column: &str,
+        selected_rows: &[usize],
+    ) -> Result<Option<Vec<Option<ArrayValue>>>, StorageError> {
         let desc_idx = table_dat
             .table_desc
             .columns
@@ -2993,9 +3080,7 @@ impl CompositeStorage {
             .iter()
             .any(|dm| is_virtual_engine(&dm.type_name))
         {
-            let snapshot = self.load_plain_table_filtered(table_path, table_dat, row_hint, None)?;
-            let values = array_column_from_snapshot(&snapshot, column)?;
-            return Ok(select_array_rows(&values, selected_rows));
+            return Ok(None);
         }
 
         let dm_seq_nr = table_dat
@@ -3044,18 +3129,13 @@ impl CompositeStorage {
                         table_dat.table_desc.columns[*bound_desc_idx].clone()
                     })
                     .collect();
-                if let Some(values) = read_stman_array_column_rows(
+                read_stman_array_column_rows(
                     &data_path,
                     &group_col_descs,
                     target_col_idx,
                     selected_rows,
                     ByteOrder::BigEndian,
-                )? {
-                    return Ok(values);
-                }
-                let values =
-                    self.load_plain_array_column(table_path, table_dat, column, row_hint)?;
-                Ok(select_array_rows(&values, selected_rows))
+                )
             }
             "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan" => {
                 tiled_stman::load_tiled_column_rows(
@@ -3066,30 +3146,22 @@ impl CompositeStorage {
                     desc_idx,
                     selected_rows,
                 )
+                .map(Some)
             }
             "StandardStMan" => {
                 let group_col_descs: Vec<_> = bound_cols
                     .iter()
                     .map(|(bound_desc_idx, _)| &table_dat.table_desc.columns[*bound_desc_idx])
                     .collect();
-                if let Some(values) = read_ssm_array_column_rows(
+                read_ssm_array_column_rows(
                     &data_path,
                     &dm.data,
                     &group_col_descs,
                     target_col_idx,
                     selected_rows,
-                )? {
-                    return Ok(values);
-                }
-                let values =
-                    self.load_plain_array_column(table_path, table_dat, column, row_hint)?;
-                Ok(select_array_rows(&values, selected_rows))
+                )
             }
-            _ => {
-                let values =
-                    self.load_plain_array_column(table_path, table_dat, column, row_hint)?;
-                Ok(select_array_rows(&values, selected_rows))
-            }
+            _ => Ok(None),
         }
     }
 
@@ -3262,22 +3334,23 @@ impl CompositeStorage {
             .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
             .collect();
 
-        match dm.type_name.as_str() {
-            "TiledShapeStMan" => tiled_stman::load_tiled_column_rows_2d_channel_range_typed(
-                table_path,
-                read_metadata,
-                dm,
-                &table_dat.table_desc.columns,
-                &bound_cols,
-                desc_idx,
-                request.selected_rows,
-                request.channel_start,
-                request.channel_count,
-            ),
-            other => Err(StorageError::FormatMismatch(format!(
-                "typed selected 2-D channel reads for column '{}' require TiledShapeStMan, found {other}",
-                request.column
-            ))),
+        match selected_cells::channel_read_footprint(&dm.type_name) {
+            SelectedReadFootprint::Streamed => {
+                tiled_stman::load_tiled_column_rows_2d_channel_range_typed(
+                    table_path,
+                    read_metadata,
+                    dm,
+                    &table_dat.table_desc.columns,
+                    &bound_cols,
+                    desc_idx,
+                    request.selected_rows,
+                    request.channel_start,
+                    request.channel_count,
+                )
+            }
+            SelectedReadFootprint::WholeCells => self
+                .whole_cell_read(table_path, table_dat, column, request.selected_rows)
+                .load_2d(request.channel_start, request.channel_count),
         }
     }
 
@@ -3342,23 +3415,24 @@ impl CompositeStorage {
             .enumerate()
             .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
             .collect();
-        match dm.type_name.as_str() {
-            "TiledShapeStMan" => tiled_stman::fill_tiled_column_rows_2d_channel_range_typed(
-                table_path,
-                read_metadata,
-                dm,
-                &table_dat.table_desc.columns,
-                &bound_cols,
-                desc_idx,
-                request.selected_rows,
-                request.channel_start,
-                request.channel_count,
-                destination,
-            ),
-            other => Err(StorageError::FormatMismatch(format!(
-                "typed selected 2-D channel reads for column '{}' require TiledShapeStMan, found {other}",
-                request.column
-            ))),
+        match selected_cells::channel_read_footprint(&dm.type_name) {
+            SelectedReadFootprint::Streamed => {
+                tiled_stman::fill_tiled_column_rows_2d_channel_range_typed(
+                    table_path,
+                    read_metadata,
+                    dm,
+                    &table_dat.table_desc.columns,
+                    &bound_cols,
+                    desc_idx,
+                    request.selected_rows,
+                    request.channel_start,
+                    request.channel_count,
+                    destination,
+                )
+            }
+            SelectedReadFootprint::WholeCells => self
+                .whole_cell_read(table_path, table_dat, column, request.selected_rows)
+                .fill_2d(request.channel_start, request.channel_count, destination),
         }
     }
 
@@ -3447,10 +3521,11 @@ impl CompositeStorage {
                 desc_idx,
                 request.selected_rows,
             ),
-            other => Err(StorageError::FormatMismatch(format!(
-                "typed selected 1-D reads for column '{}' do not support {other}",
-                request.column
-            ))),
+            // The managers `selected_cells::cell_read_footprint` reports as
+            // `WholeCells`.
+            _ => self
+                .whole_cell_read(table_path, table_dat, column, request.selected_rows)
+                .load_1d(),
         }
     }
 
@@ -3552,10 +3627,11 @@ impl CompositeStorage {
                 request.selected_rows,
                 destination,
             ),
-            other => Err(StorageError::FormatMismatch(format!(
-                "typed selected 1-D reads for column '{}' do not support {other}",
-                request.column
-            ))),
+            // The managers `selected_cells::cell_read_footprint` reports as
+            // `WholeCells`.
+            _ => self
+                .whole_cell_read(table_path, table_dat, column, request.selected_rows)
+                .fill_1d(destination),
         }
     }
 

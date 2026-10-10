@@ -391,7 +391,6 @@ fn selected_row_write_session_persists_bounded_typed_batches() {
     let mut session =
         MeasurementSetWriteSession::start_selected_row_mutation(&mut measurement_set, plan)
             .expect("start mutation");
-    assert!(ms_path.join(".casa-rs-write-incomplete").exists());
     while !session
         .next_mutation_rows()
         .expect("next mutation rows")
@@ -437,8 +436,21 @@ fn selected_row_write_session_persists_bounded_typed_batches() {
     assert_eq!(telemetry.queue_wait_seconds, 0.0);
     assert!(telemetry.producer_seconds >= telemetry.write_seconds);
     assert!(telemetry.finalize_seconds >= 0.0);
-    assert!(!ms_path.join(".casa-rs-write-incomplete").exists());
     drop(measurement_set);
+    let entries = std::fs::read_dir(&ms_path)
+        .expect("list mutated MS")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        entries.iter().all(|name| !name.contains("casa-rs")),
+        "an in-place mutation left casa-rs files: {entries:?}"
+    );
 
     let reopened = MeasurementSet::open(&ms_path).expect("reopen mutated MS");
     for row in selected_rows {
@@ -471,7 +483,7 @@ fn selected_row_write_session_persists_bounded_typed_batches() {
 }
 
 #[test]
-fn interrupted_selected_row_write_remains_detectable_without_snapshot_state() {
+fn interrupted_selected_row_write_keeps_persisted_rows_and_reopens() {
     let dir = tempfile::tempdir().expect("tempdir");
     let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
     let mut measurement_set = MeasurementSet::open(&ms_path).expect("open fixture MS");
@@ -512,13 +524,9 @@ fn interrupted_selected_row_write_remains_detectable_without_snapshot_state() {
     drop(session);
     drop(measurement_set);
 
-    let error = match MeasurementSet::open(&ms_path) {
-        Ok(_) => panic!("marker must reject open"),
-        Err(error) => error,
-    };
-    assert!(error.to_string().contains("incomplete write marker"));
-    std::fs::remove_file(ms_path.join(".casa-rs-write-incomplete")).expect("remove test marker");
-    let reopened = MeasurementSet::open(&ms_path).expect("reopen after explicit marker removal");
+    // As after an interrupted CASA write, the MeasurementSet reopens with the
+    // rows persisted before the interruption.
+    let reopened = MeasurementSet::open(&ms_path).expect("reopen after an interrupted write");
     assert_eq!(
         reopened
             .main_table()
@@ -527,4 +535,716 @@ fn interrupted_selected_row_write_remains_detectable_without_snapshot_state() {
             .expect("persisted interrupted value"),
         &ScalarValue::Bool(true)
     );
+}
+
+/// Start a one-row `FLAG_ROW` mutation on `measurement_set`.
+fn start_flag_row_mutation(
+    measurement_set: &mut MeasurementSet,
+) -> Result<MeasurementSetWriteSession, casa_ms::MeasurementSetWriteError> {
+    let plan = MeasurementSetWritePlan::selected_row_mutation(
+        vec![0],
+        vec![MeasurementSetWriteColumnPlan {
+            name: "FLAG_ROW".to_string(),
+            bytes_per_row: 1,
+            mode: MeasurementSetColumnWriteMode::Replace,
+            storage_manager: MeasurementSetColumnStorage::Persisted,
+            tile_shape: None,
+            create_source_column: None,
+        }],
+        MeasurementSetWriteResources {
+            available_bytes: 1,
+            maximum_live_batches: 1,
+            tiled_column_buffer_bytes: 0,
+        },
+    )
+    .expect("mutation plan");
+    MeasurementSetWriteSession::start_selected_row_mutation(measurement_set, plan)
+}
+
+/// Write the one planned `FLAG_ROW` row and complete the session.
+fn finish_flag_row_mutation(
+    mut session: MeasurementSetWriteSession,
+    measurement_set: &mut MeasurementSet,
+) {
+    session
+        .write_mutation_batch(
+            measurement_set,
+            MeasurementSetMutationBatch {
+                row_indices: vec![0],
+                columns: vec![MeasurementSetMutationColumnBatch {
+                    name: "FLAG_ROW".to_string(),
+                    values: MeasurementSetMutationColumnValues::Scalars(vec![ScalarValue::Bool(
+                        true,
+                    )]),
+                }],
+            },
+        )
+        .expect("write FLAG_ROW");
+    session.finish_mutation().expect("finish mutation");
+}
+
+/// The sync data `table` publishes describes it as persisted; `None` when it
+/// publishes none. Call only while this process holds no lock on `table`.
+#[track_caller]
+fn assert_published_as_persisted(table: &std::path::Path) {
+    if let Some(published) = casa_test_support::table_sync::published_table_sync(table) {
+        assert_eq!(
+            published.shape,
+            casa_test_support::table_sync::persisted_table_shape(table),
+            "published versus persisted shape of {}",
+            table.display()
+        );
+    }
+}
+
+/// An in-place MeasurementSet save publishes, for every table it rewrites,
+/// sync data describing the table as persisted. Under the mixed storage
+/// policy MAIN has many data managers, and casacore asserts one change
+/// counter per data manager when it locks the table.
+#[test]
+fn a_saved_measurement_set_publishes_its_persisted_layout() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    assert!(casa_test_support::table_sync::persisted_table_shape(&ms_path).data_managers > 1);
+    assert!(casa_test_support::table_sync::published_table_sync(&ms_path).is_some());
+    for table in [
+        ms_path.clone(),
+        ms_path.join("ANTENNA"),
+        ms_path.join("SPECTRAL_WINDOW"),
+    ] {
+        assert_published_as_persisted(&table);
+    }
+}
+
+/// The modify counter MAIN's sync data publishes to other processes.
+fn published_modify_counter(ms_path: &std::path::Path) -> u32 {
+    let mut main = casa_tables::Table::open_with_lock(
+        casa_tables::TableOptions::new(ms_path),
+        casa_tables::LockOptions::new(casa_tables::LockMode::UserLocking),
+    )
+    .expect("open MAIN with locking");
+    assert!(
+        main.lock(casa_tables::LockType::Read, 1)
+            .expect("read-lock MAIN")
+    );
+    main.locked_modify_counter().expect("modify counter")
+}
+
+/// A save that fails while writing MAIN publishes nothing for a subtable it
+/// never reached: ANTENNA, with a third row pending in memory, is unchanged
+/// on disk, keeps its modify counter, and still reopens with two rows, in
+/// casa-rs as in casacore, which both take the row count from the sync data.
+#[test]
+fn a_save_that_fails_on_main_publishes_no_unwritten_subtable() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let antenna = ms_path.join("ANTENNA");
+    let antenna_dat = std::fs::read(antenna.join("table.dat")).expect("ANTENNA table.dat");
+    let antenna_counter = published_modify_counter(&antenna);
+    let antenna_rows = casa_tables::Table::open(casa_tables::TableOptions::new(&antenna))
+        .expect("open ANTENNA")
+        .row_count();
+
+    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open MeasurementSet");
+    common::stage_an_antenna_row(&mut measurement_set);
+    common::make_main_unwritable(&ms_path);
+    assert!(
+        measurement_set.save().is_err(),
+        "the save of MAIN must fail"
+    );
+    drop(measurement_set);
+
+    assert_eq!(
+        std::fs::read(antenna.join("table.dat")).expect("ANTENNA table.dat"),
+        antenna_dat
+    );
+    assert_eq!(published_modify_counter(&antenna), antenna_counter);
+    assert_published_as_persisted(&antenna);
+    assert_eq!(
+        casa_tables::Table::open(casa_tables::TableOptions::new(&antenna))
+            .expect("reopen ANTENNA")
+            .row_count(),
+        antenna_rows
+    );
+}
+
+/// A column installation that cannot start, its clone source missing, is
+/// refused before the write lock is taken: MAIN is unchanged on disk and
+/// nothing is published, so a reader is not told about a column that never
+/// reached disk.
+#[test]
+fn an_installation_refused_before_writing_publishes_nothing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let counter_before = published_modify_counter(&ms_path);
+    let table_dat = std::fs::read(ms_path.join("table.dat")).expect("MAIN table.dat");
+
+    match common::install_cloned_columns(&ms_path, &[("NEVER_INSTALLED", "MISSING_SOURCE")]) {
+        Err(casa_ms::MeasurementSetWriteError::Install { column, reason }) => {
+            assert_eq!(column, "NEVER_INSTALLED");
+            assert!(reason.contains("MISSING_SOURCE"), "{reason}");
+        }
+        other => panic!("the installation must be refused: {other:?}"),
+    }
+
+    assert_eq!(
+        std::fs::read(ms_path.join("table.dat")).expect("MAIN table.dat"),
+        table_dat
+    );
+    assert_eq!(published_modify_counter(&ms_path), counter_before);
+    assert_published_as_persisted(&ms_path);
+}
+
+/// Columns a mutation session creates are persisted one by one. When a
+/// later installation fails, the column installed before it stays on disk,
+/// and releasing the lock publishes MAIN as persisted: with that column and
+/// its data manager, without the one that failed.
+#[test]
+fn a_failed_column_installation_publishes_the_columns_installed_before_it() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let counter_before = published_modify_counter(&ms_path);
+    let before = casa_test_support::table_sync::persisted_table_shape(&ms_path);
+
+    // TIME exists but is not in a tiled data manager, which only the
+    // installation itself finds out.
+    match common::install_cloned_columns(&ms_path, &[("CLONE_A", "DATA"), ("CLONE_B", "TIME")]) {
+        Err(casa_ms::MeasurementSetWriteError::Install { column, .. }) => {
+            assert_eq!(column, "CLONE_B");
+        }
+        other => panic!("the second installation must fail: {other:?}"),
+    }
+
+    let after = casa_test_support::table_sync::persisted_table_shape(&ms_path);
+    assert_eq!(after.columns, before.columns + 1, "CLONE_A is on disk");
+    assert_eq!(after.data_managers, before.data_managers + 1);
+    let reopened = MeasurementSet::open(&ms_path).expect("reopen MeasurementSet");
+    let schema = reopened.main_table().schema().expect("MAIN schema");
+    assert!(schema.contains_column("CLONE_A"));
+    assert!(!schema.contains_column("CLONE_B"));
+    drop(reopened);
+    assert!(
+        published_modify_counter(&ms_path) > counter_before,
+        "the partial installation was not published"
+    );
+    assert_published_as_persisted(&ms_path);
+}
+
+/// A mutation session writes only the MeasurementSet it locked: a batch
+/// given another MeasurementSet is refused before anything is written, and
+/// the session can still complete on its own MeasurementSet.
+#[test]
+fn a_mutation_session_refuses_a_batch_for_another_measurement_set() {
+    let first_dir = tempfile::tempdir().expect("tempdir");
+    let second_dir = tempfile::tempdir().expect("tempdir");
+    let first_path = common::create_msexplore_spectrum_fixture_ms(first_dir.path(), true, &[]);
+    let second_path = common::create_msexplore_spectrum_fixture_ms(second_dir.path(), true, &[]);
+    let mut first = MeasurementSet::open(&first_path).expect("open first MeasurementSet");
+    let mut second = MeasurementSet::open(&second_path).expect("open second MeasurementSet");
+    let flag_row_0 = |path: &std::path::Path| {
+        MeasurementSet::open(path)
+            .expect("reopen")
+            .main_table()
+            .cell_accessor(0, "FLAG_ROW")
+            .and_then(|cell| cell.scalar().cloned())
+            .expect("FLAG_ROW")
+    };
+    let second_before = flag_row_0(&second_path);
+
+    let mut session = start_flag_row_mutation(&mut first).expect("session on the first");
+    let refused = session.write_mutation_batch(
+        &mut second,
+        MeasurementSetMutationBatch {
+            row_indices: vec![0],
+            columns: vec![MeasurementSetMutationColumnBatch {
+                name: "FLAG_ROW".to_string(),
+                values: MeasurementSetMutationColumnValues::Scalars(vec![ScalarValue::Bool(
+                    !matches!(second_before, ScalarValue::Bool(true)),
+                )]),
+            }],
+        },
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(casa_ms::MeasurementSetWriteError::ForeignMeasurementSet { .. })
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(flag_row_0(&second_path), second_before);
+    finish_flag_row_mutation(session, &mut first);
+    assert_eq!(flag_row_0(&first_path), ScalarValue::Bool(true));
+}
+
+const WRITE_LOCK_PROBE_TABLE: &str = "CASA_RS_WRITE_LOCK_PROBE_TABLE";
+const WRITE_LOCK_HOLD_SIGNAL: &str = "CASA_RS_WRITE_LOCK_HOLD_SIGNAL";
+const WRITE_LOCK_HOLD_RELEASE: &str = "CASA_RS_WRITE_LOCK_HOLD_RELEASE";
+
+/// Child-process half of the write-lock tests: tries casacore's write lock on
+/// the table named by the environment once, as another process would, and
+/// reports the outcome. With a signal and a release file named too, it holds
+/// the lock, creates the signal file, and releases once the release file
+/// appears (or after 20 s). Without the environment it does nothing.
+#[test]
+fn write_lock_probe_from_another_process() {
+    let Some(table) = std::env::var_os(WRITE_LOCK_PROBE_TABLE) else {
+        return;
+    };
+    let lock = match casa_tables::TableWriteLock::acquire(&table, 1) {
+        Ok(lock) => lock,
+        Err(error) => {
+            println!("write-lock-probe: refused ({error})");
+            return;
+        }
+    };
+    println!("write-lock-probe: acquired");
+    if let (Some(signal), Some(release)) = (
+        std::env::var_os(WRITE_LOCK_HOLD_SIGNAL),
+        std::env::var_os(WRITE_LOCK_HOLD_RELEASE),
+    ) {
+        std::fs::write(signal, "locked").expect("signal the held lock");
+        if let (Some(main), Some(go), Some(done)) = (
+            std::env::var_os(WRITE_MAIN_TABLE),
+            std::env::var_os(WRITE_MAIN_GO),
+            std::env::var_os(WRITE_MAIN_DONE),
+        ) {
+            wait_for_path(std::path::Path::new(&go));
+            write_flag_row_0_in_place(std::path::Path::new(&main));
+            std::fs::write(done, "written").expect("signal the MAIN write");
+        }
+        wait_for_path(std::path::Path::new(&release));
+    }
+    drop(lock);
+}
+
+const WRITE_MAIN_TABLE: &str = "CASA_RS_WRITE_LOCK_PROBE_WRITE_MAIN";
+const WRITE_MAIN_GO: &str = "CASA_RS_WRITE_LOCK_PROBE_WRITE_MAIN_GO";
+const WRITE_MAIN_DONE: &str = "CASA_RS_WRITE_LOCK_PROBE_WRITE_MAIN_DONE";
+
+/// Wait up to 20 s for `path` to appear.
+fn wait_for_path(path: &std::path::Path) {
+    let start = std::time::Instant::now();
+    while !path.exists() && start.elapsed() < std::time::Duration::from_secs(20) {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// Set FLAG_ROW of row 0 in MAIN in place under MAIN's write lock, and
+/// publish the write, as another writer of the MeasurementSet would.
+fn write_flag_row_0_in_place(ms_path: &std::path::Path) {
+    let mut lock = casa_tables::TableWriteLock::acquire(ms_path, 0).expect("MAIN's write lock");
+    let mut main =
+        casa_tables::Table::open(casa_tables::TableOptions::new(ms_path)).expect("open MAIN");
+    main.cell_accessor_mut(0, "FLAG_ROW")
+        .expect("FLAG_ROW cell")
+        .set(casa_types::Value::Scalar(ScalarValue::Bool(true)))
+        .expect("set FLAG_ROW");
+    lock.record_write();
+    main.prepare_write()
+        .save_selected_rows(&["FLAG_ROW"], &[0])
+        .expect("persist FLAG_ROW");
+    lock.release().expect("release MAIN");
+}
+
+/// Whether another process can take casacore's write lock on `table`.
+fn another_process_takes_the_write_lock(table: &std::path::Path) -> bool {
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "write_lock_probe_from_another_process",
+            "--exact",
+            "--nocapture",
+        ])
+        .env(WRITE_LOCK_PROBE_TABLE, table)
+        .output()
+        .expect("run the write-lock probe");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("write-lock-probe: "),
+        "the write-lock probe did not run: {stdout} {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    stdout.contains("write-lock-probe: acquired")
+}
+
+/// An in-place mutation holds casacore's write lock on MAIN from start to
+/// completion. Until the first completes, another handle in this process is
+/// refused at once and another process cannot take the lock (one attempt
+/// fails), and opening and closing other handles on the MeasurementSet
+/// meanwhile does not drop it.
+#[test]
+fn selected_row_mutation_holds_the_table_write_lock_until_it_completes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let mut first = MeasurementSet::open(&ms_path).expect("open first handle");
+    let mut second = MeasurementSet::open(&ms_path).expect("open second handle");
+
+    let session = start_flag_row_mutation(&mut first).expect("first session starts");
+    let refused = start_flag_row_mutation(&mut second);
+    match &refused {
+        Err(casa_ms::MeasurementSetWriteError::WriteLock {
+            source: casa_tables::TableError::LockFailed { message, .. },
+            ..
+        }) => assert!(message.contains("in this process"), "{message}"),
+        _ => panic!(
+            "a second in-place writer was admitted while the first session was live: {:?}",
+            refused.err()
+        ),
+    }
+    assert!(matches!(
+        second.save_main_table_only(),
+        Err(casa_ms::MsError::Table(
+            casa_tables::TableError::LockFailed { .. }
+        ))
+    ));
+    drop(MeasurementSet::open(&ms_path).expect("open and close a third handle"));
+    assert!(
+        !another_process_takes_the_write_lock(&ms_path),
+        "another process took MAIN's write lock during the session"
+    );
+
+    finish_flag_row_mutation(session, &mut first);
+    assert!(another_process_takes_the_write_lock(&ms_path));
+    let session = start_flag_row_mutation(&mut second)
+        .expect("a new session is admitted once the first completes");
+    finish_flag_row_mutation(session, &mut second);
+}
+
+/// A session dropped before completion releases the lock, and the rows it
+/// persisted stay written.
+#[test]
+fn an_abandoned_selected_row_mutation_releases_the_table_write_lock() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let mut first = MeasurementSet::open(&ms_path).expect("open first handle");
+    let mut second = MeasurementSet::open(&ms_path).expect("open second handle");
+
+    let session = start_flag_row_mutation(&mut first).expect("first session starts");
+    drop(session);
+    let session = start_flag_row_mutation(&mut second)
+        .expect("a new session is admitted once the first is abandoned");
+    finish_flag_row_mutation(session, &mut second);
+}
+
+/// Hold casacore's write lock on `table` in another process until
+/// `release` appears; returns once the lock is held.
+fn hold_the_write_lock_in_another_process(
+    table: &std::path::Path,
+    signal: &std::path::Path,
+    release: &std::path::Path,
+) -> std::process::Child {
+    let holder = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "write_lock_probe_from_another_process",
+            "--exact",
+            "--nocapture",
+        ])
+        .env(WRITE_LOCK_PROBE_TABLE, table)
+        .env(WRITE_LOCK_HOLD_SIGNAL, signal)
+        .env(WRITE_LOCK_HOLD_RELEASE, release)
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("start the lock holder");
+    let start = std::time::Instant::now();
+    while !signal.exists() {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(20),
+            "the other process did not take the write lock"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    holder
+}
+
+/// The process ids in the request list of `table`'s `table.lock`, read as
+/// casacore's `LockFile` reads it: a big-endian count, then `(pid, hostid)`
+/// pairs. A casacore holder using AutoLocking releases its lock when the
+/// count is not zero.
+///
+/// Reading through a separate descriptor and closing it drops every `fcntl`
+/// lock this process holds on the file, so it is read only while this
+/// process waits for the lock, before the holder is told to release.
+fn requesting_pids(table: &std::path::Path) -> Vec<i32> {
+    let bytes = std::fs::read(table.join("table.lock")).unwrap_or_default();
+    let int = |offset: usize| {
+        bytes
+            .get(offset..offset + 4)
+            .map(|word| i32::from_be_bytes(word.try_into().expect("four bytes")))
+    };
+    let count = int(0).unwrap_or(0).clamp(0, 32) as usize;
+    (0..count).filter_map(|slot| int(4 + 8 * slot)).collect()
+}
+
+/// Wait until this process is in the request list of `table`'s lock file.
+fn this_process_requests_the_lock(table: &std::path::Path) -> bool {
+    let pid = std::process::id() as i32;
+    let start = std::time::Instant::now();
+    while start.elapsed() < std::time::Duration::from_secs(10) {
+        if requesting_pids(table).contains(&pid) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    false
+}
+
+/// An in-place mutation waits, as casacore does, while another process holds
+/// MAIN's write lock: it is in MAIN's request list, where a casacore holder
+/// using AutoLocking sees it and releases, and it starts once the holder
+/// releases.
+#[test]
+fn selected_row_mutation_waits_for_another_process_holding_main() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let signal = dir.path().join("holder-locked.signal");
+    let release = dir.path().join("holder-release.signal");
+    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open MeasurementSet");
+    let mut holder = hold_the_write_lock_in_another_process(&ms_path, &signal, &release);
+
+    let releaser = {
+        let ms_path = ms_path.clone();
+        std::thread::spawn(move || {
+            let requested = this_process_requests_the_lock(&ms_path);
+            std::fs::write(&release, "release").expect("release the holder");
+            requested
+        })
+    };
+    let session = start_flag_row_mutation(&mut measurement_set);
+    let requested = releaser.join().expect("releaser thread");
+    assert!(holder.wait().expect("holder exits").success());
+
+    assert!(
+        requested,
+        "the waiting writer was not in MAIN's request list"
+    );
+    let session = session.expect("the mutation starts once the other process releases");
+    finish_flag_row_mutation(session, &mut measurement_set);
+    assert!(requesting_pids(&ms_path).is_empty());
+}
+
+/// A save waiting for a subtable another process holds does not hold MAIN
+/// meanwhile, so it cannot deadlock with a process that holds the subtable
+/// while it waits for MAIN; it completes once the subtable is released.
+#[test]
+fn an_in_place_save_waits_for_a_held_subtable_without_holding_main() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let antenna = ms_path.join("ANTENNA");
+    let signal = dir.path().join("holder-locked.signal");
+    let release = dir.path().join("holder-release.signal");
+    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open MeasurementSet");
+    let mut holder = hold_the_write_lock_in_another_process(&antenna, &signal, &release);
+
+    let releaser = {
+        let ms_path = ms_path.clone();
+        std::thread::spawn(move || {
+            let requested = this_process_requests_the_lock(&antenna);
+            let main_free = another_process_takes_the_write_lock(&ms_path);
+            std::fs::write(&release, "release").expect("release the holder");
+            (requested, main_free)
+        })
+    };
+    let saved = measurement_set.save();
+    let (requested, main_free) = releaser.join().expect("releaser thread");
+    assert!(holder.wait().expect("holder exits").success());
+
+    assert!(requested, "the save was not in ANTENNA's request list");
+    assert!(main_free, "the save held MAIN while it waited for ANTENNA");
+    saved.expect("the save completes once ANTENNA is released");
+}
+
+/// A save that released MAIN to wait for ANTENNA is refused when another
+/// process wrote MAIN meanwhile, before it writes anything: its in-memory
+/// MAIN was read before that write and would overwrite it. The other
+/// process's write survives.
+#[test]
+fn an_in_place_save_refuses_main_written_while_it_waited_for_a_subtable() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let antenna = ms_path.join("ANTENNA");
+    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open MeasurementSet");
+    // Stage a real save: materialize MAIN, with FLAG_ROW[0] false, and add a
+    // row to it in memory.
+    let row = measurement_set
+        .main_table()
+        .row_accessor()
+        .row(0)
+        .expect("MAIN row 0")
+        .clone();
+    measurement_set
+        .main_table_mut()
+        .add_row(row)
+        .expect("stage a MAIN row");
+    assert!(!flag_row_0(&ms_path));
+    let rows_before = casa_test_support::table_sync::persisted_table_shape(&ms_path).rows;
+
+    // Another process holds ANTENNA and, once the save waits for it, writes
+    // FLAG_ROW[0] of MAIN under MAIN's lock, then releases ANTENNA.
+    let signal = dir.path().join("holder-locked.signal");
+    let release = dir.path().join("holder-release.signal");
+    let go = dir.path().join("write-main.signal");
+    let done = dir.path().join("main-written.signal");
+    let mut holder = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "write_lock_probe_from_another_process",
+            "--exact",
+            "--nocapture",
+        ])
+        .env(WRITE_LOCK_PROBE_TABLE, &antenna)
+        .env(WRITE_LOCK_HOLD_SIGNAL, &signal)
+        .env(WRITE_LOCK_HOLD_RELEASE, &release)
+        .env(WRITE_MAIN_TABLE, &ms_path)
+        .env(WRITE_MAIN_GO, &go)
+        .env(WRITE_MAIN_DONE, &done)
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("start the ANTENNA holder");
+    wait_for_path(&signal);
+    assert!(signal.exists(), "the other process did not take ANTENNA");
+
+    let coordinator = {
+        let ms_path = ms_path.clone();
+        std::thread::spawn(move || {
+            let requested = this_process_requests_the_lock(&antenna);
+            std::fs::write(&go, "go").expect("let the other process write MAIN");
+            wait_for_path(&done);
+            let main_written = done.exists() && flag_row_0(&ms_path);
+            std::fs::write(&release, "release").expect("release ANTENNA");
+            (requested, main_written)
+        })
+    };
+    let saved = measurement_set.save();
+    let (requested, main_written) = coordinator.join().expect("coordinator thread");
+    assert!(holder.wait().expect("holder exits").success());
+    drop(measurement_set);
+
+    assert!(requested, "the save was not in ANTENNA's request list");
+    assert!(main_written, "the other process did not write MAIN");
+    match saved {
+        Err(casa_ms::MsError::Table(casa_tables::TableError::LockFailed { message, .. })) => {
+            assert!(message.contains("while the save waited"), "{message}");
+        }
+        other => panic!("a save over another process's write must be refused: {other:?}"),
+    }
+    assert!(flag_row_0(&ms_path), "the other process's write was lost");
+    assert_eq!(
+        casa_test_support::table_sync::persisted_table_shape(&ms_path).rows,
+        rows_before,
+        "the refused save wrote MAIN"
+    );
+    assert_published_as_persisted(&ms_path);
+}
+
+/// FLAG_ROW of row 0 in the table at `table`, read without locking.
+fn flag_row_0(table: &std::path::Path) -> bool {
+    let table = casa_tables::Table::open(casa_tables::TableOptions::new(table))
+        .expect("open the flag version");
+    match table
+        .cell_accessor(0, "FLAG_ROW")
+        .and_then(|cell| cell.scalar())
+        .expect("FLAG_ROW")
+    {
+        ScalarValue::Bool(value) => *value,
+        other => panic!("unexpected FLAG_ROW {other:?}"),
+    }
+}
+
+/// Saving into an existing flag version is an in-place write: it holds the
+/// version table's write lock from before it reads the version until the
+/// version is saved. While another process holds the lock, the save waits in
+/// the request list and the version is unchanged; it completes once the
+/// lock is released.
+#[test]
+fn saving_into_an_existing_flag_version_waits_for_its_write_lock() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open MeasurementSet");
+    casa_ms::save_flag_version(&measurement_set, "v1", "seed", casa_ms::FlagMerge::Replace)
+        .expect("create the flag version");
+    let version = std::path::PathBuf::from(format!("{}.flagversions/flags.v1", ms_path.display()));
+    let saved_flag_row = flag_row_0(&version);
+    measurement_set
+        .main_table_mut()
+        .cell_accessor_mut(0, "FLAG_ROW")
+        .expect("FLAG_ROW cell")
+        .set(casa_types::Value::Scalar(ScalarValue::Bool(
+            !saved_flag_row,
+        )))
+        .expect("change FLAG_ROW");
+
+    let signal = dir.path().join("holder-locked.signal");
+    let release = dir.path().join("holder-release.signal");
+    let mut holder = hold_the_write_lock_in_another_process(&version, &signal, &release);
+    let releaser = {
+        let version = version.clone();
+        std::thread::spawn(move || {
+            let requested = this_process_requests_the_lock(&version);
+            let unchanged = flag_row_0(&version) == saved_flag_row;
+            std::fs::write(&release, "release").expect("release the holder");
+            (requested, unchanged)
+        })
+    };
+    let saved = casa_ms::save_flag_version(
+        &measurement_set,
+        "v1",
+        "replace",
+        casa_ms::FlagMerge::Replace,
+    );
+    let (requested, unchanged) = releaser.join().expect("releaser thread");
+    assert!(holder.wait().expect("holder exits").success());
+
+    assert!(requested, "the save was not in the version's request list");
+    assert!(
+        unchanged,
+        "the version changed while another process held it"
+    );
+    saved.expect("the save completes once the version is released");
+    assert_eq!(flag_row_0(&version), !saved_flag_row);
+}
+
+/// Restoring a flag version reads the version under its read lock, so a
+/// version another process is writing is never read half written. While
+/// another process holds the version's write lock, the restore waits in the
+/// version's request list and MAIN is unchanged; it completes once the lock
+/// is released.
+#[test]
+fn restoring_a_flag_version_waits_for_its_write_lock() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open MeasurementSet");
+    casa_ms::save_flag_version(&measurement_set, "v1", "seed", casa_ms::FlagMerge::Replace)
+        .expect("create the flag version");
+    let version = std::path::PathBuf::from(format!("{}.flagversions/flags.v1", ms_path.display()));
+    assert!(!flag_row_0(&version), "the fixture starts unflagged");
+    let session = start_flag_row_mutation(&mut measurement_set).expect("flag row 0");
+    finish_flag_row_mutation(session, &mut measurement_set);
+    assert!(flag_row_0(&ms_path));
+
+    let signal = dir.path().join("holder-locked.signal");
+    let release = dir.path().join("holder-release.signal");
+    let mut holder = hold_the_write_lock_in_another_process(&version, &signal, &release);
+    let releaser = {
+        let version = version.clone();
+        let ms_path = ms_path.clone();
+        std::thread::spawn(move || {
+            let requested = this_process_requests_the_lock(&version);
+            let main_unchanged = flag_row_0(&ms_path);
+            std::fs::write(&release, "release").expect("release the holder");
+            (requested, main_unchanged)
+        })
+    };
+    let restored =
+        casa_ms::restore_flag_version(&mut measurement_set, "v1", casa_ms::FlagMerge::Replace);
+    let (requested, main_unchanged) = releaser.join().expect("releaser thread");
+    assert!(holder.wait().expect("holder exits").success());
+
+    assert!(
+        requested,
+        "the restore was not in the version's request list"
+    );
+    assert!(
+        main_unchanged,
+        "MAIN changed while another process held the version"
+    );
+    restored.expect("the restore completes once the version is released");
+    assert!(!flag_row_0(&ms_path), "the version was restored");
 }

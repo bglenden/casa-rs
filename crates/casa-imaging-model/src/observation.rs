@@ -17,36 +17,6 @@ const OBSERVATION_PROVENANCE_IDENTITY_VERSION: u32 = 1;
 const SELECTED_ROW_SEQUENCE_IDENTITY_DOMAIN: &[u8] = b"casa-rs-selected-row-sequence";
 const SELECTED_ROW_SEQUENCE_IDENTITY_VERSION: u32 = 3;
 
-const REQUIRED_COORDINATE_COLUMNS: [MsColumnKind; 15] = [
-    MsColumnKind::Uvw,
-    MsColumnKind::Time,
-    MsColumnKind::TimeCentroid,
-    MsColumnKind::Interval,
-    MsColumnKind::Exposure,
-    MsColumnKind::FieldId,
-    MsColumnKind::DataDescriptionId,
-    MsColumnKind::Antenna1,
-    MsColumnKind::Antenna2,
-    MsColumnKind::Feed1,
-    MsColumnKind::Feed2,
-    MsColumnKind::ScanNumber,
-    MsColumnKind::StateId,
-    MsColumnKind::ObservationId,
-    MsColumnKind::ArrayId,
-];
-
-const REQUIRED_METADATA_TABLES: [MetadataTableKind; 9] = [
-    MetadataTableKind::Antenna,
-    MetadataTableKind::DataDescription,
-    MetadataTableKind::Feed,
-    MetadataTableKind::Field,
-    MetadataTableKind::Observation,
-    MetadataTableKind::Pointing,
-    MetadataTableKind::Polarization,
-    MetadataTableKind::SpectralWindow,
-    MetadataTableKind::State,
-];
-
 /// Stable compiler-derived identity of one immutable observation snapshot.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ObservationSnapshotId(LogicalIdentity);
@@ -104,48 +74,6 @@ impl fmt::Debug for ObservationProvenanceId {
 impl fmt::Display for ObservationProvenanceId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
-    }
-}
-
-/// Logical identity of one MeasurementSet independent of its filesystem location.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MeasurementSetIdentity(LogicalIdentity);
-
-impl MeasurementSetIdentity {
-    /// Wrap an identity supplied by the observation storage owner.
-    #[must_use]
-    pub const fn new(identity: LogicalIdentity) -> Self {
-        Self(identity)
-    }
-
-    /// Return the wrapped logical identity.
-    #[must_use]
-    pub const fn identity(self) -> LogicalIdentity {
-        self.0
-    }
-}
-
-impl fmt::Display for MeasurementSetIdentity {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}
-
-/// Storage-owner token proving that a source is still one consistency generation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ConsistencyToken(LogicalIdentity);
-
-impl ConsistencyToken {
-    /// Wrap a consistency token supplied by the observation storage owner.
-    #[must_use]
-    pub const fn new(identity: LogicalIdentity) -> Self {
-        Self(identity)
-    }
-
-    /// Return the wrapped logical identity.
-    #[must_use]
-    pub const fn identity(self) -> LogicalIdentity {
-        self.0
     }
 }
 
@@ -1577,16 +1505,6 @@ pub enum VisibilityColumn {
     FloatData,
 }
 
-impl VisibilityColumn {
-    const fn column_kind(self) -> MsColumnKind {
-        match self {
-            Self::Data => MsColumnKind::Data,
-            Self::CorrectedData => MsColumnKind::CorrectedData,
-            Self::FloatData => MsColumnKind::FloatData,
-        }
-    }
-}
-
 /// Exact flag combination applied to every selected sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FlagPolicy {
@@ -1603,87 +1521,26 @@ pub enum WeightColumn {
     WeightSpectrum,
 }
 
-impl WeightColumn {
-    const fn column_kind(self) -> MsColumnKind {
-        match self {
-            Self::Weight => MsColumnKind::Weight,
-            Self::WeightSpectrum => MsColumnKind::WeightSpectrum,
-        }
-    }
-}
-
-/// Consistency generation of one selected MAIN column.
+/// Exact data, flag, and weight columns read from one source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ColumnGeneration {
-    kind: MsColumnKind,
-    identity: LogicalIdentity,
-}
-
-/// Exact existence and generation of the optional MAIN `MODEL_DATA` column.
-///
-/// This state is captured independently of [`SelectedColumns`] because an
-/// existing output-only model column is a write precondition without being an
-/// observation input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModelColumnState {
-    /// `MODEL_DATA` did not exist when the snapshot was captured.
-    Absent,
-    /// `MODEL_DATA` existed with this storage-owner generation.
-    Present(LogicalIdentity),
-}
-
-/// Exact existence and generation of output-only `CORRECTED_DATA`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CorrectedDataColumnState {
-    /// The destination did not exist when the snapshot was captured.
-    Absent,
-    /// The destination existed with this storage-owner generation.
-    Present(LogicalIdentity),
-}
-
-impl ColumnGeneration {
-    /// Construct one column generation binding.
-    #[must_use]
-    pub const fn new(kind: MsColumnKind, identity: LogicalIdentity) -> Self {
-        Self { kind, identity }
-    }
-
-    /// Return the bound MAIN column.
-    #[must_use]
-    pub const fn kind(self) -> MsColumnKind {
-        self.kind
-    }
-
-    /// Return the storage-owner generation identity.
-    #[must_use]
-    pub const fn identity(self) -> LogicalIdentity {
-        self.identity
-    }
-}
-
-/// Exact data, flag, weight, and coordinate-column contract for one source.
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectedColumns {
     visibility: VisibilityColumn,
     flags: FlagPolicy,
     weights: WeightColumn,
-    generations: Vec<ColumnGeneration>,
 }
 
 impl SelectedColumns {
-    /// Construct selected column semantics and their captured generations.
+    /// Construct the selected column semantics.
     #[must_use]
     pub const fn new(
         visibility: VisibilityColumn,
         flags: FlagPolicy,
         weights: WeightColumn,
-        generations: Vec<ColumnGeneration>,
     ) -> Self {
         Self {
             visibility,
             flags,
             weights,
-            generations,
         }
     }
 
@@ -1703,244 +1560,6 @@ impl SelectedColumns {
     #[must_use]
     pub const fn weights(&self) -> WeightColumn {
         self.weights
-    }
-
-    /// Return all captured column generations in canonical column order.
-    #[must_use]
-    pub fn generations(&self) -> &[ColumnGeneration] {
-        &self.generations
-    }
-
-    /// Return the captured generation for one column.
-    #[must_use]
-    pub fn generation(&self, kind: MsColumnKind) -> Option<LogicalIdentity> {
-        self.generations
-            .iter()
-            .find_map(|generation| (generation.kind == kind).then_some(generation.identity))
-    }
-
-    fn canonicalize(&mut self) -> Result<(), CompileObservationError> {
-        self.generations
-            .sort_unstable_by_key(|generation| generation.kind);
-        if let Some(column) = self
-            .generations
-            .windows(2)
-            .find_map(|pair| (pair[0].kind == pair[1].kind).then_some(pair[0].kind))
-        {
-            return Err(CompileObservationError::DuplicateColumnGeneration { column });
-        }
-        for generation in &self.generations {
-            require_identity(generation.identity, "column generation")?;
-        }
-        let required = [
-            self.visibility.column_kind(),
-            MsColumnKind::Flag,
-            MsColumnKind::FlagRow,
-            self.weights.column_kind(),
-        ];
-        for column in required.into_iter().chain(REQUIRED_COORDINATE_COLUMNS) {
-            if self.generation(column).is_none() {
-                return Err(CompileObservationError::MissingColumnGeneration { column });
-            }
-        }
-        Ok(())
-    }
-}
-
-/// MeasurementSet metadata table whose generation affects selected samples.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum MetadataTableKind {
-    /// `ANTENNA`.
-    Antenna,
-    /// `DATA_DESCRIPTION`.
-    DataDescription,
-    /// `DOPPLER`.
-    Doppler,
-    /// `FEED`.
-    Feed,
-    /// `FIELD`.
-    Field,
-    /// `FREQ_OFFSET`.
-    FrequencyOffset,
-    /// `OBSERVATION`.
-    Observation,
-    /// `POINTING`.
-    Pointing,
-    /// `POLARIZATION`.
-    Polarization,
-    /// `SOURCE`.
-    Source,
-    /// `SPECTRAL_WINDOW`.
-    SpectralWindow,
-    /// `STATE`.
-    State,
-    /// `SYSCAL`.
-    SysCal,
-    /// `WEATHER`.
-    Weather,
-}
-
-/// Consistency generation of one relevant MeasurementSet metadata table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MetadataGeneration {
-    kind: MetadataTableKind,
-    identity: LogicalIdentity,
-}
-
-impl MetadataGeneration {
-    /// Construct one metadata generation binding.
-    #[must_use]
-    pub const fn new(kind: MetadataTableKind, identity: LogicalIdentity) -> Self {
-        Self { kind, identity }
-    }
-
-    /// Return the metadata table family.
-    #[must_use]
-    pub const fn kind(self) -> MetadataTableKind {
-        self.kind
-    }
-
-    /// Return the storage-owner generation identity.
-    #[must_use]
-    pub const fn identity(self) -> LogicalIdentity {
-        self.identity
-    }
-}
-
-/// All source-local generations required to consume a snapshot consistently.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SourceGenerations {
-    consistency_token: ConsistencyToken,
-    columns: SelectedColumns,
-    metadata: Vec<MetadataGeneration>,
-    model_column: ModelColumnState,
-    corrected_data_column: CorrectedDataColumnState,
-}
-
-impl SourceGenerations {
-    /// Construct source consistency, column, metadata, and optional model-column generations.
-    #[must_use]
-    pub const fn new(
-        consistency_token: ConsistencyToken,
-        columns: SelectedColumns,
-        metadata: Vec<MetadataGeneration>,
-        model_column: ModelColumnState,
-    ) -> Self {
-        Self {
-            consistency_token,
-            columns,
-            metadata,
-            model_column,
-            corrected_data_column: CorrectedDataColumnState::Absent,
-        }
-    }
-
-    /// Bind the output-only CORRECTED_DATA write precondition.
-    #[must_use]
-    pub const fn with_corrected_data_column(mut self, state: CorrectedDataColumnState) -> Self {
-        self.corrected_data_column = state;
-        self
-    }
-
-    /// Return the atomic source consistency token.
-    #[must_use]
-    pub const fn consistency_token(&self) -> ConsistencyToken {
-        self.consistency_token
-    }
-
-    /// Return selected column semantics and generations.
-    #[must_use]
-    pub const fn columns(&self) -> &SelectedColumns {
-        &self.columns
-    }
-
-    /// Return metadata generations in canonical table-family order.
-    #[must_use]
-    pub fn metadata_generations(&self) -> &[MetadataGeneration] {
-        &self.metadata
-    }
-
-    /// Return the captured generation for one metadata table.
-    #[must_use]
-    pub fn metadata(&self, kind: MetadataTableKind) -> Option<LogicalIdentity> {
-        self.metadata
-            .iter()
-            .find_map(|generation| (generation.kind == kind).then_some(generation.identity))
-    }
-
-    /// Return the captured existence and generation of `MODEL_DATA`.
-    #[must_use]
-    pub const fn model_column(&self) -> ModelColumnState {
-        self.model_column
-    }
-
-    /// Return the captured output-only CORRECTED_DATA state.
-    #[must_use]
-    pub const fn corrected_data_column(&self) -> CorrectedDataColumnState {
-        self.corrected_data_column
-    }
-
-    /// Return bytes owned by this shared immutable generation manifest.
-    #[must_use]
-    pub fn retained_manifest_bytes(&self) -> Option<usize> {
-        size_of::<Self>()
-            .checked_add(2 * size_of::<usize>())?
-            .checked_add(self.retained_owned_heap_bytes()?)
-    }
-
-    fn retained_owned_heap_bytes(&self) -> Option<usize> {
-        self.columns
-            .generations
-            .capacity()
-            .checked_mul(size_of::<ColumnGeneration>())?
-            .checked_add(
-                self.metadata
-                    .capacity()
-                    .checked_mul(size_of::<MetadataGeneration>())?,
-            )
-    }
-
-    fn canonicalize(&mut self) -> Result<(), CompileObservationError> {
-        require_identity(self.consistency_token.0, "source consistency token")?;
-        self.columns.canonicalize()?;
-        self.metadata
-            .sort_unstable_by_key(|generation| generation.kind);
-        if let Some(table) = self
-            .metadata
-            .windows(2)
-            .find_map(|pair| (pair[0].kind == pair[1].kind).then_some(pair[0].kind))
-        {
-            return Err(CompileObservationError::DuplicateMetadataGeneration { table });
-        }
-        for generation in &self.metadata {
-            require_identity(generation.identity, "metadata generation")?;
-        }
-        match self.model_column {
-            ModelColumnState::Absent => {
-                if self.columns.generation(MsColumnKind::ModelData).is_some() {
-                    return Err(CompileObservationError::InconsistentModelColumnState);
-                }
-            }
-            ModelColumnState::Present(generation) => {
-                require_identity(generation, "MODEL_DATA generation")?;
-                if self
-                    .columns
-                    .generation(MsColumnKind::ModelData)
-                    .is_some_and(|selected| selected != generation)
-                {
-                    return Err(CompileObservationError::InconsistentModelColumnState);
-                }
-            }
-        }
-        if let CorrectedDataColumnState::Present(generation) = self.corrected_data_column {
-            require_identity(generation, "CORRECTED_DATA generation")?;
-        }
-        for table in REQUIRED_METADATA_TABLES {
-            if self.metadata(table).is_none() {
-                return Err(CompileObservationError::MissingMetadataGeneration { table });
-            }
-        }
-        Ok(())
     }
 }
 
@@ -1990,26 +1609,27 @@ impl ObservationSourceProvenance {
 /// Uncompiled source manifest supplied by the observation adapter.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObservationSourceInput {
-    identity: MeasurementSetIdentity,
     provenance: ObservationSourceProvenance,
     selection: ObservationSelection,
-    generations: SourceGenerations,
+    columns: SelectedColumns,
+    corrected_data_present: bool,
 }
 
 impl ObservationSourceInput {
-    /// Construct one logical MeasurementSet source manifest.
+    /// Construct one MeasurementSet source manifest: where it is, what is
+    /// selected, which columns are read, and whether MAIN has `CORRECTED_DATA`.
     #[must_use]
     pub const fn new(
-        identity: MeasurementSetIdentity,
         provenance: ObservationSourceProvenance,
         selection: ObservationSelection,
-        generations: SourceGenerations,
+        columns: SelectedColumns,
+        corrected_data_present: bool,
     ) -> Self {
         Self {
-            identity,
             provenance,
             selection,
-            generations,
+            columns,
+            corrected_data_present,
         }
     }
 }
@@ -2017,27 +1637,22 @@ impl ObservationSourceInput {
 /// One validated immutable MeasurementSet source in a compiled snapshot.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObservationSource {
-    identity: MeasurementSetIdentity,
     provenance: ObservationSourceProvenance,
     input_ordinal: usize,
     selection: Arc<ObservationSelection>,
-    generations: Arc<SourceGenerations>,
+    columns: SelectedColumns,
+    corrected_data_present: bool,
 }
 
 impl ObservationSource {
-    /// Return the location-independent source identity.
-    #[must_use]
-    pub const fn identity(&self) -> MeasurementSetIdentity {
-        self.identity
-    }
-
     /// Return source origin and original selection-request provenance.
     #[must_use]
     pub const fn provenance(&self) -> &ObservationSourceProvenance {
         &self.provenance
     }
 
-    /// Return this source's ordinal in the original multi-MS request.
+    /// Return this source's ordinal in the original multi-MS request, which
+    /// is also its position in the snapshot.
     #[must_use]
     pub const fn input_ordinal(&self) -> usize {
         self.input_ordinal
@@ -2049,18 +1664,20 @@ impl ObservationSource {
         &self.selection
     }
 
-    /// Return all bound source generations.
+    /// Return the data, flag, and weight columns read.
     #[must_use]
-    pub fn generations(&self) -> &SourceGenerations {
-        &self.generations
+    pub const fn columns(&self) -> SelectedColumns {
+        self.columns
+    }
+
+    /// Return whether MAIN had a `CORRECTED_DATA` column when resolved.
+    #[must_use]
+    pub const fn corrected_data_present(&self) -> bool {
+        self.corrected_data_present
     }
 
     pub(crate) fn selection_arc(&self) -> Arc<ObservationSelection> {
         Arc::clone(&self.selection)
-    }
-
-    pub(crate) fn generations_arc(&self) -> Arc<SourceGenerations> {
-        Arc::clone(&self.generations)
     }
 }
 
@@ -2114,7 +1731,7 @@ impl ObservationSnapshot {
         self.provenance_id
     }
 
-    /// Return sources in canonical content-identity order.
+    /// Return sources in request order.
     #[must_use]
     pub fn sources(&self) -> &[ObservationSource] {
         &self.sources
@@ -2130,179 +1747,6 @@ impl ObservationSnapshot {
     #[must_use]
     pub const fn model(&self) -> ModelStateIdentity {
         self.model
-    }
-
-    /// Reject any current state that could mix generations with this snapshot.
-    pub fn validate_consistency(
-        &self,
-        mut current: ObservationState,
-    ) -> Result<(), ObservationConsistencyError> {
-        current.canonicalize()?;
-        if self.sources.len() != current.sources.len()
-            || self
-                .sources
-                .iter()
-                .zip(&current.sources)
-                .any(|(expected, actual)| expected.identity != actual.identity)
-        {
-            return Err(ObservationConsistencyError::SourceSetChanged);
-        }
-        for (expected, actual) in self.sources.iter().zip(&current.sources) {
-            let source = expected.identity;
-            if expected.selection.rows != actual.selected_rows {
-                return Err(ObservationConsistencyError::SelectedRowsChanged {
-                    measurement_set: source,
-                });
-            }
-            if expected.generations.columns.visibility != actual.generations.columns.visibility
-                || expected.generations.columns.flags != actual.generations.columns.flags
-                || expected.generations.columns.weights != actual.generations.columns.weights
-            {
-                return Err(ObservationConsistencyError::SelectedColumnContractChanged {
-                    measurement_set: source,
-                });
-            }
-            compare_columns(
-                source,
-                &expected.generations.columns,
-                &actual.generations.columns,
-            )?;
-            if expected.generations.model_column != actual.generations.model_column {
-                return Err(ObservationConsistencyError::ModelColumnStateChanged {
-                    measurement_set: source,
-                });
-            }
-            if expected.generations.corrected_data_column
-                != actual.generations.corrected_data_column
-            {
-                return Err(ObservationConsistencyError::ColumnGenerationChanged {
-                    measurement_set: source,
-                    column: MsColumnKind::CorrectedData,
-                });
-            }
-            compare_metadata(source, &expected.generations, &actual.generations)?;
-            if expected.generations.consistency_token != actual.generations.consistency_token {
-                return Err(ObservationConsistencyError::ConsistencyTokenChanged {
-                    measurement_set: source,
-                });
-            }
-        }
-        if self.reference_data != current.reference_data {
-            return Err(ObservationConsistencyError::ReferenceDataChanged);
-        }
-        if self.model != current.model {
-            return Err(ObservationConsistencyError::ModelStateChanged);
-        }
-        Ok(())
-    }
-}
-
-/// Current source facts probed before or at a declared safe streaming boundary.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ObservationSourceState {
-    identity: MeasurementSetIdentity,
-    selected_rows: SelectedRows,
-    generations: SourceGenerations,
-}
-
-impl ObservationSourceState {
-    /// Construct one current source-state probe.
-    #[must_use]
-    pub const fn new(
-        identity: MeasurementSetIdentity,
-        selected_rows: SelectedRows,
-        generations: SourceGenerations,
-    ) -> Self {
-        Self {
-            identity,
-            selected_rows,
-            generations,
-        }
-    }
-
-    /// Return the source identity.
-    #[must_use]
-    pub const fn identity(&self) -> MeasurementSetIdentity {
-        self.identity
-    }
-
-    /// Return the current selected-row manifest.
-    #[must_use]
-    pub const fn selected_rows(&self) -> &SelectedRows {
-        &self.selected_rows
-    }
-
-    /// Return current column, metadata, and consistency generations.
-    #[must_use]
-    pub const fn generations(&self) -> &SourceGenerations {
-        &self.generations
-    }
-
-    /// Return heap bytes additionally retained by this current-state graph.
-    ///
-    /// Inline state belongs to its outer owner allocation. Generation vectors
-    /// are owned uniquely by this value, while selected-row manifests can be
-    /// shared with compiled sources or earlier state probes and are omitted
-    /// when their allocation is already accounted by one of those roots.
-    #[must_use]
-    pub fn additional_retained_heap_bytes<'a>(
-        &self,
-        already_accounted_rows: impl IntoIterator<Item = &'a SelectedRows>,
-    ) -> Option<usize> {
-        self.selected_rows
-            .additional_retained_manifest_bytes(already_accounted_rows)?
-            .checked_add(self.generations.retained_owned_heap_bytes()?)
-    }
-}
-
-/// Current input state supplied for fail-closed snapshot consistency validation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ObservationState {
-    sources: Vec<ObservationSourceState>,
-    reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
-    model: ModelStateIdentity,
-}
-
-impl ObservationState {
-    /// Construct a current input-state probe.
-    #[must_use]
-    pub const fn new(
-        sources: Vec<ObservationSourceState>,
-        reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
-        model: ModelStateIdentity,
-    ) -> Self {
-        Self {
-            sources,
-            reference_data,
-            model,
-        }
-    }
-
-    fn canonicalize(&mut self) -> Result<(), ObservationConsistencyError> {
-        self.sources.sort_unstable_by_key(|source| source.identity);
-        if self
-            .sources
-            .windows(2)
-            .any(|pair| pair[0].identity == pair[1].identity)
-        {
-            return Err(ObservationConsistencyError::InvalidCurrentState {
-                reason: "duplicate MeasurementSet identity",
-            });
-        }
-        for source in &mut self.sources {
-            canonicalize_current_generations(&mut source.generations)?;
-        }
-        self.reference_data.sort_unstable_by_key(|(kind, _)| *kind);
-        if self
-            .reference_data
-            .windows(2)
-            .any(|pair| pair[0].0 == pair[1].0)
-        {
-            return Err(ObservationConsistencyError::InvalidCurrentState {
-                reason: "duplicate reference-data family",
-            });
-        }
-        Ok(())
     }
 }
 
@@ -2320,12 +1764,6 @@ pub enum CompileObservationError {
     UnidentifiedInput {
         /// Stable identity scope.
         scope: &'static str,
-    },
-    /// One logical MeasurementSet was supplied more than once.
-    #[error("duplicate MeasurementSet identity {measurement_set}")]
-    DuplicateSource {
-        /// Duplicate source identity.
-        measurement_set: MeasurementSetIdentity,
     },
     /// Source provenance did not name an origin.
     #[error("observation source locator is empty")]
@@ -2454,33 +1892,6 @@ pub enum CompileObservationError {
         /// Orphan `POLARIZATION_ID`.
         polarization_id: u32,
     },
-    /// More than one generation was supplied for a MAIN column.
-    #[error("duplicate generation for MAIN column {column:?}")]
-    DuplicateColumnGeneration {
-        /// Duplicated column.
-        column: MsColumnKind,
-    },
-    /// A required selected or coordinate column generation was absent.
-    #[error("missing generation for MAIN column {column:?}")]
-    MissingColumnGeneration {
-        /// Missing column.
-        column: MsColumnKind,
-    },
-    /// The optional `MODEL_DATA` state contradicted its selected generation.
-    #[error("MODEL_DATA state conflicts with its selected column generation")]
-    InconsistentModelColumnState,
-    /// More than one generation was supplied for a metadata table.
-    #[error("duplicate generation for metadata table {table:?}")]
-    DuplicateMetadataGeneration {
-        /// Duplicated table.
-        table: MetadataTableKind,
-    },
-    /// A required coordinate/selection metadata generation was absent.
-    #[error("missing generation for metadata table {table:?}")]
-    MissingMetadataGeneration {
-        /// Missing table.
-        table: MetadataTableKind,
-    },
     /// More than one identity was supplied for one external reference-data family.
     #[error("duplicate reference-data identity for {kind:?}")]
     DuplicateReferenceData {
@@ -2489,82 +1900,10 @@ pub enum CompileObservationError {
     },
 }
 
-/// Failure to prove that current inputs still match a compiled snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum ObservationConsistencyError {
-    /// A current state probe was internally ambiguous.
-    #[error("invalid current observation state: {reason}")]
-    InvalidCurrentState {
-        /// Stable reason.
-        reason: &'static str,
-    },
-    /// The MeasurementSet source set changed.
-    #[error("MeasurementSet source set changed")]
-    SourceSetChanged,
-    /// Re-evaluating selection changed selected rows or their canonical order.
-    #[error("selected rows changed for source {measurement_set}")]
-    SelectedRowsChanged {
-        /// Mutated source.
-        measurement_set: MeasurementSetIdentity,
-    },
-    /// Visibility, flag, or weight interpretation changed.
-    #[error("selected column contract changed for source {measurement_set}")]
-    SelectedColumnContractChanged {
-        /// Mutated source.
-        measurement_set: MeasurementSetIdentity,
-    },
-    /// The set of generation-tracked MAIN columns changed.
-    #[error("tracked MAIN column set changed for source {measurement_set}")]
-    ColumnSetChanged {
-        /// Mutated source.
-        measurement_set: MeasurementSetIdentity,
-    },
-    /// One selected MAIN column changed generation.
-    #[error("MAIN column {column:?} changed generation for source {measurement_set}")]
-    ColumnGenerationChanged {
-        /// Mutated source.
-        measurement_set: MeasurementSetIdentity,
-        /// Mutated column.
-        column: MsColumnKind,
-    },
-    /// The optional `MODEL_DATA` column appeared, disappeared, or changed generation.
-    #[error("MODEL_DATA state changed for source {measurement_set}")]
-    ModelColumnStateChanged {
-        /// Mutated source.
-        measurement_set: MeasurementSetIdentity,
-    },
-    /// The set of generation-tracked metadata tables changed.
-    #[error("tracked metadata table set changed for source {measurement_set}")]
-    MetadataSetChanged {
-        /// Mutated source.
-        measurement_set: MeasurementSetIdentity,
-    },
-    /// One metadata table changed generation.
-    #[error("metadata table {table:?} changed generation for source {measurement_set}")]
-    MetadataGenerationChanged {
-        /// Mutated source.
-        measurement_set: MeasurementSetIdentity,
-        /// Mutated metadata table.
-        table: MetadataTableKind,
-    },
-    /// The storage owner's atomic consistency token changed.
-    #[error("consistency token changed for source {measurement_set}")]
-    ConsistencyTokenChanged {
-        /// Mutated source.
-        measurement_set: MeasurementSetIdentity,
-    },
-    /// External measures, observatory, ephemeris, or instrument data changed.
-    #[error("external reference-data generation changed")]
-    ReferenceDataChanged,
-    /// The aggregate input-model generation changed.
-    #[error("input model state changed")]
-    ModelStateChanged,
-}
-
 /// Compile and validate one immutable logical observation snapshot.
 ///
-/// The compiler hashes only compact manifests and owner-supplied generations;
-/// it never reads or retains visibility, flag, weight, or coordinate arrays.
+/// The compiler reads only compact manifests; it never reads or retains
+/// visibility, flag, weight, or coordinate arrays. Sources keep request order.
 pub fn compile_observation(
     input: ObservationSnapshotInput,
 ) -> Result<ObservationSnapshot, CompileObservationError> {
@@ -2574,33 +1913,21 @@ pub fn compile_observation(
     let mut sources = Vec::with_capacity(input.sources.len());
     let mut has_selected_rows = false;
     for (input_ordinal, source) in input.sources.into_iter().enumerate() {
-        require_identity(source.identity.0, "MeasurementSet")?;
         let provenance = source.provenance;
         provenance.validate()?;
         let mut selection = source.selection;
         selection.canonicalize()?;
         has_selected_rows |= selection.rows.selected_row_count() > 0;
-        let mut generations = source.generations;
-        generations.canonicalize()?;
         sources.push(ObservationSource {
-            identity: source.identity,
             provenance,
             input_ordinal,
             selection: Arc::new(selection),
-            generations: Arc::new(generations),
+            columns: source.columns,
+            corrected_data_present: source.corrected_data_present,
         });
     }
     if !has_selected_rows {
         return Err(CompileObservationError::EmptySelection);
-    }
-    sources.sort_unstable_by_key(|source| source.identity);
-    if let Some(source) = sources
-        .windows(2)
-        .find_map(|pair| (pair[0].identity == pair[1].identity).then_some(pair[0].identity))
-    {
-        return Err(CompileObservationError::DuplicateSource {
-            measurement_set: source,
-        });
     }
 
     let mut reference_data = input.reference_data;
@@ -2630,92 +1957,6 @@ pub fn compile_observation(
         reference_data,
         model: input.model,
     })
-}
-
-fn compare_columns(
-    source: MeasurementSetIdentity,
-    expected: &SelectedColumns,
-    actual: &SelectedColumns,
-) -> Result<(), ObservationConsistencyError> {
-    if expected.generations.len() != actual.generations.len()
-        || expected
-            .generations
-            .iter()
-            .zip(&actual.generations)
-            .any(|(left, right)| left.kind != right.kind)
-    {
-        return Err(ObservationConsistencyError::ColumnSetChanged {
-            measurement_set: source,
-        });
-    }
-    for (left, right) in expected.generations.iter().zip(&actual.generations) {
-        if left.identity != right.identity {
-            return Err(ObservationConsistencyError::ColumnGenerationChanged {
-                measurement_set: source,
-                column: left.kind,
-            });
-        }
-    }
-    Ok(())
-}
-
-fn compare_metadata(
-    source: MeasurementSetIdentity,
-    expected: &SourceGenerations,
-    actual: &SourceGenerations,
-) -> Result<(), ObservationConsistencyError> {
-    if expected.metadata.len() != actual.metadata.len()
-        || expected
-            .metadata
-            .iter()
-            .zip(&actual.metadata)
-            .any(|(left, right)| left.kind != right.kind)
-    {
-        return Err(ObservationConsistencyError::MetadataSetChanged {
-            measurement_set: source,
-        });
-    }
-    for (left, right) in expected.metadata.iter().zip(&actual.metadata) {
-        if left.identity != right.identity {
-            return Err(ObservationConsistencyError::MetadataGenerationChanged {
-                measurement_set: source,
-                table: left.kind,
-            });
-        }
-    }
-    Ok(())
-}
-
-fn canonicalize_current_generations(
-    generations: &mut SourceGenerations,
-) -> Result<(), ObservationConsistencyError> {
-    generations
-        .columns
-        .generations
-        .sort_unstable_by_key(|generation| generation.kind);
-    if generations
-        .columns
-        .generations
-        .windows(2)
-        .any(|pair| pair[0].kind == pair[1].kind)
-    {
-        return Err(ObservationConsistencyError::InvalidCurrentState {
-            reason: "duplicate MAIN column generation",
-        });
-    }
-    generations
-        .metadata
-        .sort_unstable_by_key(|generation| generation.kind);
-    if generations
-        .metadata
-        .windows(2)
-        .any(|pair| pair[0].kind == pair[1].kind)
-    {
-        return Err(ObservationConsistencyError::InvalidCurrentState {
-            reason: "duplicate metadata generation",
-        });
-    }
-    Ok(())
 }
 
 fn canonicalize_time_selection(
@@ -2872,9 +2113,11 @@ fn canonical_snapshot_id(
     encoder.u32(OBSERVATION_SNAPSHOT_IDENTITY_VERSION);
     encoder.usize(sources.len());
     for source in sources {
-        encoder.identity(source.identity.0);
         encode_selection(&mut encoder, &source.selection);
-        encode_generations(&mut encoder, &source.generations);
+        encoder.u8(visibility_column_tag(source.columns.visibility));
+        encoder.u8(flag_policy_tag(source.columns.flags));
+        encoder.u8(weight_column_tag(source.columns.weights));
+        encoder.u8(u8::from(source.corrected_data_present));
     }
     encoder.usize(reference_data.len());
     for (kind, identity) in reference_data {
@@ -2898,7 +2141,6 @@ fn canonical_provenance_id(
     encoder.usize(by_request_order.len());
     for source in by_request_order {
         encoder.usize(source.input_ordinal);
-        encoder.identity(source.identity.0);
         encoder.bytes(source.provenance.locator.as_bytes());
         encoder.identity(source.provenance.selection_request);
     }
@@ -2970,37 +2212,6 @@ fn encode_selection(encoder: &mut CanonicalEncoder, selection: &ObservationSelec
         for product in &correlation.products {
             encoder.u32(product.correlation_index);
             encoder.u8(correlation_type_tag(product.correlation_type));
-        }
-    }
-}
-
-fn encode_generations(encoder: &mut CanonicalEncoder, generations: &SourceGenerations) {
-    encoder.identity(generations.consistency_token.0);
-    encoder.u8(visibility_column_tag(generations.columns.visibility));
-    encoder.u8(flag_policy_tag(generations.columns.flags));
-    encoder.u8(weight_column_tag(generations.columns.weights));
-    encoder.usize(generations.columns.generations.len());
-    for generation in &generations.columns.generations {
-        encoder.u8(ms_column_tag(generation.kind));
-        encoder.identity(generation.identity);
-    }
-    encoder.usize(generations.metadata.len());
-    for generation in &generations.metadata {
-        encoder.u8(metadata_table_tag(generation.kind));
-        encoder.identity(generation.identity);
-    }
-    match generations.model_column {
-        ModelColumnState::Absent => encoder.u8(0),
-        ModelColumnState::Present(generation) => {
-            encoder.u8(1);
-            encoder.identity(generation);
-        }
-    }
-    match generations.corrected_data_column {
-        CorrectedDataColumnState::Absent => encoder.u8(0),
-        CorrectedDataColumnState::Present(generation) => {
-            encoder.u8(1);
-            encoder.identity(generation);
         }
     }
 }
@@ -3103,53 +2314,6 @@ const fn weight_column_tag(column: WeightColumn) -> u8 {
     match column {
         WeightColumn::Weight => 0,
         WeightColumn::WeightSpectrum => 1,
-    }
-}
-
-const fn ms_column_tag(column: MsColumnKind) -> u8 {
-    match column {
-        MsColumnKind::Data => 0,
-        MsColumnKind::CorrectedData => 1,
-        MsColumnKind::FloatData => 2,
-        MsColumnKind::Flag => 3,
-        MsColumnKind::FlagRow => 4,
-        MsColumnKind::Weight => 5,
-        MsColumnKind::WeightSpectrum => 6,
-        MsColumnKind::Uvw => 7,
-        MsColumnKind::Time => 8,
-        MsColumnKind::TimeCentroid => 9,
-        MsColumnKind::Interval => 10,
-        MsColumnKind::Exposure => 11,
-        MsColumnKind::FieldId => 12,
-        MsColumnKind::DataDescriptionId => 13,
-        MsColumnKind::Antenna1 => 14,
-        MsColumnKind::Antenna2 => 15,
-        MsColumnKind::Feed1 => 16,
-        MsColumnKind::Feed2 => 17,
-        MsColumnKind::ScanNumber => 18,
-        MsColumnKind::StateId => 19,
-        MsColumnKind::ObservationId => 20,
-        MsColumnKind::ArrayId => 21,
-        MsColumnKind::ModelData => 22,
-    }
-}
-
-const fn metadata_table_tag(table: MetadataTableKind) -> u8 {
-    match table {
-        MetadataTableKind::Antenna => 0,
-        MetadataTableKind::DataDescription => 1,
-        MetadataTableKind::Doppler => 2,
-        MetadataTableKind::Feed => 3,
-        MetadataTableKind::Field => 4,
-        MetadataTableKind::FrequencyOffset => 5,
-        MetadataTableKind::Observation => 6,
-        MetadataTableKind::Pointing => 7,
-        MetadataTableKind::Polarization => 8,
-        MetadataTableKind::Source => 9,
-        MetadataTableKind::SpectralWindow => 10,
-        MetadataTableKind::State => 11,
-        MetadataTableKind::SysCal => 12,
-        MetadataTableKind::Weather => 13,
     }
 }
 

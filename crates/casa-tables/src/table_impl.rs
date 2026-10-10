@@ -268,9 +268,24 @@ pub(crate) struct TableImpl {
     keywords: RecordValue,
     column_keywords: HashMap<String, RecordValue>,
     schema: Option<TableSchema>,
+    /// Counts the changes made to rows, cells, keywords and the schema
+    /// through this value; every mutator advances it. A lock compares it
+    /// with the value at the last flush to tell whether there is anything
+    /// to write (casacore's `tableChanged`/`dataManChanged` flags).
+    generation: u64,
 }
 
 impl TableImpl {
+    /// The change count; see the `generation` field.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Count one change made outside this value's own mutators.
+    pub(crate) fn note_change(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+    }
+
     pub(crate) fn retained_lazy_metadata_heap_bytes(&self) -> Option<usize> {
         if self.loaded_rows.get().is_some() || self.lazy_rows.is_none() {
             return None;
@@ -371,6 +386,7 @@ impl TableImpl {
             keywords: RecordValue::default(),
             column_keywords: HashMap::new(),
             schema: None,
+            generation: 0,
         }
     }
 
@@ -392,6 +408,7 @@ impl TableImpl {
             keywords: RecordValue::default(),
             column_keywords: HashMap::new(),
             schema: None,
+            generation: 0,
         }
     }
 
@@ -419,6 +436,7 @@ impl TableImpl {
             keywords,
             column_keywords,
             schema,
+            generation: 0,
         }
     }
 
@@ -452,6 +470,7 @@ impl TableImpl {
             keywords,
             column_keywords,
             schema,
+            generation: 0,
         }
     }
 
@@ -473,6 +492,7 @@ impl TableImpl {
             keywords,
             column_keywords,
             schema,
+            generation: 0,
         }
     }
 
@@ -839,6 +859,7 @@ impl TableImpl {
     }
 
     pub(crate) fn add_row(&mut self, row: RecordValue) -> Result<(), TableError> {
+        self.note_change();
         let loaded = self.ensure_loaded_mut()?;
         loaded.rows.push(row);
         loaded.undefined_cells.push(HashSet::new());
@@ -905,6 +926,7 @@ impl TableImpl {
     }
 
     pub(crate) fn undefined_cells_mut(&mut self) -> Result<&mut [HashSet<String>], TableError> {
+        self.note_change();
         Ok(self.ensure_loaded_mut()?.undefined_cells.as_mut_slice())
     }
 
@@ -1679,10 +1701,12 @@ impl TableImpl {
         &mut self,
         row_index: usize,
     ) -> Result<Option<&mut RecordValue>, TableError> {
+        self.note_change();
         Ok(self.ensure_loaded_mut()?.rows.get_mut(row_index))
     }
 
     pub(crate) fn rows_mut(&mut self) -> Result<&mut [RecordValue], TableError> {
+        self.note_change();
         Ok(self.ensure_loaded_mut()?.rows.as_mut_slice())
     }
 
@@ -1692,6 +1716,7 @@ impl TableImpl {
         column: &str,
         value: ScalarValue,
     ) -> Result<Option<ScalarValue>, TableError> {
+        self.note_change();
         if let Some(loaded_rows) = self.loaded_rows.get_mut() {
             let Some(row) = loaded_rows.rows.get_mut(row_index) else {
                 return Ok(Some(value));
@@ -1731,6 +1756,7 @@ impl TableImpl {
         column: &str,
         value: ArrayValue,
     ) -> Result<Option<ArrayValue>, TableError> {
+        self.note_change();
         if let Some(loaded_rows) = self.loaded_rows.get_mut() {
             let Some(row) = loaded_rows.rows.get_mut(row_index) else {
                 return Ok(Some(value));
@@ -1819,10 +1845,12 @@ impl TableImpl {
         &mut self,
         row_index: usize,
     ) -> Result<Option<&mut HashSet<String>>, TableError> {
+        self.note_change();
         Ok(self.ensure_loaded_mut()?.undefined_cells.get_mut(row_index))
     }
 
     pub(crate) fn remove_row(&mut self, index: usize) -> Result<RecordValue, TableError> {
+        self.note_change();
         let loaded = self.ensure_loaded_mut()?;
         loaded.undefined_cells.remove(index);
         let removed = loaded.rows.remove(index);
@@ -1832,6 +1860,7 @@ impl TableImpl {
     }
 
     pub(crate) fn insert_row(&mut self, index: usize, row: RecordValue) -> Result<(), TableError> {
+        self.note_change();
         let loaded = self.ensure_loaded_mut()?;
         loaded.rows.insert(index, row);
         loaded.undefined_cells.insert(index, HashSet::new());
@@ -1845,6 +1874,7 @@ impl TableImpl {
     }
 
     pub(crate) fn keywords_mut(&mut self) -> &mut RecordValue {
+        self.note_change();
         &mut self.keywords
     }
 
@@ -1853,6 +1883,7 @@ impl TableImpl {
     }
 
     pub(crate) fn set_column_keywords(&mut self, column: String, keywords: RecordValue) {
+        self.note_change();
         self.column_keywords.insert(column, keywords);
     }
 
@@ -1861,10 +1892,12 @@ impl TableImpl {
     }
 
     pub(crate) fn remove_column_keywords(&mut self, column: &str) -> Option<RecordValue> {
+        self.note_change();
         self.column_keywords.remove(column)
     }
 
     pub(crate) fn rename_column_keywords(&mut self, old: &str, new: String) {
+        self.note_change();
         if let Some(kw) = self.column_keywords.remove(old) {
             self.column_keywords.insert(new, kw);
         }
@@ -1875,6 +1908,7 @@ impl TableImpl {
     }
 
     pub(crate) fn set_schema(&mut self, schema: Option<TableSchema>) {
+        self.note_change();
         self.loaded_scalar_columns = lazy_scalar_column_store(schema.as_ref());
         self.loaded_array_columns = lazy_array_column_store(schema.as_ref());
         self.buffered_array_cells = lazy_buffered_array_cell_store(schema.as_ref());

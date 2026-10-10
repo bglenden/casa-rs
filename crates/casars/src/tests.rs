@@ -9399,12 +9399,6 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
 
     let fixture_temp = tempdir().expect("fixture tempdir");
     let ms_path = create_fixture_ms(fixture_temp.path());
-    casa_ms::initialize_measurement_set_owner_manifest(&ms_path)
-        .expect("initialize imaging owner manifest");
-    MeasurementSet::open(&ms_path)
-        .expect("reopen owned imaging fixture")
-        .save()
-        .expect("preserve owner manifest and production bindings");
     let temp = tempdir().expect("tempdir");
     let imagename = temp.path().join("fixture-dirty-mfs");
     let schema = imager_app().load_schema().expect("load imager schema");

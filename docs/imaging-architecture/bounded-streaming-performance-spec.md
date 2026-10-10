@@ -398,10 +398,8 @@ pass/copy/residency evidence, and zero later-pass proof bytes.
 The approved seam retains an opaque proof, not an MS lock. Its exact retained
 heap is charged in the cross-plan frozen-weighting reservation. `casa-ms`
 mints it only after the first exhaustive traversal and owns the only rebind
-operation. Each later plan opens fresh retained locks and, under those locks,
-revalidates the owner manifest, physical modification counters, selected rows,
-physical selection, and selected read state before using the retained
-generation. The pass still consumes every bounded block, validates canonical
+operation. (Superseded 2026-10-09: the owner manifest and rebind were removed;
+a retained access replays its proof only in process. See ADR-0008.) The pass still consumes every bounded block, validates canonical
 order, reaches the terminal poll, and checks exact sample and block counts.
 `casa-imaging-runtime` carries the proof beside frozen weighting and otherwise
 keeps the existing per-plan leases and cancellation. Reconstruction derives

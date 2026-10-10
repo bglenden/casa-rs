@@ -3,13 +3,13 @@
 use std::convert::Infallible;
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, ColumnGeneration, CorrelationProduct, CorrelationSelection,
-    CorrelationType, DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw,
-    DirectionCoordinateSpec, DirectionFrame, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy,
-    FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    InstrumentResponse, MeasurementEquationContract, ModelColumnWrite, ModelInnerProduct,
-    ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationPointingLaw, ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
+    AxisOrder, CentreLaws, CorrelationProduct, CorrelationSelection, CorrelationType,
+    DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
+    DirectionFrame, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
+    GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
+    MeasurementEquationContract, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
     ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
     PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
     PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput,
@@ -22,11 +22,11 @@ use casa_imaging_model::{
     SelectedObservationPassError, SelectedObservationSample, SelectedPhaseCentreProjection,
     SelectedPredictionTarget, SelectedRowSpectralGeometry, SelectedRows, SelectedSampleAddress,
     SelectedSampleCoordinates, SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection,
-    SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, UvwCoordinateLaw, VisibilityColumn,
+    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
+    compile, compile_observation,
 };
 
 mod common;
@@ -135,10 +135,7 @@ fn selected_row_spectral_geometry_binds_exact_row_and_conversion_context() {
     assert!(!geometry.matches_sample(sample.as_view(), FrequencyFrame::Barycentric));
     type SampleChange = (&'static str, fn(&mut SelectedObservationSample));
     let changes: [SampleChange; 8] = [
-        ("source", |sample| {
-            sample.address.measurement_set =
-                casa_imaging_model::MeasurementSetIdentity::new(identity(251))
-        }),
+        ("source", |sample| sample.address.measurement_set = 251),
         ("row", |sample| sample.address.physical_row += 1),
         ("DDID", |sample| sample.address.data_description_id += 1),
         ("SPW", |sample| sample.address.spectral_window_id += 1),
@@ -431,7 +428,7 @@ fn exact_samples(problem: &casa_imaging_model::CompiledProblem) -> Vec<SelectedO
 }
 
 fn sample(
-    measurement_set: casa_imaging_model::MeasurementSetIdentity,
+    measurement_set: usize,
     physical_row: u64,
     data_description: DataDescriptionSelection,
     channel_index: u32,
@@ -631,44 +628,11 @@ fn source(
             ),
         ],
     );
-    let mut column_generations = source.generations().columns().generations().to_vec();
-    let required_column = match visibility {
-        VisibilityColumn::Data => MsColumnKind::Data,
-        VisibilityColumn::CorrectedData => MsColumnKind::CorrectedData,
-        VisibilityColumn::FloatData => MsColumnKind::FloatData,
-    };
-    if column_generations
-        .iter()
-        .all(|generation| generation.kind() != required_column)
-    {
-        column_generations.push(ColumnGeneration::new(required_column, identity(111)));
-    }
-    let required_weight = match weights {
-        WeightColumn::Weight => MsColumnKind::Weight,
-        WeightColumn::WeightSpectrum => MsColumnKind::WeightSpectrum,
-    };
-    if column_generations
-        .iter()
-        .all(|generation| generation.kind() != required_weight)
-    {
-        column_generations.push(ColumnGeneration::new(required_weight, identity(112)));
-    }
-    let generations = SourceGenerations::new(
-        source.generations().consistency_token(),
-        SelectedColumns::new(
-            visibility,
-            FlagPolicy::FlagOrFlagRow,
-            weights,
-            column_generations,
-        ),
-        source.generations().metadata_generations().to_vec(),
-        source.generations().model_column(),
-    );
     ObservationSourceInput::new(
-        source.identity(),
         source.provenance().clone(),
         selection,
-        generations,
+        SelectedColumns::new(visibility, FlagPolicy::FlagOrFlagRow, weights),
+        source.corrected_data_present(),
     )
 }
 

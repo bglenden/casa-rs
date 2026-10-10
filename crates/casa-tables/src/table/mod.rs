@@ -15,6 +15,8 @@ use thiserror::Error;
 #[cfg(unix)]
 use crate::lock::LockFile;
 use crate::lock::SyncData;
+#[cfg(unix)]
+use crate::lock::publish_persisted_write;
 use crate::lock::{LockMode, LockOptions, LockType};
 use crate::schema::{ArrayShapeContract, ColumnSchema, ColumnType, SchemaError, TableSchema};
 use crate::storage::virtual_engine::VirtualColumnBinding;
@@ -232,6 +234,78 @@ pub struct ColumnBinding {
     /// Optional tile shape (only used with tiled storage managers).
     pub tile_shape: Option<Vec<usize>>,
 }
+
+/// What a typed selected-row array read holds in memory besides its packed
+/// output.
+///
+/// The typed selected readers ([`TableColumn::fill_array_cells_2d_channel_range_typed_uncached`],
+/// [`TableColumn::fill_array_cells_1d_typed_uncached`] and their `load`
+/// forms) pack a selection of rows, and for 2-D cells a channel range, into
+/// flat layouts. What they hold beyond that depends on the column's data
+/// manager ([`Table::selected_channel_read_footprint`],
+/// [`Table::selected_cell_read_footprint`]): some managers stream the
+/// selection, the others are read cell by cell. A cell-by-cell read never
+/// escalates to a whole-column read, so [`WholeCells`](Self::WholeCells) is a
+/// true bound a memory planner can charge per selected row with
+/// [`staging_bytes_per_row`](Self::staging_bytes_per_row) and once per read
+/// with [`staging_fixed_bytes`](Self::staging_fixed_bytes).
+///
+/// A cell-by-cell read stages only the selected rows' cells, however the
+/// selection is strided: `StandardStMan` is read bucket by bucket, keeping the
+/// selected rows of each, and `StManAipsIO` row by row. Two costs are outside
+/// this footprint because the selection does not bound them: a reader's I/O
+/// buffers, which depend on the stored layout (a `StandardStMan` bucket's worth
+/// at a time; a tiled manager's recent tiles and the process-wide table cache, see
+/// [`set_table_cache_budget_bytes`](crate::set_table_cache_budget_bytes)), and
+/// data-manager metadata a reader parses for any read (bucket indices, tile
+/// layouts), which depends on the stored table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectedReadFootprint {
+    /// The data manager streams the selected rows (and channels) into the
+    /// layout tile by tile, or the table is held in memory: nothing is held
+    /// per selected row.
+    Streamed,
+    /// Each selected row's whole stored cell is read and held until the
+    /// selection is packed.
+    WholeCells,
+}
+
+impl SelectedReadFootprint {
+    /// Bytes besides the packed output held per selected row whose stored
+    /// cell has `stored_cell_bytes` bytes of values.
+    ///
+    /// A whole-cell read holds the cell's values and one owned cell slot per
+    /// row (the slot's array header and the read's row bookkeeping).
+    #[must_use]
+    pub const fn staging_bytes_per_row(self, stored_cell_bytes: usize) -> Option<usize> {
+        match self {
+            Self::Streamed => Some(0),
+            Self::WholeCells => stored_cell_bytes.checked_add(WHOLE_CELL_SLOT_BYTES),
+        }
+    }
+
+    /// Bytes besides the packed output and the per-row staging held once per
+    /// read of cells with `stored_cell_bytes` bytes of values: a whole-cell
+    /// read decodes through a buffer of at most one cell, plus its file and
+    /// decoding state.
+    #[must_use]
+    pub const fn staging_fixed_bytes(self, stored_cell_bytes: usize) -> Option<usize> {
+        match self {
+            Self::Streamed => Some(0),
+            Self::WholeCells => stored_cell_bytes.checked_add(WHOLE_CELL_READ_FIXED_BYTES),
+        }
+    }
+}
+
+/// Owned-cell slot and row bookkeeping of one whole-cell read row: the
+/// `Option<ArrayValue>` slot (array header, shape and strides inline) plus
+/// the reader's per-row request and offset entries.
+const WHOLE_CELL_SLOT_BYTES: usize =
+    size_of::<Option<casa_types::ArrayValue>>() + 4 * size_of::<usize>();
+
+/// Per-read file and decoding state of a whole-cell read besides its
+/// one-cell buffer.
+const WHOLE_CELL_READ_FIXED_BYTES: usize = 64 * 1024;
 
 /// Typed selected 2-D array cells packed as `[channel][row][axis0]`.
 #[derive(Clone, Debug, PartialEq)]
@@ -1904,6 +1978,19 @@ struct LockState {
     options: LockOptions,
     data_manager: DataManagerKind,
     endian_format: EndianFormat,
+    /// The table's change count when its state last matched the disk (open,
+    /// reload or flush). Releasing a write lock writes and publishes the
+    /// table only when the count has moved since, as casacore's
+    /// `PlainTable::putFile` writes only what changed.
+    flushed_generation: u64,
+}
+
+#[cfg(unix)]
+impl LockState {
+    /// Whether the table changed since its state last matched the disk.
+    fn has_unflushed_changes(&self, table: &TableImpl) -> bool {
+        table.generation() != self.flushed_generation
+    }
 }
 
 #[cfg(unix)]
@@ -2352,26 +2439,26 @@ impl Drop for Table {
         #[cfg(unix)]
         {
             if self.kind != TableKind::Memory {
-                let had_write_lock = self
-                    .lock_state
-                    .as_ref()
-                    .is_some_and(|state| state.lock_file.has_lock(LockType::Write));
+                // A write lock that changed nothing writes and publishes
+                // nothing, as in casacore.
+                let has_changes_to_flush = self.lock_state.as_ref().is_some_and(|state| {
+                    state.lock_file.has_lock(LockType::Write)
+                        && state.has_unflushed_changes(&self.inner)
+                });
 
-                if had_write_lock {
+                if has_changes_to_flush {
                     let save_opts = self.lock_state.as_ref().map(|state| {
                         TableOptions::new(&state.path)
                             .with_data_manager(state.data_manager)
                             .with_endian_format(state.endian_format)
                     });
 
-                    if let Some(save_opts) = save_opts
-                        && self.save(save_opts).is_ok()
-                    {
-                        let nrrow = self.row_count() as u64;
-                        let nrcolumn = self.schema().map(|s| s.columns().len() as u32).unwrap_or(0);
-                        if let Some(state) = self.lock_state.as_mut() {
-                            state.sync_data.record_write(nrrow, nrcolumn, true, &[true]);
-                            let _ = state.lock_file.write_sync_data(&state.sync_data);
+                    if let Some(save_opts) = save_opts {
+                        // Whatever part of the save reached the disk is
+                        // published, describing the table as persisted.
+                        let _ = self.save(save_opts);
+                        if let Some(state) = self.lock_state.as_ref() {
+                            let _ = publish_persisted_write(&state.lock_file, &state.path);
                         }
                     }
                 }

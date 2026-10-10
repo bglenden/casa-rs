@@ -14,8 +14,9 @@ use crate::schema::{ColumnSchema, TableSchema};
 
 use super::{
     ColumnBinding, ColumnOverrides, DataManagerKind, EndianFormat, GeneratedScalarColumn,
-    GeneratedScalarValueRun, RequiredScalarColumnValues, RowRange, SelectedArray2DCells, SortOrder,
-    StreamedScalarType, StreamingScalarColumnWriter, Table, TableError, TableOptions,
+    GeneratedScalarValueRun, RequiredScalarColumnValues, RowRange, SelectedArray2DCells,
+    SelectedArray2DCellsMut, SortOrder, StreamedScalarType, StreamingScalarColumnWriter, Table,
+    TableError, TableOptions,
 };
 
 fn row_with_fixed_arrays(id: i32, data: &[i32], other: &[i32]) -> RecordValue {
@@ -2577,6 +2578,90 @@ fn lazy_disk_open_reads_selected_array_cells_without_loading_full_tiled_column()
     );
 
     std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
+#[test]
+fn typed_selected_reads_cover_every_casacore_array_manager() {
+    let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+        "data",
+        PrimitiveType::Float32,
+        vec![2, 6],
+    )])
+    .expect("schema");
+    let mut table = Table::with_schema(schema);
+    for row_idx in 0..8 {
+        let mut values = Vec::new();
+        for channel in 0..6 {
+            for corr in 0..2 {
+                values.push(row_idx as f32 * 100.0 + channel as f32 * 10.0 + corr as f32);
+            }
+        }
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "data",
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(ndarray::IxDyn(&[2, 6]).f(), values)
+                        .expect("shape data"),
+                )),
+            )]))
+            .expect("push row");
+    }
+
+    for manager in [
+        DataManagerKind::TiledColumnStMan,
+        DataManagerKind::StandardStMan,
+        DataManagerKind::StManAipsIO,
+    ] {
+        let root = unique_test_dir("typed_selected_reads_every_manager");
+        std::fs::create_dir_all(&root).expect("create test dir");
+        table
+            .save(TableOptions::new(&root).with_data_manager(manager))
+            .expect("save table");
+        let reopened = Table::open(TableOptions::new(&root)).expect("open lazy table");
+        let column = reopened.column_accessor("data").expect("data accessor");
+
+        let mut row_channel = Vec::new();
+        let shape = column
+            .fill_array_cells_2d_channel_range_typed_uncached(
+                &[7, 2],
+                1,
+                3,
+                SelectedArray2DCellsMut::RowChannelFloat32(&mut row_channel),
+            )
+            .unwrap_or_else(|error| panic!("{manager:?} typed 2-D fill: {error}"))
+            .expect("defined selected cells");
+        assert_eq!(
+            (shape.row_count, shape.axis0_count, shape.channel_count),
+            (2, 2, 3),
+            "{manager:?}"
+        );
+        assert_eq!(
+            row_channel,
+            [
+                710.0, 711.0, 720.0, 721.0, 730.0, 731.0, 210.0, 211.0, 220.0, 221.0, 230.0, 231.0,
+            ],
+            "{manager:?}"
+        );
+        let SelectedArray2DCells::Float32(channel_row) = column
+            .array_cells_2d_channel_range_typed_uncached(&[7, 2], 1, 3)
+            .expect("typed selected channel ranges")
+            .expect("defined selected cells")
+        else {
+            panic!("{manager:?}: expected Float32 cells");
+        };
+        assert_eq!(
+            channel_row.values(),
+            &[
+                710.0, 711.0, 210.0, 211.0, 720.0, 721.0, 220.0, 221.0, 730.0, 731.0, 230.0, 231.0,
+            ],
+            "{manager:?}"
+        );
+        assert!(
+            !reopened.inner.has_loaded_array_column("data"),
+            "{manager:?}: selected reads must not populate the full array-column cache"
+        );
+        std::fs::remove_dir_all(&root).expect("cleanup test dir");
+    }
 }
 
 #[test]
@@ -5394,6 +5479,168 @@ mod lock_tests {
         assert_eq!(
             first.locked_modify_counter().unwrap(),
             before.wrapping_add(1)
+        );
+    }
+
+    /// A published write describes the table as persisted: casacore takes a
+    /// reopened table's row count from the sync data, refuses a lock whose
+    /// column count differs, and asserts one change counter per data manager
+    /// (`ColumnSet::resync`). Covers `Table::unlock` on a table with several
+    /// data managers and `TableWriteLock` across a layout change.
+    #[test]
+    fn published_writes_describe_the_persisted_layout() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("mixed.tbl");
+        let schema = TableSchema::new(vec![
+            ColumnSchema::scalar("id", PrimitiveType::Int32),
+            ColumnSchema::scalar("name", PrimitiveType::String),
+            ColumnSchema::scalar("flag", PrimitiveType::Bool),
+        ])
+        .unwrap();
+        let mut table = Table::with_schema(schema);
+        for id in 0..3 {
+            table
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("id", Value::Scalar(ScalarValue::Int32(id))),
+                    RecordField::new("name", Value::Scalar(ScalarValue::String("n".into()))),
+                    RecordField::new("flag", Value::Scalar(ScalarValue::Bool(false))),
+                ]))
+                .unwrap();
+        }
+        let binding = |data_manager| ColumnBinding {
+            data_manager,
+            tile_shape: None,
+        };
+        let bindings = HashMap::from([
+            (
+                "name".to_string(),
+                binding(DataManagerKind::IncrementalStMan),
+            ),
+            ("flag".to_string(), binding(DataManagerKind::StManAipsIO)),
+        ]);
+        table
+            .save_with_bindings(
+                TableOptions::new(&path).with_data_manager(DataManagerKind::StandardStMan),
+                &bindings,
+            )
+            .unwrap();
+        let persisted = |path: &std::path::Path| {
+            let contents =
+                crate::storage::table_control::read_table_dat(&path.join("table.dat")).unwrap();
+            (
+                contents.nrrow,
+                contents.table_desc.columns.len() as i32,
+                contents.column_set.data_managers.len(),
+            )
+        };
+        let published = |path: &std::path::Path| {
+            let sync = crate::lock::read_sync_data_from_table_dir(path)
+                .unwrap()
+                .expect("published sync data");
+            (
+                sync.nrrow,
+                sync.nrcolumn,
+                sync.data_man_change_counters.len(),
+            )
+        };
+        assert_eq!(persisted(&path), (3, 3, 3));
+
+        // An in-place writer publishes the three managers.
+        let mut lock = crate::TableWriteLock::acquire(&path, 1).unwrap();
+        lock.record_write();
+        lock.release().unwrap();
+        assert_eq!(published(&path), persisted(&path));
+
+        // Table::unlock currently saves through Table::save with the data
+        // manager of its open options, which collapses the three managers to
+        // one; that is a known problem of the save, not of the publication.
+        // Whatever the save leaves, the published counters follow it, here
+        // shrinking from three to one.
+        let mut locked = Table::open_with_lock(
+            TableOptions::new(&path),
+            LockOptions::new(LockMode::UserLocking),
+        )
+        .unwrap();
+        assert!(locked.lock(LockType::Write, 1).unwrap());
+        locked
+            .row_accessor_mut()
+            .set_cell(
+                0,
+                "name",
+                Value::Scalar(ScalarValue::String("changed".into())),
+            )
+            .unwrap();
+        locked.unlock().unwrap();
+        drop(locked);
+        assert_eq!(published(&path), persisted(&path));
+
+        // A layout change made under the lock adds a manager.
+        let managers_before = persisted(&path).2;
+        let mut lock = crate::TableWriteLock::acquire(&path, 1).unwrap();
+        let mut plain = Table::open(TableOptions::new(&path)).unwrap();
+        plain
+            .add_column(
+                ColumnSchema::array_variable("extra", PrimitiveType::Float32, Some(1)),
+                None,
+            )
+            .unwrap();
+        lock.record_write();
+        plain
+            .prepare_write()
+            .add_tiled_shape_column("extra", &[], None)
+            .unwrap();
+        lock.release().unwrap();
+        let after_layout_change = persisted(&path);
+        assert_eq!(after_layout_change.1, 4);
+        assert_eq!(after_layout_change.2, managers_before + 1);
+        assert_eq!(published(&path), after_layout_change);
+    }
+
+    /// casacore raises the modify counter only when a write lock period
+    /// changed the table (`TableSyncData::write`, `PlainTable::putFile`): a
+    /// write lock released without a change publishes nothing, and a change
+    /// is published once, however many lock periods follow it.
+    #[test]
+    fn a_write_lock_that_changes_nothing_publishes_nothing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let opts = build_test_table_on_disk(tmp.path(), DataManagerKind::StManAipsIO);
+        let lock_opts = LockOptions::new(LockMode::UserLocking);
+        let published = || {
+            let mut reader = Table::open_with_lock(opts.clone(), lock_opts.clone()).unwrap();
+            assert!(reader.lock(LockType::Read, 1).unwrap());
+            reader.locked_modify_counter().unwrap()
+        };
+        let before = published();
+
+        let mut writer = Table::open_with_lock(opts.clone(), lock_opts.clone()).unwrap();
+        // A write refused for want of the write lock changes nothing.
+        assert!(
+            writer
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("id", Value::Scalar(ScalarValue::Int32(2))),
+                    RecordField::new("name", Value::Scalar(ScalarValue::String("bob".into()))),
+                ]))
+                .is_err()
+        );
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        assert_eq!(writer.row_count(), 1);
+        writer.unlock().unwrap();
+        assert_eq!(published(), before, "an unchanged write lock was published");
+
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        writer
+            .keywords_mut()
+            .upsert("CHANGED", Value::Scalar(ScalarValue::Bool(true)));
+        writer.unlock().unwrap();
+        assert_eq!(published(), before.wrapping_add(1));
+
+        assert!(writer.lock(LockType::Write, 1).unwrap());
+        writer.unlock().unwrap();
+        drop(writer);
+        assert_eq!(
+            published(),
+            before.wrapping_add(1),
+            "a change was published twice"
         );
     }
 

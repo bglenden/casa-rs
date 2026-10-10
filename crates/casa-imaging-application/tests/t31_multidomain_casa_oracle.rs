@@ -41,7 +41,6 @@ fn t31_multidomain_geometry_matches_frozen_casa_dirty_and_hogbom() -> Result<(),
     let staging = tempfile::tempdir()?;
     let measurement_set = staging.path().join("refim_twopoints_twochan.ms");
     copy_tree(&source, &measurement_set)?;
-    casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
     let mut failures = Vec::new();
 
     for (label, iterations) in [("dirty", 0), ("clean", 10)] {
@@ -129,7 +128,6 @@ fn issue607_representative_main_and_outlier_match_casa() -> Result<(), Box<dyn E
         .tempdir_in(&rust_root)?;
     let measurement_set = staging.path().join("input.ms");
     copy_tree(&source, &measurement_set)?;
-    casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
 
     for (label, iterations) in [("dirty", 0), ("clean", 25)] {
         let rust_case = rust_root.join(label);

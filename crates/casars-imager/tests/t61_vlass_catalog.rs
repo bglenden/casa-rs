@@ -32,7 +32,6 @@ fn t61_vlass_controls_reach_the_request_and_the_real_snapshot() -> Result<(), Bo
     let staging = tempfile::tempdir()?;
     let staged_measurement_set = staging.path().join("ref_vlass_wtsp_creation.ms");
     copy_tree(&measurement_set, &staged_measurement_set)?;
-    casa_ms::initialize_measurement_set_owner_manifest(&staged_measurement_set)?;
     let output = tempfile::tempdir()?;
     let image_name = output.path().join("vlass-t61");
 

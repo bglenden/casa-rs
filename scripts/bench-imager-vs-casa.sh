@@ -494,9 +494,6 @@ echo
 
 if [[ "$skip_rust_enabled" == "0" ]]; then
   cargo build --release -p casars-imager --bin casars-imager >/dev/null
-  if [[ "$ms_staging" == "copy" ]]; then
-    cargo build --release -p casa-ms --example initialize_imaging_owner >/dev/null
-  fi
 fi
 
 tmpdir="$(mktemp -d "$tmp_root/casa-rs-imager-bench.XXXXXX")"
@@ -507,7 +504,6 @@ casa_ms_path="$source_ms_path"
 if [[ "$ms_staging" == "copy" && "$skip_rust_enabled" == "0" ]]; then
   rust_ms_path="$tmpdir/benchmark.ms"
   cp -R "$source_ms_path" "$rust_ms_path"
-  target/release/examples/initialize_imaging_owner "$rust_ms_path" >/dev/null
 fi
 if [[ "$ms_staging" == "copy" && "$skip_casa" != "1" && "$skip_casa" != "true" && "$skip_casa" != "yes" && "$skip_casa" != "on" && ( "$savemodel" == "modelcolumn" || -n "$fitspw" ) ]]; then
   casa_ms_path="$tmpdir/casa-benchmark.ms"

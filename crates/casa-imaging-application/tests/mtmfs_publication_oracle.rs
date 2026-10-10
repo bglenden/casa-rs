@@ -69,7 +69,6 @@ fn t44_application_mtmfs_publishes_frozen_casa_product_contract() -> Result<(), 
     let staging = tempfile::tempdir()?;
     let staged = staging.path().join("ref_vlass_wtsp_creation.ms");
     copy_tree(&source, &staged)?;
-    casa_ms::initialize_measurement_set_owner_manifest(&staged)?;
 
     let request = mtmfs_request(json!({
         "vis": staged,
@@ -138,7 +137,6 @@ fn issue607_representative_mtmfs_matches_casa_products() -> Result<(), Box<dyn E
     let staging = tempfile::tempdir()?;
     let staged = staging.path().join("issue607-mtmfs.ms");
     measurement_set.save_as(&staged)?;
-    casa_ms::initialize_measurement_set_owner_manifest(&staged)?;
     let output = staging.path().join("rust-mtmfs-representative");
     let request = mtmfs_request(json!({
         "vis": staged,
