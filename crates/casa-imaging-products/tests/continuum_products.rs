@@ -140,24 +140,12 @@ fn generate_for(
 }
 
 #[test]
-fn planned_generation_binds_the_exact_graph_and_run_associations() {
+fn planned_generation_lists_the_graph_members() {
     let problem = continuum_problem(81, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem, 82);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
         .expect("planned generation");
-    assert_eq!(
-        planned.major_cycle_completion(),
-        inputs.major_cycle_completion()
-    );
-    assert_eq!(
-        planned.normal_state_completion(),
-        inputs.normal_state_completion()
-    );
-    assert_eq!(
-        planned.final_model_generation(),
-        round.join.normal_state().final_model_generation()
-    );
 
     let graph_members = problem.product_graph().publication().members();
     assert_eq!(planned.members().len(), graph_members.len());
@@ -198,17 +186,6 @@ fn planned_generation_binds_the_exact_graph_and_run_associations() {
             .iter()
             .map(|member| member.node())
             .collect::<Vec<_>>()
-    );
-
-    let other = continuum_problem(83, &CONTINUUM_PRODUCTS);
-    let other_round = run_continuum_round(&other, 84);
-    let other_inputs = ContinuumProductInputs::from_major_cycle(&other, &other_round.join);
-    let other_planned =
-        PlannedContinuumGeneration::new(&other_inputs, &ContinuumProductControls::default())
-            .expect("other planned");
-    assert_ne!(
-        planned.major_cycle_completion(),
-        other_planned.major_cycle_completion()
     );
 }
 
@@ -414,61 +391,6 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
         let expected_mask = vec![1.0; expected_shape[0] * expected_shape[1]];
         assert_eq!(mask_member.payload(), expected_mask);
     }
-}
-
-#[test]
-fn direct_generation_rejects_same_problem_with_foreign_completions() {
-    let problem = two_domain_problem(145);
-    let first_round = run_two_domain_round(&problem, 146);
-    let mask_plans =
-        ImageDomainReconstructionMaskPlans::new(problem.geometry().domains().iter().map(
-            |domain| ReconstructionMaskPlan::FullPlane {
-                coordinate: domain.direction(),
-            },
-        ))
-        .expect("domain mask plans");
-    let (masks, _) = mask_plans
-        .materialize(
-            first_round.join.final_model(),
-            first_round.join.normal_state(),
-            None,
-        )
-        .expect("domain masks")
-        .into_parts();
-
-    let second_round = rerun_two_domain_with_masks(&problem, 147, 8, first_round, &masks);
-    let planned = {
-        let second_inputs = ContinuumProductInputs::from_major_cycle(&problem, &second_round.join)
-            .with_domain_reconstruction_masks(&masks)
-            .expect("second mask-bound inputs");
-        planned_for(&second_inputs, &ContinuumProductControls::default())
-    };
-
-    let third_round = rerun_two_domain_with_masks(&problem, 148, 9, second_round, &masks);
-    let third_inputs = ContinuumProductInputs::from_major_cycle(&problem, &third_round.join)
-        .with_domain_reconstruction_masks(&masks)
-        .expect("third mask-bound inputs");
-    assert_ne!(
-        planned.final_model_generation(),
-        third_inputs.final_model().generation_id(),
-        "a distinct execution attempt owns a distinct adopted model generation"
-    );
-    assert_ne!(
-        planned.major_cycle_completion(),
-        third_inputs.major_cycle_completion(),
-        "each reconciliation has its own run association"
-    );
-    assert_ne!(
-        planned.normal_state_completion(),
-        third_inputs.normal_state_completion(),
-        "each reconciliation has its own normal-state completion"
-    );
-
-    let output = MemoryProductOutput::default();
-    assert!(matches!(
-        produce_continuum_members(&planned, &third_inputs, full_window(&planned), &(), &output),
-        Err(ProductsError::SourceLineageMismatch)
-    ));
 }
 
 #[test]

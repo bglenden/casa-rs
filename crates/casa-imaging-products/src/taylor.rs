@@ -298,8 +298,7 @@ impl TaylorProducts {
 
         if let Some(started) = normalization_started {
             eprintln!(
-                "imaging_taylor_normalization_envelope model_generation={} aw_projection={aw_projection} preparation_nanos={} residual_model_nanos={} normal_sum_weight={principal_sum_weight} residual_sum_weight={residual_sum_weight} excludes=psf_weight_products,restoration,publication",
-                inputs.final_model().generation_id(),
+                "imaging_taylor_normalization_envelope aw_projection={aw_projection} preparation_nanos={} residual_model_nanos={} normal_sum_weight={principal_sum_weight} residual_sum_weight={residual_sum_weight} excludes=psf_weight_products,restoration,publication",
                 preparation_nanos.expect("normalization timer follows preparation timer"),
                 started.elapsed().as_nanos(),
             );

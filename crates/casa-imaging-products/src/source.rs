@@ -2,28 +2,23 @@
 
 //! Direct scientific inputs for continuum products.
 //!
-//! The inputs are minted only from a whole released Major-Cycle join, so one
-//! atomic reconciliation result carries the scientific payloads together and
-//! source/run association cannot be substituted independently.
+//! The inputs borrow one whole Major-Cycle completion, so the final normal
+//! state and model they carry come from the same reconciliation.
 
 use casa_imaging_model::{CompiledProblem, ImageDomainRole};
 use casa_imaging_reconstruction::{
-    FinalNormalState, FinalNormalStateCompletionId, ImageDomainReconstructionMasks,
-    MajorCycleCompletion, MajorCycleCompletionId, ModelGeneration, ReconstructionMask,
-    ReconstructionMaskGenerationId,
+    FinalNormalState, ImageDomainReconstructionMasks, MajorCycleCompletion, ModelGeneration,
+    ReconstructionMask, ReconstructionMaskGenerationId,
 };
 
 use crate::error::ProductsError;
 /// Borrowed scientific payloads for producing planned members.
 ///
-/// This value is minted only from a whole join plus its exact compiled
-/// problem, so production always consumes the same atomic reconciliation
-/// result named by the direct run associations.
+/// This value borrows one whole completion and its compiled problem, so the
+/// final normal state and model it carries come from the same reconciliation.
 #[derive(Debug)]
 pub struct ContinuumProductInputs<'a> {
     problem: &'a CompiledProblem,
-    major_cycle_completion: MajorCycleCompletionId,
-    normal_state_completion: FinalNormalStateCompletionId,
     normal_state: &'a FinalNormalState,
     final_model: &'a ModelGeneration,
     reconstruction_mask: Option<&'a ReconstructionMask>,
@@ -38,8 +33,6 @@ impl<'a> ContinuumProductInputs<'a> {
     ) -> Self {
         Self {
             problem,
-            major_cycle_completion: join.completion_id(),
-            normal_state_completion: join.normal_state().completion_id(),
             normal_state: join.normal_state(),
             final_model: join.final_model(),
             reconstruction_mask: None,
@@ -89,18 +82,6 @@ impl<'a> ContinuumProductInputs<'a> {
     #[must_use]
     pub const fn problem(&self) -> &CompiledProblem {
         self.problem
-    }
-
-    /// Return the released Major-Cycle run association for these payloads.
-    #[must_use]
-    pub const fn major_cycle_completion(&self) -> MajorCycleCompletionId {
-        self.major_cycle_completion
-    }
-
-    /// Return the released Normal-State completion associated with this run.
-    #[must_use]
-    pub const fn normal_state_completion(&self) -> FinalNormalStateCompletionId {
-        self.normal_state_completion
     }
 
     /// Return radians-per-pixel on each direction axis of the main domain.

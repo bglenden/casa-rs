@@ -182,12 +182,9 @@ fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
 /// continuum generation.
 #[derive(Debug)]
 pub struct PlannedContinuumGeneration {
-    major_cycle_completion: casa_imaging_reconstruction::MajorCycleCompletionId,
-    normal_state_completion: casa_imaging_reconstruction::FinalNormalStateCompletionId,
     psf_cutoff: f32,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     members: Box<[PlannedMember]>,
-    final_model_generation: casa_imaging_reconstruction::ModelGenerationId,
     reconstruction_mask_generation:
         Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId>,
 }
@@ -242,42 +239,17 @@ impl PlannedContinuumGeneration {
             });
         }
         Ok(Self {
-            major_cycle_completion: inputs.major_cycle_completion(),
-            normal_state_completion: inputs.normal_state_completion(),
             psf_cutoff: controls.psf_cutoff(),
             primary_beam_model: controls.primary_beam_model(),
             members: members.into_boxed_slice(),
-            final_model_generation: inputs.final_model().generation_id(),
             reconstruction_mask_generation: inputs.reconstruction_mask_generation(),
         })
-    }
-
-    /// Return the released Major-Cycle run association.
-    #[must_use]
-    pub const fn major_cycle_completion(
-        &self,
-    ) -> casa_imaging_reconstruction::MajorCycleCompletionId {
-        self.major_cycle_completion
-    }
-
-    /// Return the released Normal-State completion association.
-    #[must_use]
-    pub const fn normal_state_completion(
-        &self,
-    ) -> casa_imaging_reconstruction::FinalNormalStateCompletionId {
-        self.normal_state_completion
     }
 
     /// Return planned members in exact publication order.
     #[must_use]
     pub const fn members(&self) -> &[PlannedMember] {
         &self.members
-    }
-
-    /// Return the named final model generation this plan restores from.
-    #[must_use]
-    pub const fn final_model_generation(&self) -> casa_imaging_reconstruction::ModelGenerationId {
-        self.final_model_generation
     }
 
     /// Return the beam-fitting cutoff bound into this plan.
@@ -394,12 +366,6 @@ pub fn produce_continuum_members(
     execution: &impl crate::ProductWindowExecutor,
     output: &dyn ProductOutput,
 ) -> Result<PublishedContinuumGeneration, ProductsError> {
-    if inputs.major_cycle_completion() != planned.major_cycle_completion
-        || inputs.normal_state_completion() != planned.normal_state_completion
-        || inputs.final_model().generation_id() != planned.final_model_generation
-    {
-        return Err(ProductsError::SourceLineageMismatch);
-    }
     if inputs.reconstruction_mask_generation() != planned.reconstruction_mask_generation {
         return Err(ProductsError::SourceLineageMismatch);
     }
@@ -1365,8 +1331,6 @@ fn published_generation(
         });
     }
     Ok(PublishedContinuumGeneration {
-        major_cycle_completion: planned.major_cycle_completion,
-        normal_state_completion: planned.normal_state_completion,
         fitted_beams,
         restoring_beams,
         members: members.into_boxed_slice(),
@@ -1413,30 +1377,12 @@ impl PublishedMember {
 /// Payload-free metadata for one generated continuum run.
 #[derive(Debug, Clone)]
 pub struct PublishedContinuumGeneration {
-    major_cycle_completion: casa_imaging_reconstruction::MajorCycleCompletionId,
-    normal_state_completion: casa_imaging_reconstruction::FinalNormalStateCompletionId,
     fitted_beams: Box<[Option<RestoringBeam>]>,
     restoring_beams: Box<[Option<RestoringBeam>]>,
     members: Box<[PublishedMember]>,
 }
 
 impl PublishedContinuumGeneration {
-    /// Return the released Major-Cycle run association.
-    #[must_use]
-    pub const fn major_cycle_completion(
-        &self,
-    ) -> casa_imaging_reconstruction::MajorCycleCompletionId {
-        self.major_cycle_completion
-    }
-
-    /// Return the released Normal-State completion association.
-    #[must_use]
-    pub const fn normal_state_completion(
-        &self,
-    ) -> casa_imaging_reconstruction::FinalNormalStateCompletionId {
-        self.normal_state_completion
-    }
-
     /// Return the fitted restoring beams retained as metadata.
     #[must_use]
     pub const fn fitted_beams(&self) -> &[Option<RestoringBeam>] {
