@@ -407,8 +407,9 @@ each of its tables for as long as the run keeps it. Each pass turns it into
 one ordered block stream (`into_block_stream`, or `into_windowed_block_stream`
 for a restricted wave); `SelectedObservationBlockSource::fill_next` walks MAIN
 in physical order, applies the compiled row predicate and fills one reusable
-block; `complete` refuses a stream that is not exhausted and returns the
-access for the next pass. No proof or identity carries from one pass to the
+block; `complete` refuses a stream that is not exhausted or whose walk
+selected a different number of rows than the compiled selection counted, and
+returns the access for the next pass. No proof or identity carries from one pass to the
 next. In the final pass a `VisibilityWriter` takes the MeasurementSet's write
 lock, writes each block during the pass, and its `complete` flushes and
 releases the lock.

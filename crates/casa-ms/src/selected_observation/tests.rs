@@ -1295,7 +1295,7 @@ fn selected_observation_residency_is_cardinality_independent() {
 }
 
 #[test]
-fn numeric_blocks_skip_unused_parallactic_angles_and_reject_stale_geometry() {
+fn numeric_blocks_skip_unused_parallactic_angles() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("numeric-stream.ms");
     generate_fixture_with_rows(&path, 4);
@@ -1311,42 +1311,120 @@ fn numeric_blocks_skip_unused_parallactic_angles_and_reject_stale_geometry() {
     let mut storage = source.create_storage();
     let mut geometry = super::SelectedObservationNumericGeometry::new(1, 2).unwrap();
     let mut blocks = 0;
-    while source.fill_next(&mut storage).unwrap() {
-        storage
+    while let Some(filled) = source.fill_next(&mut storage).unwrap() {
+        let projected = filled
             .project_numeric_geometry(&problem, &mut geometry)
             .unwrap();
-        for row in 0..geometry.row_count() {
+        for row in 0..projected.row_count() {
             assert!(
-                storage
-                    .numeric_row(&geometry, row)
-                    .unwrap()
+                projected
+                    .numeric_row(row)
                     .row
                     .coordinates
                     .parallactic_angles_rad
                     .is_none()
             );
         }
-        assert_eq!(storage.parallactic_angle_cache_entries(), 0);
+        assert_eq!(filled.parallactic_angle_cache_entries(), 0);
         blocks += 1;
     }
     assert_eq!(blocks, 4);
-    assert!(
-        storage.numeric_row(&geometry, 0).is_err(),
-        "an exhausted block no longer matches the geometry of its last fill"
-    );
-    let observation = source.complete().unwrap();
+    source.complete().unwrap();
+}
 
-    let mut source = observation.into_block_stream(&problem);
-    let mut first = source.create_storage();
-    assert!(source.fill_next(&mut first).unwrap());
-    first
-        .project_numeric_geometry(&problem, &mut geometry)
-        .unwrap();
-    assert!(source.fill_next(&mut first).unwrap());
-    assert!(
-        first.numeric_row(&geometry, 0).is_err(),
-        "geometry projected from one fill is not read against the next"
-    );
+#[test]
+fn a_stream_whose_main_walk_finds_other_than_the_compiled_rows_does_not_complete() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("row-count.ms");
+    generate_fixture_with_rows(&path, 4);
+    // Selections compiled for three and for five of the four MAIN rows stand
+    // for a MAIN that gained or lost a selected row after compile.
+    for compiled_rows in [3_u64, 5] {
+        let problem = compiled_problem(&path, compiled_rows as usize);
+        let source = &problem.observation().sources()[0];
+        let budget = content_budget_for_rows(&problem, source, 1, 1);
+        // A window that reaches no channel skips every block's payload but
+        // still walks, and counts, every selected row.
+        for window in [None, Some([1.5e9, 1.6e9])] {
+            let observation = open_observation(&problem, source, budget).unwrap();
+            let mut stream = match window {
+                Some(bounds) => observation.into_windowed_block_stream(&problem, bounds),
+                None => observation.into_block_stream(&problem),
+            };
+            let mut block = stream.create_storage();
+            while stream.fill_next(&mut block).unwrap().is_some() {}
+            let refused = stream.complete();
+            assert!(
+                matches!(
+                    refused,
+                    Err(super::BoundObservationSourceError::SelectedRowCountMismatch {
+                        expected,
+                        delivered: 4,
+                    }) if expected == compiled_rows
+                ),
+                "compiled {compiled_rows} rows, window {window:?}: {:?}",
+                refused.err()
+            );
+        }
+    }
+}
+
+#[test]
+fn a_sparse_selection_streams_exactly_its_rows_and_their_samples() {
+    const ROWS: usize = 5;
+    const LAST: u64 = ROWS as u64 - 1;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("sparse.ms");
+    generate_fixture_with_rows(&path, ROWS);
+    let dense = stream_rows(&compiled_problem(&path, ROWS), 1)
+        .into_iter()
+        .filter(|sample| matches!(sample.row.physical_row, 0 | LAST))
+        .collect::<Vec<_>>();
+    assert!(!dense.is_empty());
+
+    // The interior rows move to a DATA_DESCRIPTION the selection does not
+    // name, so the predicate admits only the first and last physical rows.
+    let mut main = Table::open(TableOptions::new(&path)).expect("open fixture MAIN");
+    for row in 1..ROWS - 1 {
+        main.row_accessor_mut()
+            .set_cell(row, "DATA_DESC_ID", Value::Scalar(ScalarValue::Int32(7)))
+            .expect("move an interior row out of the selection");
+    }
+    main.flush().expect("persist the sparse fixture");
+    drop(main);
+    let selected_rows = SelectedRows::from_ordered_main_rows(
+        ROWS as u64,
+        [SelectedMainRow::new(0, 0), SelectedMainRow::new(LAST, 0)],
+    )
+    .expect("sparse selected-row manifest");
+    let snapshot = compile_observation(ObservationSnapshotInput::new(vec![fixture_source_input(
+        &path,
+        fixture_selection(
+            selected_rows,
+            RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
+        ),
+    )]))
+    .expect("compile the sparse selection");
+    let problem = compile(ProblemInput::new(
+        specification(),
+        geometry(),
+        snapshot,
+        model_lifecycle(),
+    ))
+    .expect("compile the sparse problem");
+
+    // With two rows per block both selected rows share one fill, whose
+    // physical rows are not contiguous.
+    for rows_per_block in [1, 2] {
+        let sparse = stream_rows(&problem, rows_per_block);
+        let mut rows = sparse
+            .iter()
+            .map(|sample| sample.row.physical_row)
+            .collect::<Vec<_>>();
+        rows.dedup();
+        assert_eq!(rows, [0, LAST], "{rows_per_block} rows per block");
+        assert_eq!(sparse, dense, "{rows_per_block} rows per block");
+    }
 }
 
 #[test]
@@ -1364,15 +1442,15 @@ fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
     .unwrap();
     let mut source = selected.into_block_stream(&problem);
     let mut storage = source.create_storage();
-    assert!(source.fill_next(&mut storage).unwrap());
-    let mut serial = super::SelectedObservationNumericGeometry::new(17, 3).unwrap();
-    storage
-        .project_numeric_geometry(&problem, &mut serial)
+    let filled = source.fill_next(&mut storage).unwrap().unwrap();
+    let mut serial_geometry = super::SelectedObservationNumericGeometry::new(17, 3).unwrap();
+    let serial = filled
+        .project_numeric_geometry(&problem, &mut serial_geometry)
         .unwrap();
     for chunk_rows in [1, 3, 5, 6] {
-        let mut parallel = super::SelectedObservationNumericGeometry::new(17, 3).unwrap();
-        storage
-            .project_numeric_geometry_with(&problem, &mut parallel, chunk_rows, |chunks| {
+        let mut parallel_geometry = super::SelectedObservationNumericGeometry::new(17, 3).unwrap();
+        let parallel = filled
+            .project_numeric_geometry_with(&problem, &mut parallel_geometry, chunk_rows, |chunks| {
                 std::thread::scope(|scope| {
                     let jobs = chunks
                         .iter_mut()
@@ -1388,36 +1466,36 @@ fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
         assert_eq!(parallel.row_count(), serial.row_count());
         assert_eq!(parallel.frequencies_hz(), serial.frequencies_hz());
         for row in 0..serial.row_count() {
-            assert_eq!(
-                storage.numeric_row(&parallel, row).unwrap().row,
-                storage.numeric_row(&serial, row).unwrap().row
-            );
+            assert_eq!(parallel.numeric_row(row).row, serial.numeric_row(row).row);
         }
     }
-    let mut incomplete = super::SelectedObservationNumericGeometry::new(17, 3).unwrap();
+    let mut incomplete_geometry = super::SelectedObservationNumericGeometry::new(17, 3).unwrap();
     assert!(
-        storage
-            .project_numeric_geometry_with(&problem, &mut incomplete, 3, |chunks| {
+        filled
+            .project_numeric_geometry_with(&problem, &mut incomplete_geometry, 3, |chunks| {
                 chunks[0].project()?;
                 Err(crate::BoundObservationSourceError::StoredSampleShapeMismatch)
             })
             .is_err()
     );
-    assert!(storage.numeric_row(&incomplete, 0).is_err());
 
-    while source.fill_next(&mut storage).unwrap() {}
+    while source.fill_next(&mut storage).unwrap().is_some() {}
     let retained = source.complete().unwrap();
     // The second selected channel (1.402 GHz) and its straddling partner.
     let mut window_source = retained.into_windowed_block_stream(&problem, [1.4015e9, 1.4025e9]);
     let mut window_storage = window_source.create_storage();
-    assert!(window_source.fill_next(&mut window_storage).unwrap());
-    let mut window_serial = super::SelectedObservationNumericGeometry::new(17, 2).unwrap();
-    window_storage
-        .project_numeric_geometry(&problem, &mut window_serial)
+    let window_filled = window_source
+        .fill_next(&mut window_storage)
+        .unwrap()
         .unwrap();
-    let mut window_parallel = super::SelectedObservationNumericGeometry::new(17, 2).unwrap();
-    window_storage
-        .project_numeric_geometry_with(&problem, &mut window_parallel, 3, |chunks| {
+    let mut window_serial_geometry = super::SelectedObservationNumericGeometry::new(17, 2).unwrap();
+    let window_serial = window_filled
+        .project_numeric_geometry(&problem, &mut window_serial_geometry)
+        .unwrap();
+    let mut window_parallel_geometry =
+        super::SelectedObservationNumericGeometry::new(17, 2).unwrap();
+    let window_parallel = window_filled
+        .project_numeric_geometry_with(&problem, &mut window_parallel_geometry, 3, |chunks| {
             std::thread::scope(|scope| {
                 let jobs = chunks
                     .iter_mut()
@@ -1436,11 +1514,8 @@ fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
     );
     for row in 0..window_serial.row_count() {
         assert_eq!(
-            window_storage
-                .numeric_row(&window_parallel, row)
-                .unwrap()
-                .row,
-            window_storage.numeric_row(&window_serial, row).unwrap().row
+            window_parallel.numeric_row(row).row,
+            window_serial.numeric_row(row).row
         );
     }
 }
@@ -1461,12 +1536,12 @@ fn refillable_block_stream_reads_whole_numeric_blocks_and_returns_the_owner() {
     let mut source = observation.into_block_stream(&problem);
     let mut storage = source.create_storage();
     let mut blocks = 0;
-    while source
+    while let Some(filled) = source
         .fill_next(&mut storage)
         .expect("fill canonical block")
     {
         blocks += 1;
-        let numeric = storage.numeric_columns().expect("filled numeric block");
+        let numeric = filled.numeric_columns();
         let samples =
             numeric.physical_rows.len() * numeric.channel_range.count * numeric.correlation_count;
         assert_eq!(numeric.flags.len(), samples);
@@ -1493,9 +1568,10 @@ fn refillable_block_stream_reads_whole_numeric_blocks_and_returns_the_owner() {
     }
     assert_eq!(blocks, 4);
     assert!(
-        !source
+        source
             .fill_next(&mut storage)
             .expect("poll after exhaustion")
+            .is_none()
     );
     let observation = source.complete().expect("return the owner");
 
@@ -1526,14 +1602,14 @@ fn windowed_block_streams_read_only_the_reached_channels() {
             super::SelectedObservationNumericGeometry::new(source.maximum_rows_per_block(), 3)
                 .unwrap();
         let mut channels = Vec::new();
-        while source.fill_next(&mut storage).expect("fill window block") {
-            let columns = storage.numeric_columns().unwrap();
+        while let Some(filled) = source.fill_next(&mut storage).expect("fill window block") {
+            let columns = filled.numeric_columns();
             channels.push((columns.channel_range.start, columns.channel_range.count));
-            storage
+            let projected = filled
                 .project_numeric_geometry(&problem, &mut geometry)
                 .unwrap();
             assert_eq!(
-                geometry.channels().len(),
+                projected.channels().len(),
                 columns.channel_range.count,
                 "the geometry covers exactly the channels read"
             );
@@ -2234,11 +2310,11 @@ fn stream(
         super::SelectedObservationNumericGeometry::new(source.maximum_rows_per_block(), channels)
             .expect("allocate numeric geometry");
     let mut samples = Vec::new();
-    while source.fill_next(&mut block)? {
-        block.project_numeric_geometry(problem, &mut geometry)?;
-        for row in 0..geometry.row_count() {
-            let numeric = block.numeric_row(&geometry, row)?;
-            let frequencies = &geometry.frequencies_hz()
+    while let Some(filled) = source.fill_next(&mut block)? {
+        let projected = filled.project_numeric_geometry(problem, &mut geometry)?;
+        for row in 0..projected.row_count() {
+            let numeric = projected.numeric_row(row);
+            let frequencies = &projected.frequencies_hz()
                 [row * numeric.channels.len()..(row + 1) * numeric.channels.len()];
             for (channel, frequency_hz) in numeric.channels.iter().zip(frequencies) {
                 let stored = (channel.channel_index - numeric.first_stored_channel) as usize;

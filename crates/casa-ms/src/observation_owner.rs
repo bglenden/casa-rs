@@ -596,8 +596,12 @@ pub enum ObservationOwnerError {
         /// Standard MAIN column name.
         column: &'static str,
     },
-    /// The selected physical MAIN row sequence differs from the compiled selection.
-    #[error("selected physical MAIN rows no longer match the compiled observation selection")]
+    /// The MeasurementSet cannot realize the requested selection: a selected
+    /// SPECTRAL_WINDOW row is missing or its CHAN_FREQ and CHAN_WIDTH are
+    /// empty or of unequal length, or no MAIN row is selected.
+    #[error(
+        "the MeasurementSet's spectral windows or MAIN rows do not realize the observation selection"
+    )]
     PhysicalSelectionMismatch,
     /// The complete physical SPW coordinate catalog cannot fit its explicit source budget.
     #[error(

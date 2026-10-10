@@ -87,15 +87,14 @@ sampling and instrument response. The data metric W is a separate contract.
 _Avoid_: Gridder, FT machine
 
 **Normal State Generation**:
-A versioned semantic generation identifying the observation, model, and
-weighting generations; A*W(d-Ax); normal-operator or PSF approximation;
+A versioned semantic generation identifying the model and weighting
+generations; A*W(d-Ax); normal-operator or PSF approximation;
 sensitivity and sum weights; valid support; numerics; and provenance. It need
 not be one resident image.
 _Avoid_: Dirty image bundle, solver scratch
 
 **Minor Cycle View**:
-An immutable bounded approximation with an identifier, valid domain,
-error/staleness bound, threshold, and maximum admissible model update.
+An immutable bounded approximation with a valid domain, error/staleness bound, threshold, and maximum admissible model update.
 _Avoid_: Mutable residual image, solver workspace
 
 **Major Cycle**:

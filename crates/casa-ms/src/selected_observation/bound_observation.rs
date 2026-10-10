@@ -8,10 +8,10 @@ use crate::selected_pointing::SelectedPointingQueryDomain;
 
 use super::access::{BoundObservationReferenceData, SelectedRowReplay};
 use super::{
-    BoundObservationSource, BoundObservationSourceError, SelectedObservationBlock,
-    SelectedObservationContentBudget, SelectedObservationContentRequirements,
-    SelectedObservationMeasures, SelectedObservationMeasuresError,
-    content_plan::SelectedObservationSharedBytes,
+    BoundObservationSource, BoundObservationSourceError, FilledObservationBlock,
+    SelectedObservationBlock, SelectedObservationContentBudget,
+    SelectedObservationContentRequirements, SelectedObservationMeasures,
+    SelectedObservationMeasuresError, content_plan::SelectedObservationSharedBytes,
 };
 
 /// One snapshot source and its bounded-content budget.
@@ -228,8 +228,8 @@ impl BoundSelectedObservation {
 
     /// Open every compiled source under retained read locks and its content budget.
     ///
-    /// Caller plan order is irrelevant. Sources are retained and replayed only in the compiler's
-    /// canonical read-set order.
+    /// Caller binding order is irrelevant. Sources are retained and streamed only in the
+    /// compiler's canonical read-set order.
     #[cfg(unix)]
     pub fn open(
         problem: &CompiledProblem,
@@ -329,6 +329,7 @@ impl BoundSelectedObservation {
             observation: self,
             source_index: 0,
             row_replay: None,
+            selected_rows: 0,
             exhausted: false,
             maximum_rows,
             window,
@@ -342,6 +343,8 @@ pub struct SelectedObservationBlockSource<'a> {
     observation: BoundSelectedObservation,
     source_index: usize,
     row_replay: Option<SelectedRowReplay>,
+    /// Rows the predicate selected in the sources already walked.
+    selected_rows: u64,
     exhausted: bool,
     maximum_rows: usize,
     window: Option<[f64; 2]>,
@@ -360,20 +363,19 @@ impl SelectedObservationBlockSource<'_> {
         SelectedObservationBlock::new(self.maximum_rows)
     }
 
-    /// Fill `block` with the next canonical row block; `false` once every
-    /// source is exhausted.
-    pub fn fill_next(
+    /// Fill `block` with the next canonical row block and borrow it as filled;
+    /// `None` once every source is exhausted.
+    pub fn fill_next<'b>(
         &mut self,
-        block: &mut SelectedObservationBlock,
-    ) -> Result<bool, BoundObservationSourceError> {
-        block.invalidate();
+        block: &'b mut SelectedObservationBlock,
+    ) -> Result<Option<FilledObservationBlock<'b>>, BoundObservationSourceError> {
         if self.exhausted {
-            return Ok(false);
+            return Ok(None);
         }
         loop {
             let Some(source) = self.observation.sources.get(self.source_index) else {
                 self.exhausted = true;
-                return Ok(false);
+                return Ok(None);
             };
             let logical_source = self
                 .problem
@@ -385,32 +387,54 @@ impl SelectedObservationBlockSource<'_> {
             if self.row_replay.is_none() {
                 self.row_replay = Some(source.selected_row_replay()?);
             }
-            if source.fill_next_selected_block(
+            let replay = self
+                .row_replay
+                .as_mut()
+                .expect("selected-row replay initialized for current source");
+            if let Some(binding) = source.fill_next_selected_block(
                 self.problem,
                 logical_source,
-                self.row_replay
-                    .as_mut()
-                    .expect("selected-row replay initialized for current source"),
+                replay,
                 block,
                 self.window,
             )? {
-                return Ok(true);
+                return Ok(Some(FilledObservationBlock::new(block, binding)));
             }
+            self.selected_rows += replay.selected_rows();
             self.source_index += 1;
             self.row_replay = None;
         }
     }
 
     /// Return the retained access once every block has been read.
+    ///
+    /// The stream must be exhausted, and its walk of MAIN must have selected
+    /// exactly the rows the compiled selection counted: the content plan and
+    /// the model were sized from that count, so a MAIN that has since gained
+    /// or lost selected rows is refused. A channel window skips payload, not
+    /// rows, so a windowed stream is held to the same count.
     pub fn complete(self) -> Result<BoundSelectedObservation, BoundObservationSourceError> {
         if !self.exhausted {
             return Err(BoundObservationSourceError::IncompleteBlockTraversal);
+        }
+        let expected = self
+            .problem
+            .observation()
+            .sources()
+            .iter()
+            .map(|source| source.selection().rows().selected_row_count())
+            .sum();
+        if self.selected_rows != expected {
+            return Err(BoundObservationSourceError::SelectedRowCountMismatch {
+                expected,
+                delivered: self.selected_rows,
+            });
         }
         Ok(self.observation)
     }
 }
 
-/// Failure to bind or replay a complete compiled selected observation.
+/// Failure to bind a complete compiled selected observation.
 #[derive(Debug, Error)]
 pub enum BoundSelectedObservationError {
     /// The injected Measures provider is missing, stale, or unaccounted.
