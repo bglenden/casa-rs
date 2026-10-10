@@ -487,8 +487,9 @@ impl MeasurementSet {
     ///
     /// [`MsError::Table`] with [`TableError::LockFailed`] when another handle
     /// in this process holds the write lock on MAIN or a subtable, when
-    /// another process wrote such a table while the save waited for it, or
-    /// when the wait would deadlock.
+    /// another process wrote such a table while the save waited for it or
+    /// for another table, or when the wait would deadlock. A refused save
+    /// writes nothing.
     pub fn save(&mut self) -> MsResult<()> {
         let path = self
             .path
@@ -540,7 +541,11 @@ impl MeasurementSet {
     /// as a deadlock and fail the save; releasing first lets the save complete
     /// once the other process is done. On the first table that is held, every
     /// lock taken so far is released, unrecorded, the save waits for that
-    /// table alone and keeps it, and then tries the rest again.
+    /// table alone and keeps it, and then tries the rest again. A released
+    /// table's modify counter is read before its lock is released and
+    /// compared once every lock is held again: if another process wrote the
+    /// table meanwhile, the save would overwrite that write with its stale
+    /// in-memory table, so it is refused before anything is written.
     fn lock_tables_for_in_place_save(
         &self,
         path: &Path,
@@ -558,6 +563,9 @@ impl MeasurementSet {
         }
         tables.retain(|(_, table_path)| table_path.join("table.dat").is_file());
         let mut held: Vec<Option<TableWriteLock>> = tables.iter().map(|_| None).collect();
+        // The modify counter of each table whose lock was released to wait
+        // for another, read while it was still held.
+        let mut released_at: Vec<Option<Option<u32>>> = tables.iter().map(|_| None).collect();
         'acquire: loop {
             for (index, (_, table_path)) in tables.iter().enumerate() {
                 if held[index].is_some() {
@@ -568,7 +576,13 @@ impl MeasurementSet {
                     Err(TableError::LockFailed { .. }) => {
                         // Release before waiting; a holder in this process is
                         // refused again at once by the waiting request.
-                        held.iter_mut().for_each(|lock| *lock = None);
+                        for (lock, baseline) in held.iter_mut().zip(released_at.iter_mut()) {
+                            if let Some(lock) = lock.take()
+                                && baseline.is_none()
+                            {
+                                *baseline = Some(lock.modify_counter()?);
+                            }
+                        }
                         held[index] = Some(TableWriteLock::acquire(table_path, 0)?);
                         continue 'acquire;
                     }
@@ -576,6 +590,26 @@ impl MeasurementSet {
                 }
             }
             break;
+        }
+        // A table released while the save waited for another may have been
+        // written by another process meanwhile; the in-memory tables would
+        // then overwrite that write, so the save is refused before anything
+        // is written.
+        for (index, (_, table_path)) in tables.iter().enumerate() {
+            let Some(baseline) = released_at[index] else {
+                continue;
+            };
+            let lock = held[index].as_ref().expect("every table is locked");
+            if lock.modify_counter()? != baseline {
+                return Err(TableError::LockFailed {
+                    path: table_path.display().to_string(),
+                    message: "another process wrote this table while the save waited for \
+                              another table of the MeasurementSet; reopen the MeasurementSet \
+                              and retry"
+                        .to_string(),
+                }
+                .into());
+            }
         }
         Ok(InPlaceSaveLocks {
             locks: tables

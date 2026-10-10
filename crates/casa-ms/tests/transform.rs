@@ -811,13 +811,47 @@ fn write_lock_probe_from_another_process() {
         std::env::var_os(WRITE_LOCK_HOLD_RELEASE),
     ) {
         std::fs::write(signal, "locked").expect("signal the held lock");
-        let release = std::path::PathBuf::from(release);
-        let start = std::time::Instant::now();
-        while !release.exists() && start.elapsed() < std::time::Duration::from_secs(20) {
-            std::thread::sleep(std::time::Duration::from_millis(20));
+        if let (Some(main), Some(go), Some(done)) = (
+            std::env::var_os(WRITE_MAIN_TABLE),
+            std::env::var_os(WRITE_MAIN_GO),
+            std::env::var_os(WRITE_MAIN_DONE),
+        ) {
+            wait_for_path(std::path::Path::new(&go));
+            write_flag_row_0_in_place(std::path::Path::new(&main));
+            std::fs::write(done, "written").expect("signal the MAIN write");
         }
+        wait_for_path(std::path::Path::new(&release));
     }
     drop(lock);
+}
+
+const WRITE_MAIN_TABLE: &str = "CASA_RS_WRITE_LOCK_PROBE_WRITE_MAIN";
+const WRITE_MAIN_GO: &str = "CASA_RS_WRITE_LOCK_PROBE_WRITE_MAIN_GO";
+const WRITE_MAIN_DONE: &str = "CASA_RS_WRITE_LOCK_PROBE_WRITE_MAIN_DONE";
+
+/// Wait up to 20 s for `path` to appear.
+fn wait_for_path(path: &std::path::Path) {
+    let start = std::time::Instant::now();
+    while !path.exists() && start.elapsed() < std::time::Duration::from_secs(20) {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// Set FLAG_ROW of row 0 in MAIN in place under MAIN's write lock, and
+/// publish the write, as another writer of the MeasurementSet would.
+fn write_flag_row_0_in_place(ms_path: &std::path::Path) {
+    let mut lock = casa_tables::TableWriteLock::acquire(ms_path, 0).expect("MAIN's write lock");
+    let mut main =
+        casa_tables::Table::open(casa_tables::TableOptions::new(ms_path)).expect("open MAIN");
+    main.cell_accessor_mut(0, "FLAG_ROW")
+        .expect("FLAG_ROW cell")
+        .set(casa_types::Value::Scalar(ScalarValue::Bool(true)))
+        .expect("set FLAG_ROW");
+    lock.record_write();
+    main.prepare_write()
+        .save_selected_rows(&["FLAG_ROW"], &[0])
+        .expect("persist FLAG_ROW");
+    lock.release().expect("release MAIN");
 }
 
 /// Whether another process can take casacore's write lock on `table`.
@@ -1024,6 +1058,88 @@ fn an_in_place_save_waits_for_a_held_subtable_without_holding_main() {
     assert!(requested, "the save was not in ANTENNA's request list");
     assert!(main_free, "the save held MAIN while it waited for ANTENNA");
     saved.expect("the save completes once ANTENNA is released");
+}
+
+/// A save that released MAIN to wait for ANTENNA is refused when another
+/// process wrote MAIN meanwhile, before it writes anything: its in-memory
+/// MAIN was read before that write and would overwrite it. The other
+/// process's write survives.
+#[test]
+fn an_in_place_save_refuses_main_written_while_it_waited_for_a_subtable() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ms_path = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let antenna = ms_path.join("ANTENNA");
+    let mut measurement_set = MeasurementSet::open(&ms_path).expect("open MeasurementSet");
+    // Stage a real save: materialize MAIN, with FLAG_ROW[0] false, and add a
+    // row to it in memory.
+    let row = measurement_set
+        .main_table()
+        .row_accessor()
+        .row(0)
+        .expect("MAIN row 0")
+        .clone();
+    measurement_set
+        .main_table_mut()
+        .add_row(row)
+        .expect("stage a MAIN row");
+    assert!(!flag_row_0(&ms_path));
+    let rows_before = casa_test_support::table_sync::persisted_table_shape(&ms_path).rows;
+
+    // Another process holds ANTENNA and, once the save waits for it, writes
+    // FLAG_ROW[0] of MAIN under MAIN's lock, then releases ANTENNA.
+    let signal = dir.path().join("holder-locked.signal");
+    let release = dir.path().join("holder-release.signal");
+    let go = dir.path().join("write-main.signal");
+    let done = dir.path().join("main-written.signal");
+    let mut holder = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "write_lock_probe_from_another_process",
+            "--exact",
+            "--nocapture",
+        ])
+        .env(WRITE_LOCK_PROBE_TABLE, &antenna)
+        .env(WRITE_LOCK_HOLD_SIGNAL, &signal)
+        .env(WRITE_LOCK_HOLD_RELEASE, &release)
+        .env(WRITE_MAIN_TABLE, &ms_path)
+        .env(WRITE_MAIN_GO, &go)
+        .env(WRITE_MAIN_DONE, &done)
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("start the ANTENNA holder");
+    wait_for_path(&signal);
+    assert!(signal.exists(), "the other process did not take ANTENNA");
+
+    let coordinator = {
+        let ms_path = ms_path.clone();
+        std::thread::spawn(move || {
+            let requested = this_process_requests_the_lock(&antenna);
+            std::fs::write(&go, "go").expect("let the other process write MAIN");
+            wait_for_path(&done);
+            let main_written = done.exists() && flag_row_0(&ms_path);
+            std::fs::write(&release, "release").expect("release ANTENNA");
+            (requested, main_written)
+        })
+    };
+    let saved = measurement_set.save();
+    let (requested, main_written) = coordinator.join().expect("coordinator thread");
+    assert!(holder.wait().expect("holder exits").success());
+    drop(measurement_set);
+
+    assert!(requested, "the save was not in ANTENNA's request list");
+    assert!(main_written, "the other process did not write MAIN");
+    match saved {
+        Err(casa_ms::MsError::Table(casa_tables::TableError::LockFailed { message, .. })) => {
+            assert!(message.contains("while the save waited"), "{message}");
+        }
+        other => panic!("a save over another process's write must be refused: {other:?}"),
+    }
+    assert!(flag_row_0(&ms_path), "the other process's write was lost");
+    assert_eq!(
+        casa_test_support::table_sync::persisted_table_shape(&ms_path).rows,
+        rows_before,
+        "the refused save wrote MAIN"
+    );
+    assert_published_as_persisted(&ms_path);
 }
 
 /// FLAG_ROW of row 0 in the table at `table`, read without locking.

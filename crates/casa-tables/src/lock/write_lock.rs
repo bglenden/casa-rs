@@ -151,6 +151,36 @@ impl TableWriteLock {
         &self.path
     }
 
+    /// The modify counter the table's sync data publishes, read now; `None`
+    /// when the table has no sync data.
+    ///
+    /// While this lock is held no other process can publish a write, so a
+    /// writer that releases the lock and takes it again later compares two
+    /// readings to learn whether another process wrote the table in between.
+    ///
+    /// # Errors
+    ///
+    /// [`TableError::LockIo`] when the sync data cannot be read.
+    pub fn modify_counter(&self) -> Result<Option<u32>, TableError> {
+        #[cfg(unix)]
+        {
+            let Some(lock_file) = &self.lock_file else {
+                return Ok(None);
+            };
+            lock_file
+                .read_sync_data()
+                .map(|sync| sync.map(|sync| sync.modify_counter))
+                .map_err(|error| TableError::LockIo {
+                    path: self.path.display().to_string(),
+                    message: error.to_string(),
+                })
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(None)
+        }
+    }
+
     /// Record that the table is, or may be, changed on disk under this lock.
     ///
     /// Call it before writing, so that a write interrupted part way is still
