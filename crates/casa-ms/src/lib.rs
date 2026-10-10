@@ -143,13 +143,13 @@ pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 pub use selected_observation::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
-    DeferredSelectedObservationAccess, ObservationSourceBinding, SelectedObservationBlock,
-    SelectedObservationBlockSource, SelectedObservationContentBudget,
-    SelectedObservationContentPlan, SelectedObservationContentPlanError,
-    SelectedObservationContentRequirements, SelectedObservationMeasures,
-    SelectedObservationMeasuresError, SelectedObservationNumericGeometry,
-    SelectedObservationReferenceDataBudget, SelectedObservationRow,
-    SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
+    DeferredSelectedObservationAccess, FilledObservationBlock, ObservationSourceBinding,
+    ProjectedObservationBlock, SelectedObservationBlock, SelectedObservationBlockSource,
+    SelectedObservationContentBudget, SelectedObservationContentPlan,
+    SelectedObservationContentPlanError, SelectedObservationContentRequirements,
+    SelectedObservationMeasures, SelectedObservationMeasuresError,
+    SelectedObservationNumericGeometry, SelectedObservationReferenceDataBudget,
+    SelectedObservationRow, SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
     SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralWindow,
 };
 pub use selected_observation_buffer::{
