@@ -18,7 +18,7 @@ coordinates, measures, and related workflows.
 | foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
 | shared numerics (`casa-numerics`) | Domain-neutral numerical algorithms reused by observation, calibration, and imaging owners | Rust numerical ecosystem crates only |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
-| native imaging contracts (`casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`) | Dependency-free logical schemas and commitments; the measurement operator (weighting, spectral resampling, gridding, degridding, FFT and normalization); minor-cycle solvers; authoritative model-state ingest, reprojection, delta, and completion algorithms; continuum product algorithms with bounded owned windows streamed directly to CASA staging and atomic individual-image replacement; process-level resource topology, policies, demand envelopes, arbitration and leases; the major-cycle pass, worker team and paged cube state; the Metal backend | ADR-0016 layering, enforced by `scripts/check-imaging-dependencies.py`: `casa-imaging-model` has no workspace dependencies; the operator and deconvolution depend on the model, `casa-fft` and `casa-numerics`; reconstruction and products depend inward on the model and domain-neutral numerics, with products also depending on reconstruction completions; runtime composes the operator, reconstruction and products; the Metal crate depends only on the operator |
+| native imaging contracts (`casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`) | Dependency-free logical schemas and commitments; the measurement operator (weighting, spectral resampling, gridding, degridding, FFT and normalization); minor-cycle solvers; authoritative model generations, deltas and final-model completion; continuum product algorithms with bounded owned windows streamed directly to CASA staging and atomic individual-image replacement; process-level resource topology, policies, demand envelopes, arbitration and leases; the major-cycle pass, worker team and paged cube state; the Metal backend | ADR-0016 layering, enforced by `scripts/check-imaging-dependencies.py`: `casa-imaging-model` has no workspace dependencies; the operator and deconvolution depend on the model, `casa-fft` and `casa-numerics`; reconstruction and products depend inward on the model and domain-neutral numerics, with products also depending on reconstruction completions; runtime composes the operator, reconstruction and products; the Metal crate depends only on the operator |
 | imaging application composition (`casa-imaging-application`) | Sole production composition seam across MeasurementSet authority, reconstruction, products, resources, execution, typed installed-implementation availability, and CASA product publication | Native imaging owners only; unavailable requests invoke no execution implementation |
 | domain libraries (`casa-ms`, `casa-simulation-synthesis`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence; simulation synthesis owns only the serial model predictor and Airy voltage pattern used by MeasurementSet simulation | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
@@ -75,8 +75,7 @@ resources and the admission of each phase's memory, the major-cycle pass on its
 worker team and bounded source stream, cooperative cancellation, the paged cube
 state, the minor-cycle adapter and the run summary. It depends inward on the
 model, reconstruction, deconvolution, products, the operator and the Metal
-backend; it
-does not own reprojection algorithms. Metal runs inside the pass: with
+backend. Metal runs inside the pass: with
 `backend = metal` every owner grids through its own
 `casa_imaging_metal::MetalBackend`.
 
@@ -230,8 +229,9 @@ intervening rows.
 tables. Each pass turns it into one block stream (`into_block_stream`):
 `SelectedObservationBlockSource::fill_next` walks MAIN in physical order,
 applies the row predicate, and fills one reusable block with consecutive
-selected rows of one DDID, reading their columns over the selected channel
-span and evaluating each row's geometry. `complete` refuses a stream that is
+selected rows of one DDID: it keeps the row metadata the walk read, reads
+their visibility, flag and weight columns over the selected channel span and
+evaluates each row's geometry. `complete` refuses a stream that is
 not exhausted and returns the access for the next pass. For a channel-local
 cube with a linear spectral WCS and no continuum transform, a wave that covers
 only part of the cube and need not read whole rows streams through
@@ -281,8 +281,7 @@ The Compiled Problem also derives one Observation Transaction: the canonical
 read set of every consumed per-MS selection and selected columns, and the
 exact selected-cell scope of an optional `MODEL_DATA` or `CORRECTED_DATA`
 write. No
-runtime plan binds it (IF-6 deleted the plan, its binder and the receipts):
-the application resolves the selected observation once, every pass reads it
+runtime plan binds it: the application resolves the selected observation once, every pass reads it
 through the bounded source, and the final major-cycle pass writes the
 visibilities (see Imaging execution). Conventional image members and
 `MODEL_DATA` are separate side effects: failure of one never rolls back or
@@ -576,7 +575,7 @@ progress events; the cycle loop logs worker counts and stage timings through
 default) runs the pass with one worker. All production FFTs use FFTW; there is
 no FFT backend selector or fallback.
 
-W-projection, AW-projection and mosaics run on the pass since IF-3. Facets,
+W-projection, AW-projection and mosaics run on the pass. Facets,
 `mtmfs` via cube and cubic spectral interpolation are not in the catalog, so no
 request names them; a compiled problem with faceted geometry is typed
 unavailability in `availability::check` (facets #664, cubic #42).
@@ -657,10 +656,7 @@ never makes a route available.
   listed files.
 - The imaging foundation refactor (#648, ADR-0016) is in progress; the plan in
   `docs/imaging-architecture/imaging-foundation-plan-20261007.md` is the
-  target. IF-2 replaced the gridding drivers and replay cache with the
-  major-cycle pass, and IF-4 added the Metal backend. Product publication
-  still runs through the runtime's plan, executor and receipt layers, which
-  IF-6 deletes; W, AW and mosaic imaging are unavailable until IF-3.
+  target.
 
 ## ADR index
 
