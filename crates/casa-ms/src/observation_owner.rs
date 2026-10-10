@@ -12,8 +12,8 @@ use std::{path::Path, sync::Arc};
 use casa_imaging_model::{
     FlagPolicy, LogicalIdentity, ModelStateIdentity, MsColumnKind, ObservationSelection,
     ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
-    ReferenceDataKind, SelectedColumns, SelectedMainRow, SelectedRowsBuilder,
-    SpectralWindowCoordinateCatalog, SpectralWindowSelection, VisibilityColumn, WeightColumn,
+    ReferenceDataKind, SelectedColumns, SpectralWindowCoordinateCatalog, SpectralWindowSelection,
+    VisibilityColumn, WeightColumn,
 };
 use casa_tables::{ColumnSchema, LockType, Table};
 use casa_types::{
@@ -21,7 +21,6 @@ use casa_types::{
 };
 use thiserror::Error;
 
-use crate::selected_observation::validate_selected_coordinates;
 use crate::selected_pointing::SelectedPointingQueryDomain;
 use crate::subtables::SubTable;
 use crate::{
@@ -470,21 +469,13 @@ impl ResolvedSelectedObservationAccess {
         )
     }
 
-    /// Finalize both source-read and selected-output storage budgets from one quote.
-    pub fn with_content_budget(
-        mut self,
-        requirements: &crate::SelectedObservationContentRequirements,
-        budget: SelectedObservationContentBudget,
-    ) -> Result<Self, BoundSelectedObservationError> {
-        requirements
-            .plan(budget)
-            .map_err(|error| BoundSelectedObservationError::Source {
-                measurement_set: self.binding.measurement_set(),
-                error: Box::new(crate::BoundObservationSourceError::ContentPlan(error)),
-            })?;
+    /// Set the source-read and selected-output storage budget planned from
+    /// [`Self::content_requirements`].
+    #[must_use]
+    pub fn with_content_budget(mut self, budget: SelectedObservationContentBudget) -> Self {
         self.binding.set_content_budget(budget);
         self.visibility_storage.content_budget = budget;
-        Ok(self)
+        self
     }
 
     /// Transfer this resolved source into the deferred execution capability.
@@ -621,7 +612,7 @@ pub fn resolve_selected_observation(
         request.content_budget,
     )?);
     let pointing_query_domain =
-        validate_physical_selection(&measurement_set, &selection, request.content_budget)?;
+        selected_pointing_query_domain(&measurement_set, &selection, request.content_budget)?;
     let visibility_storage = SelectedVisibilityStoragePlanner {
         locator: request.locator.clone(),
         selection: Arc::clone(&selection),
@@ -794,48 +785,32 @@ pub enum ObservationOwnerError {
     UnselectedWriteTarget,
 }
 
-fn validate_physical_selection(
+/// The antennas and times of the selected rows, the domain the POINTING
+/// catalog is prepared for.
+fn selected_pointing_query_domain(
     measurement_set: &MeasurementSet,
     selection: &ObservationSelection,
     content_budget: SelectedObservationContentBudget,
 ) -> Result<SelectedPointingQueryDomain, ObservationOwnerError> {
-    validate_selected_coordinates(measurement_set, selection)?;
     let row_selection = SelectedObservationRowSelection::from_compiled(selection);
-    let mut actual = SelectedRowsBuilder::with_data_description_capacity(
-        u64::try_from(measurement_set.row_count())
-            .map_err(|_| ObservationOwnerError::PhysicalSelectionMismatch)?,
-        selection.data_descriptions().len(),
-    );
     let mut pointing_query_domain = SelectedPointingQueryDomain::builder();
     let mut pointing_domain_error = None;
-    let mut invalid = false;
     measurement_set.visit_selected_observation_rows(
         &row_selection,
         content_budget.row_io_budget(),
         |row| {
-            if !invalid {
-                invalid = actual
-                    .push(SelectedMainRow::new(
-                        row.physical_row() as u64,
-                        u32::try_from(row.data_description_id()).unwrap_or(u32::MAX),
-                    ))
-                    .is_err();
-                if !invalid && pointing_domain_error.is_none() {
-                    pointing_domain_error = pointing_query_domain
-                        .observe_row(
-                            row.antenna1(),
-                            row.antenna2(),
-                            row.time_mjd_seconds(),
-                            row.time_centroid_mjd_seconds(),
-                        )
-                        .err();
-                }
+            if pointing_domain_error.is_none() {
+                pointing_domain_error = pointing_query_domain
+                    .observe_row(
+                        row.antenna1(),
+                        row.antenna2(),
+                        row.time_mjd_seconds(),
+                        row.time_centroid_mjd_seconds(),
+                    )
+                    .err();
             }
         },
     )?;
-    if invalid || &actual.finish() != selection.rows() {
-        return Err(ObservationOwnerError::PhysicalSelectionMismatch);
-    }
     if let Some(error) = pointing_domain_error {
         return Err(error.into());
     }
@@ -845,12 +820,12 @@ fn validate_physical_selection(
 }
 
 #[cfg(all(test, unix))]
-pub(crate) fn validate_test_physical_selection(
+pub(crate) fn test_pointing_query_domain(
     measurement_set: &MeasurementSet,
     selection: &ObservationSelection,
     content_budget: SelectedObservationContentBudget,
 ) -> Result<SelectedPointingQueryDomain, ObservationOwnerError> {
-    validate_physical_selection(measurement_set, selection, content_budget)
+    selected_pointing_query_domain(measurement_set, selection, content_budget)
 }
 
 fn main_data_description_id(
@@ -1111,9 +1086,6 @@ mod tests {
             .expect("owner-certified full SPW catalog");
         assert_eq!(catalog.channel_frequencies_hz(), frequencies_hz);
         assert_eq!(catalog.first_channel_width_hz(), widths_hz[0]);
-        let measurement_set = MeasurementSet::open(&path).expect("reopen physical catalog");
-        validate_selected_coordinates(&measurement_set, snapshot.sources()[0].selection())
-            .expect("runtime access accepts the exact owner-certified catalog");
     }
 
     #[test]
@@ -1230,7 +1202,7 @@ mod tests {
             MeasurementSet::open_retained_read(&path).expect("reopen lazy selected MAIN facts");
 
         let selection = one_row_selection_with_total_rows(vec![0], 3);
-        let domain = validate_physical_selection(
+        let domain = selected_pointing_query_domain(
             &measurement_set,
             &selection,
             SelectedObservationContentBudget::new(1 << 20, 1, 4),

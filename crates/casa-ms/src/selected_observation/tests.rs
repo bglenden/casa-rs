@@ -86,7 +86,6 @@ struct AccountedTestMeasures {
 struct AccountedTestMeasuresState {
     identity_sha256: [u8; 32],
     retained: Vec<u8>,
-    dut1_seconds: f64,
 }
 
 impl AccountedTestMeasures {
@@ -99,15 +98,8 @@ impl AccountedTestMeasures {
             state: Mutex::new(AccountedTestMeasuresState {
                 identity_sha256: [identity; 32],
                 retained: vec![0; bytes],
-                dut1_seconds: 0.0,
             }),
         }
-    }
-
-    fn mutate_science(&self, identity: u8, dut1_seconds: f64) {
-        let mut state = self.state.lock().expect("test Measures state lock");
-        state.identity_sha256 = [identity; 32];
-        state.dut1_seconds = dut1_seconds;
     }
 }
 
@@ -124,12 +116,8 @@ impl MeasuresProvider for AccountedTestMeasures {
     }
 
     fn eop_values(&self, _utc_mjd: f64) -> Result<Option<EopValues>, String> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| "test Measures state lock poisoned".to_string())?;
         Ok(Some(EopValues {
-            dut1_seconds: state.dut1_seconds,
+            dut1_seconds: 0.0,
             x_arcsec: 0.0,
             y_arcsec: 0.0,
             dx_mas: 0.0,
@@ -695,41 +683,6 @@ fn sparse_manifest_reads_only_selected_physical_rows() {
 }
 
 #[test]
-fn unconditional_sparse_manifest_is_rejected_without_scanning_intervening_rows() {
-    let directory = tempfile::tempdir().expect("temporary incomplete-manifest fixture");
-    let path = directory.path().join("incomplete-manifest.ms");
-    generate_fixture_with_rows(&path, 64);
-    let selected_rows = SelectedRows::from_ordered_main_rows(
-        64,
-        [SelectedMainRow::new(0, 0), SelectedMainRow::new(63, 0)],
-    )
-    .expect("corrupt unconditional row manifest");
-    let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source_input_with_selected_rows(&path, 1, selected_rows)],
-        vec![(ReferenceDataKind::Measures, identity(90))],
-        ModelStateIdentity::Empty,
-    ))
-    .expect("compile incomplete unconditional manifest");
-    let problem = compile(ProblemInput::new(
-        specification(),
-        geometry(),
-        ProblemInputIdentities::new(snapshot.clone()),
-        model_lifecycle(snapshot.model()),
-    ))
-    .expect("compile incomplete-manifest problem");
-    let source = &problem.inputs().observation_snapshot().sources()[0];
-
-    assert!(matches!(
-        BoundObservationSource::open(
-            &problem,
-            source,
-            content_budget_for_rows(&problem, source, 2, 1),
-        ),
-        Err(super::BoundObservationSourceError::IncompleteUnconditionalRowManifest)
-    ));
-}
-
-#[test]
 fn retained_metadata_is_rejected_before_content_blocks_are_planned() {
     let directory = tempfile::tempdir().expect("temporary metadata-budget fixture");
     let path = directory.path().join("metadata-budget.ms");
@@ -756,7 +709,7 @@ fn retained_metadata_is_rejected_before_content_blocks_are_planned() {
 }
 
 #[test]
-fn selected_observation_rejects_opaque_foreign_and_mutated_measures_providers() {
+fn selected_observation_rejects_opaque_and_foreign_measures_providers() {
     let directory = tempfile::tempdir().expect("temporary Measures-binding fixture");
     let path = directory.path().join("measures-binding.ms");
     generate_fixture(&path);
@@ -780,22 +733,6 @@ fn selected_observation_rejects_opaque_foreign_and_mutated_measures_providers() 
         BoundSelectedObservation::open(&problem, foreign, vec![foreign_binding]),
         Err(super::BoundSelectedObservationError::Measures(
             super::SelectedObservationMeasuresError::ReferenceIdentityMismatch { .. }
-        ))
-    ));
-
-    let mutable_provider = Arc::new(AccountedTestMeasures::with_heap_bytes(64));
-    let erased_provider: Arc<dyn MeasuresProvider> = mutable_provider.clone();
-    let mutated = super::SelectedObservationMeasures::new(erased_provider)
-        .expect("acquire mutable provider before mutation");
-    mutable_provider.mutate_science(92, 0.25);
-    let mutated_binding = ObservationSourceBinding::new(
-        source_ordinal(source),
-        content_budget_for_rows(&problem, source, 1, 1),
-    );
-    assert!(matches!(
-        BoundSelectedObservation::open(&problem, mutated, vec![mutated_binding]),
-        Err(super::BoundSelectedObservationError::Measures(
-            super::SelectedObservationMeasuresError::ProviderStateChanged { .. }
         ))
     ));
 }
@@ -1840,7 +1777,7 @@ fn numeric_blocks_skip_unused_parallactic_angles_and_reject_stale_geometry() {
         content_budget_for_rows(&problem, source, 1, 1),
     )
     .unwrap();
-    let mut source = observation.into_block_stream(&problem).unwrap();
+    let mut source = observation.into_block_stream(&problem);
     let mut storage = source.create_storage();
     let mut geometry = super::SelectedObservationNumericGeometry::new(1, 2).unwrap();
     let mut blocks = 0;
@@ -1869,7 +1806,7 @@ fn numeric_blocks_skip_unused_parallactic_angles_and_reject_stale_geometry() {
     );
     let observation = source.complete().unwrap();
 
-    let mut source = observation.into_block_stream(&problem).unwrap();
+    let mut source = observation.into_block_stream(&problem);
     let mut first = source.create_storage();
     assert!(source.fill_next(&mut first).unwrap());
     first
@@ -1895,7 +1832,7 @@ fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
         content_budget_for_rows(&problem, source, 17, 1),
     )
     .unwrap();
-    let mut source = selected.into_block_stream(&problem).unwrap();
+    let mut source = selected.into_block_stream(&problem);
     let mut storage = source.create_storage();
     assert!(source.fill_next(&mut storage).unwrap());
     let mut serial = super::SelectedObservationNumericGeometry::new(17, 3).unwrap();
@@ -1941,9 +1878,7 @@ fn numeric_geometry_coarse_chunks_match_serial_for_uneven_rows_and_window() {
     while source.fill_next(&mut storage).unwrap() {}
     let retained = source.complete().unwrap();
     // The second selected channel (1.402 GHz) and its straddling partner.
-    let mut window_source = retained
-        .into_windowed_block_stream(&problem, [1.4015e9, 1.4025e9])
-        .unwrap();
+    let mut window_source = retained.into_windowed_block_stream(&problem, [1.4015e9, 1.4025e9]);
     let mut window_storage = window_source.create_storage();
     assert!(window_source.fill_next(&mut window_storage).unwrap());
     let mut window_serial = super::SelectedObservationNumericGeometry::new(17, 2).unwrap();
@@ -1993,9 +1928,7 @@ fn refillable_block_stream_reads_whole_numeric_blocks_and_returns_the_owner() {
         content_budget_for_rows(&problem, source, 1, 1),
     )
     .expect("bind block traversal");
-    let mut source = observation
-        .into_block_stream(&problem)
-        .expect("open block traversal");
+    let mut source = observation.into_block_stream(&problem);
     let mut storage = source.create_storage();
     let mut blocks = 0;
     while source
@@ -2057,9 +1990,7 @@ fn windowed_block_streams_read_only_the_reached_channels() {
     assert_eq!(full.len(), 6 * 3 * 2);
 
     let window = |observation: BoundSelectedObservation, bounds| {
-        let mut source = observation
-            .into_windowed_block_stream(&problem, bounds)
-            .expect("open windowed replay");
+        let mut source = observation.into_windowed_block_stream(&problem, bounds);
         let mut storage = source.create_storage();
         let mut geometry =
             super::SelectedObservationNumericGeometry::new(source.maximum_rows_per_block(), 3)
@@ -2827,7 +2758,7 @@ fn open_observation(
         let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())
             .expect("open fixture for its POINTING query domain");
         binding = binding.with_pointing_query_domain(
-            crate::observation_owner::validate_test_physical_selection(
+            crate::observation_owner::test_pointing_query_domain(
                 &measurement_set,
                 source.selection(),
                 budget,
@@ -2845,9 +2776,7 @@ fn stream(
     problem: &casa_imaging_model::CompiledProblem,
     observation: BoundSelectedObservation,
 ) -> Result<(BoundSelectedObservation, Vec<Sample>), super::BoundObservationSourceError> {
-    let mut source = observation
-        .into_block_stream(problem)
-        .expect("open the block stream");
+    let mut source = observation.into_block_stream(problem);
     let mut block = source.create_storage();
     let channels = problem
         .selected_observation()
@@ -3276,7 +3205,7 @@ fn content_budget_for_rows_with_shared_bytes(
                 PointingCentreLaw::Observation(_)
             ) {
                 Some(
-                    crate::observation_owner::validate_test_physical_selection(
+                    crate::observation_owner::test_pointing_query_domain(
                         &measurement_set,
                         source.selection(),
                         budget,

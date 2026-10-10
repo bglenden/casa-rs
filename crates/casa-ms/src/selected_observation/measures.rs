@@ -49,10 +49,6 @@ impl SelectedObservationMeasures {
         self.retained_bytes
     }
 
-    pub(crate) const fn provider_state(&self) -> MeasuresProviderState {
-        self.provider_state
-    }
-
     pub(crate) fn provider(&self) -> Arc<dyn MeasuresProvider> {
         Arc::clone(&self.provider)
     }
@@ -74,20 +70,6 @@ impl SelectedObservationMeasures {
             return Err(
                 SelectedObservationMeasuresError::ReferenceIdentityMismatch { expected, actual },
             );
-        }
-        self.verify_state()
-    }
-
-    pub(crate) fn verify_state(&self) -> Result<(), SelectedObservationMeasuresError> {
-        let actual = self
-            .provider
-            .prepare_bounded_state()
-            .map_err(SelectedObservationMeasuresError::ProviderPreparation)?;
-        if actual != Some(self.provider_state) {
-            return Err(SelectedObservationMeasuresError::ProviderStateChanged {
-                expected: self.provider_state,
-                actual,
-            });
         }
         Ok(())
     }
@@ -119,14 +101,6 @@ pub enum SelectedObservationMeasuresError {
     /// The provider exposes opaque retained state and cannot enter a bounded operation.
     #[error("Measures provider does not expose bounded retained residency")]
     UnaccountedProvider,
-    /// Provider scientific identity or cache residency changed after acquisition.
-    #[error("Measures provider state changed from {expected:?} to {actual:?}")]
-    ProviderStateChanged {
-        /// Provider-owned state admitted during acquisition.
-        expected: MeasuresProviderState,
-        /// Provider-owned state observed on the later stability check.
-        actual: Option<MeasuresProviderState>,
-    },
     /// The provider allocation and cache projection overflowed the host byte domain.
     #[error("Measures provider retained-residency projection overflowed")]
     ByteOverflow,

@@ -405,10 +405,7 @@ pub(crate) fn selected_content_requirements(
                 .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
         )
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    let row_replay_fixed_bytes = BoundObservationSource::row_replay_fixed_bytes(
-        source.selection().data_descriptions().len(),
-    )
-    .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+    let row_replay_fixed_bytes = BoundObservationSource::row_replay_fixed_bytes();
     let traversal_base_bytes = retained_bytes
         .checked_add(inspection_bytes)
         // The generation encoder may retain the final row's shared projection

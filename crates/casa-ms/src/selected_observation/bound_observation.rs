@@ -298,7 +298,6 @@ impl DeferredSelectedObservationAccess {
 /// ```
 pub struct BoundSelectedObservation {
     residency: SelectedObservationResidencyCertificate,
-    measures: SelectedObservationMeasures,
     sources: Vec<BoundObservationSource>,
 }
 
@@ -438,12 +437,7 @@ impl BoundSelectedObservation {
                 })?,
             );
         }
-        measures.verify_state()?;
-        Ok(Self {
-            residency,
-            measures,
-            sources,
-        })
+        Ok(Self { residency, sources })
     }
 
     /// Return the exact aggregate residency certificate retained by this owner.
@@ -474,10 +468,11 @@ impl BoundSelectedObservation {
 
     /// Stream every selected row of every source, in canonical compiler order,
     /// as refillable blocks.
+    #[must_use]
     pub fn into_block_stream(
         self,
         problem: &CompiledProblem,
-    ) -> Result<SelectedObservationBlockSource<'_>, BoundSelectedObservationError> {
+    ) -> SelectedObservationBlockSource<'_> {
         self.into_block_stream_with_window(problem, None)
     }
 
@@ -486,11 +481,12 @@ impl BoundSelectedObservation {
     /// straddling channel kept at each edge so interpolation keeps both
     /// partners. A row block with no such channel is skipped without reading
     /// its payload.
+    #[must_use]
     pub fn into_windowed_block_stream(
         self,
         problem: &CompiledProblem,
         frequency_bounds_hz: [f64; 2],
-    ) -> Result<SelectedObservationBlockSource<'_>, BoundSelectedObservationError> {
+    ) -> SelectedObservationBlockSource<'_> {
         self.into_block_stream_with_window(problem, Some(frequency_bounds_hz))
     }
 
@@ -498,15 +494,14 @@ impl BoundSelectedObservation {
         self,
         problem: &CompiledProblem,
         window: Option<[f64; 2]>,
-    ) -> Result<SelectedObservationBlockSource<'_>, BoundSelectedObservationError> {
-        self.measures.verify_state()?;
+    ) -> SelectedObservationBlockSource<'_> {
         let maximum_rows = self
             .sources
             .iter()
             .map(BoundObservationSource::rows_per_block)
             .max()
             .unwrap_or(0);
-        Ok(SelectedObservationBlockSource {
+        SelectedObservationBlockSource {
             problem,
             observation: self,
             source_index: 0,
@@ -514,7 +509,7 @@ impl BoundSelectedObservation {
             exhausted: false,
             maximum_rows,
             window,
-        })
+        }
     }
 }
 

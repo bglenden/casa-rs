@@ -26,11 +26,10 @@ use casa_imaging_model::{
     MissingPointingPolicy, ObservationSelection, ObservationSource, PhaseCentreLaw,
     PointingCentreLaw, PointingDirectionColumn, PointingExtrapolation, PointingInterpolation,
     PointingTimeSampling, Projection as ModelProjection, SelectedAntennaResponses,
-    SelectedImageDomainProjection, SelectedImageDomainProjections, SelectedMainRow,
-    SelectedObservationRunChannel, SelectedObservationRunRow, SelectedPhaseCentreProjection,
-    SelectedPointingDirections, SelectedPredictionTarget, SelectedRowsBuilder,
-    SelectedSampleCoordinates, SelectedSampleMetadata, SkyDirection, TimeScale, VisibilityColumn,
-    WeightColumn,
+    SelectedImageDomainProjection, SelectedImageDomainProjections, SelectedObservationRunChannel,
+    SelectedObservationRunRow, SelectedPhaseCentreProjection, SelectedPointingDirections,
+    SelectedPredictionTarget, SelectedSampleCoordinates, SelectedSampleMetadata, SkyDirection,
+    TimeScale, VisibilityColumn, WeightColumn,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use ndarray::arr2;
@@ -101,7 +100,6 @@ pub(crate) struct BoundObservationSource {
     pointing_catalog: Option<PreparedSelectedPointingCatalog>,
     aw_pointing_plan: Option<AwPointingEpochPlan>,
     content_plan: SelectedObservationContentPlan,
-    source_row_count_matches: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -128,10 +126,8 @@ struct AwPointingEpochPlan {
 }
 
 impl BoundObservationSource {
-    pub(super) fn row_replay_fixed_bytes(data_description_capacity: usize) -> Option<usize> {
-        data_description_capacity
-            .checked_mul(size_of::<u32>())
-            .and_then(|bytes| bytes.checked_add(size_of::<SelectedRowReplay>()))
+    pub(super) const fn row_replay_fixed_bytes() -> usize {
+        size_of::<SelectedRowReplay>()
     }
 
     pub(super) const fn row_replay_bytes_per_row() -> usize {
@@ -192,16 +188,14 @@ impl BoundObservationSource {
     ) -> Result<SelectedObservationContentRequirements, BoundObservationSourceError> {
         measures.validate_problem(problem)?;
         let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())?;
-        let requirements = Self::requirements_for_locked_source(
+        Self::requirements_for_locked_source(
             &measurement_set,
             problem,
             source,
             shared_bytes,
             binding.content_budget().maximum_pointing_polynomial_terms(),
             binding.pointing_query_domain(),
-        )?;
-        measures.verify_state()?;
-        Ok(requirements)
+        )
     }
 
     pub(super) fn requirements_for_locked_source(
@@ -320,7 +314,7 @@ impl BoundObservationSource {
             pointing_catalog,
         )?;
         if aw_pointing_plan_ceiling != 0 {
-            let plan = build_aw_pointing_epoch_plan(problem, source, &bound)?;
+            let plan = build_aw_pointing_epoch_plan(problem, &bound)?;
             if plan.retained_byte_ceiling > aw_pointing_plan_ceiling {
                 return Err(BoundObservationSourceError::MeasurementOverflow);
             }
@@ -345,25 +339,12 @@ impl BoundObservationSource {
     ) -> Result<Self, BoundObservationSourceError> {
         let row_predicate = selected_row_predicate(&measurement_set, source)?;
         let coordinates = Arc::from(selected_coordinates(&measurement_set, source.selection())?);
-        let data_description_count = measurement_set.data_description()?.row_count();
-        if row_predicate.requires_every_source_row(data_description_count)
-            && source.selection().rows().selected_row_count()
-                != u64::try_from(measurement_set.row_count())
-                    .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?
-        {
-            return Err(BoundObservationSourceError::IncompleteUnconditionalRowManifest);
-        }
         let geometry_engine = Arc::new(MsCalEngine::new_selected_observation(
             &measurement_set,
             measures.provider(),
-            measures.provider_state(),
             ephemeris.cloned(),
         )?);
-        geometry_engine.verify_selected_observation_measures()?;
         Ok(Self {
-            source_row_count_matches: usize::try_from(source.selection().rows().source_row_count())
-                .ok()
-                == Some(measurement_set.row_count()),
             measurement_set,
             geometry_engine,
             row_predicate,
@@ -387,7 +368,7 @@ impl BoundObservationSource {
         ) {
             let measurement_set =
                 MeasurementSet::open_retained_read(source.provenance().locator())?;
-            let domain = crate::observation_owner::validate_test_physical_selection(
+            let domain = crate::observation_owner::test_pointing_query_domain(
                 &measurement_set,
                 source.selection(),
                 content_budget,
@@ -430,11 +411,8 @@ impl BoundObservationSource {
         block: &mut SelectedObservationBlock,
         window: Option<[f64; 2]>,
     ) -> Result<bool, BoundObservationSourceError> {
-        self.geometry_engine
-            .verify_selected_observation_measures()?;
         loop {
             let Some(coordinate_index) = self.fill_selected_row_group(
-                logical_source,
                 replay,
                 &mut block.request_rows,
                 &mut block.row_contexts,
@@ -477,27 +455,6 @@ impl BoundObservationSource {
                 ),
                 &mut block.buffer,
             )?;
-            for row in 0..block.buffer.row_count() {
-                let stored = block
-                    .buffer
-                    .row(row)
-                    .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
-                if u32::try_from(stored.data_description_id()).ok()
-                    != Some(coordinates.data_description.data_description_id())
-                {
-                    return Err(
-                        BoundObservationSourceError::DataDescriptionCoordinateMismatch {
-                            data_description_id: coordinates.data_description.data_description_id(),
-                        },
-                    );
-                }
-                if !self.row_predicate.matches(StoredMainRow::from(stored)) {
-                    return Err(BoundObservationSourceError::SelectedRowPredicateMismatch {
-                        physical_row: u64::try_from(stored.physical_row())
-                            .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?,
-                    });
-                }
-            }
             let observation_pointings =
                 evaluate_observation_pointings(self, problem, &block.buffer)?;
             block.row_geometry.clear();
@@ -541,23 +498,16 @@ impl BoundObservationSource {
         Ok(SelectedRowReplay {
             cursor: self.measurement_set.main_row_selection_cursor(plan)?,
             pending: None,
-            manifest: Some(SelectedRowsBuilder::with_data_description_capacity(
-                u64::try_from(self.measurement_set.row_count())
-                    .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?,
-                self.coordinates.len(),
-            )),
-            terminal_checked: false,
         })
     }
 
     fn fill_selected_row_group(
         &self,
-        logical_source: &MeasurementSetReadAccess,
         replay: &mut SelectedRowReplay,
         physical_rows: &mut Vec<usize>,
         row_contexts: &mut Vec<SelectedReplayRow>,
     ) -> Result<Option<usize>, BoundObservationSourceError> {
-        let Some(first) = replay.next_selected(self, logical_source)? else {
+        let Some(first) = replay.next_selected(self)? else {
             return Ok(None);
         };
         let coordinate_index = self
@@ -579,7 +529,7 @@ impl BoundObservationSource {
         );
         row_contexts.push(first);
         while physical_rows.len() < self.content_plan.rows_per_block() {
-            let Some(row) = replay.next_selected(self, logical_source)? else {
+            let Some(row) = replay.next_selected(self)? else {
                 break;
             };
             if row.data_description_id() != first.data_description_id() {
@@ -780,45 +730,26 @@ mod selected_channel_window_tests {
     }
 }
 
+/// The selected MAIN rows of one source, in physical order: a cursor over
+/// MAIN filtered by the compiled row predicate.
 pub(super) struct SelectedRowReplay {
     cursor: MainRowSelectionCursor,
     pending: Option<SelectedReplayRow>,
-    manifest: Option<SelectedRowsBuilder>,
-    terminal_checked: bool,
 }
 
 impl SelectedRowReplay {
     fn next_selected(
         &mut self,
         source: &BoundObservationSource,
-        logical_source: &MeasurementSetReadAccess,
     ) -> Result<Option<SelectedReplayRow>, BoundObservationSourceError> {
         if let Some(row) = self.pending.take() {
             return Ok(Some(row));
         }
-        loop {
-            let Some(fact) = self.cursor.next(&source.measurement_set)? else {
-                if self.terminal_checked {
-                    return Ok(None);
-                }
-                self.terminal_checked = true;
-                if !source.source_row_count_matches {
-                    return Err(BoundObservationSourceError::SourceRowCountMismatch);
-                }
-                let observed = self
-                    .manifest
-                    .take()
-                    .expect("selected-row manifest finishes once")
-                    .finish();
-                if &observed != logical_source.selection().rows() {
-                    return Err(BoundObservationSourceError::StaleSelectedRows);
-                }
-                return Ok(None);
-            };
+        while let Some(fact) = self.cursor.next(&source.measurement_set)? {
             if !source.row_predicate.matches(StoredMainRow::from(fact)) {
                 continue;
             }
-            let row = SelectedReplayRow::new(
+            return Ok(Some(SelectedReplayRow::new(
                 u64::try_from(fact.physical_row())
                     .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?,
                 u32::try_from(fact.data_description_id()).map_err(|_| {
@@ -827,17 +758,9 @@ impl SelectedRowReplay {
                     }
                 })?,
                 fact,
-            );
-            self.manifest
-                .as_mut()
-                .expect("selected-row manifest remains active before terminal")
-                .push(SelectedMainRow::new(
-                    row.physical_row(),
-                    row.data_description_id(),
-                ))
-                .map_err(|_| BoundObservationSourceError::StaleSelectedRows)?;
-            return Ok(Some(row));
+            )));
         }
+        Ok(None)
     }
 }
 
@@ -1339,9 +1262,6 @@ pub enum BoundObservationSourceError {
     /// The retained source is not one exact member of the supplied compiled problem.
     #[error("retained observation source does not match the compiled selected observation")]
     ProblemSourceMismatch,
-    /// Re-evaluated selected rows differ from the compiled row/DDID manifest.
-    #[error("current selected rows differ from the compiled source manifest")]
-    StaleSelectedRows,
     /// This first native slice does not yet implement the compiled centre laws.
     #[error(
         "compiled centre laws require a selected-observation geometry evaluator not yet migrated"
@@ -1368,21 +1288,13 @@ pub enum BoundObservationSourceError {
         /// Canonical casacore epoch-reference name.
         name: String,
     },
-    /// Stored spectral-window coordinates contradicted the compiled channel selection.
+    /// Stored spectral-window coordinates do not cover the compiled channel selection.
     #[error(
-        "stored spectral coordinates do not match selected SPECTRAL_WINDOW_ID {spectral_window_id}"
+        "stored spectral coordinates do not cover selected SPECTRAL_WINDOW_ID {spectral_window_id}"
     )]
     SpectralCoordinateMismatch {
-        /// Spectral window whose coordinate vectors differed.
+        /// Spectral window whose coordinate vectors were short or not finite.
         spectral_window_id: u32,
-    },
-    /// Stored correlation coordinates contradicted the compiled polarization selection.
-    #[error(
-        "stored correlation coordinates do not match selected POLARIZATION_ID {polarization_id}"
-    )]
-    CorrelationCoordinateMismatch {
-        /// Polarization row whose correlation products differed.
-        polarization_id: u32,
     },
     /// Selected correlations do not define CASA's one unpolarized imaging-weight group.
     #[error(
@@ -1395,29 +1307,15 @@ pub enum BoundObservationSourceError {
     /// A physical MAIN row index did not fit the host storage index domain.
     #[error("selected physical MAIN row index exceeds the host storage index domain")]
     PhysicalRowIndexOverflow,
-    /// Retained MAIN cardinality differs from the compiler-owned source manifest.
-    #[error("retained MAIN row count differs from the compiled source manifest")]
-    SourceRowCountMismatch,
-    /// Block-source completion was requested before the terminal poll.
-    #[error("selected-observation block source has not reached its terminal poll")]
+    /// The block stream was completed before its last block was read.
+    #[error("selected-observation block stream completed before it was exhausted")]
     IncompleteBlockTraversal,
-    /// An unconditional resolved selector omitted one or more retained MAIN rows.
-    #[error("compiled unconditional row selection omits retained MAIN rows")]
-    IncompleteUnconditionalRowManifest,
     /// The bounded storage block did not contain one compiled sample coordinate.
     #[error("bounded selected-observation storage block has an inconsistent sample shape")]
     StoredSampleShapeMismatch,
     /// Stored row geometry could not be represented by the compiled sample schema.
     #[error("stored selected-observation row geometry is invalid")]
     InvalidRowGeometry,
-    /// One manifest-listed row no longer satisfies the compiled resolved selector.
-    #[error(
-        "selected physical MAIN row {physical_row} no longer satisfies the compiled row selection"
-    )]
-    SelectedRowPredicateMismatch {
-        /// Manifest-listed physical MAIN row.
-        physical_row: u64,
-    },
     /// Observation POINTING evaluation was required but no per-antenna result was supplied.
     #[error("selected-observation row is missing evaluated POINTING directions")]
     MissingEvaluatedPointingDirections,
@@ -1465,7 +1363,6 @@ fn selected_coordinates(
     selection: &ObservationSelection,
 ) -> Result<Box<[SelectedCoordinates]>, BoundObservationSourceError> {
     let spectral_windows = measurement_set.spectral_window()?;
-    let polarizations = measurement_set.polarization()?;
     let mut coordinates = Vec::with_capacity(selection.data_descriptions().len());
     for data_description in selection.data_descriptions().iter().copied() {
         let spectral_window = selection
@@ -1506,22 +1403,6 @@ fn selected_coordinates(
                 spectral_window_id: data_description.spectral_window_id(),
             });
         };
-        if let Some(catalog) = spectral_window.coordinate_catalog()
-            && (catalog.channel_count() != centres.len()
-                || widths.first().is_none_or(|width| {
-                    width.to_bits() != catalog.first_channel_width_hz().to_bits()
-                })
-                || catalog
-                    .channel_frequencies_hz()
-                    .iter()
-                    .copied()
-                    .zip(centres.iter().copied())
-                    .any(|(expected, actual)| expected.to_bits() != actual.to_bits()))
-        {
-            return Err(BoundObservationSourceError::SpectralCoordinateMismatch {
-                spectral_window_id: data_description.spectral_window_id(),
-            });
-        }
         let frame = frequency_frame(selected_i32_scalar(
             spectral_windows.table(),
             "MEAS_FREQ_REF",
@@ -1581,41 +1462,6 @@ fn selected_coordinates(
             .iter()
             .find(|candidate| candidate.polarization_id() == data_description.polarization_id())
             .expect("compiled DATA_DESCRIPTION has one polarization selection");
-        let polarization_row =
-            usize::try_from(data_description.polarization_id()).map_err(|_| {
-                BoundObservationSourceError::CorrelationCoordinateMismatch {
-                    polarization_id: data_description.polarization_id(),
-                }
-            })?;
-        let Some(casa_types::ArrayValue::Int32(stored_products)) = polarizations
-            .table()
-            .column_accessor("CORR_TYPE")
-            .map_err(MsError::from)?
-            .array_cells_owned_uncached(&[polarization_row])
-            .map_err(MsError::from)?
-            .pop()
-            .flatten()
-        else {
-            return Err(BoundObservationSourceError::CorrelationCoordinateMismatch {
-                polarization_id: data_description.polarization_id(),
-            });
-        };
-        for product in polarization.products() {
-            let product_index = usize::try_from(product.correlation_index()).map_err(|_| {
-                BoundObservationSourceError::CorrelationCoordinateMismatch {
-                    polarization_id: data_description.polarization_id(),
-                }
-            })?;
-            if stored_products
-                .get(product_index)
-                .and_then(|code| correlation_type(*code))
-                != Some(product.correlation_type())
-            {
-                return Err(BoundObservationSourceError::CorrelationCoordinateMismatch {
-                    polarization_id: data_description.polarization_id(),
-                });
-            }
-        }
         validate_input_weight_group(polarization.products(), data_description.polarization_id())?;
         coordinates.push(SelectedCoordinates {
             data_description,
@@ -1687,13 +1533,6 @@ fn matches_canonical_correlation_order(
             .by_ref()
             .any(|candidate| *candidate == product.correlation_type())
     })
-}
-
-pub(crate) fn validate_selected_coordinates(
-    measurement_set: &MeasurementSet,
-    selection: &ObservationSelection,
-) -> Result<(), BoundObservationSourceError> {
-    selected_coordinates(measurement_set, selection).map(drop)
 }
 
 #[derive(Clone)]
@@ -2048,7 +1887,6 @@ fn evaluate_observation_pointings(
 
 fn build_aw_pointing_epoch_plan(
     problem: &CompiledProblem,
-    observation: &ObservationSource,
     source: &BoundObservationSource,
 ) -> Result<AwPointingEpochPlan, BoundObservationSourceError> {
     let contract = problem
@@ -2107,12 +1945,6 @@ fn build_aw_pointing_epoch_plan(
             .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
         epoch.antennas.insert(row.antenna1());
         epoch.antennas.insert(row.antenna2());
-    }
-    let selected_rows = epochs.iter().try_fold(0_u64, |count, epoch| {
-        count.checked_add(epoch.row_count as u64)
-    });
-    if selected_rows != Some(observation.selection().rows().selected_row_count()) {
-        return Err(BoundObservationSourceError::StaleSelectedRows);
     }
 
     let charts = problem
@@ -2531,44 +2363,6 @@ fn time_scale(name: &str) -> Result<TimeScale, BoundObservationSourceError> {
     }
 }
 
-const fn correlation_type(code: i32) -> Option<CorrelationType> {
-    Some(match code {
-        1 => CorrelationType::StokesI,
-        2 => CorrelationType::StokesQ,
-        3 => CorrelationType::StokesU,
-        4 => CorrelationType::StokesV,
-        5 => CorrelationType::CircularRr,
-        6 => CorrelationType::CircularRl,
-        7 => CorrelationType::CircularLr,
-        8 => CorrelationType::CircularLl,
-        9 => CorrelationType::LinearXx,
-        10 => CorrelationType::LinearXy,
-        11 => CorrelationType::LinearYx,
-        12 => CorrelationType::LinearYy,
-        13 => CorrelationType::MixedRx,
-        14 => CorrelationType::MixedRy,
-        15 => CorrelationType::MixedLx,
-        16 => CorrelationType::MixedLy,
-        17 => CorrelationType::MixedXr,
-        18 => CorrelationType::MixedXl,
-        19 => CorrelationType::MixedYr,
-        20 => CorrelationType::MixedYl,
-        21 => CorrelationType::QuasiOrthogonalPp,
-        22 => CorrelationType::QuasiOrthogonalPq,
-        23 => CorrelationType::QuasiOrthogonalQp,
-        24 => CorrelationType::QuasiOrthogonalQq,
-        25 => CorrelationType::RightCircular,
-        26 => CorrelationType::LeftCircular,
-        27 => CorrelationType::Linear,
-        28 => CorrelationType::PolarizedIntensity,
-        29 => CorrelationType::LinearPolarizedIntensity,
-        30 => CorrelationType::FractionalPolarizedIntensity,
-        31 => CorrelationType::FractionalLinearPolarizedIntensity,
-        32 => CorrelationType::PolarizationAngle,
-        _ => return None,
-    })
-}
-
 fn selected_row_predicate(
     measurement_set: &MeasurementSet,
     source: &ObservationSource,
@@ -2741,7 +2535,7 @@ mod aw_pointing_tests {
             measures.eop_values(time / 86_400.0).unwrap(),
             measures.tai_minus_utc_seconds(time / 86_400.0).unwrap()
         );
-        let engine = MsCalEngine::new_selected_observation(&ms, measures, state, None).unwrap();
+        let engine = MsCalEngine::new_selected_observation(&ms, measures, None).unwrap();
         let queries = expected
             .keys()
             .map(|&antenna| PointingDirectionQuery::new(antenna, time).unwrap())

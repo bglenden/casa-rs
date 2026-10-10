@@ -301,8 +301,8 @@ impl BoundedSource for MeasurementSetSource<'_> {
         .then(|| self.bounds.as_ref().map(|bounds| bounds(planes)))
         .flatten();
         let source = match window {
-            Some(bounds) => selected.into_windowed_block_stream(self.problem, bounds)?,
-            None => selected.into_block_stream(self.problem)?,
+            Some(bounds) => selected.into_windowed_block_stream(self.problem, bounds),
+            None => selected.into_block_stream(self.problem),
         };
         let block = source.create_storage();
         let channels = self

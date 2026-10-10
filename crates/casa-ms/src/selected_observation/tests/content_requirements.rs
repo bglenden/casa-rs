@@ -38,7 +38,7 @@ fn t51_content_requirements_admit_the_exact_minimum_and_bound_live_blocks() {
         Err(SelectedObservationContentPlanError::InvalidBudget)
     ));
 
-    let access = access.with_content_budget(&requirements, budget).unwrap();
+    let access = access.with_content_budget(budget);
     assert_eq!(access.source_binding().content_budget(), budget);
     let deferred = access.into_deferred();
     let certificate = deferred.certify_residency(&problem).unwrap();

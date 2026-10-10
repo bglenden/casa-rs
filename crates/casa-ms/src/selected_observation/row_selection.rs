@@ -187,26 +187,6 @@ impl CompiledRowPredicate {
             && intent_matches(selection.intents(), row.state_id)
             && id_matches(selection.arrays(), row.array_id)
     }
-
-    pub(crate) fn requires_every_source_row(&self, data_description_count: usize) -> bool {
-        let selection = self.catalog.selection();
-        let data_descriptions = self.catalog.data_descriptions();
-        matches!(selection.fields(), IdSelection::All)
-            && matches!(selection.times(), TimeSelection::All)
-            && matches!(selection.uv_distances(), UvSelection::All)
-            && matches!(selection.antennas(), AntennaSelection::All)
-            && matches!(selection.scans(), IdSelection::All)
-            && matches!(selection.observations(), IdSelection::All)
-            && matches!(selection.intents(), IntentSelection::All)
-            && matches!(selection.arrays(), IdSelection::All)
-            && data_descriptions.len() == data_description_count
-            && data_descriptions
-                .iter()
-                .enumerate()
-                .all(|(index, description)| {
-                    usize::try_from(description.data_description_id()).ok() == Some(index)
-                })
-    }
 }
 
 fn needs_reference_wavelengths(selection: &RowSelection) -> bool {

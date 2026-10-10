@@ -79,8 +79,5 @@ pub fn finalize_source_access(
         maximum_live_blocks,
         requirements.maximum_pointing_polynomial_terms(),
     );
-    Ok((
-        access.with_content_budget(&requirements, budget)?,
-        reservation,
-    ))
+    Ok((access.with_content_budget(budget), reservation))
 }

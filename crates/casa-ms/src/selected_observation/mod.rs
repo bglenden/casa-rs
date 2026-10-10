@@ -16,7 +16,7 @@ mod spectral_evaluation;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use access::{BoundObservationSource, validate_selected_coordinates};
+pub(crate) use access::BoundObservationSource;
 pub use access::{
     BoundObservationSourceError, SelectedObservationBlock, SelectedObservationNumericGeometry,
 };
