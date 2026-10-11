@@ -260,6 +260,9 @@ fn assert_close(actual: f32, expected: f32, context: &str) {
     );
 }
 
+/// CASA's principal solution (`SDAlgorithmMSMFS::restore`): the residuals
+/// over the principal sum weight, solved with the PSF moments at the peak
+/// divided by the zeroth moment's peak (`SIImageStore::normPSF`).
 fn principal_residuals(join: &MajorCycleCompletion) -> [Vec<f32>; TERMS] {
     let normal = join.normal_state();
     let window = normal
@@ -276,21 +279,56 @@ fn principal_residuals(join: &MajorCycleCompletion) -> [Vec<f32>; TERMS] {
         .max_by(|(_, left), (_, right)| left.re.abs().total_cmp(&right.re.abs()))
         .expect("PSF peak")
         .0;
-    let h00 = moments[0].normal_approximation()[peak].re;
-    let h01 = moments[1].normal_approximation()[peak].re;
-    let h11 = moments[2].normal_approximation()[peak].re;
+    let psf_peak = moments[0].normal_approximation()[peak].re;
+    let sum_weight = moments[0].sum_weight();
+    let h00 = moments[0].normal_approximation()[peak].re / psf_peak;
+    let h01 = moments[1].normal_approximation()[peak].re / psf_peak;
+    let h11 = moments[2].normal_approximation()[peak].re / psf_peak;
     let determinant = h00 * h11 - h01 * h01;
     assert!(determinant.is_finite() && determinant.abs() > f64::EPSILON);
     let residual0 = window.coefficient_term(0).expect("residual tt0").residual();
     let residual1 = window.coefficient_term(1).expect("residual tt1").residual();
     let mut principal = [vec![0.0; cells], vec![0.0; cells]];
     for index in 0..cells {
-        principal[0][index] =
-            ((h11 * residual0[index].re - h01 * residual1[index].re) / determinant) as f32;
-        principal[1][index] =
-            ((h00 * residual1[index].re - h01 * residual0[index].re) / determinant) as f32;
+        let [r0, r1] = [residual0[index].re, residual1[index].re].map(|r| r / sum_weight);
+        principal[0][index] = ((h11 * r0 - h01 * r1) / determinant) as f32;
+        principal[1][index] = ((h00 * r1 - h01 * r0) / determinant) as f32;
     }
     principal
+}
+
+/// The restored images solve with the PSF moments over the zeroth
+/// moment's peak, not its sum of weights (#704). A mosaic's PSF peaks below
+/// its sum of weights; scaling the PSF moments alone, with the residuals
+/// and sums unchanged, leaves `.image.tt*` CASA's principal solution, the
+/// same as for a PSF that peaks at its sum.
+#[test]
+fn t44_the_principal_solution_divides_the_moments_by_the_psf_peak() {
+    let problem = taylor_problem(205, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar);
+    let images = [1.0, 0.5].map(|scale| {
+        let scene = taylor_scene(&problem).with_psf_scale(0, scale);
+        let join = two_cycle_round(&problem, &scene, Vec::new());
+        let principal = principal_residuals(&join);
+        let generated = generate(&problem, &join);
+        for (term, principal) in principal.iter().enumerate() {
+            let restored = member(&generated, &format!(".image.tt{term}")).payload();
+            for (actual, expected) in restored.iter().zip(principal) {
+                assert_close(*actual, *expected, "principal solution, empty model");
+            }
+        }
+        (0..TERMS)
+            .map(|term| {
+                member(&generated, &format!(".image.tt{term}"))
+                    .payload()
+                    .to_vec()
+            })
+            .collect::<Vec<_>>()
+    });
+    for (term, (unit, half)) in images[0].iter().zip(&images[1]).enumerate() {
+        for (unit, half) in unit.iter().zip(half) {
+            assert_close(*half, *unit, &format!(".image.tt{term} at half the PSF"));
+        }
+    }
 }
 
 #[test]

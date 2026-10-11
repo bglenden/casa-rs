@@ -435,6 +435,10 @@ impl MeasurementSet {
     }
 
     /// Scan POINTING scalar metadata once, then retain and read only selected candidates.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     pub(crate) fn prepare_selected_pointing_catalog(
         &self,
         column: PointingDirectionColumn,

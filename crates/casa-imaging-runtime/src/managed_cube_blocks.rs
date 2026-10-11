@@ -278,6 +278,10 @@ impl CubeResidency {
 
     /// Reserve every block and its backend staging before loading any member.
     /// A busy pinned set returns WouldBlock without acquiring a partial set.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     pub(crate) fn try_admit(
         self: &Arc<Self>,
         requests: &[BlockRequest],

@@ -37,7 +37,7 @@ pub use plan::{
 pub use restore::{
     ResidualBeamScaling, fft_convolve, gaussian_beam_image, rescale_residual_to_beam,
 };
-pub use source::ContinuumProductInputs;
+pub use source::{ContinuumProductInputs, PrimaryBeamCentres};
 pub use storage::{ProductStoragePlan, ProductWindow, ProductWindowExecutor, ProductWindowLayout};
 pub use visibility::VisibilityProductCompletion;
 pub use writer::{CasaImageDomainOutput, CasaImageWriter};

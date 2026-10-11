@@ -118,3 +118,7 @@ unused_must_use = "deny"
 
 [workspace.lints.clippy]
 suspicious = "deny"
+# Functions stay under clippy.toml's code-line threshold. A function over it
+# carries `#[expect(clippy::too_many_lines, reason = ...)]` naming its
+# tracking issue, so splitting it fails the build until the expectation goes.
+too_many_lines = "deny"

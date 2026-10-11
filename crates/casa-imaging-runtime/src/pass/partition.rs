@@ -158,9 +158,14 @@ impl WaveDemand<'_> {
             let image_cells = (width * height) as u64;
             let basis = operator.basis();
             let pols = operator.polarization().requested().len() as u64;
+            // The weight image has the PSF's terms (`AccumulatorLayout`).
             let images = (basis.data_terms()
                 + if self.modes.psf { basis.psf_terms() } else { 0 }
-                + usize::from(self.modes.weight)) as u64;
+                + if self.modes.weight {
+                    basis.psf_terms()
+                } else {
+                    0
+                }) as u64;
             per_plane += images * pols * image_cells * size_of::<f32>() as u64;
             if !matches!(basis, Basis::ChannelLocal { .. }) {
                 per_plane += pols

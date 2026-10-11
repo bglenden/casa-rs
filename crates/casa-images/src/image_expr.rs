@@ -3586,6 +3586,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     fn direct_trait_ops_cover_remaining_complex_impls() {
         let c32 = Complex32::new(1.25, -0.75);
         assert!((<Complex32 as ImageExprValue>::expr_exp(c32) - c32.exp()).norm() < 1e-5);

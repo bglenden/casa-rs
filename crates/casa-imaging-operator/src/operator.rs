@@ -149,10 +149,12 @@ impl NormalImages {
         &self.planes[plane].psf[term * self.pols + pol]
     }
 
-    /// Weight image of `pol` on `plane`, when the weight mode was accumulated.
+    /// Weight image `(term, pol)` of `plane`, when the weight mode was
+    /// accumulated: the term's spectral moment Σ W·s^term of the weight
+    /// kernel, one per PSF term (`MultiTermFTNew`).
     #[must_use]
-    pub fn weight(&self, plane: usize, pol: usize) -> Option<&Array2<f32>> {
-        self.planes[plane].weight.get(pol)
+    pub fn weight(&self, plane: usize, term: usize, pol: usize) -> Option<&Array2<f32>> {
+        self.planes[plane].weight.get(term * self.pols + pol)
     }
 
     /// `sumwt` of data image `(term, pol)` of `plane`.
@@ -168,11 +170,11 @@ impl NormalImages {
         plane.sumwt[plane.data.len() + term * self.pols + pol]
     }
 
-    /// `sumwt` of the weight image of `pol` on `plane`.
+    /// `sumwt` of weight image `(term, pol)` of `plane`.
     #[must_use]
-    pub fn weight_sumwt(&self, plane: usize, pol: usize) -> f64 {
+    pub fn weight_sumwt(&self, plane: usize, term: usize, pol: usize) -> f64 {
         let plane = &self.planes[plane];
-        plane.sumwt[plane.data.len() + plane.psf.len() + pol]
+        plane.sumwt[plane.data.len() + plane.psf.len() + term * self.pols + pol]
     }
 }
 
@@ -559,17 +561,25 @@ impl MeasurementOperator {
     ) -> Array2<f32> {
         let [width, height] = self.geometry.image().shape;
         let mut image = Array2::<f32>::zeros((height, width));
-        for (gpol, grid_image) in gpol_images.iter().enumerate() {
-            let coefficient = match mode {
-                Mode::Data => self.polarization.to_requested(pol, gpol),
-                Mode::Psf | Mode::Weight => self.polarization.to_requested_psf(pol, gpol),
-            };
-            if coefficient == Complex64::default() {
-                continue;
-            }
-            for (target, value) in image.iter_mut().zip(grid_image) {
-                *target += (coefficient * value).re as f32;
-            }
+        let coefficients = gpol_images
+            .iter()
+            .enumerate()
+            .map(|(gpol, grid_image)| {
+                let coefficient = match mode {
+                    Mode::Data => self.polarization.to_requested(pol, gpol),
+                    Mode::Psf | Mode::Weight => self.polarization.to_requested_psf(pol, gpol),
+                };
+                (coefficient, grid_image)
+            })
+            .filter(|(coefficient, _)| *coefficient != Complex64::default())
+            .collect::<Vec<_>>();
+        let magnitude = mode == Mode::Weight && self.cf.weight_image_magnitude();
+        for (index, target) in image.iter_mut().enumerate() {
+            let value = coefficients
+                .iter()
+                .map(|(coefficient, grid_image)| coefficient * grid_image[index])
+                .sum::<Complex64>();
+            *target = if magnitude { value.norm() } else { value.re } as f32;
         }
         image
     }

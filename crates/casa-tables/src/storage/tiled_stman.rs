@@ -7817,6 +7817,10 @@ fn save_single_column_tiled_column_stman(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn save_single_column_tiled_shape_stman(
     table_path: &Path,
     dm_seq_nr: u32,
@@ -8375,6 +8379,10 @@ fn save_tiled_column_stman(
 }
 
 /// Save with `TiledShapeStMan` (one hypercube per unique array shape).
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn save_tiled_shape_stman(
     table_path: &Path,
     dm_seq_nr: u32,

@@ -206,6 +206,33 @@ pub enum PrepareError {
     /// A source-frame cube needs an ephemeris phase centre.
     #[error("source-frame cube imaging requires a moving phase centre")]
     MovingPhaseCentre,
+    /// An analytic primary beam for a moving phase centre: CASA shifts each
+    /// field's beam with the source (`SynthesisImagerVi2::getMovingDirection`),
+    /// which casa-rs does not.
+    #[error("write_pb and pbcor need a fixed phase centre with the standard and wproject gridders")]
+    MovingAnalyticPrimaryBeam,
+    /// An analytic primary beam for a field whose `PHASE_DIR` polynomial
+    /// has a nonzero rate term: CASA evaluates it at the field's first
+    /// selected time (`SIMapper::addPB`'s `phaseDirMeas`), which casa-rs
+    /// does not.
+    #[error(
+        "write_pb and pbcor need constant field directions with the standard and wproject \
+         gridders; FIELD {field_id} has a time-varying PHASE_DIR"
+    )]
+    PolynomialFieldPrimaryBeam {
+        /// The selected field with a time-varying phase direction.
+        field_id: usize,
+    },
+    /// A selected field's pointing could not be projected onto an image
+    /// domain for its analytic primary beam.
+    #[error("cannot place FIELD {field_id}'s pointing on an image for its primary beam: {source}")]
+    PrimaryBeamPointing {
+        /// The selected field.
+        field_id: usize,
+        /// The coordinate failure.
+        #[source]
+        source: casa_coordinates::CoordinateError,
+    },
     /// A source-frame cube needs the source's rest frequency.
     #[error("source-frame cube imaging requires REST_FREQUENCY metadata")]
     RestFrequencyMissing,

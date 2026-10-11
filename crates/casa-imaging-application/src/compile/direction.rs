@@ -7,13 +7,15 @@
 use std::path::Path;
 
 use casa_coordinates::{
-    CoordinateSystem, DirectionCoordinate, ObsInfo, Projection as CoordinateProjection,
-    ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
+    CoordinateSystem, CoordinateType, DirectionCoordinate, ObsInfo,
+    Projection as CoordinateProjection, ProjectionType, SpectralCoordinate, StokesCoordinate,
+    StokesType,
 };
 use casa_imaging_model::{
     DirectionCoordinateSpec, DirectionFrame, PhaseCentreLaw, PolarizationCoordinate, Projection,
     SkyDirection,
 };
+use casa_imaging_products::PrimaryBeamCentres;
 use casa_ms::{MeasurementSet, SelectedObservationContentBudget, SelectedObservationEphemeris};
 use casa_types::measures::{
     direction::{DirectionRef, MDirection},
@@ -22,6 +24,7 @@ use casa_types::measures::{
 };
 
 use super::PrepareError;
+use super::domains::PreparedImageDomain;
 use super::selection::Survey;
 use crate::ImagingRequest;
 
@@ -130,6 +133,109 @@ pub(super) fn resolve_centre(
         image_centre,
         field_id,
     })
+}
+
+/// Where an analytic primary beam is centred on each image domain: the
+/// pixel of every selected field's phase direction, in the domain's frame.
+///
+/// CASA centres one beam per field on its `PHASE_DIR` and sums them on every
+/// image, outliers included (`SynthesisImagerVi2::makePrimaryBeam`,
+/// `SIMapper::addPB`, `PBMath1D::apply`'s `toPixel`). A pointing 90° or more
+/// from a domain's centre adds nothing there; CASA's `toPixel` fails for it
+/// and `PBMath1D::apply` uses whatever pixel the failed call left.
+///
+/// # Errors
+///
+/// A moving phase centre, whose beams CASA shifts with the source
+/// (`SynthesisImagerVi2::getMovingDirection`); a selected field whose
+/// `PHASE_DIR` polynomial has a nonzero rate, which CASA evaluates at the
+/// field's first selected time; unreadable field directions, frame
+/// conversions or projections.
+pub(super) fn primary_beam_centres(
+    domains: &[PreparedImageDomain],
+    ms: &MeasurementSet,
+    survey: &Survey,
+    centre: &Centre,
+    engine: &casa_ms::derived::engine::MsCalEngine,
+) -> Result<PrimaryBeamCentres, PrepareError> {
+    if centre.ephemeris.is_some() {
+        return Err(PrepareError::MovingAnalyticPrimaryBeam);
+    }
+    let field = ms.field()?;
+    let pointings = survey
+        .fields
+        .iter()
+        .map(|field_id| {
+            let field_id = usize::try_from(*field_id).expect("selected FIELD_IDs are nonnegative");
+            if phase_direction_varies(field.phase_dir(field_id)?) {
+                return Err(PrepareError::PolynomialFieldPrimaryBeam { field_id });
+            }
+            Ok((field_id, engine.field_direction_j2000(field_id)?.clone()))
+        })
+        .collect::<Result<Vec<(usize, MDirection)>, PrepareError>>()?;
+    domains
+        .iter()
+        .map(|domain| {
+            let frame = direction_ref(domain.direction.reference_direction().frame());
+            let coordinate = domain.coordinates.coordinate(
+                domain
+                    .coordinates
+                    .find_coordinate(CoordinateType::Direction)
+                    .expect("an image domain has a direction coordinate"),
+            );
+            let mut centres = Vec::with_capacity(pointings.len());
+            for (field_id, pointing) in &pointings {
+                let pointing = if frame == DirectionRef::J2000 {
+                    pointing.clone()
+                } else {
+                    let measures = engine.spectral_frame_observatory_direction(
+                        survey.first_time_mjd_seconds,
+                        pointing.clone(),
+                    )?;
+                    pointing.convert_to(frame, &measures)?
+                };
+                let (longitude, latitude) = pointing.as_angles();
+                let pixel =
+                    pointing_pixel(coordinate, [longitude, latitude]).map_err(|source| {
+                        PrepareError::PrimaryBeamPointing {
+                            field_id: *field_id,
+                            source,
+                        }
+                    })?;
+                centres.extend(pixel);
+            }
+            Ok((domain.role.clone(), centres))
+        })
+        .collect()
+}
+
+/// Whether a `PHASE_DIR` polynomial, shaped `[2, NUM_POLY + 1]`, has a
+/// nonzero rate term. A zero rate is the constant direction exactly.
+fn phase_direction_varies(coefficients: &casa_types::ArrayValue) -> bool {
+    match coefficients {
+        casa_types::ArrayValue::Float64(coefficients) => coefficients
+            .indexed_iter()
+            .any(|(index, value)| index[1] > 0 && *value != 0.0),
+        _ => false,
+    }
+}
+
+/// The pixel of `pointing`, `[longitude, latitude]` in radians, on the
+/// direction coordinate `coordinate`, or `None` when it lies 90° or more
+/// from the coordinate's reference direction. The SIN projection would
+/// otherwise mirror such a pointing onto the near hemisphere.
+fn pointing_pixel(
+    coordinate: &casa_coordinates::CoordinateModel,
+    pointing: [f64; 2],
+) -> Result<Option<[f64; 2]>, casa_coordinates::CoordinateError> {
+    let reference = coordinate.reference_value();
+    let cosine = reference[1].sin() * pointing[1].sin()
+        + reference[1].cos() * pointing[1].cos() * (pointing[0] - reference[0]).cos();
+    if cosine <= 0.0 {
+        return Ok(None);
+    }
+    let pixel = coordinate.to_pixel(&pointing)?;
+    Ok(Some([pixel[0], pixel[1]]))
 }
 
 /// The image's reference direction and the frame it records: ICRS at the
@@ -478,5 +584,60 @@ mod tests {
             panic!("polarization coordinate has the wrong type");
         };
         assert_eq!(stokes.stokes(), [StokesType::Q]);
+    }
+
+    /// A pointing on the far hemisphere adds no beam. The SIN projection
+    /// alone would mirror the antipode onto the reference pixel.
+    #[test]
+    fn a_pointing_beyond_ninety_degrees_has_no_pixel() {
+        let cell = 1.0e-5;
+        let coordinate = CoordinateModel::from(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            CoordinateProjection::new(ProjectionType::SIN),
+            [1.0, 0.4],
+            [-cell, cell],
+            [32.0, 32.0],
+        ));
+        let near = pointing_pixel(&coordinate, [1.0 + 10.0 * cell / 0.4_f64.cos(), 0.4])
+            .expect("projection")
+            .expect("a near pointing has a pixel");
+        assert!((near[0] - 22.0).abs() < 1.0e-3, "{near:?}");
+        assert!((near[1] - 32.0).abs() < 1.0e-3, "{near:?}");
+        let antipode = [1.0 + std::f64::consts::PI, -0.4];
+        let mirrored = coordinate.to_pixel(&antipode).expect("SIN never fails");
+        assert!((mirrored[0] - 32.0).abs() < 1.0e-6, "{mirrored:?}");
+        assert_eq!(
+            pointing_pixel(&coordinate, antipode).expect("projection"),
+            None
+        );
+        let beyond = [1.0 + 1.6, 0.0];
+        assert_eq!(
+            pointing_pixel(&coordinate, beyond).expect("projection"),
+            None
+        );
+    }
+
+    /// Only a nonzero rate makes a `PHASE_DIR` polynomial time-varying.
+    #[test]
+    fn a_phase_direction_varies_only_with_a_nonzero_rate() {
+        use ndarray::ShapeBuilder as _;
+        // Fortran order, as casacore stores it: lon0, lat0, lon1, lat1, ...
+        let polynomial = |coefficients: &[f64]| {
+            casa_types::ArrayValue::Float64(
+                ndarray::ArrayD::from_shape_vec(
+                    ndarray::IxDyn(&[2, coefficients.len() / 2]).f(),
+                    coefficients.to_vec(),
+                )
+                .expect("[2, NUM_POLY + 1]"),
+            )
+        };
+        assert!(!phase_direction_varies(&polynomial(&[1.0, 0.4])));
+        assert!(!phase_direction_varies(&polynomial(&[1.0, 0.4, 0.0, 0.0])));
+        assert!(phase_direction_varies(&polynomial(&[
+            1.0, 0.4, 1.0e-9, 0.0
+        ])));
+        assert!(phase_direction_varies(&polynomial(&[
+            1.0, 0.4, 0.0, -1.0e-9
+        ])));
     }
 }

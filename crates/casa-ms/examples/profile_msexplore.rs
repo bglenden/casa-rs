@@ -60,6 +60,10 @@ fn main() {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn run() -> Result<(), String> {
     let options = parse_args(env::args().skip(1))?;
     let selection = MsSelection {

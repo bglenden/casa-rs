@@ -892,9 +892,12 @@ fn read_single<'a>(
     })
 }
 
-/// The Taylor family's residual terms and `2·N_t − 1` PSF moments, scaled
-/// alike: by the zeroth moment's peak, or under a response with the residuals
-/// in CASA's units and the moments over the zeroth moment's sum weight.
+/// The Taylor family's residual terms and `2·N_t − 1` PSF moments. Every
+/// moment divides by the zeroth moment's peak, with or without a response
+/// (`SIImageStore::normPSF`, which `SDAlgorithmMSMFS::initializeDeconvolver`
+/// reads, #704). Without a response the residuals divide by the same peak;
+/// with one they take CASA's units and the components convert back over
+/// the zeroth moment's sum weight.
 fn read_taylor(
     normal: &FinalNormalState,
     setup: &MinorCycleSetup,
@@ -922,16 +925,17 @@ fn read_taylor(
             .expect("every coefficient term is present")
             .residual()
     });
+    let peak = psf_peak_value(&moments[0], shape)?;
+    let psf = moments
+        .into_iter()
+        .map(|moment| normalise(moment, peak))
+        .collect();
     let Some(response) = setup.response else {
-        let peak = psf_peak_value(&moments[0], shape)?;
         return Ok(PlaneTerms {
             residual: raw
                 .map(|term| term.iter().map(|value| value.re / peak).collect())
                 .collect(),
-            psf: moments
-                .into_iter()
-                .map(|moment| normalise(moment, peak))
-                .collect(),
+            psf,
             response: None,
         });
     };
@@ -958,10 +962,7 @@ fn read_taylor(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(PlaneTerms {
         residual,
-        psf: moments
-            .into_iter()
-            .map(|moment| normalise(moment, normal_weight))
-            .collect(),
+        psf,
         response: Some(ResponseBinding {
             sensitivity: Cow::Owned(sensitivity),
             response,

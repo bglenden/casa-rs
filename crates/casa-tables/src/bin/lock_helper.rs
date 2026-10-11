@@ -60,6 +60,10 @@ use std::time::Duration;
 use casa_tables::{LockMode, LockOptions, LockType, Table, TableOptions};
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {

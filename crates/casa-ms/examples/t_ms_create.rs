@@ -17,6 +17,10 @@ use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 use num_complex::Complex32;
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn main() {
     let dir = tempfile::tempdir().expect("tempdir");
     let ms_path = dir.path().join("demo.ms");

@@ -65,7 +65,8 @@ pub(crate) fn pass_images(
             }
         }
         // A kernel set with weight taps (mosaic, AW) gridded one sensitivity
-        // image per polarization and plane; the standard sets gridded none.
+        // image per PSF term, polarization and plane; the standard sets
+        // gridded none.
         let weight = (!weight.is_empty()).then_some(weight);
         (Some(psf), sum_weights, published_sum_weights, weight)
     } else {

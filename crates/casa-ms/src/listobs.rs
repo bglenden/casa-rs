@@ -622,6 +622,10 @@ impl ListObsSummary {
     }
 
     /// Render the summary as CASA-style text using explicit render options.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     pub fn render_text_with_options(&self, options: &ListObsOptions) -> String {
         let mut out = String::new();
         let name = self
@@ -1393,6 +1397,10 @@ fn build_antennas(
     Ok(summaries)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn build_scans(
     ms: &MeasurementSet,
     selected_rows: Option<&[usize]>,

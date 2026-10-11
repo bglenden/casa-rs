@@ -174,8 +174,8 @@ fn grid(operator: &MeasurementOperator, block: &SampleBuffer, mode: Mode) -> (Ar
         Mode::Data => (normal.data(0, 0, 0).clone(), normal.data_sumwt(0, 0, 0)),
         Mode::Psf => (normal.psf(0, 0, 0).clone(), normal.psf_sumwt(0, 0, 0)),
         Mode::Weight => (
-            normal.weight(0, 0).expect("weight image").clone(),
-            normal.weight_sumwt(0, 0),
+            normal.weight(0, 0, 0).expect("weight image").clone(),
+            normal.weight_sumwt(0, 0, 0),
         ),
     }
 }

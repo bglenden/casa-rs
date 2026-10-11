@@ -368,17 +368,16 @@ impl PassNormalState {
             || published_sum_weights.len() != moments * polarizations
             || weight
                 .as_ref()
-                .is_some_and(|weight| weight.len() != polarizations * cells)
+                .is_some_and(|weight| weight.len() != moments * polarizations * cells)
         {
             return Err(SpectralOperatorError::InvalidSlab);
         }
         // The sensitivity per (moment, pol) plane: the gridded weight image
-        // of the pol for a set with weight taps (`MosaicFT`'s sky
-        // coverage, repeated over the moments), else the scalar `sumwt`.
+        // of the moment and pol for a set with weight taps (`MosaicFT`'s sky
+        // coverage, a Taylor family's moment by moment), else the scalar
+        // `sumwt`.
         let sensitivity = match &weight {
-            Some(weight) => (0..moments)
-                .flat_map(|_| weight.iter().map(|value| f64::from(*value)))
-                .collect(),
+            Some(weight) => weight.iter().map(|value| f64::from(*value)).collect(),
             None => sum_weights
                 .iter()
                 .flat_map(|weight| std::iter::repeat_n(*weight, cells))

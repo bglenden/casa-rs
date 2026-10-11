@@ -916,6 +916,10 @@ fn image_plane_axis_colors(theme_mode: BrowserRenderTheme) -> ([u8; 3], [u8; 3])
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn draw_plane_scale_sidebar(
     image: &mut RgbImage,
     layout: ImagePlaneLayout,

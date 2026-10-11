@@ -235,6 +235,10 @@ pub fn mstransform(request: &MsTransformRequest) -> Result<MsTransformReport, Ms
     Ok(report)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport, MsTransformError> {
     let started_at = Instant::now();
     tracing::info!(

@@ -1669,6 +1669,10 @@ impl ConvCtx {
 // ---------------------------------------------------------------------------
 
 /// Applies a single conversion hop.
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn apply_hop(
     cosines: [f64; 3],
     from: DirectionRef,

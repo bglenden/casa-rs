@@ -382,6 +382,10 @@ impl SolveAccumulator {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     pub(crate) fn observe(
         &mut self,
         ms: &MeasurementSet,

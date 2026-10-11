@@ -33,6 +33,7 @@ python3 scripts/check-parameter-contract-history.py
 python3 scripts/check-no-casa-runtime.py
 python3 scripts/check-imaging-dependencies.py --self-test
 python3 scripts/check-imaging-dependencies.py
+python3 scripts/check-file-length.py
 
 for heading in "${required_sections[@]}"; do
   grep -Fq "$heading" ARCHITECTURE.md || {

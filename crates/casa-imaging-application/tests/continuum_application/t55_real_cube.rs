@@ -284,6 +284,10 @@ fn t55_synthetic_clark_cube_worker_scaling() {
 }
 
 /// `weightings`: label and catalog `weighting` (Briggs at robust 0.5).
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn real_clark_worker_cases(
     workload: &str,
     expected_filename: &str,

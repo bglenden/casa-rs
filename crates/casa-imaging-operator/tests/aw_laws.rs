@@ -796,3 +796,73 @@ fn the_image_correction_is_the_sampling_sinc_and_the_model_is_uncorrected() {
     assert_eq!(correction.model_at(gx, gy), 1.0);
     assert_eq!(correction.model_at(0, 0), 1.0);
 }
+
+/// `AWProjectWBFT::makeWBSensitivityImage` publishes `abs` of the
+/// polarization-averaged weight transform. Samples all below the reference
+/// frequency make the first Taylor weight moment Σ W·s·K negative; it is
+/// published as its magnitude, |s| times moment 0 (#704).
+#[test]
+fn an_aw_taylor_weight_moment_publishes_its_magnitude() {
+    let mut rng = Rng::new(107);
+    let root = tempfile::tempdir().expect("cache directory");
+    let operator = MeasurementOperator::new(
+        geometry(),
+        Basis::Taylor {
+            terms: 2,
+            reference_hz: REFERENCE_HZ,
+        },
+        routing(),
+        Box::new(generated(root.path(), true, usize::MAX)),
+        GridPrecision::F64,
+    );
+    let spectral = ((FREQUENCIES_HZ[0] - REFERENCE_HZ) / REFERENCE_HZ) as f32;
+    let mut placed = placements(operator.geometry(), 40, 1, &mut rng);
+    for placement in &mut placed {
+        placement.w = 0.0;
+        placement.prediction_w_positive = false;
+        placement.spectral = spectral;
+        placement.cf = operator.cf().key(&context(17.0, 0), FREQUENCIES_HZ[0], 0.0);
+        placement.u *= 0.7;
+        placement.v *= 0.7;
+    }
+    placed.retain(|placement| fits(&operator, placement));
+    assert!(placed.len() >= 20, "{} placements fit", placed.len());
+    let (values, weights) = samples(&placed, 2, &mut rng);
+    let block = buffer(&placed, &values, &weights, 2);
+    let mut acc = operator.accumulator(
+        PlaneRange::single(0),
+        None,
+        ModeSet {
+            data: false,
+            psf: false,
+            weight: true,
+        },
+    );
+    CpuBackend::new()
+        .apply(
+            &block.block(),
+            operator.cf(),
+            Work::Grid {
+                mode: Mode::Weight,
+                acc: &mut acc,
+            },
+        )
+        .expect("grid");
+    let normal = operator.finish(acc).expect("finish");
+    let zeroth = normal.weight(0, 0, 0).expect("moment 0");
+    let first = normal.weight(0, 1, 0).expect("moment 1");
+    let s = f64::from(spectral);
+    let ratio = normal.weight_sumwt(0, 1, 0) / normal.weight_sumwt(0, 0, 0);
+    assert!((ratio - s).abs() < 1.0e-6, "sumwt ratio {ratio}, s {s}");
+    let peak = zeroth
+        .iter()
+        .fold(0.0_f64, |peak, value| peak.max(f64::from(*value).abs()));
+    for (first, zeroth) in first.iter().zip(zeroth) {
+        assert!(*first >= 0.0, "a published weight moment {first}");
+        let expected = s.abs() * f64::from(*zeroth);
+        assert!(
+            (f64::from(*first) - expected).abs() <= 1.0e-5 * peak,
+            "moment 1 {first}, |s| × moment 0 {expected}"
+        );
+    }
+}

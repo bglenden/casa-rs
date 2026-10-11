@@ -31,6 +31,7 @@ use casa_imaging_model::{
 use casa_imaging_operator::{AwCatalog, AwIndexing};
 use casa_imaging_products::{
     AnalyticPrimaryBeamModel, CasaImageWriter, ContinuumProductControls, MinorCycleImageResponse,
+    PrimaryBeamCentres,
 };
 use casa_imaging_reconstruction::ImageDomainReconstructionMaskPlans;
 use casa_ms::derived::engine::MsCalEngine;
@@ -142,7 +143,20 @@ pub(crate) fn prepare(
         &observation_info,
     )?;
     let primary_beam = primary_beam_model(request, &ms)?;
-    let deployment = deployment(request, context, &surveyed, &domains, primary_beam)?;
+    let primary_beam_centres = match primary_beam {
+        None | Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => None,
+        Some(_) => Some(direction::primary_beam_centres(
+            &domains, &ms, &survey, &centre, &engine,
+        )?),
+    };
+    let deployment = deployment(
+        request,
+        context,
+        &surveyed,
+        &domains,
+        primary_beam,
+        primary_beam_centres,
+    )?;
     let instrument = instrument::scientific_instrument_model(&request.gridder, &ms)?;
     let specification = specification::specification(
         request,
@@ -475,6 +489,7 @@ fn deployment(
     surveyed: &Surveyed<'_>,
     domains: &[PreparedImageDomain],
     primary_beam: Option<AnalyticPrimaryBeamModel>,
+    primary_beam_centres: Option<PrimaryBeamCentres>,
 ) -> Result<Deployment, PrepareError> {
     let parent = |path: &Path| {
         path.parent()
@@ -501,6 +516,7 @@ fn deployment(
         },
         publication: ApplicationPublication {
             controls,
+            primary_beam_centres,
             writer: CasaImageWriter::for_domains(domains.iter().map(PreparedImageDomain::output)),
         },
         output_directories: domains

@@ -510,6 +510,10 @@ fn curated_visibility_plots_build_stable_payloads_from_real_fixture() {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn wrapper_mutators_and_generic_type_mismatch_paths_are_exercised() {
     let observation_schema =
         build_table_schema(casa_ms::schema::observation::REQUIRED_COLUMNS).unwrap();

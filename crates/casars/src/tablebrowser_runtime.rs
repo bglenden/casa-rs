@@ -3439,6 +3439,10 @@ subtable_back={subtable_back_elapsed:?}"
         table_path
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     fn create_type_matrix_browser(root: &Path) -> TableBrowser {
         let child_path = root.join("child.tab");
         let root_path = root.join("type_matrix.tab");

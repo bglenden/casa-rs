@@ -113,6 +113,10 @@ pub fn create_msexplore_fixture_ms_with_flags(
 
 /// Create an on-disk MS fixture with multiple scans, fields, baselines, and
 /// spectral windows so averaging controls can be exercised deterministically.
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 pub fn create_msexplore_averaging_fixture_ms(root: &Path) -> PathBuf {
     let ms_path = root.join("msexplore_averaging_fixture.ms");
     let mut ms = MeasurementSet::create(
@@ -496,6 +500,10 @@ pub fn create_msexplore_spectrum_fixture_ms(
 
 /// Create an on-disk MS fixture with realistic antenna positions and a field
 /// direction suitable for derived observational-geometry axes.
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 pub fn create_msexplore_geometry_fixture_ms(root: &Path) -> PathBuf {
     let ms_path = root.join("msexplore_geometry_fixture.ms");
     let mut ms = MeasurementSet::create(

@@ -539,6 +539,10 @@ impl Table {
     ///
     /// `changed_rows` may be empty, in which case the save falls back to
     /// column-only invalidation semantics.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     pub(crate) fn persist_selected_rows_in_place(
         &mut self,
         changed_columns: &[&str],

@@ -19,6 +19,10 @@ fn contiguous_spectral_block() {
     run_c_array(true);
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn run_c_array(block: bool) {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let input = PathBuf::from(std::env::var_os("CASA_RS_C_ARRAY_MS").expect("isolated MS"));

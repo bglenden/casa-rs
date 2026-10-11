@@ -67,6 +67,11 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
   adding code.
 - Crate names: `casa-*` for libraries, `casars-*` for apps and runtimes.
 - Public APIs get rustdoc comparable in depth to the casacore doxygen.
+- Size limits are enforced, not reviewed. Functions stay under clippy's
+  `too_many_lines` threshold (`clippy.toml`, code lines only). Files stay
+  under 1,500 lines (`scripts/check-file-length.py`, in `just arch-check`).
+  Split new code rather than add an exception; the existing exceptions only
+  shrink (#705).
 - No `TODO`, `FIXME`, `XXX`, or `HACK` without a GitHub issue reference.
 
 ## Storage

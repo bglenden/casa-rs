@@ -251,6 +251,10 @@ pub(super) fn measurement_set_fixture(
     output
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 pub(super) fn populate_fixture(
     measurement_set: &mut MeasurementSet,
     options: MeasurementSetFixtureOptions,

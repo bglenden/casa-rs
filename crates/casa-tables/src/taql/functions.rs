@@ -114,6 +114,10 @@ pub fn clear_udfs() {
 ///
 /// User-defined functions registered via [`register_udf`] take precedence
 /// over built-in functions.
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 pub fn call_function(
     name: &str,
     args: &[ExprValue],

@@ -465,6 +465,10 @@ pub struct EvalContext<'a> {
 }
 
 /// Evaluate an expression against a row context.
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlError> {
     match expr {
         Expr::Literal(lit) => Ok(eval_literal(lit)),

@@ -305,6 +305,10 @@ pub struct SimobserveFamilyTaskRequest {
 impl SimobserveFamilyTaskRequest {
     /// Execute the family request by generating a concrete MeasurementSet and
     /// manifest from the persisted dialog inputs.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     pub fn execute(&self) -> Result<SimobserveFamilyTaskResult, String> {
         if self.target_ms_size_gib <= 0.0 || !self.target_ms_size_gib.is_finite() {
             return Err("target_ms_size_gib must be positive".to_string());

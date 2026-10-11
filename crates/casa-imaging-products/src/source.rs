@@ -5,11 +5,22 @@
 //! The inputs borrow one whole Major-Cycle completion, so the final normal
 //! state and model they carry come from the same reconciliation.
 
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+
 use casa_imaging_model::{CompiledProblem, ImageDomainRole, ReconstructionBasis};
 use casa_imaging_reconstruction::{
     FinalNormalState, ImageDomainReconstructionMasks, MajorCycleCompletion, ModelGeneration,
     NormalStateCatalog, ReconstructionMask,
 };
+
+/// Where an analytic primary beam is centred on each image domain: the
+/// pixel position `[x, y]` of every selected field's phase direction.
+///
+/// CASA centres one beam on each field's `PHASE_DIR` and sums them on every
+/// image, outliers included (`SynthesisImagerVi2::makePrimaryBeam`,
+/// `SIMapper::addPB`).
+pub type PrimaryBeamCentres = BTreeMap<ImageDomainRole, Vec<[f64; 2]>>;
 
 /// Borrowed scientific payloads for producing planned members.
 ///
@@ -24,6 +35,7 @@ pub struct ContinuumProductInputs<'a> {
     final_model: &'a ModelGeneration,
     reconstruction_mask: Option<&'a ReconstructionMask>,
     domain_reconstruction_masks: Option<&'a ImageDomainReconstructionMasks>,
+    primary_beam_centres: Option<&'a PrimaryBeamCentres>,
 }
 
 impl<'a> ContinuumProductInputs<'a> {
@@ -85,6 +97,7 @@ impl<'a> ContinuumProductInputs<'a> {
             final_model: join.final_model(),
             reconstruction_mask: None,
             domain_reconstruction_masks: None,
+            primary_beam_centres: None,
         }
     }
 
@@ -127,6 +140,41 @@ impl<'a> ContinuumProductInputs<'a> {
         self.reconstruction_mask = None;
         self.domain_reconstruction_masks = Some(masks);
         self
+    }
+
+    /// Centre an analytic primary beam on the selected fields' pointings.
+    /// Without them it is centred on each domain's reference pixel. A
+    /// domain with no pointing has a zero PB.
+    ///
+    /// # Panics
+    ///
+    /// If a domain of the problem has no entry.
+    #[must_use]
+    pub fn with_primary_beam_centres(mut self, centres: &'a PrimaryBeamCentres) -> Self {
+        assert!(
+            self.problem
+                .geometry()
+                .domains()
+                .iter()
+                .all(|domain| centres.contains_key(domain.role())),
+            "the pointings cover every image domain"
+        );
+        self.primary_beam_centres = Some(centres);
+        self
+    }
+
+    /// The pixel positions an analytic primary beam is centred on in the
+    /// domain `role`, whose reference pixel is `reference_pixel`: borrowed
+    /// from the bound pointings, so a plane holds no copy of them.
+    pub(crate) fn primary_beam_centres(
+        &self,
+        role: &ImageDomainRole,
+        reference_pixel: [f64; 2],
+    ) -> Cow<'a, [[f64; 2]]> {
+        self.primary_beam_centres.map_or_else(
+            || Cow::Owned(vec![reference_pixel]),
+            |centres| Cow::Borrowed(centres[role].as_slice()),
+        )
     }
 
     /// Borrow the exact compiled problem behind these payloads.

@@ -268,6 +268,9 @@ fn publish_products(
             ReconstructionMaskSet::Domains(masks) => inputs.with_domain_reconstruction_masks(masks),
         };
     }
+    if let Some(centres) = publication.primary_beam_centres.as_ref() {
+        inputs = inputs.with_primary_beam_centres(centres);
+    }
     let planned = PlannedContinuumGeneration::new(&inputs, &publication.controls)?;
     let window = ProductStoragePlan::new(1, team.workers())?;
     let demand = planned.demand(&inputs, window, &publication.writer)?;

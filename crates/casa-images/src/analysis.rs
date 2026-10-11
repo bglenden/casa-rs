@@ -4447,6 +4447,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     fn image_analysis_task_dispatch_roundtrips_real_image_products() {
         let temp = tempfile::tempdir().unwrap();
         let source_path = temp.path().join("source.image");

@@ -870,6 +870,12 @@ impl ConvolutionFunctionSet for AwCatalog {
     fn pointing_ramp(&self) -> bool {
         true
     }
+
+    /// `AWProjectWBFT::makeWBSensitivityImage` publishes `abs` of the
+    /// polarization-averaged weight transform.
+    fn weight_image_magnitude(&self) -> bool {
+        true
+    }
 }
 
 /// `AWVisResampler`'s routes through diagonal Mueller cells. Each selected

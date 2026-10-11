@@ -278,6 +278,10 @@ pub struct DataObjectSchemaBundle {
 
 impl DataObjectSchemaBundle {
     /// Build the current object-surface schema bundle.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     pub fn current() -> Self {
         let open_schema = schema_for!(OpenObjectRequest);
         let array_region_schema = schema_for!(ArrayRegionRequest);
