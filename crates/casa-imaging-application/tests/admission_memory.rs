@@ -605,6 +605,32 @@ fn a_refused_run_holds_no_more_than_it_was_admitted() {
     }
 }
 
+/// A cleaned run that writes its model to `MODEL_DATA`: its last pass
+/// predicts every selected sample and hands each block to the writer.
+#[test]
+fn a_visibility_write_stays_within_its_admission() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), 4);
+    warm(&measurement_set, root.path());
+    let mut breaches = Vec::new();
+    for (imsize, workers) in [(256, 1), (1024, 4)] {
+        check(
+            &mut breaches,
+            &format!("savemodel {imsize} px {workers} workers"),
+            &request(
+                &measurement_set,
+                &root.path().join(format!("savemodel-{imsize}")),
+                imsize,
+                json!({ "deconvolver": "hogbom", "savemodel": "modelcolumn" }),
+            ),
+            workers,
+            AMPLE,
+        );
+    }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
 /// Runs whose phases the other laws do not reach: W-projection, whose
 /// kernels are built and held before the passes, and a linear cube of a
 /// sparse selection, whose rows place far more samples than they have

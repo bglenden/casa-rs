@@ -6,18 +6,23 @@
 //! (`screens_bytes`, before any is transformed), then the kernels cut from
 //! them (`kernel_bytes`, once their supports are known), and keeps the
 //! set's `resident_bytes` while the operator lives; a spheroidal set's
-//! `bytes` before it is built. This binary's global allocator counts the
-//! live heap and measures each stage against its statement. A global
-//! allocator applies to this test binary alone.
+//! `bytes` before it is built; an AW catalog's `charge_bytes` once its
+//! index is read, for the workers that fetch its cells. This binary's
+//! global allocator counts the live heap and measures each stage against
+//! its statement. A global allocator applies to this test binary alone.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+use casa_imaging_model::{
+    CorrelationType, EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput,
+    NativeAwTerms, PolarizationCoordinate,
+};
 use casa_imaging_operator::{
-    AiryDish, GridGeometry, GridPadding, ImageExtent, MosaicPb, MosaicWindow, PolarizationRouting,
-    Spheroidal, WPlaneCount, WPlanes,
+    AiryDish, AwCatalog, AwIndexing, CellHold, CfKey, ConvolutionFunctionSet, GridGeometry,
+    GridPadding, ImageExtent, MosaicPb, MosaicWindow, PolarizationRouting, Spheroidal, WPlaneCount,
+    WPlanes,
 };
 
 #[global_allocator]
@@ -230,5 +235,108 @@ fn a_spheroidal_set_holds_what_it_states() {
             Spheroidal::bytes(&geometry)
         );
         drop(set);
+    }
+}
+
+/// Generate an AW catalog into `root` natively, as the `aw_laws` do: one
+/// parallactic angle, two frequencies, two w planes and two Mueller
+/// elements for a 64² image of 20″ cells, oversampled four times.
+fn aw_cache(root: &std::path::Path) {
+    const CELL_RAD: f64 = 1.0e-4;
+    const OVERSAMPLING: usize = 4;
+    const W_PLANES: usize = 2;
+    let surface = EvlaDishSurface::new(
+        (0..=125)
+            .map(|i| {
+                let r = f64::from(i) / 10.0;
+                [r, r * r / 36.0, r / 18.0]
+            })
+            .collect(),
+    )
+    .expect("surface");
+    let max_w = 1.0 / (CELL_RAD * 4.0);
+    let w_increment = f64::from(((W_PLANES - 1) * (W_PLANES - 1)) as f32) / max_w;
+    let working = CELL_RAD * OVERSAMPLING as f64;
+    let request = NativeAwRequestInput {
+        surface,
+        antenna_diameter_m: 25.0,
+        frequencies: [1.4e9, 1.6e9]
+            .iter()
+            .enumerate()
+            .map(|(window, frequency)| NativeAwFrequencyGroup {
+                spectral_window: window as u32,
+                channel_frequencies_hz: vec![*frequency],
+                cf_frequency_hz: *frequency,
+            })
+            .collect(),
+        w_values: (0..W_PLANES)
+            .map(|index| (index * index) as f64 / w_increment)
+            .collect(),
+        w_increment,
+        pa_values: vec![0.31],
+        mueller_elements: vec![0, 15],
+        reference_frequency_hz: 1.5e9,
+        grid: NativeAwGrid {
+            size: 64,
+            sky_increment_rad: [-working, working],
+            oversampling: OVERSAMPLING,
+        },
+        terms: NativeAwTerms {
+            aperture: true,
+            w_term: true,
+            prolate_spheroidal: false,
+            wideband: true,
+            conjugate_beams: false,
+        },
+        maximum_cells: 64,
+    };
+    AwCatalog::generate_native(root, &request, false).expect("generate");
+}
+
+#[test]
+fn an_aw_catalog_holds_at_most_its_charge() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let root = tempfile::tempdir().expect("cache directory");
+    aw_cache(root.path());
+    let geometry = geometry(64, 1.0e-4, GridPadding::None);
+    let routing = PolarizationRouting::compile(
+        &[CorrelationType::CircularRr, CorrelationType::CircularLl],
+        &[PolarizationCoordinate::StokesI],
+    )
+    .expect("routing");
+    let indexing = AwIndexing {
+        conjugate_beams: false,
+        image_reference_hz: 1.5e9,
+    };
+    // Open the catalog and fetch every group's imaging and weight cells
+    // through one worker's hold.
+    let open_and_fetch = |bound: usize| {
+        let catalog =
+            AwCatalog::open_casa(root.path(), indexing, &geometry, &routing, bound).expect("open");
+        let mut hold = CellHold::new();
+        for group in 0..catalog.groups() {
+            let key = CfKey {
+                group: group as u16,
+                cube: group as u16,
+            };
+            assert!(catalog.taps(key, &mut hold).half_support()[0] > 0);
+            let mut weight_hold = CellHold::new();
+            assert!(catalog.weight_taps(key, &mut weight_hold).is_some());
+        }
+        catalog
+    };
+    // The cells are read through casa-tables, whose process-wide tile cache
+    // keeps what it reads under its own charge; read them once first.
+    drop(open_and_fetch(usize::MAX));
+    // A bound below one group evicts at every fetch; a large one keeps
+    // every group.
+    for bound in [1, 64 << 20] {
+        let (peak, _, catalog) = measure(|| open_and_fetch(bound));
+        let charge = catalog.charge_bytes(1);
+        eprintln!("bound {bound}: held {peak}, charged {charge}");
+        assert!(
+            peak <= charge,
+            "bound {bound}: opening and fetching held {peak}, charged {charge}"
+        );
     }
 }
