@@ -7,10 +7,12 @@ CASA behaviours casa-rs follows for parity:
 [AW-projection hand pairing](#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell),
 [AW-projection prediction w](#aw-projection-predicts-with-the-unrotated-w),
 [MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it),
-[exact peak comparisons](#peak-searches-let-rounding-choose-between-equal-pixels).
+[exact peak comparisons](#peak-searches-let-rounding-choose-between-equal-pixels),
+[multi-term weight normalization](#the-multi-term-weight-normalization-override-is-never-called).
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
-[MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps).
+[MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
+[an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -286,3 +288,36 @@ CASA's way and 3.1e-2 when it does not (as on `main`). Both outcomes are
 equally valid cleans; such rows cannot measure parity, so
 IF-5's multiscale and MT-MFS acceptance uses skies without the symmetry
 (`refim_twopoints_twochan`, `refim_eptwochan`).
+
+## The multi-term weight normalization override is never called
+
+- Date noted: 2026-10-11
+- Status: likely CASA bug; casa-rs follows it for parity (#704, PR #707)
+- Affected code: `synthesis/ImagerObjects/SIImageStore.h`,
+  `SIImageStoreMultiTerm.h`, `SynthesisNormalizer.cc`
+  (`divideWeightBySumWt`)
+
+`SIImageStore` declares `virtual void divideWeightBySumwt()` (lower-case
+`wt`). `SIImageStoreMultiTerm` declares `void divideWeightBySumWt()` (upper
+case `W`), a different name, so it overrides nothing; its loop that divides
+every Taylor weight image by the principal sum of weights is never called.
+`SynthesisNormalizer::divideWeightBySumWt` calls
+`itsImages->divideWeightBySumwt()`, which reaches the base body and divides
+`weight()`, term 0, alone. `MultiTermFTNew::finalizeToSkyNew` writes each
+term's raw `getWeightImage` moment, so `.weight.tt1` and `.weight.tt2` stay
+the raw Σ W·s^N while `.weight.tt0` is normalized. CASA 6.7.6.14 on
+`refim_alma_mosaic` (mosaic, `nterms=2`) agrees: `weight.ttN / sumwt.ttN` is
+0.6913 for N = 0, 1 and 2. casa-rs publishes the same.
+
+## The analytic PB ignores a failed `toPixel`
+
+- Date noted: 2026-10-11
+- Status: likely CASA bug; casa-rs does not follow it (#702, PR #707)
+- Affected code: `synthesis/TransformMachines/PBMath1D.cc` (`apply`)
+
+`PBMath1D::apply` converts the pointing to a pixel with the image's direction
+coordinate (`toPixel`) and ignores the call's result, so a pointing the
+projection cannot place, such as one 90° or more from the image centre under
+SIN, is centred on whatever pixel the failed call left. casa-rs adds no beam
+for a pointing 90° or more from an image domain's centre and refuses any
+other projection failure.
