@@ -4,6 +4,11 @@
 //! The instrumentation facade for workspace code is [`tracing`]. This crate
 //! owns only the CASA-specific priority model, log-table serialization, sink
 //! fan-out, and application initialization helpers.
+//!
+//! An event's fields follow its message as `name=value`, separated by
+//! spaces: a string value containing whitespace, or an empty one, is
+//! written as a quoted Rust string literal, a `?` value as its `Debug` form
+//! (quoted for strings) and a `%` value as its `Display` form.
 
 use std::ffi::OsString;
 use std::fmt::{self, Write as _};
@@ -16,9 +21,10 @@ use casa_tables::{ColumnSchema, ColumnType, DataManagerKind, Table, TableInfo, T
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use thiserror::Error;
 use tracing::field::{Field, Visit};
+use tracing::level_filters::LevelFilter;
 use tracing::subscriber::Interest;
 use tracing::{Event, Level, Metadata, Subscriber};
-use tracing_subscriber::layer::{Context, SubscriberExt};
+use tracing_subscriber::layer::{Context, Filter, SubscriberExt};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{Layer, Registry};
 
@@ -747,31 +753,34 @@ impl Drop for CasaLoggingGuard {
 }
 
 /// `tracing_subscriber` layer that converts events into CASA log records.
-#[derive(Clone)]
 pub struct CasaLogLayer {
     sink: Arc<dyn CasaLogSink>,
 }
 
 impl CasaLogLayer {
-    pub fn new(sink: Arc<dyn CasaLogSink>) -> Self {
-        Self { sink }
+    /// The layer writing to `sink`, behind its own per-layer filter: an
+    /// event below every sink's threshold is disabled for this layer alone,
+    /// so it is never formatted here and other layers stacked with it still
+    /// receive it. The filter's level hint is the most verbose level a sink
+    /// takes, so when no other layer asks for more, the `tracing` macros
+    /// skip lower events before building them and `tracing::enabled!`
+    /// reports them off. A `casa.priority` field sets the record's priority
+    /// but cannot bring in an event below that level.
+    pub fn filtered<S>(sink: Arc<dyn CasaLogSink>) -> impl Layer<S> + Send + Sync + 'static
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+    {
+        Self { sink: sink.clone() }.with_filter(SinkThreshold { sink })
     }
 }
 
-impl<S> Layer<S> for CasaLogLayer
-where
-    S: Subscriber + for<'a> LookupSpan<'a>,
-{
-    // Sinks keep their thresholds for the process, but tests install
-    // subscribers with others, so interest is decided per event.
-    fn register_callsite(&self, _metadata: &'static Metadata<'static>) -> Interest {
-        Interest::sometimes()
-    }
+/// A [`CasaLogLayer`]'s filter: its sinks' thresholds.
+struct SinkThreshold {
+    sink: Arc<dyn CasaLogSink>,
+}
 
-    /// An event below every sink's threshold is disabled, so it is never
-    /// formatted and `tracing::enabled!` reports it off; only a
-    /// `casa.priority` field can raise an event above its level.
-    fn enabled(&self, metadata: &Metadata<'_>, _ctx: Context<'_, S>) -> bool {
+impl<S> Filter<S> for SinkThreshold {
+    fn enabled(&self, metadata: &Metadata<'_>, _cx: &Context<'_, S>) -> bool {
         // Spans only name an event's location. `tracing::enabled!` asks with
         // a hint, which is not an event but is filtered as one.
         metadata.is_span()
@@ -781,6 +790,35 @@ where
                 .enabled(CasaPriority::from_tracing_level(metadata.level()))
     }
 
+    // Sinks keep their thresholds for the process, but tests install
+    // subscribers with others, so interest is decided per event.
+    fn callsite_enabled(&self, _metadata: &'static Metadata<'static>) -> Interest {
+        Interest::sometimes()
+    }
+
+    // The registry reports an event enabled while any per-layer filter's
+    // bit is clear, so only the level hint turns `tracing::enabled!` off.
+    fn max_level_hint(&self) -> Option<LevelFilter> {
+        let levels = [
+            Level::TRACE,
+            Level::DEBUG,
+            Level::INFO,
+            Level::WARN,
+            Level::ERROR,
+        ];
+        Some(
+            levels
+                .into_iter()
+                .find(|level| self.sink.enabled(CasaPriority::from_tracing_level(level)))
+                .map_or(LevelFilter::OFF, LevelFilter::from_level),
+        )
+    }
+}
+
+impl<S> Layer<S> for CasaLogLayer
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
         let metadata = event.metadata();
         let mut visitor = EventVisitor::default();
@@ -880,6 +918,9 @@ impl Visit for EventVisitor {
             "casa.priority" => self.priority = Some(value.to_string()),
             "casa.location" => self.location = Some(value.to_string()),
             "casa.object_id" => self.object_id = Some(value.to_string()),
+            name if value.is_empty() || value.contains(char::is_whitespace) => {
+                self.push_field(name, format_args!("{value:?}"));
+            }
             name => self.push_field(name, value),
         }
     }
@@ -903,9 +944,10 @@ pub fn init_global(config: CasaLoggingConfig) -> Result<CasaLoggingGuard, CasaLo
     } else {
         Arc::new(CompositeSink::new(sinks))
     };
-    let layer = CasaLogLayer::new(sink.clone());
-    tracing::subscriber::set_global_default(Registry::default().with(layer))
-        .map_err(|error| CasaLoggingError::Subscriber(error.to_string()))?;
+    tracing::subscriber::set_global_default(
+        Registry::default().with(CasaLogLayer::filtered(sink.clone())),
+    )
+    .map_err(|error| CasaLoggingError::Subscriber(error.to_string()))?;
     Ok(CasaLoggingGuard { sink })
 }
 
@@ -1154,7 +1196,7 @@ mod tests {
         use tracing_subscriber::layer::SubscriberExt;
 
         let sink = Arc::new(MemorySink::new(CasaPriority::Debug1));
-        let subscriber = tracing_subscriber::registry().with(CasaLogLayer::new(sink.clone()));
+        let subscriber = tracing_subscriber::registry().with(CasaLogLayer::filtered(sink.clone()));
         tracing::subscriber::with_default(subscriber, || {
             assert!(tracing::enabled!(target: "casa_tables::profile", tracing::Level::DEBUG));
             assert!(!tracing::enabled!(target: "casa_tables::profile", tracing::Level::TRACE));
@@ -1168,7 +1210,7 @@ mod tests {
         use tracing_subscriber::layer::SubscriberExt;
 
         let sink = Arc::new(MemorySink::new(CasaPriority::Info));
-        let subscriber = tracing_subscriber::registry().with(CasaLogLayer::new(sink.clone()));
+        let subscriber = tracing_subscriber::registry().with(CasaLogLayer::filtered(sink.clone()));
         tracing::subscriber::with_default(subscriber, || {
             assert!(tracing::enabled!(tracing::Level::INFO));
             assert!(!tracing::enabled!(tracing::Level::DEBUG));
@@ -1176,6 +1218,7 @@ mod tests {
             tracing::info!("plain\n");
             tracing::info!(phase = ?"major cycle 1", seconds = 0.5, "imaging phase\n");
             tracing::info!(bytes = 7_u64);
+            tracing::info!(path = "/My Data/x.ms", empty = "", name = "x.ms", "opened");
         });
         let messages = sink
             .records()
@@ -1188,8 +1231,73 @@ mod tests {
             [
                 "plain",
                 "imaging phase phase=\"major cycle 1\" seconds=0.5",
-                "bytes=7"
+                "bytes=7",
+                "opened path=\"/My Data/x.ms\" empty=\"\" name=x.ms"
             ]
         );
+    }
+
+    /// Counts the events it receives, as an independent collector would.
+    struct Counting(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl<S: Subscriber> Layer<S> for Counting {
+        fn on_event(&self, _event: &Event<'_>, _ctx: Context<'_, S>) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    fn debug_event() {
+        tracing::debug!(target: "casa_logging::law", "below an INFO sink");
+    }
+
+    #[test]
+    fn a_casa_sink_filters_only_its_own_layer() {
+        use tracing::subscriber::with_default;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let sink = Arc::new(MemorySink::new(CasaPriority::Info));
+        let alone = tracing_subscriber::registry().with(CasaLogLayer::filtered(sink.clone()));
+        with_default(alone, || {
+            assert!(!tracing::enabled!(target: "casa_logging::law", Level::DEBUG));
+        });
+        for casa_first in [true, false] {
+            let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let collector = Counting(count.clone());
+            let registry = tracing_subscriber::registry();
+            if casa_first {
+                let stack = registry
+                    .with(CasaLogLayer::filtered(sink.clone()))
+                    .with(collector);
+                with_default(stack, debug_event);
+            } else {
+                let stack = registry
+                    .with(collector)
+                    .with(CasaLogLayer::filtered(sink.clone()));
+                with_default(stack, debug_event);
+            }
+            assert_eq!(
+                count.load(std::sync::atomic::Ordering::Relaxed),
+                1,
+                "the collector receives the event whether the CASA layer is first or not \
+                 (first: {casa_first})"
+            );
+        }
+        assert!(sink.records().unwrap().is_empty());
+    }
+
+    #[test]
+    fn each_subscriber_applies_its_own_sink_threshold() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let records = |priority| {
+            let sink = Arc::new(MemorySink::new(priority));
+            let subscriber =
+                tracing_subscriber::registry().with(CasaLogLayer::filtered(sink.clone()));
+            tracing::subscriber::with_default(subscriber, debug_event);
+            sink.records().unwrap().len()
+        };
+        assert_eq!(records(CasaPriority::Debug1), 1);
+        assert_eq!(records(CasaPriority::Info), 0);
+        assert_eq!(records(CasaPriority::Debug1), 1);
     }
 }
