@@ -417,20 +417,8 @@ impl<T: FftScalar> Fft2<T> {
         self.shape
     }
 
-    /// Validate a two-dimensional shape and read the explicitly configured
-    /// number of native FFT threads (one unless `CASA_RS_FFT_THREADS` is set).
-    pub fn new(shape: [usize; 2]) -> Result<Self, FftError> {
-        let threads = match std::env::var("CASA_RS_FFT_THREADS") {
-            Ok(value) => value
-                .parse::<usize>()
-                .map_err(|_| FftError::InvalidThreads)?,
-            Err(std::env::VarError::NotPresent) => 1,
-            Err(_) => return Err(FftError::InvalidThreads),
-        };
-        Self::with_threads(shape, threads)
-    }
-
-    /// Construct a transform with an explicit native FFT thread count.
+    /// Validate a two-dimensional shape and the native FFT thread count the
+    /// caller chooses; one thread runs the transform on the calling thread.
     pub fn with_threads(shape: [usize; 2], threads: usize) -> Result<Self, FftError> {
         let elements = shape[0]
             .checked_mul(shape[1])
@@ -529,11 +517,6 @@ pub struct RealFft2<T: FftScalar> {
 }
 
 impl<T: FftScalar> RealFft2<T> {
-    /// Validate the logical shape and use the configured native FFT thread count.
-    pub fn new(shape: [usize; 2]) -> Result<Self, FftError> {
-        Self::from_fft(Fft2::new(shape)?)
-    }
-
     /// Validate the logical shape with an explicit native FFT thread count.
     pub fn with_threads(shape: [usize; 2], threads: usize) -> Result<Self, FftError> {
         Self::from_fft(Fft2::with_threads(shape, threads)?)
@@ -739,11 +722,11 @@ mod tests {
     #[test]
     fn temporary_callers_reuse_a_measured_plan() {
         let mut plane = vec![Complex::<f64>::new(1.0, 0.0); 37 * 43];
-        let mut first = Fft2::<f64>::new([37, 43]).unwrap();
+        let mut first = Fft2::<f64>::with_threads([37, 43], 1).unwrap();
         first.transform(&mut plane, false).unwrap();
         let retained = Arc::clone(&first.current.as_ref().unwrap().1);
         drop(first);
-        let mut second = Fft2::<f64>::new([37, 43]).unwrap();
+        let mut second = Fft2::<f64>::with_threads([37, 43], 1).unwrap();
         second.transform(&mut plane, true).unwrap();
         assert!(Arc::ptr_eq(&retained, &second.current.as_ref().unwrap().1));
     }

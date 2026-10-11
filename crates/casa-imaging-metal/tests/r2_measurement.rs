@@ -135,13 +135,13 @@ fn dense_kernels_on_one_shared_grid_versus_region_tiles() {
         let rate = |seconds: f64| SAMPLES as f64 / seconds / 1.0e6;
 
         // Warm the pipelines and the kernel tables.
-        let mut warm = MetalBackend::new(operator.cf()).expect("backend");
+        let mut warm = MetalBackend::new(operator.cf(), false).expect("backend");
         let mut acc =
             MetalBackend::accumulator(operator.accumulator_layout(planes, None, ModeSet::DATA))
                 .expect("device grid");
         grid(&mut warm, &operator, &buffer, &mut acc);
 
-        let mut shared = MetalBackend::new(operator.cf()).expect("backend");
+        let mut shared = MetalBackend::new(operator.cf(), false).expect("backend");
         let mut acc =
             MetalBackend::accumulator(operator.accumulator_layout(planes, None, ModeSet::DATA))
                 .expect("device grid");
@@ -159,7 +159,8 @@ fn dense_kernels_on_one_shared_grid_versus_region_tiles() {
                         let layout =
                             operator.accumulator_layout(planes, Some(*tile), ModeSet::DATA);
                         if metal {
-                            let mut backend = MetalBackend::new(operator.cf()).expect("backend");
+                            let mut backend =
+                                MetalBackend::new(operator.cf(), false).expect("backend");
                             let mut acc = MetalBackend::accumulator(layout).expect("device tile");
                             grid(&mut backend, operator, samples, &mut acc);
                         } else {

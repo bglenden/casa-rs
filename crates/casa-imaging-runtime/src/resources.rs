@@ -198,6 +198,9 @@ impl Drop for Reservation {
 /// Bytes held by the live reservations of this process.
 static RESERVED: AtomicU64 = AtomicU64::new(0);
 
+/// The most [`RESERVED`] has held since [`take_reserved_peak`] last ran.
+static RESERVED_PEAK: AtomicU64 = AtomicU64::new(0);
+
 /// Bytes `policy` leaves free on `host` beside the live reservations.
 #[must_use]
 pub fn free_memory(host: &HostResources, policy: &ResourcePolicy) -> u64 {
@@ -206,7 +209,24 @@ pub fn free_memory(host: &HostResources, policy: &ResourcePolicy) -> u64 {
         .saturating_sub(RESERVED.load(Ordering::Acquire))
 }
 
-/// Admit `demand` if it fits what `policy` leaves free on `host`.
+/// Bytes the live reservations of this process hold.
+#[must_use]
+pub fn reserved_memory() -> u64 {
+    RESERVED.load(Ordering::Acquire)
+}
+
+/// The most the process's reservations held at once since the previous
+/// call, which starts a new mark at what they hold now. Process-wide, like
+/// the resident high-water mark it is compared with: runs sharing a process
+/// share it.
+pub(crate) fn take_reserved_peak() -> u64 {
+    let now = RESERVED.load(Ordering::Acquire);
+    RESERVED_PEAK.swap(now, Ordering::AcqRel).max(now)
+}
+
+/// Admit `demand` if it fits what `policy` leaves free on `host`, and log
+/// the admission (`debug`): the phase, its bytes, what the process then
+/// holds and the policy's capacity, the bytes the run summary reports.
 ///
 /// # Errors
 ///
@@ -234,6 +254,15 @@ pub fn admit(
             Ordering::Acquire,
         ) {
             Ok(_) => {
+                let held = reserved + demand.memory;
+                RESERVED_PEAK.fetch_max(held, Ordering::AcqRel);
+                tracing::debug!(
+                    phase = ?demand.phase,
+                    bytes = demand.memory,
+                    reserved_bytes = held,
+                    capacity_bytes = capacity,
+                    "memory admitted"
+                );
                 return Ok(Reservation {
                     memory: demand.memory,
                 });
@@ -398,5 +427,26 @@ mod tests {
         );
         drop(held);
         assert_eq!(free_memory(&HOST, &policy), 1 << 20);
+    }
+
+    #[test]
+    fn the_reservation_peak_keeps_what_was_released_before_the_mark() {
+        let policy = ResourcePolicy::Explicit {
+            workers: 1,
+            memory: 1 << 30,
+        };
+        let _ = take_reserved_peak();
+        let held = admit(
+            &HOST,
+            &policy,
+            &Demand {
+                phase: "transient",
+                memory: 5 << 20,
+            },
+        )
+        .expect("fits");
+        drop(held);
+        // Other tests of this process may hold reservations too.
+        assert!(take_reserved_peak() >= 5 << 20);
     }
 }

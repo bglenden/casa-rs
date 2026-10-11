@@ -18,7 +18,10 @@ pub struct MetalBackend<'cf> {
 
 impl<'cf> MetalBackend<'cf> {
     /// Always [`DeviceFailure::Unavailable`] on this host.
-    pub fn new(_kernels: &'cf dyn ConvolutionFunctionSet) -> Result<Self, OperatorError> {
+    pub fn new(
+        _kernels: &'cf dyn ConvolutionFunctionSet,
+        _stage_timing: bool,
+    ) -> Result<Self, OperatorError> {
         Err(OperatorError::Device(DeviceFailure::Unavailable))
     }
 

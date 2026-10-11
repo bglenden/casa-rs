@@ -763,6 +763,15 @@ where
 {
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
         let metadata = event.metadata();
+        // Only a `casa.priority` field can raise an event above its level,
+        // so any other event below every sink's threshold is not formatted.
+        if metadata.fields().field("casa.priority").is_none()
+            && !self
+                .sink
+                .enabled(CasaPriority::from_tracing_level(metadata.level()))
+        {
+            return;
+        }
         let mut visitor = EventVisitor::default();
         event.record(&mut visitor);
         let priority = visitor
@@ -772,7 +781,13 @@ where
         if !self.sink.enabled(priority) {
             return;
         }
-        let message = visitor.message.unwrap_or(visitor.fields);
+        // Structured fields follow the message as `name=value`, so a log
+        // line carries what the event recorded.
+        let message = match visitor.message {
+            Some(message) if visitor.fields.is_empty() => message,
+            Some(message) => format!("{} {}", trim_message(message), visitor.fields),
+            None => visitor.fields,
+        };
         let location = visitor.location.unwrap_or_else(|| {
             event_location(
                 metadata.target(),
@@ -1121,5 +1136,32 @@ mod tests {
         let records = sink.records().unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].priority, CasaPriority::Severe);
+    }
+
+    #[test]
+    fn an_event_logs_its_fields_after_its_message() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let sink = Arc::new(MemorySink::new(CasaPriority::Info));
+        let subscriber = tracing_subscriber::registry().with(CasaLogLayer::new(sink.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!("plain\n");
+            tracing::info!(phase = ?"major cycle 1", seconds = 0.5, "imaging phase\n");
+            tracing::info!(bytes = 7_u64);
+        });
+        let messages = sink
+            .records()
+            .unwrap()
+            .into_iter()
+            .map(|record| record.message)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            messages,
+            [
+                "plain",
+                "imaging phase phase=\"major cycle 1\" seconds=0.5",
+                "bytes=7"
+            ]
+        );
     }
 }

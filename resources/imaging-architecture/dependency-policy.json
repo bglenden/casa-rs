@@ -196,7 +196,9 @@
     "crates/casa-imaging-reconstruction/src",
     "crates/casa-imaging-products/src",
     "crates/casa-imaging-runtime/src",
-    "crates/casa-imaging-metal/src"
+    "crates/casa-imaging-metal/src",
+    "crates/casa-imaging-application/src",
+    "crates/casa-fft/src"
    ],
    "extensions": [
     ".rs"
@@ -215,7 +217,8 @@
     "crates/casa-imaging-products/src",
     "crates/casa-imaging-runtime/src",
     "crates/casa-imaging-metal/src",
-    "crates/casa-imaging-application/src"
+    "crates/casa-imaging-application/src",
+    "crates/casa-fft/src"
    ],
    "extensions": [
     ".rs"

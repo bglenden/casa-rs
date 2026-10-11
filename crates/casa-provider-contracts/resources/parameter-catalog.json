@@ -3944,6 +3944,72 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.stage_timing",
+      "semantic_revision": 1,
+      "casa_name": "stage_timing",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Log one timing event per imaging phase",
+        "details": "Each phase (preparation, setup, every major and minor cycle, products) logs at INFO, under target casa_imaging::stage_timing, its wall time, the process's peak resident memory and the memory admission held: the phase record of <imagename>.summary.json. The events reach stderr when its priority admits INFO (--log-stderr-priority INFO), and the log table at its own priority. They change nothing the run computes.",
+        "examples": [
+          "true"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.metal_stage_timing",
+      "semantic_revision": 1,
+      "casa_name": "metal_stage_timing",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Log the Metal backend's timing for each gridding owner and pass",
+        "details": "With backend = metal, each gridding owner logs at INFO, under target casa_imaging::metal_stage_timing, when its pass ends: its dispatches, samples and sub-blocks, the kernel cells it uploaded, the host's preparation time and its waits for the device. A CPU run logs nothing.",
+        "examples": [
+          "true"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.science_trace",
+      "semantic_revision": 1,
+      "casa_name": "science_trace",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "presentation",
+      "documentation": {
+        "summary": "Log the clean controller's science quantities at each cycle",
+        "details": "Logs at INFO, under target casa_imaging::science_trace, the residual statistics each cleaning decision reads (peak in and outside the mask, PSF sidelobe, n-sigma threshold, mask size), each minor cycle's controls (iteration limit, cycle threshold, gain), and what each minor cycle cleaned. They change nothing the run computes.",
+        "examples": [
+          "true"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.gridrows",
       "semantic_revision": 1,
       "casa_name": "gridrows",
@@ -5851,8 +5917,8 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Mosaic primary-beam cutoff for flat-noise normalization",
-        "details": null,
+        "summary": "Primary-beam cutoff of the primary-beam support, its pixel mask and the mosaic flat-noise normalization",
+        "details": "Its magnitude bounds where the primary beam is used: the mosaic and AW flat-noise normalization, and the support and pixel mask of `.pb`. The standard and W-projection gridders use it only when they write `.pb` (`write_pb` or `pbcor`). A negative value leaves the uncorrected products, such as `.image` and `.residual`, unmasked.",
         "examples": [
           "0.2"
         ]
@@ -8506,7 +8572,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Write the primary-beam image used for PB correction",
-        "details": null,
+        "details": "Without it, or `pbcor`, the standard and W-projection gridders form no primary beam: they write no `.pb` and attach no primary-beam pixel mask to `.image` or `.residual`, unlike CASA, which always does. Setting it gives CASA's `.pb` and its `pblimit` masks.",
         "examples": [
           "false"
         ]

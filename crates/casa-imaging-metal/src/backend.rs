@@ -52,10 +52,12 @@ pub struct MetalBackend<'cf> {
     ring: Vec<Slot>,
     next: usize,
     usage: Usage,
+    stage_timing: bool,
 }
 
-/// What a backend dispatched over its life, reported once when it drops:
-/// the host's preparation time and its waits for the device.
+/// What a backend dispatched over its life, logged once when it drops if
+/// it was made with stage timing: the host's preparation time and its
+/// waits for the device.
 #[derive(Default)]
 struct Usage {
     applies: u64,
@@ -109,8 +111,13 @@ enum Readback<'o> {
 }
 
 impl<'cf> MetalBackend<'cf> {
-    /// A backend on the system's Metal device for kernel set `kernels`.
-    pub fn new(kernels: &'cf dyn ConvolutionFunctionSet) -> Result<Self, OperatorError> {
+    /// A backend on the system's Metal device for kernel set `kernels`;
+    /// with `stage_timing` it logs its usage when it drops
+    /// ([`crate::METAL_STAGE_TIMING`]).
+    pub fn new(
+        kernels: &'cf dyn ConvolutionFunctionSet,
+        stage_timing: bool,
+    ) -> Result<Self, OperatorError> {
         let device = Device::shared()?;
         let mut ring = Vec::with_capacity(RING);
         for _ in 0..RING {
@@ -143,6 +150,7 @@ impl<'cf> MetalBackend<'cf> {
             ring,
             next: 0,
             usage: Usage::default(),
+            stage_timing,
         })
     }
 
@@ -568,13 +576,16 @@ impl Drop for MetalBackend<'_> {
             prepare,
             wait,
         } = self.usage;
-        if applies > 0 {
-            tracing::debug!(
-                "metal backend usage: applies={applies} samples={samples} \
-                 sub_blocks={sub_blocks} kernel_cells={} prepare_s={:.3} wait_s={:.3}",
-                self.tables.len(),
-                prepare.as_secs_f64(),
-                wait.as_secs_f64(),
+        if self.stage_timing && applies > 0 {
+            tracing::info!(
+                target: crate::METAL_STAGE_TIMING,
+                applies,
+                samples,
+                sub_blocks,
+                kernel_cells = self.tables.len(),
+                prepare_seconds = prepare.as_secs_f64(),
+                wait_seconds = wait.as_secs_f64(),
+                "metal gridding owner"
             );
         }
     }

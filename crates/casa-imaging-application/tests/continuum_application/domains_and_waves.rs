@@ -179,6 +179,7 @@ fn a_refused_run_records_its_error_in_its_summary() {
     let summary: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).expect("the summary")).expect("JSON");
     assert_eq!(summary["request"]["case"], "refused");
+    assert_eq!(summary["status"], "failed");
     assert!(
         summary["error"]
             .as_str()

@@ -1217,6 +1217,11 @@
       "fingerprint": "97bf54af2407ee424533f7855db78afd1cad7a48e50f9982617680bbc8fd0604"
     },
     {
+      "id": "parameter.metal_stage_timing",
+      "semantic_revision": 1,
+      "fingerprint": "13a50f87617f755d6a4ac3a7ca8ad452b21ed15785ab03a8c6f434e6d2b94d06"
+    },
+    {
       "id": "parameter.min_snr",
       "semantic_revision": 1,
       "fingerprint": "256fa219aca40a0d4391897ff8a28d72f944ba7006e5b8f58136997130ef1864"
@@ -1692,6 +1697,11 @@
       "fingerprint": "bd529db543fec7497992d177735a5bfa8557cb5d362956a3002c8f1ca3cd2167"
     },
     {
+      "id": "parameter.science_trace",
+      "semantic_revision": 1,
+      "fingerprint": "c2649559d0d4d53dd7edac800bac05c7c8dee87a51a27fb3ff34efb422db520d"
+    },
+    {
       "id": "parameter.scr",
       "semantic_revision": 1,
       "fingerprint": "693244050e645d78c0160b753b8be40911a75339f31d8709362a11c0ec026501"
@@ -1840,6 +1850,11 @@
       "id": "parameter.spwmap",
       "semantic_revision": 1,
       "fingerprint": "c7e7a2af4a734a542ea4216d8c417d2d8e45208d14461066ccbc0bc10cdd0c31"
+    },
+    {
+      "id": "parameter.stage_timing",
+      "semantic_revision": 1,
+      "fingerprint": "c4121d9baab2c88b38dc2d23cb244eecb35a55c03820c263ad29b27249160f97"
     },
     {
       "id": "parameter.standard_mfs_acceleration",
@@ -2542,6 +2557,11 @@
       "id": "imager",
       "contract_version": 20,
       "fingerprint": "4c5a3474c43cc5510166f414460fc60d5cdd41b514fb8827b566a0c193da0d09"
+    },
+    {
+      "id": "imager",
+      "contract_version": 21,
+      "fingerprint": "97757157a4a816f726bf841147f5c9ff808795a97286e956355f43ca7d37a5b5"
     },
     {
       "id": "imcollapse",

@@ -274,7 +274,10 @@ impl<'w, 'p> Wave<'w, 'p> {
                                         operator.accumulator_layout(range, tile, pass.modes),
                                     )?),
                                     backend: OwnerBackend::Metal {
-                                        backend: Box::new(MetalBackend::new(operator.cf())?),
+                                        backend: Box::new(MetalBackend::new(
+                                            operator.cf(),
+                                            pass.metal_stage_timing,
+                                        )?),
                                         staging: SampleBuffer::with_capacity(
                                             shape.npol,
                                             count * shape.placements,

@@ -21,8 +21,8 @@ pub use casa_imaging_model::{
 pub use casa_imaging_operator::GridPrecision;
 pub use casa_imaging_runtime::pass::{BackendChoice, Cancel};
 pub use casa_imaging_runtime::{
-    Admission, HostResources, Phase, ResourcePolicy, ReturningAllocator, RunSummary, SummaryTarget,
-    TracedComponent,
+    Admission, Diagnostics, HostResources, Phase, ResourcePolicy, ReturningAllocator, RunStatus,
+    RunSummary, SCIENCE_TRACE, STAGE_TIMING, SummaryTarget, TracedComponent,
 };
 pub use compile::{OutlierProblem, PrepareError};
 pub use request::{
@@ -41,6 +41,7 @@ use casa_imaging_products::{
     VisibilityProductCompletion,
 };
 use casa_imaging_reconstruction::MajorCycleCompletion;
+use casa_imaging_runtime::run_phase;
 use casa_ms::resolve_selected_observation;
 use native::{NativeError, NativeInput, run_native};
 
@@ -59,7 +60,7 @@ pub struct RunContext {
     /// Set (SIGINT in `casars-imager`) to stop the run at the next block
     /// boundary or phase; nothing is published.
     pub cancel: Cancel,
-    /// Where the run writes its summary, whether it completes or fails;
+    /// Where the run writes its summary, however it ends ([`RunSummary`]);
     /// `None` writes no file.
     pub summary: Option<SummaryTarget>,
 }
@@ -75,7 +76,7 @@ pub(crate) struct ApplicationRuntime {
     pub(crate) cancel: Cancel,
     /// Directory the paged cube state of a channel-local run lives in.
     pub(crate) spill_directory: PathBuf,
-    pub(crate) summary: Option<SummaryTarget>,
+    pub(crate) diagnostics: Diagnostics,
 }
 
 /// The runtime, product publication and AW catalog of the native run.
@@ -125,8 +126,7 @@ pub struct ImagingOutcome {
     pub planes_per_wave: Option<u32>,
     /// Final per-visibility product identities and provenance, when requested.
     pub visibility_products: Option<VisibilityProductCompletion>,
-    /// The run's phases, team and totals; the caller adds the request echo
-    /// before writing it beside the products.
+    /// The run's summary, as written to the context's summary target.
     pub summary: RunSummary,
     /// Final authoritative complete-data and model state; borrowed through
     /// [`Self::scientific`], so that it cannot outlive its charge.
@@ -247,21 +247,68 @@ impl NativeMinorCycleStopReason {
 
 /// Run one imaging request on the installed implementation: validate it,
 /// compile it against its MeasurementSet, check once that the
-/// implementation can run it ([`Unsupported`]), and run it. A run that
-/// fails before its native run starts writes the context's summary with
-/// the error, as the native run does.
+/// implementation can run it ([`Unsupported`]), and run it.
+///
+/// Preparation (validation, compile, availability) is the run's first
+/// phase. The context's summary target receives the [`RunSummary`] however
+/// the run ends; a completed run whose summary cannot be written fails.
 pub fn execute(
     request: &ImagingRequest,
     context: RunContext,
 ) -> Result<ImagingOutcome, ApplicationDispatchError> {
-    let target = context.summary.clone();
-    let (problem, input, native, _resident) =
-        compile_run(request, &context).inspect_err(|error| {
-            if let Some(target) = &target {
-                native::record_failure(target, error);
+    let mut summary = RunSummary::begin(
+        context
+            .summary
+            .as_ref()
+            .map_or(serde_json::Value::Null, |target| target.request.clone()),
+        context.policy.memory(&context.host),
+        request.backend,
+    );
+    let mut result = prepare_and_run(request, &context, &mut summary);
+    if let Ok(outcome) = &mut result {
+        outcome.summary.status = RunStatus::Completed;
+    }
+    let Some(target) = &context.summary else {
+        return result;
+    };
+    match result {
+        Ok(outcome) => {
+            outcome
+                .summary
+                .write(&target.path)
+                .map_err(|error| ApplicationDispatchError::Native(Box::new(error)))?;
+            Ok(outcome)
+        }
+        Err(error) => {
+            summary.status = match &error {
+                ApplicationDispatchError::Cancelled => RunStatus::Cancelled,
+                error => RunStatus::Failed {
+                    error: error.to_string(),
+                },
+            };
+            if let Err(write) = summary.write(&target.path) {
+                tracing::warn!("the failed run's summary could not be written: {write}");
             }
-        })?;
-    run_native(&problem, input, native).map_err(|error| match error {
+            Err(error)
+        }
+    }
+}
+
+/// The preparation phase and the native run, recorded in `summary`; a
+/// completed run's outcome takes it.
+fn prepare_and_run(
+    request: &ImagingRequest,
+    context: &RunContext,
+    summary: &mut RunSummary,
+) -> Result<ImagingOutcome, ApplicationDispatchError> {
+    let (problem, input, native, _resident) = run_phase(
+        "preparation",
+        &context.cancel,
+        request.diagnostics,
+        summary,
+        || compile_run(request, context),
+    )?;
+    run_native(&problem, input, native, summary).map_err(|error| match error {
         NativeError::Admission(admission) => ApplicationDispatchError::Admission(admission),
         NativeError::Cancelled(_) => ApplicationDispatchError::Cancelled,
         NativeError::Other(error) => ApplicationDispatchError::Native(error),
@@ -454,6 +501,12 @@ impl fmt::Display for ApplicationDispatchError {
 }
 
 impl Error for ApplicationDispatchError {}
+
+impl From<casa_imaging_runtime::Cancelled> for ApplicationDispatchError {
+    fn from(_: casa_imaging_runtime::Cancelled) -> Self {
+        Self::Cancelled
+    }
+}
 
 fn boxed(message: &'static str) -> ApplicationError {
     Box::new(io::Error::other(message))

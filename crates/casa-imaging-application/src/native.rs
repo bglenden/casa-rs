@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The native run: the source admitted, the major and minor cycles on one
-//! worker team, the products, and the run summary, written whether the run
-//! completes or fails.
+//! worker team, and the products, each phase recorded in the run summary.
 
 use std::path::PathBuf;
 
@@ -101,63 +100,10 @@ impl From<std::io::Error> for NativeError {
 }
 
 /// Run the major-cycle passes, the minor cycles between them and any
-/// visibility write, then publish the products.
-///
-/// When the runtime names a summary target, the run summary is written
-/// there whether the run completes or fails; a cancelled run writes
-/// nothing.
+/// visibility write, then publish the products. `summary` collects the
+/// phases and totals as they complete, and a completed run's outcome takes
+/// it.
 pub(crate) fn run_native(
-    problem: &CompiledProblem,
-    input: NativeInput,
-    native: ApplicationNative,
-) -> Result<ImagingOutcome, NativeError> {
-    let target = native.runtime.summary.clone();
-    let mut summary = RunSummary {
-        backend: native.runtime.backend,
-        ..RunSummary::default()
-    };
-    if let Some(target) = &target {
-        summary.request = target.request.clone();
-    }
-    let result = run(problem, input, native, &mut summary);
-    let Some(target) = target else {
-        return result;
-    };
-    match result {
-        Ok(outcome) => {
-            outcome.summary.write(&target.path)?;
-            Ok(outcome)
-        }
-        Err(NativeError::Cancelled(cancelled)) => Err(NativeError::Cancelled(cancelled)),
-        Err(error) => {
-            summary.error = Some(error.to_string());
-            if let Err(write) = summary.write(&target.path) {
-                tracing::warn!("the failed run's summary could not be written: {write}");
-            }
-            Err(error)
-        }
-    }
-}
-
-/// Write the summary of a run that failed before its native run started:
-/// the request echo and the error.
-pub(crate) fn record_failure(
-    target: &casa_imaging_runtime::SummaryTarget,
-    error: &impl std::fmt::Display,
-) {
-    let summary = RunSummary {
-        request: target.request.clone(),
-        error: Some(error.to_string()),
-        ..RunSummary::default()
-    };
-    if let Err(write) = summary.write(&target.path) {
-        tracing::warn!("the failed run's summary could not be written: {write}");
-    }
-}
-
-/// The run itself; `summary` collects its phases, and a completed run's
-/// outcome takes it.
-fn run(
     problem: &CompiledProblem,
     input: NativeInput,
     native: ApplicationNative,
@@ -203,22 +149,27 @@ fn run(
             aw_catalog,
             backend: runtime.backend,
             grid_precision: runtime.grid_precision,
+            diagnostics: runtime.diagnostics,
         },
         summary,
     )?;
     drop(source);
-    summary.minor_cycles = outcome.minor_cycles.len();
-    summary.minor_iterations = outcome.total_minor_iterations;
-    let products = run_phase("products", &runtime.cancel, summary, || {
-        publish_products(
-            problem,
-            outcome.scientific,
-            outcome.masks,
-            &runtime,
-            publication,
-            &team,
-        )
-    })?;
+    let products = run_phase(
+        "products",
+        &runtime.cancel,
+        runtime.diagnostics,
+        summary,
+        || {
+            publish_products(
+                problem,
+                outcome.scientific,
+                outcome.masks,
+                &runtime,
+                publication,
+                &team,
+            )
+        },
+    )?;
     summary.products = products
         .planned
         .members()

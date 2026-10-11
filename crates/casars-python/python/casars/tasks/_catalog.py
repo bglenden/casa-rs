@@ -336,6 +336,9 @@ def imager(
     native_cf_maximum_cells: int | Literal['none'] | object = _UNSET,
     backend: Literal['cpu', 'metal'] | object = _UNSET,
     gridprecision: Literal['auto', 'f32', 'f64'] | object = _UNSET,
+    stage_timing: bool | object = _UNSET,
+    metal_stage_timing: bool | object = _UNSET,
+    science_trace: bool | object = _UNSET,
     parameters: TaskParameters | None = None,
     profile: StrPath | None = None,
     base_source: Literal["defaults", "last", "last_successful"] = "defaults",
@@ -351,7 +354,7 @@ def imager(
     confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet"""
-    overrides = _explicit(locals(), ('vis', 'imagename', 'imsize', 'cell', 'datacolumn', 'savemodel', 'outlierfile', 'field', 'phasecenter_field', 'ddid', 'phasecenter', 'spw', 'channel_start', 'channel_count', 'stokes', 'specmode', 'start', 'width', 'outframe', 'veltype', 'interpolation', 'restfreq', 'restoringbeam', 'perchanweightdensity', 'dirty_only', 'niter', 'threshold', 'nmajor', 'gain', 'nsigma', 'psfcutoff', 'minor_cycle_length', 'cyclefactor', 'deconvolver', 'minpsffraction', 'maxpsffraction', 'nterms', 'hogbom_iteration_mode', 'scales', 'smallscalebias', 'usemask', 'sidelobethreshold', 'noisethreshold', 'lownoisethreshold', 'negativethreshold', 'minbeamfrac', 'growiterations', 'mask_box', 'weighting', 'mask_image', 'robust', 'wprojplanes', 'usepointing', 'write_pb', 'pbcor', 'pblimit', 'gridder', 'parallel', 'uvrange', 'intent', 'cfcache', 'cf_resident_mb', 'pointingoffsetsigdev', 'normtype', 'fitspw', 'fitorder', 'save_continuum_residual', 'aw_cf_source', 'native_cf_cache', 'evla_surface', 'native_cf_policy', 'native_cf_working_size', 'native_cf_oversampling', 'native_cf_cache_bytes', 'native_cf_maximum_cells', 'backend', 'gridprecision'))
+    overrides = _explicit(locals(), ('vis', 'imagename', 'imsize', 'cell', 'datacolumn', 'savemodel', 'outlierfile', 'field', 'phasecenter_field', 'ddid', 'phasecenter', 'spw', 'channel_start', 'channel_count', 'stokes', 'specmode', 'start', 'width', 'outframe', 'veltype', 'interpolation', 'restfreq', 'restoringbeam', 'perchanweightdensity', 'dirty_only', 'niter', 'threshold', 'nmajor', 'gain', 'nsigma', 'psfcutoff', 'minor_cycle_length', 'cyclefactor', 'deconvolver', 'minpsffraction', 'maxpsffraction', 'nterms', 'hogbom_iteration_mode', 'scales', 'smallscalebias', 'usemask', 'sidelobethreshold', 'noisethreshold', 'lownoisethreshold', 'negativethreshold', 'minbeamfrac', 'growiterations', 'mask_box', 'weighting', 'mask_image', 'robust', 'wprojplanes', 'usepointing', 'write_pb', 'pbcor', 'pblimit', 'gridder', 'parallel', 'uvrange', 'intent', 'cfcache', 'cf_resident_mb', 'pointingoffsetsigdev', 'normtype', 'fitspw', 'fitorder', 'save_continuum_residual', 'aw_cf_source', 'native_cf_cache', 'evla_surface', 'native_cf_policy', 'native_cf_working_size', 'native_cf_oversampling', 'native_cf_cache_bytes', 'native_cf_maximum_cells', 'backend', 'gridprecision', 'stage_timing', 'metal_stage_timing', 'science_trace'))
     return _run(
         "imager",
         parameters=parameters,

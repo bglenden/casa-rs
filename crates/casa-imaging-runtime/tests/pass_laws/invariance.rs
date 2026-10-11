@@ -133,6 +133,7 @@ fn a_cancelled_pass_stops_with_a_typed_error() {
         residency: Residency::All,
         native_spacing_hz: WIDTH_HZ,
         backend: BackendChoice::Cpu,
+        metal_stage_timing: false,
     };
     let cancel = Cancel::new();
     cancel.cancel();
@@ -192,6 +193,7 @@ fn a_pass_cancelled_midway_reads_no_further_block() {
         residency: Residency::All,
         native_spacing_hz: WIDTH_HZ,
         backend: BackendChoice::Cpu,
+        metal_stage_timing: false,
     };
     for workers in [1, 3] {
         let cancel = Cancel::new();
