@@ -60,7 +60,10 @@ impl From<ApplicationError> for NativeError {
 impl From<ImagingError> for NativeError {
     fn from(error: ImagingError) -> Self {
         match error {
-            ImagingError::Admission(admission) => Self::Admission(admission),
+            ImagingError::Admission(admission)
+            | ImagingError::Minor(casa_imaging_runtime::MinorCycleRunError::Admission(admission)) => {
+                Self::Admission(admission)
+            }
             ImagingError::Cancelled(cancelled) => Self::Cancelled(cancelled),
             ImagingError::Pass(error) => error.into(),
             error => Self::Other(Box::new(error)),
@@ -137,6 +140,22 @@ pub(crate) fn run_native(
     }
 }
 
+/// Write the summary of a run that failed before its native run started:
+/// the request echo and the error.
+pub(crate) fn record_failure(
+    target: &casa_imaging_runtime::SummaryTarget,
+    error: &impl std::fmt::Display,
+) {
+    let summary = RunSummary {
+        request: target.request.clone(),
+        error: Some(error.to_string()),
+        ..RunSummary::default()
+    };
+    if let Err(write) = summary.write(&target.path) {
+        tracing::warn!("the failed run's summary could not be written: {write}");
+    }
+}
+
 /// The run itself; `summary` collects its phases, and a completed run's
 /// outcome takes it.
 fn run(
@@ -164,6 +183,7 @@ fn run(
     let (access, source) = finalize_source_access(
         problem,
         input.initial_access,
+        imaging::row_samples(problem)?,
         &runtime.host,
         &runtime.resource_policy,
     )?;
@@ -220,6 +240,7 @@ fn run(
         scientific: products.scientific,
         planned_products: products.planned,
         products: products.published,
+        _retained: outcome.retained,
     })
 }
 

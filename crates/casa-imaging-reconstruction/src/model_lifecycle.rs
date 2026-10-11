@@ -36,6 +36,13 @@ impl ModelGeneration {
         self.samples.len()
     }
 
+    /// Heap bytes this generation holds resident: its samples outside paged
+    /// storage and its queued sparse updates.
+    #[must_use]
+    pub fn resident_bytes(&self) -> u64 {
+        self.samples.resident_bytes()
+    }
+
     /// Read an explicitly bounded canonical sample range.
     pub fn read_samples(
         &self,
@@ -109,11 +116,25 @@ impl ModelLifecycle {
         &self.contract
     }
 
+    /// Heap bytes [`Self::prepare_final_model`] holds per term besides the
+    /// terms while it queues them: the validated updates, and the pending
+    /// windows a generation keeps until it applies them.
+    pub const QUEUED_TERM_BYTES: usize = crate::model_storage::QUEUED_UPDATE_BYTES;
+
+    /// Heap bytes one of this run's generations holds resident, before any
+    /// sparse update is queued.
+    #[must_use]
+    pub fn resident_bytes(&self) -> u64 {
+        self.storage
+            .resident_bytes(self.contract.target().sample_count())
+    }
+
     /// The empty initial generation every run begins from.
     pub fn initial_empty(&self) -> Result<ModelGeneration, ModelLifecycleError> {
         let zero = ModelValue::new(0.0)?;
         let mut samples = self.storage.create(self.contract.target().sample_count())?;
-        let window = vec![ModelSample::valid(zero); samples.window_samples()];
+        // Written in bounded chunks, not one model-sized copy.
+        let window = vec![ModelSample::valid(zero); samples.window_samples().min(1 << 16)];
         for start in (0..samples.len()).step_by(window.len()) {
             samples.write(start, &window[..window.len().min(samples.len() - start)])?;
         }

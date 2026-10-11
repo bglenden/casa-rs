@@ -5,7 +5,7 @@
 use crate::Error;
 use crate::patch::subtract_window;
 use crate::plane::{PlaneShape, Support, casacore_max_abs, peak_magnitude};
-use crate::scales::ScaleBank;
+use crate::scales::{ScaleBank, plane_bytes, spectrum_bytes};
 use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd};
 
 /// The scale-mask threshold of `MatrixCleaner` (`itsMaskThreshold`): a
@@ -224,5 +224,24 @@ impl Solver for Multiscale {
             peak: peak_magnitude(&residual[0], view.support),
             refreshes: usize::from(refreshed),
         })
+    }
+
+    /// The bank, the PSF and residual spectra, `S(S+1)/2` cross planes, `S`
+    /// dirty planes and masks, and the largest transient: the terminal
+    /// refresh's model, wrapped PSF and prediction planes with two spectra.
+    fn working_bytes(&self, shape: PlaneShape, _terms: usize) -> u64 {
+        let scales = self.scales.len() as u64;
+        let planes = scales * (scales + 1) / 2 + scales;
+        ScaleBank::bytes(&self.scales, shape)
+            + 2 * spectrum_bytes(shape)
+            + planes * plane_bytes(shape)
+            + scales * shape.len() as u64
+            + (3 * plane_bytes(shape) + 2 * spectrum_bytes(shape))
+                .max(ScaleBank::masks_bytes(shape))
+    }
+
+    /// The largest scale's support.
+    fn component_cells(&self, shape: PlaneShape) -> usize {
+        ScaleBank::support_cells(&self.scales, shape)
     }
 }

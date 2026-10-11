@@ -13,6 +13,9 @@ use casa_imaging_operator::{
     WPlanes,
 };
 use casa_imaging_runtime::pass::BackendChoice;
+use casa_imaging_runtime::{
+    Demand, FRAME_MARGIN, HostResources, Reservation, ResourcePolicy, admit, row_layout,
+};
 
 use super::ImagingError;
 use crate::AwCatalogDeployment;
@@ -25,6 +28,8 @@ pub(crate) struct DomainOperator {
     /// Whether the kernel set grids a sensitivity (weight) image
     /// (`ConvolutionFunctionSet::weight_taps`): mosaic and AW.
     pub(crate) weight_image: bool,
+    /// The charge of the kernel set, held while the operator lives.
+    _kernels: Reservation,
 }
 
 /// Correlation types every block delivers, in block order: the first
@@ -54,6 +59,13 @@ pub(crate) fn selected_correlations(
         });
     }
     Ok(first)
+}
+
+/// The most samples a row of `problem`'s source places on any of its image
+/// domains, which share one resampler
+/// ([`SpectralResampler::samples_per_row`]).
+pub(crate) fn row_samples(problem: &CompiledProblem) -> Result<usize, ImagingError> {
+    Ok(resampler(problem, basis(problem)?)?.samples_per_row(row_layout(problem).spectrum))
 }
 
 /// The grid basis of the compiled reconstruction basis. A Taylor basis
@@ -147,6 +159,9 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
 /// `dish_classes` (`HetArrayConvFunc::findAntennaSizes`), the order the
 /// rows' antenna types index. Mosaic and AW grid without padding (CASA
 /// `MosaicFT`, `AWProjectFT`); the others on CASA's composite-padded grid.
+/// The kernel set is admitted as [`kernel_set`] says, and its charge lives
+/// with the operator.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn domain_operator(
     problem: &CompiledProblem,
     domain: &CompiledImageDomain,
@@ -155,6 +170,7 @@ pub(crate) fn domain_operator(
     requested_precision: Option<GridPrecision>,
     aw_catalog: Option<&AwCatalogDeployment>,
     dish_classes: &[AntennaResponseClass],
+    admission: KernelAdmission<'_>,
 ) -> Result<DomainOperator, ImagingError> {
     let kind = kernel_set_kind(problem);
     let padding = match kind {
@@ -178,8 +194,64 @@ pub(crate) fn domain_operator(
         });
     }
     let resampler = resampler(problem, basis)?;
-    let cf: Box<dyn ConvolutionFunctionSet> = match kind {
-        KernelSetKind::Standard => Box::new(Spheroidal::new(&geometry, &polarization)),
+    let (cf, kernels) = kernel_set(
+        problem,
+        kind,
+        (&geometry, &polarization),
+        aw_catalog,
+        dish_classes,
+        admission,
+    )?;
+    Ok(DomainOperator {
+        operator: MeasurementOperator::new(
+            geometry,
+            basis,
+            polarization,
+            cf,
+            precision(basis, backend, requested_precision),
+        ),
+        resampler,
+        weight_image: matches!(kind, KernelSetKind::Mosaic | KernelSetKind::Aw),
+        _kernels: kernels,
+    })
+}
+
+/// Where a run admits its kernel sets: its host and policy, and the
+/// workers that fetch cells from a paged set.
+#[derive(Clone, Copy)]
+pub(crate) struct KernelAdmission<'a> {
+    pub(crate) host: &'a HostResources,
+    pub(crate) policy: &'a ResourcePolicy,
+    pub(crate) workers: usize,
+}
+
+impl KernelAdmission<'_> {
+    fn admit(self, phase: &'static str, memory: u64) -> Result<Reservation, ImagingError> {
+        Ok(admit(self.host, self.policy, &Demand { phase, memory })?)
+    }
+}
+
+/// The kernel set of `kind` on `geometry` routing `polarization`, with the
+/// charge of what it holds, admitted before it is built. W-projection and
+/// mosaic sets are built in two stages, their screens and then the kernels
+/// cut from them, each admitted before it allocates; the screens' charge
+/// is released once the kernels are built. An AW catalog is charged its
+/// cache bound and what its workers can hold beyond it once its index is
+/// read ([`AwCatalog::charge_bytes`]).
+fn kernel_set(
+    problem: &CompiledProblem,
+    kind: KernelSetKind,
+    (geometry, polarization): (&GridGeometry, &PolarizationRouting),
+    aw_catalog: Option<&AwCatalogDeployment>,
+    dish_classes: &[AntennaResponseClass],
+    admission: KernelAdmission<'_>,
+) -> Result<(Box<dyn ConvolutionFunctionSet>, Reservation), ImagingError> {
+    const PHASE: &str = "convolution functions";
+    Ok(match kind {
+        KernelSetKind::Standard => {
+            let kernels = admission.admit(PHASE, Spheroidal::bytes(geometry))?;
+            (Box::new(Spheroidal::new(geometry, polarization)), kernels)
+        }
         KernelSetKind::WPlanes => {
             let contract = problem
                 .science()
@@ -199,7 +271,16 @@ pub(crate) fn domain_operator(
                     });
                 }
             };
-            Box::new(WPlanes::new(&geometry, &polarization, count)?)
+            let screening = admission.admit(
+                "W-projection screens",
+                WPlanes::screens_bytes(geometry, count)?,
+            )?;
+            let screens = WPlanes::screens(geometry, polarization, count)?;
+            let mut kernels = admission.admit(PHASE, screens.kernel_bytes())?;
+            let set = screens.finish()?;
+            drop(screening);
+            kernels.retain(set.resident_bytes());
+            (Box::new(set), kernels)
         }
         KernelSetKind::Mosaic => {
             if dish_classes.is_empty() {
@@ -215,41 +296,38 @@ pub(crate) fn domain_operator(
                             AntennaResponseClass::CasaAlma12m => 12.0,
                             AntennaResponseClass::CasaAca7m => 7.0,
                         },
-                        &geometry,
+                        geometry,
                     )
                 })
                 .collect::<Vec<_>>();
-            Box::new(MosaicPb::new(
-                &geometry,
-                &polarization,
-                reference_frequency_hz(problem)?,
-                &dishes,
-                &mosaic_windows(problem)?,
-            )?)
+            let frequency_hz = reference_frequency_hz(problem)?;
+            let windows = mosaic_windows(problem)?;
+            let screening = admission.admit(
+                "mosaic screens",
+                MosaicPb::screens_bytes(geometry, frequency_hz, &dishes, &windows)?,
+            )?;
+            let screens =
+                MosaicPb::screens(geometry, polarization, frequency_hz, &dishes, &windows)?;
+            let mut kernels = admission.admit(PHASE, screens.kernel_bytes())?;
+            let set = screens.finish()?;
+            drop(screening);
+            kernels.retain(set.resident_bytes());
+            (Box::new(set), kernels)
         }
         KernelSetKind::Aw => {
             let deployment = aw_catalog.ok_or(ImagingError::Unsupported {
                 reason: "an A-projection run needs its convolution-function catalog",
             })?;
-            Box::new(AwCatalog::open_casa(
+            let catalog = AwCatalog::open_casa(
                 &deployment.root,
                 deployment.indexing,
-                &geometry,
-                &polarization,
+                geometry,
+                polarization,
                 deployment.resident_bytes,
-            )?)
+            )?;
+            let kernels = admission.admit(PHASE, catalog.charge_bytes(admission.workers))?;
+            (Box::new(catalog), kernels)
         }
-    };
-    Ok(DomainOperator {
-        operator: MeasurementOperator::new(
-            geometry,
-            basis,
-            polarization,
-            cf,
-            precision(basis, backend, requested_precision),
-        ),
-        resampler,
-        weight_image: matches!(kind, KernelSetKind::Mosaic | KernelSetKind::Aw),
     })
 }
 
@@ -345,11 +423,6 @@ fn resampler(problem: &CompiledProblem, basis: Basis) -> Result<SpectralResample
         kernel,
     ))
 }
-
-/// Relative allowance for the Doppler factor between the stored frame of the
-/// spectral-window catalog and the output frame rows are delivered in
-/// (3000 km/s); the pass checks every row against the widened bound.
-const FRAME_MARGIN: f64 = 0.01;
 
 /// The widest spacing between adjacent selected native channels of any
 /// selected spectral window, from the storage owner's `CHAN_FREQ` catalog,

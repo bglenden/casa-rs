@@ -31,6 +31,7 @@ use crate::convolution::{
     CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
     MuellerRouting, RowContext, TapLayout,
 };
+use crate::dense::dense_cell_bytes;
 use crate::geometry::GridGeometry;
 use crate::polarization::PolarizationRouting;
 use crate::sample::CfKey;
@@ -658,6 +659,54 @@ impl AwCatalog {
     #[must_use]
     pub fn resident_bytes(&self) -> usize {
         self.lru.lock().expect("cache lock").bytes
+    }
+
+    /// Bytes the catalog holds at most while it lives with `holders`
+    /// workers fetching cells: its index and corrections; the cache's bound
+    /// and one group past it, which a fetch inserts before the cache
+    /// evicts; and for each holder the largest group, which its
+    /// [`CellHold`] keeps alive after eviction, and the planes it reads to
+    /// build one (each read as an image array and its copy).
+    #[must_use]
+    pub fn charge_bytes(&self, holders: usize) -> u64 {
+        let header = |header: &CellHeader| size_of::<CellHeader>() + header.path.as_os_str().len();
+        let index = self.groups.capacity() * size_of::<Group>()
+            + self
+                .groups
+                .iter()
+                .flat_map(|group| &group.cells)
+                .map(|cell| header(&cell.imaging) + header(&cell.weight))
+                .sum::<usize>()
+            + (self.pa_deg.len() + self.frequencies_hz.len() + self.w_values.len())
+                * size_of::<f64>()
+            + self.mueller_elements.len() * size_of::<u32>();
+        let group = |group: &Group| {
+            let planes = group.cells.len();
+            dense_cell_bytes(planes, self.oversampling, group.imaging_half_support)
+                + dense_cell_bytes(planes, self.oversampling, group.weight_half_support)
+        };
+        let read = |group: &Group| {
+            let plane = |header: &CellHeader| header.shape[0] * header.shape[1];
+            let imaging = group
+                .cells
+                .iter()
+                .map(|cell| plane(&cell.imaging))
+                .sum::<usize>();
+            let weight = group
+                .cells
+                .iter()
+                .map(|cell| plane(&cell.weight))
+                .sum::<usize>();
+            (2 * imaging.max(weight) * size_of::<Complex32>()) as u64
+        };
+        let largest = self.groups.iter().map(group).max().unwrap_or(0);
+        let reading = self.groups.iter().map(read).max().unwrap_or(0);
+        let bound = self.lru.lock().expect("cache lock").bound as u64;
+        index as u64
+            + self.correction.resident_bytes()
+            + bound
+            + (holders as u64 + 1) * largest
+            + holders as u64 * reading
     }
 
     /// The parallactic-angle cell of `pa_deg`: the nearest listed angle on

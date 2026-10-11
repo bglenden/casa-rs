@@ -30,6 +30,27 @@ static F64_THREADS: OnceLock<c_int> = OnceLock::new();
 // a small bounded set of measured plans rather than replanning every channel.
 const CACHED_PLAN_PAIRS_PER_PRECISION: usize = 8;
 
+/// The most C heap FFTW keeps for one plan pair (twiddles and buffers):
+/// under 0.7 MB is measured for transforms up to 8192², the prime 8191²
+/// real transform keeping the most (the law
+/// `a_plan_pair_keeps_at_most_its_bytes`).
+pub const PLAN_PAIR_BYTES: usize = 1 << 20;
+
+/// The most C heap FFTW keeps for the plans this crate caches for the
+/// process: [`PLAN_PAIR_BYTES`] for each of the plan pairs cached per
+/// precision, as measured for the transforms the law runs, up to 8192². A
+/// plan a live transform still holds after the cache drops it is the
+/// transform's.
+pub const PLAN_CACHE_BYTES: usize = 2 * CACHED_PLAN_PAIRS_PER_PRECISION * PLAN_PAIR_BYTES;
+
+/// Heap bytes planning a transform of `elements` values of `T` holds while
+/// FFTW plans it, beside the plans: the aligned scratch plane it plans on.
+/// A transform plans when its plan is not cached.
+#[must_use]
+pub const fn planning_bytes<T: FftScalar>(elements: usize) -> u64 {
+    ((elements + 64) * size_of::<Complex<T>>()) as u64
+}
+
 struct PlanCache<T: FftScalar> {
     plans: HashMap<Key, Arc<Plans<T>>>,
     oldest_first: VecDeque<Key>,
@@ -525,10 +546,16 @@ impl<T: FftScalar> RealFft2<T> {
     }
 
     fn from_fft(mut fft: Fft2<T>) -> Result<Self, FftError> {
-        fft.elements = fft.shape[0]
-            .checked_mul(fft.shape[1] / 2 + 1)
-            .ok_or(FftError::InvalidShape)?;
+        fft.elements = Self::spectrum_len(fft.shape).ok_or(FftError::InvalidShape)?;
         Ok(Self { fft })
+    }
+
+    /// Complex values of the shared real/spectrum allocation of a `shape`
+    /// transform ([`Self::storage_len`]), for sizing one before it exists;
+    /// `None` when the count overflows.
+    #[must_use]
+    pub const fn spectrum_len(shape: [usize; 2]) -> Option<usize> {
+        shape[0].checked_mul(shape[1] / 2 + 1)
     }
 
     /// Number of complex values required by the shared real/spectrum allocation.

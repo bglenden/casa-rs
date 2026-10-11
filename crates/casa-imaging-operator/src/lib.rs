@@ -65,16 +65,33 @@ pub use convolution::{
 pub use cpu::CpuBackend;
 pub use error::{DeviceFailure, OperatorError};
 pub use geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent};
-pub use mosaic::{AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicWindow, pair_plane};
+pub use mosaic::{
+    AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicScreens, MosaicWindow, pair_plane,
+};
 pub use operator::{
     Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, NormalPlane,
 };
 pub use polarization::{FeedBasis, GridPolarization, PolarizationRouting};
-pub use resample::{NativeRow, PredictionScratch, SpectralAxis, SpectralKernel, SpectralResampler};
+pub use resample::{
+    NativeRow, PredictionScratch, RowSpectrum, SpectralAxis, SpectralKernel, SpectralResampler,
+};
 pub use sample::{CfKey, Placement, SampleBlock, SampleBuffer};
 pub use spheroidal::{SPHEROIDAL_OVERSAMPLING, SPHEROIDAL_SUPPORT, Spheroidal, grdsf};
 pub use weighting::{
     BandwidthTaper, DensityCellRule, DensityGrid, DensityGridShape, DensityUv, RobustFactors,
     Taper, WeightingGeneration, build_density_grid,
 };
-pub use wplanes::{WPlaneCount, WPlanes};
+pub use wplanes::{WPlaneCount, WPlanes, WScreens};
+
+/// The C heap FFTW keeps for the plans the process caches
+/// ([`casa_fft::PLAN_CACHE_BYTES`]), which every transform of the operator
+/// and the minor cycle plans through.
+pub const FFT_PLAN_CACHE_BYTES: usize = casa_fft::PLAN_CACHE_BYTES;
+
+/// Heap bytes planning the operator's complex transform of `cells` grid
+/// cells holds while FFTW plans it ([`casa_fft::planning_bytes`]). The
+/// process plans one transform at a time.
+#[must_use]
+pub const fn grid_planning_bytes(cells: usize) -> u64 {
+    casa_fft::planning_bytes::<f64>(cells)
+}

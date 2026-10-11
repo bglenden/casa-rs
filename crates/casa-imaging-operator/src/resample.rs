@@ -52,6 +52,43 @@ pub struct NativeRow<'a> {
     pub context: RowContext,
 }
 
+/// What bounds the samples a native row places: the most selected channels
+/// in a row and, where they are known, the smallest separation of a row's
+/// first two channels and the widest span from its first channel to its
+/// last, in the frame rows reach the resampler in.
+///
+/// Linear interpolation places one sample per point of CASA's fine grid
+/// inside a row's span, and the fine grid is as fine as the row's first
+/// channel separation, so a sparse selection (`0:0~1;100`) places far more
+/// samples than it has channels. The spacing and span must therefore bound
+/// every row: the smallest spacing and the widest span over the selection,
+/// widened for the Doppler factor between the stored frequencies and the
+/// rows' frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RowSpectrum {
+    /// Selected channels in a row, at most.
+    pub channels: usize,
+    /// Separation of a row's first two channels in hertz, at least; zero
+    /// when the rows' frequencies are not known in advance, and the rows
+    /// are then taken to be evenly spaced.
+    pub first_spacing_hz: f64,
+    /// Distance from a row's first channel to its last in hertz, at most.
+    pub span_hz: f64,
+}
+
+impl RowSpectrum {
+    /// Rows of at most `channels` evenly spaced channels whose frequencies
+    /// are not known in advance.
+    #[must_use]
+    pub const fn evenly_spaced(channels: usize) -> Self {
+        Self {
+            channels,
+            first_spacing_hz: 0.0,
+            span_hz: 0.0,
+        }
+    }
+}
+
 /// CASA cube channel mapping rule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpectralKernel {
@@ -236,6 +273,29 @@ impl FineGrid {
     }
 }
 
+/// The most fine-grid points a row of `spectrum` visits against an output
+/// axis of `channels` channels `increment_hz` apart.
+///
+/// [`FineGrid`] takes `p = max(1, floor(|width| / first spacing))` points
+/// per output channel, `|width| / p` apart, and a row visits each point at
+/// most once and only within its span: at most `p · channels` points and
+/// `floor(span / spacing) + 1` of them, plus one for rounding. For evenly
+/// spaced channels that is about one per channel or per output plane. A
+/// one-channel axis or row maps like `nearest`, one sample per channel.
+fn linear_samples(increment_hz: f64, channels: usize, spectrum: RowSpectrum) -> usize {
+    if channels <= 1 || spectrum.channels <= 1 {
+        return spectrum.channels;
+    }
+    if spectrum.first_spacing_hz <= 0.0 {
+        return spectrum.channels.max(channels) + 1;
+    }
+    let width = increment_hz.abs();
+    let per_output = (width / spectrum.first_spacing_hz).floor().max(1.0);
+    let within = (spectrum.span_hz * per_output / width).floor() + 2.0;
+    // Saturating: a bound past the address space fails its allocation.
+    (per_output * channels as f64).min(within) as usize
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Sampling {
     Direct,
@@ -251,6 +311,9 @@ enum Source {
 }
 
 /// Reusable buffers for [`SpectralResampler::predict_row`]; one per worker.
+///
+/// [`SpectralResampler::prediction_scratch`] allocates them once for the
+/// widest row; a default scratch grows as rows need.
 #[derive(Debug, Default)]
 pub struct PredictionScratch {
     buffer: Option<SampleBuffer>,
@@ -262,6 +325,41 @@ pub struct PredictionScratch {
 }
 
 impl PredictionScratch {
+    /// Scratch for `npol` correlations with room for `samples` degridded
+    /// samples and `planes` output planes, so that predicting rows within
+    /// them never grows it beyond [`Self::bytes`].
+    #[must_use]
+    pub fn with_capacity(npol: usize, samples: usize, planes: usize) -> Self {
+        Self {
+            buffer: Some(SampleBuffer::with_capacity(npol, samples)),
+            zeros: vec![Complex32::default(); npol],
+            ones: vec![1.0; npol],
+            predicted: Vec::with_capacity(samples * npol),
+            sources: Vec::with_capacity(samples),
+            values: Vec::with_capacity(planes * npol),
+        }
+    }
+
+    /// Bytes [`Self::with_capacity`] allocates.
+    #[must_use]
+    pub const fn bytes(npol: usize, samples: usize, planes: usize) -> u64 {
+        SampleBuffer::bytes(npol, samples)
+            + (npol * (size_of::<Complex32>() + size_of::<f32>())
+                + samples * (npol * size_of::<Complex32>() + size_of::<usize>())
+                + planes * npol * size_of::<Complex32>()) as u64
+    }
+
+    /// Bytes the scratch's buffers hold now, from their capacities.
+    #[must_use]
+    pub fn capacity_bytes(&self) -> u64 {
+        self.buffer.as_ref().map_or(0, SampleBuffer::capacity_bytes)
+            + (self.zeros.capacity() * size_of::<Complex32>()
+                + self.ones.capacity() * size_of::<f32>()
+                + self.predicted.capacity() * size_of::<Complex32>()
+                + self.sources.capacity() * size_of::<usize>()
+                + self.values.capacity() * size_of::<Complex32>()) as u64
+    }
+
     /// Clear every buffer for a row of `npol` polarizations.
     fn reset(&mut self, npol: usize) {
         if self.zeros.len() != npol {
@@ -682,6 +780,92 @@ impl SpectralResampler {
             out.push(placement, &values, &weights);
         });
         Ok(())
+    }
+
+    /// The most samples [`Self::place`] places for one native row of
+    /// `spectrum`. Direct and nearest sampling place at most one per
+    /// channel; linear interpolation as [`linear_samples`] bounds it.
+    #[must_use]
+    pub fn samples_per_row(&self, spectrum: RowSpectrum) -> usize {
+        match self.sampling {
+            Sampling::Direct | Sampling::Nearest(_) => spectrum.channels,
+            Sampling::Linear(axis) => {
+                linear_samples(axis.increment_hz, axis.channels as usize, spectrum)
+            }
+        }
+    }
+
+    /// The most samples [`Self::place_density`] places for one native row
+    /// of `spectrum` on a density grid of `shape`: one per channel under the
+    /// standard cell rule, and under the cube rule as
+    /// [`Self::samples_per_row`] over the padded density axis.
+    #[must_use]
+    pub fn density_samples_per_row(
+        &self,
+        shape: &DensityGridShape,
+        spectrum: RowSpectrum,
+    ) -> usize {
+        match (shape.rule, self.sampling) {
+            (DensityCellRule::Cube, Sampling::Linear(axis)) => {
+                linear_samples(axis.increment_hz, shape.planes, spectrum)
+            }
+            _ => spectrum.channels,
+        }
+    }
+
+    /// The most samples [`Self::predict_row`] degrids for one native row of
+    /// `channels` channels: one per channel, or under linear interpolation
+    /// one per output channel.
+    #[must_use]
+    pub fn prediction_samples_per_row(&self, channels: usize) -> usize {
+        match self.sampling {
+            Sampling::Direct | Sampling::Nearest(_) => channels,
+            Sampling::Linear(axis) => channels.max(axis.channels as usize),
+        }
+    }
+
+    /// Reusable buffers for [`Self::predict_row`] over rows of at most
+    /// `channels` channels of `npol` correlations, allocated once at
+    /// [`PredictionScratch::bytes`] for every resampler in `resamplers`.
+    #[must_use]
+    pub fn prediction_scratch<'r>(
+        resamplers: impl IntoIterator<Item = &'r Self>,
+        npol: usize,
+        channels: usize,
+    ) -> PredictionScratch {
+        let (samples, planes) = Self::prediction_extent(resamplers, channels);
+        PredictionScratch::with_capacity(npol, samples, planes)
+    }
+
+    /// Bytes [`Self::prediction_scratch`] holds for the same arguments.
+    #[must_use]
+    pub fn prediction_scratch_bytes<'r>(
+        resamplers: impl IntoIterator<Item = &'r Self>,
+        npol: usize,
+        channels: usize,
+    ) -> u64 {
+        let (samples, planes) = Self::prediction_extent(resamplers, channels);
+        PredictionScratch::bytes(npol, samples, planes)
+    }
+
+    /// The most samples and output planes any of `resamplers` predicts with
+    /// for rows of at most `channels` channels.
+    fn prediction_extent<'r>(
+        resamplers: impl IntoIterator<Item = &'r Self>,
+        channels: usize,
+    ) -> (usize, usize) {
+        resamplers
+            .into_iter()
+            .fold((0, 0), |(samples, planes), resampler| {
+                let linear = match resampler.sampling {
+                    Sampling::Linear(axis) => axis.channels as usize,
+                    Sampling::Direct | Sampling::Nearest(_) => 0,
+                };
+                (
+                    samples.max(resampler.prediction_samples_per_row(channels)),
+                    planes.max(linear),
+                )
+            })
     }
 
     /// Place one row's density-pass samples for a grid of `shape`: one

@@ -142,3 +142,7 @@ required-features = ["cpp-interop-tests"]
 [[test]]
 name = "simulation_ms"
 path = "tests/simulation_ms.rs"
+
+[[test]]
+name = "row_walk_memory"
+path = "tests/row_walk_memory.rs"

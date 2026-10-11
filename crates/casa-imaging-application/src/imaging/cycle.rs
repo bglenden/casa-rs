@@ -23,21 +23,22 @@ use casa_imaging_reconstruction::{
     ReconstructionMaskSet,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain, PassError,
-    PassSummary, Residency, VisibilitySink, WaveDemand, WorkerTeam, run_density_pass,
-    run_major_cycle,
+    BackendChoice, BoundedSource, Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain,
+    PassError, PassSummary, Residency, VisibilitySink, WaveDemand, WorkerTeam, density_pass_bytes,
+    run_density_pass, run_major_cycle,
 };
 use casa_imaging_runtime::{
     CubeState, Demand, HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache, Reservation,
-    ResourcePolicy, RunSummary, admit, free_memory, prepare_minor_cycle, run_minor_cycle,
-    run_phase,
+    ResourcePolicy, RunSummary, admit, free_memory, mask_bytes, prepare_bytes, prepare_minor_cycle,
+    run_bytes, run_minor_cycle, run_phase,
 };
 use casa_ms::ResolvedSelectedObservationAccess;
 
 use super::ImagingError;
 use super::images::{pass_images, prepare_model};
 use super::measurement::{
-    DomainOperator, density_shape, domain_operator, native_spacing_hz, selected_correlations,
+    DomainOperator, KernelAdmission, density_shape, domain_operator, native_spacing_hz,
+    selected_correlations,
 };
 use super::source::{MeasurementSetSource, PlaneBounds};
 use super::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
@@ -75,6 +76,9 @@ pub(crate) struct ImagingOutcome {
     pub(crate) total_actual_minor_iterations: usize,
     pub(crate) visibility_products: Option<VisibilityProductCompletion>,
     pub(crate) planes_per_wave: Option<u32>,
+    /// The charge of the memory `scientific` holds resident, released with
+    /// it.
+    pub(crate) retained: Reservation,
 }
 
 /// Fixed parts of one run shared by every pass.
@@ -83,6 +87,8 @@ struct Run<'a> {
     domains: Vec<DomainOperator>,
     source: MeasurementSetSource<'a>,
     weighting: WeightingGeneration,
+    /// The charge of the weighting's density grid, held with it.
+    _weights: Reservation,
     team: &'a WorkerTeam,
     cancel: Cancel,
     host: HostResources,
@@ -99,6 +105,9 @@ struct Run<'a> {
     /// Whether the initial pass also grids the sensitivity image
     /// (`Mode::Weight`): a kernel set with weight taps on any domain.
     weight_image: bool,
+    /// The charge of the memory the latest completion holds resident (its
+    /// normal state and model), held while it lives.
+    retained: Reservation,
 }
 
 /// One reconciled major cycle.
@@ -120,6 +129,7 @@ impl ImagingOutcome {
             total_actual_minor_iterations: 0,
             visibility_products: major.visibility,
             planes_per_wave: run.planes_per_wave,
+            retained: Reservation::none(),
         }
     }
 }
@@ -148,11 +158,25 @@ pub(crate) fn run(
     let major = run_phase("major cycle 1", &cancel, summary, || run.initial(!cleaning))?;
     let mut outcome = ImagingOutcome::initial(major, &run);
     if !cleaning {
+        outcome.retained = std::mem::replace(&mut run.retained, Reservation::none());
         return Ok(outcome);
     }
     let mut controller = Controller::new(&controls);
     let mut cache = PsfCache::default();
+    // What outlives each minor cycle: the masks it forms (the latest, and the
+    // one an automatic mask evolves from) and a Clark refresh it caches.
+    let mut held = run.admit("reconstruction masks", 2 * mask_bytes(&outcome.scientific))?;
     loop {
+        let preparing = run.admit(
+            "minor-cycle preparation",
+            prepare_bytes(
+                &outcome.scientific,
+                &mask_plans,
+                &setup,
+                &cache,
+                run.team.workers(),
+            ),
+        )?;
         let prepared = prepare_minor_cycle(
             &outcome.scientific,
             &mask_plans,
@@ -160,6 +184,7 @@ pub(crate) fn run(
             &mut cache,
             run.team,
         )?;
+        drop(preparing);
         let statistics = prepared.statistics;
         if let Some(stop) = controller.clean_complete(&statistics) {
             tracing::info!("imaging stopped: {stop:?} (stopcode {})", stop.code());
@@ -172,6 +197,17 @@ pub(crate) fn run(
         let cycle_controls = controller.cycle_controls(&statistics);
         let started = Instant::now();
         let name = format!("minor cycle {}", outcome.minor_cycles.len() + 1);
+        let cached = cache.refresh_bytes(&outcome.scientific);
+        let mut solving = run.admit(
+            "minor cycle",
+            run_bytes(
+                &outcome.scientific,
+                &setup,
+                &cycle_controls,
+                &cache,
+                run.team.workers(),
+            ),
+        )?;
         let minor = run_phase(name, &cancel, summary, || {
             Ok::<_, ImagingError>(run_minor_cycle(
                 prepared,
@@ -180,8 +216,14 @@ pub(crate) fn run(
                 &cycle_controls,
                 &mut cache,
                 run.team,
+                (&run.host, &run.policy),
             )?)
         })?;
+        let refresh = cache.refresh_bytes(&outcome.scientific);
+        if refresh > cached {
+            held.join(solving.split(refresh - cached));
+        }
+        drop(solving);
         let global_threshold = controls
             .threshold_jy_per_beam()
             .max(statistics.nsigma_threshold);
@@ -198,6 +240,16 @@ pub(crate) fn run(
         if minor.summary.iterations == 0 {
             // tclean skips the major cycle, updates the mask and still asks
             // `hasConverged` for the stop it reports.
+            let _preparing = run.admit(
+                "minor-cycle preparation",
+                prepare_bytes(
+                    &outcome.scientific,
+                    &mask_plans,
+                    &setup,
+                    &cache,
+                    run.team.workers(),
+                ),
+            )?;
             let prepared = prepare_minor_cycle(
                 &outcome.scientific,
                 &mask_plans,
@@ -212,7 +264,7 @@ pub(crate) fn run(
         let name = format!("major cycle {}", outcome.major_cycle_count + 1);
         let scientific = outcome.scientific;
         let major = run_phase(name, &cancel, summary, || {
-            run.refresh(scientific, minor.terms, last)
+            run.refresh(scientific, (minor.terms, minor.results), last)
         })?;
         controller.end_major_cycle();
         outcome.scientific = major.completion;
@@ -225,6 +277,8 @@ pub(crate) fn run(
         })?;
     }
     outcome.planes_per_wave = run.planes_per_wave;
+    outcome.retained = std::mem::replace(&mut run.retained, Reservation::none());
+    outcome.retained.join(held);
     Ok(outcome)
 }
 
@@ -279,7 +333,7 @@ fn predict_final_model(
     run: &mut Run<'_>,
     mut outcome: ImagingOutcome,
 ) -> Result<ImagingOutcome, ImagingError> {
-    let major = run.refresh(outcome.scientific, Vec::new(), true)?;
+    let major = run.refresh(outcome.scientific, (Vec::new(), Reservation::none()), true)?;
     outcome.scientific = major.completion;
     outcome.visibility_products = major.visibility;
     outcome.major_cycle_count += 1;
@@ -317,6 +371,11 @@ impl<'a> Run<'a> {
             .open(problem)
             .map_err(|error| ImagingError::Observation(Box::new(error)))?;
         let dish_classes = selected.antenna_response_classes();
+        let admission = KernelAdmission {
+            host: &inputs.host,
+            policy: &inputs.policy,
+            workers: inputs.team.workers(),
+        };
         let domains = problem
             .geometry()
             .domains()
@@ -330,6 +389,7 @@ impl<'a> Run<'a> {
                     inputs.grid_precision,
                     inputs.aw_catalog.as_ref(),
                     &dish_classes,
+                    admission,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -353,13 +413,20 @@ impl<'a> Run<'a> {
                 .any(|domain| domain.operator.cf().pointing_ramp()),
             dish_classes,
         );
+        let (host, policy) = (inputs.host, inputs.policy);
         let started = Instant::now();
-        let weighting = weighting(problem, &domains[0], &mut source, team, &cancel)?;
+        let (weighting, weights) = weighting(
+            problem,
+            &domains[0],
+            &mut source,
+            team,
+            &cancel,
+            (&host, &policy),
+        )?;
         tracing::info!(
             "imaging weights: {workers} workers, {:.2} s",
             started.elapsed().as_secs_f64()
         );
-        let (host, policy) = (inputs.host, inputs.policy);
         let cube = matches!(main.basis(), Basis::ChannelLocal { .. })
             .then(|| cube_state(problem, inputs.spill_directory, workers, &host, &policy))
             .transpose()?;
@@ -375,6 +442,7 @@ impl<'a> Run<'a> {
             domains,
             source,
             weighting,
+            _weights: weights,
             team,
             cancel,
             host,
@@ -386,6 +454,7 @@ impl<'a> Run<'a> {
             visibility_write: inputs.visibility_write,
             planes_per_wave: None,
             weight_image,
+            retained: Reservation::none(),
         };
         if run.visibility_write.is_some() {
             // The pass that writes is the initial one without cleaning and a
@@ -397,7 +466,7 @@ impl<'a> Run<'a> {
             } else {
                 (run.initial_modes(), false)
             };
-            if run.admit_pass(modes, with_model)?.0 != Residency::All {
+            if run.admit_pass(modes, with_model, 0)?.0 != Residency::All {
                 return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
             }
         }
@@ -407,12 +476,16 @@ impl<'a> Run<'a> {
     /// The initial major cycle: data and PSF, from an empty model; it writes
     /// visibilities when it is also final.
     fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
+        // The model is admitted with the pass, before it is allocated.
+        let (residency, pass) =
+            self.admit_pass(self.initial_modes(), false, self.lifecycle.resident_bytes())?;
         let model = self
             .lifecycle
             .prepare_final_model(self.lifecycle.initial_empty()?, [])?;
-        let (residency, _pass) = self.admit_pass(self.initial_modes(), false)?;
         let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(residency)?)?;
-        self.reconcile(cycle, true, last, residency)
+        let major = self.reconcile(cycle, true, last, residency)?;
+        self.retain(&major, pass)?;
+        Ok(major)
     }
 
     /// The major cycle after a minor cycle: the residual of the model updated
@@ -420,19 +493,62 @@ impl<'a> Run<'a> {
     fn refresh(
         &mut self,
         completion: MajorCycleCompletion,
-        terms: Vec<ModelDeltaTerm>,
+        (terms, results): (Vec<ModelDeltaTerm>, Reservation),
         last: bool,
     ) -> Result<Major, ImagingError> {
+        // The retained charge still covers the normal state and model the
+        // pass refreshes; the pass adds its scratch and the new residual,
+        // and the minor cycle's charge covers its terms until the model
+        // holds them.
         let (normal_state, model) = completion.into_parts();
+        let (residency, mut pass) = self.admit_pass(ModeSet::DATA, true, 0)?;
         let model = self.lifecycle.prepare_final_model(model, terms)?;
-        let (residency, _pass) = self.admit_pass(ModeSet::DATA, true)?;
         let cycle = MajorCycle::refresh(
             self.problem,
             normal_state,
             model,
             self.normal_storage(residency)?,
         )?;
-        self.reconcile(cycle, false, last, residency)
+        let major = self.reconcile(cycle, false, last, residency)?;
+        pass.join(results);
+        self.retain(&major, pass)?;
+        Ok(major)
+    }
+
+    /// Admit `memory` bytes for `phase` under the run's policy.
+    fn admit(&self, phase: &'static str, memory: u64) -> Result<Reservation, ImagingError> {
+        Ok(admit(&self.host, &self.policy, &Demand { phase, memory })?)
+    }
+
+    /// Hand the pass's charge on to what `major` holds resident: join it to
+    /// the retained charge and keep only the completion's resident bytes.
+    fn retain(&mut self, major: &Major, pass: Reservation) -> Result<(), ImagingError> {
+        let resident = major.completion.resident_bytes()?;
+        self.retained.join(pass);
+        debug_assert!(
+            resident <= self.retained.memory(),
+            "the pass admitted what it hands on: {resident} bytes resident, {} charged",
+            self.retained.memory()
+        );
+        if resident > self.retained.memory() {
+            // The pass's plan undercounted what it hands on: admitted after
+            // the fact, so said.
+            tracing::warn!(
+                resident,
+                charged = self.retained.memory(),
+                "a pass handed on more than it admitted"
+            );
+            self.retained.join(admit(
+                &self.host,
+                &self.policy,
+                &Demand {
+                    phase: "retained normal state",
+                    memory: resident - self.retained.memory(),
+                },
+            )?);
+        }
+        self.retained.retain(resident);
+        Ok(())
     }
 
     /// Run `cycle`'s pass and finish it. The initial pass grids the data;
@@ -515,13 +631,14 @@ impl<'a> Run<'a> {
     }
 
     /// The waves of a pass accumulating `modes`, with a model when
-    /// `with_model`, that fit the free memory, and the reservation of one
-    /// wave: planned once per major cycle for both the pass and its normal
-    /// storage, and held while the pass runs.
+    /// `with_model`, that fit the free memory beside `besides` bytes the
+    /// pass also allocates (an initial model), and the reservation of both:
+    /// planned once per major cycle for the pass and its normal storage.
     fn admit_pass(
         &self,
         modes: ModeSet,
         with_model: bool,
+        besides: u64,
     ) -> Result<(Residency, Reservation), ImagingError> {
         let domains = pass_domains(&self.domains, self.team.workers());
         let demand = WaveDemand {
@@ -531,8 +648,10 @@ impl<'a> Run<'a> {
             native_spacing_hz: self.native_spacing_hz,
             workers: self.team.workers(),
             backend: self.backend,
+            block: self.source.maximum_block(),
         };
-        let residency = Residency::plan(&demand, free_memory(&self.host, &self.policy));
+        let free = free_memory(&self.host, &self.policy).saturating_sub(besides);
+        let residency = Residency::plan(&demand, free);
         let planes = match residency {
             Residency::All => demand.planes(),
             Residency::Waves { planes_per_wave } => planes_per_wave,
@@ -542,7 +661,7 @@ impl<'a> Run<'a> {
             &self.policy,
             &Demand {
                 phase: "major-cycle pass",
-                memory: demand.bytes(planes),
+                memory: demand.bytes(planes) + besides,
             },
         )?;
         Ok((residency, reservation))
@@ -634,18 +753,23 @@ fn next_masks(
 
 /// CASA's imaging weights for the run: the input weights (natural) or the
 /// density weights of one traversal on the main domain's cells, which every
-/// domain shares (`SynthesisImagerVi2::weight`).
+/// domain shares (`SynthesisImagerVi2::weight`), with the charge of the
+/// density grid the weights keep. The density pass is admitted under the
+/// run's `(host, policy)` before it allocates.
 fn weighting(
     problem: &CompiledProblem,
     main: &DomainOperator,
     source: &mut MeasurementSetSource<'_>,
     team: &WorkerTeam,
     cancel: &Cancel,
-) -> Result<WeightingGeneration, ImagingError> {
+    (host, policy): (&HostResources, &ResourcePolicy),
+) -> Result<(WeightingGeneration, Reservation), ImagingError> {
     let contract = problem.weighting();
     let taper = contract.uv_taper();
     let (robust, bandwidth) = match contract.scheme() {
-        WeightingScheme::Natural => return Ok(WeightingGeneration::Natural { taper }),
+        WeightingScheme::Natural => {
+            return Ok((WeightingGeneration::Natural { taper }, Reservation::none()));
+        }
         WeightingScheme::Uniform => (None, None),
         WeightingScheme::Briggs { robust } => (Some(robust), None),
         WeightingScheme::BriggsBandwidthTaper { robust } => {
@@ -666,10 +790,23 @@ fn weighting(
         }
     };
     let shape = density_shape(problem, &problem.geometry().domains()[0])?;
+    let mut weights = admit(
+        host,
+        policy,
+        &Demand {
+            phase: "imaging weights",
+            memory: density_pass_bytes(
+                &main.resampler,
+                &shape,
+                source.maximum_block(),
+                team.workers(),
+            ),
+        },
+    )?;
     let grid = run_density_pass(&main.operator, &main.resampler, shape, source, team, cancel)?;
-    Ok(WeightingGeneration::density(
-        grid, robust, bandwidth, taper,
-    )?)
+    weights.retain(shape.bytes());
+    let weighting = WeightingGeneration::density(grid, robust, bandwidth, taper)?;
+    Ok((weighting, weights))
 }
 
 /// The output-frame frequency envelope of a plane range of a channel-local

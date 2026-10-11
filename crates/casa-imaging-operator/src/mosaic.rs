@@ -18,7 +18,7 @@ use crate::convolution::{
     CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
     MuellerRouting, RowContext, TapLayout,
 };
-use crate::dense::{OversampledPlane, dense_cell};
+use crate::dense::{OversampledPlane, dense_cell, dense_cell_bytes};
 use crate::error::OperatorError;
 use crate::fft::PlaneFft;
 use crate::geometry::{GridGeometry, next_larger_even_composite};
@@ -262,21 +262,18 @@ pub struct MosaicPb {
     correction: ImageCorrection,
 }
 
-impl MosaicPb {
-    /// Build the cells for `geometry`'s image (which is the grid: the
-    /// mosaic set grids without padding), `dishes` in CASA's dish-class
-    /// order and the selected `windows`. `image_frequency_hz` is the
-    /// image's frequency at spectral pixel 0, which sizes the screen
-    /// (`PBMath1D::support`).
-    ///
-    /// # Errors
-    ///
-    /// No dish or window, a window without positive finite frequencies, a
-    /// screen too small to hold a cell, a failed FFT plan, a zero support
-    /// or a non-positive convolution-function integral.
-    pub fn new(
+/// What sizes a mosaic set before it is built
+/// (`HetArrayConvFunc::findConvFunction`): the side of the screen, which
+/// the widest dish class sets, and every window's frequency cells.
+struct MosaicLayout {
+    conv_size: usize,
+    cells: Vec<FrequencyCells>,
+    cell_count: usize,
+}
+
+impl MosaicLayout {
+    fn new(
         geometry: &GridGeometry,
-        polarization: &PolarizationRouting,
         image_frequency_hz: f64,
         dishes: &[AiryDish],
         windows: &[MosaicWindow],
@@ -317,14 +314,6 @@ impl MosaicPb {
                 reason: "the mosaic screen is smaller than 16 pixels",
             });
         }
-        let lattice = conv_size / 4;
-        // The screen covers the image field at `conv_size` pixels, so its
-        // increment is `Δ · n / convSize` per axis, in degrees as
-        // `PBMath1D::apply` works.
-        let screen_increment_deg = [
-            (increment[0] * nx as f64 / conv_size as f64).to_degrees(),
-            (increment[1] * ny as f64 / conv_size as f64).to_degrees(),
-        ];
         let mut cells = Vec::with_capacity(windows.len());
         let mut cell_count = 0;
         for window in windows {
@@ -337,6 +326,103 @@ impl MosaicPb {
                 reason: "the mosaic set has more than 65535 frequency cells",
             });
         }
+        Ok(Self {
+            conv_size,
+            cells,
+            cell_count,
+        })
+    }
+}
+
+impl MosaicPb {
+    /// Build the cells for `geometry`'s image (which is the grid: the
+    /// mosaic set grids without padding), `dishes` in CASA's dish-class
+    /// order and the selected `windows`: [`Self::screens`], then
+    /// [`MosaicScreens::finish`]. `image_frequency_hz` is the image's
+    /// frequency at spectral pixel 0, which sizes the screen
+    /// (`PBMath1D::support`).
+    ///
+    /// # Errors
+    ///
+    /// As those two stages.
+    pub fn new(
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        image_frequency_hz: f64,
+        dishes: &[AiryDish],
+        windows: &[MosaicWindow],
+    ) -> Result<Self, OperatorError> {
+        Self::screens(geometry, polarization, image_frequency_hz, dishes, windows)?.finish()
+    }
+
+    /// Bytes [`Self::screens`] holds at most for the same arguments: each
+    /// dish class's voltage table, the screen every lattice is transformed
+    /// on and its planning, one dish pair's beam products, and every pair's
+    /// lattices at every beam frequency.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::screens`] refuses the arguments, before it allocates.
+    pub fn screens_bytes(
+        geometry: &GridGeometry,
+        image_frequency_hz: f64,
+        dishes: &[AiryDish],
+        windows: &[MosaicWindow],
+    ) -> Result<u64, OperatorError> {
+        let layout = MosaicLayout::new(geometry, image_frequency_hz, dishes, windows)?;
+        let conv = layout.conv_size;
+        let lattice = conv / 4;
+        let pairs = pair_planes(dishes.len());
+        let lattices = pairs
+            * (layout.cell_count
+                * (2 * lattice * lattice * size_of::<Complex32>() + size_of::<PairLattices>())
+                + layout.cells.len()
+                    * (size_of::<(usize, usize, Vec<PairLattices>)>() + size_of::<usize>()));
+        let products = 2 * conv * (conv * size_of::<Complex32>() + size_of::<f32>());
+        let tables = dishes.len()
+            * (AnnularApertureVoltageTable::BYTES + size_of::<AnnularApertureVoltageTable>());
+        Ok(
+            (tables + conv * conv * size_of::<Complex64>() + products + lattices) as u64
+                + frequency_cell_bytes(&layout.cells)
+                + casa_fft::planning_bytes::<f64>(conv * conv)
+                + MuellerRouting::MAXIMUM_BYTES,
+        )
+    }
+
+    /// The first stage of building the cells: every dish pair's beam
+    /// products transformed on the screen at every beam frequency, cropped
+    /// to their lattices, with each window's support.
+    /// [`MosaicScreens::kernel_bytes`] then says what the cells cropped from
+    /// them hold before [`MosaicScreens::finish`] builds them.
+    ///
+    /// # Errors
+    ///
+    /// No dish or window, a window without positive finite frequencies, a
+    /// screen too small to hold a cell, a failed FFT plan or a zero
+    /// support.
+    pub fn screens(
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        image_frequency_hz: f64,
+        dishes: &[AiryDish],
+        windows: &[MosaicWindow],
+    ) -> Result<MosaicScreens, OperatorError> {
+        let MosaicLayout {
+            conv_size,
+            cells,
+            cell_count,
+        } = MosaicLayout::new(geometry, image_frequency_hz, dishes, windows)?;
+        let image = geometry.image();
+        let [nx, ny] = image.shape;
+        let increment = image.increment_rad;
+        let lattice = conv_size / 4;
+        // The screen covers the image field at `conv_size` pixels, so its
+        // increment is `Δ · n / convSize` per axis, in degrees as
+        // `PBMath1D::apply` works.
+        let screen_increment_deg = [
+            (increment[0] * nx as f64 / conv_size as f64).to_degrees(),
+            (increment[1] * ny as f64 / conv_size as f64).to_degrees(),
+        ];
         let tables = dishes.iter().map(AiryDish::table).collect::<Vec<_>>();
         let mut fft = PlaneFft::<f64>::new([conv_size, conv_size], false)?;
         let mut screen = vec![Complex64::default(); conv_size * conv_size];
@@ -369,6 +455,139 @@ impl MosaicPb {
                 }
             }
         }
+        Ok(MosaicScreens {
+            dishes: dishes.len(),
+            windows: cells,
+            cell_count,
+            screened,
+            window_support,
+            lattice,
+            conv_size,
+            grid: geometry.grid_shape(),
+            mueller: MuellerRouting::scalar(polarization.pol_map(), polarization.grid_pols()),
+        })
+    }
+
+    /// Bytes the set holds: its imaging and weight cells and its
+    /// corrections.
+    #[must_use]
+    pub fn resident_bytes(&self) -> u64 {
+        self.imaging
+            .iter()
+            .chain(&self.weight)
+            .map(|cell| cell.bytes() as u64)
+            .sum::<u64>()
+            + ((self.imaging.capacity() + self.weight.capacity()) * size_of::<DenseCell>()) as u64
+            + frequency_cell_bytes(&self.windows)
+            + self.mueller.bytes()
+            + self.correction.resident_bytes()
+    }
+}
+
+/// Bytes the windows' frequency cells hold, from their capacities.
+fn frequency_cell_bytes(windows: &Vec<FrequencyCells>) -> u64 {
+    (windows.capacity() * size_of::<FrequencyCells>()
+        + windows
+            .iter()
+            .map(|window| window.frequencies_hz.capacity() * size_of::<f64>())
+            .sum::<usize>()) as u64
+}
+
+/// A mosaic set's beam products transformed on their screens and cropped
+/// to their lattices, with each window's support, before their cells are
+/// cut and resampled ([`MosaicPb::screens`], [`Self::finish`]).
+#[derive(Debug)]
+pub struct MosaicScreens {
+    dishes: usize,
+    windows: Vec<FrequencyCells>,
+    cell_count: usize,
+    /// Per dish pair and window: the window, the pair's support and its
+    /// lattices at every beam frequency.
+    screened: Vec<(usize, usize, Vec<PairLattices>)>,
+    window_support: Vec<usize>,
+    lattice: usize,
+    conv_size: usize,
+    grid: [usize; 2],
+    mueller: MuellerRouting,
+}
+
+impl MosaicScreens {
+    /// Bytes the screens hold: every pair's lattices and the supports.
+    #[must_use]
+    pub fn bytes(&self) -> u64 {
+        (self
+            .screened
+            .iter()
+            .map(|(_, _, lattices)| {
+                lattices.capacity() * size_of::<PairLattices>()
+                    + lattices
+                        .iter()
+                        .map(|pair| {
+                            (pair.imaging.capacity() + pair.weight.capacity())
+                                * size_of::<Complex32>()
+                        })
+                        .sum::<usize>()
+            })
+            .sum::<usize>()
+            + self.screened.capacity() * size_of::<(usize, usize, Vec<PairLattices>)>()
+            + self.window_support.capacity() * size_of::<usize>()) as u64
+            + frequency_cell_bytes(&self.windows)
+            + self.mueller.bytes()
+    }
+
+    /// Bytes [`Self::finish`] allocates beside the screens: the imaging and
+    /// weight cells it cuts from them, which the set keeps
+    /// ([`MosaicPb::resident_bytes`]), one cell's crop and resampling at a
+    /// time, and the corrections.
+    #[must_use]
+    pub fn kernel_bytes(&self) -> u64 {
+        let cells = self
+            .screened
+            .iter()
+            .map(|(_, support, lattices)| {
+                let half = u16::try_from(*support).expect("support fits u16");
+                2 * lattices.len() as u64 * dense_cell_bytes(1, MOSAIC_OVERSAMPLING, [half, half])
+            })
+            .sum::<u64>();
+        let crop = self
+            .window_support
+            .iter()
+            .map(|support| self.crop(*support))
+            .max()
+            .unwrap_or(0);
+        let resampled = crop * usize::from(MOSAIC_OVERSAMPLING);
+        let transients = crop * crop * (size_of::<Complex32>() + 2 * size_of::<f32>())
+            + resampled * resampled * size_of::<Complex32>();
+        let records = 2 * self.cell_count * pair_planes(self.dishes) * size_of::<DenseCell>();
+        cells + (transients + records) as u64 + ImageCorrection::bytes(self.grid)
+    }
+
+    /// The side every pair of a window of `support` is cropped to.
+    fn crop(&self, support: usize) -> usize {
+        (2 * (support + 2)).min(self.lattice)
+    }
+
+    /// The second stage of building the cells: crop every pair of a window
+    /// to the widest pair's `2(support + 2)`, normalise each over its own
+    /// support, resample, and form the corrections.
+    ///
+    /// # Errors
+    ///
+    /// A crop too small to resample, or a non-positive
+    /// convolution-function integral.
+    pub fn finish(self) -> Result<MosaicPb, OperatorError> {
+        let Self {
+            dishes,
+            windows: cells,
+            cell_count,
+            screened,
+            window_support,
+            lattice,
+            conv_size,
+            grid,
+            mueller,
+        } = self;
+        let planes = pair_planes(dishes);
         // `findConvFunction` crops every pair of a window to the widest
         // pair's `2(support + 2)`; each pair is normalised over its own
         // support.
@@ -407,24 +626,26 @@ impl MosaicPb {
                 })
                 .collect::<Vec<_>>()
         };
-        let [grid_nx, grid_ny] = geometry.grid_shape();
+        let [grid_nx, grid_ny] = grid;
         let model_x = sinc(grid_nx);
         let model_y = sinc(grid_ny);
         let image_x = model_x.iter().map(|value| 1.0 / value).collect();
         let image_y = model_y.iter().map(|value| 1.0 / value).collect();
-        Ok(Self {
-            dishes: dishes.len(),
+        Ok(MosaicPb {
+            dishes,
             windows: cells,
             cells_per_plane: cell_count,
             imaging,
             weight,
             max_half_support: half_support,
             conv_size,
-            mueller: MuellerRouting::scalar(polarization.pol_map(), polarization.grid_pols()),
+            mueller,
             correction: ImageCorrection::split(image_x, image_y, model_x, model_y),
         })
     }
+}
 
+impl MosaicPb {
     /// Number of dish classes.
     #[must_use]
     pub const fn dishes(&self) -> usize {
@@ -450,16 +671,6 @@ impl MosaicPb {
     #[must_use]
     pub fn half_support(&self, key: CfKey) -> u16 {
         self.imaging[self.index(key)].support[0] / 2
-    }
-
-    /// Bytes of the imaging and weight tap values.
-    #[must_use]
-    pub fn bytes(&self) -> usize {
-        self.imaging
-            .iter()
-            .chain(&self.weight)
-            .map(DenseCell::bytes)
-            .sum()
     }
 
     fn window(&self, spectral_window: u32) -> Option<&FrequencyCells> {
@@ -557,6 +768,7 @@ impl ConvolutionFunctionSet for MosaicPb {
 
 /// The quarter-cropped imaging and weight lattices of one pair at one
 /// frequency, `side × side`, x fastest, origin at `side/2`.
+#[derive(Debug)]
 struct PairLattices {
     imaging: Vec<Complex32>,
     weight: Vec<Complex32>,

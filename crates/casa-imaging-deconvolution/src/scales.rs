@@ -8,6 +8,34 @@ use num_complex::Complex64;
 use crate::Error;
 use crate::plane::{PlaneShape, Support};
 
+/// Heap bytes of one `f64` plane of `shape`.
+pub(crate) const fn plane_bytes(shape: PlaneShape) -> u64 {
+    (shape.len() * size_of::<f64>()) as u64
+}
+
+/// Heap bytes of one half spectrum of `shape` ([`PlaneFft::forward`]).
+pub(crate) const fn spectrum_bytes(shape: PlaneShape) -> u64 {
+    match RealFft2::<f64>::spectrum_len([shape.nx, shape.ny]) {
+        Some(len) => (len * size_of::<Complex64>()) as u64,
+        None => u64::MAX,
+    }
+}
+
+/// Heap bytes planning the half-spectrum transform of `shape` holds while
+/// FFTW plans it ([`casa_fft::planning_bytes`]).
+pub(crate) const fn planning_bytes(shape: PlaneShape) -> u64 {
+    match RealFft2::<f64>::spectrum_len([shape.nx, shape.ny]) {
+        Some(len) => casa_fft::planning_bytes::<f64>(len),
+        None => u64::MAX,
+    }
+}
+
+/// Heap bytes one [`ScaleBank::convolve`] holds while it runs: the product
+/// spectrum, then the plane it returns.
+pub(crate) const fn convolve_bytes(shape: PlaneShape) -> u64 {
+    spectrum_bytes(shape) + plane_bytes(shape)
+}
+
 /// Real two-dimensional transforms of one plane shape, in double precision
 /// on one thread.
 pub(crate) struct PlaneFft {
@@ -170,6 +198,47 @@ pub(crate) struct ScaleBank {
 }
 
 impl ScaleBank {
+    /// Heap bytes a bank of `sizes` on `shape` holds, with what building
+    /// it holds besides: each scale's spectrum and samples, and one
+    /// wrapped plane and its spectrum at a time, beside planning their
+    /// transform.
+    pub(crate) fn bytes(sizes: &[f64], shape: PlaneShape) -> u64 {
+        let samples = sizes
+            .iter()
+            .map(|&size| {
+                let count = Self::scale_cells(size, shape).next_power_of_two();
+                (count * size_of::<(isize, isize, f64)>()) as u64
+            })
+            .sum::<u64>();
+        sizes.len() as u64 * spectrum_bytes(shape)
+            + samples
+            + plane_bytes(shape)
+            + spectrum_bytes(shape)
+            + planning_bytes(shape)
+    }
+
+    /// Samples one scale function of `size` pixels has at most on `shape`:
+    /// the disc's bounding square, as [`ScaleFunction::new`] scans it.
+    fn scale_cells(size: f64, shape: PlaneShape) -> usize {
+        let side = 2 * size as usize + 3;
+        (side * side).min(shape.len())
+    }
+
+    /// Pixels a component of any of `sizes` covers at most on `shape`.
+    pub(crate) fn support_cells(sizes: &[f64], shape: PlaneShape) -> usize {
+        sizes
+            .iter()
+            .map(|&size| Self::scale_cells(size, shape))
+            .max()
+            .unwrap_or(1)
+    }
+
+    /// Heap bytes [`Self::masks`] holds while it runs, besides the masks it
+    /// returns: the support as a plane, its spectrum and one convolution.
+    pub(crate) const fn masks_bytes(shape: PlaneShape) -> u64 {
+        plane_bytes(shape) + spectrum_bytes(shape) + convolve_bytes(shape)
+    }
+
     /// The scales `sizes` (ascending) with CASA's bias
     /// `1 − bias·size/largest` (1 for a single scale); `small_scale_bias`
     /// is clamped to [−1, 1] as `SDAlgorithmMSClean` does.

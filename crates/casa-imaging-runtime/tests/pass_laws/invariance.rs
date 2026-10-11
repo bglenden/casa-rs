@@ -7,8 +7,8 @@ use casa_imaging_operator::{
     SpectralResampler, WeightingGeneration, build_density_grid,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, BoundedSource, Cancel, MajorCyclePass, NativeBlock, Partition, PassDomain,
-    PassError, Residency, SourceError, WorkerTeam, run_density_pass, run_major_cycle,
+    BackendChoice, BlockShape, BoundedSource, Cancel, MajorCyclePass, NativeBlock, Partition,
+    PassDomain, PassError, Residency, SourceError, WorkerTeam, run_density_pass, run_major_cycle,
 };
 use num_complex::Complex32;
 
@@ -168,6 +168,10 @@ impl BoundedSource for CancellingRows {
             self.cancel.cancel();
         }
         Ok(more)
+    }
+
+    fn maximum_block(&self) -> BlockShape {
+        self.rows.maximum_block()
     }
 }
 

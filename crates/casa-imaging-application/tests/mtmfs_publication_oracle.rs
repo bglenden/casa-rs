@@ -157,7 +157,7 @@ fn issue607_representative_mtmfs_matches_casa_products() -> Result<(), Box<dyn E
     assert_eq!(outcome.total_minor_iterations, 8);
     assert_eq!(outcome.product_names(), PRODUCT_NAMES.map(str::to_string));
     assert_eq!(
-        outcome.scientific.normal_state().sample_count(),
+        outcome.scientific().normal_state().sample_count(),
         1_336_320,
         "representative MT-MFS selected sample count changed",
     );

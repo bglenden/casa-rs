@@ -65,6 +65,9 @@ pub(crate) struct Prepared {
     pub(crate) write_corrected_data: bool,
     /// What the native run deploys once the availability check passes.
     pub(crate) deployment: Deployment,
+    /// The charge of the walks of the MeasurementSet's rows: the survey's,
+    /// done, and the observation's resolution's, still to come.
+    pub(crate) walks: casa_imaging_runtime::Reservation,
 }
 
 /// The MeasurementSet as [`prepare`] surveyed it: the table, its geometry
@@ -78,12 +81,28 @@ struct Surveyed<'a> {
 }
 
 /// Compile `request` against its MeasurementSet.
+///
+/// What compile reads is admitted, not compile itself: the walks of the
+/// MeasurementSet's rows are admitted once it is open and its rows are
+/// known, before the first walk; opening it reads only its tables'
+/// descriptions, under the run's fixed charges.
 pub(crate) fn prepare(
     request: &ImagingRequest,
     context: &RunContext,
 ) -> Result<Prepared, PrepareError> {
     let ms = MeasurementSet::open(&request.vis)?;
     let budget = casa_imaging_runtime::bootstrap_source_budget();
+    // The survey here and the observation's resolution after it each walk
+    // the MAIN rows under `budget`, one after the other: one walk's charge
+    // covers both.
+    let walks = casa_imaging_runtime::admit(
+        &context.host,
+        &context.policy,
+        &casa_imaging_runtime::Demand {
+            phase: "MeasurementSet walks",
+            memory: ms.row_walk_bytes(budget.row_io_budget())? as u64,
+        },
+    )?;
     // The one Measures provider of the run: compile's geometry and the bound
     // observation's both evaluate with it.
     let measures = casa_ms::open_measures_runtime()?;
@@ -169,6 +188,7 @@ pub(crate) fn prepare(
         write_model_column: request.savemodel,
         write_corrected_data: request.save_continuum_residual,
         deployment,
+        walks,
     })
 }
 

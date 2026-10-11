@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+/// Freed working buffers leave the process at once, so a run's footprint
+/// follows the memory its phases admit.
+#[global_allocator]
+static ALLOCATOR: casa_imaging_application::ReturningAllocator =
+    casa_imaging_application::ReturningAllocator;
+
 fn main() {
     let (logging_guard, args) =
         match casa_logging::init_global_from_env_and_args(std::env::args_os().skip(1)) {

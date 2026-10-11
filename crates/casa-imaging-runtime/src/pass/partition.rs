@@ -3,9 +3,12 @@
 
 use std::ops::Range;
 
-use casa_imaging_operator::{CellHold, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile};
+use casa_imaging_operator::{
+    Basis, CellHold, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile, grid_planning_bytes,
+};
+use casa_imaging_reconstruction::resident_bytes_per_cell;
 
-use super::{BackendChoice, PassDomain, native_residuals};
+use super::{BackendChoice, BlockShape, PassDomain, native_residuals};
 
 /// How one pass divides an image domain's grid accumulation among owners
 /// (one per worker).
@@ -109,6 +112,8 @@ pub struct WaveDemand<'a> {
     pub workers: usize,
     /// Where the owners grid.
     pub backend: BackendChoice,
+    /// The layout of the source's rows ([`super::BoundedSource::maximum_block`]).
+    pub block: BlockShape,
 }
 
 impl WaveDemand<'_> {
@@ -121,20 +126,28 @@ impl WaveDemand<'_> {
     }
 
     /// Bytes a wave of `planes` planes holds. Per image domain and plane:
-    /// its accumulator holding `modes` and its images twice (the operator's
-    /// and the normal state's copy); with a model, the prepared grids of the
-    /// wave's planes and of its model halo on each side. Per worker: one
+    /// its accumulator holding `modes`; the operator's `f32` images; and, for
+    /// a basis whose normal state is resident, that state's copy at its
+    /// stored size ([`casa_imaging_reconstruction::resident_bytes_per_cell`]):
+    /// a channel-local state is paged, under its cube cache's charge. With a
+    /// model, the prepared grids of the wave's planes and of its model halo on
+    /// each side. Per worker: one
     /// transform plane and one image per grid polarization of the largest
     /// domain. On Metal the accumulators are device memory and cost nothing
     /// more; each owner adds its ring ([`casa_imaging_metal::ring_bytes`]),
     /// and a pass that subtracts the model on the device adds the device
-    /// copy of the model grids.
+    /// copy of the model grids. Per pass, whatever the wave: the row chunks
+    /// it places [`Self::block`]'s rows with, and planning one grid
+    /// transform ([`grid_planning_bytes`]), which the process does one at a
+    /// time. What grows with the source's block is the source's
+    /// ([`super::source_block_bytes`]).
     #[must_use]
     pub fn bytes(&self, planes: u32) -> u64 {
         let total = self.planes();
         let one = PlaneRange::single(0);
         let mut bytes = 0_u64;
         let mut per_worker = 0_u64;
+        let mut planning = 0_u64;
         for domain in self.domains {
             let operator = domain.operator;
             let precision = operator.precision();
@@ -145,9 +158,19 @@ impl WaveDemand<'_> {
             let image_cells = (width * height) as u64;
             let basis = operator.basis();
             let pols = operator.polarization().requested().len() as u64;
-            let images =
-                (basis.data_terms() + if self.modes.psf { basis.psf_terms() } else { 0 }) as u64;
-            per_plane += 2 * images * pols * image_cells * 4;
+            let images = (basis.data_terms()
+                + if self.modes.psf { basis.psf_terms() } else { 0 }
+                + usize::from(self.modes.weight)) as u64;
+            per_plane += images * pols * image_cells * size_of::<f32>() as u64;
+            if !matches!(basis, Basis::ChannelLocal { .. }) {
+                per_plane += pols
+                    * image_cells
+                    * resident_bytes_per_cell(
+                        basis.data_terms(),
+                        basis.psf_terms(),
+                        self.modes.psf,
+                    );
+            }
             bytes += per_plane * u64::from(planes);
             if self.with_model {
                 let model_planes = planes
@@ -172,8 +195,18 @@ impl WaveDemand<'_> {
             let grid_cells = operator.geometry().cells() as u64;
             let gpols = operator.polarization().grid_pols() as u64;
             per_worker = per_worker.max(grid_cells * 16 + gpols * image_cells * 16);
+            planning = planning.max(grid_planning_bytes(operator.geometry().cells()));
         }
-        bytes + self.workers as u64 * per_worker
+        bytes
+            + planning
+            + self.workers as u64 * per_worker
+            + super::wave::chunk_bytes(
+                self.domains,
+                self.backend,
+                self.block,
+                self.workers,
+                self.modes.weight,
+            )
     }
 }
 

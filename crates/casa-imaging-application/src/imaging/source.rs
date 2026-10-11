@@ -8,8 +8,10 @@ use casa_imaging_model::{
 use casa_imaging_operator::{PlaneRange, RowContext};
 use casa_imaging_reconstruction::direction_world_to_pixel;
 use casa_imaging_runtime::pass::{
-    BoundedSource, DomainProjection, NativeBlock, NativeRowHeader, RowAddress, SourceError,
+    BlockShape, BoundedSource, DomainProjection, NativeBlock, NativeRowHeader, RowAddress,
+    SourceError,
 };
+use casa_imaging_runtime::row_layout;
 use casa_ms::{
     BoundSelectedObservation, ProjectedObservationBlock, SelectedObservationBlock,
     SelectedObservationBlockSource, SelectedObservationNumericGeometry,
@@ -300,18 +302,10 @@ impl BoundedSource for MeasurementSetSource<'_> {
             None => selected.into_block_stream(self.problem),
         };
         let block = source.create_storage();
-        let channels = self
-            .problem
-            .observation_transaction()
-            .read_set()
-            .sources()
-            .iter()
-            .flat_map(|source| source.selection().spectral_windows())
-            .map(|window| window.channel_indices().len())
-            .max()
-            .unwrap_or(0);
-        let geometry =
-            SelectedObservationNumericGeometry::new(source.maximum_rows_per_block(), channels)?;
+        let geometry = SelectedObservationNumericGeometry::new(
+            source.maximum_rows_per_block(),
+            row_layout(self.problem).channels(),
+        )?;
         self.traversal = Traversal::Streaming(Box::new(Stream {
             source,
             block,
@@ -339,5 +333,17 @@ impl BoundedSource for MeasurementSetSource<'_> {
         self.convert(&projected, out)?;
         self.traversal = Traversal::Streaming(stream);
         Ok(true)
+    }
+
+    fn maximum_block(&self) -> BlockShape {
+        let rows = match &self.traversal {
+            Traversal::Idle(selected) => selected.maximum_rows_per_block(),
+            Traversal::Streaming(stream) => stream.source.maximum_rows_per_block(),
+            Traversal::Failed => 0,
+        };
+        BlockShape {
+            rows,
+            ..row_layout(self.problem)
+        }
     }
 }

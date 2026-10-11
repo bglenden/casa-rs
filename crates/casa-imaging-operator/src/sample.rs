@@ -140,6 +140,37 @@ impl SampleBuffer {
         }
     }
 
+    /// Empty buffer for `npol` visibility polarizations per placement with
+    /// room for `placements` placements, so filling it with at most that
+    /// many never grows it beyond [`Self::bytes`].
+    #[must_use]
+    pub fn with_capacity(npol: usize, placements: usize) -> Self {
+        assert!(npol > 0, "a sample block needs at least one polarization");
+        Self {
+            placements: Vec::with_capacity(placements),
+            values: Vec::with_capacity(placements * npol),
+            weights: Vec::with_capacity(placements * npol),
+            npol,
+        }
+    }
+
+    /// Bytes a buffer of `npol` polarizations holds with room for
+    /// `placements` placements ([`Self::with_capacity`]).
+    #[must_use]
+    pub const fn bytes(npol: usize, placements: usize) -> u64 {
+        (placements * (size_of::<Placement>() + npol * (size_of::<Complex32>() + size_of::<f32>())))
+            as u64
+    }
+
+    /// Bytes the buffer holds now, from its capacities: [`Self::bytes`] for
+    /// a buffer [`Self::with_capacity`] made that has not grown.
+    #[must_use]
+    pub fn capacity_bytes(&self) -> u64 {
+        (self.placements.capacity() * size_of::<Placement>()
+            + self.values.capacity() * size_of::<Complex32>()
+            + self.weights.capacity() * size_of::<f32>()) as u64
+    }
+
     /// Visibility polarizations per placement.
     #[must_use]
     pub const fn npol(&self) -> usize {

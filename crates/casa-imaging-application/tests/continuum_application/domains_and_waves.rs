@@ -6,9 +6,13 @@ use casa_imaging_application::{Admission, SummaryTarget};
 
 use super::*;
 
-/// One worker and `memory` bytes of host memory.
-const fn memory_policy(memory: u64) -> ResourcePolicy {
-    ResourcePolicy::Explicit { workers: 1, memory }
+/// One worker and `memory` bytes of host memory for the run's phases,
+/// beside what compiling leaves resident.
+fn memory_policy(memory: u64) -> ResourcePolicy {
+    ResourcePolicy::Explicit {
+        workers: 1,
+        memory: memory + compile_resident(),
+    }
 }
 
 /// A dirty cube of the 32-channel fixture's channels 1 … 30 at
@@ -186,7 +190,8 @@ fn a_refused_run_records_its_error_in_its_summary() {
 
 /// The paged cube cache stays charged while anything holds the run's model
 /// and normal state, products included, and is released with the last
-/// holder.
+/// holder. The process keeps the charge of its caches, which its first run
+/// takes.
 #[test]
 fn a_completed_cube_keeps_its_cache_charged_until_its_state_drops() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -200,14 +205,22 @@ fn a_completed_cube_keeps_its_cache_charged_until_its_state_drops() {
     let context = context_with(memory_policy(64 << 20));
     let (host, policy) = (context.host, context.policy);
     let free = casa_imaging_runtime::free_memory(&host, &policy);
+    let table_cache = if free == policy.memory(&host) {
+        casa_imaging_application::process_cache_bytes()
+    } else {
+        0
+    };
     let outcome =
         casa_imaging_application::execute(&imaging, context).expect("a cube within 64 MiB");
     assert!(
-        casa_imaging_runtime::free_memory(&host, &policy) < free,
+        casa_imaging_runtime::free_memory(&host, &policy) < free - table_cache,
         "the returned cube state still charges its cache"
     );
     drop(outcome);
-    assert_eq!(casa_imaging_runtime::free_memory(&host, &policy), free);
+    assert_eq!(
+        casa_imaging_runtime::free_memory(&host, &policy),
+        free - table_cache
+    );
 }
 
 /// A source with many rows grows its blocks by at most a quarter of the
@@ -278,7 +291,7 @@ fn outlier_cubes_of_another_size_page_their_own_planes() {
         };
         imaging.outlierfile = Some(outlier_file);
         let outcome = execute(&imaging).expect("a cube with a smaller outlier");
-        assert_eq!(outcome.scientific.normal_state().domain_count(), 2);
+        assert_eq!(outcome.scientific().normal_state().domain_count(), 2);
         for suffix in DIRTY_PRODUCT_SUFFIXES {
             let plane = |pixels: usize| -> Vec<usize> {
                 if suffix == ".sumwt" {

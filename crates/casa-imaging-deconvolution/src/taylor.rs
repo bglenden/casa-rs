@@ -8,7 +8,7 @@ use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 use crate::Error;
 use crate::patch::subtract_window;
 use crate::plane::{PlaneShape, Support, beam_patch, casacore_max_abs};
-use crate::scales::ScaleBank;
+use crate::scales::{ScaleBank, convolve_bytes, plane_bytes, spectrum_bytes};
 use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd};
 
 /// The scale-mask threshold of the multi-term cleaner (`setupUserMask`).
@@ -43,6 +43,16 @@ impl Taylor {
             scales,
             small_scale_bias,
         }
+    }
+
+    /// The scales a plane of `shape` cleans with: those larger than half the
+    /// image are dropped (`verifyScaleSizes`).
+    fn sizes(&self, shape: PlaneShape) -> Vec<f64> {
+        self.scales
+            .iter()
+            .copied()
+            .filter(|size| *size <= (shape.nx / 2) as f64 && *size <= (shape.ny / 2) as f64)
+            .collect()
     }
 }
 
@@ -127,13 +137,7 @@ impl Solver for Taylor {
     ) -> Result<TaylorState, Error> {
         let shape = view.shape;
         let terms = self.terms;
-        // Scales larger than half the image are dropped (verifyScaleSizes).
-        let sizes = self
-            .scales
-            .iter()
-            .copied()
-            .filter(|size| *size <= (shape.nx / 2) as f64 && *size <= (shape.ny / 2) as f64)
-            .collect::<Vec<_>>();
+        let sizes = self.sizes(shape);
         if sizes.is_empty() {
             return Err(Error::NoScale);
         }
@@ -338,6 +342,30 @@ impl Solver for Taylor {
             plane.clone_from(&state.rhs[term * scales]);
         }
         Ok(StepEnd { peak, refreshes: 0 })
+    }
+
+    /// The bank, the `2T−1` PSF spectra, the Hessian patches, `2·T·S`
+    /// right-hand-side and coefficient planes, `S` work planes and masks,
+    /// and the largest transient: a convolution beside one residual term's
+    /// spectrum, or the masks' construction.
+    fn working_bytes(&self, shape: PlaneShape, terms: usize) -> u64 {
+        let sizes = self.sizes(shape);
+        let (scales, terms) = (sizes.len() as u64, terms as u64);
+        let patch = sizes
+            .last()
+            .map_or(0, |largest| beam_patch(*largest, shape)) as u64;
+        let hessian = terms * (terms + 1) / 2 * scales * (scales + 1) / 2 * patch * patch;
+        ScaleBank::bytes(&sizes, shape)
+            + (2 * terms).saturating_sub(1) * spectrum_bytes(shape)
+            + hessian * size_of::<f64>() as u64
+            + (2 * terms * scales + scales) * plane_bytes(shape)
+            + scales * shape.len() as u64
+            + (convolve_bytes(shape) + spectrum_bytes(shape)).max(ScaleBank::masks_bytes(shape))
+    }
+
+    /// The largest scale's support.
+    fn component_cells(&self, shape: PlaneShape) -> usize {
+        ScaleBank::support_cells(&self.sizes(shape), shape)
     }
 }
 

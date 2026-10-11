@@ -523,7 +523,7 @@ fn real_clark_worker_cases(
                         }
                     })
                     .collect::<Vec<_>>();
-                let science = &output.scientific;
+                let science = output.scientific();
                 let normal = science.normal_state();
                 let windows = (0..normal.sum_weights().len())
                     .map(|channel| {

@@ -28,7 +28,7 @@ pub use image_response::{ImageResponseError, MinorCycleImageResponse, MosaicSens
 pub(crate) use spectral_operator::PassNormalState;
 pub use spectral_operator::{
     PassImages, SpectralChannelValidity, SpectralOperatorError, SpectralOperatorPrimitives,
-    SpectralPrimitiveCatalog, SpectralSlabPlan,
+    SpectralPrimitiveCatalog, SpectralSlabPlan, resident_bytes_per_cell,
 };
 
 /// The normal-state storage seam: `casa-imaging-runtime` implements paged
