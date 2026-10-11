@@ -235,6 +235,27 @@ impl MuellerRouting {
         }
     }
 
+    /// Bytes a routing of at most four correlations and four grid
+    /// polarizations holds at most.
+    pub const MAXIMUM_BYTES: u64 =
+        4 * (4 * size_of::<Vec<Option<u8>>>() as u64 + 16 * size_of::<Option<u8>>() as u64);
+
+    /// Bytes the routing's tables hold, from their capacities.
+    #[must_use]
+    pub fn bytes(&self) -> u64 {
+        self.adjoint
+            .iter()
+            .chain(&self.forward)
+            .map(|table| {
+                table.capacity() * size_of::<Vec<Option<u8>>>()
+                    + table
+                        .iter()
+                        .map(|row| row.capacity() * size_of::<Option<u8>>())
+                        .sum::<usize>()
+            })
+            .sum::<usize>() as u64
+    }
+
     /// Number of grid polarizations.
     #[must_use]
     pub fn grid_pols(&self) -> usize {
@@ -325,6 +346,19 @@ impl ImageCorrection {
             model_x: model_x.into_boxed_slice(),
             model_y: model_y.into_boxed_slice(),
         }
+    }
+
+    /// Bytes the four correction vectors of a grid of `grid` hold.
+    #[must_use]
+    pub const fn bytes(grid: [usize; 2]) -> u64 {
+        (2 * (grid[0] + grid[1]) * size_of::<f64>()) as u64
+    }
+
+    /// Bytes the four correction vectors hold.
+    #[must_use]
+    pub fn resident_bytes(&self) -> u64 {
+        ((self.x.len() + self.y.len() + self.model_x.len() + self.model_y.len()) * size_of::<f64>())
+            as u64
     }
 
     /// Image-side correction along the grid x axis.

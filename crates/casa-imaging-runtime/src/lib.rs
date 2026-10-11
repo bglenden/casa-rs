@@ -21,13 +21,13 @@ pub use allocator::{RETURNED_BLOCK_BYTES, ReturningAllocator};
 pub use cube_state::CubeState;
 pub use minor::{
     MinorCycleOutcome, MinorCycleRunError, MinorCycleSetup, MinorCycleSummary, PreparedMinorCycle,
-    PsfCache, TracedComponent, mask_bytes, prepare_bytes, prepare_minor_cycle, run_bytes,
-    run_minor_cycle,
+    PsfCache, TracedComponent, mask_bytes, prepare_bytes, prepare_minor_cycle, result_bytes,
+    run_bytes, run_minor_cycle,
 };
 pub use resources::{
     Admission, Demand, HostError, HostResources, Reservation, ResourcePolicy, admit, free_memory,
 };
 pub use source_access::{
-    SourceAccessError, bootstrap_source_budget, finalize_source_access, row_layout,
+    FRAME_MARGIN, SourceAccessError, bootstrap_source_budget, finalize_source_access, row_layout,
 };
 pub use summary::{Cancelled, Phase, RunSummary, SummaryTarget, run_phase};

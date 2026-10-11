@@ -17,6 +17,9 @@ pub struct AnnularApertureVoltageTable {
 }
 
 impl AnnularApertureVoltageTable {
+    /// Heap bytes a table holds.
+    pub const BYTES: usize = SAMPLE_COUNT * size_of::<f32>();
+
     /// Tabulate an aperture with the supplied diameter, blockage, and support.
     #[must_use]
     pub fn new(aperture_diameter: f64, blockage_diameter: f64, maximum_radius: f64) -> Self {

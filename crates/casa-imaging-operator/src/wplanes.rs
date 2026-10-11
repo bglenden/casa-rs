@@ -8,7 +8,7 @@ use crate::convolution::{
     CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
     MuellerRouting, RowContext, TapLayout,
 };
-use crate::dense::dense_cell_from_quadrant;
+use crate::dense::{dense_cell_from_quadrant, dense_cell_from_quadrant_bytes};
 use crate::error::OperatorError;
 use crate::fft::PlaneFft;
 use crate::geometry::{GridGeometry, next_larger_even_composite};
@@ -57,18 +57,20 @@ pub struct WPlanes {
     correction: ImageCorrection,
 }
 
-impl WPlanes {
-    /// Build the planes for `geometry`'s image on its CASA-padded grid.
-    ///
-    /// # Errors
-    ///
-    /// The plane count resolves to zero, the FFT cannot be planned, or the
-    /// plane-0 kernel has no positive integral.
-    pub fn new(
-        geometry: &GridGeometry,
-        polarization: &PolarizationRouting,
-        count: WPlaneCount,
-    ) -> Result<Self, OperatorError> {
+/// What sizes a W-projection set before it is built
+/// (`WPConvFunc::findConvFunction`): the plane count, the largest `|w|` the
+/// planes reach, the side of the screen they are transformed on and its
+/// oversampling.
+#[derive(Clone, Copy, Debug)]
+struct WLayout {
+    planes: usize,
+    max_uvw: f64,
+    conv_size: usize,
+    sampling: u16,
+}
+
+impl WLayout {
+    fn new(geometry: &GridGeometry, count: WPlaneCount) -> Result<Self, OperatorError> {
         let image = geometry.image();
         let [nx, ny] = image.shape;
         let increment = image.increment_rad;
@@ -97,8 +99,6 @@ impl WPlanes {
                 reason: "W projection needs at least one plane",
             });
         }
-        // `wScale = Float((wConvSize-1)*(wConvSize-1))/maxUVW`.
-        let w_scale = f64::from(((planes - 1) * (planes - 1)) as f32) / max_uvw;
         let sampling = if planes > 1 { W_OVERSAMPLING } else { 1 };
         // `convSize = max(Int(nx*padding), Int(ny*padding))`, stepped to
         // `nextLargerEven` for more than one plane only. `CompositeNumber::
@@ -115,13 +115,93 @@ impl WPlanes {
         } else {
             padded + padded % 2
         };
+        Ok(Self {
+            planes,
+            max_uvw,
+            conv_size,
+            sampling,
+        })
+    }
+
+    /// Side of the positive quadrant kept of each plane's screen.
+    const fn quadrant_side(self) -> usize {
+        self.conv_size / 2 - 1
+    }
+}
+
+impl WPlanes {
+    /// Build the planes for `geometry`'s image on its CASA-padded grid:
+    /// [`Self::screens`], then [`WScreens::finish`].
+    ///
+    /// # Errors
+    ///
+    /// As those two stages.
+    pub fn new(
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        count: WPlaneCount,
+    ) -> Result<Self, OperatorError> {
+        Self::screens(geometry, polarization, count)?.finish()
+    }
+
+    /// Bytes [`Self::screens`] holds at most for `geometry` and `count`:
+    /// the screen every plane is transformed on and its planning, each
+    /// plane's quadrant, its support and the taper.
+    ///
+    /// # Errors
+    ///
+    /// The plane count resolves to zero.
+    pub fn screens_bytes(
+        geometry: &GridGeometry,
+        count: WPlaneCount,
+    ) -> Result<u64, OperatorError> {
+        let layout = WLayout::new(geometry, count)?;
+        let side = layout.quadrant_side();
+        let quadrant = side * side * size_of::<Complex32>() + size_of::<Vec<Complex32>>();
+        Ok(
+            (layout.conv_size * layout.conv_size * size_of::<Complex64>()
+                + layout.planes * (quadrant + size_of::<usize>())
+                + layout.conv_size / usize::from(layout.sampling) * size_of::<f64>())
+                as u64
+                + casa_fft::planning_bytes::<f64>(layout.conv_size * layout.conv_size)
+                + MuellerRouting::MAXIMUM_BYTES,
+        )
+    }
+
+    /// The first stage of building the planes: transform every plane on its
+    /// screen and keep its positive quadrant, normalised to plane 0's peak,
+    /// with its support. [`WScreens::kernel_bytes`] then says what the
+    /// kernels cropped from them hold before [`WScreens::finish`] builds
+    /// them.
+    ///
+    /// # Errors
+    ///
+    /// The plane count resolves to zero, the FFT cannot be planned, or the
+    /// plane-0 kernel has no peak.
+    pub fn screens(
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        count: WPlaneCount,
+    ) -> Result<WScreens, OperatorError> {
+        let layout = WLayout::new(geometry, count)?;
+        let WLayout {
+            planes,
+            max_uvw,
+            conv_size,
+            sampling,
+        } = layout;
+        let image = geometry.image();
+        let [nx, ny] = image.shape;
+        let increment = image.increment_rad;
+        // `wScale = Float((wConvSize-1)*(wConvSize-1))/maxUVW`.
+        let w_scale = f64::from(((planes - 1) * (planes - 1)) as f32) / max_uvw;
         let inner = conv_size / usize::from(sampling);
         // The screen's sky sampling: `incr · convSampling · padding·n/convSize`.
         let screen_increment = [
             increment[0] * f64::from(sampling) * PADDING * nx as f64 / conv_size as f64,
             increment[1] * f64::from(sampling) * PADDING * ny as f64 / conv_size as f64,
         ];
-        let quadrant_side = conv_size / 2 - 1;
+        let quadrant_side = layout.quadrant_side();
         let correction_axis = |len: usize| {
             (0..len)
                 .map(|index| grdsf((index as f64 - (len / 2) as f64).abs() / (len / 2) as f64))
@@ -181,11 +261,110 @@ impl WPlanes {
                 support
             })
             .collect::<Vec<_>>();
+        Ok(WScreens {
+            w_scale,
+            conv_size,
+            sampling,
+            quadrant_side,
+            quadrants,
+            supports,
+            grid: geometry.grid_shape(),
+            mueller: MuellerRouting::scalar(polarization.pol_map(), polarization.grid_pols()),
+        })
+    }
+
+    /// Bytes the set holds: its kernels and its corrections.
+    #[must_use]
+    pub fn resident_bytes(&self) -> u64 {
+        self.planes
+            .iter()
+            .map(|cell| cell.bytes() as u64)
+            .sum::<u64>()
+            + (self.planes.capacity() * size_of::<DenseCell>()) as u64
+            + self.mueller.bytes()
+            + self.correction.resident_bytes()
+    }
+}
+
+/// The planes of a W-projection set transformed on their screens, each
+/// plane's positive quadrant and its support, before their kernels are
+/// cropped ([`WPlanes::screens`], [`Self::finish`]).
+#[derive(Debug)]
+pub struct WScreens {
+    w_scale: f64,
+    conv_size: usize,
+    sampling: u16,
+    quadrant_side: usize,
+    quadrants: Vec<Vec<Complex32>>,
+    supports: Vec<usize>,
+    grid: [usize; 2],
+    mueller: MuellerRouting,
+}
+
+impl WScreens {
+    /// Bytes the screens hold: every plane's quadrant and support, and the
+    /// set's Mueller routing.
+    #[must_use]
+    pub fn bytes(&self) -> u64 {
+        (self
+            .quadrants
+            .iter()
+            .map(|quadrant| quadrant.capacity() * size_of::<Complex32>())
+            .sum::<usize>()
+            + self.quadrants.capacity() * size_of::<Vec<Complex32>>()
+            + self.supports.capacity() * size_of::<usize>()) as u64
+            + self.mueller.bytes()
+    }
+
+    /// Bytes [`Self::finish`] allocates beside the screens: the kernels it
+    /// crops from them, which the set keeps ([`WPlanes::resident_bytes`]),
+    /// one cropped quadrant at a time and the corrections.
+    #[must_use]
+    pub fn kernel_bytes(&self) -> u64 {
+        let side = self.cropped_side();
+        self.supports
+            .iter()
+            .map(|support| {
+                dense_cell_from_quadrant_bytes(
+                    self.sampling,
+                    u16::try_from(*support).expect("support fits u16"),
+                )
+            })
+            .sum::<u64>()
+            + (self.supports.len() * size_of::<DenseCell>() + side * side * size_of::<Complex32>())
+                as u64
+            + ImageCorrection::bytes(self.grid)
+    }
+
+    /// Side of the quadrant every kernel is cropped from: the last plane's
+    /// support and two more pixels, at the oversampling.
+    fn cropped_side(&self) -> usize {
+        let last_support = *self.supports.last().expect("at least one plane");
+        (2 * (last_support + 2) * usize::from(self.sampling)).min(self.conv_size) / 2 - 1
+    }
+
+    /// The second stage of building the planes: crop every plane to the
+    /// last plane's support, normalise all of them by plane 0's integral
+    /// over its support, and form the corrections.
+    ///
+    /// # Errors
+    ///
+    /// The plane-0 kernel has no positive integral.
+    pub fn finish(self) -> Result<WPlanes, OperatorError> {
+        let cropped_side = self.cropped_side();
+        let Self {
+            w_scale,
+            conv_size,
+            sampling,
+            quadrant_side,
+            quadrants,
+            supports,
+            grid,
+            mueller,
+        } = self;
         // Crop every plane to the last plane's support and normalise all
         // of them by the plane-0 integral over its support.
         let last_support = *supports.last().expect("at least one plane");
-        let cropped = (2 * (last_support + 2) * usize::from(sampling)).min(conv_size);
-        let cropped_side = cropped / 2 - 1;
         let mut integral = 0.0;
         for iy in -(supports[0] as i64)..=supports[0] as i64 {
             for ix in -(supports[0] as i64)..=supports[0] as i64 {
@@ -220,7 +399,7 @@ impl WPlanes {
         // axis and divides the model by `correctX1D / sinc`, so the model is
         // multiplied by the sinc the image is divided by (the `MosaicFT`
         // asymmetry).
-        let [grid_nx, grid_ny] = geometry.grid_shape();
+        let [grid_nx, grid_ny] = grid;
         let sinc = |len: usize, index: usize| {
             let x = std::f64::consts::PI * (index as f64 - (len / 2) as f64)
                 / (len as f64 * f64::from(sampling));
@@ -255,12 +434,12 @@ impl WPlanes {
                 })
                 .collect::<Vec<_>>()
         };
-        Ok(Self {
+        Ok(WPlanes {
             max_half_support: u16::try_from(last_support).expect("support fits u16"),
             planes: cells,
             w_scale,
             screen_size: conv_size,
-            mueller: MuellerRouting::scalar(polarization.pol_map(), polarization.grid_pols()),
+            mueller,
             correction: ImageCorrection::split(
                 image_correction(grid_nx),
                 image_correction(grid_ny),
@@ -269,7 +448,9 @@ impl WPlanes {
             ),
         })
     }
+}
 
+impl WPlanes {
     /// Number of planes.
     #[must_use]
     pub fn planes(&self) -> usize {
@@ -314,12 +495,6 @@ impl WPlanes {
     #[must_use]
     pub fn half_support(&self, plane: usize) -> u16 {
         self.planes[plane].support[0] / 2
-    }
-
-    /// Bytes of the tap values.
-    #[must_use]
-    pub fn bytes(&self) -> usize {
-        self.planes.iter().map(DenseCell::bytes).sum()
     }
 }
 

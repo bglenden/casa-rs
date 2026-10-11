@@ -29,11 +29,12 @@ use casa_imaging_model::{
 use casa_imaging_reconstruction::{
     AutoMaskBeam, AutoMultithreshEvidence, FinalNormalState, ImageDomainReconstructionMaskPlans,
     ImageDomainReconstructionMasks, MajorCycleCompletion, MaskError, MinorCycleImageResponse,
-    ModelGeneration, ModelLifecycleError, MosaicSensitivity, NormalStateCatalog,
+    ModelGeneration, ModelLifecycle, ModelLifecycleError, MosaicSensitivity, NormalStateCatalog,
     SpectralChannelValidity, SpectralOperatorError,
 };
 
 use crate::pass::WorkerTeam;
+use crate::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit};
 
 /// Component records kept per minor cycle for diagnostics.
 const TRACE: usize = 64;
@@ -59,6 +60,9 @@ pub enum MinorCycleRunError {
     /// The selected algorithm has no minor cycle.
     #[error("{0:?} has no minor cycle")]
     Algorithm(ReconstructionAlgorithm),
+    /// A plane's terms do not fit what the policy leaves free.
+    #[error(transparent)]
+    Admission(#[from] Admission),
 }
 
 /// What every minor cycle of a run shares.
@@ -181,11 +185,27 @@ pub fn mask_bytes(completion: &MajorCycleCompletion) -> u64 {
         .sum()
 }
 
-/// Heap bytes [`run_minor_cycle`] holds at most under `controls`: on each of
-/// the planes solved at once on `workers` (one when a single plane spreads
-/// over the team), the load and the solve
-/// ([`casa_imaging_deconvolution::solve_bytes`]). A Clark refresh already in
-/// `cache` is charged with the cache, not here.
+/// Bytes the model terms of one solved plane hold, charged as the plane
+/// finishes ([`run_minor_cycle`]): for each of `terms` terms its record and
+/// its copy while the cycle merges every plane's terms in model order,
+/// which also covers what the model holds per term while it queues them
+/// ([`ModelLifecycle::QUEUED_TERM_BYTES`]); and the plane's component
+/// records.
+#[must_use]
+pub const fn result_bytes(terms: usize) -> u64 {
+    let entry = size_of::<(usize, ModelDeltaTerm)>();
+    let merged = 2 * entry;
+    let queued = size_of::<ModelDeltaTerm>() + ModelLifecycle::QUEUED_TERM_BYTES;
+    let per_term = if merged > queued { merged } else { queued };
+    (terms * per_term + TRACE * (size_of::<Component>() + size_of::<TracedComponent>())) as u64
+}
+
+/// Heap bytes [`run_minor_cycle`] holds at most under `controls`, besides
+/// each plane's terms ([`result_bytes`]): on each of the planes solved at
+/// once on `workers` (one when a single plane spreads over the team), the
+/// load and the solve ([`casa_imaging_deconvolution::solve_bytes`]), and a
+/// record of every plane. A Clark refresh already in `cache` is charged
+/// with the cache, not here.
 #[must_use]
 pub fn run_bytes(
     completion: &MajorCycleCompletion,
@@ -252,7 +272,11 @@ pub fn run_bytes(
     } else {
         workers.min(keys.len()) as u64
     };
+    // Every plane's slot, solved record and stop, which the cycle keeps
+    // until it merges them.
+    let records = keys.len() * (size_of::<Slot>() + size_of::<Solved>() + size_of::<PlaneStop>());
     concurrent * (load_bytes(cells, residual, psf, setup.response.is_some()) + solve)
+        + records as u64
 }
 
 /// One minor cycle's masks and plane measurements.
@@ -320,6 +344,9 @@ pub struct MinorCycleOutcome {
     /// The model update in strictly increasing model order; empty when no
     /// component was cleaned.
     pub terms: Vec<ModelDeltaTerm>,
+    /// The charge of `terms` ([`result_bytes`]), which covers queuing them
+    /// on the model too: keep it until the model holds them under its own.
+    pub results: Reservation,
     /// The masks components were placed within.
     pub masks: ImageDomainReconstructionMasks,
     /// Automatic-mask diagnostics per image domain.
@@ -453,11 +480,13 @@ struct Slot {
 /// Planes are independent: several run concurrently on `team`, each on one
 /// thread, and their terms are merged in model order, so the result does
 /// not depend on the worker count. A single plane spreads Clark's sparse
-/// refresh across the team instead.
+/// refresh across the team instead. As each plane finishes, its terms are
+/// admitted under `policy` on `host` ([`result_bytes`]) before they are
+/// formed; the outcome hands their charge on.
 ///
 /// # Errors
 ///
-/// When a plane cannot be read or its solver fails.
+/// When a plane cannot be read, its solver fails or its terms are refused.
 pub fn run_minor_cycle(
     prepared: PreparedMinorCycle,
     completion: &MajorCycleCompletion,
@@ -465,6 +494,7 @@ pub fn run_minor_cycle(
     controls: &CycleControls,
     cache: &mut PsfCache,
     team: &WorkerTeam,
+    (host, policy): (&HostResources, &ResourcePolicy),
 ) -> Result<MinorCycleOutcome, MinorCycleRunError> {
     let PreparedMinorCycle {
         masks,
@@ -480,11 +510,16 @@ pub fn run_minor_cycle(
         setup,
         taylor: is_taylor(normal),
     };
+    let admission = (host, policy);
     let mut results = Vec::with_capacity(planes.len());
     if let [(key, statistics)] = planes.as_slice() {
         let summary = cache.summaries[key];
         let clark = &mut cache.clark;
-        results.push(team.install(|| solve(&inputs, *key, &summary, statistics, controls, clark))?);
+        results.push(team.install(|| {
+            solve(
+                &inputs, admission, *key, &summary, statistics, controls, clark,
+            )
+        })?);
     } else {
         let mut slots = planes
             .iter()
@@ -499,6 +534,7 @@ pub fn run_minor_cycle(
             let summary = shared.summaries[&slot.key];
             slot.solved = Some(solve(
                 &inputs,
+                admission,
                 slot.key,
                 &summary,
                 &slot.statistics,
@@ -524,8 +560,11 @@ pub fn run_minor_cycle(
         refreshes: 0,
         trace: Vec::new(),
     };
-    let mut terms = Vec::new();
+    // Each plane's charge covers its terms' copy here.
+    let mut terms = Vec::with_capacity(results.iter().map(|solved| solved.terms.len()).sum());
+    let mut charge = Reservation::none();
     for ((_, statistics), solved) in planes.iter().zip(results) {
+        charge.join(solved.charge);
         let outcome = &solved.outcome;
         summary.iterations += outcome.iterations;
         summary.components += outcome.components;
@@ -548,8 +587,11 @@ pub fn run_minor_cycle(
         terms.extend(solved.terms);
     }
     terms.sort_unstable_by_key(|(index, _)| *index);
+    let mut ordered = Vec::with_capacity(terms.len());
+    ordered.extend(terms.into_iter().map(|(_, term)| term));
     Ok(MinorCycleOutcome {
-        terms: terms.into_iter().map(|(_, term)| term).collect(),
+        terms: ordered,
+        results: charge,
         masks,
         auto_masks,
         summary,
@@ -937,16 +979,22 @@ fn normalise(mut plane: Vec<f64>, scale: f64) -> Vec<f64> {
 
 /// A plane's solve: its outcome, model terms keyed by model order, and the
 /// first component records.
+/// One solved plane: its outcome without the model update, which its terms
+/// hold, and their charge.
 struct Solved {
     outcome: PlaneOutcome,
     terms: Vec<(usize, ModelDeltaTerm)>,
     trace: Vec<TracedComponent>,
+    charge: Reservation,
 }
 
-/// Read and clean one plane. Clark takes `clark`'s refresh, when it serves
-/// this PSF, and leaves its own there for the next cycle.
+/// Read and clean one plane, and admit its terms on `host` under `policy`
+/// before forming them. Clark takes `clark`'s refresh, when it serves this
+/// PSF, and leaves its own there for the next cycle.
+#[allow(clippy::too_many_arguments)]
 fn solve(
     inputs: &Inputs<'_>,
+    (host, policy): (&HostResources, &ResourcePolicy),
     key: PlaneKey,
     summary: &PsfSummary,
     statistics: &PlaneStatistics,
@@ -995,12 +1043,26 @@ fn solve(
         )?,
         algorithm => return Err(MinorCycleRunError::Algorithm(algorithm.clone())),
     };
-    let terms = model_terms(&outcome.delta, &plane, inputs, key)?;
+    let mut outcome = outcome;
+    let delta = std::mem::take(&mut outcome.delta);
+    let entries = (0..delta.term_count())
+        .map(|term| delta.term(term).count())
+        .sum();
+    let charge = admit(
+        host,
+        policy,
+        &Demand {
+            phase: "minor-cycle results",
+            memory: result_bytes(entries),
+        },
+    )?;
+    let terms = model_terms(&delta, entries, &plane, inputs, key)?;
     let trace = trace(&outcome.trace, &plane, inputs, key);
     Ok(Solved {
         outcome,
         terms,
         trace,
+        charge,
     })
 }
 
@@ -1020,14 +1082,16 @@ const fn coefficient(inputs: &Inputs<'_>, key: PlaneKey, term: usize) -> usize {
     if inputs.taylor { term } else { key.channel }
 }
 
-/// The plane's components as model terms keyed by model order.
+/// The plane's components as model terms keyed by model order, in a vector
+/// with room for `delta`'s `entries`.
 fn model_terms(
     delta: &Delta,
+    entries: usize,
     plane: &PlaneData,
     inputs: &Inputs<'_>,
     key: PlaneKey,
 ) -> Result<Vec<(usize, ModelDeltaTerm)>, MinorCycleRunError> {
-    let mut terms = Vec::new();
+    let mut terms = Vec::with_capacity(entries);
     let physical = plane.physical()?;
     for term in 0..delta.term_count() {
         for (index, flux) in delta.term(term) {

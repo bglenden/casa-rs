@@ -44,7 +44,7 @@ fn t34_full_stokes_hogbom_matches_casa_products() -> Result<(), Box<dyn Error>> 
     assert_eq!(result.total_minor_iterations, 20);
     assert!(result.major_cycle_count >= 2);
     assert_eq!(
-        result.scientific.normal_state().sample_count(),
+        result.scientific().normal_state().sample_count(),
         selected.sample_count,
         "Rust selected exactly the CASA RR/RL/LR/LL cells",
     );
@@ -307,7 +307,7 @@ fn issue607_representative_full_stokes_matches_casa_products() -> Result<(), Box
     assert_eq!(result.total_minor_iterations, 25);
     assert!(result.major_cycle_count >= 2);
     assert_eq!(
-        result.scientific.normal_state().sample_count(),
+        result.scientific().normal_state().sample_count(),
         selected.sample_count,
     );
     compare_products(&rust_prefix, &casa_prefix, &selected)?;

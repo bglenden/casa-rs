@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Owned native rows of one bounded source block.
 
-use casa_imaging_operator::{NativeRow, RowContext};
+use casa_imaging_operator::{NativeRow, RowContext, RowSpectrum};
 use num_complex::Complex32;
 
 /// Where a row lives in its MeasurementSet, for the model-column writer.
@@ -41,12 +41,13 @@ pub struct NativeRowHeader {
 /// The largest block a source delivers ([`super::BoundedSource::maximum_block`]):
 /// what each pass sizes its per-block storage by, and admits before it
 /// allocates it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct BlockShape {
     /// Rows.
     pub rows: usize,
-    /// Selected channels per row.
-    pub channels: usize,
+    /// Selected channels per row and their frequencies' extent, which bound
+    /// the samples a row places ([`RowSpectrum`]).
+    pub spectrum: RowSpectrum,
     /// Selected correlations per row.
     pub correlations: usize,
     /// Image domains each row is projected on.
@@ -54,16 +55,23 @@ pub struct BlockShape {
 }
 
 impl BlockShape {
+    /// Selected channels per row.
+    #[must_use]
+    pub const fn channels(self) -> usize {
+        self.spectrum.channels
+    }
+
     /// Bytes a [`NativeBlock`] of this shape holds
     /// ([`NativeBlock::with_capacity`]).
     #[must_use]
     pub const fn bytes(self) -> u64 {
-        let cells = self.channels * self.correlations;
+        let channels = self.channels();
+        let cells = channels * self.correlations;
         let per_row = size_of::<NativeRowHeader>()
             + self.domains * size_of::<DomainProjection>()
-            + self.channels * size_of::<f64>()
+            + channels * size_of::<f64>()
             + cells * (size_of::<Complex32>() + size_of::<f32>() + size_of::<bool>());
-        (self.rows * per_row + (self.channels + self.correlations) * size_of::<u32>()) as u64
+        (self.rows * per_row + (channels + self.correlations) * size_of::<u32>()) as u64
     }
 }
 
@@ -93,18 +101,34 @@ impl NativeBlock {
     /// never grows it beyond [`BlockShape::bytes`].
     #[must_use]
     pub fn with_capacity(shape: BlockShape) -> Self {
-        let cells = shape.rows * shape.channels * shape.correlations;
+        let channels = shape.channels();
+        let cells = shape.rows * channels * shape.correlations;
         Self {
             domains: shape.domains,
             rows: Vec::with_capacity(shape.rows),
             projections: Vec::with_capacity(shape.rows * shape.domains),
-            channel_indices: Vec::with_capacity(shape.channels),
+            channel_indices: Vec::with_capacity(channels),
             correlation_indices: Vec::with_capacity(shape.correlations),
-            frequencies_hz: Vec::with_capacity(shape.rows * shape.channels),
+            frequencies_hz: Vec::with_capacity(shape.rows * channels),
             values: Vec::with_capacity(cells),
             weights: Vec::with_capacity(cells),
             flags: Vec::with_capacity(cells),
         }
+    }
+
+    /// Bytes the block holds now, from its capacities: at most
+    /// [`BlockShape::bytes`] for a block [`Self::with_capacity`] made and
+    /// filled within its shape.
+    #[must_use]
+    pub fn capacity_bytes(&self) -> u64 {
+        (self.rows.capacity() * size_of::<NativeRowHeader>()
+            + self.projections.capacity() * size_of::<DomainProjection>()
+            + (self.channel_indices.capacity() + self.correlation_indices.capacity())
+                * size_of::<u32>()
+            + self.frequencies_hz.capacity() * size_of::<f64>()
+            + self.values.capacity() * size_of::<Complex32>()
+            + self.weights.capacity() * size_of::<f32>()
+            + self.flags.capacity() * size_of::<bool>()) as u64
     }
 
     /// Empty the block and set the layout of the rows that follow: the

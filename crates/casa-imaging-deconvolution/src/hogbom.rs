@@ -109,4 +109,9 @@ impl Solver for Hogbom {
     fn working_bytes(&self, _shape: PlaneShape, _terms: usize) -> u64 {
         0
     }
+
+    /// A point component.
+    fn component_cells(&self, _shape: PlaneShape) -> usize {
+        1
+    }
 }

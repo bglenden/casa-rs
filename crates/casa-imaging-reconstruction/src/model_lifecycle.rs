@@ -116,6 +116,11 @@ impl ModelLifecycle {
         &self.contract
     }
 
+    /// Heap bytes [`Self::prepare_final_model`] holds per term besides the
+    /// terms while it queues them: the validated updates, and the pending
+    /// windows a generation keeps until it applies them.
+    pub const QUEUED_TERM_BYTES: usize = crate::model_storage::QUEUED_UPDATE_BYTES;
+
     /// Heap bytes one of this run's generations holds resident, before any
     /// sparse update is queued.
     #[must_use]

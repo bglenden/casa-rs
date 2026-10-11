@@ -37,10 +37,19 @@ const CACHED_PLAN_PAIRS_PER_PRECISION: usize = 8;
 pub const PLAN_PAIR_BYTES: usize = 1 << 20;
 
 /// The most C heap FFTW keeps for the plans this crate caches for the
-/// process, whatever transforms it runs: [`PLAN_PAIR_BYTES`] for each of
-/// the plan pairs cached per precision. A plan a live transform still holds
-/// after the cache drops it is the transform's.
+/// process: [`PLAN_PAIR_BYTES`] for each of the plan pairs cached per
+/// precision, as measured for the transforms the law runs, up to 8192². A
+/// plan a live transform still holds after the cache drops it is the
+/// transform's.
 pub const PLAN_CACHE_BYTES: usize = 2 * CACHED_PLAN_PAIRS_PER_PRECISION * PLAN_PAIR_BYTES;
+
+/// Heap bytes planning a transform of `elements` values of `T` holds while
+/// FFTW plans it, beside the plans: the aligned scratch plane it plans on.
+/// A transform plans when its plan is not cached.
+#[must_use]
+pub const fn planning_bytes<T: FftScalar>(elements: usize) -> u64 {
+    ((elements + 64) * size_of::<Complex<T>>()) as u64
+}
 
 struct PlanCache<T: FftScalar> {
     plans: HashMap<Key, Arc<Plans<T>>>,

@@ -329,31 +329,41 @@ const DENSITY_CHUNKS_PER_WORKER: usize = 4;
 /// block and its workers meet once per slice.
 const CHUNK_PLACEMENTS: usize = 1 << 15;
 
+/// Placements a row chunk of a major-cycle pass takes at once when each
+/// image domain has at most `owners` owners. Each owner's buffer in a
+/// chunk can take every placement of the chunk, and a pass has four chunks
+/// per worker, so past four owners a chunk takes proportionally fewer: the
+/// chunks' storage then grows linearly with the workers rather than as
+/// their square, and a slice places as many samples whatever the workers.
+const fn chunk_placements(owners: usize) -> usize {
+    if owners <= 4 {
+        CHUNK_PLACEMENTS
+    } else {
+        4 * CHUNK_PLACEMENTS / owners
+    }
+}
+
 /// Rows a row chunk places at once, for rows of `row` placements each in
-/// blocks of at most `block_rows` rows split among `chunks` chunks: as many
-/// as [`CHUNK_PLACEMENTS`] holds, and no more than a block's share.
-const fn chunk_rows(row: usize, block_rows: usize, chunks: usize) -> usize {
-    let fitting = CHUNK_PLACEMENTS / if row == 0 { 1 } else { row };
+/// blocks of at most `block_rows` rows split among `chunks` chunks taking
+/// `placements` placements each: as many as fit, at least one, and no more
+/// than a block's share.
+const fn chunk_rows(row: usize, block_rows: usize, chunks: usize, placements: usize) -> usize {
+    let fitting = placements / if row == 0 { 1 } else { row };
     let share = block_rows.div_ceil(if chunks == 0 { 1 } else { chunks });
     let rows = if fitting < share { fitting } else { share };
     if rows == 0 { 1 } else { rows }
 }
 
 /// An upper bound of the bytes a pass's row chunks hold per row of the
-/// source's block, for rows of `layout` placed on `planes` planes by
-/// `workers` workers, while a chunk's rows are a block's share rather than
-/// [`CHUNK_PLACEMENTS`]: each owner's buffer and the weight owner's can take
-/// every placement of a row, at most one per native channel or per plane
-/// and one more ([`SpectralResampler::samples_per_row`]). The source sizes
-/// its blocks with it ([`crate::finalize_source_access`]);
-/// [`WaveDemand::bytes`] charges the chunks exactly.
+/// source's block, for rows of `layout` that each place at most `row`
+/// samples ([`SpectralResampler::samples_per_row`]) on `workers` workers,
+/// while a chunk's rows are a block's share rather than its placement cap:
+/// each owner's buffer and the weight owner's can take every placement of
+/// a row. The source sizes its blocks with it
+/// ([`crate::finalize_source_access`]); [`WaveDemand::bytes`] charges the
+/// chunks exactly.
 #[must_use]
-pub const fn chunk_bytes_per_row(layout: BlockShape, planes: usize, workers: usize) -> u64 {
-    let row = if layout.channels > planes {
-        layout.channels
-    } else {
-        planes
-    } + 1;
+pub const fn chunk_bytes_per_row(layout: BlockShape, row: usize, workers: usize) -> u64 {
     (workers as u64 + 1) * SampleBuffer::bytes(layout.correlations, row)
 }
 
@@ -394,8 +404,8 @@ pub fn density_pass_bytes(
     workers: usize,
 ) -> u64 {
     let chunks = workers * DENSITY_CHUNKS_PER_WORKER;
-    let row = resampler.density_samples_per_row(shape, block.channels);
-    let placements = chunk_rows(row, block.rows, chunks) * row;
+    let row = resampler.density_samples_per_row(shape, block.spectrum);
+    let placements = chunk_rows(row, block.rows, chunks, CHUNK_PLACEMENTS) * row;
     shape.bytes() + chunks as u64 * SampleBuffer::bytes(1, placements)
 }
 
@@ -417,8 +427,8 @@ pub fn run_density_pass(
     let mut grid = DensityGrid::new(shape);
     let maximum = source.maximum_block();
     let count = team.workers() * DENSITY_CHUNKS_PER_WORKER;
-    let row = resampler.density_samples_per_row(&shape, maximum.channels);
-    let rows_per_chunk = chunk_rows(row, maximum.rows, count);
+    let row = resampler.density_samples_per_row(&shape, maximum.spectrum);
+    let rows_per_chunk = chunk_rows(row, maximum.rows, count, CHUNK_PLACEMENTS);
     let placements = rows_per_chunk * row;
     let mut chunks = (0..count)
         .map(|_| (0..0, SampleBuffer::with_capacity(1, placements)))
@@ -436,7 +446,7 @@ pub fn run_density_pass(
                     resampler.place_density(operator, &block.row(0, row), &shape, buffer)?;
                 }
                 debug_assert!(
-                    buffer.len() <= placements,
+                    buffer.capacity_bytes() == SampleBuffer::bytes(1, placements),
                     "a density chunk places within the placements it was allocated for"
                 );
                 Ok::<_, PassError>(())

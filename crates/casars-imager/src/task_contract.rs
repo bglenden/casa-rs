@@ -179,7 +179,7 @@ impl ImagerRunTaskResult {
             artifacts: artifacts(&request.imagename, &outcome.product_names()),
             request: parameters,
             run: ImagerRunReport {
-                gridded_samples: outcome.scientific.normal_state().sample_count(),
+                gridded_samples: outcome.scientific().normal_state().sample_count(),
                 major_cycles: outcome.major_cycle_count,
                 minor_iterations: outcome.total_minor_iterations,
                 actual_minor_iterations: outcome.total_actual_minor_iterations,

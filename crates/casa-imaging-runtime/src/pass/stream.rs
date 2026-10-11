@@ -69,8 +69,9 @@ pub(super) fn stream_blocks(
             }
             debug_assert!(
                 block.len() <= shape.rows
-                    && block.channels() <= shape.channels
-                    && block.correlations() <= shape.correlations,
+                    && block.channels() <= shape.channels()
+                    && block.correlations() <= shape.correlations
+                    && block.capacity_bytes() <= shape.bytes(),
                 "a source fills blocks within its maximum block"
             );
             if let Err(error) = consume(&block) {

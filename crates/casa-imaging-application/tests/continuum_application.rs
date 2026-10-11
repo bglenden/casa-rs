@@ -982,7 +982,7 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
         );
 
         let result = execute(&imaging).expect("execute T31 multi-domain application");
-        assert_eq!(result.scientific.normal_state().domain_count(), 2);
+        assert_eq!(result.scientific().normal_state().domain_count(), 2);
         assert_eq!(
             result.planned_products.members().len(),
             2 * product_suffixes.len()
@@ -1035,7 +1035,7 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
             }
         }
 
-        let model_nonzero = fixture_model_samples(result.scientific.final_model())
+        let model_nonzero = fixture_model_samples(result.scientific().final_model())
             .iter()
             .filter(|sample| sample.value().value() != 0.0)
             .count();
@@ -1086,7 +1086,7 @@ fn outlier_cube_domains_image_independently_of_the_main_cube() {
     )
     .expect("write recentred outlier cube");
     let result = cube(&main, Some(outlier_file));
-    assert_eq!(result.scientific.normal_state().domain_count(), 2);
+    assert_eq!(result.scientific().normal_state().domain_count(), 2);
     let read = |base: &Path, suffix: &str| {
         let image = PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", base.display())))
             .expect("open cube product");
@@ -1159,7 +1159,7 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
     ];
 
     let normal_roles = result
-        .scientific
+        .scientific()
         .normal_state()
         .read_window(0..1)
         .expect("fixture domain window")
@@ -1368,7 +1368,7 @@ fn t607_application_preserves_channel_topology_and_wcs_through_cube_planning() {
     let result = execute(&imaging).expect("native 32-channel cube execution");
     assert_dirty_products(&image_name, &result.product_names());
     assert_eq!(
-        result.scientific.normal_state().catalog(),
+        result.scientific().normal_state().catalog(),
         casa_imaging_reconstruction::NormalStateCatalog::UnnormalizedChannelSlabV1
     );
     let residual =

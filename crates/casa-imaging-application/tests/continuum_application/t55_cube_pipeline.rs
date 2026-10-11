@@ -56,7 +56,7 @@ fn streaming_cube_complete_application_handoff() {
     assert!(outcome.total_actual_minor_iterations > 0);
     for channel in 0..4 {
         let normal = outcome
-            .scientific
+            .scientific()
             .normal_state()
             .read_window(channel..channel + 1)
             .unwrap();
@@ -313,7 +313,7 @@ fn compare_clark_cube_cases(cases: &[(usize, Option<u64>)], weightings: &[&str])
                     last,
                 ));
             }
-            let science = &outcome.scientific;
+            let science = outcome.scientific();
             let evidence = (
                 products,
                 fixture_model_samples(science.final_model()),

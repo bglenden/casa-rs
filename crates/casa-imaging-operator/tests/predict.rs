@@ -376,3 +376,63 @@ fn wide_output_channels_reproduce_a_flat_spectrum_and_unmapped_channels_predict_
         );
     }
 }
+
+/// A prediction scratch made for the widest row never grows: predicting
+/// rows of every width up to it, narrow after wide, keeps every buffer at
+/// the capacity [`PredictionScratch::bytes`] charges, for direct, nearest
+/// and linear resamplers and widths that are not powers of two.
+#[test]
+fn a_prediction_scratch_holds_what_it_charges() {
+    let axis =
+        |width_hz: f64, channels: u32| SpectralAxis::new(1.0e9, width_hz, channels).expect("axis");
+    let resamplers = [
+        SpectralResampler::direct(Basis::Constant).expect("direct"),
+        SpectralResampler::channel_local(axis(1.0e6, 37), SpectralKernel::Nearest),
+        SpectralResampler::channel_local(axis(3.0e6, 37), SpectralKernel::Linear),
+        SpectralResampler::channel_local(axis(0.5e6, 301), SpectralKernel::Linear),
+    ];
+    let widest = 257;
+    for resampler in &resamplers {
+        let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
+        let model = point_model(&operator, &vec![1.0; resampler.basis().planes() as usize]);
+        let mut scratch = SpectralResampler::prediction_scratch([resampler], 2, widest);
+        let bytes = SpectralResampler::prediction_scratch_bytes([resampler], 2, widest);
+        assert_eq!(scratch.capacity_bytes(), bytes);
+        let mut backend = CpuBackend::new();
+        for channels in [3, widest, 1, 129, widest, 7] {
+            let frequencies = (0..channels)
+                .map(|channel| 1.0e9 + 1.0e6 * channel as f64)
+                .collect::<Vec<_>>();
+            let values = vec![Complex32::new(1.0, 0.0); channels * 2];
+            let weights = vec![1.0; channels * 2];
+            let flags = vec![false; channels * 2];
+            let row = NativeRow {
+                uvw_m: UVW_M,
+                phase_shift_m: 0.0,
+                pointing_offset_rad: [0.0; 2],
+                frequencies_hz: &frequencies,
+                values: &values,
+                weights: &weights,
+                flags: &flags,
+                row_flag: false,
+                context: context(),
+            };
+            let mut out = vec![Complex32::default(); channels * 2];
+            resampler
+                .predict_row(
+                    &operator,
+                    &mut backend,
+                    &model,
+                    &row,
+                    &mut scratch,
+                    &mut out,
+                )
+                .expect("prediction");
+            assert_eq!(
+                scratch.capacity_bytes(),
+                bytes,
+                "{channels} channels grew the scratch"
+            );
+        }
+    }
+}

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The bounded content budget of the selected observation's source.
 
-use casa_imaging_model::CompiledProblem;
+use casa_imaging_model::{CompiledProblem, SpectralWindowSelection};
+use casa_imaging_operator::RowSpectrum;
 use casa_ms::{
     BoundSelectedObservationError, ResolvedSelectedObservationAccess,
     SelectedObservationContentBudget, SelectedObservationContentPlanError,
@@ -10,20 +11,25 @@ use casa_ms::{
 use crate::pass::{BlockShape, chunk_bytes_per_row, source_block_bytes};
 use crate::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit, free_memory};
 
+/// Relative allowance for the Doppler factor between the frame of a
+/// spectral window's stored `CHAN_FREQ` and the output frame rows reach the
+/// passes in: 3,000 km/s.
+pub const FRAME_MARGIN: f64 = 0.01;
+
 /// One row of the blocks `problem`'s source delivers: the most channels any
-/// selected spectral window gives a row, the most correlations any selection
-/// routes, and the image domains each row is projected on; no rows.
+/// selected spectral window gives a row and their frequencies' extent, the
+/// most correlations any selection routes, and the image domains each row
+/// is projected on; no rows.
 #[must_use]
 pub fn row_layout(problem: &CompiledProblem) -> BlockShape {
     let sources = problem.observation_transaction().read_set().sources();
     BlockShape {
         rows: 0,
-        channels: sources
-            .iter()
-            .flat_map(|source| source.selection().spectral_windows())
-            .map(|window| window.channel_indices().len())
-            .max()
-            .unwrap_or(0),
+        spectrum: row_spectrum(
+            sources
+                .iter()
+                .flat_map(|source| source.selection().spectral_windows()),
+        ),
         correlations: sources
             .iter()
             .flat_map(|source| source.selection().correlations())
@@ -31,6 +37,48 @@ pub fn row_layout(problem: &CompiledProblem) -> BlockShape {
             .max()
             .unwrap_or(0),
         domains: problem.geometry().domains().len(),
+    }
+}
+
+/// What bounds the samples a row of `windows` places: its most selected
+/// channels, and from the storage owner's `CHAN_FREQ` the smallest first
+/// separation and the widest span of any window's selected channels,
+/// widened by [`FRAME_MARGIN`]. A window without a catalog leaves its rows
+/// evenly spaced ([`RowSpectrum::evenly_spaced`]); the storage owner binds
+/// one to every MeasurementSet selection.
+fn row_spectrum<'a>(windows: impl Iterator<Item = &'a SpectralWindowSelection>) -> RowSpectrum {
+    let mut spectrum = RowSpectrum::evenly_spaced(0);
+    let mut known = true;
+    for window in windows {
+        let channels = window.channel_indices();
+        spectrum.channels = spectrum.channels.max(channels.len());
+        let frequency = |index: usize| {
+            let catalog = window.coordinate_catalog()?;
+            catalog.channel_frequency_hz(*channels.get(index)? as usize)
+        };
+        if channels.len() < 2 {
+            continue;
+        }
+        let (Some(first), Some(second), Some(last)) =
+            (frequency(0), frequency(1), frequency(channels.len() - 1))
+        else {
+            known = false;
+            continue;
+        };
+        let spacing = (second - first).abs() * (1.0 - FRAME_MARGIN);
+        if spacing > 0.0
+            && (spectrum.first_spacing_hz == 0.0 || spacing < spectrum.first_spacing_hz)
+        {
+            spectrum.first_spacing_hz = spacing;
+        }
+        spectrum.span_hz = spectrum
+            .span_hz
+            .max((last - first).abs() * (1.0 + FRAME_MARGIN));
+    }
+    if known {
+        spectrum
+    } else {
+        RowSpectrum::evenly_spaced(spectrum.channels)
     }
 }
 
@@ -68,12 +116,18 @@ pub enum SourceAccessError {
 /// ([`source_block_bytes`]); the source and that storage together grow by
 /// at most a quarter of what `policy` leaves free on `host` past the
 /// minimum, shared in proportion to their bytes per row, so the paged cube
-/// cache and the passes, admitted after them, keep the rest. The
-/// reservation holds the envelope the source plans and what the passes hold
-/// for its blocks, and the run keeps it while the source is open.
+/// cache and the passes, admitted after them, keep the rest. A row places at
+/// most `row` samples ([`SpectralResampler::samples_per_row`] of
+/// [`row_layout`]), which the passes' row chunks hold until they reach their
+/// cap. The reservation holds the envelope the source plans and what the
+/// passes hold for its blocks, and the run keeps it while the source is
+/// open.
+///
+/// [`SpectralResampler::samples_per_row`]: casa_imaging_operator::SpectralResampler::samples_per_row
 pub fn finalize_source_access(
     problem: &CompiledProblem,
     access: ResolvedSelectedObservationAccess,
+    row: usize,
     host: &HostResources,
     policy: &ResourcePolicy,
 ) -> Result<(ResolvedSelectedObservationAccess, Reservation), SourceAccessError> {
@@ -99,9 +153,8 @@ pub fn finalize_source_access(
     let passes = |rows: usize| source_block_bytes(BlockShape { rows, ..layout });
     // The passes' row chunks also grow with the block, under the passes'
     // own charge, until they reach their cap.
-    let planes = problem.geometry().spectral().output_channels();
     let passes_per_row =
-        passes(1) - passes(0) + chunk_bytes_per_row(layout, planes, policy.workers(host));
+        passes(1) - passes(0) + chunk_bytes_per_row(layout, row, policy.workers(host));
     let unshared = requirements.plan(budget(bootstrap.min(quarter))?)?;
     let source_per_row =
         (unshared.maximum_resident_bytes() / unshared.rows_per_block().max(1)) as u64;

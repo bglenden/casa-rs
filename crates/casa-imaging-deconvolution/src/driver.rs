@@ -51,8 +51,9 @@ const DELTA_ENTRY_BYTES: u64 = 48;
 /// Heap bytes [`run_plane`] holds at most for one plane of `shape` with
 /// `terms` residual terms that places up to `components` components and
 /// traces `trace` of them: its residual copy, the cycle's and the step's
-/// updates, the trace, and the solver's working state
-/// ([`Solver::working_bytes`]).
+/// updates, which hold an entry for each pixel a component adds flux to
+/// ([`Solver::component_cells`]) and at most every pixel, the trace, and
+/// the solver's working state ([`Solver::working_bytes`]).
 #[must_use]
 pub fn solve_bytes<S: Solver>(
     solver: &S,
@@ -61,7 +62,10 @@ pub fn solve_bytes<S: Solver>(
     components: usize,
     trace: usize,
 ) -> u64 {
-    let entries = 2 * components as u64 * terms as u64;
+    let cells = components
+        .saturating_mul(solver.component_cells(shape))
+        .min(shape.len());
+    let entries = 2 * cells as u64 * terms as u64;
     (terms * shape.len() * size_of::<f64>()) as u64
         + entries * DELTA_ENTRY_BYTES
         + (trace.next_power_of_two() * size_of::<Component>()) as u64

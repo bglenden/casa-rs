@@ -240,6 +240,11 @@ impl Solver for Clark {
         let active = shape.len().next_power_of_two() * size_of::<Active>();
         LinearRefresh::bytes(shape) + active as u64
     }
+
+    /// A point component.
+    fn component_cells(&self, _shape: PlaneShape) -> usize {
+        1
+    }
 }
 
 impl ClarkState {

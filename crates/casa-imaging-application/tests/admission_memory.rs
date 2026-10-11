@@ -6,6 +6,16 @@
 //! beyond what was live when it started with the memory its phases hold
 //! admitted at that instant. A global allocator applies to this test binary
 //! alone, so no other test is affected.
+//!
+//! The comparison leaves out the process caches' charge: each test first
+//! runs its MeasurementSet once unmeasured ([`warm`]), so the caches are
+//! charged and the table cache holds the MeasurementSet's tiles before the
+//! baseline is taken, and FFTW's plan cache is C heap this allocator does
+//! not see. Only the MeasurementSet's size on disk stays in the comparison,
+//! for tiles a measured run reads that the warming did not. What remains
+//! unspent of the fixed charges is then the Measures catalogs' (16 MiB,
+//! of which a run holds 3.3 MB to 10.6 MB) and that allowance: the law
+//! resolves a missing charge of about 15 MB, two 1024² `f64` planes.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
@@ -39,14 +49,17 @@ static LIVE: AtomicU64 = AtomicU64::new(0);
 static MEASURING: AtomicBool = AtomicBool::new(false);
 /// `LIVE` when the measured run started.
 static BASELINE: AtomicU64 = AtomicU64::new(0);
-/// The measured run's memory ceiling.
-static CEILING: AtomicU64 = AtomicU64::new(0);
 /// The largest `LIVE − BASELINE`.
 static PEAK: AtomicI64 = AtomicI64::new(0);
 /// The largest `LIVE − BASELINE − reserved`.
 static EXCESS: AtomicI64 = AtomicI64::new(i64::MIN);
 /// The largest reserved total seen.
 static RESERVED_PEAK: AtomicU64 = AtomicU64::new(0);
+/// Reserved bytes the comparison leaves out: the process caches' charge,
+/// less the warmed MeasurementSet's allowance ([`warm`]).
+static FIXED: AtomicU64 = AtomicU64::new(0);
+/// The warmed MeasurementSet's size on disk.
+static ALLOWANCE: AtomicU64 = AtomicU64::new(0);
 /// Nanoseconds into the run when `EXCESS` was last raised.
 static EXCESS_AT: AtomicU64 = AtomicU64::new(0);
 /// When the measured run started.
@@ -121,21 +134,11 @@ fn grow(bytes: u64) {
     observe(live);
 }
 
-/// Bytes the live reservations of the process hold.
-fn reserved() -> u64 {
-    let ceiling = CEILING.load(Ordering::Relaxed);
-    let policy = ResourcePolicy::Explicit {
-        workers: 1,
-        memory: ceiling,
-    };
-    ceiling - casa_imaging_runtime::free_memory(&HOST, &policy)
-}
-
 fn observe(live: u64) {
     if !MEASURING.load(Ordering::Relaxed) {
         return;
     }
-    let reserved = reserved();
+    let reserved = held_by_process().saturating_sub(FIXED.load(Ordering::Relaxed));
     RESERVED_PEAK.fetch_max(reserved, Ordering::Relaxed);
     let reserved = reserved as i64;
     let used = live as i64 - BASELINE.load(Ordering::Relaxed) as i64;
@@ -180,13 +183,18 @@ struct Measured {
 /// Run `request` on `workers` workers under a `ceiling`-byte policy,
 /// measuring its heap from the call on.
 fn measure(request: &ImagingRequest, workers: usize, ceiling: u64) -> Measured {
-    // The process holds its caches' charge from its first run on.
+    // The process holds its caches' charge from its first run, the warming,
+    // on.
     let process = held_by_process();
-    assert!(
-        process == 0 || process == casa_imaging_application::process_cache_bytes(),
-        "no reservation of a run outlives it: {process} bytes held"
+    assert_eq!(
+        process,
+        casa_imaging_application::process_cache_bytes(),
+        "the MeasurementSet was warmed, and no reservation of a run outlives it"
     );
-    CEILING.store(ceiling, Ordering::Relaxed);
+    FIXED.store(
+        process.saturating_sub(ALLOWANCE.load(Ordering::Relaxed)),
+        Ordering::Relaxed,
+    );
     PEAK.store(0, Ordering::Relaxed);
     EXCESS.store(i64::MIN, Ordering::Relaxed);
     RESERVED_PEAK.store(0, Ordering::Relaxed);
@@ -214,6 +222,46 @@ fn measure(request: &ImagingRequest, workers: usize, ceiling: u64) -> Measured {
     };
     report(&measured, offset);
     measured
+}
+
+/// Run `measurement_set` once unmeasured, so that the process caches are
+/// charged and the table cache holds its tiles before a measured run takes
+/// its baseline; its size on disk bounds what a measured run can add to
+/// the table cache, and stays in the comparison.
+fn warm(measurement_set: &Path, root: &Path) {
+    casa_imaging_application::execute(
+        &request(
+            measurement_set,
+            &root.join("warm"),
+            64,
+            json!({ "niter": 0 }),
+        ),
+        RunContext {
+            host: HOST,
+            ..imaging::context(ResourcePolicy::Explicit {
+                workers: 1,
+                memory: AMPLE,
+            })
+        },
+    )
+    .expect("the warming run");
+    ALLOWANCE.store(disk_bytes(measurement_set), Ordering::Relaxed);
+}
+
+/// Bytes of the files under `path`.
+fn disk_bytes(path: &Path) -> u64 {
+    std::fs::read_dir(path)
+        .expect("a MeasurementSet directory")
+        .map(|entry| {
+            let entry = entry.expect("a directory entry");
+            let metadata = entry.metadata().expect("metadata");
+            if metadata.is_dir() {
+                disk_bytes(&entry.path())
+            } else {
+                metadata.len()
+            }
+        })
+        .sum()
 }
 
 /// Bytes the process's live reservations hold, whatever a run's ceiling.
@@ -379,6 +427,7 @@ fn continuum_runs_stay_within_their_admission() {
     let _measurement = MEASUREMENT.lock().expect("measurement lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = observation(root.path(), 4);
+    warm(&measurement_set, root.path());
     let mut breaches = Vec::new();
     for (label, controls) in [
         ("hogbom", json!({ "deconvolver": "hogbom" })),
@@ -444,6 +493,7 @@ fn cubes_stay_within_their_admission_resident_and_in_waves() {
     let _measurement = MEASUREMENT.lock().expect("measurement lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = observation(root.path(), CUBE_CHANNELS);
+    warm(&measurement_set, root.path());
     let mut breaches = Vec::new();
     let resident = check(
         &mut breaches,
@@ -462,7 +512,10 @@ fn cubes_stay_within_their_admission_resident_and_in_waves() {
     drop(resident);
     // Raise the ceiling from 1 MiB by what each refusal reports missing,
     // and a third more, until the cube runs: just above what it needs, so in
-    // waves. A refused attempt keeps the law as a completed one does.
+    // waves. A refused attempt keeps the law as a completed one does. Each
+    // solved plane's terms are admitted as it finishes, and such a refusal
+    // misses only the plane's terms, so the ceiling grows by an eighth at
+    // least.
     let waved = cube(&measurement_set, &root.path().join("waved"), json!({}));
     let mut memory = 1 << 20;
     let mut refusals = 0;
@@ -479,9 +532,9 @@ fn cubes_stay_within_their_admission_resident_and_in_waves() {
                 ..
             })) => {
                 let gap = required - available;
-                memory += gap + gap.div_ceil(3);
+                memory += (gap + gap.div_ceil(3)).max(memory / 8);
                 refusals += 1;
-                assert!(refusals < 32, "the ceiling converges");
+                assert!(refusals < 48, "the ceiling converges");
             }
             Err(error) => panic!("only admission refuses a small ceiling: {error}"),
         }
@@ -511,23 +564,91 @@ fn a_refused_run_holds_no_more_than_it_was_admitted() {
     let _measurement = MEASUREMENT.lock().expect("measurement lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = observation(root.path(), 4);
-    let measured = measure(
+    warm(&measurement_set, root.path());
+    let refusals = [
+        (
+            "clark uniform at 1 MiB",
+            request(
+                &measurement_set,
+                &root.path().join("refused"),
+                1024,
+                json!({ "deconvolver": "clark", "weighting": "uniform" }),
+            ),
+            1 << 20,
+        ),
+        // Astra's probe on #700: 64 W planes at 1024² are refused before
+        // the operator builds them.
+        (
+            "wproject at 128 MiB",
+            request(
+                &measurement_set,
+                &root.path().join("wproject-refused"),
+                1024,
+                json!({ "gridder": "wproject", "wprojplanes": 64, "niter": 0 }),
+            ),
+            128 << 20,
+        ),
+    ];
+    for (label, request, ceiling) in &refusals {
+        eprintln!("{label}");
+        let measured = measure(request, 1, *ceiling);
+        assert!(
+            matches!(
+                measured.outcome,
+                Err(ApplicationDispatchError::Admission(_))
+            ),
+            "{label}: the run is refused, not {:?}",
+            measured.outcome.as_ref().err()
+        );
+        let breach = admission_breach(label, &measured);
+        assert!(breach.is_none(), "{breach:?}");
+    }
+}
+
+/// Runs whose phases the other laws do not reach: W-projection, whose
+/// kernels are built and held before the passes, and a linear cube of a
+/// sparse selection, whose rows place far more samples than they have
+/// channels (Astra's probe on #700: `0:0~1;100` of 101 channels 128 MHz
+/// apart onto ten channels 1.28 GHz wide).
+#[test]
+fn kernel_sets_and_sparse_selections_stay_within_their_admission() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), 101);
+    warm(&measurement_set, root.path());
+    let mut breaches = Vec::new();
+    check(
+        &mut breaches,
+        "wproject 16 planes",
         &request(
             &measurement_set,
-            &root.path().join("refused"),
-            1024,
-            json!({ "deconvolver": "clark", "weighting": "uniform" }),
+            &root.path().join("wproject"),
+            256,
+            json!({ "gridder": "wproject", "wprojplanes": 16, "deconvolver": "hogbom" }),
         ),
-        4,
-        1 << 20,
+        2,
+        AMPLE,
     );
-    assert!(
-        matches!(
-            measured.outcome,
-            Err(ApplicationDispatchError::Admission(_))
+    check(
+        &mut breaches,
+        "sparse linear cube",
+        &request(
+            &measurement_set,
+            &root.path().join("sparse"),
+            256,
+            json!({
+                "specmode": "cube",
+                "outframe": "TOPO",
+                "spw": "0:0~1;100",
+                "channel_count": 10,
+                "start": "44.64GHz",
+                "width": "1.28GHz",
+                "interpolation": "linear",
+                "niter": 0,
+            }),
         ),
-        "1 MiB holds no 1024-pixel run"
+        2,
+        2 << 30,
     );
-    let breach = admission_breach("refused", &measured);
-    assert!(breach.is_none(), "{breach:?}");
+    assert!(breaches.is_empty(), "{breaches:#?}");
 }

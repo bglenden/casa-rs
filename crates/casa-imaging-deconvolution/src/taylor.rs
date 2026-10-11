@@ -362,6 +362,11 @@ impl Solver for Taylor {
             + scales * shape.len() as u64
             + (convolve_bytes(shape) + spectrum_bytes(shape)).max(ScaleBank::masks_bytes(shape))
     }
+
+    /// The largest scale's support.
+    fn component_cells(&self, shape: PlaneShape) -> usize {
+        ScaleBank::support_cells(&self.sizes(shape), shape)
+    }
 }
 
 /// The inverse of one scale's Hessian, refused when a diagonal entry is

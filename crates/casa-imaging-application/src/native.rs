@@ -60,7 +60,10 @@ impl From<ApplicationError> for NativeError {
 impl From<ImagingError> for NativeError {
     fn from(error: ImagingError) -> Self {
         match error {
-            ImagingError::Admission(admission) => Self::Admission(admission),
+            ImagingError::Admission(admission)
+            | ImagingError::Minor(casa_imaging_runtime::MinorCycleRunError::Admission(admission)) => {
+                Self::Admission(admission)
+            }
             ImagingError::Cancelled(cancelled) => Self::Cancelled(cancelled),
             ImagingError::Pass(error) => error.into(),
             error => Self::Other(Box::new(error)),
@@ -180,6 +183,7 @@ fn run(
     let (access, source) = finalize_source_access(
         problem,
         input.initial_access,
+        imaging::row_samples(problem)?,
         &runtime.host,
         &runtime.resource_policy,
     )?;

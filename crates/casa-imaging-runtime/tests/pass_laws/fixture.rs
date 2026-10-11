@@ -5,8 +5,8 @@ use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
     Basis, CpuBackend, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
     ModeSet, ModelImages, ModelPlane, ModelPrescale, NativeRow, NormalImages, PlaneRange,
-    PolarizationRouting, PredictionScratch, PreparedModelGrids, RowContext, SpectralAxis,
-    SpectralKernel, SpectralResampler, Spheroidal, WeightingGeneration,
+    PolarizationRouting, PredictionScratch, PreparedModelGrids, RowContext, RowSpectrum,
+    SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WeightingGeneration,
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockShape, BoundedSource, Cancel, DomainProjection, MajorCyclePass,
@@ -227,9 +227,19 @@ impl BoundedSource for Rows {
     }
 
     fn maximum_block(&self) -> BlockShape {
+        let frequencies = &self.frequencies;
+        let channels = frequencies.len();
         BlockShape {
             rows: 37,
-            channels: self.frequencies.len(),
+            spectrum: RowSpectrum {
+                channels,
+                first_spacing_hz: if channels > 1 {
+                    (frequencies[1] - frequencies[0]).abs()
+                } else {
+                    0.0
+                },
+                span_hz: (frequencies[channels - 1] - frequencies[0]).abs(),
+            },
             correlations: 2,
             domains: self.rows.first().map_or(1, |row| row.projections.len()),
         }

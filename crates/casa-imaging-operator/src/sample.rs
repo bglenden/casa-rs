@@ -162,6 +162,15 @@ impl SampleBuffer {
             as u64
     }
 
+    /// Bytes the buffer holds now, from its capacities: [`Self::bytes`] for
+    /// a buffer [`Self::with_capacity`] made that has not grown.
+    #[must_use]
+    pub fn capacity_bytes(&self) -> u64 {
+        (self.placements.capacity() * size_of::<Placement>()
+            + self.values.capacity() * size_of::<Complex32>()
+            + self.weights.capacity() * size_of::<f32>()) as u64
+    }
+
     /// Visibility polarizations per placement.
     #[must_use]
     pub const fn npol(&self) -> usize {

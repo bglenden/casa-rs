@@ -304,7 +304,7 @@ impl BoundedSource for MeasurementSetSource<'_> {
         let block = source.create_storage();
         let geometry = SelectedObservationNumericGeometry::new(
             source.maximum_rows_per_block(),
-            row_layout(self.problem).channels,
+            row_layout(self.problem).channels(),
         )?;
         self.traversal = Traversal::Streaming(Box::new(Stream {
             source,

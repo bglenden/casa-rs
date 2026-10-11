@@ -37,7 +37,8 @@ use casa_ms::ResolvedSelectedObservationAccess;
 use super::ImagingError;
 use super::images::{pass_images, prepare_model};
 use super::measurement::{
-    DomainOperator, density_shape, domain_operator, native_spacing_hz, selected_correlations,
+    DomainOperator, KernelAdmission, density_shape, domain_operator, native_spacing_hz,
+    selected_correlations,
 };
 use super::source::{MeasurementSetSource, PlaneBounds};
 use super::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
@@ -215,6 +216,7 @@ pub(crate) fn run(
                 &cycle_controls,
                 &mut cache,
                 run.team,
+                (&run.host, &run.policy),
             )?)
         })?;
         let refresh = cache.refresh_bytes(&outcome.scientific);
@@ -262,7 +264,7 @@ pub(crate) fn run(
         let name = format!("major cycle {}", outcome.major_cycle_count + 1);
         let scientific = outcome.scientific;
         let major = run_phase(name, &cancel, summary, || {
-            run.refresh(scientific, minor.terms, last)
+            run.refresh(scientific, (minor.terms, minor.results), last)
         })?;
         controller.end_major_cycle();
         outcome.scientific = major.completion;
@@ -331,7 +333,7 @@ fn predict_final_model(
     run: &mut Run<'_>,
     mut outcome: ImagingOutcome,
 ) -> Result<ImagingOutcome, ImagingError> {
-    let major = run.refresh(outcome.scientific, Vec::new(), true)?;
+    let major = run.refresh(outcome.scientific, (Vec::new(), Reservation::none()), true)?;
     outcome.scientific = major.completion;
     outcome.visibility_products = major.visibility;
     outcome.major_cycle_count += 1;
@@ -369,6 +371,11 @@ impl<'a> Run<'a> {
             .open(problem)
             .map_err(|error| ImagingError::Observation(Box::new(error)))?;
         let dish_classes = selected.antenna_response_classes();
+        let admission = KernelAdmission {
+            host: &inputs.host,
+            policy: &inputs.policy,
+            workers: inputs.team.workers(),
+        };
         let domains = problem
             .geometry()
             .domains()
@@ -382,6 +389,7 @@ impl<'a> Run<'a> {
                     inputs.grid_precision,
                     inputs.aw_catalog.as_ref(),
                     &dish_classes,
+                    admission,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -485,13 +493,15 @@ impl<'a> Run<'a> {
     fn refresh(
         &mut self,
         completion: MajorCycleCompletion,
-        terms: Vec<ModelDeltaTerm>,
+        (terms, results): (Vec<ModelDeltaTerm>, Reservation),
         last: bool,
     ) -> Result<Major, ImagingError> {
         // The retained charge still covers the normal state and model the
-        // pass refreshes; the pass adds its scratch and the new residual.
+        // pass refreshes; the pass adds its scratch and the new residual,
+        // and the minor cycle's charge covers its terms until the model
+        // holds them.
         let (normal_state, model) = completion.into_parts();
-        let (residency, pass) = self.admit_pass(ModeSet::DATA, true, 0)?;
+        let (residency, mut pass) = self.admit_pass(ModeSet::DATA, true, 0)?;
         let model = self.lifecycle.prepare_final_model(model, terms)?;
         let cycle = MajorCycle::refresh(
             self.problem,
@@ -500,6 +510,7 @@ impl<'a> Run<'a> {
             self.normal_storage(residency)?,
         )?;
         let major = self.reconcile(cycle, false, last, residency)?;
+        pass.join(results);
         self.retain(&major, pass)?;
         Ok(major)
     }
@@ -514,8 +525,19 @@ impl<'a> Run<'a> {
     fn retain(&mut self, major: &Major, pass: Reservation) -> Result<(), ImagingError> {
         let resident = major.completion.resident_bytes()?;
         self.retained.join(pass);
+        debug_assert!(
+            resident <= self.retained.memory(),
+            "the pass admitted what it hands on: {resident} bytes resident, {} charged",
+            self.retained.memory()
+        );
         if resident > self.retained.memory() {
-            // The pass's plan undercounted what it hands on.
+            // The pass's plan undercounted what it hands on: admitted after
+            // the fact, so said.
+            tracing::warn!(
+                resident,
+                charged = self.retained.memory(),
+                "a pass handed on more than it admitted"
+            );
             self.retained.join(admit(
                 &self.host,
                 &self.policy,

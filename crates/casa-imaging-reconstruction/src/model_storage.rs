@@ -97,6 +97,11 @@ fn add_with_precision(precision: NumericPrecision, left: f64, right: f64) -> f64
     }
 }
 
+/// Heap bytes queuing one update holds at most: the validated update, its
+/// copy in a pending window, and a window of its own.
+pub(crate) const QUEUED_UPDATE_BYTES: usize =
+    2 * size_of::<ModelSampleUpdate>() + size_of::<PendingWindow>();
+
 #[derive(Debug)]
 struct PendingWindow {
     range: Range<usize>,

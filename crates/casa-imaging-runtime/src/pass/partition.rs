@@ -4,7 +4,7 @@
 use std::ops::Range;
 
 use casa_imaging_operator::{
-    Basis, CellHold, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile,
+    Basis, CellHold, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile, grid_planning_bytes,
 };
 use casa_imaging_reconstruction::resident_bytes_per_cell;
 
@@ -137,14 +137,17 @@ impl WaveDemand<'_> {
     /// more; each owner adds its ring ([`casa_imaging_metal::ring_bytes`]),
     /// and a pass that subtracts the model on the device adds the device
     /// copy of the model grids. Per pass, whatever the wave: the row chunks
-    /// it places [`Self::block`]'s rows with. What grows with the source's
-    /// block is the source's ([`super::source_block_bytes`]).
+    /// it places [`Self::block`]'s rows with, and planning one grid
+    /// transform ([`grid_planning_bytes`]), which the process does one at a
+    /// time. What grows with the source's block is the source's
+    /// ([`super::source_block_bytes`]).
     #[must_use]
     pub fn bytes(&self, planes: u32) -> u64 {
         let total = self.planes();
         let one = PlaneRange::single(0);
         let mut bytes = 0_u64;
         let mut per_worker = 0_u64;
+        let mut planning = 0_u64;
         for domain in self.domains {
             let operator = domain.operator;
             let precision = operator.precision();
@@ -192,8 +195,10 @@ impl WaveDemand<'_> {
             let grid_cells = operator.geometry().cells() as u64;
             let gpols = operator.polarization().grid_pols() as u64;
             per_worker = per_worker.max(grid_cells * 16 + gpols * image_cells * 16);
+            planning = planning.max(grid_planning_bytes(operator.geometry().cells()));
         }
         bytes
+            + planning
             + self.workers as u64 * per_worker
             + super::wave::chunk_bytes(
                 self.domains,

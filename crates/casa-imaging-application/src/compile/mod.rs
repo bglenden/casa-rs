@@ -81,6 +81,11 @@ struct Surveyed<'a> {
 }
 
 /// Compile `request` against its MeasurementSet.
+///
+/// What compile reads is admitted, not compile itself: the walks of the
+/// MeasurementSet's rows are admitted once it is open and its rows are
+/// known, before the first walk; opening it reads only its tables'
+/// descriptions, under the run's fixed charges.
 pub(crate) fn prepare(
     request: &ImagingRequest,
     context: &RunContext,

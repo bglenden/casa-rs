@@ -305,7 +305,7 @@ fn keys_follow_the_pair_plane_and_the_window_cells() {
     assert_eq!(set.max_half_support(), [largest; 2]);
     assert_eq!(set.normalisation(), KernelNormalisation::UnitSum);
     assert!(set.pointing_ramp());
-    assert!(set.bytes() > 0);
+    assert!(set.resident_bytes() > 0);
 }
 
 #[test]

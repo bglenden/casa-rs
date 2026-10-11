@@ -201,7 +201,7 @@ pub fn reconstruction_problem_with_domains(
         geometry,
         snapshot,
         ModelLifecycleRequirements::new(
-            ModelBounds::new(4_096, 4_096, 1.0e30, 1.0e30).expect("valid bounds"),
+            ModelBounds::new(1 << 20, 1 << 20, 1.0e30, 1.0e30).expect("valid bounds"),
             NumericPrecision::F64,
         ),
     ))

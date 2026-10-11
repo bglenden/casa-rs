@@ -128,8 +128,9 @@ pub struct ImagingOutcome {
     /// The run's phases, team and totals; the caller adds the request echo
     /// before writing it beside the products.
     pub summary: RunSummary,
-    /// Final authoritative complete-data and model state.
-    pub scientific: MajorCycleCompletion,
+    /// Final authoritative complete-data and model state; borrowed through
+    /// [`Self::scientific`], so that it cannot outlive its charge.
+    scientific: MajorCycleCompletion,
     /// Planned product generation used before member production.
     pub planned_products: PlannedContinuumGeneration,
     /// Payload-free authorized generation retained after publication.
@@ -140,6 +141,22 @@ pub struct ImagingOutcome {
 }
 
 impl ImagingOutcome {
+    /// The final authoritative complete-data and model state.
+    ///
+    /// It stays charged against the process's memory until the outcome
+    /// drops, so it is only lent: a completion moved out of its outcome
+    /// would outlive its charge.
+    ///
+    /// ```compile_fail
+    /// fn detach(outcome: casa_imaging_application::ImagingOutcome) {
+    ///     let _ = outcome.scientific;
+    /// }
+    /// ```
+    #[must_use]
+    pub const fn scientific(&self) -> &MajorCycleCompletion {
+        &self.scientific
+    }
+
     /// The CASA suffixes of the published products, for example `.image`.
     #[must_use]
     pub fn product_names(&self) -> Vec<String> {

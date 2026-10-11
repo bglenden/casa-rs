@@ -291,7 +291,7 @@ fn outlier_cubes_of_another_size_page_their_own_planes() {
         };
         imaging.outlierfile = Some(outlier_file);
         let outcome = execute(&imaging).expect("a cube with a smaller outlier");
-        assert_eq!(outcome.scientific.normal_state().domain_count(), 2);
+        assert_eq!(outcome.scientific().normal_state().domain_count(), 2);
         for suffix in DIRTY_PRODUCT_SUFFIXES {
             let plane = |pixels: usize| -> Vec<usize> {
                 if suffix == ".sumwt" {

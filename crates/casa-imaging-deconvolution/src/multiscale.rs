@@ -239,4 +239,9 @@ impl Solver for Multiscale {
             + (3 * plane_bytes(shape) + 2 * spectrum_bytes(shape))
                 .max(ScaleBank::masks_bytes(shape))
     }
+
+    /// The largest scale's support.
+    fn component_cells(&self, shape: PlaneShape) -> usize {
+        ScaleBank::support_cells(&self.scales, shape)
+    }
 }

@@ -29,9 +29,25 @@
 //!     casa_imaging_runtime::ReturningAllocator;
 //! ```
 //!
+//! On glibc this is what `mallopt(M_MMAP_THRESHOLD, 1 MiB)` with a matching
+//! `M_TRIM_THRESHOLD` would do; one mechanism serves both systems so that
+//! the `returning_allocator` law tests the same thing on each. Launch-time
+//! settings such as libmalloc's `MallocLargeCache=0` take effect only if
+//! they are in the environment before the process starts, which a binary
+//! run from a shell cannot ensure for itself.
+//!
+//! What this does not reach: memory C libraries allocate with `malloc`,
+//! FFTW's plans and planner scratch among them, still goes to the system
+//! allocator and its cache. Admission charges FFTW's plan cache; planner
+//! scratch freed into libmalloc's cache is outside both.
+//!
 //! A returned block's pages fault in afresh when they are allocated again. On
 //! the cube that costs about 3% of the run, mostly system time; pooling the
-//! pass's per-plane buffers (IF-10) removes most of it.
+//! pass's per-plane buffers (IF-10) removes most of it. Each live mapped
+//! block is one or more map entries: under a 16 GiB ceiling at most 16 Ki
+//! blocks, below Linux's default `vm.max_map_count` of 65,530. If pooling
+//! alone keeps a run's footprint within its admission with the system
+//! allocator, this allocator is deleted (#657).
 
 use std::alloc::{GlobalAlloc, Layout, System};
 
@@ -46,11 +62,14 @@ pub const RETURNED_BLOCK_BYTES: usize = 1 << 20;
 /// whose alignment is at most a page; a block with a larger alignment uses
 /// the system allocator. Fresh mappings are zeroed by the system, so zeroed
 /// allocation costs nothing beyond the mapping. Resizing a mapped block
-/// keeps it in place when its pages suffice, releases the pages it no longer
-/// needs when it shrinks, and otherwise grows it in place where the
-/// following address range is free (`mremap` on Linux), copying only when it
-/// must move. On platforms without `mmap` every block uses the system
-/// allocator.
+/// keeps it in place when its pages suffice and releases the pages it no
+/// longer needs when it shrinks. To grow, Linux's `mremap` extends the
+/// mapping in place or moves its pages without copying them; elsewhere the
+/// block grows in place where the following address range is free, and
+/// otherwise is copied to a new mapping, briefly holding both. A failed
+/// resize returns null and leaves the block as it was. A failed unmap
+/// aborts the process (see `unmap`). On platforms without `mmap` every
+/// block uses the system allocator.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ReturningAllocator;
 
@@ -186,7 +205,13 @@ fn map_at(hint: *mut u8, bytes: usize) -> *mut u8 {
     }
 }
 
-/// Unmap the mapping of `bytes` bytes at `pointer`.
+/// Unmap the mapping of `bytes` bytes at `pointer`, or stop the process.
+///
+/// `munmap` can fail for a valid mapping: on Linux, freeing the middle of
+/// mappings the kernel merged needs one more map entry, which fails with
+/// `ENOMEM` once the process is at `vm.max_map_count`. A global allocator
+/// must not unwind, and a block whose pages stay mapped would hold memory
+/// that nothing charges, so the process aborts.
 ///
 /// # Safety
 ///
@@ -194,10 +219,21 @@ fn map_at(hint: *mut u8, bytes: usize) -> *mut u8 {
 /// page boundary, and nothing uses it after this call.
 #[cfg(unix)]
 unsafe fn unmap(pointer: *mut u8, bytes: usize) {
-    let length = pages(bytes).expect("a mapped block's pages fit the address space");
+    // `map` mapped these pages, so their length fits the address space.
+    let length = bytes.next_multiple_of(page_size());
     // SAFETY: the caller's contract; the range is whole pages of one mapping.
-    let status = unsafe { libc::munmap(pointer.cast(), length) };
-    debug_assert_eq!(status, 0, "munmap of a mapped block");
+    if unsafe { libc::munmap(pointer.cast(), length) } != 0 {
+        abort_with(b"casa-rs: munmap of a freed block failed; aborting\n");
+    }
+}
+
+/// Write `message` to standard error without allocating, then abort.
+#[cfg(unix)]
+fn abort_with(message: &[u8]) -> ! {
+    // SAFETY: `message` is a live buffer of `message.len()` bytes; a failed
+    // write changes nothing.
+    unsafe { libc::write(libc::STDERR_FILENO, message.as_ptr().cast(), message.len()) };
+    std::process::abort()
 }
 
 /// Resize the mapping of `old` bytes at `pointer` to hold `new` bytes; null,

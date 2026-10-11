@@ -39,6 +39,16 @@ impl Spheroidal {
             correction: ImageCorrection::new(correction_axis(nx), correction_axis(ny)),
         }
     }
+
+    /// Bytes a set for `geometry` holds at most: its tap rows, its Mueller
+    /// routing and its corrections.
+    #[must_use]
+    pub const fn bytes(geometry: &GridGeometry) -> u64 {
+        let rows = (SPHEROIDAL_OVERSAMPLING as usize + 1) * SPHEROIDAL_SUPPORT as usize;
+        (rows * size_of::<f32>()) as u64
+            + MuellerRouting::MAXIMUM_BYTES
+            + ImageCorrection::bytes(geometry.grid_shape())
+    }
 }
 
 impl ConvolutionFunctionSet for Spheroidal {
