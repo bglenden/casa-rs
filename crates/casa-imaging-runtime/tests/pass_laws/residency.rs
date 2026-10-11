@@ -148,6 +148,7 @@ fn a_writing_pass_in_waves_is_a_typed_error() {
         residency: Residency::Waves { planes_per_wave: 1 },
         native_spacing_hz: WIDTH_HZ,
         backend: BackendChoice::Cpu,
+        metal_stage_timing: false,
     };
     let mut write = |_: &_, _: &[_]| -> Result<(), _> { panic!("nothing is written") };
     let mut sink = VisibilitySink {

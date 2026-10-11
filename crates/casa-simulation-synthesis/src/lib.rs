@@ -350,7 +350,7 @@ impl StandardGridder {
 
 fn centered_fft2(input: &Array2<Complex32>) -> Array2<Complex32> {
     let mut transformed = shift2(input, true);
-    let mut fft = Fft2::<f32>::new([transformed.shape()[0], transformed.shape()[1]])
+    let mut fft = Fft2::<f32>::with_threads([transformed.shape()[0], transformed.shape()[1]], 1)
         .expect("valid synthesis FFT shape");
     fft.transform(
         transformed

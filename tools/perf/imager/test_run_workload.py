@@ -19,7 +19,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_workload
-from perf_harness import casa_tclean
+from perf_harness import casa_tclean, stages
 from perf_harness.image_compare import CASA_IMAGE_COMPARATOR
 from test_support import canonical_test_environment, canonical_workload_result
 
@@ -1912,7 +1912,7 @@ real 1.145408
         self.assertEqual(
             "auto:1000", env["IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK"]
         )
-        self.assertEqual("1", env["CASA_RS_STANDARD_MFS_PROFILE_DETAIL"])
+        self.assertNotIn("CASA_RS_STANDARD_MFS_PROFILE_DETAIL", env)
 
     def test_casa_unlimited_nmajor_flows_to_the_matched_benchmark(self) -> None:
         manifest = {
@@ -2449,7 +2449,6 @@ standard_mfs_profile_run run=1 gridded_samples=500000 major_cycles=10 minor_iter
         _, kwargs = run_command.call_args
         self.assertTrue(kwargs["stream_log"])
         self.assertEqual("1", kwargs["env"]["IMAGER_BENCH_STREAM_LOG"])
-        self.assertEqual("1", kwargs["env"]["CASA_RS_IMAGING_PROGRESS"])
 
     def test_parse_backend_plan_logs_extracts_multiscale_minor_cycle_summary(
         self,
@@ -3557,72 +3556,59 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
             panel["zoom_panel"]["reason"],
         )
 
-    def test_parse_rust_stage_section_keeps_full_core_timing_set(self) -> None:
+    def test_rust_stage_medians_sum_each_phase_kind_of_the_stage_timing_events(
+        self,
+    ) -> None:
+        def event(phase: str, seconds: float) -> str:
+            return (
+                "INFO casa_imaging::stage_timing (file crates/casa-imaging-runtime/"
+                f'src/summary.rs, line 205) imaging phase phase="{phase}" '
+                f"completed=true seconds={seconds} process_peak_rss_bytes=1 "
+                "peak_reserved_bytes=2 reserved_bytes=1"
+            )
+
+        run = "\n".join(
+            [
+                "INFO casars_imager (file crates/casars-imager/src/main.rs, line 18) "
+                "casars-imager started",
+                event("preparation", 0.1),
+                event("setup", 0.01),
+                event("major cycle 1", 0.2),
+                event("minor-cycle preparation 1", 0.004),
+                event("minor cycle 1", 0.003),
+                event("major cycle 2", 0.3),
+                event("minor-cycle preparation 2", 0.002),
+                event("products", 0.05),
+            ]
+        )
+        other = run.replace("seconds=0.3 ", "seconds=0.5 ")
+        medians = stages.rust_stage_medians([run, run, other])
+        self.assertEqual(
+            {
+                "preparation": 100.0,
+                "setup": 10.0,
+                "major_cycles": 500.0,
+                "minor_cycle_preparations": 6.0,
+                "minor_cycles": 3.0,
+                "products": 50.0,
+                "total": 669.0,
+            },
+            {kind: round(value, 6) for kind, value in medians.items()},
+        )
+        with self.assertRaisesRegex(ValueError, "unknown casars-imager phase"):
+            stages.rust_phase_milliseconds(event("restore", 1.0))
+
         log = """Rust stage medians (milliseconds):
-  run=1 frontend_total_ms=100.000 open_ms=1.000 prepare_ms=2.000 phase_center_ms=3.000 imaging_ms=4.000 coords_ms=5.000 write_ms=6.000 core_total_ms=40.000 controller_ms=7.000 weighting_ms=8.000 major_refresh_ms=9.000 psf_grid_ms=10.000 psf_fft_ms=11.000 psf_normalize_ms=12.000 model_fft_ms=13.000 residual_grid_ms=14.000 residual_fft_ms=15.000 residual_normalize_ms=16.000 minor_ms=17.000 minor_solve_ms=18.000 beam_fit_ms=19.000 restore_ms=20.000
-  frontend:
-  open_measurement_set=1.000
-  prepare_plane_input=2.000
-  prepared_source_read=2.500
-  prepared_source_prepare=3.500
-  extract_phase_center=3.000
-  run_imaging=4.000
-  build_coordinate_system=5.000
-  write_products=6.000
-  frontend_total=100.000
-  core:
-  controller_overhead=7.000
-  weighting=8.000
-  psf_grid=10.000
-  psf_fft=11.000
-  psf_normalize=12.000
-  model_fft=13.000
-  residual_degrid_grid=14.000
-  residual_fft=15.000
-  residual_normalize=16.000
-  major_cycle_refresh=9.000
-  residual_refresh_overhead=9.500
-  clean_cycle_setup=9.250
-  deconvolver_setup=9.750
-  multiscale_scale_refresh=9.125
-  minor_cycle=17.000
-  minor_cycle_solve=18.000
-  beam_fit=19.000
-  restore=20.000
-  total=40.000
+  major_cycles=500.000
+  setup=10.000
+  total=663.000
 
 CASA tclean timings (seconds):
 """
-
-        stages = run_workload.parse_stage_section(log, "Rust stage medians")
-
-        for name in [
-            "psf_normalize",
-            "model_fft",
-            "residual_normalize",
-            "major_cycle_refresh",
-            "residual_refresh_overhead",
-            "clean_cycle_setup",
-            "deconvolver_setup",
-            "multiscale_scale_refresh",
-            "minor_cycle",
-            "minor_cycle_solve",
-            "beam_fit",
-            "restore",
-        ]:
-            self.assertIn(name, stages)
-        self.assertEqual(stages["psf_normalize"], 12.0)
-        self.assertEqual(stages["model_fft"], 13.0)
-        self.assertEqual(stages["residual_refresh_overhead"], 9.5)
-        self.assertEqual(stages["clean_cycle_setup"], 9.25)
-        self.assertEqual(stages["deconvolver_setup"], 9.75)
-        self.assertEqual(stages["multiscale_scale_refresh"], 9.125)
-        self.assertEqual(stages["get_ms_values_into_processing_buffer"], 2.5)
-        self.assertEqual(stages["prepare_processing_buffer"], 3.5)
-        self.assertEqual(stages["restore"], 20.0)
-        self.assertNotIn("niter", stages)
-        self.assertNotIn("imsize", stages)
-        self.assertNotIn("psf_grid_ms", stages)
+        parsed = run_workload.parse_stage_section(log, "Rust stage medians")
+        self.assertEqual(
+            {"major_cycles": 500.0, "setup": 10.0, "total": 663.0}, parsed
+        )
 
     def test_comparison_evidence_status_distinguishes_failure_and_tolerance(
         self,

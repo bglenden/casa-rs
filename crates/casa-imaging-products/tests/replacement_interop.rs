@@ -61,7 +61,7 @@ fn publish_run(base: &Path, cleaned: f64) -> f64 {
     let writer = CasaImageWriter::new(base.to_path_buf(), CoordinateSystem::new());
     produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &writer)
         .expect("generated products");
-    writer.publish().expect("published products");
+    writer.publish(|_| ()).expect("published products");
     let residual = casa_images::PagedImage::<f32>::open(residual_path(base)).expect("residual");
     let shape = residual.shape().to_vec();
     residual

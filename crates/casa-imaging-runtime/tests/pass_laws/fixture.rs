@@ -384,6 +384,7 @@ pub fn try_run(
         residency: run.residency,
         native_spacing_hz: run.native_spacing_hz,
         backend: run.backend,
+        metal_stage_timing: false,
     };
     let team = WorkerTeam::new(run.workers).expect("team");
     let mut joined: Vec<Option<NormalImages>> = (0..domains.len()).map(|_| None).collect();

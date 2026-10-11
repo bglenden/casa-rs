@@ -8,6 +8,7 @@ mod cycle;
 mod images;
 mod measurement;
 mod source;
+mod trace;
 mod visibility_write;
 
 pub(crate) use cycle::{ImagingInputs, run};

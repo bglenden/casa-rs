@@ -28,7 +28,6 @@ use casa_types::ArrayValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
-use std::sync::OnceLock;
 use std::time::Instant;
 use thiserror::Error;
 
@@ -1288,18 +1287,12 @@ fn uv_range_matches(
     range.lower.is_none_or(compare) && range.upper.is_none_or(compare)
 }
 
+/// The `tracing` target of the selection profile (`debug`).
+const SELECTION_PROFILE: &str = "casa_ms::selection_profile";
+
+/// Whether the logging configuration takes the selection profile.
 fn selection_profile_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| match std::env::var("CASA_RS_SELECTION_PROFILE") {
-        Ok(value) => {
-            let trimmed = value.trim();
-            !trimmed.is_empty()
-                && trimmed != "0"
-                && !trimmed.eq_ignore_ascii_case("false")
-                && !trimmed.eq_ignore_ascii_case("off")
-        }
-        Err(_) => false,
-    })
+    tracing::enabled!(target: SELECTION_PROFILE, tracing::Level::DEBUG)
 }
 
 fn log_selection_profile(phase: &str, total_ns: u64, detail: Option<String>) {
@@ -1316,7 +1309,7 @@ fn log_selection_profile(phase: &str, total_ns: u64, detail: Option<String>) {
         line.push(' ');
         line.push_str(&detail);
     }
-    eprintln!("{line}");
+    tracing::debug!(target: SELECTION_PROFILE, "{line}");
 }
 
 #[derive(Clone, Copy, Debug, Default)]

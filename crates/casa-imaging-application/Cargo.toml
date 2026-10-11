@@ -35,3 +35,4 @@ casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 casa-test-support = { path = "../casa-test-support" }
 sha2 = "0.10"
+tracing-subscriber.workspace = true

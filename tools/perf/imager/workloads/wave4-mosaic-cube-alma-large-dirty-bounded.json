@@ -40,10 +40,7 @@
     "run_label": "w4-12",
     "storage_label": "external-ssd-wave1-large",
     "ms_staging": "direct",
-    "stream_log": true,
-    "env": {
-      "CASA_RS_IMAGING_PROGRESS": "1"
-    }
+    "stream_log": true
   },
   "comparison": {
     "products": [

@@ -2,8 +2,9 @@
 
 //! SIGINT during a run (IF-6): `casars-imager` stops at the next block
 //! boundary of a pass or before its next phase, exits with status 130 and
-//! leaves nothing it wrote: no product, no staged member, no paged cube
-//! state and no run summary.
+//! leaves only its run summary, which records the cancellation and the
+//! phases before it (IF-9): no product, no staged member and no paged cube
+//! state.
 
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -117,7 +118,30 @@ fn an_interrupted_cube_clean_exits_130_and_leaves_nothing_behind() {
     );
     assert_eq!(
         written(&directory, "interrupted"),
-        Vec::<String>::new(),
-        "nothing of the run remains"
+        ["interrupted.summary.json"],
+        "nothing of the run remains but its summary"
     );
+    let summary: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(directory.join("interrupted.summary.json")).expect("summary"),
+    )
+    .expect("summary JSON");
+    assert_eq!(summary["status"], "cancelled", "{summary}");
+    let phases = summary["phases"].as_array().expect("phases");
+    let names = phases
+        .iter()
+        .map(|phase| phase["name"].as_str().expect("name"))
+        .collect::<Vec<_>>();
+    // The paged cube state exists once setup has formed the weights.
+    assert_eq!(
+        names.get(..2),
+        Some(&["preparation", "setup"][..]),
+        "{summary}"
+    );
+    assert!(
+        phases[..phases.len() - 1]
+            .iter()
+            .all(|phase| phase["completed"] == true),
+        "only the phase the interrupt stopped may be incomplete: {summary}"
+    );
+    assert_eq!(summary["products"], serde_json::json!([]));
 }

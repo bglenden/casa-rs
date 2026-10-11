@@ -52,10 +52,14 @@ pub struct MetalBackend<'cf> {
     ring: Vec<Slot>,
     next: usize,
     usage: Usage,
+    stage_timing: bool,
 }
 
-/// What a backend dispatched over its life, reported once when it drops:
-/// the host's preparation time and its waits for the device.
+/// What a backend was asked to dispatch over its life, logged once when it
+/// drops if it was made with stage timing: the work is counted before it is
+/// dispatched, so after a failure the counts include work the device never
+/// did, and `failed` says so. Also the host's preparation time and its
+/// waits for the device.
 #[derive(Default)]
 struct Usage {
     applies: u64,
@@ -63,6 +67,7 @@ struct Usage {
     sub_blocks: u64,
     prepare: std::time::Duration,
     wait: std::time::Duration,
+    failed: bool,
 }
 
 /// A growing device array of kernel values.
@@ -109,8 +114,13 @@ enum Readback<'o> {
 }
 
 impl<'cf> MetalBackend<'cf> {
-    /// A backend on the system's Metal device for kernel set `kernels`.
-    pub fn new(kernels: &'cf dyn ConvolutionFunctionSet) -> Result<Self, OperatorError> {
+    /// A backend on the system's Metal device for kernel set `kernels`;
+    /// with `stage_timing` it logs its usage when it drops
+    /// ([`crate::METAL_STAGE_TIMING`]).
+    pub fn new(
+        kernels: &'cf dyn ConvolutionFunctionSet,
+        stage_timing: bool,
+    ) -> Result<Self, OperatorError> {
         let device = Device::shared()?;
         let mut ring = Vec::with_capacity(RING);
         for _ in 0..RING {
@@ -143,6 +153,7 @@ impl<'cf> MetalBackend<'cf> {
             ring,
             next: 0,
             usage: Usage::default(),
+            stage_timing,
         })
     }
 
@@ -338,10 +349,15 @@ impl<'cf> MetalBackend<'cf> {
                 drained = retired;
             }
         }
-        match dispatched {
+        let result = match dispatched {
             Ok(outcome) => outcome.and(drained),
-            Err(panic) => std::panic::resume_unwind(panic),
-        }
+            Err(panic) => {
+                self.usage.failed = true;
+                std::panic::resume_unwind(panic)
+            }
+        };
+        self.usage.failed |= result.is_err();
+        result
     }
 
     /// Write the records, values, weights and inverse norms of samples
@@ -567,14 +583,19 @@ impl Drop for MetalBackend<'_> {
             sub_blocks,
             prepare,
             wait,
+            failed,
         } = self.usage;
-        if applies > 0 {
-            tracing::debug!(
-                "metal backend usage: applies={applies} samples={samples} \
-                 sub_blocks={sub_blocks} kernel_cells={} prepare_s={:.3} wait_s={:.3}",
-                self.tables.len(),
-                prepare.as_secs_f64(),
-                wait.as_secs_f64(),
+        if self.stage_timing && applies > 0 {
+            tracing::info!(
+                target: crate::METAL_STAGE_TIMING,
+                completed = !failed && !std::thread::panicking(),
+                applies,
+                samples,
+                sub_blocks,
+                kernel_cells = self.tables.len(),
+                prepare_seconds = prepare.as_secs_f64(),
+                wait_seconds = wait.as_secs_f64(),
+                "metal gridding owner"
             );
         }
     }

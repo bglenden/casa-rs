@@ -40,12 +40,9 @@ use crate::table::{
 /// tile iteration loops.  casacore images are at most 5-D.
 const MAX_NDIM: usize = 8;
 const DEFAULT_TABLE_CACHE_BYTES: usize = 64 * 1024 * 1024;
-const TABLE_CACHE_BUDGET_ENV: &str = "CASA_RS_TABLE_CACHE_BYTES";
 /// Default explicit I/O buffer capacity for one sequential tiled-column writer.
 pub const STREAMING_TILED_COLUMN_BUFFER_BYTES: usize = 8 * 1024 * 1024;
 const STREAMING_TILED_READ_AHEAD_BYTES: usize = 16 * 1024 * 1024;
-const STREAMED_TILED_TRACE_ENV: &str = "CASA_RS_STREAMED_TILED_TRACE";
-const TYPED_2D_READ_PROFILE_ENV: &str = "CASA_RS_TYPED_2D_READ_PROFILE";
 
 #[cfg(test)]
 thread_local! {
@@ -95,24 +92,20 @@ impl IoWrite for CountingFile {
     }
 }
 
+/// The `tracing` target of the streamed tiled-write events (`debug`).
+const STREAMED_TILED_TRACE: &str = "casa_tables::streamed_tiled_write";
+/// The `tracing` target of the typed selected-row read profile (`debug`).
+const TYPED_2D_READ_PROFILE: &str = "casa_tables::typed_2d_read_profile";
+
+/// Whether the logging configuration takes the streamed tiled-write events.
 fn trace_streamed_tiled_writes() -> bool {
-    matches!(
-        std::env::var(STREAMED_TILED_TRACE_ENV)
-            .ok()
-            .as_deref()
-            .map(str::trim),
-        Some("1" | "true" | "TRUE" | "yes" | "YES")
-    )
+    tracing::enabled!(target: STREAMED_TILED_TRACE, tracing::Level::DEBUG)
 }
 
+/// Whether the logging configuration takes the typed read profile; when it
+/// does not, the reads take no clock.
 fn typed_2d_read_profile_enabled() -> bool {
-    matches!(
-        std::env::var(TYPED_2D_READ_PROFILE_ENV)
-            .ok()
-            .as_deref()
-            .map(str::trim),
-        Some("1" | "true" | "TRUE" | "yes" | "YES")
-    )
+    tracing::enabled!(target: TYPED_2D_READ_PROFILE, tracing::Level::DEBUG)
 }
 
 fn duration_ms_f64(duration: Duration) -> f64 {
@@ -137,7 +130,6 @@ struct SharedTileEntry {
 
 struct SharedTileCacheState {
     budget_bytes: usize,
-    explicit_budget: Option<usize>,
     bytes_used: usize,
     clock: u64,
     next_table_id: u64,
@@ -148,8 +140,7 @@ struct SharedTileCacheState {
 impl SharedTileCacheState {
     fn new() -> Self {
         Self {
-            budget_bytes: table_cache_budget_from_env(),
-            explicit_budget: None,
+            budget_bytes: DEFAULT_TABLE_CACHE_BYTES,
             bytes_used: 0,
             clock: 0,
             next_table_id: 1,
@@ -171,7 +162,6 @@ impl SharedTileCacheState {
     }
 
     fn set_budget(&mut self, budget_bytes: usize) {
-        self.explicit_budget = Some(budget_bytes);
         self.budget_bytes = budget_bytes;
         self.evict_to_budget();
     }
@@ -182,8 +172,7 @@ impl SharedTileCacheState {
         self.bytes_used = 0;
         self.clock = 0;
         self.next_table_id = 1;
-        self.explicit_budget = None;
-        self.budget_bytes = table_cache_budget_from_env();
+        self.budget_bytes = DEFAULT_TABLE_CACHE_BYTES;
     }
 
     fn table_id(&mut self, table_path: &Path) -> u64 {
@@ -235,17 +224,8 @@ static SHARED_TILE_CACHE: LazyLock<Mutex<SharedTileCacheState>> =
     LazyLock::new(|| Mutex::new(SharedTileCacheState::new()));
 const TILE_READ_SESSION_RECENT_TILE_COUNT: usize = 8;
 
-fn table_cache_budget_from_env() -> usize {
-    std::env::var(TABLE_CACHE_BUDGET_ENV)
-        .ok()
-        .and_then(|value| value.trim().parse::<usize>().ok())
-        .unwrap_or(DEFAULT_TABLE_CACHE_BYTES)
-}
-
-/// Returns the current process-wide shared table-read cache budget in bytes.
-///
-/// The initial value comes from `CASA_RS_TABLE_CACHE_BYTES` when set,
-/// otherwise a bounded default is used.
+/// Returns the current process-wide shared table-read cache budget in bytes:
+/// 64 MiB until [`set_table_cache_budget_bytes`] changes it.
 pub fn table_cache_budget_bytes() -> usize {
     SHARED_TILE_CACHE
         .lock()
@@ -255,8 +235,8 @@ pub fn table_cache_budget_bytes() -> usize {
 
 /// Overrides the process-wide shared table-read cache budget in bytes.
 ///
-/// The runtime override takes precedence over `CASA_RS_TABLE_CACHE_BYTES`
-/// for the remainder of the process and immediately evicts excess cached data.
+/// The budget holds for the remainder of the process; excess cached data is
+/// evicted immediately.
 pub fn set_table_cache_budget_bytes(budget_bytes: usize) {
     SHARED_TILE_CACHE
         .lock()
@@ -3961,7 +3941,8 @@ fn fill_typed_selected_2d_rows<T: Copy>(
         }
     }
     if let Some(started) = profile_started {
-        eprintln!(
+        tracing::debug!(
+            target: TYPED_2D_READ_PROFILE,
             "typed_2d_read_profile column={} mode=decode rows={} channels={} corr={} cubes={} tile_calls={} tile_bytes={} value_bytes={} read_ms={:.3} decode_ms={:.3} total_ms={:.3}",
             column_name,
             row_count,
@@ -4130,7 +4111,8 @@ fn fill_typed_selected_2d_rows_by_copy<T: TilePixel>(
         }
     }
     if let Some(started) = profile_started {
-        eprintln!(
+        tracing::debug!(
+            target: TYPED_2D_READ_PROFILE,
             "typed_2d_read_profile column={} mode=copy rows={} channels={} corr={} cubes={} tile_calls={} tile_bytes={} value_bytes={} read_ms={:.3} copy_ms={:.3} total_ms={:.3}",
             plan.column_name,
             plan.row_count,
@@ -5957,7 +5939,8 @@ impl StreamingTiledPrimitiveWriter {
 
     fn trace_write_stats(&self) {
         let stats = self.writer.get_ref().stats();
-        eprintln!(
+        tracing::debug!(
+            target: STREAMED_TILED_TRACE,
             "casa-rs streamed tiled write column={} variant={:?} type={:?} rows={} cell_shape={:?} tile_shape={:?} row_tile={} tile_buffers={} tile_row_blocks={} logical_write_calls={} logical_max_write_bytes={} buffered_write_calls={} buffered_max_write_bytes={} buffered_flush_calls={} writer_buffer_bytes={} bytes_written={} assemble_seconds={:.6} write_seconds={:.6}",
             self.temp_data_path
                 .file_name()
@@ -6517,7 +6500,8 @@ impl StreamingTiledShapeComplex32Writer {
 
     fn trace_write_stats(&self) {
         let stats = self.writer.get_ref().stats();
-        eprintln!(
+        tracing::debug!(
+            target: STREAMED_TILED_TRACE,
             "casa-rs streamed tiled write column={} variant=Shape type=Complex32 rows={} cell_shape={:?} tile_shape={:?} row_tile={} tile_buffers={} tile_row_blocks={} logical_write_calls={} logical_max_write_bytes={} buffered_write_calls={} buffered_max_write_bytes={} buffered_flush_calls={} writer_buffer_bytes={} bytes_written={} assemble_seconds={:.6} write_seconds={:.6}",
             self.temp_data_path
                 .file_name()
@@ -13328,27 +13312,14 @@ mod tests {
     }
 
     #[test]
-    fn table_cache_budget_api_respects_env_and_runtime_override() {
+    fn table_cache_budget_api_starts_at_its_default_and_takes_an_override() {
         let _guard = shared_table_cache_test_guard();
-        let prior = std::env::var(TABLE_CACHE_BUDGET_ENV).ok();
-
-        unsafe {
-            std::env::set_var(TABLE_CACHE_BUDGET_ENV, "8192");
-        }
         reset_table_cache_budget_for_tests();
-        assert_eq!(table_cache_budget_bytes(), 8192);
+        assert_eq!(table_cache_budget_bytes(), DEFAULT_TABLE_CACHE_BYTES);
 
         set_table_cache_budget_bytes(4096);
         assert_eq!(table_cache_budget_bytes(), 4096);
 
-        match prior {
-            Some(value) => unsafe {
-                std::env::set_var(TABLE_CACHE_BUDGET_ENV, value);
-            },
-            None => unsafe {
-                std::env::remove_var(TABLE_CACHE_BUDGET_ENV);
-            },
-        }
         reset_table_cache_budget_for_tests();
     }
 

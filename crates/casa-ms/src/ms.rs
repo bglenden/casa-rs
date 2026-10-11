@@ -1364,22 +1364,6 @@ pub(crate) fn measurement_set_table_options(path: &Path) -> TableOptions {
     TableOptions::new(path).with_data_manager(DataManagerKind::StandardStMan)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MeasurementSetSavePolicy {
-    Standard,
-    CasaLikeMixed,
-}
-
-fn measurement_set_save_policy() -> MeasurementSetSavePolicy {
-    match std::env::var("CASA_RS_MS_STORAGE_POLICY") {
-        Ok(value) if value.eq_ignore_ascii_case("standard") => MeasurementSetSavePolicy::Standard,
-        Ok(value) if value.eq_ignore_ascii_case("casa-like-mixed") => {
-            MeasurementSetSavePolicy::CasaLikeMixed
-        }
-        _ => MeasurementSetSavePolicy::CasaLikeMixed,
-    }
-}
-
 /// casacore's write locks on the tables of a MeasurementSet that a save
 /// rewrites in place, taken by `MeasurementSet::lock_tables_for_in_place_save`.
 ///
@@ -1408,16 +1392,13 @@ impl InPlaceSaveLocks {
     }
 }
 
+/// Save MAIN with CASA's mixed storage managers
+/// ([`measurement_set_main_table_bindings`]).
 fn save_main_table_with_policy(main: &mut Table, path: &Path) -> MsResult<()> {
     let options = measurement_set_table_options(path);
-    match measurement_set_save_policy() {
-        MeasurementSetSavePolicy::Standard => main.prepare_write().save(options)?,
-        MeasurementSetSavePolicy::CasaLikeMixed => {
-            let bindings = measurement_set_main_table_bindings(main);
-            main.prepare_write()
-                .save_with_bindings(options, &bindings)?;
-        }
-    }
+    let bindings = measurement_set_main_table_bindings(main);
+    main.prepare_write()
+        .save_with_bindings(options, &bindings)?;
     Ok(())
 }
 

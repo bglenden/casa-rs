@@ -379,11 +379,11 @@ def run_native_repeats(
         ms_path = run_dir / "native.ms"
         run_request["request"]["output_ms"] = str(ms_path)
         run_request["request"]["overwrite"] = True
+        if channel_workers is not None:
+            run_request["request"]["channel_workers"] = channel_workers
         request_path = run_dir / "request.json"
         atomic_write_json(request_path, run_request)
         env = os.environ.copy()
-        if channel_workers is not None:
-            env["CASA_RS_SIMOBSERVE_CHANNEL_WORKERS"] = str(channel_workers)
         started = time.perf_counter()
         completed = run_command(
             [str(binary), "--json-run", str(request_path)],

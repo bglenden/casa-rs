@@ -24,7 +24,7 @@ const XX_YY_REQUESTED: [PolarizationCoordinate; 2] = [
 
 /// `None` (and a note on stderr) when the host has no Metal device.
 pub fn metal(operator: &MeasurementOperator) -> Option<MetalBackend<'_>> {
-    match MetalBackend::new(operator.cf()) {
+    match MetalBackend::new(operator.cf(), false) {
         Ok(backend) => Some(backend),
         Err(error) => {
             eprintln!("skipped: {error}");

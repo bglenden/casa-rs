@@ -43,10 +43,6 @@
     "run_label": "t53-mosaic-cube",
     "storage_label": "external-ssd",
     "evidence_role": "representative_scientific_acceptance",
-    "env": {
-      "CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND": "1000000000",
-      "CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND": "1000000000"
-    },
     "stream_log": true
   },
   "comparison": {

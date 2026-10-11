@@ -373,12 +373,30 @@ name on `--json-run`, or as command-line flags). The execution controls are:
 
 Memory is not a parameter: each phase is admitted against the host's free
 memory, and a cube whose planes do not fit runs in waves. Each run writes
-`<imagename>.summary.json` with every phase's wall time and peak resident
-memory, the worker count, the backend, the minor-cycle totals and the
-products. `CASA_RS_FFT_THREADS` sets FFTW threads per transform (default 1).
-Benchmark records report it separately from the worker count; choose their
-product within the available CPU budget rather than multiplying both
-independently.
+`<imagename>.summary.json` however it ends: its status (`completed`,
+`failed` with the error, or `cancelled`), the policy's memory capacity, the
+worker count, the backend and resolved grid precision, the CASA stop reason,
+the minor-cycle totals and the product images published (on a failure while
+publishing, those published before it). Each phase records whether it
+completed, its wall time, the process's resident high-water mark sampled at
+its end, the most memory the process's reservations held during it
+(`peak_reserved_bytes`) and what they still held at its end. Every step that
+can fail is inside a phase, each minor cycle's preparation included. FFTs
+run on one thread inside each worker.
+
+Three diagnostic parameters add structured log events (`name=value` fields
+after the message), logged at INFO, so they reach stderr with
+`--log-stderr-priority INFO`:
+
+- `stage_timing`: one `casa_imaging::stage_timing` event per phase, the
+  summary's phase record. `scripts/bench-imager-vs-casa.sh` turns it on and
+  reports the medians of each phase kind's total (`preparation`, `setup`,
+  `major_cycles`, `minor_cycle_preparations`, `minor_cycles`,
+  `model_prediction`, `products`, `total`) as the Rust stage medians;
+- `metal_stage_timing`: one `casa_imaging::metal_stage_timing` event per
+  Metal gridding owner and wave, with whether its work completed;
+- `science_trace`: `casa_imaging::science_trace` events for the residual
+  statistics, controls and record of each cycle.
 
 ## Apple GPU product finishing
 

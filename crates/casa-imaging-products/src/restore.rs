@@ -196,14 +196,15 @@ pub fn rescale_residual_to_beam(
 }
 
 /// Convolve one real plane with an equal-shape kernel through even-shifted
-/// FFTs, matching the reconstruction owner's transform conventions.
+/// FFTs, matching the reconstruction owner's transform conventions, on the
+/// calling thread.
 #[must_use]
 pub fn fft_convolve(plane: &[f32], kernel: &[f32], shape: [usize; 2]) -> Vec<f32> {
     fft_convolve_with_plan(
         plane,
         kernel,
         shape,
-        Fft2::new(shape).expect("valid restoration FFT shape"),
+        Fft2::with_threads(shape, 1).expect("valid restoration FFT shape"),
     )
 }
 

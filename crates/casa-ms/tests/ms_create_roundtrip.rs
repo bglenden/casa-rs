@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Integration test: create an MS, save, reopen, validate, and verify data.
 
-use std::sync::{Mutex, OnceLock};
-
 use casa_ms::SubTable;
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
@@ -122,14 +120,8 @@ fn main_dm_types(ms: &MeasurementSet) -> Vec<String> {
         .collect()
 }
 
-fn storage_policy_env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
 #[test]
 fn round_trip_create_save_open_validate() {
-    let _guard = storage_policy_env_lock().lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let ms_path = dir.path().join("roundtrip.ms");
 
@@ -213,7 +205,6 @@ fn round_trip_create_save_open_validate() {
 
 #[test]
 fn save_preserves_existing_measure_reference_keywords() {
-    let _guard = storage_policy_env_lock().lock().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let ms_path = dir.path().join("measure-refs.ms");
 
@@ -246,43 +237,6 @@ fn save_preserves_existing_measure_reference_keywords() {
         measinfo.get("Ref"),
         Some(&Value::Scalar(ScalarValue::String("TAI".to_string())))
     );
-}
-
-#[test]
-fn save_honors_standard_storage_policy_override() {
-    let _guard = storage_policy_env_lock().lock().unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let ms_path = dir.path().join("standard-override.ms");
-
-    unsafe {
-        std::env::set_var("CASA_RS_MS_STORAGE_POLICY", "standard");
-    }
-    let result = std::panic::catch_unwind(|| {
-        let mut ms = MeasurementSet::create(&ms_path, MeasurementSetBuilder::new()).unwrap();
-        add_main_row(
-            &mut ms,
-            &[
-                ("ANTENNA1", Value::Scalar(ScalarValue::Int32(0))),
-                ("ANTENNA2", Value::Scalar(ScalarValue::Int32(1))),
-                ("FIELD_ID", Value::Scalar(ScalarValue::Int32(0))),
-                ("DATA_DESC_ID", Value::Scalar(ScalarValue::Int32(0))),
-                (
-                    "TIME",
-                    Value::Scalar(ScalarValue::Float64(59000.0 * 86400.0)),
-                ),
-            ],
-        );
-        ms.save().unwrap();
-
-        let reopened = MeasurementSet::open(&ms_path).unwrap();
-        let main_dm_types = main_dm_types(&reopened);
-        assert!(!main_dm_types.is_empty());
-        assert!(main_dm_types.iter().all(|dm| dm == "StandardStMan"));
-    });
-    unsafe {
-        std::env::remove_var("CASA_RS_MS_STORAGE_POLICY");
-    }
-    result.unwrap();
 }
 
 #[test]

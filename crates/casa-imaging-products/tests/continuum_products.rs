@@ -458,7 +458,9 @@ fn bounded_windows_publish_the_members_one_window_does() {
         ),
         Err(ProductsError::GeneratedNonfinite)
     ));
-    failed_output.publish().expect("nothing staged to publish");
+    failed_output
+        .publish(|image| panic!("{} published", image.display()))
+        .expect("nothing staged to publish");
     assert!(
         failed_output.entries().is_empty(),
         "a failed generation publishes no image and leaves no staging: {:?}",
@@ -518,7 +520,9 @@ fn a_late_failure_discards_the_members_already_staged() {
             "call {failing_call}: the finished members' staging is gone: {:?}",
             output.entries()
         );
-        output.publish().expect("nothing staged to publish");
+        output
+            .publish(|image| panic!("{} published", image.display()))
+            .expect("nothing staged to publish");
         assert!(output.entries().is_empty(), "nothing published");
     }
 }
@@ -624,7 +628,9 @@ fn an_unwritable_output_fails_generation_and_publishes_nothing() {
         matches!(&error, ProductsError::Io { path, .. } if path == &blocked),
         "{error}"
     );
-    writer.publish().expect("nothing staged to publish");
+    writer
+        .publish(|image| panic!("{} published", image.display()))
+        .expect("nothing staged to publish");
     let entries = std::fs::read_dir(root.path())
         .expect("output root")
         .map(|entry| entry.expect("entry").file_name())

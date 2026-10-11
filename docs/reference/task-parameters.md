@@ -10,16 +10,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 385
+- Concepts: 388
 - Surfaces: 29 (27 task, 2 session)
-- Surface bindings: 556
+- Surface bindings: 559
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 4 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 4 | <code>calibration</code> | 49 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 20 | <code>imager</code> | 77 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 21 | <code>imager</code> | 80 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 4 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
 | [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 3 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
 | [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 3 | <code>image_browser</code> | 17 | browse persistent casacore images |
@@ -219,7 +219,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `20`
+- Contract version: `21`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -279,9 +279,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>robust</code> | <code>parameter.robust@r1</code> | <code>float</code> | <code>0.5</code>; optional | Stages | Briggs robust parameter when weighting=briggs or briggsbwtaper |
 | <code>wprojplanes</code> | <code>parameter.wprojplanes@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Explicit wproject plane budget |
 | <code>usepointing</code> | <code>parameter.usepointing@r1</code> | <code>bool</code> | <code>false</code>; optional | Advanced Wide-Field | Use POINTING-table directions instead of FIELD phase centers |
-| <code>write_pb</code> | <code>parameter.write_pb@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Write the primary-beam image used for PB correction |
+| <code>write_pb</code> | <code>parameter.write_pb@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Write the primary-beam image; without it or pbcor, the standard and W-projection gridders write no .pb and no PB pixel mask, unlike CASA |
 | <code>pbcor</code> | <code>parameter.pbcor@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Write mosaic primary-beam-corrected image products |
-| <code>pblimit</code> | <code>parameter.pblimit@r1</code> | <code>float</code> | <code>0.2</code>; optional | Stages | Mosaic primary-beam cutoff for flat-noise normalization |
+| <code>pblimit</code> | <code>parameter.pblimit@r1</code> | <code>float</code> | <code>0.2</code>; optional | Stages | Primary-beam cutoff of .pb's support and pixel mask and of the mosaic flat-noise normalization; negative leaves uncorrected products unmasked |
 | <code>gridder</code> | <code>parameter.gridder@r2</code> | <code>choice (4 values)</code> | <code>"standard"</code>; optional | Stages | CASA tclean gridder family |
 | <code>parallel</code> | <code>parameter.parallel@r2</code> | <code>bool</code> | <code>false</code>; optional | Stages | Image on the host's workers (the balanced resource policy); false images on one worker |
 | <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine. |
@@ -303,6 +303,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>native_cf_maximum_cells</code> | <code>parameter.native_cf_maximum_cells@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW maximum catalog cells<br><em>Surface:</em> Explicit maximum admitted metadata-only paired-cell count, not serialized compiled catalog state. |
 | <code>backend</code> | <code>parameter.backend@r1</code> | <code>choice (2 values)</code> | <code>"cpu"</code>; optional | Stages | Gridding backend of the major-cycle passes: cpu, or metal on macOS |
 | <code>gridprecision</code> | <code>parameter.gridprecision@r1</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Stages | Grid arithmetic: auto, f32 or f64 |
+| <code>stage_timing</code> | <code>parameter.stage_timing@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log one timing event per imaging phase |
+| <code>metal_stage_timing</code> | <code>parameter.metal_stage_timing@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log the Metal backend's timing for each gridding owner and wave |
+| <code>science_trace</code> | <code>parameter.science_trace@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log the clean controller's science quantities at each cycle |
 
 <a id="surface-simobserve"></a>
 

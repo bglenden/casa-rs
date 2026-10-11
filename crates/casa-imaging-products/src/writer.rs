@@ -203,13 +203,15 @@ impl CasaImageWriter {
             .truncate(kept);
     }
 
-    /// Replace every staged member's target, in generation order.
+    /// Replace every staged member's target, in generation order, telling
+    /// `published` each target once it is replaced.
     ///
     /// # Errors
     ///
     /// The first replacement that fails. Members replaced before it stay
-    /// replaced; the run must be repeated.
-    pub fn publish(&self) -> Result<(), ProductsError> {
+    /// replaced, and `published` has heard of each; the run must be
+    /// repeated.
+    pub fn publish(&self, mut published: impl FnMut(&Path)) -> Result<(), ProductsError> {
         let staged =
             std::mem::take(&mut *self.staged.lock().unwrap_or_else(PoisonError::into_inner));
         for image in staged {
@@ -220,6 +222,7 @@ impl CasaImageWriter {
                     source,
                 }
             })?;
+            published(&image.target);
         }
         Ok(())
     }

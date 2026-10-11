@@ -35,6 +35,11 @@ pub use backend::MetalBackend;
 #[cfg(not(all(target_os = "macos", not(coverage))))]
 pub use unavailable::MetalBackend;
 
+/// The `tracing` target of the event a backend made with stage timing logs
+/// when it drops: its dispatches, samples and sub-blocks, the kernel cells
+/// it uploaded, the host's preparation time and its waits for the device.
+pub const METAL_STAGE_TIMING: &str = "casa_imaging::metal_stage_timing";
+
 /// Ring slots of one backend: the host prepares one while the device runs
 /// the others.
 const RING: usize = 3;

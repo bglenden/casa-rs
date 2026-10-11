@@ -16,8 +16,8 @@ use casa_imaging_model::{
     HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, RestoringBeamPolicy,
 };
 use casa_imaging_operator::GridPrecision;
-use casa_imaging_runtime::ResourcePolicy;
 use casa_imaging_runtime::pass::BackendChoice;
+use casa_imaging_runtime::{Diagnostics, ResourcePolicy};
 use casa_ms::CubeInterpolation;
 use casa_types::measures::{doppler::DopplerRef, frequency::FrequencyRef};
 use serde::{Deserialize, Deserializer, de::Error as _};
@@ -170,12 +170,16 @@ pub struct ImagingRequest {
     /// The convolution-function set, with the parameters only it reads.
     #[serde(flatten)]
     pub gridder: Gridder,
-    /// Write the primary-beam image.
+    /// Write the primary-beam image. The standard and W-projection
+    /// gridders form an analytic beam only for it or `pbcor`: without
+    /// either they write no `.pb` and no primary-beam pixel mask, unlike
+    /// CASA (#217).
     pub write_pb: bool,
     /// Write the primary-beam-corrected image.
     pub pbcor: bool,
-    /// Signed CASA `pblimit`: its magnitude bounds the primary-beam support;
-    /// a negative value leaves uncorrected products unmasked.
+    /// Signed CASA `pblimit`: its magnitude bounds the primary-beam support
+    /// and pixel mask; a negative value leaves uncorrected products
+    /// unmasked.
     pub pblimit: f64,
     /// Line-free channels of a visibility-domain continuum fit, for
     /// example `0:0~239;281~383`.
@@ -192,6 +196,10 @@ pub struct ImagingRequest {
     /// Grid arithmetic; `None` (`auto`) is plan decision D2's rule.
     #[serde(deserialize_with = "grid_precision")]
     pub gridprecision: Option<GridPrecision>,
+    /// The optional diagnostic output: `stage_timing`,
+    /// `metal_stage_timing` and `science_trace`.
+    #[serde(flatten)]
+    pub diagnostics: Diagnostics,
 }
 
 /// Visibility column imaged.
@@ -876,6 +884,14 @@ pub(crate) mod tests {
         let request = request(json!({}));
         request.validate().expect("defaults");
         assert_eq!(request.gridder, Gridder::Standard);
+        assert_eq!(
+            request.diagnostics,
+            Diagnostics {
+                stage_timing: false,
+                metal_stage_timing: false,
+                science_trace: false,
+            }
+        );
         assert_eq!(
             request.resource_policy(),
             ResourcePolicy::Explicit {

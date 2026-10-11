@@ -10,8 +10,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -938,34 +937,38 @@ fn apply_tfcrop_flags(
     }
     let union_candidates = count_mask(&modified);
     let planned_ms = started.elapsed().as_millis();
-    trace_flagdata(json!({
-        "mode": "tfcrop",
-        "implementation": "casa-rs-native-current",
-        "selected_rows": selected_rows.len(),
-        "samples": samples.len(),
-        "groups": groups.len(),
-        "freqcutoff": request.freqcutoff,
-        "timecutoff": request.timecutoff,
-        "freq_candidate_samples": count_mask(&freq_flags),
-        "time_candidate_samples": count_mask(&time_flags),
-        "union_candidate_samples": union_candidates,
-        "union_by_spw_corr": flag_mask_counts_by_spw_corr(&modified, &samples),
-        "timing_ms": {
-            "load": loaded_ms,
-            "plan": planned_ms.saturating_sub(loaded_ms),
-        },
-    }));
+    trace_flagdata(|| {
+        json!({
+            "mode": "tfcrop",
+            "implementation": "casa-rs-native-current",
+            "selected_rows": selected_rows.len(),
+            "samples": samples.len(),
+            "groups": groups.len(),
+            "freqcutoff": request.freqcutoff,
+            "timecutoff": request.timecutoff,
+            "freq_candidate_samples": count_mask(&freq_flags),
+            "time_candidate_samples": count_mask(&time_flags),
+            "union_candidate_samples": union_candidates,
+            "union_by_spw_corr": flag_mask_counts_by_spw_corr(&modified, &samples),
+            "timing_ms": {
+                "load": loaded_ms,
+                "plan": planned_ms.saturating_sub(loaded_ms),
+            },
+        })
+    });
     let mut changes = apply_flag_mask_with_preloaded(&samples, &modified, loaded.flags_by_row, ms)?;
     let applied_ms = started.elapsed().as_millis();
     changes.summary = Some(summary_after_flag_only(&samples, changes.changed_samples));
-    trace_flagdata(json!({
-        "mode": "tfcrop",
-        "implementation": "casa-rs-casa-shaped-tfcrop",
-        "timing_ms": {
-            "apply": applied_ms.saturating_sub(planned_ms),
-            "total_before_save": applied_ms,
-        },
-    }));
+    trace_flagdata(|| {
+        json!({
+            "mode": "tfcrop",
+            "implementation": "casa-rs-casa-shaped-tfcrop",
+            "timing_ms": {
+                "apply": applied_ms.saturating_sub(planned_ms),
+                "total_before_save": applied_ms,
+            },
+        })
+    });
     Ok(changes)
 }
 
@@ -999,36 +1002,40 @@ fn apply_rflag_flags(
     }
     let union_candidates = count_mask(&modified);
     let planned_ms = started.elapsed().as_millis();
-    trace_flagdata(json!({
-        "mode": "rflag",
-        "implementation": "casa-rs-casa-shaped-rflag",
-        "selected_rows": selected_rows.len(),
-        "samples": samples.len(),
-        "groups": groups.len(),
-        "timedev_by_field_spw": format_threshold_map(&thresholds.timedev),
-        "freqdev_by_field_spw": format_threshold_map(&thresholds.freqdev),
-        "time_candidate_samples": count_mask(&time_flags),
-        "freq_candidate_samples": count_mask(&freq_flags),
-        "union_candidate_samples": union_candidates,
-        "union_by_spw_corr": flag_mask_counts_by_spw_corr(&modified, &samples),
-        "timing_ms": {
-            "load": loaded_ms,
-            "threshold": threshold_ms.saturating_sub(loaded_ms),
-            "plan": planned_ms.saturating_sub(threshold_ms),
-        },
-    }));
+    trace_flagdata(|| {
+        json!({
+            "mode": "rflag",
+            "implementation": "casa-rs-casa-shaped-rflag",
+            "selected_rows": selected_rows.len(),
+            "samples": samples.len(),
+            "groups": groups.len(),
+            "timedev_by_field_spw": format_threshold_map(&thresholds.timedev),
+            "freqdev_by_field_spw": format_threshold_map(&thresholds.freqdev),
+            "time_candidate_samples": count_mask(&time_flags),
+            "freq_candidate_samples": count_mask(&freq_flags),
+            "union_candidate_samples": union_candidates,
+            "union_by_spw_corr": flag_mask_counts_by_spw_corr(&modified, &samples),
+            "timing_ms": {
+                "load": loaded_ms,
+                "threshold": threshold_ms.saturating_sub(loaded_ms),
+                "plan": planned_ms.saturating_sub(threshold_ms),
+            },
+        })
+    });
     let mut changes = apply_flag_mask_with_preloaded(&samples, &modified, loaded.flags_by_row, ms)?;
     let applied_ms = started.elapsed().as_millis();
     changes.summary = Some(summary_after_flag_only(&samples, changes.changed_samples));
     changes.thresholds = Some(thresholds.representative_pair());
-    trace_flagdata(json!({
-        "mode": "rflag",
-        "implementation": "casa-rs-casa-shaped-rflag",
-        "timing_ms": {
-            "apply": applied_ms.saturating_sub(planned_ms),
-            "total_before_save": applied_ms,
-        },
-    }));
+    trace_flagdata(|| {
+        json!({
+            "mode": "rflag",
+            "implementation": "casa-rs-casa-shaped-rflag",
+            "timing_ms": {
+                "apply": applied_ms.saturating_sub(planned_ms),
+                "total_before_save": applied_ms,
+            },
+        })
+    });
     Ok(changes)
 }
 
@@ -2529,17 +2536,15 @@ fn union_masks(left: &[bool], right: &[bool]) -> Vec<bool> {
         .collect()
 }
 
-fn trace_flagdata(value: serde_json::Value) {
-    let Ok(path) = std::env::var("CASA_RS_FLAGDATA_TRACE") else {
-        return;
-    };
-    match OpenOptions::new().create(true).append(true).open(&path) {
-        Ok(mut file) => {
-            if serde_json::to_writer(&mut file, &value).is_ok() {
-                let _ = file.write_all(b"\n");
-            }
-        }
-        Err(error) => eprintln!("failed to open CASA_RS_FLAGDATA_TRACE {path}: {error}"),
+/// The `tracing` target of the flagging trace (`debug`): one JSON record per
+/// tfcrop or rflag stage.
+const FLAGDATA_TRACE: &str = "casa_ms::flagdata_trace";
+
+/// Log the record `value` forms when the logging configuration takes the
+/// flagging trace; otherwise it is not formed.
+fn trace_flagdata(value: impl FnOnce() -> serde_json::Value) {
+    if tracing::enabled!(target: FLAGDATA_TRACE, tracing::Level::DEBUG) {
+        tracing::debug!(target: FLAGDATA_TRACE, "{}", value());
     }
 }
 

@@ -3516,7 +3516,7 @@ fn unravel_index(mut value: usize, shape: &[usize]) -> Vec<usize> {
 
 fn centered_fft2(input: &Array2<Complex32>) -> Array2<Complex32> {
     let mut shifted = ifftshift2(input);
-    let mut fft = Fft2::<f32>::new([shifted.shape()[0], shifted.shape()[1]])
+    let mut fft = Fft2::<f32>::with_threads([shifted.shape()[0], shifted.shape()[1]], 1)
         .expect("valid feather FFT shape");
     fft.transform(
         shifted.as_slice_mut().expect("contiguous feather plane"),
@@ -3528,7 +3528,7 @@ fn centered_fft2(input: &Array2<Complex32>) -> Array2<Complex32> {
 
 fn centered_ifft2(input: &Array2<Complex32>) -> Array2<Complex32> {
     let mut shifted = ifftshift2(input);
-    let mut fft = Fft2::<f32>::new([shifted.shape()[0], shifted.shape()[1]])
+    let mut fft = Fft2::<f32>::with_threads([shifted.shape()[0], shifted.shape()[1]], 1)
         .expect("valid feather FFT shape");
     fft.transform(
         shifted.as_slice_mut().expect("contiguous feather plane"),

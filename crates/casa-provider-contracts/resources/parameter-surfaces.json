@@ -7936,7 +7936,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 20,
+      "contract_version": 21,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -12032,6 +12032,156 @@
             },
             "presentation": {
               "label": "Grid Precision",
+              "group": "Stages",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "stage_timing",
+          "concept": {
+            "id": "parameter.stage_timing",
+            "semantic_revision": 1
+          },
+          "order": 104,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--stage-timing"
+              ],
+              "false_flags": [],
+              "metavar": null
+            },
+            "provider": {
+              "field": "stage_timing",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "stage_timing",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Stage Timing",
+              "group": "Stages",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "metal_stage_timing",
+          "concept": {
+            "id": "parameter.metal_stage_timing",
+            "semantic_revision": 1
+          },
+          "order": 105,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--metal-stage-timing"
+              ],
+              "false_flags": [],
+              "metavar": null
+            },
+            "provider": {
+              "field": "metal_stage_timing",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "metal_stage_timing",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Metal Stage Timing",
+              "group": "Stages",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "science_trace",
+          "concept": {
+            "id": "parameter.science_trace",
+            "semantic_revision": 1
+          },
+          "order": 106,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--science-trace"
+              ],
+              "false_flags": [],
+              "metavar": null
+            },
+            "provider": {
+              "field": "science_trace",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "science_trace",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Science Trace",
               "group": "Stages",
               "advanced": true,
               "hidden": false

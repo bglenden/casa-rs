@@ -70,6 +70,9 @@ const EXPORT_DPI: f32 = 72.0;
 const AVG_TIME_BUCKET_EPSILON_SECONDS: f64 = 0.002;
 type BitmapArea<'a> = DrawingArea<BitMapBackend<'a>, plotters::coord::Shift>;
 
+/// The `tracing` target of the visibility-scatter timing (`debug`).
+const MSEXPLORE_TIMING: &str = "casa_ms::msexplore_timing";
+
 #[derive(Default)]
 struct VisibilityScatterTiming {
     row_grid: Duration,
@@ -81,15 +84,20 @@ struct VisibilityScatterTiming {
 }
 
 impl VisibilityScatterTiming {
+    /// Whether the logging configuration takes the timing events (`debug`,
+    /// target [`MSEXPLORE_TIMING`]).
     fn enabled() -> bool {
-        std::env::var("CASA_RS_MSEXPLORE_TIMING")
-            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        tracing::enabled!(target: MSEXPLORE_TIMING, tracing::Level::DEBUG)
     }
 
     fn checkpoint(label: &str, started: &mut Instant) {
         if Self::enabled() {
             let elapsed = started.elapsed();
-            eprintln!("msexplore timing: {label}={} ms", elapsed.as_millis());
+            tracing::debug!(
+                target: MSEXPLORE_TIMING,
+                "msexplore timing: {label}={} ms",
+                elapsed.as_millis()
+            );
         }
         *started = Instant::now();
     }
@@ -98,7 +106,8 @@ impl VisibilityScatterTiming {
         if !Self::enabled() {
             return;
         }
-        eprintln!(
+        tracing::debug!(
+            target: MSEXPLORE_TIMING,
             "msexplore timing: {label} total={} ms rows={} points={} row_grid={} ms row_arrays={} ms grouping={} ms bin_collect={} ms axis_compute={} ms point_push={} ms",
             started.elapsed().as_millis(),
             rows,

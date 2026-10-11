@@ -27,13 +27,12 @@ use casa_imaging_runtime::pass::{
     run_density_pass, run_major_cycle,
 };
 use casa_imaging_runtime::{
-    CubeState, Demand, HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache, Reservation,
-    ResourcePolicy, RunSummary, admit, free_memory, mask_bytes, prepare_bytes, prepare_minor_cycle,
-    run_bytes, run_minor_cycle, run_phase,
+    CubeState, Demand, Diagnostics, HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache,
+    Reservation, ResourcePolicy, RunSummary, admit, free_memory, mask_bytes, prepare_bytes,
+    prepare_minor_cycle, run_bytes, run_minor_cycle, run_phase,
 };
 use casa_ms::ResolvedSelectedObservationAccess;
 
-use super::ImagingError;
 use super::images::{pass_images, prepare_model};
 use super::measurement::{
     DomainOperator, KernelAdmission, density_shape, domain_operator, native_spacing_hz,
@@ -41,6 +40,7 @@ use super::measurement::{
 };
 use super::source::{MeasurementSetSource, PlaneBounds};
 use super::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
+use super::{ImagingError, trace};
 use crate::{AwCatalogDeployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason};
 
 /// What one native imaging run needs besides the compiled problem.
@@ -62,6 +62,7 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) backend: BackendChoice,
     /// The requested grid precision; `None` is plan decision D2's rule.
     pub(crate) grid_precision: Option<GridPrecision>,
+    pub(crate) diagnostics: Diagnostics,
 }
 
 /// The final reconciliation and the record of the cycles that led to it.
@@ -98,6 +99,8 @@ struct Run<'a> {
     lifecycle: ModelLifecycle,
     native_spacing_hz: f64,
     backend: BackendChoice,
+    /// Whether each Metal gridding owner logs its timing.
+    metal_stage_timing: bool,
     visibility_write: Option<VisibilityWriteTarget>,
     /// Planes per wave of the most finely waved pass so far.
     planes_per_wave: Option<u32>,
@@ -139,9 +142,12 @@ impl ImagingOutcome {
 /// the fresh residual whether cleaning is complete (`cleanComplete`);
 /// otherwise a minor cycle runs under its controls and a major cycle
 /// refreshes the residual. A minor cycle that cleans nothing ends the run
-/// without another major cycle. Each cycle is a phase of `summary`; a
-/// cancelled run stops at the next block boundary of a pass or before the
-/// next phase.
+/// without another major cycle. Each cycle, and each minor cycle's
+/// preparation (its masks and residual statistics), is a phase of
+/// `summary`, so every step that can fail is inside one; `summary` also
+/// takes the resolved precision, the minor-cycle totals as each cycle
+/// completes and the stop reason. A cancelled run stops at the next block
+/// boundary of a pass or before the next phase.
 pub(crate) fn run(
     inputs: ImagingInputs<'_>,
     summary: &mut RunSummary,
@@ -152,9 +158,16 @@ pub(crate) fn run(
     let setup = minor_setup(problem, inputs.image_response, &inputs.masks);
     let mut mask_plans = inputs.masks.clone();
     let cancel = inputs.cancel.clone();
+    let diagnostics = inputs.diagnostics;
     // Operators, the source, the imaging weights and the paged cube state.
-    let mut run = run_phase("setup", &cancel, summary, || Run::open(inputs))?;
-    let major = run_phase("major cycle 1", &cancel, summary, || run.initial(!cleaning))?;
+    let mut run = run_phase("setup", &cancel, diagnostics, summary, || Run::open(inputs))?;
+    summary.precision = run
+        .domains
+        .first()
+        .map(|domain| domain.operator.precision());
+    let major = run_phase("major cycle 1", &cancel, diagnostics, summary, || {
+        run.initial(!cleaning)
+    })?;
     let mut outcome = ImagingOutcome::initial(major, &run);
     if !cleaning {
         outcome.retained = std::mem::replace(&mut run.retained, Reservation::none());
@@ -164,51 +177,74 @@ pub(crate) fn run(
     let mut cache = PsfCache::default();
     // What outlives each minor cycle: the masks it forms (the latest, and the
     // one an automatic mask evolves from) and a Clark refresh it caches.
-    let mut held = run.admit("reconstruction masks", 2 * mask_bytes(&outcome.scientific))?;
+    let mut held = Reservation::none();
+    // tclean skips the major cycle after a minor cycle that cleans nothing,
+    // updates the mask and still asks `hasConverged` for the stop it reports.
+    let mut cleaned_nothing = false;
     loop {
-        let preparing = run.admit(
-            "minor-cycle preparation",
-            prepare_bytes(
+        let ordinal = outcome.minor_cycles.len() + 1;
+        let name = format!("minor-cycle preparation {ordinal}");
+        let prepared = run_phase(name, &cancel, diagnostics, summary, || {
+            if ordinal == 1 {
+                held = run.admit("reconstruction masks", 2 * mask_bytes(&outcome.scientific))?;
+            }
+            let _preparing = run.admit(
+                "minor-cycle preparation",
+                prepare_bytes(
+                    &outcome.scientific,
+                    &mask_plans,
+                    &setup,
+                    &cache,
+                    run.team.workers(),
+                ),
+            )?;
+            Ok::<_, ImagingError>(prepare_minor_cycle(
                 &outcome.scientific,
                 &mask_plans,
                 &setup,
-                &cache,
-                run.team.workers(),
-            ),
-        )?;
-        let prepared = prepare_minor_cycle(
-            &outcome.scientific,
-            &mask_plans,
-            &setup,
-            &mut cache,
-            run.team,
-        )?;
-        drop(preparing);
+                &mut cache,
+                run.team,
+            )?)
+        })?;
         let statistics = prepared.statistics;
-        if let Some(stop) = controller.clean_complete(&statistics) {
+        if diagnostics.science_trace {
+            trace::residual(outcome.major_cycle_count, &statistics);
+        }
+        let stop = controller.clean_complete(&statistics);
+        if let Some(stop) = stop {
             tracing::info!("imaging stopped: {stop:?} (stopcode {})", stop.code());
-            outcome.stop = Some(stop);
+        }
+        if cleaned_nothing {
+            outcome.stop = stop;
+            outcome.masks = Some(ReconstructionMaskSet::Domains(prepared.masks().clone()));
+            break;
+        }
+        if stop.is_some() {
+            outcome.stop = stop;
             outcome
                 .masks
                 .get_or_insert_with(|| ReconstructionMaskSet::Domains(prepared.masks().clone()));
             break;
         }
         let cycle_controls = controller.cycle_controls(&statistics);
+        if diagnostics.science_trace {
+            trace::cycle_controls(ordinal, &cycle_controls);
+        }
         let started = Instant::now();
-        let name = format!("minor cycle {}", outcome.minor_cycles.len() + 1);
-        let cached = cache.refresh_bytes(&outcome.scientific);
-        let mut solving = run.admit(
-            "minor cycle",
-            run_bytes(
-                &outcome.scientific,
-                &setup,
-                &cycle_controls,
-                &cache,
-                run.team.workers(),
-            ),
-        )?;
-        let minor = run_phase(name, &cancel, summary, || {
-            Ok::<_, ImagingError>(run_minor_cycle(
+        let name = format!("minor cycle {ordinal}");
+        let (minor, next_plans) = run_phase(name, &cancel, diagnostics, summary, || {
+            let cached = cache.refresh_bytes(&outcome.scientific);
+            let mut solving = run.admit(
+                "minor cycle",
+                run_bytes(
+                    &outcome.scientific,
+                    &setup,
+                    &cycle_controls,
+                    &cache,
+                    run.team.workers(),
+                ),
+            )?;
+            let minor = run_minor_cycle(
                 prepared,
                 &outcome.scientific,
                 &setup,
@@ -216,13 +252,20 @@ pub(crate) fn run(
                 &mut cache,
                 run.team,
                 (&run.host, &run.policy),
-            )?)
+            )?;
+            let refresh = cache.refresh_bytes(&outcome.scientific);
+            if refresh > cached {
+                held.join(solving.split(refresh - cached));
+            }
+            let plans = next_masks(
+                &mask_plans,
+                &minor,
+                ordinal,
+                cycle_controls.threshold_reached,
+            )?;
+            Ok::<_, ImagingError>((minor, plans))
         })?;
-        let refresh = cache.refresh_bytes(&outcome.scientific);
-        if refresh > cached {
-            held.join(solving.split(refresh - cached));
-        }
-        drop(solving);
+        mask_plans = next_plans;
         let global_threshold = controls
             .threshold_jy_per_beam()
             .max(statistics.nsigma_threshold);
@@ -234,35 +277,19 @@ pub(crate) fn run(
             global_threshold,
             started,
         );
+        summary.minor_cycles = cycle;
+        summary.minor_iterations = outcome.total_minor_iterations;
+        if diagnostics.science_trace {
+            trace::minor_cycle(&outcome.minor_cycles[cycle - 1]);
+        }
         let last = controller.budget_spent() || controller.last_cycle(&statistics);
-        mask_plans = next_masks(&mask_plans, &minor, cycle, cycle_controls.threshold_reached)?;
         if minor.summary.iterations == 0 {
-            // tclean skips the major cycle, updates the mask and still asks
-            // `hasConverged` for the stop it reports.
-            let _preparing = run.admit(
-                "minor-cycle preparation",
-                prepare_bytes(
-                    &outcome.scientific,
-                    &mask_plans,
-                    &setup,
-                    &cache,
-                    run.team.workers(),
-                ),
-            )?;
-            let prepared = prepare_minor_cycle(
-                &outcome.scientific,
-                &mask_plans,
-                &setup,
-                &mut cache,
-                run.team,
-            )?;
-            outcome.stop = controller.clean_complete(&prepared.statistics);
-            outcome.masks = Some(ReconstructionMaskSet::Domains(prepared.masks().clone()));
-            break;
+            cleaned_nothing = true;
+            continue;
         }
         let name = format!("major cycle {}", outcome.major_cycle_count + 1);
         let scientific = outcome.scientific;
-        let major = run_phase(name, &cancel, summary, || {
+        let major = run_phase(name, &cancel, diagnostics, summary, || {
             run.refresh(scientific, (minor.terms, minor.results), last)
         })?;
         controller.end_major_cycle();
@@ -270,8 +297,9 @@ pub(crate) fn run(
         outcome.visibility_products = major.visibility;
         outcome.major_cycle_count += 1;
     }
+    summary.stop = outcome.stop;
     if run.visibility_write.is_some() && outcome.visibility_products.is_none() {
-        outcome = run_phase("model prediction", &cancel, summary, || {
+        outcome = run_phase("model prediction", &cancel, diagnostics, summary, || {
             predict_final_model(&mut run, outcome)
         })?;
     }
@@ -450,6 +478,7 @@ impl<'a> Run<'a> {
             lifecycle,
             native_spacing_hz: native_spacing_hz(problem),
             backend,
+            metal_stage_timing: inputs.diagnostics.metal_stage_timing,
             visibility_write: inputs.visibility_write,
             planes_per_wave: None,
             weight_image,
@@ -690,6 +719,7 @@ impl<'a> Run<'a> {
             residency,
             native_spacing_hz: self.native_spacing_hz,
             backend: self.backend,
+            metal_stage_timing: self.metal_stage_timing,
         };
         let predictions = writer.as_deref().map(VisibilityWriter::needs_predictions);
         let mut write = |block: &_, predictions: &[_]| match writer.as_deref_mut() {

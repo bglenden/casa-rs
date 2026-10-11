@@ -45,13 +45,7 @@
     "skip_profile": "1",
     "phase_probe": "0",
     "evidence_role": "optimization_turnaround_threads8_ablation",
-    "stream_log": true,
-    "env": {
-      "CASA_RS_IMAGING_PROGRESS": "1",
-      "CASA_RS_STANDARD_MFS_GRID_THREADS": "8",
-      "CASA_RS_STANDARD_MFS_DENSITY_THREADS": "8",
-      "CASA_RS_STANDARD_MFS_PROFILE_BLOCK_DETAIL": "1"
-    }
+    "stream_log": true
   },
   "comparison": {
     "products": [

@@ -709,7 +709,6 @@ def build_plan(
                 env[env_key] = str(int_value(imaging, imaging_key, 0))
     if imaging.get("parallel") is not None:
         env["IMAGER_BENCH_PARALLEL"] = boolean_env_value(imaging, "parallel", True)
-    env.setdefault("CASA_RS_STANDARD_MFS_PROFILE_DETAIL", "1")
     env.update(extra_env)
 
     command = [str(BENCH_SCRIPT), str(dataset_path)]
@@ -1035,7 +1034,6 @@ def run_benchmark_plan(
     env.update(plan["command"]["env"])
     if bool(plan.get("run", {}).get("stream_log", False)):
         env["IMAGER_BENCH_STREAM_LOG"] = "1"
-        env["CASA_RS_IMAGING_PROGRESS"] = "1"
     started = utc_now()
     completed = run_benchmark_command(
         plan["command"]["argv"],

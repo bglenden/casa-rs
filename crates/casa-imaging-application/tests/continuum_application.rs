@@ -131,6 +131,9 @@ mod t53_spectral_joins;
 #[path = "continuum_application/domains_and_waves.rs"]
 mod domains_and_waves;
 
+#[path = "continuum_application/run_summary.rs"]
+mod run_summary;
+
 #[path = "continuum_application/metal.rs"]
 mod metal;
 
@@ -147,7 +150,7 @@ mod t55_c_array_turnaround;
 mod t55_mfs_pilot;
 
 #[test]
-fn unsupported_primary_beam_frequency_rejects_before_any_phase() {
+fn unsupported_primary_beam_frequency_rejects_in_preparation() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     // This existing fixture labels 44 GHz as EVLA; the selected common EVLA
@@ -159,7 +162,25 @@ fn unsupported_primary_beam_frequency_rejects_before_any_phase() {
         &image_name,
         json!({ "niter": 0, "write_pb": true }),
     );
-    let error = execute(&imaging).err().expect("unsupported beam frequency");
+    let summaries = tempfile::tempdir().expect("summary directory");
+    let summary_path = summaries.path().join("unsupported-beam.summary.json");
+    let context = RunContext {
+        summary: Some(casa_imaging_application::SummaryTarget {
+            path: summary_path.clone(),
+            request: json!({}),
+        }),
+        ..context_with(ResourcePolicy::Balanced)
+    };
+    let error = casa_imaging_application::execute(&imaging, context)
+        .err()
+        .expect("unsupported beam frequency");
+    let summary: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&summary_path).expect("the summary"))
+            .expect("summary JSON");
+    run_summary::assert_the_last_phase_failed(&summary);
+    let phases = summary["phases"].as_array().expect("phases");
+    assert_eq!(phases.len(), 1, "{summary}");
+    assert_eq!(phases[0]["name"], "preparation");
     let ApplicationDispatchError::Native(error) = error else {
         panic!("expected native coverage validation, found {error:?}");
     };
@@ -175,7 +196,8 @@ fn unsupported_primary_beam_frequency_rejects_before_any_phase() {
     // frequency, not the source's exactly 44-GHz TOPO channel.
     assert_ne!(*frequency_hz, 44.0e9);
     assert!((*frequency_hz - 44.0e9).abs() < 2.0e6);
-    // No phase ran: nothing but the input is in the output directory.
+    // Only preparation ran: nothing but the input is in the output
+    // directory.
     let entries = std::fs::read_dir(root.path())
         .expect("output directory")
         .map(|entry| entry.expect("entry").file_name())

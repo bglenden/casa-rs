@@ -201,6 +201,9 @@ pub struct MajorCyclePass<'a> {
     pub native_spacing_hz: f64,
     /// Where the owners grid.
     pub backend: BackendChoice,
+    /// Whether each Metal owner logs its timing when the pass ends
+    /// ([`crate::Diagnostics::metal_stage_timing`]).
+    pub metal_stage_timing: bool,
 }
 
 /// Whether a pass over `domains` forms its residual at native channels: with

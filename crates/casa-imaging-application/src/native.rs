@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The native run: the source admitted, the major and minor cycles on one
-//! worker team, the products, and the run summary, written whether the run
-//! completes or fails.
+//! worker team, and the products, each phase recorded in the run summary.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use casa_imaging_model::CompiledProblem;
 use casa_imaging_products::{
@@ -15,15 +14,15 @@ use casa_imaging_reconstruction::{
 };
 use casa_imaging_runtime::pass::{PassError, WorkerTeam};
 use casa_imaging_runtime::{
-    Admission, Cancelled, Demand, RunSummary, SourceAccessError, admit, finalize_source_access,
-    run_phase,
+    Admission, Cancelled, Demand, Reservation, RunSummary, SourceAccessError, admit,
+    finalize_source_access, run_phase,
 };
 use casa_ms::{ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest};
 
 use crate::imaging::{self, ImagingError};
 use crate::{
-    ApplicationError, ApplicationNative, ApplicationPublication, ApplicationRuntime,
-    ImagingOutcome, visibility_write_selection,
+    ApplicationDispatchError, ApplicationError, ApplicationNative, ApplicationPublication,
+    ApplicationRuntime, AwCatalogDeployment, ImagingOutcome, visibility_write_selection,
 };
 
 /// What the native run needs besides the compiled problem and its runtime.
@@ -48,6 +47,16 @@ pub(crate) enum NativeError {
     /// Any other failure.
     #[error("{0}")]
     Other(ApplicationError),
+}
+
+impl From<NativeError> for ApplicationDispatchError {
+    fn from(error: NativeError) -> Self {
+        match error {
+            NativeError::Admission(admission) => Self::Admission(admission),
+            NativeError::Cancelled(_) => Self::Cancelled,
+            NativeError::Other(error) => Self::Native(error),
+        }
+    }
 }
 
 impl From<ApplicationError> for NativeError {
@@ -100,69 +109,28 @@ impl From<std::io::Error> for NativeError {
     }
 }
 
-/// Run the major-cycle passes, the minor cycles between them and any
-/// visibility write, then publish the products.
-///
-/// When the runtime names a summary target, the run summary is written
-/// there whether the run completes or fails; a cancelled run writes
-/// nothing.
-pub(crate) fn run_native(
+/// A native run ready to start: its admitted source, its worker team and
+/// what its passes, cycles and products need.
+pub(crate) struct NativeRun {
+    runtime: ApplicationRuntime,
+    publication: ApplicationPublication,
+    aw_catalog: Option<AwCatalogDeployment>,
+    visibility_write: Option<imaging::VisibilityWriteTarget>,
+    access: ResolvedSelectedObservationAccess,
+    /// The source's charge, held while it is open.
+    source: Reservation,
+    team: WorkerTeam,
+    masks: ImageDomainReconstructionMaskPlans,
+    image_response: Option<MinorCycleImageResponse>,
+}
+
+/// The end of a run's preparation: check the products against `problem`,
+/// resolve any visibility write, admit the source and form the worker team.
+pub(crate) fn prepare(
     problem: &CompiledProblem,
     input: NativeInput,
     native: ApplicationNative,
-) -> Result<ImagingOutcome, NativeError> {
-    let target = native.runtime.summary.clone();
-    let mut summary = RunSummary {
-        backend: native.runtime.backend,
-        ..RunSummary::default()
-    };
-    if let Some(target) = &target {
-        summary.request = target.request.clone();
-    }
-    let result = run(problem, input, native, &mut summary);
-    let Some(target) = target else {
-        return result;
-    };
-    match result {
-        Ok(outcome) => {
-            outcome.summary.write(&target.path)?;
-            Ok(outcome)
-        }
-        Err(NativeError::Cancelled(cancelled)) => Err(NativeError::Cancelled(cancelled)),
-        Err(error) => {
-            summary.error = Some(error.to_string());
-            if let Err(write) = summary.write(&target.path) {
-                tracing::warn!("the failed run's summary could not be written: {write}");
-            }
-            Err(error)
-        }
-    }
-}
-
-/// Write the summary of a run that failed before its native run started:
-/// the request echo and the error.
-pub(crate) fn record_failure(
-    target: &casa_imaging_runtime::SummaryTarget,
-    error: &impl std::fmt::Display,
-) {
-    let summary = RunSummary {
-        request: target.request.clone(),
-        error: Some(error.to_string()),
-        ..RunSummary::default()
-    };
-    if let Err(write) = summary.write(&target.path) {
-        tracing::warn!("the failed run's summary could not be written: {write}");
-    }
-}
-
-/// The run itself; `summary` collects its phases, and a completed run's
-/// outcome takes it.
-fn run(
-    problem: &CompiledProblem,
-    input: NativeInput,
-    native: ApplicationNative,
-    summary: &mut RunSummary,
-) -> Result<ImagingOutcome, NativeError> {
+) -> Result<NativeRun, NativeError> {
     let ApplicationNative {
         runtime,
         publication,
@@ -187,13 +155,46 @@ fn run(
         &runtime.resource_policy,
     )?;
     let team = WorkerTeam::new(runtime.resource_policy.workers(&runtime.host))?;
-    summary.workers = team.workers();
+    Ok(NativeRun {
+        runtime,
+        publication,
+        aw_catalog,
+        visibility_write,
+        access,
+        source,
+        team,
+        masks: input.masks,
+        image_response: input.minor_cycle_image_response,
+    })
+}
+
+/// Run the major-cycle passes, the minor cycles between them and any
+/// visibility write, then publish the products. `summary` collects the
+/// phases and totals as they end; a completed run's outcome takes it once
+/// the caller has finished it.
+pub(crate) fn run(
+    problem: &CompiledProblem,
+    run: NativeRun,
+    summary: &mut RunSummary,
+) -> Result<impl FnOnce(RunSummary) -> ImagingOutcome + use<>, NativeError> {
+    summary.workers = run.team.workers();
+    let NativeRun {
+        runtime,
+        publication,
+        aw_catalog,
+        visibility_write,
+        access,
+        source,
+        team,
+        masks,
+        image_response,
+    } = run;
     let outcome = imaging::run(
         imaging::ImagingInputs {
             problem,
             access,
-            masks: input.masks,
-            image_response: input.minor_cycle_image_response,
+            masks,
+            image_response,
             visibility_write,
             host: runtime.host,
             policy: runtime.resource_policy,
@@ -203,39 +204,44 @@ fn run(
             aw_catalog,
             backend: runtime.backend,
             grid_precision: runtime.grid_precision,
+            diagnostics: runtime.diagnostics,
         },
         summary,
     )?;
     drop(source);
-    summary.minor_cycles = outcome.minor_cycles.len();
-    summary.minor_iterations = outcome.total_minor_iterations;
-    let products = run_phase("products", &runtime.cancel, summary, || {
-        publish_products(
-            problem,
-            outcome.scientific,
-            outcome.masks,
-            &runtime,
-            publication,
-            &team,
-        )
-    })?;
-    summary.products = products
-        .planned
-        .members()
-        .iter()
-        .map(|member| member.name().to_string())
-        .collect();
-    Ok(ImagingOutcome {
-        problem: problem.clone(),
+    let mut published = Vec::new();
+    let products = run_phase(
+        "products",
+        &runtime.cancel,
+        runtime.diagnostics,
+        summary,
+        || {
+            publish_products(
+                problem,
+                outcome.scientific,
+                outcome.masks,
+                &runtime,
+                publication,
+                &team,
+                &mut published,
+            )
+        },
+    );
+    summary.products = published;
+    let products = products?;
+    let workers = team.workers();
+    let problem = problem.clone();
+    Ok(move |summary| ImagingOutcome {
+        problem,
         minor_cycles: outcome.minor_cycles,
         stop: outcome.stop,
         major_cycle_count: outcome.major_cycle_count,
         total_minor_iterations: outcome.total_minor_iterations,
         total_actual_minor_iterations: outcome.total_actual_minor_iterations,
-        workers: team.workers(),
+        workers,
         planes_per_wave: outcome.planes_per_wave,
         visibility_products: outcome.visibility_products,
-        summary: std::mem::take(summary),
+        summary,
         scientific: products.scientific,
         planned_products: products.planned,
         products: products.published,
@@ -251,8 +257,9 @@ struct Products {
 }
 
 /// Generate every planned product member into the writer's private staging,
-/// one output channel per window on the run's team, and publish them; a
-/// cancelled run publishes nothing.
+/// one output channel per window on the run's team, and publish them,
+/// adding each image published to `published`; a cancelled run publishes
+/// nothing.
 fn publish_products(
     problem: &CompiledProblem,
     scientific: MajorCycleCompletion,
@@ -260,6 +267,7 @@ fn publish_products(
     runtime: &ApplicationRuntime,
     publication: ApplicationPublication,
     team: &WorkerTeam,
+    published: &mut Vec<String>,
 ) -> Result<Products, NativeError> {
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific);
     if let Some(masks) = reconstruction_masks.as_ref() {
@@ -282,18 +290,20 @@ fn publish_products(
             memory: demand.peak_residency_bytes(),
         },
     )?;
-    let published =
+    let generation =
         produce_continuum_members(&planned, &inputs, window, team, &publication.writer)?;
     if runtime.cancel.is_cancelled() {
         // The staged members are removed when the writer drops.
         return Err(Cancelled.into());
     }
-    publication.writer.publish()?;
+    publication
+        .writer
+        .publish(|image: &Path| published.push(image.to_string_lossy().into_owned()))?;
     // The charge covers the staged records until they are published.
     drop(held);
     Ok(Products {
         planned,
         scientific,
-        published,
+        published: generation,
     })
 }

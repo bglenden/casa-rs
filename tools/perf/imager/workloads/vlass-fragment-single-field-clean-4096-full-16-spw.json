@@ -93,9 +93,6 @@
     "reuse_casa_prefix": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/casa-reduced-clean/4096-full-16-spw/casa",
     "cf_cache_role": "warm",
     "preverified_warm_cache": true,
-    "env": {
-      "CASA_RS_STANDARD_MFS_PROFILE_DETAIL": "1"
-    },
     "evidence_role": "reduced_turnaround_only"
   },
   "review": {

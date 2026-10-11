@@ -39,10 +39,6 @@
     "phase_probe": "0",
     "skip_casa": "1",
     "skip_profile": "1",
-    "env": {
-      "CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND": "1000000000",
-      "CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND": "1000000000"
-    },
     "evidence_role": "optimization_turnaround_serial"
   },
   "review": {

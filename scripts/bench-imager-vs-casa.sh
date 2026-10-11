@@ -482,9 +482,6 @@ emit_rust_backend_diagnostics() {
     return 0
   fi
   grep '^imager_bench_process_resource ' "$stderr_file" || true
-  grep -E \
-    '^(imaging_science_probe_v1|single_plane_execution_plan|standard_mfs_runtime_plan|standard_mfs_memory_plan_actual|imaging_source_read_ahead_summary|standard_mfs_source_read_ahead_summary|dirty_product_(fft_timing|gpu_resident|gpu_resident_fallback)|mosaic_dirty_product_gpu_resident|mosaic_mtmfs_(direct_metal_tile_parallel|residual_gpu_resident)|visibility_source_stream_consumer|standard_mfs_profile_run|standard_mfs_(hogbom|clark|multiscale)_minor_cycle_summary|standard_mfs_multiscale_metal_(minor_cycle_summary|indirect_summary)|standard_mfs_clean_residual_refresh_summary|standard_mfs_metal_(residual_refresh|residual_refresh_detail|row_run_residual_refresh|row_run_residual_refresh_detail|row_run_grouped_residual_refresh|row_run_grouped_append_detail)|spectral_slab_plan|spectral_slab_event|spectral_slab_memory|visibility_geometry_cache_summary|image_product_write|mosaic_cube_slab_(plane|executor_summary)|cube_per_plane_backend_summary|cube_slab_executor_limitation|cube_source_row_blocks|cube_plane_state_store_summary|cube_resident_clean_(control|executor_summary|stage_summary|finish_plane|finish_plane_stage_detail)|cube_shared_(direct_)?plane_executor_summary|cube_shared_direct_dirty_eligibility|cube_shared_direct_dirty_source|independent_plane_executor_owned_streaming_done|frontend stage=(prepare_plane_input/(data_coverage|accumulate_rows/detail|finish_cube_source_row_blocks)|write_products|cube_slab/|cube_resident_clean/|cli/))' \
-    "$stderr_file" || true
 }
 
 echo "ms_path=$ms_path"
@@ -652,6 +649,8 @@ build_rust_cli_args() {
   if [[ -n "$dirty_flag" ]]; then
     rust_cli_args+=("$dirty_flag")
   fi
+  # One structured event per phase, read back as the Rust stage medians.
+  rust_cli_args+=(--stage-timing --log-stderr-priority INFO)
 }
 
 if [[ "$validate_rust_cli_only_enabled" == "1" ]]; then
@@ -711,10 +710,15 @@ fi
 fi
 echo
 
-# The per-stage profiling example went with the native cutover (fff9c2d553);
-# each run's phase timings are in its <imagename>.summary.json.
+# Each run logs one `casa_imaging::stage_timing` event per phase; the
+# medians are over runs of each kind's total.
 echo "Rust stage medians (milliseconds):"
-echo "  skipped=1"
+if [[ "$skip_rust_enabled" == "1" ]]; then
+  echo "  skipped=1"
+else
+  python3 "$repo_root/tools/perf/imager/perf_harness/stages.py" rust-stage-medians \
+    "$tmpdir"/rust-*.stderr
+fi
 echo
 
 cat >"$tmpdir/casa-imager-bench.py" <<'PY'

@@ -114,15 +114,6 @@ fn run_q_band_cube(expected_rows: usize, image_size: usize, full_input: bool) {
         }),
     );
     fs::write(root.join("request.txt"), format!("{imaging:#?}\n")).unwrap();
-    if std::env::var_os("CASA_RS_PROFILE_CUBE").is_some() {
-        eprintln!(
-            "cube_profile_application start_unix_nanos={}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-    }
     let started = std::time::Instant::now();
     let result = casa_imaging_application::execute(
         &imaging,
@@ -138,15 +129,6 @@ fn run_q_band_cube(expected_rows: usize, image_size: usize, full_input: bool) {
     let task_wall_seconds = started.elapsed().as_secs_f64();
     assert!(result.major_cycle_count > 1);
     assert!(result.total_actual_minor_iterations > 0);
-    if std::env::var_os("CASA_RS_PROFILE_CUBE").is_some() {
-        eprintln!(
-            "cube_profile_application end_unix_nanos={}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-    }
     let pass_workers = result.workers;
     assert_eq!(pass_workers, workers);
     assert_products(&image_name, &result.product_names(), &REAL_PRODUCTS);

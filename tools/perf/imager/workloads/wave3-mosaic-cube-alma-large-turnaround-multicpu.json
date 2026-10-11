@@ -45,10 +45,7 @@
     "skip_profile": "1",
     "phase_probe": "0",
     "evidence_role": "optimization_turnaround_multicpu",
-    "stream_log": true,
-    "env": {
-      "CASA_RS_IMAGING_PROGRESS": "1"
-    }
+    "stream_log": true
   },
   "review": {
     "required_reviewer": "Brian",

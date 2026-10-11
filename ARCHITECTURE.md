@@ -312,15 +312,22 @@ applicable Rust/C++ RR, RC, CR, and CC matrix.
 
 Installed-implementation availability is an application-owned result checked
 once, by `availability::check` on the compiled problem, the run's backend and
-grid precision, and the host, before any phase, so a typed-unavailable request
-starts no work. A run leaves
+grid precision, and the host, during preparation and before any execution
+phase, so a typed-unavailable request starts no work. A run leaves
 one record beside its products, the run summary of plan section 8.3
-(`<imagename>.summary.json` for `casars-imager`): the request echo, each
-phase with whether it completed, its wall time and the process's peak
-resident memory, the worker count, the backend, the minor-cycle totals, the
-product list, and the error of a failed run. The application writes it when
-the run completes or fails (ADR-0014's final success/failure summary); a
-cancelled run writes nothing.
+(`<imagename>.summary.json` for `casars-imager`): the request echo, the
+status (completed, failed with its error, or cancelled), the policy's
+memory capacity, the worker count, the backend and resolved grid
+precision, the CASA stop reason, the minor-cycle totals, the product images
+published, and each phase, preparation first, with whether it completed,
+its wall time, the process's resident high-water mark at its end, and the
+most and the remaining memory the process's reservations held. Every step
+that can fail runs inside a phase (each minor cycle's preparation is one),
+so a failed run's last phase is the one that failed. The application writes
+it however the run ends (ADR-0014's final success/failure summary); a later
+failure keeps the totals of the cycles that completed and lists any images
+published before a failure while publishing, and a cancelled run publishes
+no product.
 
 ## Runtime model
 
@@ -574,8 +581,11 @@ its final pass and is refused at the start otherwise.
 
 Imager task protocol v12 carries the resolved imager parameters by catalog
 name, on stdin for `--json-run`; the result echoes them. The imager emits no
-progress events; the cycle loop logs worker counts and stage timings through
-`tracing`, and the run summary records each phase. `parallel=false` (the
+progress events; the cycle loop logs worker counts and cycle records through
+`tracing`, and the run summary records each phase. The request's
+diagnostics (`stage_timing`, `metal_stage_timing`, `science_trace`, plan
+section 8.1) add structured events under their own `casa_imaging::*`
+targets; no imaging library reads the environment. `parallel=false` (the
 default) runs the pass with one worker. All production FFTs use FFTW; there is
 no FFT backend selector or fallback.
 

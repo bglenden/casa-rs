@@ -512,7 +512,7 @@ fn deployment(
             grid_precision: request.gridprecision,
             cancel: context.cancel.clone(),
             spill_directory: parent(&request.imagename),
-            summary: context.summary.clone(),
+            diagnostics: request.diagnostics,
         },
         publication: ApplicationPublication {
             controls,

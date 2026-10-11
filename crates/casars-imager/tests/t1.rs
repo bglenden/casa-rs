@@ -9,6 +9,8 @@
 mod aw_projection;
 #[path = "t1/cube.rs"]
 mod cube;
+#[path = "t1/diagnostics.rs"]
+mod diagnostics;
 #[path = "t1/fixture.rs"]
 mod fixture;
 #[path = "t1/interrupt.rs"]

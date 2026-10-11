@@ -10,8 +10,8 @@
 
 #[cfg(target_os = "macos")]
 use std::process::Command;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 /// The host's capacity, detected once per process by
 /// [`HostResources::detect`]; tests construct it with pinned values.
@@ -195,8 +195,68 @@ impl Drop for Reservation {
     }
 }
 
-/// Bytes held by the live reservations of this process.
+/// Bytes held by the live reservations of this process. Only [`admit`]
+/// raises it, holding [`WINDOWS`]; releases lower it without the lock.
 static RESERVED: AtomicU64 = AtomicU64::new(0);
+
+/// The open [`ReservationWindow`]s, each with the most [`RESERVED`] has
+/// held since it last closed.
+static WINDOWS: Mutex<Windows> = Mutex::new(Windows {
+    next: 0,
+    open: Vec::new(),
+});
+
+struct Windows {
+    next: u64,
+    open: Vec<(u64, u64)>,
+}
+
+fn windows() -> MutexGuard<'static, Windows> {
+    WINDOWS.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// One observer's view of the process's reservations: the most they held
+/// at once over each interval it closes. Every run summary has its own, so
+/// runs sharing a process neither reset nor take each other's intervals.
+/// Admission raises every open window under the lock that a window closes
+/// under, so an admission falls wholly within one interval.
+#[derive(Debug)]
+pub struct ReservationWindow {
+    id: u64,
+}
+
+impl ReservationWindow {
+    /// A window whose first interval starts at what the reservations hold
+    /// now.
+    #[must_use]
+    pub fn open() -> Self {
+        let mut windows = windows();
+        let id = windows.next;
+        windows.next += 1;
+        windows.open.push((id, RESERVED.load(Ordering::Acquire)));
+        Self { id }
+    }
+
+    /// The most the reservations held at once in the interval this call
+    /// closes; the next starts at what they hold now, so a reservation that
+    /// outlives an interval counts in the next too.
+    pub fn close(&self) -> u64 {
+        let mut windows = windows();
+        let now = RESERVED.load(Ordering::Acquire);
+        let (_, peak) = windows
+            .open
+            .iter_mut()
+            .find(|(id, _)| *id == self.id)
+            .expect("a window is open until it drops");
+        std::mem::replace(peak, now).max(now)
+    }
+}
+
+impl Drop for ReservationWindow {
+    fn drop(&mut self) {
+        windows().open.retain(|(id, _)| *id != self.id);
+    }
+}
 
 /// Bytes `policy` leaves free on `host` beside the live reservations.
 #[must_use]
@@ -206,7 +266,14 @@ pub fn free_memory(host: &HostResources, policy: &ResourcePolicy) -> u64 {
         .saturating_sub(RESERVED.load(Ordering::Acquire))
 }
 
-/// Admit `demand` if it fits what `policy` leaves free on `host`.
+/// Bytes the live reservations of this process hold.
+#[must_use]
+pub fn reserved_memory() -> u64 {
+    RESERVED.load(Ordering::Acquire)
+}
+
+/// Admit `demand` if it fits what `policy` leaves free on `host`, and raise
+/// every open [`ReservationWindow`] to what the process then holds.
 ///
 /// # Errors
 ///
@@ -217,30 +284,24 @@ pub fn admit(
     demand: &Demand,
 ) -> Result<Reservation, Admission> {
     let capacity = policy.memory(host);
-    let mut reserved = RESERVED.load(Ordering::Acquire);
-    loop {
-        let available = capacity.saturating_sub(reserved);
-        if demand.memory > available {
-            return Err(Admission {
-                phase: demand.phase,
-                required: demand.memory,
-                available,
-            });
-        }
-        match RESERVED.compare_exchange_weak(
-            reserved,
-            reserved + demand.memory,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => {
-                return Ok(Reservation {
-                    memory: demand.memory,
-                });
-            }
-            Err(current) => reserved = current,
-        }
+    let mut windows = windows();
+    // Only admissions raise the total, and they hold the lock, so releases
+    // between this read and the add only leave more free.
+    let available = capacity.saturating_sub(RESERVED.load(Ordering::Acquire));
+    if demand.memory > available {
+        return Err(Admission {
+            phase: demand.phase,
+            required: demand.memory,
+            available,
+        });
     }
+    let held = RESERVED.fetch_add(demand.memory, Ordering::AcqRel) + demand.memory;
+    for (_, peak) in &mut windows.open {
+        *peak = (*peak).max(held);
+    }
+    Ok(Reservation {
+        memory: demand.memory,
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -398,5 +459,46 @@ mod tests {
         );
         drop(held);
         assert_eq!(free_memory(&HOST, &policy), 1 << 20);
+    }
+
+    fn admit_bytes(memory: u64) -> Reservation {
+        let policy = ResourcePolicy::Explicit {
+            workers: 1,
+            memory: 1 << 30,
+        };
+        admit(
+            &HOST,
+            &policy,
+            &Demand {
+                phase: "transient",
+                memory,
+            },
+        )
+        .expect("fits")
+    }
+
+    // Other tests of this process may hold reservations too, so these laws
+    // bound windows from below.
+
+    #[test]
+    fn a_window_keeps_its_peak_whatever_other_windows_do() {
+        let first = ReservationWindow::open();
+        drop(admit_bytes(5 << 20));
+        // Another run begins and ends a phase, then finishes, before the
+        // first run's phase ends.
+        let second = ReservationWindow::open();
+        let _ = second.close();
+        drop(second);
+        assert!(first.close() >= 5 << 20);
+    }
+
+    #[test]
+    fn a_reservation_held_across_a_close_counts_in_the_next_interval() {
+        let window = ReservationWindow::open();
+        let held = admit_bytes(3 << 20);
+        assert!(window.close() >= 3 << 20);
+        assert!(window.close() >= 3 << 20, "still held");
+        drop(held);
+        assert!(window.close() >= 3 << 20, "held when the interval began");
     }
 }

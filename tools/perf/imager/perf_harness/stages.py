@@ -9,44 +9,19 @@ import statistics
 from typing import Any
 
 
+# The kinds of `casars-imager` phase, as `stage_timing` logs them: a run's
+# major cycles, minor cycles and their preparations are summed over the run.
 RUST_STAGE_FIELDS = {
-    "open_measurement_set",
-    "prepare_plane_input",
-    "get_ms_values_into_processing_buffer",
-    "prepare_processing_buffer",
-    "extract_phase_center",
-    "run_imaging",
-    "build_coordinate_system",
-    "write_products",
-    "io_time",
-    "frontend_total",
-    "controller_overhead",
-    "weighting",
-    "executor_build",
-    "planned_sample_replay",
-    "grid_update",
-    "psf_grid",
-    "psf_fft",
-    "psf_normalize",
-    "model_fft",
-    "residual_degrid_grid",
-    "residual_fft",
-    "residual_normalize",
-    "clean_cycle_setup",
-    "deconvolver_setup",
-    "major_cycle_refresh",
-    "residual_refresh_overhead",
-    "multiscale_scale_refresh",
-    "minor_cycle",
-    "minor_cycle_solve",
-    "beam_fit",
-    "restore",
+    "preparation",
+    "setup",
+    "major_cycles",
+    "minor_cycle_preparations",
+    "minor_cycles",
+    "model_prediction",
+    "products",
     "total",
 }
-RUST_STAGE_FIELD_ALIASES = {
-    "prepared_source_read": "get_ms_values_into_processing_buffer",
-    "prepared_source_prepare": "prepare_processing_buffer",
-}
+RUST_STAGE_TARGET = "casa_imaging::stage_timing"
 CASA_STAGE_FIELDS = {
     "parameter_setup",
     "construct_imager",
@@ -112,11 +87,58 @@ def parse_stage_section(text: str, heading: str) -> dict[str, float]:
     stages: dict[str, float] = {}
     for line in _section_lines(text, f"{heading} "):
         for name, raw_value in re.findall(r"([A-Za-z0-9_]+)=([0-9.]+)", line):
-            if heading == "Rust stage medians":
-                name = RUST_STAGE_FIELD_ALIASES.get(name, name)
             if name != "run" and name in allowed:
                 stages[name] = float(raw_value)
     return stages
+
+
+def rust_phase_milliseconds(stderr: str) -> dict[str, float]:
+    """Total milliseconds of each phase kind in one run's stderr, from its
+    `casa_imaging::stage_timing` events, with their sum as `total`."""
+
+    totals: dict[str, float] = {}
+    for line in stderr.splitlines():
+        if RUST_STAGE_TARGET not in line:
+            continue
+        phase = re.search(r' phase="([^"]*)"', line)
+        seconds = re.search(r" seconds=([0-9.eE+-]+)", line)
+        if phase is None or seconds is None:
+            raise ValueError(f"malformed stage-timing event: {line}")
+        name = phase.group(1)
+        kind = re.sub(r" \d+$", "s", name).replace(" ", "_").replace("-", "_")
+        if kind not in RUST_STAGE_FIELDS:
+            raise ValueError(f"unknown casars-imager phase {name!r}: {line}")
+        totals[kind] = totals.get(kind, 0.0) + 1000.0 * float(seconds.group(1))
+    if totals:
+        totals["total"] = sum(totals.values())
+    return totals
+
+
+def rust_stage_medians(stderr_texts: list[str]) -> dict[str, float]:
+    """Median over runs of each phase kind's total milliseconds."""
+
+    runs = [rust_phase_milliseconds(text) for text in stderr_texts]
+    kinds = sorted({kind for run in runs for kind in run})
+    return {
+        kind: statistics.median(run.get(kind, 0.0) for run in runs) for kind in kinds
+    }
+
+
+def _print_rust_stage_medians(paths: list[str]) -> None:
+    texts = []
+    for path in paths:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            texts.append(handle.read())
+    for kind, milliseconds in rust_stage_medians(texts).items():
+        print(f"  {kind}={milliseconds:.3f}")
+
+
+if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) < 3 or sys.argv[1] != "rust-stage-medians":
+        sys.exit("usage: stages.py rust-stage-medians STDERR_FILE...")
+    _print_rust_stage_medians(sys.argv[2:])
 
 
 def parse_casa_clean_control_diagnostics(text: str) -> list[Any]:

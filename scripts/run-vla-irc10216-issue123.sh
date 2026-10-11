@@ -248,7 +248,7 @@ rust_transform_cmd=(
 )
 if [[ "$profile_rust" == true ]]; then
   time_json_stdout_stderr rust-transform "$outdir/rust-transform-wall-timing.json" "$outdir/rust-transform-report.json" "$outdir/rust-transform-profile.log" \
-    env CASA_RS_MSTRANSFORM_PROGRESS=1 "${rust_transform_cmd[@]}"
+    "${rust_transform_cmd[@]}" --log-stderr-priority DEBUG
 else
   time_json_stdout rust-transform "$outdir/rust-transform-wall-timing.json" "$outdir/rust-transform-report.json" "${rust_transform_cmd[@]}"
 fi
@@ -390,7 +390,7 @@ rust_tclean_cmd=(
 )
 if [[ "$profile_rust" == true ]]; then
   time_json_stdout_stderr rust-tclean "$outdir/rust-tclean-wall-timing.json" "$outdir/rust-tclean-report.json" "$outdir/rust-tclean-profile.log" \
-    env CASA_RS_IMAGING_PROGRESS=1 "${rust_tclean_cmd[@]}"
+    "${rust_tclean_cmd[@]}" --stage-timing --log-stderr-priority INFO
 else
   time_json_stdout rust-tclean "$outdir/rust-tclean-wall-timing.json" "$outdir/rust-tclean-report.json" "${rust_tclean_cmd[@]}"
 fi
