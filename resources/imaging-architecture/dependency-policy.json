@@ -188,7 +188,7 @@
   },
   {
    "id": "no-env-in-imaging-libraries",
-   "message": "library crates on the imaging path read no environment variables: switches are request fields or caller configuration, diagnostics are tracing events (ADR-0016, #658)",
+   "message": "library crates on the imaging path read no environment variables: switches are request fields or caller configuration, diagnostics are tracing events (ADR-0016, #658); resolving a relative path against the working directory (std::env::current_dir) is allowed, and the grandfathered data and state discovery waits for #709",
    "roots": [
     "crates/casa-imaging-model/src",
     "crates/casa-imaging-operator/src",
@@ -200,24 +200,37 @@
     "crates/casa-imaging-application/src",
     "crates/casa-fft/src",
     "crates/casa-ms/src",
-    "crates/casa-tables/src"
+    "crates/casa-tables/src",
+    "crates/casa-images/src",
+    "crates/casa-coordinates/src",
+    "crates/casa-lattices/src",
+    "crates/casa-numerics/src",
+    "crates/casa-types/src",
+    "crates/casa-values/src",
+    "crates/casa-aipsio/src",
+    "crates/casa-simulation-synthesis/src",
+    "crates/casa-measures-data/src",
+    "crates/casa-task-runtime/src"
    ],
    "exclude_roots": [
     "crates/casa-ms/src/bin",
     "crates/casa-ms/src/msexplore/cli.rs",
-    "crates/casa-tables/src/bin"
+    "crates/casa-tables/src/bin",
+    "crates/casa-images/src/bin"
    ],
    "extensions": [
     ".rs"
    ],
-   "regex": "\\benv::var(?:_os)?\\s*\\(|\\bstd::env\\b",
+   "regex": "\\benv::var(?:_os)?\\s*\\(|\\bstd::env\\b(?!::current_dir\\b)",
    "grandfathered": [
-    "crates/casa-ms/src/simulation_task.rs"
+    "crates/casa-measures-data/src/lib.rs",
+    "crates/casa-ms/src/simulation_task.rs",
+    "crates/casa-task-runtime/src/storage.rs"
    ]
   },
   {
    "id": "no-eprintln-in-imaging-crates",
-   "message": "library crates on the imaging path emit through tracing, never eprintln! (ADR-0016, #658)",
+   "message": "library crates on the imaging path emit through tracing, never eprintln! (ADR-0016, #658); casa-logging, the tracing sink itself, is not on the list",
    "roots": [
     "crates/casa-imaging-model/src",
     "crates/casa-imaging-operator/src",
@@ -229,12 +242,23 @@
     "crates/casa-imaging-application/src",
     "crates/casa-fft/src",
     "crates/casa-ms/src",
-    "crates/casa-tables/src"
+    "crates/casa-tables/src",
+    "crates/casa-images/src",
+    "crates/casa-coordinates/src",
+    "crates/casa-lattices/src",
+    "crates/casa-numerics/src",
+    "crates/casa-types/src",
+    "crates/casa-values/src",
+    "crates/casa-aipsio/src",
+    "crates/casa-simulation-synthesis/src",
+    "crates/casa-measures-data/src",
+    "crates/casa-task-runtime/src"
    ],
    "exclude_roots": [
     "crates/casa-ms/src/bin",
     "crates/casa-ms/src/msexplore/cli.rs",
-    "crates/casa-tables/src/bin"
+    "crates/casa-tables/src/bin",
+    "crates/casa-images/src/bin"
    ],
    "extensions": [
     ".rs"

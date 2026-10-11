@@ -11,8 +11,9 @@ Checks, from `resources/imaging-architecture/dependency-policy.json`:
 4. source rules: regexes that must not match outside grandfathered files.
    The grandfather list only shrinks: a listed file that no longer exists or
    no longer matches fails the check so the entry is removed. Test code is
-   skipped unless a rule says otherwise: items gated by `#[cfg(test)]` and
-   the files of modules declared `#[cfg(test)] mod name;`.
+   skipped unless a rule says otherwise: items gated by `#[cfg(test)]`, and
+   the files that only `#[cfg(test)]` module declarations bring into their
+   crate, found by walking each crate root's `mod name;` declarations.
 
 Run with `--grandfather` to print the files that currently violate each
 source rule, in policy form.
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -211,52 +213,279 @@ def self_test() -> int:
         if found != expected:
             failures += 1
             print(f"imaging-dependencies self-test failed: {name}", file=sys.stderr)
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        (root / "writer").mkdir()
-        (root / "lib.rs").write_text("#[cfg(test)]\nmod tests;\nmod writer;\n", encoding="utf-8")
-        (root / "writer.rs").write_text("#[cfg(test)]\npub(crate) mod probe;\n", encoding="utf-8")
-        expected = {root / "tests.rs", root / "tests", root / "writer/probe.rs", root / "writer/probe"}
-        if set(test_module_paths(root)) != expected:
-            failures += 1
-            print("imaging-dependencies self-test failed: out-of-line test modules", file=sys.stderr)
+    for name, files, expected in MODULE_CASES:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for relative, text in files.items():
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                (root / relative).write_text(text, encoding="utf-8")
+            found = {str(path.relative_to(root)) for path in test_only_files(root)}
+            if found != expected:
+                failures += 1
+                print(
+                    f"imaging-dependencies self-test failed: {name}: {sorted(found)}",
+                    file=sys.stderr,
+                )
     if failures == 0:
         print("imaging-dependencies: self-test ok")
     return 1 if failures else 0
 
 
-TEST_MODULE = re.compile(r"(?m)^[ \t]*#\[cfg\(test\)\][ \t]*\n[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?mod[ \t]+(\w+)[ \t]*;")
+# Crates for the module walk: files by path under `src`, and the files only
+# test declarations reach.
+MODULE_CASES = [
+    (
+        "a test module and its own submodules",
+        {
+            "lib.rs": "#[cfg(test)]\nmod tests;\nmod writer;\n",
+            "tests.rs": "mod helpers;\n",
+            "tests/helpers.rs": "",
+            "writer.rs": "#[cfg(test)]\npub(crate) mod probe;\n",
+            "writer/probe.rs": "",
+        },
+        {"tests.rs", "tests/helpers.rs", "writer/probe.rs"},
+    ),
+    (
+        "a production file named like a nested test module stays production",
+        {
+            "lib.rs": "mod helper;\n#[cfg(test)]\nmod tests {\n    #[cfg(test)]\n    mod helper;\n}\n",
+            "helper.rs": "",
+            "tests/helper.rs": "",
+        },
+        {"tests/helper.rs"},
+    ),
+    (
+        "a module inside an inline test module is test code",
+        {
+            "lib.rs": "#[cfg(test)]\nmod outer {\n    mod inner;\n}\n",
+            "outer/inner.rs": "",
+        },
+        {"outer/inner.rs"},
+    ),
+    (
+        "path attributes, attributes and doc comments between the gate and the module",
+        {
+            "lib.rs": (
+                "#[cfg(test)]\n#[path = \"custom_tests.rs\"]\nmod tests;\n"
+                "#[cfg(test)]\n/// A probe.\n#[allow(dead_code)]\nmod probe;\n"
+                "#[cfg(test)] mod one_line;\n"
+            ),
+            "custom_tests.rs": "",
+            "probe.rs": "",
+            "one_line.rs": "",
+        },
+        {"custom_tests.rs", "probe.rs", "one_line.rs"},
+    ),
+    (
+        "mod.rs, main.rs and binaries resolve beside themselves",
+        {
+            "main.rs": "mod a;\n",
+            "a/mod.rs": "#[cfg(test)]\nmod t;\n",
+            "a/t.rs": "",
+            "bin/tool/main.rs": "#[cfg(test)]\nmod check;\n",
+            "bin/tool/check.rs": "",
+            "bin/single.rs": "#[cfg(test)]\nmod single_tests;\n",
+            "bin/single_tests.rs": "",
+        },
+        {"a/t.rs", "bin/tool/check.rs"},
+    ),
+    (
+        "a file no declaration reaches, or that production also reaches, is production",
+        {
+            "lib.rs": "mod shared;\n#[cfg(test)]\n#[path = \"shared.rs\"]\nmod again;\n",
+            "shared.rs": "",
+            "orphan.rs": "",
+        },
+        set(),
+    ),
+]
+
+TEST_GATE_ATTRIBUTE = re.compile(r"#\[\s*cfg\s*\(\s*test\s*\)\s*\]")
+PATH_ATTRIBUTE = re.compile(r'#\[\s*path\s*=\s*"([^"]*)"\s*\]')
+IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+SPACE = re.compile(r"\s*")
+RAW_STRING = re.compile(r'b?r(#*)"')
 
 
-def test_module_paths(root: Path) -> list[Path]:
-    """Files and directories under `root` that only `#[cfg(test)] mod name;`
-    declarations bring in: test code kept out of line, like an inline test
-    module. A test module's own submodules live under its directory."""
-    found: list[Path] = []
-    for path in sorted(root.rglob("*.rs")):
-        source = path.read_text(encoding="utf-8")
-        for name in TEST_MODULE.findall(source):
-            if path.name in ("mod.rs", "lib.rs", "main.rs"):
-                directory = path.parent
+def literal_end(source: str, i: int) -> int | None:
+    """The index just past the string or char literal at `i`, or `None`
+    when none starts there (a lifetime, or an identifier)."""
+    raw = RAW_STRING.match(source, i)
+    if raw:
+        terminator = '"' + raw.group(1)
+        end = source.find(terminator, raw.end())
+        return len(source) if end == -1 else end + len(terminator)
+    j = i + 1 if source.startswith(('b"', "b'"), i) else i
+    if source.startswith('"', j):
+        k = j + 1
+        while k < len(source):
+            if source[k] == "\\":
+                k += 2
+            elif source[k] == '"':
+                return k + 1
             else:
-                directory = path.with_suffix("")
-            found += [directory / f"{name}.rs", directory / name]
-    return found
+                k += 1
+        return len(source)
+    if source.startswith("'", j):
+        char = CHAR_LITERAL.match(source, j)
+        return char.end() if char else None
+    return None
+
+
+def comment_end(source: str, i: int) -> int | None:
+    """The index just past the comment at `i`, or `None`."""
+    if source.startswith("//", i):
+        newline = source.find("\n", i)
+        return len(source) if newline == -1 else newline + 1
+    if not source.startswith("/*", i):
+        return None
+    depth = 0
+    while i < len(source):
+        if source.startswith("/*", i):
+            depth += 1
+            i += 2
+        elif source.startswith("*/", i):
+            depth -= 1
+            i += 2
+            if depth == 0:
+                return i
+        else:
+            i += 1
+    return len(source)
+
+
+def attribute_end(source: str, i: int) -> int:
+    """The index just past the attribute whose `#` is at `i`."""
+    depth = 0
+    while i < len(source):
+        end = literal_end(source, i) if source[i] in "\"'br" else None
+        if end is not None:
+            i = end
+            continue
+        if source[i] == "[":
+            depth += 1
+        elif source[i] == "]":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return len(source)
+
+
+def module_declarations(source: str) -> list[tuple[tuple[str, ...], str, bool, str | None]]:
+    """Every out-of-line `mod name;` in `source`: the inline modules that
+    enclose it, its name, whether `#[cfg(test)]` gates it or one of those
+    modules, and its `#[path]`. Comments and literals are skipped."""
+    declarations = []
+    inline: list[tuple[str, int, bool]] = []  # name, brace depth inside it, gated
+    attributes: list[str] = []
+    depth = 0
+    i = 0
+    while i < len(source):
+        end = comment_end(source, i)
+        if end is None and source[i] in "\"'br":
+            end = literal_end(source, i)
+        if end is not None:
+            i = end
+            continue
+        if source.startswith("#[", i):
+            end = attribute_end(source, i)
+            attributes.append(source[i:end])
+            i = end
+            continue
+        word = IDENTIFIER.match(source, i)
+        if word is None:
+            if source[i] == "{":
+                depth += 1
+                attributes = []
+            elif source[i] == "}":
+                if inline and inline[-1][1] == depth:
+                    inline.pop()
+                depth -= 1
+                attributes = []
+            elif source[i] == ";":
+                attributes = []
+            i += 1
+            continue
+        i = word.end()
+        if word.group() != "mod":
+            continue
+        name = IDENTIFIER.match(source, SPACE.match(source, i).end())
+        if name is None:
+            continue
+        after = SPACE.match(source, name.end()).end()
+        gated = any(TEST_GATE_ATTRIBUTE.fullmatch(a) for a in attributes) or any(
+            enclosing for _, _, enclosing in inline
+        )
+        if source.startswith(";", after):
+            path = next(
+                (match.group(1) for a in attributes if (match := PATH_ATTRIBUTE.fullmatch(a))),
+                None,
+            )
+            declarations.append((tuple(module for module, _, _ in inline), name.group(), gated, path))
+        elif source.startswith("{", after):
+            depth += 1
+            inline.append((name.group(), depth, gated))
+        else:
+            continue
+        attributes = []
+        i = after + 1
+    return declarations
+
+
+def declared_file(declaring: Path, inline: tuple[str, ...], name: str, path: str | None) -> Path | None:
+    """The file a `mod name;` in `declaring`, inside the `inline` modules,
+    loads (the Rust reference's module source filenames and `path`
+    attribute rules), or `None` when it names no file."""
+    mod_rs = declaring.name in ("mod.rs", "lib.rs", "main.rs") or declaring.parent.name == "bin"
+    directory = declaring.parent if mod_rs else declaring.with_suffix("")
+    if path is not None:
+        base = directory.joinpath(*inline) if inline else declaring.parent
+        candidate = Path(os.path.normpath(base / path))
+        return candidate if candidate.is_file() else None
+    base = directory.joinpath(*inline)
+    for candidate in (base / f"{name}.rs", base / name / "mod.rs"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def test_only_files(root: Path) -> set[Path]:
+    """Files under `root` that only `#[cfg(test)]` module declarations bring
+    into their crate: test code kept out of line, like an inline test
+    module. Each crate root under `root` (`lib.rs`, `main.rs`, `bin/`) is
+    walked through its declarations; a file that production declarations
+    reach, or that none reaches, is production."""
+    crate_roots = [path for path in (root / "lib.rs", root / "main.rs") if path.is_file()]
+    crate_roots += sorted((root / "bin").glob("*.rs")) + sorted((root / "bin").glob("*/main.rs"))
+    reached = {True: set(), False: set()}
+    pending = [(path, True) for path in crate_roots]
+    while pending:
+        path, production = pending.pop()
+        if path in reached[production]:
+            continue
+        reached[production].add(path)
+        for inline, name, gated, attribute in module_declarations(path.read_text(encoding="utf-8")):
+            child = declared_file(path, inline, name, attribute)
+            if child is not None:
+                pending.append((child, production and not gated))
+    return reached[False] - reached[True]
 
 
 def rule_files(rule: dict) -> list[Path]:
     roots = [REPO_ROOT / root for root in rule["roots"]]
     excluded = [REPO_ROOT / root for root in rule.get("exclude_roots", [])]
+    test_files: set[Path] = set()
     if rule.get("ignore_inline_tests", True):
         for root in roots:
-            excluded += test_module_paths(root)
+            test_files |= test_only_files(root)
     extensions = tuple(rule["extensions"])
     files: list[Path] = []
     for root in roots:
         for path in sorted(root.rglob("*")):
             if not path.is_file() or path.suffix not in extensions:
                 continue
-            if any(path.is_relative_to(ex) for ex in excluded):
+            if path in test_files or any(path.is_relative_to(ex) for ex in excluded):
                 continue
             files.append(path)
     return files
