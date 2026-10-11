@@ -561,17 +561,25 @@ impl MeasurementOperator {
     ) -> Array2<f32> {
         let [width, height] = self.geometry.image().shape;
         let mut image = Array2::<f32>::zeros((height, width));
-        for (gpol, grid_image) in gpol_images.iter().enumerate() {
-            let coefficient = match mode {
-                Mode::Data => self.polarization.to_requested(pol, gpol),
-                Mode::Psf | Mode::Weight => self.polarization.to_requested_psf(pol, gpol),
-            };
-            if coefficient == Complex64::default() {
-                continue;
-            }
-            for (target, value) in image.iter_mut().zip(grid_image) {
-                *target += (coefficient * value).re as f32;
-            }
+        let coefficients = gpol_images
+            .iter()
+            .enumerate()
+            .map(|(gpol, grid_image)| {
+                let coefficient = match mode {
+                    Mode::Data => self.polarization.to_requested(pol, gpol),
+                    Mode::Psf | Mode::Weight => self.polarization.to_requested_psf(pol, gpol),
+                };
+                (coefficient, grid_image)
+            })
+            .filter(|(coefficient, _)| *coefficient != Complex64::default())
+            .collect::<Vec<_>>();
+        let magnitude = mode == Mode::Weight && self.cf.weight_image_magnitude();
+        for (index, target) in image.iter_mut().enumerate() {
+            let value = coefficients
+                .iter()
+                .map(|(coefficient, grid_image)| coefficient * grid_image[index])
+                .sum::<Complex64>();
+            *target = if magnitude { value.norm() } else { value.re } as f32;
         }
         image
     }

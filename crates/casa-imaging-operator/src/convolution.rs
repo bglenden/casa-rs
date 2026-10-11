@@ -486,4 +486,13 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     fn corrects_weight_image(&self) -> bool {
         true
     }
+
+    /// Whether the weight (sensitivity) image is the magnitude of the
+    /// polarization-combined complex transform rather than its real part.
+    /// `AWProjectWBFT::makeWBSensitivityImage` averages the polarization
+    /// planes and keeps `abs` of the average, so an odd Taylor moment,
+    /// Σ W·s·K, which can be negative, publishes its magnitude.
+    fn weight_image_magnitude(&self) -> bool {
+        false
+    }
 }
