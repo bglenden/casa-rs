@@ -28,6 +28,16 @@ const METAL_STAGE_TIMING: &str = "casa_imaging::metal_stage_timing";
 /// Run a Högbom clean of `observation` named `name` with the extra `flags`,
 /// logging INFO to stderr: its stderr, or why it failed.
 fn clean(observation: &Observation, name: &str, flags: &[&str]) -> Result<String, String> {
+    clean_logging(observation, name, "INFO", flags)
+}
+
+/// [`clean`], logging `priority` and above to stderr.
+fn clean_logging(
+    observation: &Observation,
+    name: &str,
+    priority: &str,
+    flags: &[&str],
+) -> Result<String, String> {
     let directory = observation.scratch("diagnostics");
     std::fs::create_dir_all(&directory).expect("run directory");
     let geometry = observation.geometry();
@@ -48,7 +58,7 @@ fn clean(observation: &Observation, name: &str, flags: &[&str]) -> Result<String
             "--threshold-jy",
             "0.005",
             "--log-stderr-priority",
-            "INFO",
+            priority,
         ])
         .args(flags)
         .current_dir(&directory)
@@ -185,4 +195,50 @@ fn metal_stage_timing_logs_each_gridding_owner() {
     for target in [STAGE_TIMING, SCIENCE_TRACE] {
         assert!(events(&stderr, target).is_empty(), "{target}:\n{stderr}");
     }
+}
+
+/// The imaging log does not grow with the planes a cube cleans (plan
+/// section 10 rule 6): with every diagnostic off and DEBUG logging, a
+/// four-channel cube logs as many imaging events as a one-channel cube
+/// whose run has the same phases.
+#[test]
+fn imaging_logs_do_not_grow_with_the_planes_of_a_cube() {
+    let observation = Observation::synthesise_band(4, &[("point", POINT)]);
+    let run = |channels: usize| {
+        let name = format!("planes-{channels}");
+        let count = channels.to_string();
+        let flags = [
+            "--specmode",
+            "cube",
+            "--channel-count",
+            &count,
+            "--nmajor",
+            "1",
+        ];
+        let stderr = clean_logging(&observation, &name, "DEBUG", &flags)
+            .unwrap_or_else(|stderr| panic!("{channels}-channel cube failed: {stderr}"));
+        let phases = summary(&observation, &name)["phases"]
+            .as_array()
+            .expect("phases")
+            .iter()
+            .map(|phase| phase["name"].clone())
+            .collect::<Vec<_>>();
+        let imaging = stderr
+            .lines()
+            .filter(|line| {
+                line.split_whitespace()
+                    .nth(1)
+                    .is_some_and(|target| target.starts_with("casa_imaging"))
+            })
+            .count();
+        (phases, imaging, stderr)
+    };
+    let (one_phases, one, one_log) = run(1);
+    let (four_phases, four, four_log) = run(4);
+    assert_eq!(one_phases, four_phases, "the runs have the same phases");
+    assert!(one > 0, "{one_log}");
+    assert_eq!(
+        one, four,
+        "one channel:\n{one_log}\nfour channels:\n{four_log}"
+    );
 }
