@@ -8,7 +8,7 @@
 
 use casa_ms::SyntheticAntenna;
 use casa_numerics::AnnularApertureVoltageTable;
-use ndarray::Array2;
+use ndarray::{Array2, ShapeBuilder};
 use serde_json::json;
 
 use super::fixture::{
@@ -384,4 +384,111 @@ fn standard_gridder_pb_follows_the_pointings() {
             summed / peak
         );
     }
+}
+
+/// An outlier domain's analytic PB is the tail of the beam on the selected
+/// pointing, evaluated on the outlier's own pixels (`SIMapper::addPB` on
+/// every mapper, #702): an outlier centred 60″ east of the only pointing
+/// carries the main image's PB at 60″ east on its reference pixel, not a
+/// beam of its own peaking there.
+#[test]
+fn an_outlier_pb_is_the_main_beams_tail() {
+    let observation = Observation::synthesise_setup(setup(), &[("centre", CENTRE)]);
+    let offset_px = 60;
+    let outlier_centre = Setup::pointing([f64::from(offset_px) * GEOMETRY.cell_rad(), 0.0]);
+    let outlier = observation.scratch("outlier-pb");
+    let outlier_file = observation.scratch("pb.outlier");
+    std::fs::write(
+        &outlier_file,
+        format!(
+            "imagename={}\nimsize=[64,64]\ncell=[{}arcsec,{}arcsec]\nphasecenter=J2000 {}rad {}rad\n",
+            outlier.display(),
+            GEOMETRY.cell_arcsec,
+            GEOMETRY.cell_arcsec,
+            outlier_centre[0],
+            outlier_centre[1],
+        ),
+    )
+    .expect("write the outlier file");
+    let (_, products) = observation.image(
+        "outlier-pb-main",
+        json!({
+            "weighting": "natural",
+            "niter": 0,
+            "field": "1",
+            "phasecenter": format!("J2000 {}rad {}rad", PHASE_CENTER_RAD[0], PHASE_CENTER_RAD[1]),
+            "write_pb": true,
+            "pblimit": 1.0e-6,
+            "outlierfile": outlier_file,
+        }),
+    );
+    let reference = GEOMETRY.image_size / 2;
+    let main = products.get(".pb").pixels[[reference - offset_px as usize, reference]];
+    let outlier_pb = casa_images::PagedImage::<f32>::open(format!("{}.pb", outlier.display()))
+        .expect("outlier .pb")
+        .get()
+        .expect("read outlier .pb");
+    let tail = outlier_pb[[32, 32, 0, 0]];
+    assert!(
+        (0.2..0.8).contains(&main),
+        "the main PB 60″ from the pointing is {main}"
+    );
+    assert!(
+        (tail - main).abs() < 1.0e-4,
+        "outlier PB at its centre {tail}, main PB at the same sky position {main}"
+    );
+}
+
+/// A field whose `PHASE_DIR` polynomial has a rate is refused for an
+/// analytic PB: CASA evaluates it at the field's first selected time
+/// (`SIMapper::addPB`'s `phaseDirMeas`), casa-rs only reads its constant
+/// term (#702).
+#[test]
+fn an_analytic_pb_refuses_a_time_varying_field_direction() {
+    let observation = Observation::synthesise_setup(setup(), &[("centre", CENTRE)]);
+    {
+        let mut ms = casa_ms::MeasurementSet::open(observation.measurement_set()).expect("reopen");
+        let pointing = Setup::pointing([0.0, 0.0]);
+        // [2, NUM_POLY + 1] in Fortran order: the constant pointing, then
+        // a right-ascension rate of 1e-9 rad/s.
+        let polynomial = ndarray::ArrayD::from_shape_vec(
+            ndarray::IxDyn(&[2, 2]).f(),
+            vec![pointing[0], pointing[1], 1.0e-9, 0.0],
+        )
+        .expect("PHASE_DIR shape");
+        let mut field = ms
+            .subtable_mut(casa_ms::SubtableId::Field)
+            .expect("FIELD")
+            .row_accessor_mut();
+        field
+            .set_cell(
+                1,
+                "NUM_POLY",
+                casa_types::Value::Scalar(casa_types::ScalarValue::Int32(1)),
+            )
+            .expect("NUM_POLY");
+        field
+            .set_cell(
+                1,
+                "PHASE_DIR",
+                casa_types::Value::Array(casa_types::ArrayValue::Float64(polynomial)),
+            )
+            .expect("PHASE_DIR");
+        ms.save().expect("save");
+    }
+    let Err(error) = observation.try_image(
+        "polynomial-field-pb",
+        json!({
+            "weighting": "natural",
+            "niter": 0,
+            "field": "1",
+            "write_pb": true,
+        }),
+    ) else {
+        panic!("an analytic PB on a time-varying field is refused");
+    };
+    assert!(
+        error.contains("FIELD 1 has a time-varying PHASE_DIR"),
+        "{error}"
+    );
 }

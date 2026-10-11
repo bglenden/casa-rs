@@ -234,6 +234,50 @@ fn a_multi_term_component_records_every_coefficient() {
     assert!((outcome.summary.absolute_flux - 0.15).abs() < 1e-6);
 }
 
+/// Under a response the Taylor minor cycle solves with every PSF moment
+/// divided by the zeroth moment's peak, as without one (`normPSF` before
+/// `SDAlgorithmMSMFS::initializeDeconvolver`, #704). A mosaic's PSF does not
+/// peak at its sum of weights: halving the PSF moments, with the residuals
+/// and sums unchanged, leaves `[1, −0.5]` at gain 0.1 as `[0.1, −0.05]`;
+/// dividing by the sum of weights instead doubles it.
+#[test]
+fn a_taylor_component_under_a_response_divides_the_psf_by_its_peak() {
+    let problem = problem(
+        16,
+        ReconstructionBasis::Taylor { terms: 2 },
+        ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+    );
+    let scene = Scene::new(&problem).with_point([8, 8], &[1.0, -0.5]);
+    let response =
+        MinorCycleImageResponse::new(ProductNormalization::FlatNoise, validity().primary_beam())
+            .expect("response");
+    let setup = setup(&problem, Some(response));
+    for scale in [1.0_f32, 0.5] {
+        let completion = completion(&problem, &scene, |images| {
+            let psf = images.psf.as_mut().expect("initial PSF moments");
+            for value in psf {
+                *value *= scale;
+            }
+        });
+        let (_, outcome) = minor_cycle(&problem, &completion, &setup, &controls(1, 0.1), 1);
+        let trace = &outcome.summary.trace;
+        assert_eq!(trace.len(), 2, "PSF scale {scale}");
+        assert!(
+            (trace[0].flux - 0.1).abs() < 1e-6,
+            "PSF scale {scale}: {}",
+            trace[0].flux
+        );
+        assert!(
+            (trace[1].flux + 0.05).abs() < 1e-6,
+            "PSF scale {scale}: {}",
+            trace[1].flux
+        );
+    }
+}
+
 /// The planes of a cube clean concurrently, one per worker, and their terms
 /// merge in model order: the outcome does not depend on the worker count.
 #[test]

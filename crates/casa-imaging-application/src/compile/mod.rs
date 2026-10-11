@@ -146,7 +146,7 @@ pub(crate) fn prepare(
     let primary_beam_centres = match primary_beam {
         None | Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => None,
         Some(_) => Some(direction::primary_beam_centres(
-            &domains, &survey, &centre, &engine,
+            &domains, &ms, &survey, &centre, &engine,
         )?),
     };
     let deployment = deployment(

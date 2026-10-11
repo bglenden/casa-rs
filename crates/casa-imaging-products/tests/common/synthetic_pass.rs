@@ -51,6 +51,9 @@ struct DomainScene {
     shape: [usize; 2],
     sky: Vec<Vec<f64>>,
     weights: Vec<f64>,
+    /// The PSF moments' peak over their sum weights: one for a
+    /// point-spread instrument, below one for a mosaic.
+    psf_scale: f64,
 }
 
 /// A known sky and the instrument a synthetic pass images it with.
@@ -101,6 +104,7 @@ impl Scene {
                     shape,
                     sky: vec![vec![0.0; shape[0] * shape[1]]; planes],
                     weights: weights.clone(),
+                    psf_scale: 1.0,
                 }
             })
             .collect();
@@ -120,6 +124,15 @@ impl Scene {
         let scene = &mut self.domains[domain];
         assert_eq!(weights.len(), scene.weights.len(), "one weight per moment");
         scene.weights = weights;
+        self
+    }
+
+    /// Scale `domain`'s PSF moments by `factor`, leaving the residuals and
+    /// sum weights: a PSF that peaks at `factor` times its sum of weights,
+    /// as a mosaic's does.
+    #[must_use]
+    pub fn with_psf_scale(mut self, domain: usize, factor: f64) -> Self {
+        self.domains[domain].psf_scale = factor;
         self
     }
 
@@ -198,7 +211,10 @@ impl Scene {
             let unit = self.unit_psf(domain);
             let psf = weights
                 .iter()
-                .flat_map(|weight| unit.iter().map(move |value| (weight * value) as f32))
+                .flat_map(|weight| {
+                    let scale = weight * scene.psf_scale;
+                    unit.iter().map(move |value| (scale * value) as f32)
+                })
                 .collect();
             (Some(psf), weights.clone())
         } else {

@@ -2,6 +2,8 @@
 
 //! Product-local completion of one released MT-MFS normal family.
 
+use std::borrow::Cow;
+
 use casa_imaging_model::{
     ProductBlankingPolicy, ProductNormalization, ProductRole, ProductSupportComparison,
     ProductTerm, ProductValidityRule, RestoringBeamPolicy, TaylorSupportReference,
@@ -138,11 +140,16 @@ impl TaylorFamily {
                 .map(|value| value.re as f32)
                 .collect::<Vec<_>>();
             psf.push(normalize_plane(&approximation, principal_sum_weight));
-            // CASA divides only weight.tt0 by the principal sum weight. Higher
-            // Taylor weight images retain their raw signed sensitivity moments
-            // (CASA 6.7.6 on `refim_alma_mosaic`: weight.tt1 and .tt2 are the
-            // raw Σ W·s^m moments, 0.0056 and 4.0, while weight.tt0 peaks at
-            // 0.69).
+            // CASA divides only weight.tt0 by the principal sum weight; the
+            // higher Taylor weight images keep their raw Σ W·s^m moments. Its
+            // multi-term loop over every term is never called:
+            // `SIImageStoreMultiTerm` declares `divideWeightBySumWt()`
+            // (capital W), which does not override the base class's virtual
+            // `divideWeightBySumwt()` that `SynthesisNormalizer` calls, so
+            // the base body divides `weight()`, term 0, alone (CASA 6.7.6.14;
+            // `docs/CASA (C++) bugs.md`). CASA's values on
+            // `refim_alma_mosaic` agree: weight.ttN / sumwt.ttN is 0.6913
+            // for N = 0, 1 and 2.
             let scale = if moment == 0
                 && primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
             {
@@ -649,17 +656,17 @@ fn taylor_alpha_products(
 
 /// The beam centres (pixels), cell increments (radians) and frequency of
 /// one domain's plane.
-struct BeamGeometry {
-    centres: Vec<[f64; 2]>,
+struct BeamGeometry<'a> {
+    centres: Cow<'a, [[f64; 2]]>,
     increment_rad: [f64; 2],
     frequency_hz: f64,
 }
 
-fn beam_geometry(
-    inputs: &ContinuumProductInputs<'_>,
+fn beam_geometry<'a>(
+    inputs: &ContinuumProductInputs<'a>,
     domain_role: &casa_imaging_model::ImageDomainRole,
     output_channel: usize,
-) -> Result<BeamGeometry, ProductsError> {
+) -> Result<BeamGeometry<'a>, ProductsError> {
     let domain = inputs
         .problem()
         .geometry()
@@ -684,19 +691,16 @@ fn beam_geometry(
 /// CASA's analytic PB on one plane of `shape`: a beam centred on each
 /// pointing, summed (`SIMapper::addPB`), and divided by its peak where that
 /// exceeds one (`SIImageStore::makePBImage`). With no pointing it is zero.
+/// `add_beam` adds one pointing's beam into the plane, which is the only
+/// allocation whatever the number of pointings.
 fn summed_beams(
     shape: [usize; 2],
     centres: &[[f64; 2]],
-    beam: impl Fn([f64; 2]) -> Vec<f32>,
+    add_beam: impl Fn(&mut [f32], [f64; 2]),
 ) -> Vec<f32> {
-    let Some((first, rest)) = centres.split_first() else {
-        return vec![0.0; shape[0] * shape[1]];
-    };
-    let mut sum = beam(*first);
-    for centre in rest {
-        for (total, value) in sum.iter_mut().zip(beam(*centre)) {
-            *total += value;
-        }
+    let mut sum = vec![0.0; shape[0] * shape[1]];
+    for centre in centres {
+        add_beam(&mut sum, *centre);
     }
     let peak = sum.iter().fold(0.0_f32, |peak, value| peak.max(*value));
     if peak > 1.0 {
@@ -720,19 +724,27 @@ pub(crate) fn analytic_evla_primary_beam(
     } = beam_geometry(inputs, domain_role, output_channel)?;
     let coefficients = nearest_evla_common_coefficients(frequency_hz * 1.0e-6)
         .ok_or(ProductsError::UnsupportedProblem)?;
-    Ok(summed_beams(shape, &centres, |centre| {
-        evla_common_power_plane(shape, centre, increment_rad, frequency_hz, coefficients)
+    Ok(summed_beams(shape, &centres, |plane, centre| {
+        add_evla_common_power(
+            plane,
+            shape,
+            centre,
+            increment_rad,
+            frequency_hz,
+            coefficients,
+        );
     }))
 }
 
-fn evla_common_power_plane(
+/// Add the EVLA common beam centred on pixel `centre` into `values`.
+fn add_evla_common_power(
+    values: &mut [f32],
     shape: [usize; 2],
     centre: [f64; 2],
     increment_rad: [f64; 2],
     frequency_hz: f64,
     coefficients: [f64; 4],
-) -> Vec<f32> {
-    let mut values = vec![0.0; shape[0] * shape[1]];
+) {
     let increment_deg = increment_rad.map(f64::to_degrees);
     let frequency_factor = 60.0 * frequency_hz / 1.0e9;
     for x in 0..shape[0] {
@@ -742,11 +754,10 @@ fn evla_common_power_plane(
             // PBMath1D::apply stores squared degree offsets and scaled radius
             // as Float. Rounding before the table lookup matters at bin edges.
             let radius_arcmin_ghz = (f64::from((rx2 + ry2).sqrt()) * frequency_factor) as f32;
-            values[x * shape[1] + y] =
+            values[x * shape[1] + y] +=
                 evla_common_power_pattern(f64::from(radius_arcmin_ghz), coefficients);
         }
     }
-    values
 }
 
 pub(crate) fn analytic_vla_primary_beam(
@@ -761,8 +772,8 @@ pub(crate) fn analytic_vla_primary_beam(
         frequency_hz,
     } = beam_geometry(inputs, domain_role, output_channel)?;
     let table = vla_band_voltage_table(frequency_hz)?;
-    Ok(summed_beams(shape, &centres, |centre| {
-        annular_aperture_power_plane(shape, centre, increment_rad, frequency_hz, &table)
+    Ok(summed_beams(shape, &centres, |plane, centre| {
+        add_annular_aperture_power(plane, shape, centre, increment_rad, frequency_hz, &table);
     }))
 }
 
@@ -779,19 +790,21 @@ pub(crate) fn analytic_alma_airy_primary_beam(
         frequency_hz,
     } = beam_geometry(inputs, domain_role, output_channel)?;
     let table = AnnularApertureVoltageTable::new(effective_diameter_m, 0.75, 3.568 * 60.0);
-    Ok(summed_beams(shape, &centres, |centre| {
-        annular_aperture_power_plane(shape, centre, increment_rad, frequency_hz, &table)
+    Ok(summed_beams(shape, &centres, |plane, centre| {
+        add_annular_aperture_power(plane, shape, centre, increment_rad, frequency_hz, &table);
     }))
 }
 
-fn annular_aperture_power_plane(
+/// Add the annular-aperture beam power centred on pixel `centre` into
+/// `values`.
+fn add_annular_aperture_power(
+    values: &mut [f32],
     shape: [usize; 2],
     centre: [f64; 2],
     increment_rad: [f64; 2],
     frequency_hz: f64,
     table: &AnnularApertureVoltageTable,
-) -> Vec<f32> {
-    let mut values = vec![0.0; shape[0] * shape[1]];
+) {
     let increment_deg = increment_rad.map(f64::to_degrees);
     let frequency_factor = 60.0 * frequency_hz / 1.0e9;
     for x in 0..shape[0] {
@@ -803,10 +816,9 @@ fn annular_aperture_power_plane(
             let radius_arcmin_ghz =
                 (f64::from((rx2 + ry2).sqrt()) * frequency_factor) as f32 as f64;
             let voltage = table.evaluate(radius_arcmin_ghz);
-            values[x * shape[1] + y] = voltage * voltage;
+            values[x * shape[1] + y] += voltage * voltage;
         }
     }
-    values
 }
 
 fn evla_common_power_pattern(radius_arcmin_ghz: f64, coefficients: [f64; 4]) -> f32 {
@@ -1028,7 +1040,9 @@ mod tests {
     #[test]
     fn vla_pb_channel_455_edge_matches_casa_support() {
         let table = super::vla_band_voltage_table(44.91e9).expect("VLA Q-band table");
-        let plane = super::annular_aperture_power_plane(
+        let mut plane = vec![0.0; 3 * 43];
+        super::add_annular_aperture_power(
+            &mut plane,
             [3, 43],
             [512.0, 512.0],
             [-2.908_882_086_657_215_7e-7, 2.908_882_086_657_215_7e-7],
@@ -1193,8 +1207,15 @@ mod tests {
             ([2040.0, 1158.0], 0.815_362_93_f32),
             ([2019.0, 1989.0], 0.739_581_9_f32),
         ] {
-            let actual =
-                super::evla_common_power_plane([1, 1], offset, [-cell, cell], 6.0e9, coefficients);
+            let mut actual = [0.0];
+            super::add_evla_common_power(
+                &mut actual,
+                [1, 1],
+                offset,
+                [-cell, cell],
+                6.0e9,
+                coefficients,
+            );
             assert_eq!(actual, [expected]);
         }
     }

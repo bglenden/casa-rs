@@ -10,8 +10,8 @@ use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
     Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend, GridPrecision,
     ImageCorrection, KernelNormalisation, MeasurementOperator, Mode, ModeSet, ModelImages,
-    ModelPlane, ModelPrescale, MuellerRouting, PlaneRange, PolarizationRouting, RowContext,
-    SPHEROIDAL_OVERSAMPLING, Spheroidal, TapLayout, Work,
+    ModelPlane, ModelPrescale, MuellerRouting, Placement, PlaneRange, PolarizationRouting,
+    RowContext, SPHEROIDAL_OVERSAMPLING, Spheroidal, TapLayout, Work,
 };
 use common::{IMAGE, Rng, buffer, geometry, max_abs, placements, samples};
 use ndarray::Array2;
@@ -19,6 +19,10 @@ use num_complex::{Complex32, Complex64};
 
 const XX_YY: [CorrelationType; 2] = [CorrelationType::LinearXx, CorrelationType::LinearYy];
 const STOKES_I: [PolarizationCoordinate; 1] = [PolarizationCoordinate::StokesI];
+const XX_YY_REQUESTED: [PolarizationCoordinate; 2] = [
+    PolarizationCoordinate::LinearXx,
+    PolarizationCoordinate::LinearYy,
+];
 
 /// A kernel set whose dense tiles are the outer product of separable rows.
 struct DenseFromRows {
@@ -401,8 +405,8 @@ fn weight_mode_places_the_weight_taps_at_the_origin() {
         )
         .expect("grid");
     let normal = operator.finish(acc).expect("finish");
-    let image = normal.weight(0, 0).expect("weight");
-    let sumwt = normal.weight_sumwt(0, 0);
+    let image = normal.weight(0, 0, 0).expect("weight");
+    let sumwt = normal.weight_sumwt(0, 0, 0);
     assert!((sumwt - weights.iter().sum::<f64>()).abs() <= 1.0e-6 * sumwt);
     // Every sample lands on the origin, so the image is the kernel's
     // transform: flat to within the correction, maximal at the centre.
@@ -425,4 +429,100 @@ fn weight_mode_places_the_weight_taps_at_the_origin() {
         result,
         Err(casa_imaging_operator::OperatorError::WeightKernelUnavailable { .. })
     ));
+}
+
+/// A Taylor weight mode forms one weight image per PSF term, the moment
+/// Σ W·s^m of the weight kernel (`MultiTermFTNew`, #704), for each
+/// polarization. XX and YY carry unequal weights over an asymmetric band,
+/// so the odd moments do not cancel: each term's `sumwt` is the moment of
+/// that polarization's weights, and, the weight taps all sitting at the
+/// origin, its image is moment-0's scaled by the ratio of the two.
+#[test]
+fn taylor_weight_images_are_the_weight_moments_of_each_polarization() {
+    const OFFSETS: [f32; 4] = [-0.12, 0.03, 0.18, 0.31];
+    for terms in [2_u32, 3] {
+        let geometry = geometry();
+        let polarization = PolarizationRouting::compile(&XX_YY, &XX_YY_REQUESTED).expect("routing");
+        let template = Spheroidal::new(&geometry, &polarization);
+        let mut hold = CellHold::new();
+        let TapLayout::SeparableReal {
+            rows,
+            support,
+            oversampling,
+        } = template.taps(CfKey::default(), &mut hold)
+        else {
+            panic!("spheroidal taps are separable");
+        };
+        let dense = DenseFromRows::new(rows, support, oversampling, &template, &polarization);
+        let operator = MeasurementOperator::new(
+            geometry,
+            Basis::Taylor {
+                terms,
+                reference_hz: 1.0e9,
+            },
+            polarization,
+            Box::new(dense),
+            GridPrecision::F64,
+        );
+        let mut rng = Rng::new(37);
+        let placed = placements(operator.geometry(), 40, 1, &mut rng)
+            .into_iter()
+            .enumerate()
+            .map(|(index, placement)| Placement {
+                spectral: OFFSETS[index % OFFSETS.len()],
+                ..placement
+            })
+            .collect::<Vec<_>>();
+        let (values, weights) = samples(&placed, 2, &mut rng);
+        let block = buffer(&placed, &values, &weights, 2);
+        let mut acc = operator.accumulator(PlaneRange::single(0), None, ModeSet::ALL);
+        CpuBackend::new()
+            .apply(
+                &block.block(),
+                operator.cf(),
+                Work::Grid {
+                    mode: Mode::Weight,
+                    acc: &mut acc,
+                },
+            )
+            .expect("grid");
+        let normal = operator.finish(acc).expect("finish");
+        let moments = 2 * terms as usize - 1;
+        for pol in 0..2 {
+            let moment = |order: usize| -> (f64, f64) {
+                placed
+                    .iter()
+                    .enumerate()
+                    .fold((0.0, 0.0), |(sum, scale), (index, p)| {
+                        let weight = f64::from(weights[index * 2 + pol] as f32);
+                        let power = f64::from(p.spectral).powi(order as i32);
+                        (sum + weight * power, scale + (weight * power).abs())
+                    })
+            };
+            let (zeroth, _) = moment(0);
+            let base = normal.weight(0, 0, pol).expect("weight term 0");
+            let peak = max_abs(base.iter().copied());
+            for order in 0..moments {
+                let (expected, scale) = moment(order);
+                let sumwt = normal.weight_sumwt(0, order, pol);
+                assert!(
+                    (sumwt - expected).abs() <= 1.0e-6 * scale,
+                    "{terms} terms, pol {pol}, moment {order}: sumwt {sumwt}, expected {expected}"
+                );
+                let image = normal.weight(0, order, pol).expect("weight term");
+                let ratio = expected / zeroth;
+                for (actual, base) in image.iter().zip(base) {
+                    let expected = f64::from(*base) * ratio;
+                    assert!(
+                        (f64::from(*actual) - expected).abs() <= 1.0e-5 * peak * scale / zeroth,
+                        "{terms} terms, pol {pol}, moment {order}: {actual} vs {expected}"
+                    );
+                }
+            }
+            assert!(
+                normal.weight(0, moments, pol).is_none(),
+                "{moments} weight terms"
+            );
+        }
+    }
 }

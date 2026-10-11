@@ -5,6 +5,7 @@
 //! The inputs borrow one whole Major-Cycle completion, so the final normal
 //! state and model they carry come from the same reconciliation.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use casa_imaging_model::{CompiledProblem, ImageDomainRole, ReconstructionBasis};
@@ -163,14 +164,17 @@ impl<'a> ContinuumProductInputs<'a> {
     }
 
     /// The pixel positions an analytic primary beam is centred on in the
-    /// domain `role`, whose reference pixel is `reference_pixel`.
+    /// domain `role`, whose reference pixel is `reference_pixel`: borrowed
+    /// from the bound pointings, so a plane holds no copy of them.
     pub(crate) fn primary_beam_centres(
         &self,
         role: &ImageDomainRole,
         reference_pixel: [f64; 2],
-    ) -> Vec<[f64; 2]> {
-        self.primary_beam_centres
-            .map_or_else(|| vec![reference_pixel], |centres| centres[role].clone())
+    ) -> Cow<'a, [[f64; 2]]> {
+        self.primary_beam_centres.map_or_else(
+            || Cow::Owned(vec![reference_pixel]),
+            |centres| Cow::Borrowed(centres[role].as_slice()),
+        )
     }
 
     /// Borrow the exact compiled problem behind these payloads.

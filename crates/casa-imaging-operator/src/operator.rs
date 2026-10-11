@@ -149,10 +149,12 @@ impl NormalImages {
         &self.planes[plane].psf[term * self.pols + pol]
     }
 
-    /// Weight image of `pol` on `plane`, when the weight mode was accumulated.
+    /// Weight image `(term, pol)` of `plane`, when the weight mode was
+    /// accumulated: the term's spectral moment Σ W·s^term of the weight
+    /// kernel, one per PSF term (`MultiTermFTNew`).
     #[must_use]
-    pub fn weight(&self, plane: usize, pol: usize) -> Option<&Array2<f32>> {
-        self.planes[plane].weight.get(pol)
+    pub fn weight(&self, plane: usize, term: usize, pol: usize) -> Option<&Array2<f32>> {
+        self.planes[plane].weight.get(term * self.pols + pol)
     }
 
     /// `sumwt` of data image `(term, pol)` of `plane`.
@@ -168,11 +170,11 @@ impl NormalImages {
         plane.sumwt[plane.data.len() + term * self.pols + pol]
     }
 
-    /// `sumwt` of the weight image of `pol` on `plane`.
+    /// `sumwt` of weight image `(term, pol)` of `plane`.
     #[must_use]
-    pub fn weight_sumwt(&self, plane: usize, pol: usize) -> f64 {
+    pub fn weight_sumwt(&self, plane: usize, term: usize, pol: usize) -> f64 {
         let plane = &self.planes[plane];
-        plane.sumwt[plane.data.len() + plane.psf.len() + pol]
+        plane.sumwt[plane.data.len() + plane.psf.len() + term * self.pols + pol]
     }
 }
 
