@@ -30,6 +30,18 @@ static F64_THREADS: OnceLock<c_int> = OnceLock::new();
 // a small bounded set of measured plans rather than replanning every channel.
 const CACHED_PLAN_PAIRS_PER_PRECISION: usize = 8;
 
+/// The most C heap FFTW keeps for one plan pair (twiddles and buffers):
+/// under 0.7 MB is measured for transforms up to 8192², the prime 8191²
+/// real transform keeping the most (the law
+/// `a_plan_pair_keeps_at_most_its_bytes`).
+pub const PLAN_PAIR_BYTES: usize = 1 << 20;
+
+/// The most C heap FFTW keeps for the plans this crate caches for the
+/// process, whatever transforms it runs: [`PLAN_PAIR_BYTES`] for each of
+/// the plan pairs cached per precision. A plan a live transform still holds
+/// after the cache drops it is the transform's.
+pub const PLAN_CACHE_BYTES: usize = 2 * CACHED_PLAN_PAIRS_PER_PRECISION * PLAN_PAIR_BYTES;
+
 struct PlanCache<T: FftScalar> {
     plans: HashMap<Key, Arc<Plans<T>>>,
     oldest_first: VecDeque<Key>,

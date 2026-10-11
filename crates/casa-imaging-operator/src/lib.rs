@@ -78,3 +78,8 @@ pub use weighting::{
     Taper, WeightingGeneration, build_density_grid,
 };
 pub use wplanes::{WPlaneCount, WPlanes};
+
+/// The C heap FFTW keeps for the plans the process caches
+/// ([`casa_fft::PLAN_CACHE_BYTES`]), which every transform of the operator
+/// and the minor cycle plans through.
+pub const FFT_PLAN_CACHE_BYTES: usize = casa_fft::PLAN_CACHE_BYTES;

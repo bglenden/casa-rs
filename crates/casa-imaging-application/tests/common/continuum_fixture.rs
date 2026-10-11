@@ -757,11 +757,11 @@ pub(super) fn context_with(policy: ResourcePolicy) -> RunContext {
     imaging::context(policy)
 }
 
-/// What compiling a run leaves resident for the run, admitted before
-/// anything else: the process-wide table-read cache and the Measures
-/// catalogs. A ceiling meant for a run's own phases adds it.
+/// What a run admits before compile reads anything and keeps for the run:
+/// the process-wide caches and the Measures catalogs. A ceiling meant for a
+/// run's own phases adds it.
 pub(super) fn compile_resident() -> u64 {
-    (casa_ms::table_read_cache_bytes() + casa_ms::MEASURES_RUNTIME_BYTES) as u64
+    casa_imaging_application::process_cache_bytes() + casa_ms::MEASURES_RUNTIME_BYTES as u64
 }
 
 /// Run `request` in [`context`].

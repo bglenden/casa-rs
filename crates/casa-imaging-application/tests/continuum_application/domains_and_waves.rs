@@ -190,8 +190,8 @@ fn a_refused_run_records_its_error_in_its_summary() {
 
 /// The paged cube cache stays charged while anything holds the run's model
 /// and normal state, products included, and is released with the last
-/// holder. The process keeps the table-read cache's charge, which its first
-/// run takes.
+/// holder. The process keeps the charge of its caches, which its first run
+/// takes.
 #[test]
 fn a_completed_cube_keeps_its_cache_charged_until_its_state_drops() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -206,7 +206,7 @@ fn a_completed_cube_keeps_its_cache_charged_until_its_state_drops() {
     let (host, policy) = (context.host, context.policy);
     let free = casa_imaging_runtime::free_memory(&host, &policy);
     let table_cache = if free == policy.memory(&host) {
-        casa_ms::table_read_cache_bytes() as u64
+        casa_imaging_application::process_cache_bytes()
     } else {
         0
     };

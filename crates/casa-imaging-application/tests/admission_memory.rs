@@ -180,10 +180,10 @@ struct Measured {
 /// Run `request` on `workers` workers under a `ceiling`-byte policy,
 /// measuring its heap from the call on.
 fn measure(request: &ImagingRequest, workers: usize, ceiling: u64) -> Measured {
-    // The process holds the table-read cache's charge from its first run on.
+    // The process holds its caches' charge from its first run on.
     let process = held_by_process();
     assert!(
-        process == 0 || process == casa_ms::table_read_cache_bytes() as u64,
+        process == 0 || process == casa_imaging_application::process_cache_bytes(),
         "no reservation of a run outlives it: {process} bytes held"
     );
     CEILING.store(ceiling, Ordering::Relaxed);

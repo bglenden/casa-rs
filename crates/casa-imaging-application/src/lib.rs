@@ -251,37 +251,44 @@ pub fn execute(
     })
 }
 
-/// The charge of the process-wide table-read cache: every run's
-/// MeasurementSet reads fill it and it keeps their tiles after the run, so
-/// the first run to be admitted takes its charge for the process.
-static TABLE_CACHE: std::sync::OnceLock<casa_imaging_runtime::Reservation> =
+/// The charge of the process-wide caches every run fills and that keep what
+/// they hold after it: the table-read cache, with the MeasurementSet's
+/// tiles, and FFTW's plan cache. The first run to be admitted takes it for
+/// the process.
+static PROCESS_CACHES: std::sync::OnceLock<casa_imaging_runtime::Reservation> =
     std::sync::OnceLock::new();
 
-/// Charge the table-read cache for the process if no run has yet. Of runs
-/// admitted at once, one keeps its charge and the others release theirs.
-fn admit_table_cache(context: &RunContext) -> Result<(), ApplicationDispatchError> {
-    if TABLE_CACHE.get().is_none() {
+/// Bytes the process-wide caches hold at most.
+#[must_use]
+pub fn process_cache_bytes() -> u64 {
+    (casa_ms::table_read_cache_bytes() + casa_imaging_operator::FFT_PLAN_CACHE_BYTES) as u64
+}
+
+/// Charge the process-wide caches if no run has yet. Of runs admitted at
+/// once, one keeps its charge and the others release theirs.
+fn admit_process_caches(context: &RunContext) -> Result<(), ApplicationDispatchError> {
+    if PROCESS_CACHES.get().is_none() {
         let charge = casa_imaging_runtime::admit(
             &context.host,
             &context.policy,
             &casa_imaging_runtime::Demand {
-                phase: "table-read cache",
-                memory: casa_ms::table_read_cache_bytes() as u64,
+                phase: "process caches",
+                memory: process_cache_bytes(),
             },
         )
         .map_err(ApplicationDispatchError::Admission)?;
         // A concurrent run that set it first holds the charge.
-        let _ = TABLE_CACHE.set(charge);
+        let _ = PROCESS_CACHES.set(charge);
     }
     Ok(())
 }
 
 /// Compile `request` for its native run, with the charge of the Measures
 /// catalogs compiling loads for the run. They are admitted before compile
-/// opens anything, after the process's table-read cache
-/// ([`admit_table_cache`]); the MeasurementSet walks are admitted once its
-/// rows are known ([`compile::prepare`]) and released once the selected
-/// observation is resolved.
+/// opens anything, after the process's caches ([`admit_process_caches`]);
+/// the MeasurementSet walks are admitted once its rows are known
+/// ([`compile::prepare`]) and released once the selected observation is
+/// resolved.
 fn compile_run(
     request: &ImagingRequest,
     context: &RunContext,
@@ -297,7 +304,7 @@ fn compile_run(
     request
         .validate()
         .map_err(ApplicationDispatchError::Request)?;
-    admit_table_cache(context)?;
+    admit_process_caches(context)?;
     let resident = casa_imaging_runtime::admit(
         &context.host,
         &context.policy,
