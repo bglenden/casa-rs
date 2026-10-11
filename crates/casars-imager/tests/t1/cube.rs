@@ -85,16 +85,16 @@ fn sixteen_channel_cube_follows_the_injected_spectrum_under_natural_and_briggs()
     let natural = image(
         &observation,
         "cube-natural",
-        json!({ "weighting": "natural" }),
+        json!({ "weighting": "natural", "write_pb": true }),
     );
     let briggs = image(
         &observation,
         "cube-briggs",
-        json!({ "weighting": "briggs", "robust": 0.5 }),
+        json!({ "weighting": "briggs", "robust": 0.5, "write_pb": true }),
     );
 
     // Every product's LSRK axis lies within half a channel of the native
-    // centres, and the Q-band beam is CASA's default `.pb`.
+    // centres, and each channel's `.pb` is the Q-band beam at its frequency.
     for products in [&natural, &briggs] {
         observation.assert_product_contract(
             products,

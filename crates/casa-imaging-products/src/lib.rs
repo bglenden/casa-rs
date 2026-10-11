@@ -27,7 +27,9 @@ pub use beam::{RestoringBeam, fit_restoring_beam};
 pub use demand::ContinuumGenerationDemand;
 pub use error::ProductsError;
 pub use generation::produce_continuum_members;
-pub use normalization::{MinorCycleImageResponse, MosaicSensitivity, normalize_plane};
+pub use normalization::{
+    MinorCycleImageResponse, MosaicSensitivity, ResidualFamily, normalize_plane,
+};
 pub use plan::{
     AnalyticPrimaryBeamModel, ContinuumProductControls, DEFAULT_PSF_CUTOFF,
     PlannedContinuumGeneration, PlannedMember, PublishedContinuumGeneration, PublishedMember,

@@ -26,7 +26,9 @@ use casa_imaging_model::{
     HogbomIterationAccounting, ModelCell, ModelDeltaTerm, ModelSupport, ModelValue,
     ReconstructionAlgorithm,
 };
-use casa_imaging_products::{MinorCycleImageResponse, MosaicSensitivity, ProductsError};
+use casa_imaging_products::{
+    MinorCycleImageResponse, MosaicSensitivity, ProductsError, ResidualFamily,
+};
 use casa_imaging_reconstruction::{
     AutoMaskBeam, AutoMultithreshEvidence, FinalNormalState, ImageDomainReconstructionMaskPlans,
     ImageDomainReconstructionMasks, MajorCycleCompletion, MaskError, ModelGeneration,
@@ -870,6 +872,7 @@ fn read_single<'a>(
                 value.re,
                 index,
                 response.normalization(),
+                ResidualFamily::Single,
                 published_weight,
                 response.policy(),
             )
@@ -942,6 +945,7 @@ fn read_taylor(
                         value.re,
                         index,
                         response.normalization(),
+                        ResidualFamily::Taylor,
                         published_weight,
                         response.policy(),
                     )

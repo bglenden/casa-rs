@@ -115,16 +115,7 @@ fn command_line_and_json_runs_resolve_one_request_and_write_the_same_products() 
     assert_eq!(
         suffixes,
         BTreeSet::from(
-            [
-                ".image",
-                ".mask",
-                ".model",
-                ".pb",
-                ".psf",
-                ".residual",
-                ".sumwt"
-            ]
-            .map(String::from)
+            [".image", ".mask", ".model", ".psf", ".residual", ".sumwt"].map(String::from)
         )
     );
     assert_eq!(products(&directory, "json"), suffixes);

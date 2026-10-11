@@ -691,7 +691,7 @@ fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
     assert!(
         list.entry(ProductRole::PrimaryBeam(ProductTerm::Taylor(1)))
             .is_none(),
-        "CASA writes .pb.tt1 only for a standard-gridder pbcor"
+        "CASA writes .pb.tt1 only for a pbcor"
     );
     assert!(
         list.entries()

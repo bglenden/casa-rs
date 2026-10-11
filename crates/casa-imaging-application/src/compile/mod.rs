@@ -141,7 +141,7 @@ pub(crate) fn prepare(
         },
         &observation_info,
     )?;
-    let primary_beam = primary_beam_model(request, &ms, &spectral)?;
+    let primary_beam = primary_beam_model(request, &ms)?;
     let deployment = deployment(request, context, &surveyed, &domains, primary_beam)?;
     let instrument = instrument::scientific_instrument_model(&request.gridder, &ms)?;
     let specification = specification::specification(
@@ -336,17 +336,10 @@ fn geometry(
 
 /// The primary beam the products are written with: the mosaic
 /// sensitivity of a direction-dependent gridder, else the telescope's
-/// analytic beam.
-///
-/// CASA writes `.pb` for every gridder, and for the standard and
-/// W-projection gridders only when its VPManager knows the telescope
-/// (`SynthesisImager::makePBImage` warns "Not making PB" otherwise). So
-/// without `write_pb` or `pbcor` a telescope, dish set or band that has no
-/// analytic beam here means no PB and the same warning, not a failed run.
+/// analytic beam when `.pb` or `.image.pbcor` is asked for.
 fn primary_beam_model(
     request: &ImagingRequest,
     ms: &MeasurementSet,
-    spectral: &spectral::PreparedSpectralAxis,
 ) -> Result<Option<AnalyticPrimaryBeamModel>, PrepareError> {
     Ok(match request.gridder {
         Gridder::Mosaic { .. } | Gridder::Awproject(_) => {
@@ -355,37 +348,7 @@ fn primary_beam_model(
         Gridder::Standard | Gridder::Wproject { .. } if request.write_pb || request.pbcor => {
             Some(instrument::standard_primary_beam_model(ms)?)
         }
-        Gridder::Standard | Gridder::Wproject { .. } => {
-            let model = match instrument::standard_primary_beam_model(ms) {
-                Ok(model) => model,
-                Err(
-                    error @ (PrepareError::NoTelescope
-                    | PrepareError::NoAnalyticPrimaryBeam { .. }
-                    | PrepareError::NoAntennaDishes
-                    | PrepareError::MixedAlmaDishes { .. }),
-                ) => {
-                    tracing::warn!("not making the PB: {error}");
-                    return Ok(None);
-                }
-                Err(error) => return Err(error),
-            };
-            let coordinate = spectral.coordinate();
-            let channels = match request.deconvolver {
-                Deconvolver::Mtmfs => 1,
-                _ => spectral.output_channels,
-            };
-            let covered = (0..channels).all(|channel| {
-                coordinate
-                    .channel_centre_hz(channel)
-                    .is_some_and(|hz| model.supports_frequency(hz))
-            });
-            if !covered {
-                tracing::warn!(
-                    "not making the PB: the analytic beam does not cover every output channel"
-                );
-            }
-            covered.then_some(model)
-        }
+        Gridder::Standard | Gridder::Wproject { .. } => None,
     })
 }
 

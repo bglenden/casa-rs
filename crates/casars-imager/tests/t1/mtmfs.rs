@@ -17,6 +17,9 @@ const POINT: Component = Component {
 };
 /// Ten times the 0.5 mJy thermal noise of the 16-channel band.
 const THRESHOLD: &str = "0.005Jy";
+/// Above the Q-band PB at the field's corners (0.99974), below it at the
+/// point.
+const PBLIMIT: f64 = 0.9998;
 
 #[test]
 fn mtmfs_two_terms_recover_flux_and_spectral_index() {
@@ -29,9 +32,13 @@ fn mtmfs_two_terms_recover_flux_and_spectral_index() {
             "nterms": 2,
             "niter": 1000,
             "threshold": THRESHOLD,
+            "write_pb": true,
+            "pblimit": PBLIMIT,
         }),
     );
     // CASA's MT-MFS set, with `.pb.tt0` alone: no pbcor touches pb.tt1.
+    // The pblimit cuts the 3-arcsec field's edge, so the PB is zero and
+    // masked there, as `SIImageStore::makePBImage` leaves it.
     observation.assert_product_contract(
         &products,
         &ProductContract {
@@ -55,9 +62,20 @@ fn mtmfs_two_terms_recover_flux_and_spectral_index() {
             ],
             spectral: SpectralAxis::BandCentre,
             natural: true,
-            pblimit: 0.2,
+            pblimit: PBLIMIT as f32,
             uncorrected_masks: true,
         },
+    );
+    let pb = products.get(".pb.tt0").values();
+    let zeros = pb.iter().filter(|value| **value == 0.0).count();
+    let lowest = pb
+        .iter()
+        .filter(|value| **value > 0.0)
+        .fold(f32::MAX, |low, value| low.min(*value));
+    assert!(
+        zeros > 0 && zeros < pb.len(),
+        "the pblimit cuts the field: {zeros} of {} PB pixels zero, lowest kept {lowest}",
+        pb.len()
     );
     let tt0 = products.get(".image.tt0");
     observation.assert_image_wcs(tt0);

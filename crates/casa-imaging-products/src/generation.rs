@@ -404,7 +404,12 @@ fn produce_taylor_members(
         }
     };
     for member in &planned.members {
-        let payload = products.payload(member.role)?;
+        let mut payload = products.payload(member.role)?;
+        // As for one plane: a member with a validity rule is zero outside it,
+        // as `SIImageStore::makePBImage` leaves `.pb.tt0` at pblimit.
+        if member.validity != ProductValidityRule::All {
+            zero_invalid_plane_values(&mut payload, &products.validity(member.validity)?);
+        }
         let validity = match member.storage.pixel_mask() {
             ProductPixelMask::Absent
             | ProductPixelMask::Explicit(

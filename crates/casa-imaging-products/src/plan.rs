@@ -33,15 +33,6 @@ pub enum AnalyticPrimaryBeamModel {
     MosaicSensitivity,
 }
 
-impl AnalyticPrimaryBeamModel {
-    /// Whether this law has a beam at `frequency_hz`: CASA's VLA and EVLA
-    /// beams cover only their bands.
-    #[must_use]
-    pub fn supports_frequency(self, frequency_hz: f64) -> bool {
-        primary_beam_frequency_supported(self, frequency_hz)
-    }
-}
-
 /// Explicit continuum production controls.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ContinuumProductControls {

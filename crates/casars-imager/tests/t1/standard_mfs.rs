@@ -70,25 +70,17 @@ pub(super) fn assert_recovers_the_point(
         summary.clean_stop_reason,
     );
 
-    // The VLA Q-band beam is CASA's default `.pb`, and the default pblimit
-    // 0.2 masks `.image` and `.residual` with it. Natural weighting of unit
-    // weights: sumwt counts every parallel-hand sample that enters Stokes I.
+    // No PB is asked for, so none is written and nothing is masked. Natural
+    // weighting of unit weights: sumwt counts every parallel-hand sample
+    // that enters Stokes I.
     observation.assert_product_contract(
         &products,
         &ProductContract {
-            inventory: &[
-                ".image",
-                ".mask",
-                ".model",
-                ".pb",
-                ".psf",
-                ".residual",
-                ".sumwt",
-            ],
+            inventory: &[".image", ".mask", ".model", ".psf", ".residual", ".sumwt"],
             spectral: SpectralAxis::BandCentre,
             natural: true,
             pblimit: 0.2,
-            uncorrected_masks: true,
+            uncorrected_masks: false,
         },
     );
     observation.assert_image_wcs(image);

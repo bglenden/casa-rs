@@ -272,6 +272,7 @@ fn mosaic_flat_noise_is_flat_sky_times_the_pb() {
                 "gridder": "mosaic",
                 "normtype": normtype,
                 "pblimit": pblimit,
+                "write_pb": true,
             }),
         );
         observation.assert_product_contract(

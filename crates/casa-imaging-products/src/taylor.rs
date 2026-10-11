@@ -12,7 +12,9 @@ use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 use crate::AnalyticPrimaryBeamModel;
 use crate::beam::{RestoringBeam, fit_restoring_beam};
 use crate::error::ProductsError;
-use crate::normalization::{MosaicSensitivity, normalize_plane, normalized_psf_value, psf_peak};
+use crate::normalization::{
+    MosaicSensitivity, ResidualFamily, normalize_plane, normalized_psf_value, psf_peak,
+};
 use crate::restore::{fft_convolve, gaussian_beam_image};
 use crate::source::ContinuumProductInputs;
 use casa_numerics::AnnularApertureVoltageTable;
@@ -175,6 +177,7 @@ impl TaylorFamily {
                                 value.re,
                                 index,
                                 normalization,
+                                ResidualFamily::Taylor,
                                 residual_sum_weight,
                                 policy,
                             )? as f32)
@@ -965,6 +968,8 @@ fn model_term(
 mod tests {
     use casa_imaging_model::ProductNormalization;
 
+    use super::ResidualFamily;
+
     #[test]
     fn evla_coefficient_midpoints_choose_the_upper_frequency_like_casa() {
         for table in [
@@ -1071,7 +1076,14 @@ mod tests {
                 .enumerate()
                 .map(|(index, value)| {
                     sensitivity
-                        .normalize_weighted_residual_sample(*value, index, normalization, 4.0, open)
+                        .normalize_weighted_residual_sample(
+                            *value,
+                            index,
+                            normalization,
+                            ResidualFamily::Taylor,
+                            4.0,
+                            open,
+                        )
                         .expect("separate AW normalization sums")
                 })
                 .collect::<Vec<_>>();

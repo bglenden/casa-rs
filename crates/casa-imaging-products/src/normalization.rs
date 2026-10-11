@@ -10,15 +10,18 @@
 //! | dirty or residual, standard gridders | ÷ sumwt | [`normalize_plane`] |
 //! | PB (mosaic, AW) | √\|weight\| ÷ pbmax, zero where PB ≤ pblimit | [`MosaicSensitivity::primary_beam`], [`MosaicSensitivity::weighted_primary_beam`] |
 //! | residual, flat noise | ÷ (pbmax·√\|weight\|) where that exceeds pblimit·pbmax², else 0 | [`MosaicSensitivity::normalize`], [`MosaicSensitivity::normalize_weighted_residual_sample`] |
-//! | residual, flat sky | ÷ weight where it exceeds pblimit²·pbmax², else 0 | the same |
+//! | residual, flat sky, one term | ÷ weight where it exceeds pblimit²·pbmax², else 0 | the same |
+//! | residual, flat sky, Taylor family | ÷ weight where it exceeds \|pblimit\|·pbmax², else 0 | [`MosaicSensitivity::normalize_weighted_residual_sample`] |
 //! | model, flat noise | × PB before prediction, ÷ PB after the solve | [`MosaicSensitivity::physical_to_apparent`], [`MosaicSensitivity::apparent_to_physical`] |
 //! | pbcor | restored ÷ PB where PB > pblimit | [`MosaicSensitivity::correct_primary_beam`] |
 //!
 //! The PB and residual rules are `SIImageStore::makePBFromWeight` and
-//! `divideResidualByWeight`. Both residual cutoffs are PB > pblimit where
-//! the weight is positive; at negative weights, which FFT ringing leaves at
-//! a mosaic's edges, flat noise keeps CASA's `abs` and flat sky has no
-//! support.
+//! `divideResidualByWeight`. For one term both residual cutoffs are
+//! PB > pblimit where the weight is positive; at negative weights, which FFT
+//! ringing leaves at a mosaic's edges, flat noise keeps CASA's `abs` and
+//! flat sky has no support. `SIImageStoreMultiTerm::divideResidualByWeight`
+//! keeps the flat-noise cutoff for flat sky, so a Taylor family's flat-sky
+//! residual is cut at PB ≤ √pblimit ([`ResidualFamily`]).
 
 use casa_imaging_model::{
     PrimaryBeamValidityPolicy, ProductNormalization, ProductSupportComparison,
@@ -53,6 +56,19 @@ pub fn normalize_plane(values: &[f32], sum_weight: f64) -> Vec<f32> {
         .iter()
         .map(|value| value / sum_weight as f32)
         .collect()
+}
+
+/// Whether a residual is one term or a member of a Taylor family. CASA
+/// normalizes them in different image stores, whose flat-sky cutoffs
+/// differ: `SIImageStore::divideResidualByWeight` compares the weight with
+/// pblimit²·pbmax², `SIImageStoreMultiTerm::divideResidualByWeight` with
+/// |pblimit|·pbmax².
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResidualFamily {
+    /// One term per plane: an MFS image or a cube channel.
+    Single,
+    /// A Taylor coefficient of an MT-MFS family.
+    Taylor,
 }
 
 /// The image units a direction-dependent minor cycle solves in.
@@ -276,9 +292,11 @@ impl<'a> MosaicSensitivity<'a> {
     /// The normal sum weight is bound by [`Self::with_normal_sum_weight`].
     /// All Taylor terms divide by the principal publication sum weight given
     /// here. Flat noise divides by `sqrt(abs(weight)) * PBScale` where that
-    /// exceeds `cutoff * PBScale^2`; flat sky divides by `weight` where it
-    /// exceeds `cutoff^2 * PBScale^2`. Both are PB > cutoff. Elsewhere the
-    /// residual is zero.
+    /// exceeds `cutoff * PBScale^2`: PB > cutoff. Flat sky divides by
+    /// `weight` where it exceeds `cutoff^2 * PBScale^2` for one term
+    /// (PB > cutoff) and `cutoff * PBScale^2` for a Taylor family
+    /// (PB > √cutoff), as CASA's two image stores do. Elsewhere the residual
+    /// is zero.
     ///
     /// # Errors
     ///
@@ -288,6 +306,7 @@ impl<'a> MosaicSensitivity<'a> {
         value: f64,
         index: usize,
         normalization: ProductNormalization,
+        family: ResidualFamily,
         published_sum_weight: f64,
         policy: PrimaryBeamValidityPolicy,
     ) -> Result<f64, ProductsError> {
@@ -314,7 +333,10 @@ impl<'a> MosaicSensitivity<'a> {
                 weight.abs().sqrt() * self.model_pb_scale,
                 limit * pb_scale * pb_scale,
             ),
-            ProductNormalization::FlatSky => (weight, limit * limit * pb_scale * pb_scale),
+            ProductNormalization::FlatSky => match family {
+                ResidualFamily::Single => (weight, limit * limit * pb_scale * pb_scale),
+                ResidualFamily::Taylor => (weight, limit * pb_scale * pb_scale),
+            },
             ProductNormalization::UnitResponse => {
                 return Err(ProductsError::UnsupportedNormalization);
             }
@@ -542,7 +564,7 @@ mod tests {
         ));
     }
 
-    /// CASA's `divideResidualByWeight` cutoffs, pblimit·pbmax² on
+    /// `SIImageStore::divideResidualByWeight`'s cutoffs, pblimit·pbmax² on
     /// pbmax·√|weight| for flat noise and pblimit²·pbmax² on the weight for
     /// flat sky, are both PB > pblimit where the weight is positive.
     #[test]
@@ -563,7 +585,14 @@ mod tests {
             let staged = (0..sensitivity.len())
                 .map(|index| {
                     response
-                        .normalize_weighted_residual_sample(2.0, index, normalization, 2.0, limit)
+                        .normalize_weighted_residual_sample(
+                            2.0,
+                            index,
+                            normalization,
+                            ResidualFamily::Single,
+                            2.0,
+                            limit,
+                        )
                         .unwrap()
                 })
                 .collect::<Vec<_>>();
@@ -590,6 +619,7 @@ mod tests {
                         2.0,
                         index,
                         ProductNormalization::FlatSky,
+                        ResidualFamily::Single,
                         2.0,
                         limit,
                     )
@@ -597,6 +627,51 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(flat_sky, [0.25, 5.0, 2.5, 2.0, 0.0]);
+    }
+
+    /// `SIImageStoreMultiTerm::divideResidualByWeight` keeps
+    /// |pblimit|·pbmax² for flat sky: a Taylor family's flat-sky residual is
+    /// zero where pblimit < PB ≤ √pblimit, which one term keeps. Flat noise
+    /// is the same for both.
+    #[test]
+    fn a_taylor_flat_sky_residual_keeps_casas_multi_term_cutoff() {
+        let sensitivity = [4.0, 0.2, 0.4, 0.5, -0.5, 0.15, 0.17, 0.9];
+        let response = MosaicSensitivity::new(&sensitivity).unwrap();
+        let limit = policy(0.2);
+        // weight / pbmax² = 1, 0.05, 0.1, 0.125, -0.125, 0.0375, 0.0425,
+        // 0.225: only the first and last exceed pblimit.
+        let sample = |normalization, family| {
+            (0..sensitivity.len())
+                .map(|index| {
+                    response
+                        .normalize_weighted_residual_sample(
+                            2.0,
+                            index,
+                            normalization,
+                            family,
+                            2.0,
+                            limit,
+                        )
+                        .unwrap()
+                })
+                .collect::<Vec<_>>()
+        };
+        let taylor = sample(ProductNormalization::FlatSky, ResidualFamily::Taylor);
+        assert_eq!(
+            taylor.iter().map(|value| *value != 0.0).collect::<Vec<_>>(),
+            [true, false, false, false, false, false, false, true]
+        );
+        let single = sample(ProductNormalization::FlatSky, ResidualFamily::Single);
+        for index in [0, 7] {
+            assert_eq!(
+                taylor[index], single[index],
+                "same value where both keep it"
+            );
+        }
+        assert_eq!(
+            sample(ProductNormalization::FlatNoise, ResidualFamily::Taylor),
+            sample(ProductNormalization::FlatNoise, ResidualFamily::Single)
+        );
     }
 
     #[test]
@@ -611,7 +686,14 @@ mod tests {
                 .all(|value| *value > 0.0)
         );
         let flat_noise = response
-            .normalize_weighted_residual_sample(2.0, 4, ProductNormalization::FlatNoise, 2.0, pb)
+            .normalize_weighted_residual_sample(
+                2.0,
+                4,
+                ProductNormalization::FlatNoise,
+                ResidualFamily::Single,
+                2.0,
+                pb,
+            )
             .unwrap();
         assert!((flat_noise - 1.0 / 2.0_f64.sqrt()).abs() < 1.0e-7);
         assert_eq!(
@@ -621,6 +703,7 @@ mod tests {
                     1.0,
                     0,
                     ProductNormalization::FlatNoise,
+                    ResidualFamily::Single,
                     f64::from(1.0e-7_f32),
                     pb
                 )

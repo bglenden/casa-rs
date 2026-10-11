@@ -8505,7 +8505,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Require the primary-beam image: fail if the telescope has no analytic beam. The PB is written whenever the run has one, as CASA does",
+        "summary": "Write the primary-beam image used for PB correction",
         "details": null,
         "examples": [
           "false"

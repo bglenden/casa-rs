@@ -116,8 +116,7 @@ fn far_point(observation: &Observation, name: &str, controls: Value) -> FarPoint
         summary.major_cycles,
         summary.clean_stop_reason,
     );
-    // casa-rs has no analytic VLA beam at 150 MHz (CASA's VPManager has
-    // one), so the run writes no PB and no PB masks.
+    // No PB is asked for, so none is written and nothing is masked.
     observation.assert_product_contract(
         &products,
         &ProductContract {
