@@ -42,10 +42,7 @@
     "ms_staging": "direct",
     "skip_casa": "1",
     "skip_profile": "1",
-    "stream_log": true,
-    "env": {
-      "CASA_RS_IMAGING_PROGRESS": "1"
-    }
+    "stream_log": true
   },
   "comparison": {
     "products": [

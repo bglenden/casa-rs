@@ -45,11 +45,7 @@
     "skip_profile": "1",
     "phase_probe": "0",
     "evidence_role": "optimization_turnaround_serial",
-    "stream_log": true,
-    "env": {
-      "CASA_RS_IMAGING_PROGRESS": "1",
-      "CASA_RS_STANDARD_MFS_PROFILE_DETAIL": "1"
-    }
+    "stream_log": true
   },
   "review": {
     "required_reviewer": "Brian",

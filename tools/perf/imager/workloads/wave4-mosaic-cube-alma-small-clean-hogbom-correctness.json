@@ -41,10 +41,7 @@
     "run_label": "w4-21-mosaic-hogbom-small-correctness",
     "storage_label": "well-below-memory",
     "ms_staging": "direct",
-    "stream_log": true,
-    "env": {
-      "CASA_RS_IMAGING_PROGRESS": "1"
-    }
+    "stream_log": true
   },
   "comparison": {
     "products": [

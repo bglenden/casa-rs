@@ -45,11 +45,7 @@
     "skip_profile": "1",
     "phase_probe": "0",
     "evidence_role": "full_width_initial_dirty_representative_block_probe_auto",
-    "stream_log": true,
-    "env": {
-      "CASA_RS_IMAGING_PROGRESS": "1",
-      "CASA_RS_MOSAIC_CUBE_STREAM_PROBE": "dirty-blocks:16"
-    }
+    "stream_log": true
   },
   "comparison": {
     "products": [

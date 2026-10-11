@@ -390,7 +390,7 @@ rust_tclean_cmd=(
 )
 if [[ "$profile_rust" == true ]]; then
   time_json_stdout_stderr rust-tclean "$outdir/rust-tclean-wall-timing.json" "$outdir/rust-tclean-report.json" "$outdir/rust-tclean-profile.log" \
-    "${rust_tclean_cmd[@]}"
+    "${rust_tclean_cmd[@]}" --stage-timing --log-stderr-priority INFO
 else
   time_json_stdout rust-tclean "$outdir/rust-tclean-wall-timing.json" "$outdir/rust-tclean-report.json" "${rust_tclean_cmd[@]}"
 fi
