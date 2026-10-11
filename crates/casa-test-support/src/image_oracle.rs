@@ -582,3 +582,72 @@ impl ImageOracle {
         })
     }
 }
+
+/// A C++ casacore image held open between reads, as a viewer holding an
+/// image open does.
+///
+/// The image is opened with `TableLock::UserLocking`. Each
+/// [`read`](Self::read) takes a read lock, reads every pixel and the default
+/// mask, and releases the lock without closing the image. A writer that
+/// replaces the image's directory under it is tested against this reader:
+/// what it reads after the replacement shows whether it still sees one whole
+/// image. Run it in another process than the writer, as `fcntl` locks belong
+/// to a process.
+pub struct HeldCppImageReader {
+    #[cfg(has_casacore_cpp)]
+    handle: Option<CppHeldImageReaderHandle>,
+}
+
+/// What a [`HeldCppImageReader`] read.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HeldImageRead {
+    /// The sum of every pixel.
+    pub sum: f64,
+    /// The pixel count.
+    pub values: u64,
+    /// The pixels the default mask leaves valid; every pixel without one.
+    pub valid: u64,
+}
+
+#[cfg_attr(not(has_casacore_cpp), allow(unused_variables))]
+impl HeldCppImageReader {
+    /// Open the `PagedImage<Float>` at `path` without taking a lock.
+    pub fn open(path: &std::path::Path) -> Result<Self, OracleError> {
+        image_operation!("image.held_reader_open", {
+            cpp_held_image_reader_open(path)
+                .map(|handle| Self {
+                    handle: Some(handle),
+                })
+                .map_err(|message| OracleError::CppFailure {
+                    operation: "image.held_reader_open",
+                    message,
+                })
+        })
+    }
+
+    /// Take a read lock, read the pixels and default mask, and release the
+    /// lock, keeping the image open.
+    pub fn read(&mut self) -> Result<HeldImageRead, OracleError> {
+        image_operation!("image.held_reader_read", {
+            let handle = self.handle.as_mut().expect("an open reader");
+            cpp_held_image_reader_read(handle)
+                .map(|(sum, values, valid)| HeldImageRead { sum, values, valid })
+                .map_err(|message| OracleError::CppFailure {
+                    operation: "image.held_reader_read",
+                    message,
+                })
+        })
+    }
+}
+
+impl Drop for HeldCppImageReader {
+    fn drop(&mut self) {
+        #[cfg(has_casacore_cpp)]
+        if let Some(handle) = self.handle.take() {
+            let _guard = crate::oracle_runtime::CasacoreOracleRuntime::lock_operation(
+                "image.held_reader_close",
+            );
+            cpp_held_image_reader_close(handle);
+        }
+    }
+}

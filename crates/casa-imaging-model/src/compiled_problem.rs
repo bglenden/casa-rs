@@ -14,7 +14,7 @@ use crate::model_state::{
     compile_model_lifecycle_contract,
 };
 use crate::observation::ObservationSnapshot;
-use crate::product_graph::{ProductGraph, compile_product_graph};
+use crate::product_list::{ProductList, compile_product_list};
 use crate::transaction::{
     ObservationTransactionCompileError, ObservationTransactionContract,
     ObservationTransactionRequirements, compile_observation_transaction,
@@ -310,9 +310,8 @@ pub enum InstrumentResponse {
 /// Closed identity of an instrument power-response law compiled into the
 /// paired measurement operator.
 ///
-/// Each variant is a versioned scientific identity, not a runtime backend
-/// selector. Changing the law requires a new variant so compiled-problem
-/// identities cannot silently change meaning.
+/// Each variant names one law, not a runtime backend. A changed law is a
+/// new variant, so a variant's meaning never changes under it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InstrumentModel {
     /// CASA-compatible direct scalar power response for a homogeneous ACA
@@ -1866,7 +1865,7 @@ pub struct CompiledProblem {
     reconstruction: ReconstructionContract,
     normal_equation: NormalEquationContract,
     products: ProductRequirements,
-    product_graph: ProductGraph,
+    product_list: ProductList,
     observation_transaction: ObservationTransactionContract,
     numerics: NumericsContract,
     required_capabilities: BTreeSet<RequiredCapability>,
@@ -1937,10 +1936,11 @@ impl CompiledProblem {
         &self.products
     }
 
-    /// Return the mandatory compiler-owned product topology and publication contract.
+    /// Return the product list: every product, how it is stored, and which
+    /// are published.
     #[must_use]
-    pub const fn product_graph(&self) -> &ProductGraph {
-        &self.product_graph
+    pub const fn product_list(&self) -> &ProductList {
+        &self.product_list
     }
 
     /// Return exact snapshot-bound MeasurementSet read and write sets.
@@ -2078,7 +2078,7 @@ pub fn compile(input: ProblemInput) -> Result<CompiledProblem, CompileProblemErr
     if visibility_transform.is_some() {
         required_capabilities.insert(RequiredCapability::SequentialContinuumTransform);
     }
-    let product_graph = compile_product_graph(&geometry, &reconstruction, &products);
+    let product_list = compile_product_list(&geometry, &reconstruction, &products);
     let model_lifecycle = compile_model_lifecycle_contract(
         &geometry,
         normal_equation.measurement_operator().domain(),
@@ -2093,7 +2093,7 @@ pub fn compile(input: ProblemInput) -> Result<CompiledProblem, CompileProblemErr
         reconstruction,
         normal_equation,
         products,
-        product_graph,
+        product_list,
         observation_transaction,
         numerics,
         required_capabilities,

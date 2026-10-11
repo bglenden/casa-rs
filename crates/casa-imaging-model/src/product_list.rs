@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Compiler-owned product meaning, topology, and independently atomic publication contract.
+//! The product list (plan section 5.7): what each product of an imaging
+//! problem means, how it is stored, and which products are published, each
+//! replaced on its own.
 
 use std::collections::BTreeMap;
 
@@ -11,12 +13,12 @@ use crate::{
     ReconstructionContract, RestoringBeamPolicy, SpectralCoordinateSpec, TaylorValidityPolicy,
 };
 
-/// Stable graph-local identity of one logical product node.
+/// The position of one product in its problem's product list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ProductNodeId(usize);
+pub struct ProductId(usize);
 
-impl ProductNodeId {
-    /// Return the zero-based canonical node ordinal.
+impl ProductId {
+    /// Return the zero-based position in the product list.
     #[must_use]
     pub const fn ordinal(self) -> usize {
         self.0
@@ -32,7 +34,7 @@ pub enum ProductTerm {
     Taylor(usize),
 }
 
-/// Exact logical meaning of one product node.
+/// Exact logical meaning of one product.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ProductRole {
     /// Point-spread function or Taylor convolution term.
@@ -69,7 +71,7 @@ pub enum ProductRole {
     BeamMetadata,
 }
 
-/// Pixel-axis role of a product node.
+/// Pixel-axis role of a product.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProductAxisKind {
     /// Full sky-image axes.
@@ -80,7 +82,7 @@ pub enum ProductAxisKind {
     Metadata,
 }
 
-/// Exact coordinate and storage-axis binding of one product node.
+/// Exact coordinate and storage-axis binding of one product.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductAxes {
     kind: ProductAxisKind,
@@ -161,7 +163,7 @@ pub enum ProductBeamRule {
     /// Restore with the exact compiled restoring-beam policy.
     Restoring(RestoringBeamPolicy),
     /// Inherit beam metadata from another product.
-    Inherit(ProductNodeId),
+    Inherit(ProductId),
     /// Embed fitted and selected beam metadata for this policy.
     Metadata(RestoringBeamPolicy),
 }
@@ -215,7 +217,7 @@ impl ProductStorageContract {
 
     /// Return the serialized unit, or an explicitly empty unit label.
     ///
-    /// The node's scientific unit remains available independently.
+    /// The product's scientific unit remains available independently.
     #[must_use]
     pub const fn unit(self) -> Option<ProductUnit> {
         self.unit
@@ -228,10 +230,10 @@ impl ProductStorageContract {
     }
 }
 
-/// One immutable product node in publication order.
+/// One product of the list, published or internal.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ProductNode {
-    node_id: ProductNodeId,
+pub struct ProductEntry {
+    id: ProductId,
     role: ProductRole,
     name: Option<String>,
     axes: ProductAxes,
@@ -242,11 +244,11 @@ pub struct ProductNode {
     storage: ProductStorageContract,
 }
 
-impl ProductNode {
-    /// Return the graph-local node identity.
+impl ProductEntry {
+    /// Return the product's position in the list.
     #[must_use]
-    pub const fn node_id(&self) -> ProductNodeId {
-        self.node_id
+    pub const fn id(&self) -> ProductId {
+        self.id
     }
 
     /// Return the exact logical product meaning.
@@ -255,7 +257,8 @@ impl ProductNode {
         self.role
     }
 
-    /// Return the compiler-owned output suffix, if this node is independently materialized.
+    /// Return the output suffix of a published product; internal products
+    /// have none.
     #[must_use]
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
@@ -305,44 +308,49 @@ impl ProductNode {
 /// already replaced stays valid if a later one fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductPublication {
-    members: Box<[ProductNodeId]>,
+    members: Box<[ProductId]>,
 }
 
 impl ProductPublication {
     /// Return every published member.
     #[must_use]
-    pub const fn members(&self) -> &[ProductNodeId] {
+    pub const fn members(&self) -> &[ProductId] {
         &self.members
     }
 }
 
-/// Complete compiler-owned product DAG for one immutable imaging problem.
+/// Every product of one imaging problem, in publication order.
+///
+/// The compiler builds the list from the requested products and the
+/// problem's image domains, reconstruction basis and validity policy.
+/// Products that inherit beam metadata name the earlier product they
+/// inherit it from by [`ProductId`].
 #[derive(Debug, Clone, PartialEq)]
-pub struct ProductGraph {
+pub struct ProductList {
     normalization_boundary: ProductNormalizationBoundary,
-    nodes: Box<[ProductNode]>,
+    entries: Box<[ProductEntry]>,
     publication: ProductPublication,
 }
 
-impl ProductGraph {
+impl ProductList {
     /// Return the typed handoff from unnormalized normal state.
     #[must_use]
     pub const fn normalization_boundary(&self) -> &ProductNormalizationBoundary {
         &self.normalization_boundary
     }
 
-    /// Return every node in topological and publication order.
+    /// Return every product in publication order.
     #[must_use]
-    pub const fn nodes(&self) -> &[ProductNode] {
-        &self.nodes
+    pub const fn entries(&self) -> &[ProductEntry] {
+        &self.entries
     }
 
-    /// Find a uniquely named role across all image domains.
+    /// Find a role that only one image domain has.
     #[must_use]
-    pub fn node(&self, role: ProductRole) -> Option<&ProductNode> {
-        let mut matching = self.nodes.iter().filter(|node| node.role == role);
-        let node = matching.next()?;
-        matching.next().is_none().then_some(node)
+    pub fn entry(&self, role: ProductRole) -> Option<&ProductEntry> {
+        let mut matching = self.entries.iter().filter(|entry| entry.role == role);
+        let entry = matching.next()?;
+        matching.next().is_none().then_some(entry)
     }
 
     /// Return the canonical independently published member sequence.
@@ -352,7 +360,7 @@ impl ProductGraph {
     }
 }
 
-struct NodeProjection {
+struct EntryProjection {
     role: ProductRole,
     name: Option<String>,
     axis_kind: ProductAxisKind,
@@ -360,30 +368,30 @@ struct NodeProjection {
     normalization: Option<ProductNormalization>,
     beam: ProductBeamRule,
     validity: ProductValidityRule,
-    /// Whether the node is a published image member rather than an internal
+    /// Whether the product is a published image member rather than an internal
     /// image or metadata.
     published: bool,
 }
 
-struct GraphBuilder<'a> {
+struct ListBuilder<'a> {
     geometry: &'a CompiledGeometry,
     reconstruction: &'a ReconstructionContract,
     products: &'a ProductRequirements,
-    nodes: Vec<ProductNode>,
-    node_ids: BTreeMap<(usize, ProductRole), ProductNodeId>,
-    members: Vec<ProductNodeId>,
+    entries: Vec<ProductEntry>,
+    ids: BTreeMap<(usize, ProductRole), ProductId>,
+    members: Vec<ProductId>,
 }
 
-impl<'a> GraphBuilder<'a> {
-    fn compile(mut self) -> ProductGraph {
+impl<'a> ListBuilder<'a> {
+    fn compile(mut self) -> ProductList {
         for (domain_index, domain) in self.geometry.domains().iter().enumerate() {
             for product in self.products.products() {
                 self.compile_product(domain_index, domain, *product);
             }
         }
-        ProductGraph {
+        ProductList {
             normalization_boundary: self.products.normalization_boundary().clone(),
-            nodes: self.nodes.into_boxed_slice(),
+            entries: self.entries.into_boxed_slice(),
             publication: ProductPublication {
                 members: self.members.into_boxed_slice(),
             },
@@ -555,7 +563,7 @@ impl<'a> GraphBuilder<'a> {
             }
             ProductKind::PbCorrectedImage => {
                 for term in self.image_terms() {
-                    let restored = self.node_id(domain_index, ProductRole::RestoredImage(term));
+                    let restored = self.id(domain_index, ProductRole::RestoredImage(term));
                     self.add_image(
                         domain_index,
                         domain,
@@ -604,7 +612,7 @@ impl<'a> GraphBuilder<'a> {
                 );
             }
             ProductKind::PbCorrectedSpectralIndex => {
-                let alpha = self.node_id(domain_index, ProductRole::SpectralIndex);
+                let alpha = self.id(domain_index, ProductRole::SpectralIndex);
                 self.add_image(
                     domain_index,
                     domain,
@@ -631,7 +639,7 @@ impl<'a> GraphBuilder<'a> {
         }
     }
 
-    fn storage_contract(&self, projection: &NodeProjection) -> ProductStorageContract {
+    fn storage_contract(&self, projection: &EntryProjection) -> ProductStorageContract {
         let primary_beam =
             ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam());
         let pixel_mask = match projection.role {
@@ -678,10 +686,10 @@ impl<'a> GraphBuilder<'a> {
         beam: ProductBeamRule,
         validity: ProductValidityRule,
     ) {
-        self.add_node(
+        self.add_entry(
             domain_index,
             domain,
-            NodeProjection {
+            EntryProjection {
                 role,
                 name: Some(name),
                 axis_kind,
@@ -701,10 +709,10 @@ impl<'a> GraphBuilder<'a> {
         role: ProductRole,
         beam: ProductBeamRule,
     ) {
-        self.add_node(
+        self.add_entry(
             domain_index,
             domain,
-            NodeProjection {
+            EntryProjection {
                 role,
                 name: None,
                 axis_kind: ProductAxisKind::Metadata,
@@ -726,10 +734,10 @@ impl<'a> GraphBuilder<'a> {
         beam: ProductBeamRule,
         validity: ProductValidityRule,
     ) {
-        self.add_node(
+        self.add_entry(
             domain_index,
             domain,
-            NodeProjection {
+            EntryProjection {
                 role,
                 name: None,
                 axis_kind: ProductAxisKind::SkyImage,
@@ -742,23 +750,21 @@ impl<'a> GraphBuilder<'a> {
         );
     }
 
-    fn add_node(
+    fn add_entry(
         &mut self,
         domain_index: usize,
         domain: &CompiledImageDomain,
-        projection: NodeProjection,
+        projection: EntryProjection,
     ) {
-        let node_id = ProductNodeId(self.nodes.len());
-        let previous = self
-            .node_ids
-            .insert((domain_index, projection.role), node_id);
+        let id = ProductId(self.entries.len());
+        let previous = self.ids.insert((domain_index, projection.role), id);
         debug_assert!(previous.is_none());
         if projection.published {
-            self.members.push(node_id);
+            self.members.push(id);
         }
         let storage = self.storage_contract(&projection);
-        self.nodes.push(ProductNode {
-            node_id,
+        self.entries.push(ProductEntry {
+            id,
             role: projection.role,
             name: projection.name,
             axes: product_axes(
@@ -775,12 +781,12 @@ impl<'a> GraphBuilder<'a> {
         });
     }
 
-    fn node_id(&self, domain: usize, role: ProductRole) -> ProductNodeId {
-        self.node_ids[&(domain, role)]
+    fn id(&self, domain: usize, role: ProductRole) -> ProductId {
+        self.ids[&(domain, role)]
     }
 
     fn derived_beam(&self, domain: usize) -> ProductBeamRule {
-        self.node_ids
+        self.ids
             .get(&(domain, ProductRole::RestoredImage(ProductTerm::Taylor(0))))
             .copied()
             .map_or(
@@ -798,11 +804,15 @@ impl<'a> GraphBuilder<'a> {
         }
     }
 
+    /// CASA writes `.pb.tt0` alone, except that `pbcor` touches `pb(term)`
+    /// for every Taylor term (`SIImageStoreMultiTerm::pbcor` calls
+    /// `SIImageStore::pbcor(term)`, whatever the gridder), which writes
+    /// `.pb.tt1` and on.
     fn primary_beam_terms(&self) -> Vec<ProductTerm> {
-        if self.products.contains(ProductKind::Weight) {
-            vec![self.primary_beam_term()]
-        } else {
+        if self.products.contains(ProductKind::PbCorrectedImage) {
             self.image_terms()
+        } else {
+            vec![self.primary_beam_term()]
         }
     }
 
@@ -827,17 +837,17 @@ impl<'a> GraphBuilder<'a> {
     }
 }
 
-pub(crate) fn compile_product_graph(
+pub(crate) fn compile_product_list(
     geometry: &CompiledGeometry,
     reconstruction: &ReconstructionContract,
     products: &ProductRequirements,
-) -> ProductGraph {
-    GraphBuilder {
+) -> ProductList {
+    ListBuilder {
         geometry,
         reconstruction,
         products,
-        nodes: Vec::new(),
-        node_ids: BTreeMap::new(),
+        entries: Vec::new(),
+        ids: BTreeMap::new(),
         members: Vec::new(),
     }
     .compile()

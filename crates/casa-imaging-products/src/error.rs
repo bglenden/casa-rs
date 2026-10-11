@@ -2,15 +2,34 @@
 
 //! Exact failure reasons for continuum product construction and output.
 
+use std::path::PathBuf;
+
 use casa_imaging_model::{ProductRole, ProductTerm};
 use thiserror::Error;
 
-/// Exact reason product planning, production, or authorization failed closed.
-#[derive(Debug, Clone, PartialEq, Error)]
+/// Why product planning, generation or writing failed.
+#[derive(Debug, Error)]
 pub enum ProductsError {
-    /// A physical product output could not write or flush a window.
-    #[error("product output failed: {0}")]
-    Storage(String),
+    /// A product image could not be created, written or saved.
+    #[error("writing {}: {source}", path.display())]
+    Image {
+        /// The image's published path.
+        path: PathBuf,
+        /// What the image layer reported.
+        #[source]
+        source: casa_images::ImageError,
+    },
+    /// Staging or replacing a product image failed.
+    #[error("{operation} {}: {source}", path.display())]
+    Io {
+        /// What the writer was doing.
+        operation: &'static str,
+        /// The directory or image it was doing it to.
+        path: PathBuf,
+        /// What the system reported.
+        #[source]
+        source: std::io::Error,
+    },
     /// A product window exceeded its shape or admitted capacity.
     #[error("product window exceeds its admitted shape or capacity")]
     InvalidWindow,
@@ -28,15 +47,25 @@ pub enum ProductsError {
     /// An authoritative model plane could not be read for product generation.
     #[error(transparent)]
     ModelAccess(#[from] casa_imaging_reconstruction::ModelLifecycleError),
-    /// Shared reconstruction response normalization failed.
-    #[error(transparent)]
-    ImageResponse(#[from] casa_imaging_reconstruction::ImageResponseError),
+    /// A direction-dependent sensitivity plane has no positive value: no
+    /// weighted sample reached it.
+    #[error("the sensitivity plane has no positive support")]
+    UnsupportedSensitivity,
+    /// Direction-dependent image units need flat-noise or flat-sky
+    /// normalization.
+    #[error("direction-dependent image units need flat-noise or flat-sky normalization")]
+    UnsupportedNormalization,
     /// Production controls were outside their validated ranges.
     #[error("continuum production controls are invalid")]
     InvalidControls,
-    /// The compiled problem is not a supported single-plane continuum problem.
-    #[error("problem is not a supported single-plane constant-basis continuum problem")]
+    /// The compiled problem asks for a product rule these products do not
+    /// implement.
+    #[error("the compiled problem asks for a product rule the products do not implement")]
     UnsupportedProblem,
+    /// A PB product or PB-masked member was planned without a primary-beam
+    /// model in the controls.
+    #[error("a primary-beam product or mask needs a primary-beam model")]
+    MissingPrimaryBeamModel,
     /// The selected beam law cannot represent an output channel's frequency.
     #[error(
         "primary-beam model {model:?} does not support output channel {output_channel} at {frequency_hz} Hz"
@@ -49,13 +78,11 @@ pub enum ProductsError {
         /// Output channel centre, in Hz.
         frequency_hz: f64,
     },
-    /// The Product Graph requested a role this catalog version cannot produce.
-    #[error("product role {role:?} is not producible by algorithm catalog {catalog}")]
+    /// The product list publishes a role the products cannot produce.
+    #[error("product role {role:?} cannot be produced")]
     UnsupportedProductRole {
         /// The first unsupported role encountered.
         role: ProductRole,
-        /// Algorithm catalog version consulted.
-        catalog: u32,
     },
     /// A Taylor term other than the zeroth coefficient was requested.
     #[error("Taylor term {term:?} exceeds the nterms=1 continuum algorithm catalog")]
@@ -63,11 +90,6 @@ pub enum ProductsError {
         /// The offending Taylor term.
         term: ProductTerm,
     },
-    /// The normal state, final model, masks or beams given to the products
-    /// do not match the compiled problem: its image domains, their shapes,
-    /// planes or Taylor terms.
-    #[error("product inputs do not match the shape of the compiled problem")]
-    ProblemShapeMismatch,
     /// A Taylor run's principal sum of weights, normal or published, is not
     /// positive and finite: no weighted sample reached the image.
     #[error("Taylor products need a positive principal sum of weights, not {sum_weight}")]
@@ -83,7 +105,7 @@ pub enum ProductsError {
         /// Actual payload length.
         actual: usize,
     },
-    /// Beam fitting failed for a graph that requires fitted beam metadata.
+    /// Beam fitting failed for products that carry fitted beam metadata.
     #[error("restoring-beam fitting failed: {0}")]
     BeamFitFailed(String),
     /// Solver arithmetic produced a non-finite product value.

@@ -26,11 +26,14 @@ use casa_imaging_model::{
     HogbomIterationAccounting, ModelCell, ModelDeltaTerm, ModelSupport, ModelValue,
     ReconstructionAlgorithm,
 };
+use casa_imaging_products::{
+    MinorCycleImageResponse, MosaicSensitivity, ProductsError, ResidualFamily,
+};
 use casa_imaging_reconstruction::{
     AutoMaskBeam, AutoMultithreshEvidence, FinalNormalState, ImageDomainReconstructionMaskPlans,
-    ImageDomainReconstructionMasks, MajorCycleCompletion, MaskError, MinorCycleImageResponse,
-    ModelGeneration, ModelLifecycle, ModelLifecycleError, MosaicSensitivity, NormalStateCatalog,
-    SpectralChannelValidity, SpectralOperatorError,
+    ImageDomainReconstructionMasks, MajorCycleCompletion, MaskError, ModelGeneration,
+    ModelLifecycle, ModelLifecycleError, NormalStateCatalog, SpectralChannelValidity,
+    SpectralOperatorError,
 };
 
 use crate::pass::WorkerTeam;
@@ -51,9 +54,9 @@ pub enum MinorCycleRunError {
     /// The model support could not be read or a term is out of range.
     #[error("model: {0}")]
     Model(#[from] ModelLifecycleError),
-    /// The direction-dependent response could not convert a value.
-    #[error("image response: {0}")]
-    Response(#[from] casa_imaging_reconstruction::ImageResponseError),
+    /// The direction-dependent normalization could not convert a value.
+    #[error("normalization: {0}")]
+    Response(#[from] ProductsError),
     /// The solver failed.
     #[error(transparent)]
     Solver(#[from] casa_imaging_deconvolution::Error),
@@ -830,9 +833,12 @@ fn load<'a>(
 
 /// One plane's residual and PSF. Without a response both are divided by the
 /// PSF peak; with one the residual takes CASA's normalisation
-/// (`SIImageStore::divideResidualByWeight`: by the published sum of weights,
-/// and the weight image by the PSF gridding's) and the components convert
-/// back with `divideModelByWeight`. CASA normalises every (polarization,
+/// (`SIImageStore::divideResidualByWeight`) and the components convert back
+/// with `divideModelByWeight`. The residual divides by the published sum of
+/// weights and the weight image by the normal one; for one term both are
+/// the PSF gridding's `.sumwt` (`FTMachine::finalizeToSkyNew` writes it
+/// once), so they cancel as CASA's `divideImageByWeightVal` and
+/// `dividePSFByWeight` do. CASA normalises every (polarization,
 /// channel) plane by that plane's own sums and weight image, so a cube
 /// channel reads its own; a paged cube reads only this plane.
 fn read_single<'a>(
@@ -869,6 +875,7 @@ fn read_single<'a>(
                 value.re,
                 index,
                 response.normalization(),
+                ResidualFamily::Single,
                 published_weight,
                 response.policy(),
             )
@@ -941,6 +948,7 @@ fn read_taylor(
                         value.re,
                         index,
                         response.normalization(),
+                        ResidualFamily::Taylor,
                         published_weight,
                         response.policy(),
                     )

@@ -6,13 +6,13 @@
 //! flux; the standard gridder, run on the same data as the control,
 //! smears and displaces it (IF-3, #652).
 
-use std::collections::BTreeSet;
-
 use casa_ms::{SyntheticSpectralSetup, tutorial_vla_a_antennas};
 use ndarray::Array2;
 use serde_json::{Value, json};
 
-use super::fixture::{Component, Geometry, Observation, Setup, box_sum, peak};
+use super::fixture::{
+    Component, Geometry, Observation, ProductContract, Setup, SpectralAxis, box_sum, peak,
+};
 
 /// 150 MHz: the w term in turns scales with wavelength.
 const FREQUENCY_HZ: f64 = 150.0e6;
@@ -116,11 +116,16 @@ fn far_point(observation: &Observation, name: &str, controls: Value) -> FarPoint
         summary.major_cycles,
         summary.clean_stop_reason,
     );
-    assert_eq!(
-        products.suffixes(),
-        BTreeSet::from(
-            [".image", ".mask", ".model", ".psf", ".residual", ".sumwt"].map(String::from)
-        )
+    // No PB is asked for, so none is written and nothing is masked.
+    observation.assert_product_contract(
+        &products,
+        &ProductContract {
+            inventory: &[".image", ".mask", ".model", ".psf", ".residual", ".sumwt"],
+            spectral: SpectralAxis::BandCentre,
+            natural: false,
+            pblimit: 0.2,
+            uncorrected_masks: false,
+        },
     );
     observation.assert_image_wcs(image);
     // `sumwt = Σ W·Re N` over unit-weight samples (`wprojgrid.f`); the W

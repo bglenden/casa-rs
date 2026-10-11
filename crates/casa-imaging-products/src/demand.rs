@@ -9,23 +9,24 @@ use casa_imaging_reconstruction::NormalStateCatalog;
 use num_complex::Complex64;
 
 use crate::{
-    ContinuumProductInputs, PlannedContinuumGeneration, ProductStoragePlan, ProductsError,
-    PublishedContinuumGeneration, PublishedMember, RestoringBeam,
+    CasaImageWriter, ContinuumProductInputs, PlannedContinuumGeneration, ProductStoragePlan,
+    ProductsError, PublishedContinuumGeneration, PublishedMember, RestoringBeam,
 };
 
 /// Checked owned-array and metadata demand for one planned continuum generation.
 ///
-/// This is deliberately non-persistent. It describes the current algorithm
-/// catalog's owned payload, validity, and working arrays so the runtime can
-/// acquire one bounded lease before production starts. The generated summary's
-/// owned metadata and temporary beam arrays are included; allocator bookkeeping,
-/// the borrowed plan and borrowed reconstruction inputs are not charged here.
+/// It describes the products' payload, validity and working arrays, and what
+/// the image writer holds, so the run admits the whole phase once before
+/// production starts. The generated summary's owned metadata and temporary
+/// beam arrays are included; allocator bookkeeping, the borrowed plan and
+/// borrowed reconstruction inputs are not charged here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContinuumGenerationDemand {
     storage_plan: ProductStoragePlan,
     algorithm_scratch_bytes: u64,
     retained_metadata_bytes: u64,
     beam_scratch_bytes: u64,
+    writer_bytes: u64,
     maximum_member_payload_bytes: u64,
     maximum_member_validity_bytes: u64,
     maximum_window_payload_bytes: u64,
@@ -70,6 +71,13 @@ impl ContinuumGenerationDemand {
         self.beam_scratch_bytes
     }
 
+    /// What the CASA image writer holds: one member's image buffers and
+    /// metadata, and the staged members' records.
+    #[must_use]
+    pub const fn writer_bytes(self) -> u64 {
+        self.writer_bytes
+    }
+
     /// Largest single member's binary32 payload.
     #[must_use]
     pub const fn maximum_member_payload_bytes(self) -> u64 {
@@ -82,11 +90,22 @@ impl ContinuumGenerationDemand {
         self.maximum_member_validity_bytes
     }
 
-    /// Bounded owned arrays plus retained metadata and temporary beam storage.
+    /// Bounded owned arrays, retained metadata, temporary beam storage and
+    /// the image writer: the products phase's one charge.
     #[must_use]
     pub const fn peak_residency_bytes(self) -> u64 {
         self.peak_residency_bytes
     }
+}
+
+/// The largest arrays one member and one window hold.
+#[derive(Default)]
+struct MemberBounds {
+    member_payload: u64,
+    member_validity: u64,
+    window_payload: u64,
+    window_validity: u64,
+    windows: usize,
 }
 
 impl PlannedContinuumGeneration {
@@ -101,33 +120,11 @@ impl PlannedContinuumGeneration {
         &self,
         inputs: &ContinuumProductInputs<'_>,
         storage_plan: ProductStoragePlan,
+        writer: &CasaImageWriter,
     ) -> Result<ContinuumGenerationDemand, ProductsError> {
-        let mut maximum_member_payload_bytes = 0_u64;
-        let mut maximum_member_validity_bytes = 0_u64;
-        let mut maximum_window_payload_bytes = 0_u64;
-        let mut maximum_window_validity_bytes = 0_u64;
-        let mut maximum_windows = 1;
-        for member in self.members() {
-            let values = member.payload_values();
-            let payload = bytes_for::<f32>(values, "member payload")?;
-            let validity = bytes_for::<bool>(values, "member validity")?;
-            maximum_member_payload_bytes = maximum_member_payload_bytes.max(payload);
-            maximum_member_validity_bytes = maximum_member_validity_bytes.max(validity);
-            let layout = storage_plan.layout(member.axes())?;
-            maximum_windows = maximum_windows
-                .max(layout.shape()[layout.spectral_axis()].div_ceil(layout.maximum_channels()));
-            let window_values = layout.maximum_values();
-            maximum_window_payload_bytes = maximum_window_payload_bytes
-                .max(bytes_for::<f32>(window_values, "product window payload")?);
-            maximum_window_validity_bytes = maximum_window_validity_bytes
-                .max(bytes_for::<bool>(window_values, "product window validity")?);
-        }
-
-        let requires_beam = self
-            .members()
-            .iter()
-            .any(|member| member.beam_rule() != ProductBeamRule::None);
-        let beam_jobs = if requires_beam {
+        let bounds = self.member_bounds(storage_plan)?;
+        let maximum_windows = bounds.windows;
+        let beam_jobs = if self.requires_beam() {
             inputs
                 .normal_state()
                 .domain_count()
@@ -157,53 +154,8 @@ impl PlannedContinuumGeneration {
                 .min(maximum_windows.max(beam_jobs)),
         };
         let storage_plan = ProductStoragePlan::new(storage_plan.maximum_channels(), workers)?;
-        let window_workers = workers.min(maximum_windows);
-
-        let mut algorithm_scratch_bytes = match inputs.normal_state().catalog() {
-            NormalStateCatalog::UnnormalizedTaylorBlockV1 => taylor_scratch_bytes(inputs)?,
-            NormalStateCatalog::UnnormalizedPlaneV1
-            | NormalStateCatalog::UnnormalizedChannelSlabV1 => generic_scratch_bytes(self, inputs)?,
-        };
-        if matches!(
-            inputs.normal_state().catalog(),
-            NormalStateCatalog::UnnormalizedTaylorBlockV1
-        ) {
-            algorithm_scratch_bytes = checked_add(
-                algorithm_scratch_bytes,
-                checked_add(
-                    maximum_member_payload_bytes,
-                    maximum_member_validity_bytes,
-                    "coupled member arrays",
-                )?,
-                "coupled member production scratch",
-            )?;
-        }
-        algorithm_scratch_bytes = checked_add(
-            algorithm_scratch_bytes,
-            checked_add(
-                maximum_window_payload_bytes,
-                maximum_window_validity_bytes,
-                "active product window",
-            )?,
-            "windowed production scratch",
-        )?;
-        // Each lane can retain a completed window while another lane still owns
-        // its plane workspace. Beam fitting joins before these windows begin.
-        algorithm_scratch_bytes = algorithm_scratch_bytes
-            .checked_mul(window_workers as u64)
-            .ok_or(ProductsError::ResourceDemandOverflow(
-                "parallel product windows",
-            ))?;
-        if !matches!(
-            inputs.normal_state().catalog(),
-            NormalStateCatalog::UnnormalizedTaylorBlockV1
-        ) {
-            algorithm_scratch_bytes = checked_add(
-                algorithm_scratch_bytes,
-                bytes_for::<Option<crate::ProductWindow>>(window_workers, "product window slots")?,
-                "parallel product slots",
-            )?;
-        }
+        let algorithm_scratch_bytes =
+            self.algorithm_scratch_bytes(inputs, &bounds, workers.min(maximum_windows))?;
         let (retained_metadata_bytes, member_beam_bytes, beam_scratch_bytes) =
             self.metadata_demand(inputs, workers.min(beam_jobs))?;
         let transient_bytes = if matches!(
@@ -223,22 +175,109 @@ impl PlannedContinuumGeneration {
             )?
             .max(beam_scratch_bytes)
         };
+        let writer_bytes =
+            writer.residency_bytes(self, bounds.window_payload, bounds.window_validity)?;
         let peak_residency_bytes = checked_add(
-            retained_metadata_bytes,
-            transient_bytes,
-            "product generation residency",
+            checked_add(
+                retained_metadata_bytes,
+                transient_bytes,
+                "product generation residency",
+            )?,
+            writer_bytes,
+            "product generation and writer residency",
         )?;
         Ok(ContinuumGenerationDemand {
             storage_plan,
             algorithm_scratch_bytes,
             retained_metadata_bytes,
             beam_scratch_bytes,
-            maximum_member_payload_bytes,
-            maximum_member_validity_bytes,
-            maximum_window_payload_bytes,
-            maximum_window_validity_bytes,
+            writer_bytes,
+            maximum_member_payload_bytes: bounds.member_payload,
+            maximum_member_validity_bytes: bounds.member_validity,
+            maximum_window_payload_bytes: bounds.window_payload,
+            maximum_window_validity_bytes: bounds.window_validity,
             peak_residency_bytes,
         })
+    }
+
+    /// The largest member and window arrays, and the most windows a member
+    /// takes.
+    fn member_bounds(
+        &self,
+        storage_plan: ProductStoragePlan,
+    ) -> Result<MemberBounds, ProductsError> {
+        let mut bounds = MemberBounds {
+            windows: 1,
+            ..MemberBounds::default()
+        };
+        for member in self.members() {
+            let values = member.payload_values();
+            bounds.member_payload = bounds
+                .member_payload
+                .max(bytes_for::<f32>(values, "member payload")?);
+            bounds.member_validity = bounds
+                .member_validity
+                .max(bytes_for::<bool>(values, "member validity")?);
+            let layout = storage_plan.layout(member.axes())?;
+            bounds.windows = bounds
+                .windows
+                .max(layout.shape()[layout.spectral_axis()].div_ceil(layout.maximum_channels()));
+            let window_values = layout.maximum_values();
+            bounds.window_payload = bounds
+                .window_payload
+                .max(bytes_for::<f32>(window_values, "product window payload")?);
+            bounds.window_validity = bounds
+                .window_validity
+                .max(bytes_for::<bool>(window_values, "product window validity")?);
+        }
+        Ok(bounds)
+    }
+
+    /// The products' working arrays: the algorithm's scratch and an active
+    /// window per lane.
+    fn algorithm_scratch_bytes(
+        &self,
+        inputs: &ContinuumProductInputs<'_>,
+        bounds: &MemberBounds,
+        window_workers: usize,
+    ) -> Result<u64, ProductsError> {
+        let taylor = matches!(
+            inputs.normal_state().catalog(),
+            NormalStateCatalog::UnnormalizedTaylorBlockV1
+        );
+        let mut bytes = if taylor {
+            checked_add(
+                taylor_scratch_bytes(inputs)?,
+                checked_add(
+                    bounds.member_payload,
+                    bounds.member_validity,
+                    "coupled member arrays",
+                )?,
+                "coupled member production scratch",
+            )?
+        } else {
+            generic_scratch_bytes(self, inputs)?
+        };
+        bytes = checked_add(
+            bytes,
+            checked_add(
+                bounds.window_payload,
+                bounds.window_validity,
+                "active product window",
+            )?,
+            "windowed production scratch",
+        )?;
+        // Each lane can retain a completed window while another lane still owns
+        // its plane workspace. Beam fitting joins before these windows begin.
+        bytes = checked_mul(bytes, window_workers as u64, "parallel product windows")?;
+        if !taylor {
+            bytes = checked_add(
+                bytes,
+                bytes_for::<Option<crate::ProductWindow>>(window_workers, "product window slots")?,
+                "parallel product slots",
+            )?;
+        }
+        Ok(bytes)
     }
 
     fn metadata_demand(
@@ -248,14 +287,7 @@ impl PlannedContinuumGeneration {
     ) -> Result<(u64, u64, u64), ProductsError> {
         let state = inputs.normal_state();
         let domains = state.domain_count();
-        if domains == 0 {
-            return Err(ProductsError::ProblemShapeMismatch);
-        }
-        let requires_beam = self
-            .members()
-            .iter()
-            .any(|member| member.beam_rule() != ProductBeamRule::None);
-        let fitted = if !requires_beam {
+        let fitted = if !self.requires_beam() {
             0
         } else {
             match state.catalog() {
@@ -328,11 +360,9 @@ impl PlannedContinuumGeneration {
             0
         };
         let mut fitting_scratch = 0;
-        if requires_beam {
-            for ordinal in 0..domains {
-                let shape = state
-                    .domain_shape(ordinal)
-                    .ok_or(ProductsError::ProblemShapeMismatch)?;
+        if self.requires_beam() {
+            for shape in inputs.final_model().shape().domains() {
+                let shape = shape.pixels();
                 let cells = checked_shape_values([shape[0], shape[1], 1, 1])?;
                 let input = bytes_for::<f32>(cells, "beam real PSF")?;
                 // Paged PSFs own the decoded complex plane while converting to
@@ -375,11 +405,8 @@ fn generic_scratch_bytes(
         .any(|member| matches!(member.role(), ProductRole::RestoredImage(_)));
     let mut maximum = 0;
     let mut normal_window = 0;
-    for ordinal in 0..inputs.normal_state().domain_count() {
-        let shape = inputs
-            .normal_state()
-            .domain_shape(ordinal)
-            .ok_or(ProductsError::ProblemShapeMismatch)?;
+    for shape in inputs.final_model().shape().domains() {
+        let shape = shape.pixels();
         let cells = checked_shape_values([shape[0], shape[1], 1, 1])?;
         let plane = bytes_for::<f32>(cells, "generic plane")?;
         let validity = bytes_for::<bool>(cells, "generic validity plane")?;
@@ -428,9 +455,6 @@ fn taylor_scratch_bytes(inputs: &ContinuumProductInputs<'_>) -> Result<u64, Prod
         .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor term count"))?;
     let moments = u64::try_from(state.normal_moment_count())
         .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor moment count"))?;
-    if terms < 2 || moments != terms.saturating_mul(2).saturating_sub(1) {
-        return Err(ProductsError::ProblemShapeMismatch);
-    }
     let cells = u64::try_from(cells)
         .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor cell count"))?;
 

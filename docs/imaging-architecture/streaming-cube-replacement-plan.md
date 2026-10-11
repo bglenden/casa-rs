@@ -247,7 +247,7 @@ Strongly related implementation:
 | reconstruction `gridded_normal_operator/spectral_records.rs` | Reference for complete forward/interpolation/accumulation dependency; retire cube consumer after replacement |
 | runtime `bounded_stream.rs`, `reconstruction_executor.rs` | Reuse admitted worker team, bounded work and ownership transfer; no second pool |
 | casa-ms selected-observation access | Reuse bounded reads/selection; do not put reconstruction science in the storage owner |
-| products generation and application `casa_product_sink.rs` | Retain bounded direct generation/write, CASA formats and image atomic replacement |
+| products generation and `writer.rs` | Retain bounded direct generation/write, CASA formats and image atomic replacement |
 
 The seven inspected hotspot files total 34,871 lines, including tests and other
 modes. This is not a promised deletion count. The application entry points remain

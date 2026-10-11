@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Product-owned shape, coverage, and bounded write-only physical windows.
+//! Bounded output windows: each member is generated and written a few
+//! channels at a time, in channel order.
 
 use std::ops::Range;
 
 use casa_imaging_model::{ImageAxis, ProductAxes};
 
-use crate::{PlannedMember, ProductsError, RestoringBeam};
+use crate::ProductsError;
+use crate::writer::MemberImage;
 
 /// Explicit admitted channel-window bound for generation and staging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +19,10 @@ pub struct ProductStoragePlan {
 
 impl ProductStoragePlan {
     /// Select a positive channel-window capacity; one channel is the atomic plane.
+    ///
+    /// # Errors
+    ///
+    /// A zero channel or worker count.
     pub fn new(maximum_channels: usize, maximum_workers: usize) -> Result<Self, ProductsError> {
         if maximum_channels == 0 || maximum_workers == 0 {
             return Err(ProductsError::InvalidWindow);
@@ -48,13 +54,17 @@ impl ProductStoragePlan {
     }
 
     /// Bind the selected window to one member's exact storage axes.
+    ///
+    /// # Errors
+    ///
+    /// The member's value count overflows.
     pub fn layout(self, axes: &ProductAxes) -> Result<ProductWindowLayout, ProductsError> {
         let spectral_axis = axes
             .order()
             .positions()
             .iter()
             .position(|axis| *axis == ImageAxis::Spectral)
-            .ok_or(ProductsError::ProblemShapeMismatch)?;
+            .expect("an image domain's axes include its spectral axis");
         let shape = axes.shape();
         let maximum_channels = self.maximum_channels.min(shape[spectral_axis]);
         let mut window_shape = shape;
@@ -70,7 +80,7 @@ impl ProductStoragePlan {
     }
 }
 
-/// Exact logical shape and active-window limits supplied to a physical output owner.
+/// One member's storage shape and the largest window written to it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProductWindowLayout {
     shape: [usize; 4],
@@ -108,6 +118,10 @@ impl ProductWindowLayout {
         self.maximum_values
     }
     /// Return the complete logical value count with checked arithmetic.
+    ///
+    /// # Errors
+    ///
+    /// The value count overflows.
     pub fn values(self) -> Result<usize, ProductsError> {
         values_for(self.shape)
     }
@@ -133,12 +147,18 @@ impl ProductWindowLayout {
     }
 }
 
-/// Borrowed execution of a bounded wave of independent product preparation jobs.
+/// Runs a bounded wave of independent window preparations.
 ///
-/// Implementations must join all preparation before returning, including on
-/// failure. Physical writers remain on the caller and never enter this hook.
+/// The runtime's worker team implements it; the trait lets products run
+/// their windows on that team without depending on the runtime, which
+/// depends on products. Implementations join every preparation before
+/// returning, including on failure; image writes stay with the caller.
 pub trait ProductWindowExecutor {
     /// Fill each slot using its wave-local index, or return a joined failure.
+    ///
+    /// # Errors
+    ///
+    /// The first preparation that failed.
     fn prepare<T: Send>(
         &self,
         slots: &mut [Option<T>],
@@ -159,30 +179,7 @@ impl ProductWindowExecutor for () {
     }
 }
 
-/// Write-only output owner for one product generation.
-pub trait ProductOutput {
-    /// Begin one member in the exact planned order and storage shape.
-    fn begin_member<'a>(
-        &'a self,
-        member: &PlannedMember,
-        layout: ProductWindowLayout,
-        beams: &[Option<RestoringBeam>],
-    ) -> Result<Box<dyn ProductWriter + 'a>, ProductsError>;
-}
-
-/// Bounded write-only destination for one product member.
-pub trait ProductWriter {
-    /// Transfer one owned, generation-validated window into the destination.
-    ///
-    /// `ProductMemberWriter` owns shape, coverage, and generated-value
-    /// validation before forwarding a window here; implementations own only
-    /// the physical write and its I/O errors.
-    fn write(&mut self, window: ProductWindow) -> Result<(), ProductsError>;
-    /// Flush the physical destination after generation-owned coverage is complete.
-    fn finish(self: Box<Self>) -> Result<(), ProductsError>;
-}
-
-/// One owned, explicitly bounded product window and its exact storage coordinates.
+/// One generated window of a member and where it goes.
 #[derive(Debug)]
 pub struct ProductWindow {
     pub(crate) start: [usize; 4],
@@ -192,72 +189,40 @@ pub struct ProductWindow {
 }
 
 impl ProductWindow {
-    /// Return the window's start in full-member storage coordinates.
-    #[must_use]
-    pub const fn start(&self) -> [usize; 4] {
-        self.start
-    }
-    /// Return the local window shape in storage-axis order.
-    #[must_use]
-    pub const fn shape(&self) -> [usize; 4] {
-        self.shape
-    }
-    /// Borrow binary32 values in local storage order.
-    #[must_use]
-    pub fn payload(&self) -> &[f32] {
-        &self.payload
-    }
-    /// Borrow stored-mask support independently of numerical blanking.
-    #[must_use]
-    pub fn validity(&self) -> &[bool] {
-        &self.validity
-    }
-    /// Transfer arrays into a storage sink without duplicating the window.
-    #[must_use]
-    pub fn into_parts(self) -> ([usize; 4], [usize; 4], Vec<f32>, Vec<bool>) {
+    pub(crate) fn into_parts(self) -> ([usize; 4], [usize; 4], Vec<f32>, Vec<bool>) {
         (self.start, self.shape, self.payload, self.validity)
     }
 }
 
-pub(crate) struct ProductMemberWriter<'a> {
+/// The channels of one member written so far: windows arrive in channel
+/// order, each within the layout, and the member finishes only when every
+/// channel is written.
+#[derive(Debug)]
+struct ChannelCoverage {
     layout: ProductWindowLayout,
-    writer: Box<dyn ProductWriter + 'a>,
     next_channel: usize,
 }
 
-impl<'a> ProductMemberWriter<'a> {
-    pub(crate) fn new(
-        layout: ProductWindowLayout,
-        writer: Box<dyn ProductWriter + 'a>,
-    ) -> Result<Self, ProductsError> {
-        Ok(Self {
-            layout,
-            writer,
-            next_channel: 0,
-        })
-    }
-
-    pub(crate) fn window(&self, channels: Range<usize>) -> Result<ProductWindow, ProductsError> {
-        self.layout.window(channels)
-    }
-
-    pub(crate) fn write(&mut self, window: ProductWindow) -> Result<(), ProductsError> {
-        let start = window.start[self.layout.spectral_axis];
+impl ChannelCoverage {
+    fn accept(&mut self, window: &ProductWindow) -> Result<(), ProductsError> {
+        let layout = self.layout;
+        let start = window.start[layout.spectral_axis];
         if start != self.next_channel {
             return Err(ProductsError::WindowCoverage {
                 expected: self.next_channel,
                 actual: start,
             });
         }
+        let channels = window.shape[layout.spectral_axis];
         let end = start
-            .checked_add(window.shape[self.layout.spectral_axis])
+            .checked_add(channels)
             .ok_or(ProductsError::InvalidWindow)?;
-        if end > self.layout.shape[self.layout.spectral_axis]
-            || window.shape[self.layout.spectral_axis] > self.layout.maximum_channels
-            || window.shape[self.layout.spectral_axis] == 0
+        if end > layout.shape[layout.spectral_axis]
+            || channels > layout.maximum_channels
+            || channels == 0
             || (0..4).any(|axis| {
-                axis != self.layout.spectral_axis
-                    && (window.start[axis] != 0 || window.shape[axis] != self.layout.shape[axis])
+                axis != layout.spectral_axis
+                    && (window.start[axis] != 0 || window.shape[axis] != layout.shape[axis])
             })
             || window.payload.len() != values_for(window.shape)?
             || window.validity.len() != window.payload.len()
@@ -267,33 +232,63 @@ impl<'a> ProductMemberWriter<'a> {
         if window.payload.iter().any(|value| !value.is_finite()) {
             return Err(ProductsError::GeneratedNonfinite);
         }
-        self.writer.write(window)?;
         self.next_channel = end;
         Ok(())
     }
 
-    pub(crate) fn finish(self) -> Result<(), ProductsError> {
-        if self.next_channel != self.layout.shape[self.layout.spectral_axis] {
+    fn complete(&self) -> Result<(), ProductsError> {
+        let channels = self.layout.shape[self.layout.spectral_axis];
+        if self.next_channel != channels {
             return Err(ProductsError::WindowCoverage {
-                expected: self.layout.shape[self.layout.spectral_axis],
+                expected: channels,
                 actual: self.next_channel,
             });
         }
-        self.writer.finish()
+        Ok(())
+    }
+}
+
+/// Writes one member's windows to its image, in channel order.
+pub(crate) struct ProductMemberWriter<'a> {
+    coverage: ChannelCoverage,
+    image: MemberImage<'a>,
+}
+
+impl<'a> ProductMemberWriter<'a> {
+    pub(crate) fn new(layout: ProductWindowLayout, image: MemberImage<'a>) -> Self {
+        Self {
+            coverage: ChannelCoverage {
+                layout,
+                next_channel: 0,
+            },
+            image,
+        }
     }
 
+    pub(crate) fn write(&mut self, window: ProductWindow) -> Result<(), ProductsError> {
+        self.coverage.accept(&window)?;
+        self.image.write(window)
+    }
+
+    pub(crate) fn finish(self) -> Result<(), ProductsError> {
+        self.coverage.complete()?;
+        self.image.finish()
+    }
+
+    /// Write a whole member's values and validity, a window at a time.
     pub(crate) fn write_coupled(
         &mut self,
         payload: &[f32],
         validity: &[bool],
     ) -> Result<(), ProductsError> {
-        if payload.len() != self.layout.values()? || validity.len() != payload.len() {
+        let layout = self.coverage.layout;
+        if payload.len() != layout.values()? || validity.len() != payload.len() {
             return Err(ProductsError::InvalidWindow);
         }
-        let channels = self.layout.shape[self.layout.spectral_axis];
-        for start in (0..channels).step_by(self.layout.maximum_channels) {
+        let channels = layout.shape[layout.spectral_axis];
+        for start in (0..channels).step_by(layout.maximum_channels) {
             let mut window =
-                self.window(start..(start + self.layout.maximum_channels).min(channels))?;
+                layout.window(start..(start + layout.maximum_channels).min(channels))?;
             for local in 0..window.payload.len() {
                 let mut remainder = local;
                 let mut coordinates = [0; 4];
@@ -303,7 +298,7 @@ impl<'a> ProductMemberWriter<'a> {
                 }
                 let index = coordinates
                     .into_iter()
-                    .zip(self.layout.shape)
+                    .zip(layout.shape)
                     .fold(0, |index, (coordinate, extent)| index * extent + coordinate);
                 window.payload[local] = payload[index];
                 window.validity[local] = validity[index];
@@ -327,42 +322,39 @@ fn values_for(shape: [usize; 4]) -> Result<usize, ProductsError> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn inner_fft_workers_do_not_overlap_parallel_output_windows() {
         for workers in [1, 2, 4, 8, 16] {
-            let plan = super::ProductStoragePlan::new(1, workers).unwrap();
+            let plan = ProductStoragePlan::new(1, workers).unwrap();
             assert_eq!(plan.fft_threads(1), if cfg!(unix) { workers } else { 1 });
             for windows in [2, 4, 512] {
                 assert_eq!(plan.fft_threads(windows), 1);
             }
         }
     }
-    use super::*;
 
-    struct FixtureWriter;
-
-    impl ProductWriter for FixtureWriter {
-        fn write(&mut self, _: ProductWindow) -> Result<(), ProductsError> {
-            Ok(())
-        }
-
-        fn finish(self: Box<Self>) -> Result<(), ProductsError> {
-            Ok(())
+    fn coverage(shape: [usize; 4], maximum_channels: usize) -> ChannelCoverage {
+        ChannelCoverage {
+            layout: ProductWindowLayout {
+                shape,
+                spectral_axis: 3,
+                maximum_channels,
+                maximum_values: shape[0] * shape[1] * shape[2] * maximum_channels,
+            },
+            next_channel: 0,
         }
     }
 
     #[test]
-    fn coupled_generation_rejects_nonfinite_values_at_the_window_boundary() {
-        let layout = ProductWindowLayout {
-            shape: [2, 1, 1, 1],
-            spectral_axis: 3,
-            maximum_channels: 1,
-            maximum_values: 2,
-        };
+    fn nonfinite_values_are_refused_at_the_window_boundary() {
         for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            let mut writer = ProductMemberWriter::new(layout, Box::new(FixtureWriter)).unwrap();
+            let mut coverage = coverage([2, 1, 1, 1], 1);
+            let mut window = coverage.layout.window(0..1).unwrap();
+            window.payload[1] = invalid;
             assert!(matches!(
-                writer.write_coupled(&[1.0, invalid], &[true, true]),
+                coverage.accept(&window),
                 Err(ProductsError::GeneratedNonfinite)
             ));
         }
@@ -370,35 +362,28 @@ mod tests {
 
     #[test]
     fn incomplete_or_repeated_windows_cannot_finish_a_member() {
-        let layout = ProductWindowLayout {
-            shape: [2, 2, 1, 3],
-            spectral_axis: 3,
-            maximum_channels: 1,
-            maximum_values: 4,
-        };
-        let mut writer = ProductMemberWriter::new(layout, Box::new(FixtureWriter)).unwrap();
-        let first = writer.window(0..1).unwrap();
-        writer.write(first).unwrap();
-        let repeated = writer.window(0..1).unwrap();
+        let mut coverage = coverage([2, 2, 1, 3], 1);
+        let first = coverage.layout.window(0..1).unwrap();
+        coverage.accept(&first).unwrap();
+        let repeated = coverage.layout.window(0..1).unwrap();
         assert!(matches!(
-            writer.write(repeated),
+            coverage.accept(&repeated),
             Err(ProductsError::WindowCoverage {
                 expected: 1,
                 actual: 0
             })
         ));
         assert!(matches!(
-            writer.finish(),
+            coverage.complete(),
             Err(ProductsError::WindowCoverage {
                 expected: 3,
                 actual: 1
             })
         ));
-        let mut writer = ProductMemberWriter::new(layout, Box::new(FixtureWriter)).unwrap();
-        for channel in 0..3 {
-            let window = writer.window(channel..channel + 1).unwrap();
-            writer.write(window).unwrap();
+        for channel in 1..3 {
+            let window = coverage.layout.window(channel..channel + 1).unwrap();
+            coverage.accept(&window).unwrap();
         }
-        assert!(writer.finish().is_ok());
+        assert!(coverage.complete().is_ok());
     }
 }

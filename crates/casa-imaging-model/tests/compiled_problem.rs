@@ -335,17 +335,16 @@ fn equivalent_science_has_one_canonical_compiled_problem() {
 }
 
 #[test]
-fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
+fn compiler_owns_the_exact_product_list_and_atomic_publication_contract() {
     let compiled = compile_request(specification(false), observation()).expect("compile problem");
-    let graph = compiled.product_graph();
+    let list = compiled.product_list();
     let reordered = compile_request(specification(true), observation()).expect("compile reordered");
 
-    assert_eq!(graph, reordered.product_graph());
+    assert_eq!(list, reordered.product_list());
     assert_eq!(
-        graph
-            .nodes()
+        list.entries()
             .iter()
-            .filter_map(|node| node.name())
+            .filter_map(|entry| entry.name())
             .collect::<Vec<_>>(),
         vec![
             ".psf.tt0",
@@ -365,11 +364,11 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
         ]
     );
 
-    let restored = graph
-        .nodes()
+    let restored = list
+        .entries()
         .iter()
-        .find(|node| node.role() == ProductRole::RestoredImage(ProductTerm::Taylor(0)))
-        .expect("restored Taylor-zero node");
+        .find(|entry| entry.role() == ProductRole::RestoredImage(ProductTerm::Taylor(0)))
+        .expect("restored Taylor-zero product");
     assert_eq!(restored.axes().kind(), ProductAxisKind::SkyImage);
     assert_eq!(restored.axes().shape(), [512, 512, 1, 1]);
     assert_eq!(restored.unit(), ProductUnit::JyPerBeam);
@@ -378,13 +377,13 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
         ProductBeamRule::Restoring(RestoringBeamPolicy::PerPlane)
     );
     assert_eq!(restored.validity(), ProductValidityRule::FinalNormalState);
-    assert!(graph.publication().members().contains(&restored.node_id()));
+    assert!(list.publication().members().contains(&restored.id()));
 
-    let spectral_index = graph
-        .nodes()
+    let spectral_index = list
+        .entries()
         .iter()
-        .find(|node| node.role() == ProductRole::SpectralIndex)
-        .expect("spectral-index node");
+        .find(|entry| entry.role() == ProductRole::SpectralIndex)
+        .expect("spectral-index product");
     assert_eq!(spectral_index.unit(), ProductUnit::Dimensionless);
     assert_eq!(
         spectral_index.validity(),
@@ -392,12 +391,11 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
     );
 
     assert_eq!(
-        graph.publication().members(),
-        graph
-            .nodes()
+        list.publication().members(),
+        list.entries()
             .iter()
-            .filter(|node| node.name().is_some())
-            .map(|node| node.node_id())
+            .filter(|entry| entry.name().is_some())
+            .map(|entry| entry.id())
             .collect::<Vec<_>>()
     );
 }
@@ -439,16 +437,16 @@ fn uncorrected_mask_is_separate_from_numeric_support_and_binds_publication() {
     ] {
         assert_eq!(
             compiled
-                .product_graph()
-                .node(role)
+                .product_list()
+                .entry(role)
                 .expect("uncorrected product")
                 .validity(),
             ProductValidityRule::FinalNormalState,
         );
         assert_eq!(
             compiled
-                .product_graph()
-                .node(role)
+                .product_list()
+                .entry(role)
                 .unwrap()
                 .storage()
                 .pixel_mask(),
@@ -458,8 +456,8 @@ fn uncorrected_mask_is_separate_from_numeric_support_and_binds_publication() {
         );
         assert_eq!(
             absent
-                .product_graph()
-                .node(role)
+                .product_list()
+                .entry(role)
                 .unwrap()
                 .storage()
                 .pixel_mask(),
@@ -520,7 +518,7 @@ fn single_and_taylor_storage_contracts_preserve_science_and_exact_casa_metadata(
                 observation(),
             )
             .expect("storage contract matrix");
-            let graph = compiled.product_graph();
+            let list = compiled.product_list();
             let terms = if taylor {
                 vec![ProductTerm::Taylor(0), ProductTerm::Taylor(1)]
             } else {
@@ -530,16 +528,16 @@ fn single_and_taylor_storage_contracts_preserve_science_and_exact_casa_metadata(
                 validity.primary_beam(),
             ));
             for term in terms {
-                let psf = graph.node(ProductRole::Psf(term)).unwrap();
+                let psf = list.entry(ProductRole::Psf(term)).unwrap();
                 assert_eq!(psf.unit(), ProductUnit::JyPerBeam);
                 assert_eq!(psf.storage().unit(), None);
                 assert_eq!(psf.storage().pixel_mask(), ProductPixelMask::Absent);
-                let residual = graph.node(ProductRole::Residual(term)).unwrap();
+                let residual = list.entry(ProductRole::Residual(term)).unwrap();
                 assert_eq!(residual.unit(), ProductUnit::JyPerBeam);
                 assert_eq!(residual.storage().unit(), None);
                 assert!(!residual.storage().attach_beam());
                 assert_eq!(residual.validity(), ProductValidityRule::FinalNormalState);
-                let image = graph.node(ProductRole::RestoredImage(term)).unwrap();
+                let image = list.entry(ProductRole::RestoredImage(term)).unwrap();
                 assert_eq!(image.storage().unit(), Some(ProductUnit::JyPerBeam));
                 assert!(image.storage().attach_beam());
                 for member in [residual, image] {
@@ -553,8 +551,7 @@ fn single_and_taylor_storage_contracts_preserve_science_and_exact_casa_metadata(
                     );
                 }
                 assert_eq!(
-                    graph
-                        .node(ProductRole::PbCorrectedImage(term))
+                    list.entry(ProductRole::PbCorrectedImage(term))
                         .unwrap()
                         .storage()
                         .pixel_mask(),
@@ -567,8 +564,7 @@ fn single_and_taylor_storage_contracts_preserve_science_and_exact_casa_metadata(
                 ProductTerm::Single
             };
             assert_eq!(
-                graph
-                    .node(ProductRole::PrimaryBeam(response_term))
+                list.entry(ProductRole::PrimaryBeam(response_term))
                     .unwrap()
                     .storage()
                     .pixel_mask(),
@@ -576,8 +572,7 @@ fn single_and_taylor_storage_contracts_preserve_science_and_exact_casa_metadata(
             );
             if taylor {
                 assert_eq!(
-                    graph
-                        .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(1)))
+                    list.entry(ProductRole::PrimaryBeam(ProductTerm::Taylor(1)))
                         .unwrap()
                         .storage()
                         .pixel_mask(),
@@ -585,13 +580,12 @@ fn single_and_taylor_storage_contracts_preserve_science_and_exact_casa_metadata(
                 );
                 for role in [ProductRole::SpectralIndex, ProductRole::SpectralIndexError] {
                     assert_eq!(
-                        graph.node(role).unwrap().storage().pixel_mask(),
+                        list.entry(role).unwrap().storage().pixel_mask(),
                         ProductPixelMask::Explicit(ProductValidityRule::Taylor(validity.taylor()))
                     );
                 }
                 assert_eq!(
-                    graph
-                        .node(ProductRole::PbCorrectedSpectralIndex)
+                    list.entry(ProductRole::PbCorrectedSpectralIndex)
                         .unwrap()
                         .storage()
                         .pixel_mask(),
@@ -619,20 +613,19 @@ fn publishing_a_primary_beam_does_not_change_uncorrected_product_validity() {
         InstrumentResponse::PrimaryBeam,
     )
     .expect("compile unit-response products with a published primary beam");
-    let graph = compiled.product_graph();
+    let list = compiled.product_list();
 
     for role in [
         ProductRole::Residual(ProductTerm::Taylor(0)),
         ProductRole::RestoredImage(ProductTerm::Taylor(0)),
     ] {
         assert_eq!(
-            graph.node(role).expect("uncorrected product").validity(),
+            list.entry(role).expect("uncorrected product").validity(),
             ProductValidityRule::FinalNormalState,
         );
     }
     assert_eq!(
-        graph
-            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
+        list.entry(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
             .expect("published primary beam")
             .validity(),
         ProductValidityRule::PrimaryBeam(product_validity().primary_beam()),
@@ -674,60 +667,43 @@ fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
         observation(),
     )
     .expect("compile PB-corrected Taylor products");
-    let graph = compiled.product_graph();
-    let alpha = graph
-        .node(ProductRole::SpectralIndex)
+    let list = compiled.product_list();
+    let alpha = list
+        .entry(ProductRole::SpectralIndex)
         .expect("spectral-index product");
-    let alpha_error = graph
-        .node(ProductRole::SpectralIndexError)
+    let alpha_error = list
+        .entry(ProductRole::SpectralIndexError)
         .expect("spectral-index-error product");
-    assert!(graph.publication().members().contains(&alpha.node_id()));
-    assert!(
-        graph
-            .publication()
-            .members()
-            .contains(&alpha_error.node_id())
-    );
+    assert!(list.publication().members().contains(&alpha.id()));
+    assert!(list.publication().members().contains(&alpha_error.id()));
 
-    let pb_alpha = graph
-        .node(ProductRole::PrimaryBeamSpectralIndex)
+    let pb_alpha = list
+        .entry(ProductRole::PrimaryBeamSpectralIndex)
         .expect("internal primary-beam spectral index");
     assert_eq!(pb_alpha.name(), None);
-    assert!(!graph.publication().members().contains(&pb_alpha.node_id()));
+    assert!(!list.publication().members().contains(&pb_alpha.id()));
     assert_eq!(
-        graph
-            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
+        list.entry(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
             .expect("primary-beam Taylor-zero product")
             .validity(),
         ProductValidityRule::PrimaryBeam(product_validity().primary_beam())
     );
-    assert_eq!(
-        graph
-            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(1)))
-            .expect("primary-beam Taylor-one product")
-            .validity(),
-        ProductValidityRule::All
+    assert!(
+        list.entry(ProductRole::PrimaryBeam(ProductTerm::Taylor(1)))
+            .is_none(),
+        "CASA writes .pb.tt1 only for a pbcor"
     );
     assert!(
-        graph
-            .nodes()
+        list.entries()
             .iter()
-            .all(|node| node.name() != Some(".pb.alpha"))
+            .all(|entry| entry.name() != Some(".pb.alpha"))
     );
 
-    let corrected_alpha = graph
-        .node(ProductRole::PbCorrectedSpectralIndex)
+    let corrected_alpha = list
+        .entry(ProductRole::PbCorrectedSpectralIndex)
         .expect("PB-corrected spectral index");
-    assert_eq!(
-        corrected_alpha.beam(),
-        ProductBeamRule::Inherit(alpha.node_id())
-    );
-    assert!(
-        graph
-            .publication()
-            .members()
-            .contains(&corrected_alpha.node_id())
-    );
+    assert_eq!(corrected_alpha.beam(), ProductBeamRule::Inherit(alpha.id()));
+    assert!(list.publication().members().contains(&corrected_alpha.id()));
 }
 
 #[test]
@@ -947,8 +923,8 @@ fn flat_normalization_uses_internal_sensitivity_without_publishing_it() {
         .expect("flat normalization reads the reconstruction normal state");
     assert!(
         compiled
-            .product_graph()
-            .node(ProductRole::Sensitivity)
+            .product_list()
+            .entry(ProductRole::Sensitivity)
             .is_none()
     );
 }
@@ -1105,7 +1081,7 @@ fn every_derived_product_requires_a_closed_scientific_source_set() {
                 compile_product_set(requested, response),
                 Err(CompileProblemError::InvalidProductCombination { .. })
             ),
-            "{case} must fail before Product Graph construction"
+            "{case} must fail before the product list is built"
         );
     }
 }
@@ -1117,18 +1093,13 @@ fn taylor_collection_accepts_an_explicit_taylor_image_source() {
         InstrumentResponse::Scalar,
     )
     .expect("Taylor PSF terms form a nonempty coefficient collection");
-    let graph = compiled.product_graph();
-    let collection = graph
-        .node(ProductRole::TaylorCoefficientSet)
+    let list = compiled.product_list();
+    let collection = list
+        .entry(ProductRole::TaylorCoefficientSet)
         .expect("Taylor collection");
 
     assert_eq!(collection.name(), None);
-    assert!(
-        !graph
-            .publication()
-            .members()
-            .contains(&collection.node_id())
-    );
+    assert!(!list.publication().members().contains(&collection.id()));
 }
 
 #[test]

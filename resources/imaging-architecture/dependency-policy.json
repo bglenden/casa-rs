@@ -85,11 +85,14 @@
    "casa-numerics"
   ],
   "casa-imaging-products": [
+   "casa-coordinates",
    "casa-fft",
+   "casa-images",
    "casa-imaging-deconvolution",
    "casa-imaging-model",
    "casa-imaging-reconstruction",
-   "casa-numerics"
+   "casa-numerics",
+   "casa-types"
   ],
   "casa-imaging-metal": [
    "casa-imaging-operator"
@@ -199,9 +202,7 @@
     ".rs"
    ],
    "regex": "\\benv::var(?:_os)?\\s*\\(|\\bstd::env\\b",
-   "grandfathered": [
-    "crates/casa-imaging-products/src/taylor.rs"
-   ]
+   "grandfathered": []
   },
   {
    "id": "no-eprintln-in-imaging-crates",
@@ -220,10 +221,7 @@
     ".rs"
    ],
    "regex": "\\beprintln!\\s*\\(",
-   "grandfathered": [
-    "crates/casa-imaging-application/src/casa_product_sink.rs",
-    "crates/casa-imaging-products/src/taylor.rs"
-   ]
+   "grandfathered": []
   },
   {
    "id": "no-content-hashing-in-imaging-crates",

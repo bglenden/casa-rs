@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! T22 continuum product algorithms driven through the direct generation and
-//! write-only output seams.
+//! T22 continuum product algorithms, written as CASA images and read back.
 //!
 //! Products are generated from major-cycle completions assembled from
 //! explicit synthetic pass planes (`common::synthetic_pass`), not gridded.
@@ -15,7 +14,7 @@ use common::continuum::{
     continuum_problem_with_reconstruction, two_domain_problem,
 };
 use common::synthetic_pass::{Scene, continue_round, two_cycle_round};
-use common::{GeneratedProducts, MemoryProductOutput, full_window};
+use common::{GeneratedProducts, ImageOutput, full_window};
 
 use casa_imaging_model::{
     CompiledProblem, FacetLayout, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
@@ -115,24 +114,39 @@ fn generate_for(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
 ) -> GeneratedProducts {
-    let output = MemoryProductOutput::default();
+    let output = ImageOutput::for_problem(inputs.problem());
     let generated = produce_continuum_members(planned, inputs, full_window(planned), &(), &output)
         .expect("direct product generation");
     GeneratedProducts::from_output(planned, &generated, &output)
 }
 
+/// The demand for writing `planned` into a fresh image output.
+fn demand(
+    planned: &PlannedContinuumGeneration,
+    inputs: &ContinuumProductInputs<'_>,
+    storage_plan: ProductStoragePlan,
+) -> casa_imaging_products::ContinuumGenerationDemand {
+    planned
+        .demand(
+            inputs,
+            storage_plan,
+            &ImageOutput::for_problem(inputs.problem()),
+        )
+        .expect("product demand")
+}
+
 #[test]
-fn planned_generation_lists_the_graph_members() {
+fn planned_generation_lists_the_published_members() {
     let problem = continuum_problem(81, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
         .expect("planned generation");
 
-    let graph_members = problem.product_graph().publication().members();
-    assert_eq!(planned.members().len(), graph_members.len());
-    for (member, node) in planned.members().iter().zip(graph_members.iter()) {
-        assert_eq!(member.node(), *node);
+    let published = problem.product_list().publication().members();
+    assert_eq!(planned.members().len(), published.len());
+    for (member, id) in planned.members().iter().zip(published.iter()) {
+        assert_eq!(member.id(), *id);
         assert!(!member.name().is_empty());
         assert_eq!(member.shape()[2..], [1, 1]);
         assert_eq!(
@@ -161,38 +175,32 @@ fn planned_generation_lists_the_graph_members() {
         planned
             .members()
             .iter()
-            .map(|member| member.node())
+            .map(|member| member.id())
             .collect::<Vec<_>>(),
         replanned
             .members()
             .iter()
-            .map(|member| member.node())
+            .map(|member| member.id())
             .collect::<Vec<_>>()
     );
 }
 
 #[test]
-fn direct_generation_writes_the_exact_member_set_once() {
+fn direct_generation_publishes_exactly_the_member_set() {
     let problem = continuum_problem(85, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
         .expect("planned");
-    let output = MemoryProductOutput::default();
+    let output = ImageOutput::for_problem(&problem);
     let generated =
         produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &output)
             .expect("generated members");
 
     assert_eq!(generated.members().len(), planned.members().len());
     for (generated_member, planned_member) in generated.members().iter().zip(planned.members()) {
-        assert_eq!(generated_member.node(), planned_member.node());
+        assert_eq!(generated_member.id(), planned_member.id());
         assert_eq!(generated_member.name(), planned_member.name());
-        assert_eq!(
-            output.write_count(planned_member.node()),
-            1,
-            "full-window generation writes each member once"
-        );
-        assert!(output.finished(planned_member.node()));
     }
     let beam = generated
         .restoring_beams()
@@ -205,6 +213,18 @@ fn direct_generation_writes_the_exact_member_set_once() {
     assert!(beam.major_fwhm_rad() > 0.0);
 
     let collected = GeneratedProducts::from_output(&planned, &generated, &output);
+    assert_eq!(
+        output.entries(),
+        [
+            "domain0.image",
+            "domain0.mask",
+            "domain0.model",
+            "domain0.psf",
+            "domain0.residual",
+            "domain0.sumwt"
+        ],
+        "publishing leaves the members and no staging"
+    );
     let psf_payload = collected
         .members()
         .iter()
@@ -261,12 +281,9 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
     let round = rerun_two_domain(&problem, first_round);
     let normal = round.join.normal_state();
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join)
-        .with_domain_reconstruction_masks(&masks)
-        .expect("domain-mask inputs");
+        .with_domain_reconstruction_masks(&masks);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
-    planned
-        .demand(&inputs, full_window(&planned))
-        .expect("two-domain product residency demand");
+    demand(&planned, &inputs, full_window(&planned));
     let generated = generate_for(&planned, &inputs);
     assert_eq!(generated.members().len(), products.len() * 2);
 
@@ -352,22 +369,21 @@ fn direct_generation_publishes_metadata_without_payload_residency() {
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
         .expect("planned");
-    let output = MemoryProductOutput::default();
+    let output = ImageOutput::for_problem(&problem);
     let generated =
         produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &output)
             .expect("generated");
     assert_eq!(generated.members().len(), planned.members().len());
     let collected = GeneratedProducts::from_output(&planned, &generated, &output);
     for (member, planned_member) in collected.members().iter().zip(planned.members()) {
-        assert_eq!(member.node(), planned_member.node());
+        assert_eq!(member.id(), planned_member.id());
         assert_eq!(member.name(), planned_member.name());
         assert_eq!(member.payload().len(), planned_member.payload_values());
-        assert!(output.finished(planned_member.node()));
     }
 }
 
 #[test]
-fn direct_generation_counts_bounded_windows_and_finishes_each_member() {
+fn bounded_windows_publish_the_members_one_window_does() {
     let products = [
         ProductKind::Psf,
         ProductKind::Residual,
@@ -387,16 +403,11 @@ fn direct_generation_counts_bounded_windows_and_finishes_each_member() {
     let round = run_continuum_round(&problem);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
-    let output = MemoryProductOutput::default();
+    let output = ImageOutput::for_problem(&problem);
     let storage_plan = ProductStoragePlan::new(1, 1).expect("one-channel output bound");
     let generated = produce_continuum_members(&planned, &inputs, storage_plan, &(), &output)
         .expect("bounded generation");
     assert_eq!(generated.members().len(), planned.members().len());
-    for member in planned.members() {
-        let channels = member.axes().spectral().output_channels();
-        assert_eq!(output.write_count(member.node()), channels);
-        assert!(output.finished(member.node()));
-    }
     let bounded = GeneratedProducts::from_output(&planned, &generated, &output);
     let full = generate_for(&planned, &inputs);
     for (bounded, full) in bounded.members().iter().zip(full.members()) {
@@ -405,11 +416,9 @@ fn direct_generation_counts_bounded_windows_and_finishes_each_member() {
         assert_eq!(bounded.validity(), full.validity());
     }
 
-    let parallel_plan = planned
-        .demand(&inputs, ProductStoragePlan::new(1, 8).unwrap())
-        .unwrap();
+    let parallel_plan = demand(&planned, &inputs, ProductStoragePlan::new(1, 8).unwrap());
     assert_eq!(parallel_plan.storage_plan().maximum_workers(), 2);
-    let serial_demand = planned.demand(&inputs, storage_plan).unwrap();
+    let serial_demand = demand(&planned, &inputs, storage_plan);
     assert_eq!(
         parallel_plan.algorithm_scratch_bytes(),
         serial_demand.algorithm_scratch_bytes() * 2
@@ -423,7 +432,7 @@ fn direct_generation_counts_bounded_windows_and_finishes_each_member() {
         serial_demand.retained_metadata_bytes()
     );
     let execution = ReversedWindowCompletion { fail: false };
-    let parallel_output = MemoryProductOutput::default();
+    let parallel_output = ImageOutput::for_problem(&problem);
     let parallel = produce_continuum_members(
         &planned,
         &inputs,
@@ -438,7 +447,7 @@ fn direct_generation_counts_bounded_windows_and_finishes_each_member() {
         assert_eq!(parallel.payload(), serial.payload());
         assert_eq!(parallel.validity(), serial.validity());
     }
-    let failed_output = MemoryProductOutput::default();
+    let failed_output = ImageOutput::for_problem(&problem);
     assert!(matches!(
         produce_continuum_members(
             &planned,
@@ -449,9 +458,104 @@ fn direct_generation_counts_bounded_windows_and_finishes_each_member() {
         ),
         Err(ProductsError::GeneratedNonfinite)
     ));
-    assert_eq!(failed_output.begun_members(), 0);
-    assert_eq!(failed_output.write_count(planned.members()[0].node()), 0);
-    assert!(!failed_output.finished(planned.members()[0].node()));
+    failed_output.publish().expect("nothing staged to publish");
+    assert!(
+        failed_output.entries().is_empty(),
+        "a failed generation publishes no image and leaves no staging: {:?}",
+        failed_output.entries()
+    );
+}
+
+/// A generation that fails after members have finished discards their
+/// staging before the writer drops, so publishing it publishes nothing.
+#[test]
+fn a_late_failure_discards_the_members_already_staged() {
+    let products = [
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::SumWeights,
+    ];
+    let problem = continuum_problem_with_reconstruction(
+        97,
+        &products,
+        RestoringBeamPolicy::None,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Dirty,
+        2,
+    );
+    let round = run_continuum_round(&problem);
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
+    let planned = planned_for(&inputs, &ContinuumProductControls::default());
+    let storage_plan = ProductStoragePlan::new(1, 1).expect("one-channel windows");
+    let counting = FailingCall::new(usize::MAX);
+    produce_continuum_members(
+        &planned,
+        &inputs,
+        storage_plan,
+        &counting,
+        &ImageOutput::for_problem(&problem),
+    )
+    .expect("an unfailing generation");
+    let calls = counting.calls.into_inner();
+    // Fail every preparation in turn, the later ones after members finished.
+    for failing_call in 1..=calls {
+        let output = ImageOutput::for_problem(&problem);
+        let error = produce_continuum_members(
+            &planned,
+            &inputs,
+            storage_plan,
+            &FailingCall::new(failing_call),
+            &output,
+        )
+        .expect_err("the executor fails");
+        assert!(
+            matches!(error, ProductsError::GeneratedNonfinite),
+            "{error}"
+        );
+        assert!(
+            output.entries().is_empty(),
+            "call {failing_call}: the finished members' staging is gone: {:?}",
+            output.entries()
+        );
+        output.publish().expect("nothing staged to publish");
+        assert!(output.entries().is_empty(), "nothing published");
+    }
+}
+
+/// Runs preparations in order and fails the `failing`th, counting from one.
+struct FailingCall {
+    calls: std::sync::atomic::AtomicUsize,
+    failing: usize,
+}
+
+impl FailingCall {
+    fn new(failing: usize) -> Self {
+        Self {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            failing,
+        }
+    }
+}
+
+impl casa_imaging_products::ProductWindowExecutor for FailingCall {
+    fn prepare<T: Send>(
+        &self,
+        slots: &mut [Option<T>],
+        operation: &(dyn Fn(usize) -> Result<T, ProductsError> + Sync),
+    ) -> Result<(), ProductsError> {
+        for (index, slot) in slots.iter_mut().enumerate() {
+            let call = self
+                .calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                + 1;
+            if call == self.failing {
+                return Err(ProductsError::GeneratedNonfinite);
+            }
+            *slot = Some(operation(index)?);
+        }
+        Ok(())
+    }
 }
 
 struct ReversedWindowCompletion {
@@ -501,39 +605,31 @@ impl casa_imaging_products::ProductWindowExecutor for ReversedWindowCompletion {
 }
 
 #[test]
-fn output_errors_fail_generation_without_a_completion_receipt() {
+fn an_unwritable_output_fails_generation_and_publishes_nothing() {
     let problem = continuum_problem(98, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
 
-    let write_failure = MemoryProductOutput::failing_write();
-    assert!(matches!(
-        produce_continuum_members(
-            &planned,
-            &inputs,
-            full_window(&planned),
-            &(),
-            &write_failure
-        ),
-        Err(ProductsError::Storage(_))
-    ));
-    assert_eq!(write_failure.begun_members(), 1);
-    assert!(!write_failure.finished(planned.members()[0].node()));
-
-    let finish_failure = MemoryProductOutput::failing_finish();
-    assert!(matches!(
-        produce_continuum_members(
-            &planned,
-            &inputs,
-            full_window(&planned),
-            &(),
-            &finish_failure
-        ),
-        Err(ProductsError::Storage(_))
-    ));
-    assert_eq!(finish_failure.begun_members(), 1);
-    assert!(!finish_failure.finished(planned.members()[0].node()));
+    let root = tempfile::tempdir().expect("output root");
+    let blocked = root.path().join("blocked");
+    std::fs::write(&blocked, b"a file where the output directory goes").expect("blocker");
+    let writer = casa_imaging_products::CasaImageWriter::new(
+        blocked.join("image"),
+        casa_coordinates::CoordinateSystem::new(),
+    );
+    let error = produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &writer)
+        .expect_err("the output directory cannot be created");
+    assert!(
+        matches!(&error, ProductsError::Io { path, .. } if path == &blocked),
+        "{error}"
+    );
+    writer.publish().expect("nothing staged to publish");
+    let entries = std::fs::read_dir(root.path())
+        .expect("output root")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(entries, ["blocked"], "nothing was published or staged");
 }
 
 #[test]
@@ -542,10 +638,8 @@ fn single_window_restoration_admits_inner_fft_workers_without_replica_buffers() 
     let round = run_continuum_round(&problem);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
-    let serial = planned
-        .demand(&inputs, ProductStoragePlan::new(1, 1).unwrap())
-        .unwrap();
-    let serial_output = MemoryProductOutput::default();
+    let serial = demand(&planned, &inputs, ProductStoragePlan::new(1, 1).unwrap());
+    let serial_output = ImageOutput::for_problem(&problem);
     let serial_generation = produce_continuum_members(
         &planned,
         &inputs,
@@ -557,9 +651,11 @@ fn single_window_restoration_admits_inner_fft_workers_without_replica_buffers() 
     let serial_values =
         GeneratedProducts::from_output(&planned, &serial_generation, &serial_output);
     for workers in [4, 8] {
-        let parallel = planned
-            .demand(&inputs, ProductStoragePlan::new(1, workers).unwrap())
-            .unwrap();
+        let parallel = demand(
+            &planned,
+            &inputs,
+            ProductStoragePlan::new(1, workers).unwrap(),
+        );
         assert_eq!(
             parallel.storage_plan().maximum_workers(),
             if cfg!(unix) { workers } else { 1 }
@@ -573,13 +669,13 @@ fn single_window_restoration_admits_inner_fft_workers_without_replica_buffers() 
             parallel.peak_residency_bytes(),
             serial.peak_residency_bytes()
         );
-        let output = MemoryProductOutput::default();
+        let output = ImageOutput::for_problem(&problem);
         let generated =
             produce_continuum_members(&planned, &inputs, parallel.storage_plan(), &(), &output)
                 .unwrap();
         let values = GeneratedProducts::from_output(&planned, &generated, &output);
         for (actual, expected) in values.members().iter().zip(serial_values.members()) {
-            assert_eq!(actual.node(), expected.node());
+            assert_eq!(actual.id(), expected.id());
             assert_eq!(actual.validity(), expected.validity());
             for (actual, expected) in actual.payload().iter().zip(expected.payload()) {
                 assert!((actual - expected).abs() <= 1.0e-6 * expected.abs().max(1.0));
@@ -601,9 +697,7 @@ fn generic_generation_demand_charges_exact_owned_arrays() {
     let round = run_continuum_round(&problem);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
-    let demand = planned
-        .demand(&inputs, full_window(&planned))
-        .expect("generic demand");
+    let demand = demand(&planned, &inputs, full_window(&planned));
     let values = planned
         .members()
         .iter()
@@ -644,13 +738,14 @@ fn generic_generation_demand_charges_exact_owned_arrays() {
             + (demand.algorithm_scratch_bytes()
                 + size_of::<Option<casa_imaging_products::RestoringBeam>>() as u64)
                 .max(demand.beam_scratch_bytes())
+            + demand.writer_bytes()
     );
     let generated = produce_continuum_members(
         &planned,
         &inputs,
         full_window(&planned),
         &(),
-        &MemoryProductOutput::default(),
+        &ImageOutput::for_problem(&problem),
     )
     .unwrap();
     assert_eq!(
@@ -692,15 +787,13 @@ fn cube_generation_demand_retains_channel_beams_and_charges_common_fit_scratch()
         let round = run_continuum_round(&problem);
         let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
         let planned = planned_for(&inputs, &ContinuumProductControls::default());
-        let demand = planned
-            .demand(&inputs, ProductStoragePlan::new(1, 1).unwrap())
-            .unwrap();
+        let demand = demand(&planned, &inputs, ProductStoragePlan::new(1, 1).unwrap());
         let generated = produce_continuum_members(
             &planned,
             &inputs,
             ProductStoragePlan::new(1, 1).unwrap(),
             &(),
-            &MemoryProductOutput::default(),
+            &ImageOutput::for_problem(&problem),
         )
         .unwrap();
         assert_eq!(generated.fitted_beams().len(), 2);
@@ -727,11 +820,11 @@ fn cube_generation_demand_retains_channel_beams_and_charges_common_fit_scratch()
                 + (demand.algorithm_scratch_bytes()
                     + (2 * size_of::<Option<RestoringBeam>>()) as u64)
                     .max(demand.beam_scratch_bytes())
+                + demand.writer_bytes()
         );
 
-        let parallel_demand = planned
-            .demand(&inputs, ProductStoragePlan::new(1, 8).unwrap())
-            .unwrap();
+        let parallel_demand =
+            self::demand(&planned, &inputs, ProductStoragePlan::new(1, 8).unwrap());
         assert_eq!(parallel_demand.storage_plan().maximum_workers(), 2);
         assert_eq!(
             parallel_demand.beam_scratch_bytes(),
@@ -747,8 +840,9 @@ fn cube_generation_demand_retains_channel_beams_and_charges_common_fit_scratch()
                 + (parallel_demand.algorithm_scratch_bytes()
                     + (2 * size_of::<Option<RestoringBeam>>()) as u64)
                     .max(parallel_demand.beam_scratch_bytes())
+                + parallel_demand.writer_bytes()
         );
-        let parallel_output = MemoryProductOutput::default();
+        let parallel_output = ImageOutput::for_problem(&problem);
         let parallel = produce_continuum_members(
             &planned,
             &inputs,
@@ -765,7 +859,7 @@ fn cube_generation_demand_retains_channel_beams_and_charges_common_fit_scratch()
             assert_eq!(parallel.payload(), serial.payload());
             assert_eq!(parallel.validity(), serial.validity());
         }
-        let failed_output = MemoryProductOutput::default();
+        let failed_output = ImageOutput::for_problem(&problem);
         assert!(matches!(
             produce_continuum_members(
                 &planned,
@@ -776,17 +870,16 @@ fn cube_generation_demand_retains_channel_beams_and_charges_common_fit_scratch()
             ),
             Err(ProductsError::GeneratedNonfinite)
         ));
-        assert_eq!(
-            failed_output.begun_members(),
-            0,
-            "beam barrier precedes every writer"
+        assert!(
+            failed_output.entries().is_empty(),
+            "beam fitting precedes every image"
         );
     }
 }
 
 #[test]
 fn weight_products_plan_and_produce_the_exact_normal_state_sensitivity_plane() {
-    // Weight members are required graph products: they plan like every other
+    // Weight members are required products: they plan like every other
     // member and carry the normal state's exact per-pixel sensitivity.
     let problem = continuum_problem(
         107,
@@ -895,17 +988,25 @@ fn primary_beam_plan_rejects_a_cube_crossing_the_vla_band_boundary() {
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaVlaBand);
-    let error = PlannedContinuumGeneration::new(&inputs, &controls)
-        .expect_err("unsupported frequency must fail during planning, not production");
-    assert_eq!(
-        error,
-        ProductsError::UnsupportedPrimaryBeamFrequency {
-            model: AnalyticPrimaryBeamModel::CasaVlaBand,
-            output_channel: 1,
-            frequency_hz: 55.008e9,
-        }
-    );
-    assert_eq!(controls.validate_for_problem(&problem), Err(error));
+    let unsupported = |error| {
+        matches!(
+            error,
+            ProductsError::UnsupportedPrimaryBeamFrequency {
+                model: AnalyticPrimaryBeamModel::CasaVlaBand,
+                output_channel: 1,
+                frequency_hz,
+            } if frequency_hz == 55.008e9
+        )
+    };
+    assert!(unsupported(
+        PlannedContinuumGeneration::new(&inputs, &controls)
+            .expect_err("unsupported frequency must fail during planning, not production")
+    ));
+    assert!(unsupported(
+        controls
+            .validate_for_problem(&problem)
+            .expect_err("unsupported frequency")
+    ));
 }
 
 #[test]
@@ -960,8 +1061,7 @@ fn clean_mask_product_is_the_committed_reconstruction_support() {
     )
     .expect("reconstruction mask");
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join)
-        .with_reconstruction_mask(&mask)
-        .expect("mask-bound inputs");
+        .with_reconstruction_mask(&mask);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
     let generated = generate_for(&planned, &inputs);
     let published_mask = generated
@@ -1058,29 +1158,29 @@ fn restoration_adds_the_published_residual_without_scaling_the_convolved_model()
 }
 
 #[test]
-fn generated_members_carry_the_complete_graph_contract() {
-    // Every generated member is planned from its graph node: role, unit,
-    // WCS/axes law, beam rule with resolved fitted beam, and validity rule -
-    // not just name and payload.
+fn generated_members_carry_the_complete_product_contract() {
+    // Every generated member is planned from its product-list entry: role,
+    // unit, WCS/axes law, beam rule with resolved fitted beam, and validity
+    // rule - not just name and payload.
     let problem = continuum_problem(111, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
     let generated = generate_for(&planned, &inputs);
 
-    let graph = problem.product_graph();
+    let list = problem.product_list();
     for member in generated.members() {
-        let node = graph
-            .nodes()
+        let entry = list
+            .entries()
             .iter()
-            .find(|node| node.node_id() == member.node())
-            .expect("generated member names a graph node");
+            .find(|entry| entry.id() == member.id())
+            .expect("generated member names a product-list entry");
         let contract = member.contract();
-        assert_eq!(contract.role(), node.role());
-        assert_eq!(contract.unit(), node.unit());
-        assert_eq!(contract.axes(), node.axes());
-        assert_eq!(contract.beam_rule(), node.beam());
-        assert_eq!(contract.validity(), node.validity());
+        assert_eq!(contract.role(), entry.role());
+        assert_eq!(contract.unit(), entry.unit());
+        assert_eq!(contract.axes(), entry.axes());
+        assert_eq!(contract.beam_rule(), entry.beam());
+        assert_eq!(contract.validity(), entry.validity());
     }
 
     // Beam-bearing members resolve the generation's fitted beam; beam-free

@@ -9,7 +9,6 @@
 //! stages directly.
 
 pub mod availability;
-mod casa_product_sink;
 mod compile;
 mod imaging;
 mod native;
@@ -25,7 +24,6 @@ pub use casa_imaging_runtime::{
     Admission, HostResources, Phase, ResourcePolicy, ReturningAllocator, RunSummary, SummaryTarget,
     TracedComponent,
 };
-pub use casa_product_sink::{CasaImageDomainOutput, CasaImageProductSink};
 pub use compile::{OutlierProblem, PrepareError};
 pub use request::{
     AwCfSource, AwProjection, DataColumn, Deconvolver, Gridder, ImagingRequest, InvalidRequest,
@@ -97,10 +95,10 @@ pub(crate) struct AwCatalogDeployment {
     pub(crate) resident_bytes: usize,
 }
 
-/// Product-generation controls and the storage sink.
+/// Product-generation controls and the CASA image writer.
 pub(crate) struct ApplicationPublication {
     pub(crate) controls: ContinuumProductControls,
-    pub(crate) sink: CasaImageProductSink,
+    pub(crate) writer: casa_imaging_products::CasaImageWriter,
 }
 
 /// The result of one whole run.

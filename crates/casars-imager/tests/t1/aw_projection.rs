@@ -11,14 +11,14 @@
 //! the paraboloid, so off axis the two agree only to several per cent;
 //! T1.5 `refim_mawproject` carries the CASA parity.
 
-use std::collections::BTreeSet;
-
 use casa_ms::{SyntheticAntenna, SyntheticSpectralSetup, tutorial_vla_a_antennas};
 use casa_simulation_synthesis::{AiryPrimaryBeam, AiryVoltagePattern};
 use ndarray::Array2;
 use serde_json::json;
 
-use super::fixture::{Component, Geometry, Observation, Setup, box_sum, peak};
+use super::fixture::{
+    Component, Geometry, Observation, ProductContract, Setup, SpectralAxis, box_sum, peak,
+};
 
 /// L band, inside the native EVLA model's 0.9–8 GHz bands.
 const FREQUENCY_HZ: f64 = 1.5e9;
@@ -205,10 +205,10 @@ fn aw_projection_generates_its_catalog_and_recovers_the_sky() {
         summary.clean_stop_reason,
     );
 
-    assert_eq!(
-        products.suffixes(),
-        BTreeSet::from(
-            [
+    observation.assert_product_contract(
+        &products,
+        &ProductContract {
+            inventory: &[
                 ".image",
                 ".image.pbcor",
                 ".mask",
@@ -218,9 +218,12 @@ fn aw_projection_generates_its_catalog_and_recovers_the_sky() {
                 ".residual",
                 ".sumwt",
                 ".weight",
-            ]
-            .map(String::from)
-        )
+            ],
+            spectral: SpectralAxis::BandCentre,
+            natural: false,
+            pblimit: 0.2,
+            uncorrected_masks: true,
+        },
     );
     observation.assert_image_wcs(image);
     // The sensitivity image peaks at the pointing; a third of a beam off

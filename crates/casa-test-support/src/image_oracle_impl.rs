@@ -1298,3 +1298,63 @@ pub(crate) fn cpp_bench_image_plane_by_plane_complex(
         Err(unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) })
     }
 }
+
+/// A C++ casacore `PagedImage<Float>`, opened with `UserLocking` and held
+/// open; closed with [`cpp_held_image_reader_close`].
+#[cfg(has_casacore_cpp)]
+pub(crate) struct CppHeldImageReaderHandle(std::ptr::NonNull<std::ffi::c_void>);
+
+/// Open the image at `path` in C++ casacore with `UserLocking`, without
+/// taking a lock, and keep it open.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_held_image_reader_open(
+    path: &std::path::Path,
+) -> Result<CppHeldImageReaderHandle, String> {
+    let c_path =
+        CasacoreOracleRuntime::c_path("image path", path).map_err(|error| error.to_string())?;
+    let mut reader: *mut std::ffi::c_void = std::ptr::null_mut();
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe { cpp_image_held_reader_open(c_path.as_ptr(), &mut reader, &mut error) };
+    if rc != 0 {
+        return Err(unsafe {
+            CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error)
+        });
+    }
+    std::ptr::NonNull::new(reader)
+        .map(CppHeldImageReaderHandle)
+        .ok_or_else(|| "the C++ reader returned a null image".to_owned())
+}
+
+/// Take a read lock on the held image, read its pixels and default mask and
+/// release the lock, keeping the image open. Returns the pixel sum, the
+/// pixel count and the count of valid pixels.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_held_image_reader_read(
+    reader: &mut CppHeldImageReaderHandle,
+) -> Result<(f64, u64, u64), String> {
+    let mut sum = 0.0;
+    let mut values: i64 = 0;
+    let mut valid: i64 = 0;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_image_held_reader_read(
+            reader.0.as_ptr(),
+            &mut sum,
+            &mut values,
+            &mut valid,
+            &mut error,
+        )
+    };
+    if rc != 0 {
+        return Err(unsafe {
+            CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error)
+        });
+    }
+    Ok((sum, values as u64, valid as u64))
+}
+
+/// Close the held image.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_held_image_reader_close(reader: CppHeldImageReaderHandle) {
+    unsafe { cpp_image_held_reader_close(reader.0.as_ptr()) };
+}

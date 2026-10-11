@@ -875,7 +875,7 @@ pub fn auto_multithresh(
     ))
 }
 
-/// Mask construction or lineage failure.
+/// Why a reconstruction mask could not be built.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MaskError {
     /// A required authoritative Normal State window could not be loaded.
@@ -902,8 +902,9 @@ pub enum MaskError {
     /// A static box lies outside its named grid.
     #[error("mask box lies outside the target grid")]
     OutsideTarget,
-    /// Shape or lineage does not match the target grid.
-    #[error("mask shape or lineage mismatch")]
+    /// The support's shape or direction coordinate does not match the
+    /// target grid.
+    #[error("mask shape or direction coordinate differs from the target grid")]
     ShapeMismatch,
     /// Shape is empty or overflows addressable storage.
     #[error("mask shape must be finite and non-empty")]

@@ -7,12 +7,11 @@ use std::path::PathBuf;
 
 use casa_imaging_model::CompiledProblem;
 use casa_imaging_products::{
-    ContinuumProductInputs, PlannedContinuumGeneration, ProductStoragePlan, ProductsError,
-    PublishedContinuumGeneration, produce_continuum_members,
+    ContinuumProductInputs, MinorCycleImageResponse, PlannedContinuumGeneration,
+    ProductStoragePlan, ProductsError, PublishedContinuumGeneration, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
-    ImageDomainReconstructionMaskPlans, MajorCycleCompletion, MinorCycleImageResponse,
-    ReconstructionMaskSet,
+    ImageDomainReconstructionMaskPlans, MajorCycleCompletion, ReconstructionMaskSet,
 };
 use casa_imaging_runtime::pass::{PassError, WorkerTeam};
 use casa_imaging_runtime::{
@@ -251,7 +250,7 @@ struct Products {
     published: PublishedContinuumGeneration,
 }
 
-/// Generate every planned product member into the sink's private staging,
+/// Generate every planned product member into the writer's private staging,
 /// one output channel per window on the run's team, and publish them; a
 /// cancelled run publishes nothing.
 fn publish_products(
@@ -265,31 +264,30 @@ fn publish_products(
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific);
     if let Some(masks) = reconstruction_masks.as_ref() {
         inputs = match masks {
-            ReconstructionMaskSet::Shared(mask) => inputs.with_reconstruction_mask(mask)?,
-            ReconstructionMaskSet::Domains(masks) => {
-                inputs.with_domain_reconstruction_masks(masks)?
-            }
+            ReconstructionMaskSet::Shared(mask) => inputs.with_reconstruction_mask(mask),
+            ReconstructionMaskSet::Domains(masks) => inputs.with_domain_reconstruction_masks(masks),
         };
     }
     let planned = PlannedContinuumGeneration::new(&inputs, &publication.controls)?;
     let window = ProductStoragePlan::new(1, team.workers())?;
-    let demand = planned.demand(&inputs, window)?;
+    let demand = planned.demand(&inputs, window, &publication.writer)?;
     let held = admit(
         &runtime.host,
         &runtime.resource_policy,
         &Demand {
             phase: "products",
-            memory: demand.peak_residency_bytes()
-                + publication.sink.residency(&planned, &demand)?,
+            memory: demand.peak_residency_bytes(),
         },
     )?;
-    let published = produce_continuum_members(&planned, &inputs, window, team, &publication.sink)?;
-    drop(held);
+    let published =
+        produce_continuum_members(&planned, &inputs, window, team, &publication.writer)?;
     if runtime.cancel.is_cancelled() {
-        // The staged members are removed when the sink drops.
+        // The staged members are removed when the writer drops.
         return Err(Cancelled.into());
     }
-    publication.sink.publish()?;
+    publication.writer.publish()?;
+    // The charge covers the staged records until they are published.
+    drop(held);
     Ok(Products {
         planned,
         scientific,

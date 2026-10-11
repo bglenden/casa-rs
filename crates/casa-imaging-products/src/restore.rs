@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Restoration and normalization algorithms for continuum image products.
+//! Restoration: the model convolved with the restoring beam, plus the
+//! residual rescaled to that beam.
 //!
 //! The restoring kernel is evaluated in physical radians: fitted beam widths
 //! and the image cell scale share one unit system, so a multi-pixel beam
@@ -10,62 +11,10 @@ use casa_fft::Fft2;
 use ndarray::Array2;
 use num_complex::Complex64;
 
-use casa_imaging_model::ProductNormalization;
-
 use crate::beam::RestoringBeam;
 use crate::error::ProductsError;
 
-pub use casa_imaging_reconstruction::MosaicSensitivity;
-
 const FWHM_TO_SIGMA: f64 = 1.0 / 2.354_820_045_030_949_3;
-
-/// Publication uses the principal PSF's measured peak, not its sum weight.
-/// Coupled Taylor terms must all use this same divisor.
-pub(crate) fn psf_peak(mut values: impl Iterator<Item = f32>) -> Result<f32, ProductsError> {
-    values.try_fold(0.0_f32, |peak, value| {
-        value
-            .is_finite()
-            .then_some(peak.max(value))
-            .ok_or(ProductsError::GeneratedNonfinite)
-    })
-}
-
-pub(crate) fn normalized_psf_value(value: f32, peak: f32) -> f32 {
-    if peak > 0.0 { value / peak } else { 0.0 }
-}
-
-/// Normalize one unnormalized plane to its compiled product normalization.
-///
-/// `UnitResponse` and the currently supported scalar-response `FlatNoise`
-/// path divide by the scalar sensitivity (sum weight). `UnitResponse` does
-/// not apply direction-dependent sensitivity division. When no usable scalar
-/// sensitivity exists every pixel blanks to NaN. `FlatSky` is not produced by
-/// this catalog version.
-///
-/// # Errors
-///
-/// Fails when the normalization is not representable by this catalog.
-pub fn normalize_plane(
-    values: &[f32],
-    normalization: ProductNormalization,
-    sensitivity: f64,
-) -> Result<Vec<f32>, ProductsError> {
-    match normalization {
-        ProductNormalization::UnitResponse | ProductNormalization::FlatNoise => {
-            if !(sensitivity.is_finite() && sensitivity > 0.0) {
-                return Ok(vec![f32::NAN; values.len()]);
-            }
-            Ok(values
-                .iter()
-                .map(|value| value / sensitivity as f32)
-                .collect())
-        }
-        ProductNormalization::FlatSky => Err(ProductsError::UnsupportedProductRole {
-            role: casa_imaging_model::ProductRole::Sensitivity,
-            catalog: crate::CONTINUUM_ALGORITHM_CATALOG_VERSION,
-        }),
-    }
-}
 
 /// Build the unit-peak elliptical-Gaussian restoring kernel image.
 ///
@@ -341,29 +290,6 @@ mod tests {
                 assert_eq!(actual.threads(), threads);
                 assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
             }
-        }
-    }
-
-    #[test]
-    fn psf_normalization_is_exact_and_preserves_coupled_signed_terms() {
-        for amplitude in [f32::MIN_POSITIVE, 1.000_000_7, 12345.67] {
-            let principal = [-0.25 * amplitude, amplitude, 0.5 * amplitude];
-            let peak = psf_peak(principal.into_iter()).unwrap();
-            assert_eq!(peak, amplitude);
-            assert_eq!(
-                principal.map(|value| normalized_psf_value(value, peak)),
-                [-0.25, 1.0, 0.5]
-            );
-            let coupled = [-0.5 * amplitude, 0.25 * amplitude];
-            assert_eq!(
-                coupled.map(|value| normalized_psf_value(value, peak)),
-                [-0.5, 0.25]
-            );
-        }
-        let peak = psf_peak([0.0; 3].into_iter()).unwrap();
-        assert_eq!(normalized_psf_value(0.0, peak), 0.0);
-        for nonfinite in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            assert!(psf_peak([1.0, nonfinite].into_iter()).is_err());
         }
     }
 

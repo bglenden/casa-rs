@@ -1010,9 +1010,71 @@ void setImageCacheMiB(casacore::PagedImage<T>& img, int32_t cacheMiB) {
     accessor.setMaximumCacheSize(static_cast<casacore::uInt>(cacheMiB));
 }
 
+// A reader that keeps a PagedImage<Float> open between lock periods, as a
+// viewer holding an image open does.
+struct HeldImageReader {
+    casacore::PagedImage<casacore::Float> image;
+
+    explicit HeldImageReader(const std::string& path)
+        : image(path, casacore::TableLock(casacore::TableLock::UserLocking)) {}
+};
+
+// Take a read lock, read every pixel and the default mask, and release the
+// lock, keeping the image open.
+void held_image_read_impl(HeldImageReader& reader, double* out_sum,
+                          int64_t* out_values, int64_t* out_valid) {
+    if (!reader.image.lock(casacore::FileLocker::Read, 1))
+        throw std::runtime_error("read lock was not acquired");
+    casacore::Array<casacore::Float> pixels = reader.image.get();
+    double sum = 0.0;
+    for (const casacore::Float value : pixels) sum += value;
+    *out_sum = sum;
+    *out_values = static_cast<int64_t>(pixels.nelements());
+    *out_valid = reader.image.isMasked()
+        ? static_cast<int64_t>(casacore::ntrue(reader.image.getMask()))
+        : *out_values;
+    reader.image.unlock();
+}
+
 } // namespace
 
 extern "C" {
+
+int32_t cpp_image_held_reader_open(const char* path, void** out_reader,
+                                   char** out_error) {
+    try {
+        casacore_shim::TerminateGuard tg;
+        *out_reader = new HeldImageReader(path);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception opening a held PagedImage<Float>");
+        return -1;
+    }
+}
+
+int32_t cpp_image_held_reader_read(void* reader, double* out_sum,
+                                   int64_t* out_values, int64_t* out_valid,
+                                   char** out_error) {
+    try {
+        casacore_shim::TerminateGuard tg;
+        held_image_read_impl(*static_cast<HeldImageReader*>(reader), out_sum,
+                             out_values, out_valid);
+        return 0;
+    } catch (const std::exception& e) {
+        *out_error = make_error(e.what());
+        return -1;
+    } catch (...) {
+        *out_error = make_error("unknown exception reading a held PagedImage<Float>");
+        return -1;
+    }
+}
+
+void cpp_image_held_reader_close(void* reader) {
+    delete static_cast<HeldImageReader*>(reader);
+}
 
 int32_t cpp_create_pagedimage_float(
     const char* path,

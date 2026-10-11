@@ -9415,13 +9415,11 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
     start_run_with_default_imager_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(120)));
     let stderr = app.stderr_for_test();
-    let diagnostic_prefixes = ["planning_memory ", "imaging_product_pixels "];
     assert!(
         stderr.trim().is_empty()
-            || stderr.lines().all(|line| diagnostic_prefixes
-                .iter()
-                .any(|prefix| line.starts_with(prefix))
-                || (line.contains("WARN casars_imager") && line.ends_with("imager warning"))),
+            || stderr
+                .lines()
+                .all(|line| line.contains("WARN casars_imager") && line.ends_with("imager warning")),
         "status={} stderr={}",
         app.status_line_for_test(),
         stderr

@@ -6,15 +6,16 @@ use casa_imaging_model::{
     ProductBlankingPolicy, ProductNormalization, ProductRole, ProductSupportComparison,
     ProductTerm, ProductValidityRule, RestoringBeamPolicy, TaylorSupportReference,
 };
+use casa_imaging_reconstruction::FinalNormalStateWindow;
 use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 
 use crate::AnalyticPrimaryBeamModel;
 use crate::beam::{RestoringBeam, fit_restoring_beam};
 use crate::error::ProductsError;
-use crate::restore::{
-    MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane, normalized_psf_value,
-    psf_peak,
+use crate::normalization::{
+    MosaicSensitivity, ResidualFamily, normalize_plane, normalized_psf_value, psf_peak,
 };
+use crate::restore::{fft_convolve, gaussian_beam_image};
 use crate::source::ContinuumProductInputs;
 use casa_numerics::AnnularApertureVoltageTable;
 
@@ -40,31 +41,6 @@ pub(crate) struct TaylorProducts {
     restoring_beam: Option<RestoringBeam>,
 }
 
-fn normalize_taylor_plane(
-    values: &[f32],
-    normalization: ProductNormalization,
-    normal_sum_weight: f64,
-    residual_sum_weight: f64,
-    mosaic_sensitivity: Option<MosaicSensitivity<'_>>,
-) -> Result<Vec<f32>, ProductsError> {
-    match (mosaic_sensitivity, normalization) {
-        (Some(sensitivity), ProductNormalization::FlatNoise | ProductNormalization::FlatSky) => {
-            let mut normalized = sensitivity.normalize(values, normalization)?;
-            // CASA normalizes weight by the normal sum and residual by the
-            // publication sum before applying the PB denominator.
-            let scale = normal_sum_weight / residual_sum_weight;
-            for value in &mut normalized {
-                *value = (f64::from(*value) * scale) as f32;
-                if !value.is_finite() {
-                    return Err(ProductsError::GeneratedNonfinite);
-                }
-            }
-            Ok(normalized)
-        }
-        _ => normalize_plane(values, normalization, residual_sum_weight),
-    }
-}
-
 fn primary_beam_correct_spectral_index(
     alpha: &[f32],
     principal_sensitivity: &[f32],
@@ -75,19 +51,19 @@ fn primary_beam_correct_spectral_index(
     primary_beam_validity: &[bool],
 ) -> Result<Vec<f32>, ProductsError> {
     let cells = alpha.len();
-    if terms < 2
-        || principal_sensitivity.len() != cells
-        || weight_moments.len() < terms
-        || inverse_normal.len() != terms * terms
-        || alpha_validity.len() != cells
-        || primary_beam_validity.len() != cells
-        || weight_moments
-            .iter()
-            .take(terms)
-            .any(|moment| moment.len() != cells)
-    {
-        return Err(ProductsError::ProblemShapeMismatch);
-    }
+    debug_assert!(
+        terms >= 2
+            && principal_sensitivity.len() == cells
+            && weight_moments.len() >= terms
+            && inverse_normal.len() == terms * terms
+            && alpha_validity.len() == cells
+            && primary_beam_validity.len() == cells
+            && weight_moments
+                .iter()
+                .take(terms)
+                .all(|moment| moment.len() == cells),
+        "one Taylor family's planes share its shape"
+    );
 
     let mut corrected = vec![0.0; cells];
     for cell in 0..cells {
@@ -126,106 +102,45 @@ fn primary_beam_correct_spectral_index(
     Ok(corrected)
 }
 
-impl TaylorProducts {
-    pub(crate) fn build(
+/// The Taylor family read from the final normal state: PSF and weight
+/// moments with their sums of weights, and each term's residual and model
+/// in the units CASA publishes them in.
+struct TaylorFamily {
+    psf: Vec<Vec<f32>>,
+    weight: Vec<Vec<f32>>,
+    sum_weights: Vec<f32>,
+    residual: Vec<Vec<f32>>,
+    model: Vec<Vec<f32>>,
+}
+
+impl TaylorFamily {
+    fn read(
         inputs: &ContinuumProductInputs<'_>,
-        psf_cutoff: f32,
+        state: &FinalNormalStateWindow<'_>,
         primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+        directional: Option<MosaicSensitivity<'_>>,
+        residual_sum_weight: f64,
     ) -> Result<Self, ProductsError> {
-        let envelope_started = std::env::var_os("CASA_RS_TRACE_MAJOR_CYCLE_ENVELOPES")
-            .is_some()
-            .then(std::time::Instant::now);
-        let state = inputs.normal_state();
-        let state = &state.read_window(state.slab().core_range())?;
-        if state.domain_count() != 1 || inputs.final_model().shape().domains().len() != 1 {
-            return Err(ProductsError::ProblemShapeMismatch);
-        }
-        let domain_role = state
-            .domain(0)
-            .ok_or(ProductsError::ProblemShapeMismatch)?
-            .role();
-        let shape = state.shape();
-        let cells = shape[0] * shape[1];
-        let terms = state.coefficient_term_count();
-        let moments = state.normal_moment_count();
-        if terms < 2
-            || moments != terms.saturating_mul(2).saturating_sub(1)
-            || inputs.final_model().shape().coefficients() != terms
-        {
-            return Err(ProductsError::ProblemShapeMismatch);
-        }
-        let principal_normal = state
+        let principal_sum_weight = state
             .normal_moment(0)
-            .ok_or(ProductsError::ProblemShapeMismatch)?;
-        let principal_sum_weight = principal_normal.sum_weight();
-        if !(principal_sum_weight.is_finite() && principal_sum_weight > 0.0) {
-            return Err(ProductsError::PrincipalSumWeight {
-                sum_weight: principal_sum_weight,
-            });
-        }
-        let normalization = inputs.problem().products().normalization();
-        let aw_projection = inputs
-            .problem()
-            .science()
-            .measurement_equation()
-            .aw_projection()
-            .is_some();
-        let mosaic_sensitivity =
-            if primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
-                Some(MosaicSensitivity::new(principal_normal.sensitivity())?)
-            } else {
-                None
-            };
-        // A direction-dependent normalisation over a dense sensitivity: the
-        // residual divides by the weight image and the model is published in
-        // apparent units (CASA `divideResidualByWeight`,
-        // `multiplyModelByWeight`); unit-response products keep the scalar
-        // sum-weight division whatever beam they publish.
-        let directional = mosaic_sensitivity.filter(|_| {
-            matches!(
-                normalization,
-                ProductNormalization::FlatNoise | ProductNormalization::FlatSky
-            )
-        });
-        let sensitivity = principal_normal
-            .sensitivity()
-            .iter()
-            .map(|value| *value as f32)
-            .collect::<Vec<_>>();
-        let published_sum_weights = state.published_sum_weights();
-        // Direct CASA AW Taylor completion keeps two principal sums: the
-        // WTCF normal sum scales PSF/sensitivity products, while the CFS
-        // publication sum scales dirty/residual image products. They are
-        // equal for non-AW direct Taylor reconstruction.
-        let residual_sum_weight = *published_sum_weights
-            .first()
-            .ok_or(ProductsError::ProblemShapeMismatch)?;
-        if !(residual_sum_weight.is_finite() && residual_sum_weight > 0.0) {
-            return Err(ProductsError::PrincipalSumWeight {
-                sum_weight: residual_sum_weight,
-            });
-        }
-        let preparation_nanos = envelope_started.map(|started| started.elapsed().as_nanos());
+            .expect("the zeroth normal moment")
+            .sum_weight();
+        let published_sums = state.published_sum_weights();
+        let moments = state.normal_moment_count();
         let mut psf = Vec::with_capacity(moments);
-        let mut weight: Vec<Vec<f32>> = Vec::with_capacity(moments);
+        let mut weight = Vec::with_capacity(moments);
         let mut sum_weights = Vec::with_capacity(moments);
-        for moment in 0..moments {
-            let published_sum_weight = published_sum_weights.get(moment).copied();
-            let source = state
-                .normal_moment(moment)
-                .ok_or(ProductsError::ProblemShapeMismatch)?;
-            psf.push(normalize_plane(
-                &source
-                    .normal_approximation()
-                    .iter()
-                    .map(|value| value.re as f32)
-                    .collect::<Vec<_>>(),
-                ProductNormalization::UnitResponse,
-                principal_sum_weight,
-            )?);
+        for (moment, published) in published_sums.iter().copied().enumerate().take(moments) {
+            let source = state.normal_moment(moment).expect("every normal moment");
+            let approximation = source
+                .normal_approximation()
+                .iter()
+                .map(|value| value.re as f32)
+                .collect::<Vec<_>>();
+            psf.push(normalize_plane(&approximation, principal_sum_weight));
             // CASA divides only weight.tt0 by the principal sum weight. Higher
             // Taylor weight images retain their raw signed sensitivity moments.
-            let weight_scale = if moment == 0
+            let scale = if moment == 0
                 && primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
             {
                 principal_sum_weight
@@ -236,25 +151,25 @@ impl TaylorProducts {
                 source
                     .sensitivity()
                     .iter()
-                    .map(|value| (*value / weight_scale) as f32)
+                    .map(|value| (*value / scale) as f32)
                     .collect(),
             );
-            let sum_weight = published_sum_weight.ok_or(ProductsError::ProblemShapeMismatch)?;
-            if !sum_weight.is_finite() {
+            if !published.is_finite() {
                 return Err(ProductsError::GeneratedNonfinite);
             }
-            sum_weights.push(sum_weight as f32);
+            sum_weights.push(published as f32);
         }
-        let normalization_started = envelope_started.map(|_| std::time::Instant::now());
-        let residual = (0..terms)
+        let products = inputs.problem().products();
+        let (normalization, policy) =
+            (products.normalization(), products.validity().primary_beam());
+        let residual = (0..state.coefficient_term_count())
             .map(|term| {
-                let source = state
+                let residual = state
                     .coefficient_term(term)
-                    .ok_or(ProductsError::ProblemShapeMismatch)?;
-                if let Some(sensitivity) = directional {
-                    let response = sensitivity.with_normal_sum_weight(principal_sum_weight)?;
-                    return source
-                        .residual()
+                    .expect("every coefficient term")
+                    .residual();
+                match directional {
+                    Some(response) => residual
                         .iter()
                         .enumerate()
                         .map(|(index, value)| {
@@ -262,33 +177,28 @@ impl TaylorProducts {
                                 value.re,
                                 index,
                                 normalization,
+                                ResidualFamily::Taylor,
                                 residual_sum_weight,
-                                inputs.problem().products().validity().primary_beam(),
+                                policy,
                             )? as f32)
                         })
-                        .collect::<Result<Vec<_>, ProductsError>>();
+                        .collect(),
+                    None => Ok(normalize_plane(
+                        &residual
+                            .iter()
+                            .map(|value| value.re as f32)
+                            .collect::<Vec<_>>(),
+                        residual_sum_weight,
+                    )),
                 }
-                normalize_taylor_plane(
-                    &source
-                        .residual()
-                        .iter()
-                        .map(|value| value.re as f32)
-                        .collect::<Vec<_>>(),
-                    normalization,
-                    principal_sum_weight,
-                    residual_sum_weight,
-                    mosaic_sensitivity,
-                )
             })
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut model = (0..terms)
-            .map(|term| model_term(inputs, term, shape))
+            .collect::<Result<Vec<_>, ProductsError>>()?;
+        let mut model = (0..state.coefficient_term_count())
+            .map(|term| model_term(inputs, term, state.shape()))
             .collect::<Result<Vec<_>, _>>()?;
         // CASA restores and publishes the flat-noise model in apparent units
         // (`SynthesisNormalizer::multiplyModelByWeight`).
-        if let Some(sensitivity) = directional {
-            let response = sensitivity.with_normal_sum_weight(principal_sum_weight)?;
-            let policy = inputs.problem().products().validity().primary_beam();
+        if let Some(response) = directional {
             for plane in &mut model {
                 for (index, value) in plane.iter_mut().enumerate() {
                     *value = response.physical_to_apparent(
@@ -300,184 +210,308 @@ impl TaylorProducts {
                 }
             }
         }
+        Ok(Self {
+            psf,
+            weight,
+            sum_weights,
+            residual,
+            model,
+        })
+    }
+}
 
-        if let Some(started) = normalization_started {
-            eprintln!(
-                "imaging_taylor_normalization_envelope aw_projection={aw_projection} preparation_nanos={} residual_model_nanos={} normal_sum_weight={principal_sum_weight} residual_sum_weight={residual_sum_weight} excludes=psf_weight_products,restoration,publication",
-                preparation_nanos.expect("normalization timer follows preparation timer"),
-                started.elapsed().as_nanos(),
-            );
-        }
-        let peak = psf[0]
-            .iter()
-            .enumerate()
-            .max_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
-            .map(|(index, _)| index)
-            .ok_or(ProductsError::ProblemShapeMismatch)?;
-        let mut normal = vec![0.0; terms * terms];
-        for row in 0..terms {
-            for column in 0..terms {
-                normal[row * terms + column] = f64::from(psf[row + column][peak]);
-            }
-        }
-        let mut inverse = vec![0.0; terms * terms];
+/// The Taylor normal block at the PSF peak, inverted, and the principal
+/// solution's residuals it gives.
+fn principal_residuals(
+    psf: &[Vec<f32>],
+    residual: &[Vec<f32>],
+) -> Result<(Vec<f64>, Vec<Vec<f32>>), ProductsError> {
+    let terms = residual.len();
+    let peak = psf[0]
+        .iter()
+        .enumerate()
+        .max_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
+        .map(|(index, _)| index)
+        .expect("a PSF plane has pixels");
+    let mut normal = vec![0.0; terms * terms];
+    for row in 0..terms {
         for column in 0..terms {
-            let mut unit = vec![0.0; terms];
-            unit[column] = 1.0;
-            let solution = solve_symmetric_ldlt_casacore_dynamic(normal.clone(), &unit)
-                .ok_or_else(|| {
-                    ProductsError::BeamFitFailed("singular Taylor normal block".into())
-                })?;
-            for row in 0..terms {
-                inverse[row * terms + column] = solution[row];
-            }
+            normal[row * terms + column] = f64::from(psf[row + column][peak]);
         }
-        let mut principal_residual = vec![vec![0.0; cells]; terms];
-        for cell in 0..cells {
-            for row in 0..terms {
-                principal_residual[row][cell] = (0..terms)
-                    .map(|column| inverse[row * terms + column] * f64::from(residual[column][cell]))
-                    .sum::<f64>() as f32;
-            }
+    }
+    let mut inverse = vec![0.0; terms * terms];
+    for column in 0..terms {
+        let mut unit = vec![0.0; terms];
+        unit[column] = 1.0;
+        let solution = solve_symmetric_ldlt_casacore_dynamic(normal.clone(), &unit)
+            .ok_or_else(|| ProductsError::BeamFitFailed("singular Taylor normal block".into()))?;
+        for row in 0..terms {
+            inverse[row * terms + column] = solution[row];
         }
+    }
+    let cells = residual[0].len();
+    let mut principal = vec![vec![0.0; cells]; terms];
+    for cell in 0..cells {
+        for row in 0..terms {
+            principal[row][cell] = (0..terms)
+                .map(|column| inverse[row * terms + column] * f64::from(residual[column][cell]))
+                .sum::<f64>() as f32;
+        }
+    }
+    Ok((inverse, principal))
+}
 
-        let needs_beam = inputs
-            .problem()
-            .product_graph()
+/// Each term's model convolved with the restoring beam, plus its principal
+/// residual.
+fn restored_terms(
+    model: &[Vec<f32>],
+    principal_residual: &[Vec<f32>],
+    beam: &RestoringBeam,
+    shape: [usize; 2],
+    cell_size_rad: [f64; 2],
+) -> Vec<Vec<f32>> {
+    let kernel = gaussian_beam_image(shape, beam, cell_size_rad);
+    model
+        .iter()
+        .zip(principal_residual)
+        .map(|(model, residual)| {
+            let mut image = fft_convolve(model, kernel.as_slice().expect("contiguous"), shape);
+            image
+                .iter_mut()
+                .zip(residual)
+                .for_each(|(image, residual)| *image += residual);
+            image
+        })
+        .collect()
+}
+
+/// The mosaic's direction-dependent response a flat-noise or flat-sky
+/// Taylor family is normalized by: the residual divides by the weight image
+/// and the model is published in apparent units (CASA
+/// `divideResidualByWeight`, `multiplyModelByWeight`). Unit-response
+/// products keep the scalar sum-weight division whatever beam they publish.
+fn directional_response<'a>(
+    inputs: &ContinuumProductInputs<'_>,
+    primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+    principal_sensitivity: &'a [f64],
+    principal_sum_weight: f64,
+) -> Result<Option<MosaicSensitivity<'a>>, ProductsError> {
+    let directional = primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
+        && matches!(
+            inputs.problem().products().normalization(),
+            ProductNormalization::FlatNoise | ProductNormalization::FlatSky
+        );
+    directional
+        .then(|| {
+            MosaicSensitivity::new(principal_sensitivity)?
+                .with_normal_sum_weight(principal_sum_weight)
+        })
+        .transpose()
+}
+
+/// The spectral index, its error and its support.
+type SpectralIndexPlanes = (Vec<f32>, Vec<f32>, Vec<bool>);
+
+/// The spectral index, its error and its support, from the principal
+/// residuals and restored images of terms 0 and 1.
+fn spectral_index(
+    validity: casa_imaging_model::ProductValidityPolicies,
+    principal_residual: &[Vec<f32>],
+    restored: &[Vec<f32>],
+) -> Result<SpectralIndexPlanes, ProductsError> {
+    let policy = validity.taylor();
+    if policy.reference() != TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum
+        || policy.comparison() != ProductSupportComparison::StrictlyGreater
+        || policy.blanking() != ProductBlankingPolicy::Zero
+    {
+        return Err(ProductsError::UnsupportedProblem);
+    }
+    Ok(taylor_alpha_products(
+        &principal_residual[0],
+        &principal_residual[1],
+        &restored[0],
+        &restored[1],
+        policy.peak_fraction(),
+    ))
+}
+
+/// Term 0's PB support, and every term's restored image divided by the PB
+/// inside it.
+fn primary_beam_corrected(
+    validity: casa_imaging_model::ProductValidityPolicies,
+    pb0: &[f32],
+    restored: &[Vec<f32>],
+) -> Result<(Vec<bool>, Vec<Vec<f32>>), ProductsError> {
+    let policy = validity.primary_beam();
+    if policy.comparison() != ProductSupportComparison::StrictlyGreater
+        || policy.blanking() != ProductBlankingPolicy::Zero
+    {
+        return Err(ProductsError::UnsupportedProblem);
+    }
+    let support = pb0
+        .iter()
+        .map(|value| value.is_finite() && *value > policy.cutoff())
+        .collect::<Vec<_>>();
+    let corrected = restored
+        .iter()
+        .map(|image| {
+            image
+                .iter()
+                .zip(pb0)
+                .zip(&support)
+                .map(|((value, pb), valid)| if *valid { *value / *pb } else { 0.0 })
+                .collect()
+        })
+        .collect();
+    Ok((support, corrected))
+}
+
+/// Whether the product list publishes a role matching `role`.
+fn publishes(inputs: &ContinuumProductInputs<'_>, role: impl Fn(ProductRole) -> bool) -> bool {
+    let list = inputs.problem().product_list();
+    list.publication()
+        .members()
+        .iter()
+        .any(|id| role(list.entries()[id.ordinal()].role()))
+}
+
+/// Taylor term 0's PB: the telescope's analytic beam at the first output
+/// channel, or the mosaic's weight image.
+fn principal_primary_beam(
+    inputs: &ContinuumProductInputs<'_>,
+    domain_role: &casa_imaging_model::ImageDomainRole,
+    shape: [usize; 2],
+    primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+    directional: Option<MosaicSensitivity<'_>>,
+    weight0: &[f32],
+) -> Result<Vec<f32>, ProductsError> {
+    Ok(match primary_beam_model {
+        Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => {
+            analytic_evla_primary_beam(inputs, domain_role, shape, 0)?
+        }
+        Some(AnalyticPrimaryBeamModel::CasaVlaBand) => {
+            analytic_vla_primary_beam(inputs, domain_role, shape, 0)?
+        }
+        Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => {
+            analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 10.7)?
+        }
+        Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => {
+            analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 6.25)?
+        }
+        Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => match directional {
+            Some(response) => response
+                .weighted_primary_beam(inputs.problem().products().validity().primary_beam())?,
+            None => MosaicSensitivity::primary_beam_from_weight(weight0)?,
+        },
+        None => {
+            assert!(
+                !publishes(inputs, |role| matches!(
+                    role,
+                    ProductRole::PrimaryBeam(_) | ProductRole::PbCorrectedImage(_)
+                )),
+                "planning refuses a PB product without a primary-beam model"
+            );
+            MosaicSensitivity::primary_beam_from_weight(weight0)?
+        }
+    })
+}
+
+impl TaylorProducts {
+    pub(crate) fn build(
+        inputs: &ContinuumProductInputs<'_>,
+        psf_cutoff: f32,
+        primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+    ) -> Result<Self, ProductsError> {
+        let state = inputs.normal_state();
+        // Binding the inputs established one domain, `terms` coefficient
+        // terms and 2·terms − 1 normal moments.
+        let state = &state.read_window(state.slab().core_range())?;
+        let domain_role = state
+            .domain(0)
+            .expect("a Taylor run images one domain")
+            .role();
+        let shape = state.shape();
+        let cells = shape[0] * shape[1];
+        let terms = state.coefficient_term_count();
+        let principal_normal = state.normal_moment(0).expect("the zeroth normal moment");
+        let principal_sum_weight = principal_normal.sum_weight();
+        // Direct CASA AW Taylor completion keeps two principal sums: the
+        // WTCF normal sum scales PSF/sensitivity products, while the CFS
+        // publication sum scales dirty/residual image products. They are
+        // equal for non-AW direct Taylor reconstruction.
+        let residual_sum_weight = state.published_sum_weights()[0];
+        for sum_weight in [principal_sum_weight, residual_sum_weight] {
+            if !(sum_weight.is_finite() && sum_weight > 0.0) {
+                return Err(ProductsError::PrincipalSumWeight { sum_weight });
+            }
+        }
+        let directional = directional_response(
+            inputs,
+            primary_beam_model,
+            principal_normal.sensitivity(),
+            principal_sum_weight,
+        )?;
+        let family = TaylorFamily::read(
+            inputs,
+            state,
+            primary_beam_model,
+            directional,
+            residual_sum_weight,
+        )?;
+        let sensitivity = principal_normal
+            .sensitivity()
+            .iter()
+            .map(|value| *value as f32)
+            .collect::<Vec<_>>();
+        let (inverse, principal_residual) = principal_residuals(&family.psf, &family.residual)?;
+
+        let cell_size = inputs.cell_size_rad_for_domain(domain_role);
+        let list = inputs.problem().product_list();
+        let fitted_beam = list
             .publication()
             .members()
             .iter()
-            .any(|ordinal| {
-                inputs.problem().product_graph().nodes()[ordinal.ordinal()].beam()
-                    != casa_imaging_model::ProductBeamRule::None
-            });
-        let fitted_beam = needs_beam
-            .then(|| {
-                fit_restoring_beam(
-                    &psf[0],
-                    shape,
-                    inputs.cell_size_rad_for_domain(domain_role)?,
-                    psf_cutoff,
-                )
+            .any(|id| {
+                list.entries()[id.ordinal()].beam() != casa_imaging_model::ProductBeamRule::None
             })
+            .then(|| fit_restoring_beam(&family.psf[0], shape, cell_size, psf_cutoff))
             .transpose()?;
         let restoring_beam = match inputs.problem().products().restoring_beam() {
             RestoringBeamPolicy::None => None,
             RestoringBeamPolicy::PerPlane | RestoringBeamPolicy::Common => fitted_beam,
         };
-        let restored = if let Some(beam) = restoring_beam {
-            let kernel =
-                gaussian_beam_image(shape, &beam, inputs.cell_size_rad_for_domain(domain_role)?);
-            model
-                .iter()
-                .zip(&principal_residual)
-                .map(|(model, residual)| {
-                    let mut image =
-                        fft_convolve(model, kernel.as_slice().expect("contiguous"), shape);
-                    image
-                        .iter_mut()
-                        .zip(residual)
-                        .for_each(|(image, residual)| *image += residual);
-                    image
-                })
-                .collect()
-        } else {
-            vec![vec![0.0; cells]; terms]
-        };
-
-        let requests_primary_beam = inputs
-            .problem()
-            .product_graph()
-            .publication()
-            .members()
-            .iter()
-            .any(|ordinal| {
-                matches!(
-                    inputs.problem().product_graph().nodes()[ordinal.ordinal()].role(),
-                    ProductRole::PrimaryBeam(_) | ProductRole::PbCorrectedImage(_)
-                )
-            });
-        let pb0 = match primary_beam_model {
-            Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => {
-                analytic_evla_primary_beam(inputs, domain_role, shape, 0)?
-            }
-            Some(AnalyticPrimaryBeamModel::CasaVlaBand) => {
-                analytic_vla_primary_beam(inputs, domain_role, shape, 0)?
-            }
-            Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => {
-                analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 10.7)?
-            }
-            Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => {
-                analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 6.25)?
-            }
-            Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => match directional {
-                Some(sensitivity) => sensitivity
-                    .with_normal_sum_weight(principal_sum_weight)?
-                    .weighted_primary_beam(inputs.problem().products().validity().primary_beam())?,
-                None => MosaicSensitivity::primary_beam_from_weight(&weight[0])?,
-            },
-            None if requests_primary_beam => return Err(ProductsError::UnsupportedProblem),
-            None => MosaicSensitivity::primary_beam_from_weight(&weight[0])?,
-        };
-        let mut primary_beam = vec![vec![0.0; cells]; terms];
-        primary_beam[0] = pb0.clone();
-
-        let validity = inputs.problem().products().validity();
-        let pb_policy = validity.primary_beam();
-        if pb_policy.comparison() != ProductSupportComparison::StrictlyGreater
-            || pb_policy.blanking() != ProductBlankingPolicy::Zero
-        {
-            return Err(ProductsError::UnsupportedProblem);
-        }
-        let primary_beam_validity = pb0
-            .iter()
-            .map(|value| value.is_finite() && *value > pb_policy.cutoff())
-            .collect::<Vec<_>>();
-        let pb_corrected: Vec<Vec<f32>> = restored
-            .iter()
-            .map(|image| {
-                image
-                    .iter()
-                    .zip(&pb0)
-                    .zip(&primary_beam_validity)
-                    .map(|((value, pb), valid)| if *valid { *value / *pb } else { 0.0 })
-                    .collect()
-            })
-            .collect::<Vec<_>>();
-
-        let taylor_policy = validity.taylor();
-        if taylor_policy.reference()
-            != TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum
-            || taylor_policy.comparison() != ProductSupportComparison::StrictlyGreater
-            || taylor_policy.blanking() != ProductBlankingPolicy::Zero
-        {
-            return Err(ProductsError::UnsupportedProblem);
-        }
-        let (alpha, alpha_error, alpha_validity) = taylor_alpha_products(
-            &principal_residual[0],
-            &principal_residual[1],
-            &restored[0],
-            &restored[1],
-            taylor_policy.peak_fraction(),
+        let restored = restoring_beam.map_or_else(
+            || vec![vec![0.0; cells]; terms],
+            |beam| restored_terms(&family.model, &principal_residual, &beam, shape, cell_size),
         );
-        let requests_pb_corrected_alpha = inputs
-            .problem()
-            .product_graph()
-            .publication()
-            .members()
-            .iter()
-            .any(|ordinal| {
-                inputs.problem().product_graph().nodes()[ordinal.ordinal()].role()
-                    == ProductRole::PbCorrectedSpectralIndex
-            });
-        let alpha_pbcor = if requests_pb_corrected_alpha {
+
+        let pb0 = principal_primary_beam(
+            inputs,
+            domain_role,
+            shape,
+            primary_beam_model,
+            directional,
+            &family.weight[0],
+        )?;
+        let (primary_beam_validity, pb_corrected) =
+            primary_beam_corrected(inputs.problem().products().validity(), &pb0, &restored)?;
+        let mut primary_beam = vec![vec![0.0; cells]; terms];
+        primary_beam[0] = pb0;
+
+        let (alpha, alpha_error, alpha_validity) = spectral_index(
+            inputs.problem().products().validity(),
+            &principal_residual,
+            &restored,
+        )?;
+        let alpha_pbcor = if publishes(inputs, |role| role == ProductRole::PbCorrectedSpectralIndex)
+        {
             if primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
                 return Err(ProductsError::UnsupportedProblem);
             }
             primary_beam_correct_spectral_index(
                 &alpha,
                 &sensitivity,
-                &weight,
+                &family.weight,
                 &inverse,
                 terms,
                 &alpha_validity,
@@ -486,20 +520,17 @@ impl TaylorProducts {
         } else {
             vec![0.0; cells]
         };
-        let clean_mask =
-            crate::generation::reconstruction_support_plane(inputs, domain_role, cells)?;
-        let principal_psf_peak = psf_peak(psf[0].iter().copied())?;
 
         Ok(Self {
             shape,
-            psf,
-            principal_psf_peak,
-            residual,
-            model,
+            principal_psf_peak: psf_peak(family.psf[0].iter().copied())?,
+            psf: family.psf,
+            residual: family.residual,
+            model: family.model,
             restored,
-            weight,
+            weight: family.weight,
             sensitivity,
-            sum_weights,
+            sum_weights: family.sum_weights,
             primary_beam,
             pb_corrected,
             alpha,
@@ -507,7 +538,7 @@ impl TaylorProducts {
             alpha_error,
             alpha_validity,
             primary_beam_validity,
-            clean_mask,
+            clean_mask: crate::plane::reconstruction_support_plane(inputs, domain_role, cells),
             fitted_beam,
             restoring_beam,
         })
@@ -524,25 +555,16 @@ impl TaylorProducts {
     pub(crate) fn payload(&self, role: ProductRole) -> Result<Vec<f32>, ProductsError> {
         let term = |term: ProductTerm| match term {
             ProductTerm::Taylor(term) => Ok(term),
-            ProductTerm::Single => Err(ProductsError::UnsupportedProductRole {
-                role,
-                catalog: crate::CONTINUUM_ALGORITHM_CATALOG_VERSION,
-            }),
+            ProductTerm::Single => Err(ProductsError::UnsupportedProductRole { role }),
         };
         match role {
             ProductRole::Psf(value) => {
                 // Keep the solver/restoration Hessian's sum-weight normalization.
                 // Fuse publication-only peak normalization into the payload copy.
-                return self
-                    .psf
-                    .get(term(value)?)
-                    .map(|values| {
-                        values
-                            .iter()
-                            .map(|value| normalized_psf_value(*value, self.principal_psf_peak))
-                            .collect()
-                    })
-                    .ok_or(ProductsError::ProblemShapeMismatch);
+                return Ok(self.psf[term(value)?]
+                    .iter()
+                    .map(|value| normalized_psf_value(*value, self.principal_psf_peak))
+                    .collect());
             }
             ProductRole::Residual(value) => self.residual.get(term(value)?),
             ProductRole::Model(value) => self.model.get(term(value)?),
@@ -555,21 +577,11 @@ impl TaylorProducts {
             ProductRole::SpectralIndexError => return Ok(self.alpha_error.clone()),
             ProductRole::CleanMask => return Ok(self.clean_mask.clone()),
             ProductRole::Sensitivity => return Ok(self.sensitivity.clone()),
-            ProductRole::SumWeights(value) => {
-                return self
-                    .sum_weights
-                    .get(term(value)?)
-                    .copied()
-                    .map(|value| vec![value])
-                    .ok_or(ProductsError::ProblemShapeMismatch);
-            }
+            ProductRole::SumWeights(value) => return Ok(vec![self.sum_weights[term(value)?]]),
             _ => None,
         }
         .cloned()
-        .ok_or(ProductsError::UnsupportedProductRole {
-            role,
-            catalog: crate::CONTINUUM_ALGORITHM_CATALOG_VERSION,
-        })
+        .ok_or(ProductsError::UnsupportedProductRole { role })
     }
 
     pub(crate) fn validity(&self, rule: ProductValidityRule) -> Result<Vec<bool>, ProductsError> {
@@ -940,20 +952,10 @@ fn model_term(
     coefficient: usize,
     shape: [usize; 2],
 ) -> Result<Vec<f32>, ProductsError> {
-    let model = inputs.final_model();
-    if model.shape().domains().len() != 1
-        || model.shape().polarizations() != 1
-        || model
-            .shape()
-            .domains()
-            .first()
-            .map(|domain| domain.pixels())
-            != Some(shape)
-    {
-        return Err(ProductsError::ProblemShapeMismatch);
-    }
+    // A Taylor run images Stokes I on one domain (the availability gate and
+    // the inputs' binding).
     let mut plane = vec![0.0; shape[0] * shape[1]];
-    let samples = model.read_plane(0, coefficient, 0)?;
+    let samples = inputs.final_model().read_plane(0, coefficient, 0)?;
     for y in 0..shape[1] {
         for x in 0..shape[0] {
             plane[x * shape[1] + y] = samples[y * shape[0] + x].value().value() as f32;
@@ -965,6 +967,8 @@ fn model_term(
 #[cfg(test)]
 mod tests {
     use casa_imaging_model::ProductNormalization;
+
+    use super::ResidualFamily;
 
     #[test]
     fn evla_coefficient_midpoints_choose_the_upper_frequency_like_casa() {
@@ -1041,75 +1045,56 @@ mod tests {
     }
 
     #[test]
-    fn mosaic_primary_beam_excludes_negative_fft_ringing() {
+    fn mosaic_primary_beam_takes_casa_abs_of_the_weight() {
+        // `SIImageStore::makePBFromWeight`: sqrt(abs(weight)) / pbmax.
         let beam = super::MosaicSensitivity::primary_beam_from_weight(&[-0.25, 0.0, 1.0, 0.25])
             .expect("positive mosaic support");
-        assert_eq!(beam, vec![0.0, 0.0, 1.0, 0.5]);
-    }
-
-    #[test]
-    fn mosaic_taylor_planes_use_flatnoise_and_flatsky_sensitivity_laws() {
-        let sensitivity =
-            crate::MosaicSensitivity::new(&[16.0, 4.0, 1.0, 0.0]).expect("mosaic sensitivity");
-        let raw = [32.0, 16.0, 8.0, 4.0];
-        assert_eq!(
-            super::normalize_taylor_plane(
-                &raw,
-                ProductNormalization::FlatNoise,
-                8.0,
-                8.0,
-                Some(sensitivity),
-            )
-            .expect("flat-noise Taylor normalization"),
-            [2.0, 2.0, 2.0, 0.0]
-        );
-        assert_eq!(
-            super::normalize_taylor_plane(
-                &raw,
-                ProductNormalization::FlatSky,
-                8.0,
-                8.0,
-                Some(sensitivity),
-            )
-            .expect("flat-sky Taylor normalization"),
-            [2.0, 4.0, 8.0, 0.0]
-        );
+        assert_eq!(beam, vec![0.5, 0.0, 1.0, 0.5]);
     }
 
     #[test]
     fn aw_taylor_normalization_keeps_residual_and_sensitivity_sum_weights_distinct() {
-        let sensitivity =
-            crate::MosaicSensitivity::new(&[16.0, 4.0, 1.0, 0.0]).expect("AW sensitivity");
+        let sensitivity = crate::MosaicSensitivity::new(&[16.0, 4.0, 1.0, 0.0])
+            .expect("AW sensitivity")
+            .with_normal_sum_weight(8.0)
+            .expect("WTCF sum of weights");
+        let open = casa_imaging_model::PrimaryBeamValidityPolicy::new(
+            1.0e-6,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::Zero,
+        )
+        .expect("PB policy");
         let raw = [32.0, 16.0, 8.0, 4.0];
         // CASA divides residuals by CFS sumwt=4, then uses weight=S/WTCF_sumwt
         // with WTCF_sumwt=8 for its direction-dependent denominator.
         for (normalization, expected) in [
             (ProductNormalization::FlatNoise, [4.0, 4.0, 4.0, 0.0]),
             (ProductNormalization::FlatSky, [4.0, 8.0, 16.0, 0.0]),
-            (ProductNormalization::UnitResponse, [8.0, 4.0, 2.0, 1.0]),
         ] {
-            assert_eq!(
-                super::normalize_taylor_plane(&raw, normalization, 8.0, 4.0, Some(sensitivity))
-                    .expect("separate AW normalization sums"),
-                expected,
-                "{normalization:?}",
-            );
+            let normalized = raw
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    sensitivity
+                        .normalize_weighted_residual_sample(
+                            *value,
+                            index,
+                            normalization,
+                            ResidualFamily::Taylor,
+                            4.0,
+                            open,
+                        )
+                        .expect("separate AW normalization sums")
+                })
+                .collect::<Vec<_>>();
+            for (actual, expected) in normalized.iter().zip(expected) {
+                // CASA's Float stages round √weight·PBScale.
+                assert!(
+                    (actual - expected).abs() <= 1.0e-6 * expected,
+                    "{normalization:?}: {actual} != {expected}"
+                );
+            }
         }
-    }
-
-    #[test]
-    fn aw_taylor_normalization_rejects_nonfinite_scaled_products() {
-        let sensitivity = crate::MosaicSensitivity::new(&[1.0]).expect("AW sensitivity");
-        assert!(matches!(
-            super::normalize_taylor_plane(
-                &[1.0],
-                ProductNormalization::FlatNoise,
-                1.0e100,
-                1.0,
-                Some(sensitivity),
-            ),
-            Err(crate::ProductsError::GeneratedNonfinite)
-        ));
     }
 
     #[test]

@@ -1,51 +1,43 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
 
-//! Native continuum product algorithms and bounded write-only generation.
+//! The products of an imaging run (plan section 5.7).
 //!
-//! This owner turns one authoritative Major-Cycle result into complete,
-//! generation-consistent continuum products: restoring-beam fitting,
-//! restoration, residual scaling, normalization, validity, metadata, and the
-//! exact member set declared by the compiler-owned Product Graph. It owns the
-//! generation-construction capability and transfers bounded windows directly
-//! to a caller-owned write-only output.
+//! This crate turns a major cycle's final normal state and model into the
+//! members of the problem's product list: normalization, restoring-beam
+//! fitting, restoration, Taylor products, PB and pbcor, validity and
+//! metadata. It writes each member in bounded windows to private staging
+//! beside its CASA image target, then replaces each target atomically.
 
 mod beam;
 mod demand;
 mod error;
 mod generation;
+mod normalization;
+mod plan;
+mod plane;
 mod restore;
 mod source;
 mod storage;
 mod taylor;
 mod visibility;
+mod writer;
 
 pub use beam::{RestoringBeam, fit_restoring_beam};
 pub use demand::ContinuumGenerationDemand;
 pub use error::ProductsError;
-pub use generation::{
-    AnalyticPrimaryBeamModel, CONTINUUM_ALGORITHM_CATALOG_VERSION, ContinuumProductControls,
-    DEFAULT_PSF_CUTOFF, PlannedContinuumGeneration, PlannedMember, PublishedContinuumGeneration,
-    PublishedMember, produce_continuum_members,
+pub use generation::produce_continuum_members;
+pub use normalization::{
+    MinorCycleImageResponse, MosaicSensitivity, ResidualFamily, normalize_plane,
+};
+pub use plan::{
+    AnalyticPrimaryBeamModel, ContinuumProductControls, DEFAULT_PSF_CUTOFF,
+    PlannedContinuumGeneration, PlannedMember, PublishedContinuumGeneration, PublishedMember,
 };
 pub use restore::{
-    MosaicSensitivity, ResidualBeamScaling, fft_convolve, gaussian_beam_image, normalize_plane,
-    rescale_residual_to_beam,
+    ResidualBeamScaling, fft_convolve, gaussian_beam_image, rescale_residual_to_beam,
 };
 pub use source::ContinuumProductInputs;
-pub use storage::{
-    ProductOutput, ProductStoragePlan, ProductWindow, ProductWindowExecutor, ProductWindowLayout,
-    ProductWriter,
-};
+pub use storage::{ProductStoragePlan, ProductWindow, ProductWindowExecutor, ProductWindowLayout};
 pub use visibility::VisibilityProductCompletion;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn algorithm_catalog_version_is_pinned() {
-        // v10 publishes unit-peak PSFs and uses CASA's EVLA coefficient ties; bump this pin
-        // only together with a reviewed product-algorithm identity change.
-        assert_eq!(super::CONTINUUM_ALGORITHM_CATALOG_VERSION, 10);
-        assert_eq!(super::DEFAULT_PSF_CUTOFF, 0.35);
-    }
-}
+pub use writer::{CasaImageDomainOutput, CasaImageWriter};

@@ -18,7 +18,7 @@ coordinates, measures, and related workflows.
 | foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
 | shared numerics (`casa-numerics`) | Domain-neutral numerical algorithms reused by observation, calibration, and imaging owners | Rust numerical ecosystem crates only |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
-| native imaging contracts (`casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`) | Dependency-free logical schemas and commitments; the measurement operator (weighting, spectral resampling, gridding, degridding, FFT and normalization); minor-cycle solvers; authoritative model generations, deltas and final-model completion; continuum product algorithms with bounded owned windows streamed directly to CASA staging and atomic individual-image replacement; process-level resource topology, policies, demand envelopes, arbitration and leases; the major-cycle pass, worker team and paged cube state; the Metal backend | ADR-0016 layering, enforced by `scripts/check-imaging-dependencies.py`: `casa-imaging-model` has no workspace dependencies; the operator and deconvolution depend on the model, `casa-fft` and `casa-numerics`; reconstruction and products depend inward on the model and domain-neutral numerics, with products also depending on reconstruction completions; runtime composes the operator, reconstruction and products; the Metal crate depends only on the operator |
+| native imaging contracts (`casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`) | Dependency-free logical schemas and commitments; the measurement operator (weighting, spectral resampling, gridding, degridding, FFT and normalization); minor-cycle solvers; authoritative model generations, deltas and final-model completion; normalization, restoration, Taylor, PB and pbcor products, written in bounded windows by the products' CASA image writer to staging with atomic individual-image replacement; process-level resource topology, policies, demand envelopes, arbitration and leases; the major-cycle pass, worker team and paged cube state; the Metal backend | ADR-0016 layering, enforced by `scripts/check-imaging-dependencies.py`: `casa-imaging-model` has no workspace dependencies; the operator and deconvolution depend on the model, `casa-fft` and `casa-numerics`; reconstruction and products depend inward on the model and domain-neutral numerics, with products also depending on reconstruction completions and, for its writer, on `casa-images`, `casa-coordinates` and `casa-types`; runtime composes the operator, reconstruction and products; the Metal crate depends only on the operator |
 | imaging application composition (`casa-imaging-application`) | Sole production composition seam across MeasurementSet authority, reconstruction, products, resources, execution, typed installed-implementation availability, and CASA product publication | Native imaging owners only; unavailable requests invoke no execution implementation |
 | domain libraries (`casa-ms`, `casa-simulation-synthesis`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence; simulation synthesis owns only the serial model predictor and Airy voltage pattern used by MeasurementSet simulation | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
@@ -42,13 +42,13 @@ product schemas and commitments introduced by ADR-0009.
 `casa-imaging-reconstruction` owns model-state algorithms and opaque
 reconstruction completions and depends only inward on the model and the
 domain-neutral `casa-numerics` algorithms.
-Its image-response view owns the scientific mapping between raw normal state,
-minor-cycle image coordinates, and physical model increments. Applications bind
-the requested normalization explicitly; products reuse this mapping before
-model publication and restoration without changing the raw normal state.
-`casa-imaging-products` owns continuum product algorithms and may use the same
-domain-neutral `casa-numerics` algorithms directly; numerical helpers do not
-become reconstruction-owned merely because both owners require them.
+`casa-imaging-products` owns normalization (plan section 5.7), restoration,
+Taylor products, PB and pbcor. Its normalization rules map the raw normal state
+to CASA's image units and the solved model back to the physical model; the
+runtime's minor cycle uses the same rules, so the units a solve sees and the
+units products publish are one definition. Applications bind the requested
+normalization explicitly. Products may use domain-neutral `casa-numerics`
+algorithms directly.
 ADR-0014 requires trusted in-process generation to transfer bounded owned windows
 directly into private CASA image staging without product content attestation,
 verification-only array rereads or an intermediate readable product store.

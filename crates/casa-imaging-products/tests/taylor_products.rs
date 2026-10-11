@@ -8,7 +8,7 @@
 mod common;
 use common::observation::source;
 use common::synthetic_pass::{Scene, two_cycle_round};
-use common::{GeneratedMember, GeneratedProducts, MemoryProductOutput, full_window};
+use common::{GeneratedMember, GeneratedProducts, ImageOutput, full_window};
 
 use casa_imaging_model::{
     AxisOrder, CentreLaws, DeclaredInnerProducts, DirectionCoordinateSpec, DirectionFrame,
@@ -237,7 +237,7 @@ fn generate_with_controls(
 ) -> GeneratedProducts {
     let inputs = ContinuumProductInputs::from_major_cycle(problem, join);
     let planned = PlannedContinuumGeneration::new(&inputs, &controls).expect("T44 Taylor plan");
-    let output = MemoryProductOutput::default();
+    let output = ImageOutput::for_problem(problem);
     let produced =
         produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &output)
             .expect("T44 Taylor product family");
@@ -461,11 +461,11 @@ fn t44_alpha_and_error_use_strict_principal_support_and_zero_false_blanking() {
 #[test]
 fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor() {
     let problem = taylor_problem(205, &PB_PRODUCTS, InstrumentResponse::Scalar);
-    let graph = problem.product_graph();
-    let names = graph
-        .nodes()
+    let list = problem.product_list();
+    let names = list
+        .entries()
         .iter()
-        .filter_map(|node| node.name())
+        .filter_map(|entry| entry.name())
         .collect::<Vec<_>>();
     assert!(names.contains(&".pb.tt0"));
     assert!(names.contains(&".pb.tt1"));
@@ -474,8 +474,8 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
     assert!(!names.iter().any(|name| name.starts_with(".weight")));
     assert!(!names.contains(&".alpha.pbcor"));
 
-    let pb0 = graph
-        .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
+    let pb0 = list
+        .entry(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
         .expect("Taylor-zero PB");
     assert_eq!(pb0.unit(), ProductUnit::Dimensionless);
     assert_eq!(
@@ -483,19 +483,18 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
         ProductValidityRule::PrimaryBeam(validity().primary_beam())
     );
     assert_eq!(
-        graph
-            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(1)))
+        list.entry(ProductRole::PrimaryBeam(ProductTerm::Taylor(1)))
             .expect("Taylor-one PB")
             .validity(),
         ProductValidityRule::All,
         "CASA masks only the principal primary-beam Taylor term",
     );
     for term in 0..TERMS {
-        let restored = graph
-            .node(ProductRole::RestoredImage(ProductTerm::Taylor(term)))
+        let restored = list
+            .entry(ProductRole::RestoredImage(ProductTerm::Taylor(term)))
             .expect("restored Taylor term");
-        let corrected = graph
-            .node(ProductRole::PbCorrectedImage(ProductTerm::Taylor(term)))
+        let corrected = list
+            .entry(ProductRole::PbCorrectedImage(ProductTerm::Taylor(term)))
             .expect("PB-corrected Taylor term");
         assert_eq!(corrected.unit(), ProductUnit::JyPerBeam);
         assert_eq!(
@@ -504,14 +503,13 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
         );
         assert_eq!(
             corrected.beam(),
-            ProductBeamRule::Inherit(restored.node_id()),
+            ProductBeamRule::Inherit(restored.id()),
             "every Taylor image correction keeps its restored term's beam"
         );
     }
 
     assert!(
-        graph
-            .nodes()
+        list.entries()
             .iter()
             .all(|node| !matches!(node.role(), ProductRole::Weight(ProductTerm::Taylor(_)))),
         "the frozen standard CASA row emits no standalone weight family"
@@ -519,11 +517,11 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
 
     let join = run_round(&problem);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join);
-    assert_eq!(
+    assert!(matches!(
         PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
             .expect_err("requested PB needs a bound model at planning"),
-        ProductsError::UnsupportedProblem
-    );
+        ProductsError::MissingPrimaryBeamModel
+    ));
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
     let planned = PlannedContinuumGeneration::new(&inputs, &controls).expect("analytic PB plan");
@@ -661,10 +659,10 @@ fn t51_weight_derived_mtmfs_plan_matches_casa_eighteen_member_inventory() {
     ];
     let problem = taylor_problem(213, &products, InstrumentResponse::Scalar);
     let names = problem
-        .product_graph()
-        .nodes()
+        .product_list()
+        .entries()
         .iter()
-        .filter_map(|node| node.name())
+        .filter_map(|entry| entry.name())
         .collect::<std::collections::BTreeSet<_>>();
 
     assert_eq!(
@@ -700,7 +698,11 @@ fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
     let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
         .expect("Taylor plan");
     let demand = planned
-        .demand(&inputs, full_window(&planned))
+        .demand(
+            &inputs,
+            full_window(&planned),
+            &ImageOutput::for_problem(&problem),
+        )
         .expect("Taylor demand");
     let maximum = planned
         .members()
@@ -727,13 +729,14 @@ fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
         demand.algorithm_scratch_bytes()
             + demand.retained_metadata_bytes()
             + demand.beam_scratch_bytes()
+            + demand.writer_bytes()
     );
     let generated = produce_continuum_members(
         &planned,
         &inputs,
         full_window(&planned),
         &(),
-        &MemoryProductOutput::default(),
+        &ImageOutput::for_problem(&problem),
     )
     .unwrap();
     assert_eq!(

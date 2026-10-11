@@ -25,12 +25,14 @@ use std::sync::Arc;
 
 use casa_imaging_model::{
     CentreLaws, GeometryInput, ModelBounds, ModelLifecycleRequirements, NativeAwRequestInput,
-    NumericPrecision, ProblemSpecification, SequentialContinuumTransform,
-    UncorrectedImageMaskPolicy, UvwCoordinateLaw, WeightColumn as OwnerWeightColumn,
+    NumericPrecision, ProblemSpecification, SequentialContinuumTransform, UvwCoordinateLaw,
+    WeightColumn as OwnerWeightColumn,
 };
 use casa_imaging_operator::{AwCatalog, AwIndexing};
-use casa_imaging_products::{AnalyticPrimaryBeamModel, ContinuumProductControls};
-use casa_imaging_reconstruction::{ImageDomainReconstructionMaskPlans, MinorCycleImageResponse};
+use casa_imaging_products::{
+    AnalyticPrimaryBeamModel, CasaImageWriter, ContinuumProductControls, MinorCycleImageResponse,
+};
+use casa_imaging_reconstruction::ImageDomainReconstructionMaskPlans;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{
     MeasurementSet, SelectedObservationContentBudget, SelectedObservationEphemeris,
@@ -40,8 +42,7 @@ use casa_types::measures::{MeasuresProvider, frame::MeasFrame};
 
 use crate::{
     ApplicationNative, ApplicationPublication, ApplicationRuntime, AwCatalogDeployment, AwCfSource,
-    AwProjection, CasaImageProductSink, Deconvolver, Gridder, ImagingRequest, NativeAwCachePolicy,
-    RunContext, SpecMode,
+    AwProjection, Deconvolver, Gridder, ImagingRequest, NativeAwCachePolicy, RunContext, SpecMode,
 };
 use direction::{Centre, ImageSpectralCoordinate};
 use domains::PreparedImageDomain;
@@ -257,11 +258,7 @@ fn specification_inputs(
     let windows = &surveyed.survey.spectral_windows;
     Ok(SpecificationInputs {
         instrument,
-        uncorrected_mask: if primary_beam && request.pblimit >= 0.0 {
-            UncorrectedImageMaskPolicy::PrimaryBeam
-        } else {
-            UncorrectedImageMaskPolicy::None
-        },
+        primary_beam,
         w_projection: match &request.gridder {
             Gridder::Wproject { wprojplanes } => Some(specification::w_projection(
                 *wprojplanes,
@@ -470,7 +467,8 @@ impl AwPlan {
 }
 
 /// The native run's deployment: the runtime with the paged cube state
-/// beside the main image, the product controls and sink, and the AW plan.
+/// beside the main image, the product controls and image writer, and the AW
+/// plan.
 fn deployment(
     request: &ImagingRequest,
     context: &RunContext,
@@ -503,9 +501,7 @@ fn deployment(
         },
         publication: ApplicationPublication {
             controls,
-            sink: CasaImageProductSink::for_domains(
-                domains.iter().map(PreparedImageDomain::output),
-            ),
+            writer: CasaImageWriter::for_domains(domains.iter().map(PreparedImageDomain::output)),
         },
         output_directories: domains
             .iter()

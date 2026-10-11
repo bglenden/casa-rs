@@ -34,7 +34,9 @@ const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 /// What the specification needs besides the request and the spectral axis.
 pub(super) struct SpecificationInputs {
     pub(super) instrument: Option<InstrumentModel>,
-    pub(super) uncorrected_mask: UncorrectedImageMaskPolicy,
+    /// Whether the run has a primary beam: the mosaic sensitivity, or the
+    /// telescope's analytic beam.
+    pub(super) primary_beam: bool,
     pub(super) w_projection: Option<WProjectionContract>,
     pub(super) aw_projection: Option<AwProjectionContract>,
     pub(super) cube_density_padding: Option<usize>,
@@ -151,7 +153,14 @@ pub(super) fn specification(
                     ProductBlankingPolicy::Zero,
                 )?,
             )
-            .with_uncorrected_mask(inputs.uncorrected_mask),
+            // CASA copies the PB's mask to `.residual` and `.image` when
+            // there is a PB and pblimit is not negative
+            // (`SIImageStore::divideResidualByWeight`, `restore`).
+            .with_uncorrected_mask(if inputs.primary_beam && request.pblimit >= 0.0 {
+                UncorrectedImageMaskPolicy::PrimaryBeam
+            } else {
+                UncorrectedImageMaskPolicy::None
+            }),
         ),
         transaction(request),
         NumericsContract::new(

@@ -25,7 +25,9 @@ use super::direction::{
     parse_phase_center_direction,
 };
 use super::outliers::read_outlier_domains;
-use crate::{CasaImageDomainOutput, ImagingRequest, UseMask};
+use casa_imaging_products::CasaImageDomainOutput;
+
+use crate::{ImagingRequest, UseMask};
 
 /// The pixels a domain's minor cycle may update.
 #[derive(Clone, Debug, PartialEq)]
@@ -70,7 +72,7 @@ impl PreparedImageDomain {
         )
     }
 
-    /// Where the product sink writes this domain's images.
+    /// Where the image writer writes this domain's images.
     pub(super) fn output(&self) -> CasaImageDomainOutput {
         CasaImageDomainOutput::new(
             self.role.clone(),

@@ -16,9 +16,10 @@ use casa_imaging_model::{
     CompiledProblem, HogbomIterationAccounting, ProductNormalization, ReconstructionAlgorithm,
     ReconstructionBasis, ReconstructionControls,
 };
+use casa_imaging_products::MinorCycleImageResponse;
 use casa_imaging_reconstruction::{
-    ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, MinorCycleImageResponse,
-    PassImages, ReconstructionMaskPlan,
+    ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, PassImages,
+    ReconstructionMaskPlan,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{

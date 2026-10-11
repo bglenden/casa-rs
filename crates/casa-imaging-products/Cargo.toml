@@ -3,21 +3,32 @@ name = "casa-imaging-products"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Native continuum product algorithms and bounded write-only generation"
+description = "Normalization, restoration, Taylor and PB products, and their CASA image writer"
 repository.workspace = true
 publish = false
+
+[features]
+default = []
+cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
 
 [lints]
 workspace = true
 
 [dependencies]
 tracing.workspace = true
+casa-coordinates = { path = "../casa-coordinates" }
 casa-fft = { path = "../casa-fft" }
+casa-images = { path = "../casa-images" }
 casa-imaging-deconvolution = { path = "../casa-imaging-deconvolution" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
 casa-numerics = { path = "../casa-numerics" }
+casa-types = { path = "../casa-types" }
+libc = "0.2"
 ndarray.workspace = true
 num-complex.workspace = true
-sha2 = "0.10"
+tempfile = "3"
 thiserror.workspace = true
+
+[dev-dependencies]
+casa-test-support = { path = "../casa-test-support" }

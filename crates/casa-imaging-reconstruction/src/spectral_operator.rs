@@ -97,7 +97,7 @@ impl CubeRealFields {
     }
 }
 
-/// Unnormalized spectral primitives; these are not Product Graph artifacts.
+/// Unnormalized spectral primitives; products are formed from them.
 #[derive(Debug)]
 pub struct SpectralOperatorPrimitives {
     shape: [usize; 2],

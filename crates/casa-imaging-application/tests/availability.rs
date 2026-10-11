@@ -104,6 +104,25 @@ fn coupled_taylor_basis_rejects_non_stokes_i_polarization() {
 }
 
 #[test]
+fn a_taylor_basis_images_one_domain() {
+    let taylor = || ProblemFixture {
+        basis: ReconstructionBasis::Taylor { terms: 2 },
+        algorithm: ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+        ..ProblemFixture::standard()
+    };
+    assert!(on_cpu(&taylor().compile()).is_ok());
+    let problem = ProblemFixture {
+        outlier: true,
+        ..taylor()
+    }
+    .compile();
+    assert_exactly_unsupported(on_cpu(&problem), [Unsupported::MultiDomainTaylorBasis]);
+}
+
+#[test]
 fn w_projection_runs_on_the_cpu_pass_only() {
     let mut fixture = ProblemFixture::standard();
     fixture.measurement_equation = fixture
@@ -214,6 +233,7 @@ struct ProblemFixture {
     measurement_equation: MeasurementEquationContract,
     instrument_model: Option<InstrumentModel>,
     products: Vec<ProductKind>,
+    outlier: bool,
 }
 
 impl ProblemFixture {
@@ -235,6 +255,7 @@ impl ProblemFixture {
             ),
             instrument_model: None,
             products: vec![ProductKind::Psf],
+            outlier: false,
         }
     }
 
@@ -275,19 +296,37 @@ impl ProblemFixture {
             RestFrequency::NotApplicable,
             DopplerConvention::NotApplicable,
         );
+        let axes = AxisOrder::new([
+            ImageAxis::DirectionLongitude,
+            ImageAxis::DirectionLatitude,
+            ImageAxis::Polarization,
+            ImageAxis::Spectral,
+        ]);
+        let mut domains = vec![ImageDomainSpec::new(
+            ImageDomainRole::Main,
+            ImageShape::new(512, 512),
+            direction,
+            self.facets,
+            axes.clone(),
+        )];
+        if self.outlier {
+            domains.push(ImageDomainSpec::new(
+                ImageDomainRole::Outlier("east".into()),
+                ImageShape::new(64, 64),
+                DirectionCoordinateSpec::new(
+                    Projection::Sin,
+                    SkyDirection::new(DirectionFrame::J2000, 1.01, -0.5),
+                    [31.0, 31.0],
+                    [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+                    [[1.0, 0.0], [0.0, 1.0]],
+                    [180.0, 0.0],
+                ),
+                FacetLayout::Single,
+                axes,
+            ));
+        }
         let geometry = GeometryInput::new(
-            vec![ImageDomainSpec::new(
-                ImageDomainRole::Main,
-                ImageShape::new(512, 512),
-                direction,
-                self.facets,
-                AxisOrder::new([
-                    ImageAxis::DirectionLongitude,
-                    ImageAxis::DirectionLatitude,
-                    ImageAxis::Polarization,
-                    ImageAxis::Spectral,
-                ]),
-            )],
+            domains,
             CentreLaws::new(
                 self.phase_centre,
                 PointingCentreLaw::Observation(ObservationPointingLaw::new(

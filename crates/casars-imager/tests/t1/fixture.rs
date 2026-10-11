@@ -482,6 +482,20 @@ impl Product {
             .expect("two-dimensional plane")
     }
 
+    /// Every value, in the image's axis order.
+    pub fn values(&self) -> ndarray::ArrayD<f32> {
+        self.image.get().expect("read product")
+    }
+
+    /// The default pixel mask, when the product stores one.
+    pub fn mask(&self) -> Option<ndarray::ArrayD<bool>> {
+        self.image.default_mask_name()?;
+        let shape = self.image.shape().to_vec();
+        self.image
+            .get_mask_slice(&vec![0; shape.len()], &shape, &vec![1; shape.len()])
+            .expect("read product mask")
+    }
+
     /// The value of a single-pixel-per-channel product (`.sumwt`) per channel.
     pub fn channel_values(&self) -> Vec<f32> {
         let values = self.image.get().expect("read product");
@@ -544,6 +558,232 @@ impl Products {
             .get(suffix)
             .unwrap_or_else(|| panic!("run did not report {suffix}"))
     }
+}
+
+/// The spectral axis every product of a run shares.
+#[derive(Debug, Clone, Copy)]
+pub enum SpectralAxis {
+    /// One plane at the band centre: MFS and MT-MFS.
+    BandCentre,
+    /// The native channels, within half a channel: a cube.
+    NativeChannels,
+}
+
+/// The product contract (plan section 5.7) a T1 run is held to, beyond its
+/// science: what it publishes, their coordinates, and the normalization rows
+/// the fixture can check from the observation alone.
+pub struct ProductContract<'a> {
+    /// The exact product suffixes.
+    pub inventory: &'a [&'a str],
+    /// The spectral axis the products share.
+    pub spectral: SpectralAxis,
+    /// Whether the run weights naturally, so `.sumwt` counts the unit-weight
+    /// Stokes I samples.
+    pub natural: bool,
+    /// `|pblimit|`: the PB is zero, and masked, at and below it.
+    pub pblimit: f32,
+    /// Whether `.image` and `.residual` carry the PB's mask (pblimit not
+    /// negative).
+    pub uncorrected_masks: bool,
+}
+
+impl Observation {
+    /// Hold `products` to `contract`:
+    /// - the exact inventory;
+    /// - every member's direction, Stokes and spectral coordinates;
+    /// - a unit-peak PSF in every plane with weight;
+    /// - `.sumwt` as the natural-weighting sample count;
+    /// - a PB in [0, 1], zero and masked at or below pblimit, the root of
+    ///   `.weight` over its peak where a weight image is published;
+    /// - `.image.pbcor` as `.image` over the PB inside its support;
+    /// - the PB's mask on `.image` and `.residual` exactly when pblimit is
+    ///   not negative.
+    pub fn assert_product_contract(&self, products: &Products, contract: &ProductContract<'_>) {
+        assert_eq!(
+            products.suffixes(),
+            contract
+                .inventory
+                .iter()
+                .map(|suffix| suffix.to_string())
+                .collect::<BTreeSet<_>>(),
+            "inventory"
+        );
+        for (suffix, product) in &products.opened {
+            self.assert_direction_and_stokes(product);
+            self.assert_spectral_axis(suffix, product, contract.spectral);
+        }
+        for (suffix, product) in &products.opened {
+            let term0 = !suffix.ends_with(".tt1") && !suffix.ends_with(".tt2");
+            if suffix.starts_with(".psf") && term0 {
+                for channel in 0..product.channels() {
+                    let peak = product
+                        .plane(channel)
+                        .fold(f32::MIN, |peak, value| peak.max(*value));
+                    assert!(
+                        peak == 0.0 || (peak - 1.0).abs() < 1.0e-6,
+                        "{suffix} channel {channel} peak {peak}"
+                    );
+                }
+            }
+            if suffix.starts_with(".sumwt") {
+                // CASA tools read `useweightimage` from `.sumwt` to learn
+                // whether the residual was divided by a weight image.
+                let weight_image = contract
+                    .inventory
+                    .iter()
+                    .any(|name| name.starts_with(".weight"));
+                let recorded = product.image.misc_info().get("useweightimage").cloned();
+                assert_eq!(
+                    recorded,
+                    Some(casa_types::Value::Scalar(casa_types::ScalarValue::Bool(
+                        weight_image
+                    ))),
+                    "{suffix} useweightimage"
+                );
+                if term0
+                    && contract.natural
+                    && matches!(contract.spectral, SpectralAxis::BandCentre)
+                {
+                    assert_eq!(
+                        f64::from(product.channel_values()[0]),
+                        self.stokes_i_samples() as f64,
+                        "{suffix} counts the Stokes I samples"
+                    );
+                }
+            }
+        }
+        let Some(pb) = [".pb", ".pb.tt0"]
+            .into_iter()
+            .find_map(|suffix| products.opened.get(suffix))
+        else {
+            return;
+        };
+        let support = assert_primary_beam(pb, contract.pblimit);
+        if let Some(weight) = [".weight", ".weight.tt0"]
+            .into_iter()
+            .find_map(|suffix| products.opened.get(suffix))
+        {
+            assert_root_of_weight(pb, weight, &support);
+        }
+        for (image, corrected) in [
+            (".image", ".image.pbcor"),
+            (".image.tt0", ".image.tt0.pbcor"),
+        ] {
+            if let Some(corrected) = products.opened.get(corrected) {
+                assert_pb_corrected(products.get(image), pb, corrected, &support);
+            }
+        }
+        for (suffix, product) in &products.opened {
+            if suffix.starts_with(".image") && !suffix.ends_with(".pbcor")
+                || suffix.starts_with(".residual")
+            {
+                match (contract.uncorrected_masks, product.mask()) {
+                    (true, Some(mask)) => {
+                        assert_eq!(mask, support, "{suffix} carries the PB's mask")
+                    }
+                    (false, None) => {}
+                    (expected, mask) => {
+                        panic!(
+                            "{suffix}: PB mask expected {expected}, found {}",
+                            mask.is_some()
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fn assert_spectral_axis(&self, suffix: &str, product: &Product, axis: SpectralAxis) {
+        let native = &self.channel_frequencies_hz;
+        match axis {
+            SpectralAxis::BandCentre => {
+                let band_centre_hz = 0.5 * (native[0] + native[native.len() - 1]);
+                let frequency_hz = product.channel_frequency_hz(0);
+                assert!(
+                    (frequency_hz - band_centre_hz).abs() < 1.0,
+                    "{suffix}: reference frequency {frequency_hz} Hz, band centre \
+                     {band_centre_hz} Hz"
+                );
+            }
+            SpectralAxis::NativeChannels => {
+                let width_hz = native[1] - native[0];
+                assert_eq!(product.channels(), native.len(), "{suffix} channels");
+                for (channel, native_hz) in native.iter().enumerate() {
+                    assert!(
+                        (product.channel_frequency_hz(channel) - native_hz).abs() < 0.5 * width_hz,
+                        "{suffix} channel {channel}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The PB is in [0, 1] with a unit peak, zero at or below `pblimit`, and
+/// masked exactly there; returns its support.
+fn assert_primary_beam(pb: &Product, pblimit: f32) -> ndarray::ArrayD<bool> {
+    let values = pb.values();
+    let peak = values.iter().fold(0.0_f32, |peak, value| peak.max(*value));
+    assert!((peak - 1.0).abs() < 1.0e-3, "PB peak {peak}");
+    assert!(
+        values
+            .iter()
+            .all(|value| (0.0..=1.0 + 1.0e-6).contains(value)),
+        "the PB lies in [0, 1]"
+    );
+    let support = values.mapv(|value| value > pblimit);
+    assert!(
+        values
+            .iter()
+            .zip(&support)
+            .all(|(value, inside)| *inside || *value == 0.0),
+        "the PB is zero at or below pblimit {pblimit}"
+    );
+    assert_eq!(pb.mask().expect("the PB carries its mask"), support);
+    support
+}
+
+/// `.pb` is `sqrt(weight / max(weight))` inside its support.
+fn assert_root_of_weight(pb: &Product, weight: &Product, support: &ndarray::ArrayD<bool>) {
+    let weight = weight.values();
+    let peak = weight.iter().fold(0.0_f32, |peak, value| peak.max(*value));
+    for ((pb, weight), inside) in pb.values().iter().zip(&weight).zip(support) {
+        if *inside {
+            let expected = (weight.abs() / peak).sqrt();
+            assert!(
+                (pb - expected).abs() < 1.0e-5,
+                "PB {pb}, root of the weight over its peak {expected}"
+            );
+        }
+    }
+}
+
+/// `.image.pbcor` is `.image` over the PB inside the PB's support, and zero
+/// and masked outside it.
+fn assert_pb_corrected(
+    image: &Product,
+    pb: &Product,
+    corrected: &Product,
+    support: &ndarray::ArrayD<bool>,
+) {
+    let (image, beam, corrected_values) = (image.values(), pb.values(), corrected.values());
+    for (((image, beam), corrected), inside) in
+        image.iter().zip(&beam).zip(&corrected_values).zip(support)
+    {
+        if *inside {
+            let expected = image / beam;
+            assert!(
+                (corrected - expected).abs() <= 1.0e-5 * expected.abs().max(1.0e-3),
+                "pbcor {corrected}, image over PB {expected}"
+            );
+        } else {
+            assert_eq!(*corrected, 0.0, "pbcor outside the PB support");
+        }
+    }
+    assert_eq!(
+        corrected.mask().expect("pbcor carries the PB's mask"),
+        *support
+    );
 }
 
 /// Pixel `[x, y]` of a component offset from the image reference pixel.

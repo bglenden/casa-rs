@@ -2,14 +2,12 @@
 
 //! Standard gridder, natural weighting, MFS: Hogbom, Clark and multiscale.
 
-use std::collections::BTreeSet;
-
 use casars_imager::ImagerRunReport;
 use serde_json::{Value, json};
 
 use super::fixture::{
-    CELL_ARCSEC, Component, Observation, Products, box_sum, component_pixel, fit_psf_main_lobe,
-    off_source_rms, peak,
+    CELL_ARCSEC, Component, Observation, ProductContract, Products, SpectralAxis, box_sum,
+    component_pixel, fit_psf_main_lobe, off_source_rms, peak,
 };
 
 const POINT: Component = Component {
@@ -72,19 +70,20 @@ pub(super) fn assert_recovers_the_point(
         summary.clean_stop_reason,
     );
 
-    assert_eq!(
-        products.suffixes(),
-        BTreeSet::from(
-            [".image", ".mask", ".model", ".psf", ".residual", ".sumwt"].map(String::from)
-        )
+    // No PB is asked for, so none is written and nothing is masked. Natural
+    // weighting of unit weights: sumwt counts every parallel-hand sample
+    // that enters Stokes I.
+    observation.assert_product_contract(
+        &products,
+        &ProductContract {
+            inventory: &[".image", ".mask", ".model", ".psf", ".residual", ".sumwt"],
+            spectral: SpectralAxis::BandCentre,
+            natural: true,
+            pblimit: 0.2,
+            uncorrected_masks: false,
+        },
     );
     observation.assert_image_wcs(image);
-    // Natural weighting of unit-weight samples: sumwt counts every unflagged
-    // parallel-hand sample that enters Stokes I.
-    assert_eq!(
-        f64::from(products.get(".sumwt").pixels[[0, 0]]),
-        observation.stokes_i_samples() as f64
-    );
 
     // The point sits on a pixel centre, 68 pixels (9-17 beams) from the
     // Gaussian and 0.35 arcsec from the phase centre, where the Q-band

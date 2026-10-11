@@ -165,6 +165,19 @@ unsafe extern "C" {
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
     pub(crate) fn cpp_table_held_reader_close(reader: *mut std::ffi::c_void);
+    pub(crate) fn cpp_image_held_reader_open(
+        path: *const std::ffi::c_char,
+        out_reader: *mut *mut std::ffi::c_void,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_image_held_reader_read(
+        reader: *mut std::ffi::c_void,
+        out_sum: *mut f64,
+        out_values: *mut i64,
+        out_valid: *mut i64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_image_held_reader_close(reader: *mut std::ffi::c_void);
     #[link_name = "cpp_columns_index_time_lookups"]
     pub(crate) fn ffi_columns_index_time_lookups(
         path: *const std::ffi::c_char,
