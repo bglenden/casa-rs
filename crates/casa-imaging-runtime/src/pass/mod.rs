@@ -323,15 +323,48 @@ pub const fn source_block_bytes(block: BlockShape) -> u64 {
 /// Row chunks per worker of a density pass.
 const DENSITY_CHUNKS_PER_WORKER: usize = 4;
 
-/// Rows a row chunk places at once. A pass places each block in slices of
-/// this many rows per chunk, so its sample buffers have one size whatever
-/// rows the source puts in a block.
-const CHUNK_ROWS: usize = 16;
+/// Placements a row chunk takes at once. A pass places each block in slices
+/// of chunks this size, so its sample buffers have one bound whatever rows
+/// the source puts in a block, while a slice still spans most of a large
+/// block and its workers meet once per slice.
+const CHUNK_PLACEMENTS: usize = 1 << 15;
+
+/// Rows a row chunk places at once, for rows of `row` placements each in
+/// blocks of at most `block_rows` rows split among `chunks` chunks: as many
+/// as [`CHUNK_PLACEMENTS`] holds, and no more than a block's share.
+const fn chunk_rows(row: usize, block_rows: usize, chunks: usize) -> usize {
+    let fitting = CHUNK_PLACEMENTS / if row == 0 { 1 } else { row };
+    let share = block_rows.div_ceil(if chunks == 0 { 1 } else { chunks });
+    let rows = if fitting < share { fitting } else { share };
+    if rows == 0 { 1 } else { rows }
+}
+
+/// An upper bound of the bytes a pass's row chunks hold per row of the
+/// source's block, for rows of `layout` placed on `planes` planes by
+/// `workers` workers, while a chunk's rows are a block's share rather than
+/// [`CHUNK_PLACEMENTS`]: each owner's buffer and the weight owner's can take
+/// every placement of a row, at most one per native channel or per plane
+/// and one more ([`SpectralResampler::samples_per_row`]). The source sizes
+/// its blocks with it ([`crate::finalize_source_access`]);
+/// [`WaveDemand::bytes`] charges the chunks exactly.
+#[must_use]
+pub const fn chunk_bytes_per_row(layout: BlockShape, planes: usize, workers: usize) -> u64 {
+    let row = if layout.channels > planes {
+        layout.channels
+    } else {
+        planes
+    } + 1;
+    (workers as u64 + 1) * SampleBuffer::bytes(layout.correlations, row)
+}
 
 /// The slices of a block of `rows` rows split among `chunks` chunks of at
-/// most [`CHUNK_ROWS`] rows each, in row order.
-fn slices(rows: usize, chunks: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
-    let step = chunks * CHUNK_ROWS;
+/// most `chunk_rows` rows each, in row order.
+fn slices(
+    rows: usize,
+    chunks: usize,
+    chunk_rows: usize,
+) -> impl Iterator<Item = std::ops::Range<usize>> {
+    let step = chunks * chunk_rows;
     (0..rows)
         .step_by(step)
         .map(move |start| start..(start + step).min(rows))
@@ -361,7 +394,8 @@ pub fn density_pass_bytes(
     workers: usize,
 ) -> u64 {
     let chunks = workers * DENSITY_CHUNKS_PER_WORKER;
-    let placements = CHUNK_ROWS * resampler.density_samples_per_row(shape, block.channels);
+    let row = resampler.density_samples_per_row(shape, block.channels);
+    let placements = chunk_rows(row, block.rows, chunks) * row;
     shape.bytes() + chunks as u64 * SampleBuffer::bytes(1, placements)
 }
 
@@ -381,14 +415,16 @@ pub fn run_density_pass(
         .begin(PlaneRange::new(0, operator.basis().planes()), false)
         .map_err(PassError::Source)?;
     let mut grid = DensityGrid::new(shape);
-    let channels = source.maximum_block().channels;
+    let maximum = source.maximum_block();
     let count = team.workers() * DENSITY_CHUNKS_PER_WORKER;
-    let placements = CHUNK_ROWS * resampler.density_samples_per_row(&shape, channels);
+    let row = resampler.density_samples_per_row(&shape, maximum.channels);
+    let rows_per_chunk = chunk_rows(row, maximum.rows, count);
+    let placements = rows_per_chunk * row;
     let mut chunks = (0..count)
         .map(|_| (0..0, SampleBuffer::with_capacity(1, placements)))
         .collect::<Vec<_>>();
     stream_blocks(source, cancel, |block| {
-        for slice in slices(block.len(), count) {
+        for slice in slices(block.len(), count, rows_per_chunk) {
             let mut used = 0;
             for ((range, _), rows) in chunks.iter_mut().zip(chunk_ranges(slice, count)) {
                 *range = rows;

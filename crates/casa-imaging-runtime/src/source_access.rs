@@ -7,7 +7,7 @@ use casa_ms::{
     SelectedObservationContentBudget, SelectedObservationContentPlanError,
 };
 
-use crate::pass::{BlockShape, source_block_bytes};
+use crate::pass::{BlockShape, chunk_bytes_per_row, source_block_bytes};
 use crate::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit, free_memory};
 
 /// One row of the blocks `problem`'s source delivers: the most channels any
@@ -97,7 +97,11 @@ pub fn finalize_source_access(
     };
     let layout = row_layout(problem);
     let passes = |rows: usize| source_block_bytes(BlockShape { rows, ..layout });
-    let passes_per_row = passes(1) - passes(0);
+    // The passes' row chunks also grow with the block, under the passes'
+    // own charge, until they reach their cap.
+    let planes = problem.geometry().spectral().output_channels();
+    let passes_per_row =
+        passes(1) - passes(0) + chunk_bytes_per_row(layout, planes, policy.workers(host));
     let unshared = requirements.plan(budget(bootstrap.min(quarter))?)?;
     let source_per_row =
         (unshared.maximum_resident_bytes() / unshared.rows_per_block().max(1)) as u64;

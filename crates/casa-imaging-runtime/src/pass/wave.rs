@@ -14,8 +14,8 @@ use num_complex::Complex32;
 
 use super::partition::Router;
 use super::{
-    BackendChoice, BlockShape, CHUNK_ROWS, MajorCyclePass, NativeBlock, Partition, PassDomain,
-    PassError, VisibilitySink, WorkerTeam, chunk_ranges, slices,
+    BackendChoice, BlockShape, MajorCyclePass, NativeBlock, Partition, PassDomain, PassError,
+    VisibilitySink, WorkerTeam, chunk_ranges, chunk_rows, slices,
 };
 
 /// Row chunks per worker in the placement stage; enough to balance rows
@@ -51,10 +51,10 @@ struct Domain<'w> {
 /// One row chunk's placements on the wave's planes, by owner, its
 /// prediction scratch and its rows' native-channel residuals.
 ///
-/// Every buffer is allocated once, for [`CHUNK_ROWS`] rows of the source's
-/// widest row ([`ChunkShape`]), and each owner's can take every placement of
-/// the chunk, so a chunk holds [`ChunkShape::bytes`] however its placements
-/// fall among the owners.
+/// Every buffer is allocated once, for a chunk's rows of the source's widest
+/// row ([`ChunkShape`]), and each owner's can take every placement of the
+/// chunk, so a chunk holds [`ChunkShape::bytes`] however its placements fall
+/// among the owners.
 struct Chunk {
     rows: Range<usize>,
     /// One row's placements.
@@ -72,12 +72,15 @@ struct Chunk {
     residual: Vec<Complex32>,
 }
 
-/// The largest chunk of a wave over rows of `block`'s layout: at most
-/// [`CHUNK_ROWS`] rows, whatever rows the source puts in a block.
+/// The largest chunk of a wave over blocks of `block`: at most
+/// [`CHUNK_PLACEMENTS`](super::CHUNK_PLACEMENTS) placements, whatever rows
+/// the source puts in a block.
 #[derive(Clone, Copy)]
 struct ChunkShape {
     /// Placements one native row places on any domain.
     row: usize,
+    /// Rows a chunk places at once.
+    rows: usize,
     /// Placements the chunk's rows place.
     placements: usize,
     /// Correlations per placement.
@@ -91,15 +94,17 @@ struct ChunkShape {
 }
 
 impl ChunkShape {
-    fn new(domains: &[PassDomain<'_>], block: BlockShape, weight: bool) -> Self {
+    fn new(domains: &[PassDomain<'_>], block: BlockShape, weight: bool, chunks: usize) -> Self {
         let row = domains
             .iter()
             .map(|domain| domain.resampler.samples_per_row(block.channels))
             .max()
             .unwrap_or(0);
+        let rows = chunk_rows(row, block.rows, chunks);
         Self {
             row,
-            placements: CHUNK_ROWS * row,
+            rows,
+            placements: rows * row,
             npol: block.correlations,
             cells: block.channels * block.correlations,
             owners: domains
@@ -160,10 +165,10 @@ const fn chunks(workers: usize) -> usize {
     workers * CHUNKS_PER_WORKER
 }
 
-/// Bytes a wave places with on `workers` workers over rows of `block`'s
-/// layout, gridding the weight image when `weight`: its row chunks and, on
-/// Metal, each owner's staging. They do not grow with the source's block
-/// ([`CHUNK_ROWS`]).
+/// Bytes a wave places with on `workers` workers over blocks of `block`,
+/// gridding the weight image when `weight`: its row chunks and, on Metal,
+/// each owner's staging. They grow with the source's block only up to
+/// [`CHUNK_PLACEMENTS`](super::CHUNK_PLACEMENTS) a chunk.
 pub(super) fn chunk_bytes(
     domains: &[PassDomain<'_>],
     backend: BackendChoice,
@@ -172,7 +177,7 @@ pub(super) fn chunk_bytes(
     weight: bool,
 ) -> u64 {
     let count = chunks(workers);
-    let shape = ChunkShape::new(domains, block, weight);
+    let shape = ChunkShape::new(domains, block, weight, count);
     let staging = match backend {
         BackendChoice::Cpu => 0,
         BackendChoice::Metal => (domains.len() * shape.owners) as u64 * shape.staging_bytes(count),
@@ -213,7 +218,7 @@ impl<'w, 'p> Wave<'w, 'p> {
         workers: usize,
     ) -> Result<Self, PassError> {
         let count = chunks(workers);
-        let shape = ChunkShape::new(pass.domains, block, pass.modes.weight);
+        let shape = ChunkShape::new(pass.domains, block, pass.modes.weight, count);
         let domains = pass
             .domains
             .iter()
@@ -346,7 +351,7 @@ impl<'w, 'p> Wave<'w, 'p> {
         // Slices of the block, each owner's in row order as a whole block's
         // would be, so the accumulation is the same.
         let chunks = self.chunks.len();
-        for slice in slices(rows, chunks) {
+        for slice in slices(rows, chunks, self.shape.rows) {
             let mut count = 0;
             for (chunk, rows) in self.chunks.iter_mut().zip(chunk_ranges(slice, chunks)) {
                 chunk.rows = rows;
