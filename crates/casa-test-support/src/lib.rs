@@ -24,7 +24,7 @@ mod test_data;
 
 pub use aipsio_oracle::*;
 use casa_aipsio::{Complex32, Complex64};
-pub use image_oracle::ImageOracle;
+pub use image_oracle::{HeldCppImageReader, HeldImageRead, ImageOracle};
 pub use image_oracle_impl::{
     CppImageExprBinaryOp, CppImageExprCompareOp, CppImageExprUnaryOp, CppMaskLogicalOp,
     CppRegionStatistics, CppUnsupportedRegionKind,
