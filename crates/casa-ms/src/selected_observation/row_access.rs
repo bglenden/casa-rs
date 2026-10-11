@@ -128,6 +128,33 @@ impl MeasurementSet {
         })
     }
 
+    /// Bytes a walk of the MAIN rows under `io` holds at most
+    /// ([`Self::visit_selected_observation_rows`]): its block of row facts
+    /// and their row indices for the plan's rows per block ([`MsReadPlan`]),
+    /// and the table reads' staging beneath it. The tiles the reads load go
+    /// to the process-wide table-read cache, which is not the walk's
+    /// ([`casa_tables::table_cache_budget_bytes`]). The law
+    /// `a_row_walk_holds_at_most_its_bytes` measures walks of one block and
+    /// of many against this.
+    ///
+    /// # Errors
+    ///
+    /// When `io` admits no plan for this MeasurementSet's rows.
+    pub fn row_walk_bytes(&self, io: MsSelectionIoBudget) -> MsResult<usize> {
+        /// Staging per block row: the selected-row patches the tiled reads
+        /// group by tile, and the incremental reads' row arrays; measured at
+        /// about 40 bytes.
+        const STAGING_BYTES_PER_ROW: usize = 64;
+        /// Staging whatever the block: read-ahead and the incremental reads'
+        /// buckets; measured at tens of kilobytes.
+        const STAGING_BYTES: usize = 1 << 20;
+        let plan = MsReadPlan::new(self.row_count(), io)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        Ok(plan.rows_per_block
+            * (crate::ms::MainRowSelectionCursor::retained_bytes_per_row() + STAGING_BYTES_PER_ROW)
+            + STAGING_BYTES)
+    }
+
     /// Visit selected MAIN rows in canonical physical order with bounded residency.
     ///
     /// Predicate evaluation and row reporting share one terminally fallible

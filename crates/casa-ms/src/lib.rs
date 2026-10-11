@@ -229,6 +229,20 @@ pub use write_session::{
     standard_main_scalar_column_plans,
 };
 
+/// The most heap the provider [`open_measures_runtime`] returns holds while
+/// it loads its catalogs and after
+/// ([`casa_measures_data::MeasuresRuntime::LOAD_BYTES`]), for an application
+/// that admits it before its first lookup.
+pub const MEASURES_RUNTIME_BYTES: usize = casa_measures_data::MeasuresRuntime::LOAD_BYTES;
+
+/// The budget of the process-wide table-read cache every table read in the
+/// process shares ([`casa_tables::table_cache_budget_bytes`]); it fills as
+/// MeasurementSets are read and keeps what it holds.
+#[must_use]
+pub fn table_read_cache_bytes() -> usize {
+    casa_tables::table_cache_budget_bytes()
+}
+
 /// Open the production Measures provider used by MeasurementSet-backed applications.
 ///
 /// Keeping discovery here ensures frontends use the same reference-data authority

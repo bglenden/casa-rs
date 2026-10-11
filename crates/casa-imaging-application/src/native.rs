@@ -137,6 +137,22 @@ pub(crate) fn run_native(
     }
 }
 
+/// Write the summary of a run that failed before its native run started:
+/// the request echo and the error.
+pub(crate) fn record_failure(
+    target: &casa_imaging_runtime::SummaryTarget,
+    error: &impl std::fmt::Display,
+) {
+    let summary = RunSummary {
+        request: target.request.clone(),
+        error: Some(error.to_string()),
+        ..RunSummary::default()
+    };
+    if let Err(write) = summary.write(&target.path) {
+        tracing::warn!("the failed run's summary could not be written: {write}");
+    }
+}
+
 /// The run itself; `summary` collects its phases, and a completed run's
 /// outcome takes it.
 fn run(

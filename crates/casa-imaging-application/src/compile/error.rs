@@ -24,6 +24,10 @@ pub enum PrepareError {
     /// read.
     #[error(transparent)]
     MeasurementSet(#[from] casa_ms::MsError),
+    /// The resource policy leaves too little memory for compile's walks of
+    /// the MeasurementSet's rows.
+    #[error(transparent)]
+    Admission(#[from] casa_imaging_runtime::Admission),
     /// The selected rows are not in ascending MAIN order or name a data
     /// description twice out of sequence.
     #[error(transparent)]

@@ -570,6 +570,15 @@ pub struct MeasuresRuntime {
 }
 
 impl MeasuresRuntime {
+    /// The most heap a runtime holds while it loads every catalog
+    /// ([`Self::prepare_bounded_state`]) and once it has, for a caller that
+    /// admits the runtime before its first lookup. The packaged catalogs
+    /// peak at about 11 MB while they load (the EOP table's columns are most
+    /// of it) and keep about 3.3 MB; the law
+    /// `loading_every_catalog_holds_at_most_the_load_bytes` keeps the figure
+    /// honest as the tables grow.
+    pub const LOAD_BYTES: usize = 16 << 20;
+
     /// Validate and open one root. Construction and later reads never write.
     pub fn open(
         root: impl Into<PathBuf>,
