@@ -5,17 +5,18 @@
 //! The inputs borrow one whole Major-Cycle completion, so the final normal
 //! state and model they carry come from the same reconciliation.
 
-use casa_imaging_model::{CompiledProblem, ImageDomainRole};
+use casa_imaging_model::{CompiledProblem, ImageDomainRole, ReconstructionBasis};
 use casa_imaging_reconstruction::{
     FinalNormalState, ImageDomainReconstructionMasks, MajorCycleCompletion, ModelGeneration,
-    ReconstructionMask,
+    NormalStateCatalog, ReconstructionMask,
 };
 
-use crate::error::ProductsError;
 /// Borrowed scientific payloads for producing planned members.
 ///
 /// This value borrows one whole completion and its compiled problem, so the
 /// final normal state and model it carries come from the same reconciliation.
+/// Binding them checks once that they have the problem's shape; product
+/// generation then indexes them without checking again.
 #[derive(Debug)]
 pub struct ContinuumProductInputs<'a> {
     problem: &'a CompiledProblem,
@@ -26,14 +27,61 @@ pub struct ContinuumProductInputs<'a> {
 }
 
 impl<'a> ContinuumProductInputs<'a> {
-    /// Bind the borrowed payloads of one released join of `problem`.
-    pub const fn from_major_cycle(
-        problem: &'a CompiledProblem,
-        join: &'a MajorCycleCompletion,
-    ) -> Self {
+    /// Bind the completion of a run of `problem`.
+    ///
+    /// # Panics
+    ///
+    /// If the completion does not have `problem`'s image domains, their
+    /// shapes, planes and Taylor terms: it came from another problem's run.
+    pub fn from_major_cycle(problem: &'a CompiledProblem, join: &'a MajorCycleCompletion) -> Self {
+        let normal = join.normal_state();
+        let model = join.final_model().shape();
+        let domains = problem.geometry().domains();
+        assert!(
+            normal.domain_count() == domains.len()
+                && model.domains().len() == domains.len()
+                && domains.iter().all(|domain| {
+                    let pixels = domain.shape().pixels();
+                    model
+                        .domain_roles()
+                        .iter()
+                        .position(|role| role == domain.role())
+                        .is_some_and(|ordinal| {
+                            model.domains()[ordinal].pixels() == pixels
+                                && normal.domain_shape(ordinal) == Some(pixels)
+                        })
+                }),
+            "a run's completion has its problem's image domains and their shapes"
+        );
+        match normal.catalog() {
+            NormalStateCatalog::UnnormalizedTaylorBlockV1 => {
+                let ReconstructionBasis::Taylor { terms } = problem.reconstruction().basis() else {
+                    panic!("a Taylor normal state comes from a Taylor-basis problem");
+                };
+                assert!(
+                    terms >= 2
+                        && normal.coefficient_term_count() == terms
+                        && normal.normal_moment_count() == 2 * terms - 1
+                        && model.coefficients() == terms
+                        && domains.len() == 1,
+                    "a Taylor completion has its problem's terms, 2·terms − 1 moments and one domain"
+                );
+            }
+            NormalStateCatalog::UnnormalizedPlaneV1
+            | NormalStateCatalog::UnnormalizedChannelSlabV1 => {
+                let slab = normal.slab();
+                assert!(
+                    slab.core_range() == (0..slab.total_channels())
+                        && normal.channel_count() == slab.total_channels()
+                        && model.coefficients() == normal.channel_count()
+                        && model.polarizations() == normal.polarization_count(),
+                    "a run's final completion covers every output channel and polarization"
+                );
+            }
+        }
         Self {
             problem,
-            normal_state: join.normal_state(),
+            normal_state: normal,
             final_model: join.final_model(),
             reconstruction_mask: None,
             domain_reconstruction_masks: None,
@@ -42,39 +90,43 @@ impl<'a> ContinuumProductInputs<'a> {
 
     /// Bind the exact reconstruction mask used by the final bounded solve.
     ///
-    /// The mask must have the model-grid shape.
-    pub fn with_reconstruction_mask(
-        mut self,
-        mask: &'a ReconstructionMask,
-    ) -> Result<Self, ProductsError> {
-        if mask.shape() != self.normal_state.shape() {
-            return Err(ProductsError::ProblemShapeMismatch);
-        }
+    /// # Panics
+    ///
+    /// If the mask does not cover the main domain's grid.
+    #[must_use]
+    pub fn with_reconstruction_mask(mut self, mask: &'a ReconstructionMask) -> Self {
+        let main = self.domain(&ImageDomainRole::Main);
+        assert!(
+            mask.shape() == main.shape().pixels() && mask.coordinate() == main.direction(),
+            "the run's reconstruction mask covers its main domain"
+        );
         self.reconstruction_mask = Some(mask);
         self.domain_reconstruction_masks = None;
-        Ok(self)
+        self
     }
 
     /// Bind the exact spatial support for every canonical image domain.
+    ///
+    /// # Panics
+    ///
+    /// If the masks are not one per domain, each covering its domain.
+    #[must_use]
     pub fn with_domain_reconstruction_masks(
         mut self,
         masks: &'a ImageDomainReconstructionMasks,
-    ) -> Result<Self, ProductsError> {
-        if masks.len() != self.normal_state.domain_count()
-            || masks.len() != self.problem.geometry().domains().len()
-            || masks
-                .iter()
-                .zip(self.problem.geometry().domains())
-                .any(|(mask, domain)| {
-                    mask.shape() != domain.shape().pixels()
-                        || mask.coordinate() != domain.direction()
-                })
-        {
-            return Err(ProductsError::ProblemShapeMismatch);
-        }
+    ) -> Self {
+        let domains = self.problem.geometry().domains();
+        assert!(
+            masks.len() == domains.len()
+                && masks.iter().zip(domains).all(|(mask, domain)| {
+                    mask.shape() == domain.shape().pixels()
+                        && mask.coordinate() == domain.direction()
+                }),
+            "the run's reconstruction masks cover its domains, one each"
+        );
         self.reconstruction_mask = None;
         self.domain_reconstruction_masks = Some(masks);
-        Ok(self)
+        self
     }
 
     /// Borrow the exact compiled problem behind these payloads.
@@ -83,46 +135,36 @@ impl<'a> ContinuumProductInputs<'a> {
         self.problem
     }
 
-    /// Return radians-per-pixel on each direction axis of the main domain.
-    #[must_use]
-    pub fn cell_size_rad(&self) -> [f64; 2] {
-        self.cell_size_rad_for_domain(&ImageDomainRole::Main)
-            .expect("compiled geometry contains exactly one main domain")
-    }
-
-    /// Return radians-per-pixel on each direction axis of one image domain.
-    pub(crate) fn cell_size_rad_for_domain(
-        &self,
-        role: &ImageDomainRole,
-    ) -> Result<[f64; 2], ProductsError> {
-        let domain = self
-            .problem
+    fn domain(&self, role: &ImageDomainRole) -> &casa_imaging_model::CompiledImageDomain {
+        self.problem
             .geometry()
             .domains()
             .iter()
             .find(|domain| domain.role() == role)
-            .ok_or(ProductsError::ProblemShapeMismatch)?;
-        let increment = domain.direction().increment_rad();
-        Ok([increment[0].abs(), increment[1].abs()])
+            .expect("a product's domain is one of its problem's domains")
     }
 
-    /// Resolve the canonical model-domain ordinal from a compiler-owned role.
-    pub(crate) fn model_domain_ordinal(
-        &self,
-        role: &ImageDomainRole,
-    ) -> Result<usize, ProductsError> {
-        let mut matches = self
-            .final_model
+    /// Return radians-per-pixel on each direction axis of the main domain.
+    #[must_use]
+    pub fn cell_size_rad(&self) -> [f64; 2] {
+        self.cell_size_rad_for_domain(&ImageDomainRole::Main)
+    }
+
+    /// Return radians-per-pixel on each direction axis of one image domain.
+    pub(crate) fn cell_size_rad_for_domain(&self, role: &ImageDomainRole) -> [f64; 2] {
+        let increment = self.domain(role).direction().increment_rad();
+        [increment[0].abs(), increment[1].abs()]
+    }
+
+    /// The ordinal of a domain in the normal state and the model, which
+    /// share the problem's domain order.
+    pub(crate) fn model_domain_ordinal(&self, role: &ImageDomainRole) -> usize {
+        self.final_model
             .shape()
             .domain_roles()
             .iter()
-            .enumerate()
-            .filter(|(_, candidate)| *candidate == role);
-        let (ordinal, _) = matches.next().ok_or(ProductsError::ProblemShapeMismatch)?;
-        if matches.next().is_some() {
-            return Err(ProductsError::ProblemShapeMismatch);
-        }
-        Ok(ordinal)
+            .position(|candidate| candidate == role)
+            .expect("a product's domain is one of its problem's domains")
     }
 
     /// Borrow the authoritative normal state (residual, PSF, sensitivity).

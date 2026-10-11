@@ -14,6 +14,8 @@ mod demand;
 mod error;
 mod generation;
 mod normalization;
+mod plan;
+mod plane;
 mod restore;
 mod source;
 mod storage;
@@ -24,12 +26,12 @@ mod writer;
 pub use beam::{RestoringBeam, fit_restoring_beam};
 pub use demand::ContinuumGenerationDemand;
 pub use error::ProductsError;
-pub use generation::{
+pub use generation::produce_continuum_members;
+pub use normalization::{MinorCycleImageResponse, MosaicSensitivity, normalize_plane};
+pub use plan::{
     AnalyticPrimaryBeamModel, ContinuumProductControls, DEFAULT_PSF_CUTOFF,
     PlannedContinuumGeneration, PlannedMember, PublishedContinuumGeneration, PublishedMember,
-    produce_continuum_members,
 };
-pub use normalization::{MinorCycleImageResponse, MosaicSensitivity, normalize_plane};
 pub use restore::{
     ResidualBeamScaling, fft_convolve, gaussian_beam_image, rescale_residual_to_beam,
 };

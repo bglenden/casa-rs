@@ -20,6 +20,9 @@ pub enum Unsupported {
     Capability(RequiredCapability),
     /// A Taylor basis reconstructs Stokes I only.
     PolarizedTaylorBasis,
+    /// A Taylor basis reconstructs one image domain: the Taylor products
+    /// have no outlier fields.
+    MultiDomainTaylorBasis,
     /// The Metal backend needs a Metal device, which the host lacks.
     NoMetalDevice,
     /// Metal accumulates its grids in `f32` (plan decision D2).
@@ -38,6 +41,9 @@ impl fmt::Display for Unsupported {
             ),
             Self::PolarizedTaylorBasis => {
                 formatter.write_str("a Taylor basis reconstructs Stokes I only")
+            }
+            Self::MultiDomainTaylorBasis => {
+                formatter.write_str("a Taylor basis reconstructs one image domain, no outliers")
             }
             Self::NoMetalDevice => {
                 formatter.write_str("the Metal backend needs a unified-memory Metal 3 device")
@@ -99,10 +105,15 @@ pub fn check(
     if matches!(
         problem.reconstruction().basis(),
         ReconstructionBasis::Taylor { .. }
-    ) && problem.reconstruction().polarization().coordinates()
-        != [PolarizationCoordinate::StokesI]
-    {
-        unsupported.push(Unsupported::PolarizedTaylorBasis);
+    ) {
+        if problem.reconstruction().polarization().coordinates()
+            != [PolarizationCoordinate::StokesI]
+        {
+            unsupported.push(Unsupported::PolarizedTaylorBasis);
+        }
+        if problem.geometry().domains().len() != 1 {
+            unsupported.push(Unsupported::MultiDomainTaylorBasis);
+        }
     }
     if backend == BackendChoice::Metal {
         if !host.metal {

@@ -57,14 +57,14 @@ impl ProductStoragePlan {
     ///
     /// # Errors
     ///
-    /// The axes have no spectral axis, or their value count overflows.
+    /// The member's value count overflows.
     pub fn layout(self, axes: &ProductAxes) -> Result<ProductWindowLayout, ProductsError> {
         let spectral_axis = axes
             .order()
             .positions()
             .iter()
             .position(|axis| *axis == ImageAxis::Spectral)
-            .ok_or(ProductsError::ProblemShapeMismatch)?;
+            .expect("an image domain's axes include its spectral axis");
         let shape = axes.shape();
         let maximum_channels = self.maximum_channels.min(shape[spectral_axis]);
         let mut window_shape = shape;

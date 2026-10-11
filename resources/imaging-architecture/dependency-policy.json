@@ -202,9 +202,7 @@
     ".rs"
    ],
    "regex": "\\benv::var(?:_os)?\\s*\\(|\\bstd::env\\b",
-   "grandfathered": [
-    "crates/casa-imaging-products/src/taylor.rs"
-   ]
+   "grandfathered": []
   },
   {
    "id": "no-eprintln-in-imaging-crates",
@@ -223,9 +221,7 @@
     ".rs"
    ],
    "regex": "\\beprintln!\\s*\\(",
-   "grandfathered": [
-    "crates/casa-imaging-products/src/taylor.rs"
-   ]
+   "grandfathered": []
   },
   {
    "id": "no-content-hashing-in-imaging-crates",

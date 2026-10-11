@@ -281,8 +281,7 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
     let round = rerun_two_domain(&problem, first_round);
     let normal = round.join.normal_state();
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join)
-        .with_domain_reconstruction_masks(&masks)
-        .expect("domain-mask inputs");
+        .with_domain_reconstruction_masks(&masks);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
     demand(&planned, &inputs, full_window(&planned));
     let generated = generate_for(&planned, &inputs);
@@ -970,8 +969,7 @@ fn clean_mask_product_is_the_committed_reconstruction_support() {
     )
     .expect("reconstruction mask");
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join)
-        .with_reconstruction_mask(&mask)
-        .expect("mask-bound inputs");
+        .with_reconstruction_mask(&mask);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
     let generated = generate_for(&planned, &inputs);
     let published_mask = generated

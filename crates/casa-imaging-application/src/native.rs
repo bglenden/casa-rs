@@ -264,10 +264,8 @@ fn publish_products(
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific);
     if let Some(masks) = reconstruction_masks.as_ref() {
         inputs = match masks {
-            ReconstructionMaskSet::Shared(mask) => inputs.with_reconstruction_mask(mask)?,
-            ReconstructionMaskSet::Domains(masks) => {
-                inputs.with_domain_reconstruction_masks(masks)?
-            }
+            ReconstructionMaskSet::Shared(mask) => inputs.with_reconstruction_mask(mask),
+            ReconstructionMaskSet::Domains(masks) => inputs.with_domain_reconstruction_masks(masks),
         };
     }
     let planned = PlannedContinuumGeneration::new(&inputs, &publication.controls)?;
