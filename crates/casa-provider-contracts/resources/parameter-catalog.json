@@ -5917,7 +5917,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Primary-beam cutoff of the primary-beam support, its pixel mask and the mosaic flat-noise normalization",
+        "summary": "Primary-beam cutoff of .pb's support and pixel mask and of the mosaic flat-noise normalization; negative leaves uncorrected products unmasked",
         "details": "Its magnitude bounds where the primary beam is used: the mosaic and AW flat-noise normalization, and the support and pixel mask of `.pb`. The standard and W-projection gridders use it only when they write `.pb` (`write_pb` or `pbcor`). A negative value leaves the uncorrected products, such as `.image` and `.residual`, unmasked.",
         "examples": [
           "0.2"
@@ -8571,7 +8571,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Write the primary-beam image used for PB correction",
+        "summary": "Write the primary-beam image; without it or pbcor, the standard and W-projection gridders write no .pb and no PB pixel mask, unlike CASA",
         "details": "Without it, or `pbcor`, the standard and W-projection gridders form no primary beam: they write no `.pb` and attach no primary-beam pixel mask to `.image` or `.residual`, unlike CASA, which always does. Setting it gives CASA's `.pb` and its `pblimit` masks.",
         "examples": [
           "false"

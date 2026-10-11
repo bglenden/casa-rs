@@ -59,6 +59,22 @@ impl CleanStop {
             Self::MajorCycles => 9,
         }
     }
+
+    /// The reason's name, as the run summary records it beside the
+    /// `stopcode`.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Iterations => "iterations",
+            Self::Threshold => "threshold",
+            Self::NoChange => "no_change",
+            Self::DivergedFromPrevious => "diverged_from_previous",
+            Self::DivergedFromMinimum => "diverged_from_minimum",
+            Self::ZeroMask => "zero_mask",
+            Self::NSigma => "nsigma",
+            Self::MajorCycles => "major_cycles",
+        }
+    }
 }
 
 /// What one look at the residual of every plane and field reports to the

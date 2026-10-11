@@ -94,7 +94,7 @@ fn a_completed_run_records_every_phase_with_its_memory() {
     assert_eq!(summary["minor_iterations"], 3);
     assert_eq!(
         summary["stop"],
-        json!({ "reason": "Iterations", "stopcode": 1 })
+        json!({ "reason": "iterations", "stopcode": 1 })
     );
     assert_eq!(summary["precision"], "f64");
     assert_eq!(summary["backend"], "cpu");
@@ -135,6 +135,11 @@ fn a_run_that_fails_after_its_cycles_keeps_their_record() {
     std::fs::create_dir(&output).expect("output directory");
     std::fs::set_permissions(&output, std::fs::Permissions::from_mode(0o555))
         .expect("read-only output");
+    if std::fs::write(output.join("probe"), b"").is_ok() {
+        // A superuser writes through the permissions.
+        eprintln!("skipped: the read-only directory accepts new entries");
+        return;
+    }
     let path = root.path().join("failed.summary.json");
     let result = casa_imaging_application::execute(
         &bounded_cycles(&measurement_set, &output.join("failed")),

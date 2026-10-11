@@ -221,11 +221,11 @@ pub fn run_phase<T, E: From<Cancelled>>(
 fn clean_stop<S: Serializer>(stop: &Option<CleanStop>, serializer: S) -> Result<S::Ok, S::Error> {
     #[derive(Serialize)]
     struct Stop {
-        reason: String,
+        reason: &'static str,
         stopcode: i32,
     }
     stop.map(|stop| Stop {
-        reason: format!("{stop:?}"),
+        reason: stop.name(),
         stopcode: stop.code(),
     })
     .serialize(serializer)
@@ -322,7 +322,7 @@ mod tests {
         assert_eq!(json["error"], "a pass failed");
         assert_eq!(
             json["stop"],
-            serde_json::json!({"reason": "Threshold", "stopcode": 2})
+            serde_json::json!({"reason": "threshold", "stopcode": 2})
         );
         assert_eq!(json["precision"], "f64");
         assert_eq!(json["backend"], "cpu");
