@@ -4,10 +4,16 @@
 
 use std::sync::mpsc;
 
-use super::{BoundedSource, Cancel, NativeBlock, PassError, SourceError};
+use super::{BlockShape, BoundedSource, Cancel, NativeBlock, PassError, SourceError};
 
 /// Blocks resident at once: one being consumed and one being filled.
 const SLOTS: usize = 2;
+
+/// Bytes the stream's blocks hold for a source whose largest block is
+/// `block`.
+pub(super) const fn bytes(block: BlockShape) -> u64 {
+    SLOTS as u64 * block.bytes()
+}
 
 /// Traverse `source` to exhaustion, handing each filled block to `consume`
 /// in source order. Returns the number of blocks consumed.
@@ -19,12 +25,13 @@ pub(super) fn stream_blocks(
     cancel: &Cancel,
     mut consume: impl FnMut(&NativeBlock) -> Result<(), PassError>,
 ) -> Result<u64, PassError> {
+    let shape = source.maximum_block();
     std::thread::scope(|scope| {
         let (full_sender, full) = mpsc::sync_channel::<Result<NativeBlock, SourceError>>(SLOTS);
         let (free_sender, free) = mpsc::sync_channel::<NativeBlock>(SLOTS);
         for _ in 0..SLOTS {
             free_sender
-                .send(NativeBlock::default())
+                .send(NativeBlock::with_capacity(shape))
                 .expect("free queue holds every slot");
         }
         let producer = std::thread::Builder::new()
@@ -60,6 +67,12 @@ pub(super) fn stream_blocks(
                 result = Err(PassError::Cancelled);
                 break;
             }
+            debug_assert!(
+                block.len() <= shape.rows
+                    && block.channels() <= shape.channels
+                    && block.correlations() <= shape.correlations,
+                "a source fills blocks within its maximum block"
+            );
             if let Err(error) = consume(&block) {
                 result = Err(error);
                 break;

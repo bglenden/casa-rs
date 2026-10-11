@@ -23,9 +23,9 @@ use casa_imaging_reconstruction::{
     ReconstructionMaskSet,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain, PassError,
-    PassSummary, Residency, VisibilitySink, WaveDemand, WorkerTeam, run_density_pass,
-    run_major_cycle,
+    BackendChoice, BoundedSource, Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain,
+    PassError, PassSummary, Residency, VisibilitySink, WaveDemand, WorkerTeam, density_pass_bytes,
+    run_density_pass, run_major_cycle,
 };
 use casa_imaging_runtime::{
     CubeState, Demand, HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache, Reservation,
@@ -86,6 +86,8 @@ struct Run<'a> {
     domains: Vec<DomainOperator>,
     source: MeasurementSetSource<'a>,
     weighting: WeightingGeneration,
+    /// The charge of the weighting's density grid, held with it.
+    _weights: Reservation,
     team: &'a WorkerTeam,
     cancel: Cancel,
     host: HostResources,
@@ -403,13 +405,20 @@ impl<'a> Run<'a> {
                 .any(|domain| domain.operator.cf().pointing_ramp()),
             dish_classes,
         );
+        let (host, policy) = (inputs.host, inputs.policy);
         let started = Instant::now();
-        let weighting = weighting(problem, &domains[0], &mut source, team, &cancel)?;
+        let (weighting, weights) = weighting(
+            problem,
+            &domains[0],
+            &mut source,
+            team,
+            &cancel,
+            (&host, &policy),
+        )?;
         tracing::info!(
             "imaging weights: {workers} workers, {:.2} s",
             started.elapsed().as_secs_f64()
         );
-        let (host, policy) = (inputs.host, inputs.policy);
         let cube = matches!(main.basis(), Basis::ChannelLocal { .. })
             .then(|| cube_state(problem, inputs.spill_directory, workers, &host, &policy))
             .transpose()?;
@@ -425,6 +434,7 @@ impl<'a> Run<'a> {
             domains,
             source,
             weighting,
+            _weights: weights,
             team,
             cancel,
             host,
@@ -616,6 +626,7 @@ impl<'a> Run<'a> {
             native_spacing_hz: self.native_spacing_hz,
             workers: self.team.workers(),
             backend: self.backend,
+            block: self.source.maximum_block(),
         };
         let free = free_memory(&self.host, &self.policy).saturating_sub(besides);
         let residency = Residency::plan(&demand, free);
@@ -720,18 +731,23 @@ fn next_masks(
 
 /// CASA's imaging weights for the run: the input weights (natural) or the
 /// density weights of one traversal on the main domain's cells, which every
-/// domain shares (`SynthesisImagerVi2::weight`).
+/// domain shares (`SynthesisImagerVi2::weight`), with the charge of the
+/// density grid the weights keep. The density pass is admitted under the
+/// run's `(host, policy)` before it allocates.
 fn weighting(
     problem: &CompiledProblem,
     main: &DomainOperator,
     source: &mut MeasurementSetSource<'_>,
     team: &WorkerTeam,
     cancel: &Cancel,
-) -> Result<WeightingGeneration, ImagingError> {
+    (host, policy): (&HostResources, &ResourcePolicy),
+) -> Result<(WeightingGeneration, Reservation), ImagingError> {
     let contract = problem.weighting();
     let taper = contract.uv_taper();
     let (robust, bandwidth) = match contract.scheme() {
-        WeightingScheme::Natural => return Ok(WeightingGeneration::Natural { taper }),
+        WeightingScheme::Natural => {
+            return Ok((WeightingGeneration::Natural { taper }, Reservation::none()));
+        }
         WeightingScheme::Uniform => (None, None),
         WeightingScheme::Briggs { robust } => (Some(robust), None),
         WeightingScheme::BriggsBandwidthTaper { robust } => {
@@ -752,10 +768,23 @@ fn weighting(
         }
     };
     let shape = density_shape(problem, &problem.geometry().domains()[0])?;
+    let mut weights = admit(
+        host,
+        policy,
+        &Demand {
+            phase: "imaging weights",
+            memory: density_pass_bytes(
+                &main.resampler,
+                &shape,
+                source.maximum_block(),
+                team.workers(),
+            ),
+        },
+    )?;
     let grid = run_density_pass(&main.operator, &main.resampler, shape, source, team, cancel)?;
-    Ok(WeightingGeneration::density(
-        grid, robust, bandwidth, taper,
-    )?)
+    weights.retain(shape.bytes());
+    let weighting = WeightingGeneration::density(grid, robust, bandwidth, taper)?;
+    Ok((weighting, weights))
 }
 
 /// The output-frame frequency envelope of a plane range of a channel-local

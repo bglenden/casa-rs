@@ -8,13 +8,14 @@ use std::ops::Range;
 use casa_imaging_metal::MetalBackend;
 use casa_imaging_operator::{
     CpuBackend, GridAccumulator, GridBackend, GridPrecision, Mode, NativeRow, NormalImages,
-    PlaneRange, PredictionScratch, PreparedModelGrids, SampleBuffer, Work,
+    PlaneRange, PredictionScratch, PreparedModelGrids, SampleBlock, SampleBuffer, Work,
 };
 use num_complex::Complex32;
 
 use super::partition::Router;
 use super::{
-    BackendChoice, MajorCyclePass, NativeBlock, Partition, PassError, VisibilitySink, WorkerTeam,
+    BackendChoice, BlockShape, CHUNK_ROWS, MajorCyclePass, NativeBlock, Partition, PassDomain,
+    PassError, VisibilitySink, WorkerTeam, chunk_ranges, slices,
 };
 
 /// Row chunks per worker in the placement stage; enough to balance rows
@@ -47,20 +48,184 @@ struct Domain<'w> {
     model: Option<&'w PreparedModelGrids>,
 }
 
-/// One row chunk's placements, routed by owner, its prediction scratch and
-/// its rows' native-channel residuals.
+/// One row chunk's placements on the wave's planes, grouped by owner, its
+/// prediction scratch and its rows' native-channel residuals.
+///
+/// Every buffer is allocated once, for the largest chunk of the source's
+/// largest block ([`ChunkShape`]), so a chunk holds [`ChunkShape::bytes`]
+/// however its placements fall among the owners.
 struct Chunk {
     rows: Range<usize>,
+    /// One row's placements.
     scratch: SampleBuffer,
-    owned: Vec<SampleBuffer>,
-    /// Every placement of the chunk when the weight image has one owner
-    /// ([`Router::weight_owner`]): that owner grids `Mode::Weight` over it.
-    weight_owned: SampleBuffer,
-    placed: u64,
+    /// The chunk's placements on the wave's planes in row order; the weight
+    /// image's single owner ([`Router::weight_owner`]) grids them all.
+    placed: SampleBuffer,
+    /// The owner of each placement of `placed`.
+    owners: Vec<u32>,
+    /// `placed` grouped by owner, each owner's in row order: owner `o`'s are
+    /// `starts[o]..starts[o + 1]`. Unused with one owner, who reads `placed`.
+    routed: SampleBuffer,
+    starts: Vec<usize>,
+    /// Indices into `placed` in `routed` order.
+    order: Vec<u32>,
     backend: CpuBackend,
     prediction: PredictionScratch,
     predicted: Vec<Complex32>,
     residual: Vec<Complex32>,
+}
+
+/// The largest chunk of a wave over rows of `block`'s layout: at most
+/// [`CHUNK_ROWS`] rows, whatever rows the source puts in a block.
+#[derive(Clone, Copy)]
+struct ChunkShape {
+    /// Placements one native row places on any domain.
+    row: usize,
+    /// Placements the chunk's rows place.
+    placements: usize,
+    /// Correlations per placement.
+    npol: usize,
+    /// Correlations and channels of one row.
+    cells: usize,
+    /// Owners of the domain with the most.
+    owners: usize,
+}
+
+impl ChunkShape {
+    fn new(domains: &[PassDomain<'_>], block: BlockShape) -> Self {
+        let row = domains
+            .iter()
+            .map(|domain| domain.resampler.samples_per_row(block.channels))
+            .max()
+            .unwrap_or(0);
+        Self {
+            row,
+            placements: CHUNK_ROWS * row,
+            npol: block.correlations,
+            cells: block.channels * block.correlations,
+            owners: domains
+                .iter()
+                .map(|domain| domain.partition.owners())
+                .max()
+                .unwrap_or(1),
+        }
+    }
+
+    /// Bytes a Metal owner's staging holds: its share of every chunk of a
+    /// slice, at most the whole slice.
+    const fn staging_bytes(self, chunks: usize) -> u64 {
+        SampleBuffer::bytes(self.npol, chunks * self.placements)
+    }
+
+    /// Bytes a chunk of this shape holds: its placement, owner and order
+    /// buffers, one row's residual and model visibilities, and its
+    /// prediction scratch, which holds one row's samples, their sources and
+    /// their values.
+    const fn bytes(self) -> u64 {
+        let routed = if self.owners > 1 { self.placements } else { 0 };
+        let prediction = SampleBuffer::bytes(self.npol, self.row)
+            + (self.row * (size_of::<usize>() + 2 * self.npol * size_of::<Complex32>())) as u64;
+        SampleBuffer::bytes(self.npol, self.row + self.placements + routed)
+            + prediction
+            + (2 * self.placements * size_of::<u32>()
+                + (self.owners + 1) * size_of::<usize>()
+                + 2 * self.cells * size_of::<Complex32>()) as u64
+    }
+}
+
+impl Chunk {
+    fn new(shape: ChunkShape) -> Self {
+        let routed = if shape.owners > 1 {
+            shape.placements
+        } else {
+            0
+        };
+        Self {
+            rows: 0..0,
+            scratch: SampleBuffer::with_capacity(shape.npol, shape.row),
+            placed: SampleBuffer::with_capacity(shape.npol, shape.placements),
+            owners: Vec::with_capacity(shape.placements),
+            routed: SampleBuffer::with_capacity(shape.npol, routed),
+            starts: Vec::with_capacity(shape.owners + 1),
+            order: Vec::with_capacity(routed),
+            backend: CpuBackend::new(),
+            prediction: PredictionScratch::default(),
+            predicted: Vec::with_capacity(shape.cells),
+            residual: Vec::with_capacity(shape.cells),
+        }
+    }
+
+    /// Group `placed` by owner into `routed`, keeping row order within each
+    /// owner, for `owners` owners.
+    fn route(&mut self, owners: usize) {
+        self.starts.clear();
+        self.starts.resize(owners + 1, 0);
+        for &owner in &self.owners {
+            self.starts[owner as usize + 1] += 1;
+        }
+        for owner in 0..owners {
+            self.starts[owner + 1] += self.starts[owner];
+        }
+        // A stable counting sort; `starts` is restored as it is consumed.
+        self.order.clear();
+        self.order.resize(self.owners.len(), 0);
+        for (index, &owner) in self.owners.iter().enumerate() {
+            let slot = &mut self.starts[owner as usize];
+            self.order[*slot] = index as u32;
+            *slot += 1;
+        }
+        self.starts.copy_within(..owners, 1);
+        self.starts[0] = 0;
+        self.routed.clear();
+        let placed = self.placed.block();
+        for &index in &self.order {
+            let index = index as usize;
+            self.routed.push(
+                placed.placements[index],
+                placed.values_of(index),
+                placed.weights_of(index),
+            );
+        }
+    }
+
+    /// Owner `owner`'s placements of `owners`.
+    fn owned(&self, owner: usize, owners: usize) -> SampleBlock<'_> {
+        if owners == 1 {
+            self.placed.block()
+        } else {
+            self.routed
+                .block_range(self.starts[owner]..self.starts[owner + 1])
+        }
+    }
+}
+
+/// Row chunks of a wave on `workers` workers.
+const fn chunks(workers: usize) -> usize {
+    workers * CHUNKS_PER_WORKER
+}
+
+/// Bytes a wave places with on `workers` workers over rows of `block`'s
+/// layout: its row chunks and, on Metal, each owner's staging. They do not
+/// grow with the source's block ([`CHUNK_ROWS`]).
+pub(super) fn chunk_bytes(
+    domains: &[PassDomain<'_>],
+    backend: BackendChoice,
+    block: BlockShape,
+    workers: usize,
+) -> u64 {
+    let count = chunks(workers);
+    let shape = ChunkShape::new(domains, block);
+    let staging = match backend {
+        BackendChoice::Cpu => 0,
+        BackendChoice::Metal => (domains.len() * shape.owners) as u64 * shape.staging_bytes(count),
+    };
+    count as u64 * shape.bytes() + staging
+}
+
+/// Bytes the model visibilities of one block of `block` hold, which a wave
+/// with a model predicts for every row of the block at once.
+pub(super) const fn prediction_bytes(block: BlockShape) -> u64 {
+    (block.rows * block.channels * block.correlations * size_of::<Complex32>()) as u64
 }
 
 pub(super) struct Wave<'w, 'p> {
@@ -69,6 +234,8 @@ pub(super) struct Wave<'w, 'p> {
     domains: Vec<Domain<'w>>,
     native_residuals: bool,
     check_spacing: bool,
+    /// What each chunk was allocated for.
+    shape: ChunkShape,
     chunks: Vec<Chunk>,
     predictions: Vec<Complex32>,
     samples: u64,
@@ -76,13 +243,19 @@ pub(super) struct Wave<'w, 'p> {
 
 impl<'w, 'p> Wave<'w, 'p> {
     /// A wave over `planes` with each domain's prepared `models`, forming
-    /// residuals at native channels when `native_residuals`.
+    /// residuals at native channels when `native_residuals`, on `workers`
+    /// workers over blocks of at most `block`. It places with
+    /// [`chunk_bytes`] and predicts into [`prediction_bytes`].
     pub(super) fn new(
         pass: &'w MajorCyclePass<'p>,
         planes: PlaneRange,
         models: Option<&'w [PreparedModelGrids]>,
         native_residuals: bool,
+        block: BlockShape,
+        workers: usize,
     ) -> Result<Self, PassError> {
+        let count = chunks(workers);
+        let shape = ChunkShape::new(pass.domains, block);
         let domains = pass
             .domains
             .iter()
@@ -111,8 +284,9 @@ impl<'w, 'p> Wave<'w, 'p> {
                                     )?),
                                     backend: OwnerBackend::Metal {
                                         backend: Box::new(MetalBackend::new(operator.cf())?),
-                                        staging: SampleBuffer::new(
-                                            operator.polarization().correlations().len(),
+                                        staging: SampleBuffer::with_capacity(
+                                            shape.npol,
+                                            count * shape.placements,
                                         ),
                                     },
                                     images: None,
@@ -128,14 +302,22 @@ impl<'w, 'p> Wave<'w, 'p> {
                 })
             })
             .collect::<Result<_, PassError>>()?;
+        // A pass with a model predicts each block, for its native residuals or
+        // for a visibility writer.
+        let predictions = if pass.model.is_some() {
+            block.rows * shape.cells
+        } else {
+            0
+        };
         Ok(Self {
             pass,
             planes,
             domains,
             native_residuals,
             check_spacing: false,
-            chunks: Vec::new(),
-            predictions: Vec::new(),
+            shape,
+            chunks: (0..count).map(|_| Chunk::new(shape)).collect(),
+            predictions: Vec::with_capacity(predictions),
             samples: 0,
         })
     }
@@ -166,7 +348,6 @@ impl<'w, 'p> Wave<'w, 'p> {
         team: &WorkerTeam,
         visibilities: Option<&mut VisibilitySink<'_>>,
     ) -> Result<(), PassError> {
-        let npol = block.correlations();
         let rows = block.len();
         if self.check_spacing {
             let bound_hz = self.pass.native_spacing_hz;
@@ -186,25 +367,12 @@ impl<'w, 'p> Wave<'w, 'p> {
                 }
             }
         }
-        let count = (team.workers() * CHUNKS_PER_WORKER).clamp(1, rows.max(1));
-        if self.chunks.len() < count {
-            self.chunks.resize_with(count, || Chunk {
-                rows: 0..0,
-                scratch: SampleBuffer::new(npol),
-                owned: Vec::new(),
-                weight_owned: SampleBuffer::new(npol),
-                placed: 0,
-                backend: CpuBackend::new(),
-                prediction: PredictionScratch::default(),
-                predicted: Vec::new(),
-                residual: Vec::new(),
-            });
-        }
-        for (index, chunk) in self.chunks[..count].iter_mut().enumerate() {
-            chunk.rows = index * rows / count..(index + 1) * rows / count;
-        }
         let sink_predictions = visibilities.as_ref().is_some_and(|sink| sink.predictions);
         if self.native_residuals || sink_predictions {
+            let count = self.chunks.len().min(rows.max(1));
+            for (index, chunk) in self.chunks[..count].iter_mut().enumerate() {
+                chunk.rows = index * rows / count..(index + 1) * rows / count;
+            }
             self.predict(block, team, count)?;
         } else {
             self.predictions.clear();
@@ -217,10 +385,20 @@ impl<'w, 'p> Wave<'w, 'p> {
             };
             (sink.write)(block, predictions).map_err(PassError::VisibilityWrite)?;
         }
-        for index in 0..self.domains.len() {
-            let placed = self.place(block, team, count, index)?;
-            if index == 0 {
-                self.samples += placed;
+        // Slices of the block, each owner's in row order as a whole block's
+        // would be, so the accumulation is the same.
+        let chunks = self.chunks.len();
+        for slice in slices(rows, chunks) {
+            let mut count = 0;
+            for (chunk, rows) in self.chunks.iter_mut().zip(chunk_ranges(slice, chunks)) {
+                chunk.rows = rows;
+                count += 1;
+            }
+            for index in 0..self.domains.len() {
+                let placed = self.place(block, team, count, index)?;
+                if index == 0 {
+                    self.samples += placed;
+                }
             }
         }
         Ok(())
@@ -244,18 +422,10 @@ impl<'w, 'p> Wave<'w, 'p> {
         let predictions = &self.predictions;
         let native_residuals = self.native_residuals;
         let cells = block.channels() * block.correlations();
-        // With region owners the weight image has one owner, which must see
-        // every placement; plane owners grid their own samples' weights.
-        let route_weight = pass.modes.weight && router.weight_owner().is_some();
+        let shape = self.shape;
         team.for_each_mut(&mut self.chunks[..count], |_, chunk| {
-            chunk.placed = 0;
-            chunk
-                .owned
-                .resize_with(owners, || SampleBuffer::new(block.correlations()));
-            chunk.owned[..owners]
-                .iter_mut()
-                .for_each(SampleBuffer::clear);
-            chunk.weight_owned.clear();
+            chunk.placed.clear();
+            chunk.owners.clear();
             for row in chunk.rows.clone() {
                 chunk.scratch.clear();
                 let native = block.row(index, row);
@@ -282,26 +452,31 @@ impl<'w, 'p> Wave<'w, 'p> {
                     &native,
                     &mut chunk.scratch,
                 )?;
+                debug_assert!(
+                    chunk.scratch.len() <= shape.row,
+                    "a row places within the chunk's per-row bound"
+                );
                 let placed = chunk.scratch.block();
                 for (sample, placement) in placed.placements.iter().enumerate() {
                     if !planes.contains(placement.plane) {
                         continue;
                     }
-                    let owner = router.owner(target.operator, placement);
-                    chunk.owned[owner].push(
+                    chunk
+                        .owners
+                        .push(router.owner(target.operator, placement) as u32);
+                    chunk.placed.push(
                         *placement,
                         placed.values_of(sample),
                         placed.weights_of(sample),
                     );
-                    if route_weight {
-                        chunk.weight_owned.push(
-                            *placement,
-                            placed.values_of(sample),
-                            placed.weights_of(sample),
-                        );
-                    }
-                    chunk.placed += 1;
                 }
+            }
+            debug_assert!(
+                chunk.placed.len() <= shape.placements,
+                "a chunk places within the placements it was allocated for"
+            );
+            if owners > 1 {
+                chunk.route(owners);
             }
             Ok::<_, PassError>(())
         })?;
@@ -321,7 +496,7 @@ impl<'w, 'p> Wave<'w, 'p> {
             match &mut owner.backend {
                 OwnerBackend::Cpu(backend) => {
                     for chunk in chunks {
-                        let block = chunk.owned[owner_index].block();
+                        let block = chunk.owned(owner_index, owners);
                         if !block.is_empty() {
                             accumulate(pass, operator, backend, &block, model, acc, own_weight)?;
                         }
@@ -330,7 +505,7 @@ impl<'w, 'p> Wave<'w, 'p> {
                 OwnerBackend::Metal { backend, staging } => {
                     staging.clear();
                     for chunk in chunks {
-                        let block = chunk.owned[owner_index].block();
+                        let block = chunk.owned(owner_index, owners);
                         for sample in 0..block.len() {
                             staging.push(
                                 block.placements[sample],
@@ -355,7 +530,7 @@ impl<'w, 'p> Wave<'w, 'p> {
             }
             if pass.modes.weight && weight_owner == Some(owner_index) {
                 for chunk in chunks {
-                    let block = chunk.weight_owned.block();
+                    let block = chunk.placed.block();
                     if block.is_empty() {
                         continue;
                     }
@@ -373,7 +548,7 @@ impl<'w, 'p> Wave<'w, 'p> {
             }
             Ok::<_, PassError>(())
         })?;
-        Ok(chunks.iter().map(|chunk| chunk.placed).sum())
+        Ok(chunks.iter().map(|chunk| chunk.placed.len() as u64).sum())
     }
 
     /// Model visibilities of every selected sample of `block`, summed over

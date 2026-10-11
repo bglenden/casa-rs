@@ -8,7 +8,7 @@ use casa_imaging_operator::{
 };
 use casa_imaging_reconstruction::resident_bytes_per_cell;
 
-use super::{BackendChoice, PassDomain, native_residuals};
+use super::{BackendChoice, BlockShape, PassDomain, native_residuals};
 
 /// How one pass divides an image domain's grid accumulation among owners
 /// (one per worker).
@@ -112,6 +112,8 @@ pub struct WaveDemand<'a> {
     pub workers: usize,
     /// Where the owners grid.
     pub backend: BackendChoice,
+    /// The layout of the source's rows ([`super::BoundedSource::maximum_block`]).
+    pub block: BlockShape,
 }
 
 impl WaveDemand<'_> {
@@ -134,7 +136,9 @@ impl WaveDemand<'_> {
     /// domain. On Metal the accumulators are device memory and cost nothing
     /// more; each owner adds its ring ([`casa_imaging_metal::ring_bytes`]),
     /// and a pass that subtracts the model on the device adds the device
-    /// copy of the model grids.
+    /// copy of the model grids. Per pass, whatever the wave: the row chunks
+    /// it places [`Self::block`]'s rows with. What grows with the source's
+    /// block is the source's ([`super::source_block_bytes`]).
     #[must_use]
     pub fn bytes(&self, planes: u32) -> u64 {
         let total = self.planes();
@@ -189,7 +193,9 @@ impl WaveDemand<'_> {
             let gpols = operator.polarization().grid_pols() as u64;
             per_worker = per_worker.max(grid_cells * 16 + gpols * image_cells * 16);
         }
-        bytes + self.workers as u64 * per_worker
+        bytes
+            + self.workers as u64 * per_worker
+            + super::wave::chunk_bytes(self.domains, self.backend, self.block, self.workers)
     }
 }
 

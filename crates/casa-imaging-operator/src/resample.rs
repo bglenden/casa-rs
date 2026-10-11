@@ -684,6 +684,33 @@ impl SpectralResampler {
         Ok(())
     }
 
+    /// The most samples [`Self::place`] places for one native row of
+    /// `channels` channels. Direct and nearest sampling place at most one
+    /// per channel. Linear interpolation places one per fine-grid point
+    /// inside the row's span: the fine grid is no finer than the native
+    /// channels when the output channels are wider, and is the output axis
+    /// itself otherwise, so a row places at most one per native channel or
+    /// per output plane, whichever is more, and one straddling an edge.
+    #[must_use]
+    pub fn samples_per_row(&self, channels: usize) -> usize {
+        match self.sampling {
+            Sampling::Direct | Sampling::Nearest(_) => channels,
+            Sampling::Linear(axis) => channels.max(axis.channels as usize) + 1,
+        }
+    }
+
+    /// The most samples [`Self::place_density`] places for one native row
+    /// of `channels` channels on a density grid of `shape`: one per channel
+    /// under the standard cell rule, and under the cube rule as
+    /// [`Self::samples_per_row`] over the padded density axis.
+    #[must_use]
+    pub fn density_samples_per_row(&self, shape: &DensityGridShape, channels: usize) -> usize {
+        match (shape.rule, self.sampling) {
+            (DensityCellRule::Cube, Sampling::Linear(_)) => channels.max(shape.planes) + 1,
+            _ => channels,
+        }
+    }
+
     /// Place one row's density-pass samples for a grid of `shape`: one
     /// polarization carrying CASA's unpolarized input weight, zero values,
     /// no support test. Under the standard cell rule every unflagged native

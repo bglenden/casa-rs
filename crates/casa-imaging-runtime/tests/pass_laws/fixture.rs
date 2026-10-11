@@ -9,9 +9,9 @@ use casa_imaging_operator::{
     SpectralKernel, SpectralResampler, Spheroidal, WeightingGeneration,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, BoundedSource, Cancel, DomainProjection, MajorCyclePass, ModelPreparation,
-    NativeBlock, NativeRowHeader, Partition, PassDomain, PassError, PassSummary, Residency,
-    RowAddress, SourceError, WorkerTeam, run_major_cycle,
+    BackendChoice, BlockShape, BoundedSource, Cancel, DomainProjection, MajorCyclePass,
+    ModelPreparation, NativeBlock, NativeRowHeader, Partition, PassDomain, PassError, PassSummary,
+    Residency, RowAddress, SourceError, WorkerTeam, run_major_cycle,
 };
 use ndarray::Array2;
 use num_complex::Complex32;
@@ -224,6 +224,15 @@ impl BoundedSource for Rows {
         }
         self.next = end;
         Ok(true)
+    }
+
+    fn maximum_block(&self) -> BlockShape {
+        BlockShape {
+            rows: 37,
+            channels: self.frequencies.len(),
+            correlations: 2,
+            domains: self.rows.first().map_or(1, |row| row.projections.len()),
+        }
     }
 }
 

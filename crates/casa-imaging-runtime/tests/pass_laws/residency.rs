@@ -8,8 +8,8 @@ use casa_imaging_operator::{
     WeightingGeneration,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, Cancel, MajorCyclePass, PassError, Residency, VisibilitySink, WaveDemand,
-    WorkerTeam, run_major_cycle,
+    BackendChoice, BoundedSource, Cancel, MajorCyclePass, PassError, Residency, VisibilitySink,
+    WaveDemand, WorkerTeam, run_major_cycle,
 };
 use casa_imaging_runtime::{Admission, Demand, HostResources, ResourcePolicy, admit};
 
@@ -64,6 +64,7 @@ fn one_plane_budget(backend: BackendChoice, precision: GridPrecision) {
             native_spacing_hz: WIDTH_HZ,
             workers: 1,
             backend,
+            block: rows.maximum_block(),
         };
         let one = demand.bytes(1);
         assert_eq!(

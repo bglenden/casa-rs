@@ -38,6 +38,35 @@ pub struct NativeRowHeader {
     pub address: RowAddress,
 }
 
+/// The largest block a source delivers ([`super::BoundedSource::maximum_block`]):
+/// what each pass sizes its per-block storage by, and admits before it
+/// allocates it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlockShape {
+    /// Rows.
+    pub rows: usize,
+    /// Selected channels per row.
+    pub channels: usize,
+    /// Selected correlations per row.
+    pub correlations: usize,
+    /// Image domains each row is projected on.
+    pub domains: usize,
+}
+
+impl BlockShape {
+    /// Bytes a [`NativeBlock`] of this shape holds
+    /// ([`NativeBlock::with_capacity`]).
+    #[must_use]
+    pub const fn bytes(self) -> u64 {
+        let cells = self.channels * self.correlations;
+        let per_row = size_of::<NativeRowHeader>()
+            + self.domains * size_of::<DomainProjection>()
+            + self.channels * size_of::<f64>()
+            + cells * (size_of::<Complex32>() + size_of::<f32>() + size_of::<bool>());
+        (self.rows * per_row + (self.channels + self.correlations) * size_of::<u32>()) as u64
+    }
+}
+
 /// One block of native rows sharing a channel and correlation layout,
 /// projected on every image domain of the pass.
 ///
@@ -60,6 +89,24 @@ pub struct NativeBlock {
 }
 
 impl NativeBlock {
+    /// An empty block with room for every block of `shape`, so filling it
+    /// never grows it beyond [`BlockShape::bytes`].
+    #[must_use]
+    pub fn with_capacity(shape: BlockShape) -> Self {
+        let cells = shape.rows * shape.channels * shape.correlations;
+        Self {
+            domains: shape.domains,
+            rows: Vec::with_capacity(shape.rows),
+            projections: Vec::with_capacity(shape.rows * shape.domains),
+            channel_indices: Vec::with_capacity(shape.channels),
+            correlation_indices: Vec::with_capacity(shape.correlations),
+            frequencies_hz: Vec::with_capacity(shape.rows * shape.channels),
+            values: Vec::with_capacity(cells),
+            weights: Vec::with_capacity(cells),
+            flags: Vec::with_capacity(cells),
+        }
+    }
+
     /// Empty the block and set the layout of the rows that follow: the
     /// number of image domains each row is projected on, and the native
     /// channel and correlation indices every row selects.

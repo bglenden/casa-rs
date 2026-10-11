@@ -27,5 +27,7 @@ pub use minor::{
 pub use resources::{
     Admission, Demand, HostError, HostResources, Reservation, ResourcePolicy, admit, free_memory,
 };
-pub use source_access::{SourceAccessError, bootstrap_source_budget, finalize_source_access};
+pub use source_access::{
+    SourceAccessError, bootstrap_source_budget, finalize_source_access, row_layout,
+};
 pub use summary::{Cancelled, Phase, RunSummary, SummaryTarget, run_phase};

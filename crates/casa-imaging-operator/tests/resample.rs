@@ -575,6 +575,78 @@ fn wide_output_channels_use_casa_fine_grid_points() {
     assert_eq!(placed, [(0, 1.05), (0, 1.15), (1, 1.25), (1, 1.35)]);
 }
 
+/// A row never places more samples than the resampler's per-row bound,
+/// which sizes a pass's sample buffers before it reads any row
+/// ([`SpectralResampler::samples_per_row`],
+/// [`SpectralResampler::density_samples_per_row`]): for every sampling,
+/// with output channels narrower than, as wide as and wider than the native
+/// ones, over rows inside, across and beyond the output axis, ascending and
+/// descending.
+#[test]
+fn a_row_places_at_most_its_per_row_bound() {
+    let natives = |first_ghz: f64, width_ghz: f64, channels: usize| {
+        (0..channels)
+            .map(|channel| first_ghz + width_ghz * channel as f64)
+            .collect::<Vec<_>>()
+    };
+    let rows = [
+        natives(0.9, 0.1, 13),
+        natives(1.0, 0.1, 8),
+        natives(1.2, 0.1, 3),
+        natives(1.0, 0.05, 20),
+        natives(0.95, 0.2, 7),
+        natives(1.7, -0.1, 9),
+        natives(1.31, 0.013, 17),
+    ];
+    let resamplers = [
+        (
+            "direct",
+            SpectralResampler::direct(Basis::Constant).expect("direct"),
+        ),
+        (
+            "nearest",
+            SpectralResampler::channel_local(axis(1.0, 0.1, 8), SpectralKernel::Nearest),
+        ),
+        (
+            "linear, narrower outputs",
+            SpectralResampler::channel_local(axis(1.0, 0.025, 32), SpectralKernel::Linear),
+        ),
+        (
+            "linear, equal outputs",
+            SpectralResampler::channel_local(axis(1.0, 0.1, 8), SpectralKernel::Linear),
+        ),
+        (
+            "linear, wider outputs",
+            SpectralResampler::channel_local(axis(1.05, 0.3, 3), SpectralKernel::Linear),
+        ),
+    ];
+    for (label, resampler) in &resamplers {
+        let channel_local = matches!(resampler.basis(), Basis::ChannelLocal { .. });
+        for row in &rows {
+            let channels = row.len();
+            let placed = planes_of(resampler, row, false).len();
+            let bound = resampler.samples_per_row(channels);
+            assert!(placed <= bound, "{label}, {row:?}: {placed} > {bound}");
+            if channel_local {
+                let shape = DensityGridShape {
+                    width: 64,
+                    height: 64,
+                    planes: resampler.basis().planes() as usize,
+                    padding: 0,
+                    increment_rad: [-2.0e-5, 2.0e-5],
+                    rule: DensityCellRule::Cube,
+                };
+                let placed = planes_of(resampler, row, true).len();
+                let bound = resampler.density_samples_per_row(&shape, channels);
+                assert!(
+                    placed <= bound,
+                    "{label} density, {row:?}: {placed} > {bound}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn density_pass_carries_the_unpolarized_weight_without_a_support_test() {
     let operator = operator(GridPrecision::F64, Basis::Constant, &XX_YY, &STOKES_I);

@@ -29,7 +29,7 @@ use casa_imaging_operator::{
     PlaneRange, PreparedModelGrids, SampleBuffer, SpectralResampler, WeightingGeneration,
 };
 
-pub use block::{DomainProjection, NativeBlock, NativeRowHeader, RowAddress};
+pub use block::{BlockShape, DomainProjection, NativeBlock, NativeRowHeader, RowAddress};
 pub use partition::{Partition, Region, Residency, WaveDemand};
 pub use team::{WORKER_STACK_BYTES, WorkerTeam};
 
@@ -146,6 +146,11 @@ pub trait BoundedSource: Send {
     /// Fill `block` with the next rows of the traversal; `Ok(false)` once
     /// the traversal is exhausted.
     fn fill(&mut self, block: &mut NativeBlock) -> Result<bool, SourceError>;
+
+    /// The largest block any traversal fills, known before one begins: a
+    /// pass allocates its per-block storage for it and admits that storage
+    /// first ([`WaveDemand::bytes`], [`density_pass_bytes`]).
+    fn maximum_block(&self) -> BlockShape;
 }
 
 /// One image domain of a pass: its operator, the resampler that places rows
@@ -226,19 +231,6 @@ impl MajorCyclePass<'_> {
                 .iter()
                 .any(|domain| domain.resampler.forms_native_residuals())
     }
-
-    /// What one wave of this pass holds, for [`Residency::plan`].
-    #[must_use]
-    pub fn demand(&self, workers: usize) -> WaveDemand<'_> {
-        WaveDemand {
-            domains: self.domains,
-            modes: self.modes,
-            with_model: self.model.is_some(),
-            native_spacing_hz: self.native_spacing_hz,
-            workers,
-            backend: self.backend,
-        }
-    }
 }
 
 /// What a pass traversed.
@@ -298,8 +290,15 @@ pub fn run_major_cycle(
                     .collect::<Result<Vec<_>, _>>()
             })
             .transpose()?;
-        let mut wave = Wave::new(pass, planes, models.as_deref(), native_residuals)?
-            .checking_spacing(!restrict && pass.residency != Residency::All);
+        let mut wave = Wave::new(
+            pass,
+            planes,
+            models.as_deref(),
+            native_residuals,
+            source.maximum_block(),
+            team.workers(),
+        )?
+        .checking_spacing(!restrict && pass.residency != Residency::All);
         summary.blocks += stream_blocks(source, cancel, |block| {
             wave.consume(block, team, visibilities.as_deref_mut())
         })?;
@@ -311,10 +310,65 @@ pub fn run_major_cycle(
     Ok(summary)
 }
 
+/// Bytes the passes hold for a source whose largest block is `block`: the
+/// native blocks a pass's stream double-buffers and the model visibilities
+/// of one block, which a pass with a model predicts. They grow with the
+/// source's block, so the source's admission holds them
+/// ([`crate::finalize_source_access`]).
+#[must_use]
+pub const fn source_block_bytes(block: BlockShape) -> u64 {
+    stream::bytes(block) + wave::prediction_bytes(block)
+}
+
+/// Row chunks per worker of a density pass.
+const DENSITY_CHUNKS_PER_WORKER: usize = 4;
+
+/// Rows a row chunk places at once. A pass places each block in slices of
+/// this many rows per chunk, so its sample buffers have one size whatever
+/// rows the source puts in a block.
+const CHUNK_ROWS: usize = 16;
+
+/// The slices of a block of `rows` rows split among `chunks` chunks of at
+/// most [`CHUNK_ROWS`] rows each, in row order.
+fn slices(rows: usize, chunks: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
+    let step = chunks * CHUNK_ROWS;
+    (0..rows)
+        .step_by(step)
+        .map(move |start| start..(start + step).min(rows))
+}
+
+/// The chunks of `slice` among at most `chunks` chunks, in row order.
+fn chunk_ranges(
+    slice: std::ops::Range<usize>,
+    chunks: usize,
+) -> impl Iterator<Item = std::ops::Range<usize>> {
+    let rows = slice.len();
+    let count = chunks.min(rows.max(1));
+    (0..count).map(move |index| {
+        slice.start + index * rows / count..slice.start + (index + 1) * rows / count
+    })
+}
+
+/// Bytes a density pass over blocks of `block` on `workers` workers holds:
+/// its grid of `shape` ([`DensityGridShape::bytes`]), which it returns, and
+/// its row chunks' sample buffers, which it frees. The stream's native
+/// blocks are the source's ([`stream_bytes`]).
+#[must_use]
+pub fn density_pass_bytes(
+    resampler: &SpectralResampler,
+    shape: &DensityGridShape,
+    block: BlockShape,
+    workers: usize,
+) -> u64 {
+    let chunks = workers * DENSITY_CHUNKS_PER_WORKER;
+    let placements = CHUNK_ROWS * resampler.density_samples_per_row(shape, block.channels);
+    shape.bytes() + chunks as u64 * SampleBuffer::bytes(1, placements)
+}
+
 /// Accumulate the weight-density grid of `shape` over one traversal of the
 /// first image domain's projection: each row is placed with
 /// [`SpectralResampler::place_density`] on row chunks and the chunks are
-/// added in row order.
+/// added in row order. It holds [`density_pass_bytes`] while it runs.
 pub fn run_density_pass(
     operator: &MeasurementOperator,
     resampler: &SpectralResampler,
@@ -327,24 +381,33 @@ pub fn run_density_pass(
         .begin(PlaneRange::new(0, operator.basis().planes()), false)
         .map_err(PassError::Source)?;
     let mut grid = DensityGrid::new(shape);
-    let mut chunks = (0..team.workers() * 4)
-        .map(|_| (0..0, SampleBuffer::new(1)))
+    let channels = source.maximum_block().channels;
+    let count = team.workers() * DENSITY_CHUNKS_PER_WORKER;
+    let placements = CHUNK_ROWS * resampler.density_samples_per_row(&shape, channels);
+    let mut chunks = (0..count)
+        .map(|_| (0..0, SampleBuffer::with_capacity(1, placements)))
         .collect::<Vec<_>>();
     stream_blocks(source, cancel, |block| {
-        let rows = block.len();
-        let count = chunks.len().min(rows.max(1));
-        for (index, (range, _)) in chunks[..count].iter_mut().enumerate() {
-            *range = index * rows / count..(index + 1) * rows / count;
-        }
-        team.for_each_mut(&mut chunks[..count], |_, (range, buffer)| {
-            buffer.clear();
-            for row in range.clone() {
-                resampler.place_density(operator, &block.row(0, row), &shape, buffer)?;
+        for slice in slices(block.len(), count) {
+            let mut used = 0;
+            for ((range, _), rows) in chunks.iter_mut().zip(chunk_ranges(slice, count)) {
+                *range = rows;
+                used += 1;
             }
-            Ok::<_, PassError>(())
-        })?;
-        for (_, buffer) in &chunks[..count] {
-            grid.accumulate(&buffer.block());
+            team.for_each_mut(&mut chunks[..used], |_, (range, buffer)| {
+                buffer.clear();
+                for row in range.clone() {
+                    resampler.place_density(operator, &block.row(0, row), &shape, buffer)?;
+                }
+                debug_assert!(
+                    buffer.len() <= placements,
+                    "a density chunk places within the placements it was allocated for"
+                );
+                Ok::<_, PassError>(())
+            })?;
+            for (_, buffer) in &chunks[..used] {
+                grid.accumulate(&buffer.block());
+            }
         }
         Ok(())
     })?;
