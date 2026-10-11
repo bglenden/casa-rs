@@ -12,19 +12,15 @@ use casa_imaging_products::{
 };
 
 #[test]
-fn flat_noise_normalization_divides_by_the_exact_sensitivity() {
+fn unit_response_normalization_divides_by_the_sum_of_weights() {
     let values = [2.0_f32, -4.0, 6.0];
-    assert_eq!(
-        normalize_plane(&values, ProductNormalization::UnitResponse, 8.0).expect("unit response"),
-        [0.25, -0.5, 0.75]
+    assert_eq!(normalize_plane(&values, 8.0), [0.25, -0.5, 0.75]);
+    // No usable sum of weights blanks every pixel instead of dividing by zero.
+    assert!(
+        normalize_plane(&values, 0.0)
+            .iter()
+            .all(|value| value.is_nan())
     );
-    assert_eq!(
-        normalize_plane(&values, ProductNormalization::FlatNoise, 8.0).expect("flat noise"),
-        [0.25, -0.5, 0.75]
-    );
-    // No usable sensitivity blanks every pixel instead of dividing by zero.
-    let blanked = normalize_plane(&values, ProductNormalization::FlatNoise, 0.0).expect("blanked");
-    assert!(blanked.iter().all(|value| value.is_nan()));
 }
 
 #[test]
@@ -32,25 +28,43 @@ fn mosaic_sensitivity_owns_normalization_primary_beam_and_valid_support() {
     let sensitivity =
         MosaicSensitivity::new(&[16.0, 4.0, 1.0, 0.0]).expect("finite positive mosaic sensitivity");
     assert_eq!(sensitivity.primary_beam(), [1.0, 0.5, 0.25, 0.0]);
+    let policy = |cutoff| {
+        PrimaryBeamValidityPolicy::new(
+            cutoff,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::Zero,
+        )
+        .expect("valid PB policy")
+    };
+    let open = policy(1.0e-6);
     assert_eq!(
         sensitivity
-            .normalize(&[32.0, 16.0, 8.0, 4.0], ProductNormalization::FlatNoise)
+            .normalize(
+                &[32.0, 16.0, 8.0, 4.0],
+                ProductNormalization::FlatNoise,
+                open
+            )
             .expect("flat-noise normalization"),
         [2.0, 2.0, 2.0, 0.0]
     );
     assert_eq!(
         sensitivity
-            .normalize(&[32.0, 16.0, 8.0, 4.0], ProductNormalization::FlatSky)
+            .normalize(&[32.0, 16.0, 8.0, 4.0], ProductNormalization::FlatSky, open)
             .expect("flat-sky normalization"),
         [2.0, 4.0, 8.0, 0.0]
     );
+    // CASA zeroes the residual where PB ≤ pblimit, for flat sky too.
+    for normalization in [
+        ProductNormalization::FlatNoise,
+        ProductNormalization::FlatSky,
+    ] {
+        let limited = sensitivity
+            .normalize(&[32.0, 16.0, 8.0, 4.0], normalization, policy(0.3))
+            .expect("normalization inside PB support");
+        assert_eq!(limited[2..], [0.0, 0.0], "{normalization:?}");
+    }
 
-    let policy = PrimaryBeamValidityPolicy::new(
-        0.25,
-        ProductSupportComparison::StrictlyGreater,
-        ProductBlankingPolicy::Zero,
-    )
-    .expect("valid PB policy");
+    let policy = policy(0.25);
     assert_eq!(sensitivity.validity(policy), [true, true, false, false]);
     assert_eq!(
         sensitivity

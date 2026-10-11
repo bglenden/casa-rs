@@ -28,9 +28,14 @@ pub enum ProductsError {
     /// An authoritative model plane could not be read for product generation.
     #[error(transparent)]
     ModelAccess(#[from] casa_imaging_reconstruction::ModelLifecycleError),
-    /// Shared reconstruction response normalization failed.
-    #[error(transparent)]
-    ImageResponse(#[from] casa_imaging_reconstruction::ImageResponseError),
+    /// A direction-dependent sensitivity plane has no positive value: no
+    /// weighted sample reached it.
+    #[error("the sensitivity plane has no positive support")]
+    UnsupportedSensitivity,
+    /// Direction-dependent image units need flat-noise or flat-sky
+    /// normalization.
+    #[error("direction-dependent image units need flat-noise or flat-sky normalization")]
+    UnsupportedNormalization,
     /// Production controls were outside their validated ranges.
     #[error("continuum production controls are invalid")]
     InvalidControls,

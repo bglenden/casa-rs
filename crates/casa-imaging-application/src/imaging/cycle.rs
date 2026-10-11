@@ -15,12 +15,11 @@ use casa_imaging_model::{CompiledProblem, ModelDeltaTerm, SpectralWcs, Weighting
 use casa_imaging_operator::{
     BandwidthTaper, Basis, GridPrecision, ModeSet, PlaneRange, WeightingGeneration,
 };
-use casa_imaging_products::VisibilityProductCompletion;
+use casa_imaging_products::{MinorCycleImageResponse, VisibilityProductCompletion};
 use casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan;
 use casa_imaging_reconstruction::{
-    ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, MinorCycleImageResponse,
-    ModelGeneration, ModelLifecycle, ModelStoragePlan, PassAppender, ReconstructionMaskPlan,
-    ReconstructionMaskSet,
+    ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, ModelGeneration,
+    ModelLifecycle, ModelStoragePlan, PassAppender, ReconstructionMaskPlan, ReconstructionMaskSet,
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, BoundedSource, Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain,

@@ -10,7 +10,6 @@
 
 mod block_normal;
 mod continuum_transform;
-mod image_response;
 mod major_cycle;
 mod normal_values;
 pub use normal_values::{NormalValues, SensitivityValues};
@@ -24,7 +23,6 @@ pub use model_storage::{
     ModelSampleStorage, ModelSampleUpdate, ModelStorageFactory, ModelStoragePlan,
 };
 
-pub use image_response::{ImageResponseError, MinorCycleImageResponse, MosaicSensitivity};
 pub(crate) use spectral_operator::PassNormalState;
 pub use spectral_operator::{
     PassImages, SpectralChannelValidity, SpectralOperatorError, SpectralOperatorPrimitives,

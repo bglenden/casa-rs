@@ -26,11 +26,12 @@ use casa_imaging_model::{
     HogbomIterationAccounting, ModelCell, ModelDeltaTerm, ModelSupport, ModelValue,
     ReconstructionAlgorithm,
 };
+use casa_imaging_products::{MinorCycleImageResponse, MosaicSensitivity, ProductsError};
 use casa_imaging_reconstruction::{
     AutoMaskBeam, AutoMultithreshEvidence, FinalNormalState, ImageDomainReconstructionMaskPlans,
-    ImageDomainReconstructionMasks, MajorCycleCompletion, MaskError, MinorCycleImageResponse,
-    ModelGeneration, ModelLifecycle, ModelLifecycleError, MosaicSensitivity, NormalStateCatalog,
-    SpectralChannelValidity, SpectralOperatorError,
+    ImageDomainReconstructionMasks, MajorCycleCompletion, MaskError, ModelGeneration,
+    ModelLifecycle, ModelLifecycleError, NormalStateCatalog, SpectralChannelValidity,
+    SpectralOperatorError,
 };
 
 use crate::pass::WorkerTeam;
@@ -51,9 +52,9 @@ pub enum MinorCycleRunError {
     /// The model support could not be read or a term is out of range.
     #[error("model: {0}")]
     Model(#[from] ModelLifecycleError),
-    /// The direction-dependent response could not convert a value.
-    #[error("image response: {0}")]
-    Response(#[from] casa_imaging_reconstruction::ImageResponseError),
+    /// The direction-dependent normalization could not convert a value.
+    #[error("normalization: {0}")]
+    Response(#[from] ProductsError),
     /// The solver failed.
     #[error(transparent)]
     Solver(#[from] casa_imaging_deconvolution::Error),

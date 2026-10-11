@@ -19,10 +19,8 @@ use casa_imaging_reconstruction::{
 use crate::ProductStoragePlan;
 use crate::beam::{RestoringBeam, fit_restoring_beam};
 use crate::error::ProductsError;
-use crate::restore::{
-    MosaicSensitivity, normalize_plane, normalized_psf_value, psf_peak, rescale_residual_to_beam,
-    restore_model_plane,
-};
+use crate::normalization::{MosaicSensitivity, normalize_plane, normalized_psf_value, psf_peak};
+use crate::restore::{rescale_residual_to_beam, restore_model_plane};
 use crate::source::ContinuumProductInputs;
 use crate::storage::{ProductMemberWriter, ProductOutput};
 use crate::taylor::{
@@ -742,6 +740,7 @@ fn produce_plane_member(
                     &residual_real_plane(plane)?,
                     required_normalization(member)?,
                     plane,
+                    inputs,
                 )
             } else {
                 Ok(invalid_residual())
@@ -823,14 +822,16 @@ fn normalize_domain_plane(
     values: &[f32],
     normalization: ProductNormalization,
     plane: &FinalNormalPlaneReader<'_>,
+    inputs: &ContinuumProductInputs<'_>,
 ) -> Result<Vec<f32>, ProductsError> {
     match normalization {
-        ProductNormalization::UnitResponse => {
-            normalize_plane(values, normalization, plane.sum_weight())
-        }
+        ProductNormalization::UnitResponse => Ok(normalize_plane(values, plane.sum_weight())),
         ProductNormalization::FlatNoise | ProductNormalization::FlatSky => {
-            Ok(MosaicSensitivity::new(&plane.read_sensitivity()?)?
-                .normalize(values, normalization)?)
+            MosaicSensitivity::new(&plane.read_sensitivity()?)?.normalize(
+                values,
+                normalization,
+                inputs.problem().products().validity().primary_beam(),
+            )
         }
     }
 }
@@ -906,6 +907,7 @@ fn restored_plane(
         &residual_real_plane(plane)?,
         required_normalization(member)?,
         plane,
+        inputs,
     )?;
     let fitted_beam = fitted_beam.ok_or_else(|| {
         ProductsError::BeamFitFailed(

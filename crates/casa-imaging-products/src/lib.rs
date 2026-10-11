@@ -12,6 +12,7 @@ mod beam;
 mod demand;
 mod error;
 mod generation;
+mod normalization;
 mod restore;
 mod source;
 mod storage;
@@ -26,9 +27,9 @@ pub use generation::{
     PlannedContinuumGeneration, PlannedMember, PublishedContinuumGeneration, PublishedMember,
     produce_continuum_members,
 };
+pub use normalization::{MinorCycleImageResponse, MosaicSensitivity, normalize_plane};
 pub use restore::{
-    MosaicSensitivity, ResidualBeamScaling, fft_convolve, gaussian_beam_image, normalize_plane,
-    rescale_residual_to_beam,
+    ResidualBeamScaling, fft_convolve, gaussian_beam_image, rescale_residual_to_beam,
 };
 pub use source::ContinuumProductInputs;
 pub use storage::{

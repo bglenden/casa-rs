@@ -29,8 +29,10 @@ use casa_imaging_model::{
     UncorrectedImageMaskPolicy, UvwCoordinateLaw, WeightColumn as OwnerWeightColumn,
 };
 use casa_imaging_operator::{AwCatalog, AwIndexing};
-use casa_imaging_products::{AnalyticPrimaryBeamModel, ContinuumProductControls};
-use casa_imaging_reconstruction::{ImageDomainReconstructionMaskPlans, MinorCycleImageResponse};
+use casa_imaging_products::{
+    AnalyticPrimaryBeamModel, ContinuumProductControls, MinorCycleImageResponse,
+};
+use casa_imaging_reconstruction::ImageDomainReconstructionMaskPlans;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{
     MeasurementSet, SelectedObservationContentBudget, SelectedObservationEphemeris,

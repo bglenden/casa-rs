@@ -11,10 +11,8 @@ use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 use crate::AnalyticPrimaryBeamModel;
 use crate::beam::{RestoringBeam, fit_restoring_beam};
 use crate::error::ProductsError;
-use crate::restore::{
-    MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane, normalized_psf_value,
-    psf_peak,
-};
+use crate::normalization::{MosaicSensitivity, normalize_plane, normalized_psf_value, psf_peak};
+use crate::restore::{fft_convolve, gaussian_beam_image};
 use crate::source::ContinuumProductInputs;
 use casa_numerics::AnnularApertureVoltageTable;
 
@@ -38,31 +36,6 @@ pub(crate) struct TaylorProducts {
     clean_mask: Vec<f32>,
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
-}
-
-fn normalize_taylor_plane(
-    values: &[f32],
-    normalization: ProductNormalization,
-    normal_sum_weight: f64,
-    residual_sum_weight: f64,
-    mosaic_sensitivity: Option<MosaicSensitivity<'_>>,
-) -> Result<Vec<f32>, ProductsError> {
-    match (mosaic_sensitivity, normalization) {
-        (Some(sensitivity), ProductNormalization::FlatNoise | ProductNormalization::FlatSky) => {
-            let mut normalized = sensitivity.normalize(values, normalization)?;
-            // CASA normalizes weight by the normal sum and residual by the
-            // publication sum before applying the PB denominator.
-            let scale = normal_sum_weight / residual_sum_weight;
-            for value in &mut normalized {
-                *value = (f64::from(*value) * scale) as f32;
-                if !value.is_finite() {
-                    return Err(ProductsError::GeneratedNonfinite);
-                }
-            }
-            Ok(normalized)
-        }
-        _ => normalize_plane(values, normalization, residual_sum_weight),
-    }
 }
 
 fn primary_beam_correct_spectral_index(
@@ -220,9 +193,8 @@ impl TaylorProducts {
                     .iter()
                     .map(|value| value.re as f32)
                     .collect::<Vec<_>>(),
-                ProductNormalization::UnitResponse,
                 principal_sum_weight,
-            )?);
+            ));
             // CASA divides only weight.tt0 by the principal sum weight. Higher
             // Taylor weight images retain their raw signed sensitivity moments.
             let weight_scale = if moment == 0
@@ -268,17 +240,14 @@ impl TaylorProducts {
                         })
                         .collect::<Result<Vec<_>, ProductsError>>();
                 }
-                normalize_taylor_plane(
+                Ok(normalize_plane(
                     &source
                         .residual()
                         .iter()
                         .map(|value| value.re as f32)
                         .collect::<Vec<_>>(),
-                    normalization,
-                    principal_sum_weight,
                     residual_sum_weight,
-                    mosaic_sensitivity,
-                )
+                ))
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut model = (0..terms)
@@ -1035,75 +1004,49 @@ mod tests {
     }
 
     #[test]
-    fn mosaic_primary_beam_excludes_negative_fft_ringing() {
+    fn mosaic_primary_beam_takes_casa_abs_of_the_weight() {
+        // `SIImageStore::makePBFromWeight`: sqrt(abs(weight)) / pbmax.
         let beam = super::MosaicSensitivity::primary_beam_from_weight(&[-0.25, 0.0, 1.0, 0.25])
             .expect("positive mosaic support");
-        assert_eq!(beam, vec![0.0, 0.0, 1.0, 0.5]);
-    }
-
-    #[test]
-    fn mosaic_taylor_planes_use_flatnoise_and_flatsky_sensitivity_laws() {
-        let sensitivity =
-            crate::MosaicSensitivity::new(&[16.0, 4.0, 1.0, 0.0]).expect("mosaic sensitivity");
-        let raw = [32.0, 16.0, 8.0, 4.0];
-        assert_eq!(
-            super::normalize_taylor_plane(
-                &raw,
-                ProductNormalization::FlatNoise,
-                8.0,
-                8.0,
-                Some(sensitivity),
-            )
-            .expect("flat-noise Taylor normalization"),
-            [2.0, 2.0, 2.0, 0.0]
-        );
-        assert_eq!(
-            super::normalize_taylor_plane(
-                &raw,
-                ProductNormalization::FlatSky,
-                8.0,
-                8.0,
-                Some(sensitivity),
-            )
-            .expect("flat-sky Taylor normalization"),
-            [2.0, 4.0, 8.0, 0.0]
-        );
+        assert_eq!(beam, vec![0.5, 0.0, 1.0, 0.5]);
     }
 
     #[test]
     fn aw_taylor_normalization_keeps_residual_and_sensitivity_sum_weights_distinct() {
-        let sensitivity =
-            crate::MosaicSensitivity::new(&[16.0, 4.0, 1.0, 0.0]).expect("AW sensitivity");
+        let sensitivity = crate::MosaicSensitivity::new(&[16.0, 4.0, 1.0, 0.0])
+            .expect("AW sensitivity")
+            .with_normal_sum_weight(8.0)
+            .expect("WTCF sum of weights");
+        let open = casa_imaging_model::PrimaryBeamValidityPolicy::new(
+            1.0e-6,
+            casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+            casa_imaging_model::ProductBlankingPolicy::Zero,
+        )
+        .expect("PB policy");
         let raw = [32.0, 16.0, 8.0, 4.0];
         // CASA divides residuals by CFS sumwt=4, then uses weight=S/WTCF_sumwt
         // with WTCF_sumwt=8 for its direction-dependent denominator.
         for (normalization, expected) in [
             (ProductNormalization::FlatNoise, [4.0, 4.0, 4.0, 0.0]),
             (ProductNormalization::FlatSky, [4.0, 8.0, 16.0, 0.0]),
-            (ProductNormalization::UnitResponse, [8.0, 4.0, 2.0, 1.0]),
         ] {
-            assert_eq!(
-                super::normalize_taylor_plane(&raw, normalization, 8.0, 4.0, Some(sensitivity))
-                    .expect("separate AW normalization sums"),
-                expected,
-                "{normalization:?}",
-            );
+            let normalized = raw
+                .iter()
+                .enumerate()
+                .map(|(index, value)| {
+                    sensitivity
+                        .normalize_weighted_residual_sample(*value, index, normalization, 4.0, open)
+                        .expect("separate AW normalization sums")
+                })
+                .collect::<Vec<_>>();
+            for (actual, expected) in normalized.iter().zip(expected) {
+                // CASA's Float stages round √weight·PBScale.
+                assert!(
+                    (actual - expected).abs() <= 1.0e-6 * expected,
+                    "{normalization:?}: {actual} != {expected}"
+                );
+            }
         }
-    }
-
-    #[test]
-    fn aw_taylor_normalization_rejects_nonfinite_scaled_products() {
-        let sensitivity = crate::MosaicSensitivity::new(&[1.0]).expect("AW sensitivity");
-        assert!(matches!(
-            super::normalize_taylor_plane(
-                &[1.0],
-                ProductNormalization::FlatNoise,
-                1.0e100,
-                1.0,
-                Some(sensitivity),
-            ),
-            Err(crate::ProductsError::GeneratedNonfinite)
-        ));
     }
 
     #[test]
