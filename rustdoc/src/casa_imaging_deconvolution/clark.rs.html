@@ -232,63 +232,76 @@
 <a href=#232 id=232 data-nosnippet>232</a>        <span class="self">self</span>.refresh.set(<span class="prelude-val">Some</span>(state.refresh));
 <a href=#233 id=233 data-nosnippet>233</a>        <span class="prelude-val">Ok</span>(end)
 <a href=#234 id=234 data-nosnippet>234</a>    }
-<a href=#235 id=235 data-nosnippet>235</a>}
-<a href=#236 id=236 data-nosnippet>236</a>
-<a href=#237 id=237 data-nosnippet>237</a><span class="kw">impl </span>ClarkState {
-<a href=#238 id=238 data-nosnippet>238</a>    <span class="doccomment">/// Start a Clark cycle: the flux limit from the exterior sidelobe and
-<a href=#239 id=239 data-nosnippet>239</a>    /// the active list of supported pixels above it.
-<a href=#240 id=240 data-nosnippet>240</a>    </span><span class="kw">fn </span>begin(<span class="kw-2">&amp;mut </span><span class="self">self</span>, residual: <span class="kw-2">&amp;</span>[f64], view: <span class="kw-2">&amp;</span>MinorCycleView&lt;<span class="lifetime">'_</span>&gt;) {
-<a href=#241 id=241 data-nosnippet>241</a>        <span class="self">self</span>.flux_limit = <span class="self">self</span>.max_residual * <span class="self">self</span>.patch.exterior_sidelobe * <span class="self">self</span>.factor;
-<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">if </span><span class="self">self</span>.factor &gt; <span class="number">1.0 </span>{
-<a href=#243 id=243 data-nosnippet>243</a>            <span class="self">self</span>.flux_limit = <span class="self">self</span>.flux_limit.min(<span class="number">0.95 </span>* <span class="self">self</span>.max_residual);
-<a href=#244 id=244 data-nosnippet>244</a>        }
-<a href=#245 id=245 data-nosnippet>245</a>        <span class="kw">let </span>cutoff = <span class="self">self</span>.flux_limit.max(<span class="self">self</span>.threshold);
-<a href=#246 id=246 data-nosnippet>246</a>        <span class="comment">// GETBIMF: supported pixels at or above the cutoff, x outer and y
-<a href=#247 id=247 data-nosnippet>247</a>        // inner, which is storage order. (CASA lists a tiled residual tile
-<a href=#248 id=248 data-nosnippet>248</a>        // by tile; a plane in one tile is listed in this order.)
-<a href=#249 id=249 data-nosnippet>249</a>        </span><span class="self">self</span>.active.clear();
-<a href=#250 id=250 data-nosnippet>250</a>        <span class="kw">for </span>(index, (<span class="kw-2">&amp;</span>value, <span class="kw-2">&amp;</span>supported)) <span class="kw">in
-<a href=#251 id=251 data-nosnippet>251</a>            </span>residual.iter().zip(view.support.as_slice()).enumerate()
-<a href=#252 id=252 data-nosnippet>252</a>        {
-<a href=#253 id=253 data-nosnippet>253</a>            <span class="kw">if </span>supported &amp;&amp; value.abs() &gt;= cutoff {
-<a href=#254 id=254 data-nosnippet>254</a>                <span class="self">self</span>.active.push(Active { index, value });
-<a href=#255 id=255 data-nosnippet>255</a>            }
-<a href=#256 id=256 data-nosnippet>256</a>        }
-<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">let </span>peak = <span class="self">self
-<a href=#258 id=258 data-nosnippet>258</a>            </span>.active
-<a href=#259 id=259 data-nosnippet>259</a>            .iter()
-<a href=#260 id=260 data-nosnippet>260</a>            .fold(<span class="number">0.0_f64</span>, |best, pixel| best.max(pixel.value.abs()));
-<a href=#261 id=261 data-nosnippet>261</a>        <span class="comment">// `pow(fluxLimit / absRes, speedup)` with CASA's speedup of −1.
-<a href=#262 id=262 data-nosnippet>262</a>        </span><span class="self">self</span>.fac = <span class="kw">if </span><span class="self">self</span>.flux_limit &gt; <span class="number">0.0 </span>{
-<a href=#263 id=263 data-nosnippet>263</a>            peak / <span class="self">self</span>.flux_limit
-<a href=#264 id=264 data-nosnippet>264</a>        } <span class="kw">else </span>{
-<a href=#265 id=265 data-nosnippet>265</a>            <span class="number">0.0
-<a href=#266 id=266 data-nosnippet>266</a>        </span>};
-<a href=#267 id=267 data-nosnippet>267</a>        <span class="self">self</span>.fmn = <span class="number">0.0</span>;
-<a href=#268 id=268 data-nosnippet>268</a>        <span class="self">self</span>.iteration_flux_limit = cutoff;
-<a href=#269 id=269 data-nosnippet>269</a>        <span class="self">self</span>.cycle_iterations = <span class="number">0</span>;
-<a href=#270 id=270 data-nosnippet>270</a>    }
-<a href=#271 id=271 data-nosnippet>271</a>
-<a href=#272 id=272 data-nosnippet>272</a>    <span class="doccomment">/// End a Clark cycle: refresh the residual exactly and widen the next
-<a href=#273 id=273 data-nosnippet>273</a>    /// cycle's flux limit when the peak grew.
-<a href=#274 id=274 data-nosnippet>274</a>    </span><span class="kw">fn </span>refresh_pending(
-<a href=#275 id=275 data-nosnippet>275</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#276 id=276 data-nosnippet>276</a>        residual: <span class="kw-2">&amp;mut </span>[f64],
-<a href=#277 id=277 data-nosnippet>277</a>        view: <span class="kw-2">&amp;</span>MinorCycleView&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#278 id=278 data-nosnippet>278</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
-<a href=#279 id=279 data-nosnippet>279</a>        <span class="kw">let </span>previous = <span class="self">self</span>.max_residual;
-<a href=#280 id=280 data-nosnippet>280</a>        <span class="self">self</span>.max_residual = <span class="self">self
-<a href=#281 id=281 data-nosnippet>281</a>            </span>.active
-<a href=#282 id=282 data-nosnippet>282</a>            .iter()
-<a href=#283 id=283 data-nosnippet>283</a>            .fold(<span class="number">0.0_f64</span>, |peak, pixel| peak.max(pixel.value.abs()));
-<a href=#284 id=284 data-nosnippet>284</a>        <span class="self">self</span>.refresh.refresh(residual, <span class="kw-2">&amp;</span>view.psf[<span class="number">0</span>])<span class="question-mark">?</span>;
-<a href=#285 id=285 data-nosnippet>285</a>        <span class="self">self</span>.cycles += <span class="number">1</span>;
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="self">self</span>.cycle_iterations = <span class="number">0</span>;
-<a href=#287 id=287 data-nosnippet>287</a>        <span class="kw">if </span><span class="self">self</span>.max_residual &gt; previous {
-<a href=#288 id=288 data-nosnippet>288</a>            <span class="self">self</span>.factor <span class="kw-2">*</span>= <span class="number">3.0</span>;
-<a href=#289 id=289 data-nosnippet>289</a>            <span class="self">self</span>.maximum_cycle_iterations = <span class="number">10</span>;
-<a href=#290 id=290 data-nosnippet>290</a>        }
-<a href=#291 id=291 data-nosnippet>291</a>        <span class="prelude-val">Ok</span>(())
-<a href=#292 id=292 data-nosnippet>292</a>    }
-<a href=#293 id=293 data-nosnippet>293</a>}
+<a href=#235 id=235 data-nosnippet>235</a>
+<a href=#236 id=236 data-nosnippet>236</a>    <span class="doccomment">/// The refresh ([`LinearRefresh::bytes`]) and the active list, which
+<a href=#237 id=237 data-nosnippet>237</a>    /// grows to at most every pixel: an upper bound, since the list holds
+<a href=#238 id=238 data-nosnippet>238</a>    /// only the supported pixels above the cycle's flux limit.
+<a href=#239 id=239 data-nosnippet>239</a>    </span><span class="kw">fn </span>working_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, shape: PlaneShape, _terms: usize) -&gt; u64 {
+<a href=#240 id=240 data-nosnippet>240</a>        <span class="kw">let </span>active = shape.len().next_power_of_two() * size_of::&lt;Active&gt;();
+<a href=#241 id=241 data-nosnippet>241</a>        LinearRefresh::bytes(shape) + active <span class="kw">as </span>u64
+<a href=#242 id=242 data-nosnippet>242</a>    }
+<a href=#243 id=243 data-nosnippet>243</a>
+<a href=#244 id=244 data-nosnippet>244</a>    <span class="doccomment">/// A point component.
+<a href=#245 id=245 data-nosnippet>245</a>    </span><span class="kw">fn </span>component_cells(<span class="kw-2">&amp;</span><span class="self">self</span>, _shape: PlaneShape) -&gt; usize {
+<a href=#246 id=246 data-nosnippet>246</a>        <span class="number">1
+<a href=#247 id=247 data-nosnippet>247</a>    </span>}
+<a href=#248 id=248 data-nosnippet>248</a>}
+<a href=#249 id=249 data-nosnippet>249</a>
+<a href=#250 id=250 data-nosnippet>250</a><span class="kw">impl </span>ClarkState {
+<a href=#251 id=251 data-nosnippet>251</a>    <span class="doccomment">/// Start a Clark cycle: the flux limit from the exterior sidelobe and
+<a href=#252 id=252 data-nosnippet>252</a>    /// the active list of supported pixels above it.
+<a href=#253 id=253 data-nosnippet>253</a>    </span><span class="kw">fn </span>begin(<span class="kw-2">&amp;mut </span><span class="self">self</span>, residual: <span class="kw-2">&amp;</span>[f64], view: <span class="kw-2">&amp;</span>MinorCycleView&lt;<span class="lifetime">'_</span>&gt;) {
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="self">self</span>.flux_limit = <span class="self">self</span>.max_residual * <span class="self">self</span>.patch.exterior_sidelobe * <span class="self">self</span>.factor;
+<a href=#255 id=255 data-nosnippet>255</a>        <span class="kw">if </span><span class="self">self</span>.factor &gt; <span class="number">1.0 </span>{
+<a href=#256 id=256 data-nosnippet>256</a>            <span class="self">self</span>.flux_limit = <span class="self">self</span>.flux_limit.min(<span class="number">0.95 </span>* <span class="self">self</span>.max_residual);
+<a href=#257 id=257 data-nosnippet>257</a>        }
+<a href=#258 id=258 data-nosnippet>258</a>        <span class="kw">let </span>cutoff = <span class="self">self</span>.flux_limit.max(<span class="self">self</span>.threshold);
+<a href=#259 id=259 data-nosnippet>259</a>        <span class="comment">// GETBIMF: supported pixels at or above the cutoff, x outer and y
+<a href=#260 id=260 data-nosnippet>260</a>        // inner, which is storage order. (CASA lists a tiled residual tile
+<a href=#261 id=261 data-nosnippet>261</a>        // by tile; a plane in one tile is listed in this order.)
+<a href=#262 id=262 data-nosnippet>262</a>        </span><span class="self">self</span>.active.clear();
+<a href=#263 id=263 data-nosnippet>263</a>        <span class="kw">for </span>(index, (<span class="kw-2">&amp;</span>value, <span class="kw-2">&amp;</span>supported)) <span class="kw">in
+<a href=#264 id=264 data-nosnippet>264</a>            </span>residual.iter().zip(view.support.as_slice()).enumerate()
+<a href=#265 id=265 data-nosnippet>265</a>        {
+<a href=#266 id=266 data-nosnippet>266</a>            <span class="kw">if </span>supported &amp;&amp; value.abs() &gt;= cutoff {
+<a href=#267 id=267 data-nosnippet>267</a>                <span class="self">self</span>.active.push(Active { index, value });
+<a href=#268 id=268 data-nosnippet>268</a>            }
+<a href=#269 id=269 data-nosnippet>269</a>        }
+<a href=#270 id=270 data-nosnippet>270</a>        <span class="kw">let </span>peak = <span class="self">self
+<a href=#271 id=271 data-nosnippet>271</a>            </span>.active
+<a href=#272 id=272 data-nosnippet>272</a>            .iter()
+<a href=#273 id=273 data-nosnippet>273</a>            .fold(<span class="number">0.0_f64</span>, |best, pixel| best.max(pixel.value.abs()));
+<a href=#274 id=274 data-nosnippet>274</a>        <span class="comment">// `pow(fluxLimit / absRes, speedup)` with CASA's speedup of −1.
+<a href=#275 id=275 data-nosnippet>275</a>        </span><span class="self">self</span>.fac = <span class="kw">if </span><span class="self">self</span>.flux_limit &gt; <span class="number">0.0 </span>{
+<a href=#276 id=276 data-nosnippet>276</a>            peak / <span class="self">self</span>.flux_limit
+<a href=#277 id=277 data-nosnippet>277</a>        } <span class="kw">else </span>{
+<a href=#278 id=278 data-nosnippet>278</a>            <span class="number">0.0
+<a href=#279 id=279 data-nosnippet>279</a>        </span>};
+<a href=#280 id=280 data-nosnippet>280</a>        <span class="self">self</span>.fmn = <span class="number">0.0</span>;
+<a href=#281 id=281 data-nosnippet>281</a>        <span class="self">self</span>.iteration_flux_limit = cutoff;
+<a href=#282 id=282 data-nosnippet>282</a>        <span class="self">self</span>.cycle_iterations = <span class="number">0</span>;
+<a href=#283 id=283 data-nosnippet>283</a>    }
+<a href=#284 id=284 data-nosnippet>284</a>
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="doccomment">/// End a Clark cycle: refresh the residual exactly and widen the next
+<a href=#286 id=286 data-nosnippet>286</a>    /// cycle's flux limit when the peak grew.
+<a href=#287 id=287 data-nosnippet>287</a>    </span><span class="kw">fn </span>refresh_pending(
+<a href=#288 id=288 data-nosnippet>288</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#289 id=289 data-nosnippet>289</a>        residual: <span class="kw-2">&amp;mut </span>[f64],
+<a href=#290 id=290 data-nosnippet>290</a>        view: <span class="kw-2">&amp;</span>MinorCycleView&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#291 id=291 data-nosnippet>291</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
+<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">let </span>previous = <span class="self">self</span>.max_residual;
+<a href=#293 id=293 data-nosnippet>293</a>        <span class="self">self</span>.max_residual = <span class="self">self
+<a href=#294 id=294 data-nosnippet>294</a>            </span>.active
+<a href=#295 id=295 data-nosnippet>295</a>            .iter()
+<a href=#296 id=296 data-nosnippet>296</a>            .fold(<span class="number">0.0_f64</span>, |peak, pixel| peak.max(pixel.value.abs()));
+<a href=#297 id=297 data-nosnippet>297</a>        <span class="self">self</span>.refresh.refresh(residual, <span class="kw-2">&amp;</span>view.psf[<span class="number">0</span>])<span class="question-mark">?</span>;
+<a href=#298 id=298 data-nosnippet>298</a>        <span class="self">self</span>.cycles += <span class="number">1</span>;
+<a href=#299 id=299 data-nosnippet>299</a>        <span class="self">self</span>.cycle_iterations = <span class="number">0</span>;
+<a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">if </span><span class="self">self</span>.max_residual &gt; previous {
+<a href=#301 id=301 data-nosnippet>301</a>            <span class="self">self</span>.factor <span class="kw-2">*</span>= <span class="number">3.0</span>;
+<a href=#302 id=302 data-nosnippet>302</a>            <span class="self">self</span>.maximum_cycle_iterations = <span class="number">10</span>;
+<a href=#303 id=303 data-nosnippet>303</a>        }
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="prelude-val">Ok</span>(())
+<a href=#305 id=305 data-nosnippet>305</a>    }
+<a href=#306 id=306 data-nosnippet>306</a>}
 </code></pre></div></section></main></body></html>

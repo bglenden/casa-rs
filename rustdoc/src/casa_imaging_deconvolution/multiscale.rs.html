@@ -5,7 +5,7 @@
 <a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span><span class="kw">crate</span>::Error;
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span><span class="kw">crate</span>::patch::subtract_window;
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span><span class="kw">crate</span>::plane::{PlaneShape, Support, casacore_max_abs, peak_magnitude};
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">crate</span>::scales::ScaleBank;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">crate</span>::scales::{ScaleBank, plane_bytes, spectrum_bytes};
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">crate</span>::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd};
 <a href=#10 id=10 data-nosnippet>10</a>
 <a href=#11 id=11 data-nosnippet>11</a><span class="doccomment">/// The scale-mask threshold of `MatrixCleaner` (`itsMaskThreshold`): a
@@ -225,5 +225,24 @@
 <a href=#225 id=225 data-nosnippet>225</a>            refreshes: usize::from(refreshed),
 <a href=#226 id=226 data-nosnippet>226</a>        })
 <a href=#227 id=227 data-nosnippet>227</a>    }
-<a href=#228 id=228 data-nosnippet>228</a>}
+<a href=#228 id=228 data-nosnippet>228</a>
+<a href=#229 id=229 data-nosnippet>229</a>    <span class="doccomment">/// The bank, the PSF and residual spectra, `S(S+1)/2` cross planes, `S`
+<a href=#230 id=230 data-nosnippet>230</a>    /// dirty planes and masks, and the largest transient: the terminal
+<a href=#231 id=231 data-nosnippet>231</a>    /// refresh's model, wrapped PSF and prediction planes with two spectra.
+<a href=#232 id=232 data-nosnippet>232</a>    </span><span class="kw">fn </span>working_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, shape: PlaneShape, _terms: usize) -&gt; u64 {
+<a href=#233 id=233 data-nosnippet>233</a>        <span class="kw">let </span>scales = <span class="self">self</span>.scales.len() <span class="kw">as </span>u64;
+<a href=#234 id=234 data-nosnippet>234</a>        <span class="kw">let </span>planes = scales * (scales + <span class="number">1</span>) / <span class="number">2 </span>+ scales;
+<a href=#235 id=235 data-nosnippet>235</a>        ScaleBank::bytes(<span class="kw-2">&amp;</span><span class="self">self</span>.scales, shape)
+<a href=#236 id=236 data-nosnippet>236</a>            + <span class="number">2 </span>* spectrum_bytes(shape)
+<a href=#237 id=237 data-nosnippet>237</a>            + planes * plane_bytes(shape)
+<a href=#238 id=238 data-nosnippet>238</a>            + scales * shape.len() <span class="kw">as </span>u64
+<a href=#239 id=239 data-nosnippet>239</a>            + (<span class="number">3 </span>* plane_bytes(shape) + <span class="number">2 </span>* spectrum_bytes(shape))
+<a href=#240 id=240 data-nosnippet>240</a>                .max(ScaleBank::masks_bytes(shape))
+<a href=#241 id=241 data-nosnippet>241</a>    }
+<a href=#242 id=242 data-nosnippet>242</a>
+<a href=#243 id=243 data-nosnippet>243</a>    <span class="doccomment">/// The largest scale's support.
+<a href=#244 id=244 data-nosnippet>244</a>    </span><span class="kw">fn </span>component_cells(<span class="kw-2">&amp;</span><span class="self">self</span>, shape: PlaneShape) -&gt; usize {
+<a href=#245 id=245 data-nosnippet>245</a>        ScaleBank::support_cells(<span class="kw-2">&amp;</span><span class="self">self</span>.scales, shape)
+<a href=#246 id=246 data-nosnippet>246</a>    }
+<a href=#247 id=247 data-nosnippet>247</a>}
 </code></pre></div></section></main></body></html>

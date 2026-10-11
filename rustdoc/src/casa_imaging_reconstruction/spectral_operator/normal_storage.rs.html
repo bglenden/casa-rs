@@ -234,7 +234,7 @@
 <a href=#234 id=234 data-nosnippet>234</a>        }
 <a href=#235 id=235 data-nosnippet>235</a>        <span class="prelude-val">Ok</span>(())
 <a href=#236 id=236 data-nosnippet>236</a>    }
-<a href=#237 id=237 data-nosnippet>237</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>retained_resident_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;u64, SpectralOperatorError&gt; {
+<a href=#237 id=237 data-nosnippet>237</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>resident_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;u64, SpectralOperatorError&gt; {
 <a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#239 id=239 data-nosnippet>239</a>            <span class="self">Self</span>::ChannelLocal(domains) =&gt; domains.iter().try_fold(<span class="number">0u64</span>, |bytes, domain| {
 <a href=#240 id=240 data-nosnippet>240</a>                bytes
@@ -244,7 +244,7 @@
 <a href=#244 id=244 data-nosnippet>244</a>                    })
 <a href=#245 id=245 data-nosnippet>245</a>                    .ok_or(SpectralOperatorError::ResidencyOverflow)
 <a href=#246 id=246 data-nosnippet>246</a>            }),
-<a href=#247 id=247 data-nosnippet>247</a>            <span class="self">Self</span>::Coupled(<span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">0</span>),
+<a href=#247 id=247 data-nosnippet>247</a>            <span class="self">Self</span>::Coupled(domains) =&gt; <span class="prelude-val">Ok</span>(domains.owned_bytes() <span class="kw">as </span>u64),
 <a href=#248 id=248 data-nosnippet>248</a>        }
 <a href=#249 id=249 data-nosnippet>249</a>    }
 <a href=#250 id=250 data-nosnippet>250</a>

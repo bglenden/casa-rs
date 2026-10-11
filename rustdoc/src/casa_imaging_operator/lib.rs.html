@@ -65,17 +65,34 @@
 <a href=#65 id=65 data-nosnippet>65</a><span class="kw">pub use </span>cpu::CpuBackend;
 <a href=#66 id=66 data-nosnippet>66</a><span class="kw">pub use </span>error::{DeviceFailure, OperatorError};
 <a href=#67 id=67 data-nosnippet>67</a><span class="kw">pub use </span>geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent};
-<a href=#68 id=68 data-nosnippet>68</a><span class="kw">pub use </span>mosaic::{AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicWindow, pair_plane};
-<a href=#69 id=69 data-nosnippet>69</a><span class="kw">pub use </span>operator::{
-<a href=#70 id=70 data-nosnippet>70</a>    Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, NormalPlane,
-<a href=#71 id=71 data-nosnippet>71</a>};
-<a href=#72 id=72 data-nosnippet>72</a><span class="kw">pub use </span>polarization::{FeedBasis, GridPolarization, PolarizationRouting};
-<a href=#73 id=73 data-nosnippet>73</a><span class="kw">pub use </span>resample::{NativeRow, PredictionScratch, SpectralAxis, SpectralKernel, SpectralResampler};
-<a href=#74 id=74 data-nosnippet>74</a><span class="kw">pub use </span>sample::{CfKey, Placement, SampleBlock, SampleBuffer};
-<a href=#75 id=75 data-nosnippet>75</a><span class="kw">pub use </span>spheroidal::{SPHEROIDAL_OVERSAMPLING, SPHEROIDAL_SUPPORT, Spheroidal, grdsf};
-<a href=#76 id=76 data-nosnippet>76</a><span class="kw">pub use </span>weighting::{
-<a href=#77 id=77 data-nosnippet>77</a>    BandwidthTaper, DensityCellRule, DensityGrid, DensityGridShape, DensityUv, RobustFactors,
-<a href=#78 id=78 data-nosnippet>78</a>    Taper, WeightingGeneration, build_density_grid,
-<a href=#79 id=79 data-nosnippet>79</a>};
-<a href=#80 id=80 data-nosnippet>80</a><span class="kw">pub use </span>wplanes::{WPlaneCount, WPlanes};
+<a href=#68 id=68 data-nosnippet>68</a><span class="kw">pub use </span>mosaic::{
+<a href=#69 id=69 data-nosnippet>69</a>    AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicScreens, MosaicWindow, pair_plane,
+<a href=#70 id=70 data-nosnippet>70</a>};
+<a href=#71 id=71 data-nosnippet>71</a><span class="kw">pub use </span>operator::{
+<a href=#72 id=72 data-nosnippet>72</a>    Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, NormalPlane,
+<a href=#73 id=73 data-nosnippet>73</a>};
+<a href=#74 id=74 data-nosnippet>74</a><span class="kw">pub use </span>polarization::{FeedBasis, GridPolarization, PolarizationRouting};
+<a href=#75 id=75 data-nosnippet>75</a><span class="kw">pub use </span>resample::{
+<a href=#76 id=76 data-nosnippet>76</a>    NativeRow, PredictionScratch, RowSpectrum, SpectralAxis, SpectralKernel, SpectralResampler,
+<a href=#77 id=77 data-nosnippet>77</a>};
+<a href=#78 id=78 data-nosnippet>78</a><span class="kw">pub use </span>sample::{CfKey, Placement, SampleBlock, SampleBuffer};
+<a href=#79 id=79 data-nosnippet>79</a><span class="kw">pub use </span>spheroidal::{SPHEROIDAL_OVERSAMPLING, SPHEROIDAL_SUPPORT, Spheroidal, grdsf};
+<a href=#80 id=80 data-nosnippet>80</a><span class="kw">pub use </span>weighting::{
+<a href=#81 id=81 data-nosnippet>81</a>    BandwidthTaper, DensityCellRule, DensityGrid, DensityGridShape, DensityUv, RobustFactors,
+<a href=#82 id=82 data-nosnippet>82</a>    Taper, WeightingGeneration, build_density_grid,
+<a href=#83 id=83 data-nosnippet>83</a>};
+<a href=#84 id=84 data-nosnippet>84</a><span class="kw">pub use </span>wplanes::{WPlaneCount, WPlanes, WScreens};
+<a href=#85 id=85 data-nosnippet>85</a>
+<a href=#86 id=86 data-nosnippet>86</a><span class="doccomment">/// The C heap FFTW keeps for the plans the process caches
+<a href=#87 id=87 data-nosnippet>87</a>/// ([`casa_fft::PLAN_CACHE_BYTES`]), which every transform of the operator
+<a href=#88 id=88 data-nosnippet>88</a>/// and the minor cycle plans through.
+<a href=#89 id=89 data-nosnippet>89</a></span><span class="kw">pub const </span>FFT_PLAN_CACHE_BYTES: usize = casa_fft::PLAN_CACHE_BYTES;
+<a href=#90 id=90 data-nosnippet>90</a>
+<a href=#91 id=91 data-nosnippet>91</a><span class="doccomment">/// Heap bytes planning the operator's complex transform of `cells` grid
+<a href=#92 id=92 data-nosnippet>92</a>/// cells holds while FFTW plans it ([`casa_fft::planning_bytes`]). The
+<a href=#93 id=93 data-nosnippet>93</a>/// process plans one transform at a time.
+<a href=#94 id=94 data-nosnippet>94</a></span><span class="attr">#[must_use]
+<a href=#95 id=95 data-nosnippet>95</a></span><span class="kw">pub const fn </span>grid_planning_bytes(cells: usize) -&gt; u64 {
+<a href=#96 id=96 data-nosnippet>96</a>    casa_fft::planning_bytes::&lt;f64&gt;(cells)
+<a href=#97 id=97 data-nosnippet>97</a>}
 </code></pre></div></section></main></body></html>

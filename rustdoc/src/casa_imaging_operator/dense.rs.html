@@ -74,100 +74,117 @@
 <a href=#74 id=74 data-nosnippet>74</a>    }
 <a href=#75 id=75 data-nosnippet>75</a>}
 <a href=#76 id=76 data-nosnippet>76</a>
-<a href=#77 id=77 data-nosnippet>77</a><span class="doccomment">/// The dense cell of one even-symmetric kernel stored as its positive
-<a href=#78 id=78 data-nosnippet>78</a>/// quadrant (`WPConvFunc`: `convFunc(abs(ix·sampling + off), abs(iy·sampling
-<a href=#79 id=79 data-nosnippet>79</a>/// + off))`), `quadrant` being `side × side` values, x fastest, with the
-<a href=#80 id=80 data-nosnippet>80</a>/// origin at `(0, 0)`.
-<a href=#81 id=81 data-nosnippet>81</a>///
-<a href=#82 id=82 data-nosnippet>82</a>/// A plane at `sampling` 1 (CASA's one-plane case, where `nint((loc −
-<a href=#83 id=83 data-nosnippet>83</a>/// pos) · 1)` is always zero) becomes a cell at oversampling 2 whose every
-<a href=#84 id=84 data-nosnippet>84</a>/// fine-offset row reads the integer taps.
-<a href=#85 id=85 data-nosnippet>85</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>dense_cell_from_quadrant(
-<a href=#86 id=86 data-nosnippet>86</a>    quadrant: <span class="kw-2">&amp;</span>[Complex32],
-<a href=#87 id=87 data-nosnippet>87</a>    side: usize,
-<a href=#88 id=88 data-nosnippet>88</a>    sampling: u16,
-<a href=#89 id=89 data-nosnippet>89</a>    half_support: u16,
-<a href=#90 id=90 data-nosnippet>90</a>) -&gt; DenseCell {
-<a href=#91 id=91 data-nosnippet>91</a>    <span class="kw">let </span>oversampling = <span class="kw">if </span>sampling == <span class="number">1 </span>{ <span class="number">2 </span>} <span class="kw">else </span>{ sampling };
-<a href=#92 id=92 data-nosnippet>92</a>    <span class="macro">assert!</span>(oversampling.is_multiple_of(<span class="number">2</span>), <span class="string">"oversampling must be even"</span>);
-<a href=#93 id=93 data-nosnippet>93</a>    <span class="kw">let </span>support = <span class="number">2 </span>* half_support + <span class="number">1</span>;
-<a href=#94 id=94 data-nosnippet>94</a>    <span class="kw">let </span>taps = usize::from(support);
-<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">let </span>rows = usize::from(oversampling) + <span class="number">1</span>;
-<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">let </span>half = i64::from(oversampling / <span class="number">2</span>);
-<a href=#97 id=97 data-nosnippet>97</a>    <span class="kw">let </span><span class="kw-2">mut </span>data = Vec::with_capacity(rows * rows * taps * taps);
-<a href=#98 id=98 data-nosnippet>98</a>    <span class="kw">let </span>pixel = |k: i64, off: i64| {
-<a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">if </span>sampling == <span class="number">1 </span>{
-<a href=#100 id=100 data-nosnippet>100</a>            k.unsigned_abs() <span class="kw">as </span>usize
-<a href=#101 id=101 data-nosnippet>101</a>        } <span class="kw">else </span>{
-<a href=#102 id=102 data-nosnippet>102</a>            (k * i64::from(sampling) + off).unsigned_abs() <span class="kw">as </span>usize
-<a href=#103 id=103 data-nosnippet>103</a>        }
-<a href=#104 id=104 data-nosnippet>104</a>    };
-<a href=#105 id=105 data-nosnippet>105</a>    <span class="kw">for </span>oy <span class="kw">in </span><span class="number">0</span>..rows {
-<a href=#106 id=106 data-nosnippet>106</a>        <span class="kw">let </span>off_y = oy <span class="kw">as </span>i64 - half;
-<a href=#107 id=107 data-nosnippet>107</a>        <span class="kw">for </span>ox <span class="kw">in </span><span class="number">0</span>..rows {
-<a href=#108 id=108 data-nosnippet>108</a>            <span class="kw">let </span>off_x = ox <span class="kw">as </span>i64 - half;
-<a href=#109 id=109 data-nosnippet>109</a>            <span class="kw">for </span>iy <span class="kw">in </span><span class="number">0</span>..taps {
-<a href=#110 id=110 data-nosnippet>110</a>                <span class="kw">let </span>y = pixel(iy <span class="kw">as </span>i64 - i64::from(half_support), off_y);
-<a href=#111 id=111 data-nosnippet>111</a>                <span class="kw">for </span>ix <span class="kw">in </span><span class="number">0</span>..taps {
-<a href=#112 id=112 data-nosnippet>112</a>                    <span class="kw">let </span>x = pixel(ix <span class="kw">as </span>i64 - i64::from(half_support), off_x);
-<a href=#113 id=113 data-nosnippet>113</a>                    data.push(quadrant[y * side + x]);
-<a href=#114 id=114 data-nosnippet>114</a>                }
-<a href=#115 id=115 data-nosnippet>115</a>            }
-<a href=#116 id=116 data-nosnippet>116</a>        }
-<a href=#117 id=117 data-nosnippet>117</a>    }
-<a href=#118 id=118 data-nosnippet>118</a>    DenseCell {
-<a href=#119 id=119 data-nosnippet>119</a>        data: data.into_boxed_slice(),
-<a href=#120 id=120 data-nosnippet>120</a>        support: [support, support],
-<a href=#121 id=121 data-nosnippet>121</a>        oversampling,
-<a href=#122 id=122 data-nosnippet>122</a>        mueller_planes: <span class="number">1</span>,
-<a href=#123 id=123 data-nosnippet>123</a>    }
-<a href=#124 id=124 data-nosnippet>124</a>}
-<a href=#125 id=125 data-nosnippet>125</a>
-<a href=#126 id=126 data-nosnippet>126</a><span class="attr">#[cfg(test)]
-<a href=#127 id=127 data-nosnippet>127</a></span><span class="kw">mod </span>tests {
-<a href=#128 id=128 data-nosnippet>128</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#129 id=129 data-nosnippet>129</a>
-<a href=#130 id=130 data-nosnippet>130</a>    <span class="attr">#[test]
-<a href=#131 id=131 data-nosnippet>131</a>    </span><span class="kw">fn </span>tiles_permute_the_oversampled_plane_by_fine_offset() {
-<a href=#132 id=132 data-nosnippet>132</a>        <span class="comment">// A 9×9 plane whose value encodes its pixel, centre (4, 4),
-<a href=#133 id=133 data-nosnippet>133</a>        // sampling 2: tap k at offset off reads pixel 4 + 2k + off.
-<a href=#134 id=134 data-nosnippet>134</a>        </span><span class="kw">let </span>side = <span class="number">9</span>;
-<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">let </span>values = (<span class="number">0</span>..side * side)
-<a href=#136 id=136 data-nosnippet>136</a>            .map(|index| Complex32::new((index % side) <span class="kw">as </span>f32, (index / side) <span class="kw">as </span>f32))
-<a href=#137 id=137 data-nosnippet>137</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#138 id=138 data-nosnippet>138</a>        <span class="kw">let </span>plane = OversampledPlane {
-<a href=#139 id=139 data-nosnippet>139</a>            values: <span class="kw-2">&amp;</span>values,
-<a href=#140 id=140 data-nosnippet>140</a>            side,
-<a href=#141 id=141 data-nosnippet>141</a>            centre: [<span class="number">4</span>, <span class="number">4</span>],
-<a href=#142 id=142 data-nosnippet>142</a>            sampling: <span class="number">2</span>,
-<a href=#143 id=143 data-nosnippet>143</a>        };
-<a href=#144 id=144 data-nosnippet>144</a>        <span class="kw">let </span>cell = dense_cell(<span class="kw-2">&amp;</span>[plane], [<span class="number">1</span>, <span class="number">1</span>]);
-<a href=#145 id=145 data-nosnippet>145</a>        <span class="macro">assert_eq!</span>(cell.support, [<span class="number">3</span>, <span class="number">3</span>]);
-<a href=#146 id=146 data-nosnippet>146</a>        <span class="macro">assert_eq!</span>(cell.data.len(), <span class="number">3 </span>* <span class="number">3 </span>* <span class="number">9</span>);
-<a href=#147 id=147 data-nosnippet>147</a>        <span class="comment">// Row (ox, oy) = (0, 2), the seventh tile: off_x = −1, off_y = +1;
-<a href=#148 id=148 data-nosnippet>148</a>        // tap (ix, iy) = (2, 0) → k = (+1, −1) → pixel (4 + 2 − 1, 4 − 2 +
-<a href=#149 id=149 data-nosnippet>149</a>        // 1) = (5, 3).
-<a href=#150 id=150 data-nosnippet>150</a>        </span><span class="kw">let </span>tile = <span class="kw-2">&amp;</span>cell.data[<span class="number">6 </span>* <span class="number">9</span>..][..<span class="number">9</span>];
-<a href=#151 id=151 data-nosnippet>151</a>        <span class="macro">assert_eq!</span>(tile[<span class="number">2</span>], Complex32::new(<span class="number">5.0</span>, <span class="number">3.0</span>));
-<a href=#152 id=152 data-nosnippet>152</a>        <span class="comment">// Centre row (1, 1), the fifth tile; its centre tap is the plane
-<a href=#153 id=153 data-nosnippet>153</a>        // centre.
-<a href=#154 id=154 data-nosnippet>154</a>        </span><span class="kw">let </span>tile = <span class="kw-2">&amp;</span>cell.data[<span class="number">4 </span>* <span class="number">9</span>..][..<span class="number">9</span>];
-<a href=#155 id=155 data-nosnippet>155</a>        <span class="macro">assert_eq!</span>(tile[<span class="number">4</span>], Complex32::new(<span class="number">4.0</span>, <span class="number">4.0</span>));
-<a href=#156 id=156 data-nosnippet>156</a>    }
-<a href=#157 id=157 data-nosnippet>157</a>
-<a href=#158 id=158 data-nosnippet>158</a>    <span class="attr">#[test]
-<a href=#159 id=159 data-nosnippet>159</a>    </span><span class="kw">fn </span>quadrant_cells_mirror_negative_offsets() {
-<a href=#160 id=160 data-nosnippet>160</a>        <span class="kw">let </span>side = <span class="number">6</span>;
-<a href=#161 id=161 data-nosnippet>161</a>        <span class="kw">let </span>quadrant = (<span class="number">0</span>..side * side)
-<a href=#162 id=162 data-nosnippet>162</a>            .map(|index| Complex32::new((index % side) <span class="kw">as </span>f32, (index / side) <span class="kw">as </span>f32))
-<a href=#163 id=163 data-nosnippet>163</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#164 id=164 data-nosnippet>164</a>        <span class="kw">let </span>cell = dense_cell_from_quadrant(<span class="kw-2">&amp;</span>quadrant, side, <span class="number">2</span>, <span class="number">1</span>);
-<a href=#165 id=165 data-nosnippet>165</a>        <span class="comment">// Row (0, 1), the fourth tile: off_x = −1, off_y = 0; tap (0, 1):
-<a href=#166 id=166 data-nosnippet>166</a>        // k = (−1, 0) → |−2 − 1| = 3 along x, 0 along y.
-<a href=#167 id=167 data-nosnippet>167</a>        </span><span class="kw">let </span>tile = <span class="kw-2">&amp;</span>cell.data[<span class="number">3 </span>* <span class="number">9</span>..][..<span class="number">9</span>];
-<a href=#168 id=168 data-nosnippet>168</a>        <span class="macro">assert_eq!</span>(tile[<span class="number">3</span>], Complex32::new(<span class="number">3.0</span>, <span class="number">0.0</span>));
-<a href=#169 id=169 data-nosnippet>169</a>        <span class="comment">// Tap (2, 1): k = (+1, 0) → |2 − 1| = 1.
-<a href=#170 id=170 data-nosnippet>170</a>        </span><span class="macro">assert_eq!</span>(tile[<span class="number">5</span>], Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>));
-<a href=#171 id=171 data-nosnippet>171</a>    }
-<a href=#172 id=172 data-nosnippet>172</a>}
+<a href=#77 id=77 data-nosnippet>77</a><span class="doccomment">/// Bytes the taps of [`dense_cell`]'s cell of `planes` planes at `sampling`
+<a href=#78 id=78 data-nosnippet>78</a>/// hold for `half_support`.
+<a href=#79 id=79 data-nosnippet>79</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const fn </span>dense_cell_bytes(planes: usize, sampling: u16, half_support: [u16; <span class="number">2</span>]) -&gt; u64 {
+<a href=#80 id=80 data-nosnippet>80</a>    <span class="kw">let </span>rows = sampling <span class="kw">as </span>usize + <span class="number">1</span>;
+<a href=#81 id=81 data-nosnippet>81</a>    <span class="kw">let </span>taps = (<span class="number">2 </span>* half_support[<span class="number">0</span>] <span class="kw">as </span>usize + <span class="number">1</span>) * (<span class="number">2 </span>* half_support[<span class="number">1</span>] <span class="kw">as </span>usize + <span class="number">1</span>);
+<a href=#82 id=82 data-nosnippet>82</a>    (rows * rows * planes * taps * size_of::&lt;Complex32&gt;()) <span class="kw">as </span>u64
+<a href=#83 id=83 data-nosnippet>83</a>}
+<a href=#84 id=84 data-nosnippet>84</a>
+<a href=#85 id=85 data-nosnippet>85</a><span class="doccomment">/// Bytes the taps of [`dense_cell_from_quadrant`]'s cell hold for
+<a href=#86 id=86 data-nosnippet>86</a>/// `sampling` and `half_support`.
+<a href=#87 id=87 data-nosnippet>87</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const fn </span>dense_cell_from_quadrant_bytes(sampling: u16, half_support: u16) -&gt; u64 {
+<a href=#88 id=88 data-nosnippet>88</a>    <span class="kw">let </span>oversampling = <span class="kw">if </span>sampling == <span class="number">1 </span>{ <span class="number">2 </span>} <span class="kw">else </span>{ sampling };
+<a href=#89 id=89 data-nosnippet>89</a>    <span class="kw">let </span>rows = oversampling <span class="kw">as </span>usize + <span class="number">1</span>;
+<a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">let </span>taps = <span class="number">2 </span>* half_support <span class="kw">as </span>usize + <span class="number">1</span>;
+<a href=#91 id=91 data-nosnippet>91</a>    (rows * rows * taps * taps * size_of::&lt;Complex32&gt;()) <span class="kw">as </span>u64
+<a href=#92 id=92 data-nosnippet>92</a>}
+<a href=#93 id=93 data-nosnippet>93</a>
+<a href=#94 id=94 data-nosnippet>94</a><span class="doccomment">/// The dense cell of one even-symmetric kernel stored as its positive
+<a href=#95 id=95 data-nosnippet>95</a>/// quadrant (`WPConvFunc`: `convFunc(abs(ix·sampling + off), abs(iy·sampling
+<a href=#96 id=96 data-nosnippet>96</a>/// + off))`), `quadrant` being `side × side` values, x fastest, with the
+<a href=#97 id=97 data-nosnippet>97</a>/// origin at `(0, 0)`.
+<a href=#98 id=98 data-nosnippet>98</a>///
+<a href=#99 id=99 data-nosnippet>99</a>/// A plane at `sampling` 1 (CASA's one-plane case, where `nint((loc −
+<a href=#100 id=100 data-nosnippet>100</a>/// pos) · 1)` is always zero) becomes a cell at oversampling 2 whose every
+<a href=#101 id=101 data-nosnippet>101</a>/// fine-offset row reads the integer taps.
+<a href=#102 id=102 data-nosnippet>102</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>dense_cell_from_quadrant(
+<a href=#103 id=103 data-nosnippet>103</a>    quadrant: <span class="kw-2">&amp;</span>[Complex32],
+<a href=#104 id=104 data-nosnippet>104</a>    side: usize,
+<a href=#105 id=105 data-nosnippet>105</a>    sampling: u16,
+<a href=#106 id=106 data-nosnippet>106</a>    half_support: u16,
+<a href=#107 id=107 data-nosnippet>107</a>) -&gt; DenseCell {
+<a href=#108 id=108 data-nosnippet>108</a>    <span class="kw">let </span>oversampling = <span class="kw">if </span>sampling == <span class="number">1 </span>{ <span class="number">2 </span>} <span class="kw">else </span>{ sampling };
+<a href=#109 id=109 data-nosnippet>109</a>    <span class="macro">assert!</span>(oversampling.is_multiple_of(<span class="number">2</span>), <span class="string">"oversampling must be even"</span>);
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="kw">let </span>support = <span class="number">2 </span>* half_support + <span class="number">1</span>;
+<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">let </span>taps = usize::from(support);
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">let </span>rows = usize::from(oversampling) + <span class="number">1</span>;
+<a href=#113 id=113 data-nosnippet>113</a>    <span class="kw">let </span>half = i64::from(oversampling / <span class="number">2</span>);
+<a href=#114 id=114 data-nosnippet>114</a>    <span class="kw">let </span><span class="kw-2">mut </span>data = Vec::with_capacity(rows * rows * taps * taps);
+<a href=#115 id=115 data-nosnippet>115</a>    <span class="kw">let </span>pixel = |k: i64, off: i64| {
+<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">if </span>sampling == <span class="number">1 </span>{
+<a href=#117 id=117 data-nosnippet>117</a>            k.unsigned_abs() <span class="kw">as </span>usize
+<a href=#118 id=118 data-nosnippet>118</a>        } <span class="kw">else </span>{
+<a href=#119 id=119 data-nosnippet>119</a>            (k * i64::from(sampling) + off).unsigned_abs() <span class="kw">as </span>usize
+<a href=#120 id=120 data-nosnippet>120</a>        }
+<a href=#121 id=121 data-nosnippet>121</a>    };
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">for </span>oy <span class="kw">in </span><span class="number">0</span>..rows {
+<a href=#123 id=123 data-nosnippet>123</a>        <span class="kw">let </span>off_y = oy <span class="kw">as </span>i64 - half;
+<a href=#124 id=124 data-nosnippet>124</a>        <span class="kw">for </span>ox <span class="kw">in </span><span class="number">0</span>..rows {
+<a href=#125 id=125 data-nosnippet>125</a>            <span class="kw">let </span>off_x = ox <span class="kw">as </span>i64 - half;
+<a href=#126 id=126 data-nosnippet>126</a>            <span class="kw">for </span>iy <span class="kw">in </span><span class="number">0</span>..taps {
+<a href=#127 id=127 data-nosnippet>127</a>                <span class="kw">let </span>y = pixel(iy <span class="kw">as </span>i64 - i64::from(half_support), off_y);
+<a href=#128 id=128 data-nosnippet>128</a>                <span class="kw">for </span>ix <span class="kw">in </span><span class="number">0</span>..taps {
+<a href=#129 id=129 data-nosnippet>129</a>                    <span class="kw">let </span>x = pixel(ix <span class="kw">as </span>i64 - i64::from(half_support), off_x);
+<a href=#130 id=130 data-nosnippet>130</a>                    data.push(quadrant[y * side + x]);
+<a href=#131 id=131 data-nosnippet>131</a>                }
+<a href=#132 id=132 data-nosnippet>132</a>            }
+<a href=#133 id=133 data-nosnippet>133</a>        }
+<a href=#134 id=134 data-nosnippet>134</a>    }
+<a href=#135 id=135 data-nosnippet>135</a>    DenseCell {
+<a href=#136 id=136 data-nosnippet>136</a>        data: data.into_boxed_slice(),
+<a href=#137 id=137 data-nosnippet>137</a>        support: [support, support],
+<a href=#138 id=138 data-nosnippet>138</a>        oversampling,
+<a href=#139 id=139 data-nosnippet>139</a>        mueller_planes: <span class="number">1</span>,
+<a href=#140 id=140 data-nosnippet>140</a>    }
+<a href=#141 id=141 data-nosnippet>141</a>}
+<a href=#142 id=142 data-nosnippet>142</a>
+<a href=#143 id=143 data-nosnippet>143</a><span class="attr">#[cfg(test)]
+<a href=#144 id=144 data-nosnippet>144</a></span><span class="kw">mod </span>tests {
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#146 id=146 data-nosnippet>146</a>
+<a href=#147 id=147 data-nosnippet>147</a>    <span class="attr">#[test]
+<a href=#148 id=148 data-nosnippet>148</a>    </span><span class="kw">fn </span>tiles_permute_the_oversampled_plane_by_fine_offset() {
+<a href=#149 id=149 data-nosnippet>149</a>        <span class="comment">// A 9×9 plane whose value encodes its pixel, centre (4, 4),
+<a href=#150 id=150 data-nosnippet>150</a>        // sampling 2: tap k at offset off reads pixel 4 + 2k + off.
+<a href=#151 id=151 data-nosnippet>151</a>        </span><span class="kw">let </span>side = <span class="number">9</span>;
+<a href=#152 id=152 data-nosnippet>152</a>        <span class="kw">let </span>values = (<span class="number">0</span>..side * side)
+<a href=#153 id=153 data-nosnippet>153</a>            .map(|index| Complex32::new((index % side) <span class="kw">as </span>f32, (index / side) <span class="kw">as </span>f32))
+<a href=#154 id=154 data-nosnippet>154</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#155 id=155 data-nosnippet>155</a>        <span class="kw">let </span>plane = OversampledPlane {
+<a href=#156 id=156 data-nosnippet>156</a>            values: <span class="kw-2">&amp;</span>values,
+<a href=#157 id=157 data-nosnippet>157</a>            side,
+<a href=#158 id=158 data-nosnippet>158</a>            centre: [<span class="number">4</span>, <span class="number">4</span>],
+<a href=#159 id=159 data-nosnippet>159</a>            sampling: <span class="number">2</span>,
+<a href=#160 id=160 data-nosnippet>160</a>        };
+<a href=#161 id=161 data-nosnippet>161</a>        <span class="kw">let </span>cell = dense_cell(<span class="kw-2">&amp;</span>[plane], [<span class="number">1</span>, <span class="number">1</span>]);
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="macro">assert_eq!</span>(cell.support, [<span class="number">3</span>, <span class="number">3</span>]);
+<a href=#163 id=163 data-nosnippet>163</a>        <span class="macro">assert_eq!</span>(cell.data.len(), <span class="number">3 </span>* <span class="number">3 </span>* <span class="number">9</span>);
+<a href=#164 id=164 data-nosnippet>164</a>        <span class="comment">// Row (ox, oy) = (0, 2), the seventh tile: off_x = −1, off_y = +1;
+<a href=#165 id=165 data-nosnippet>165</a>        // tap (ix, iy) = (2, 0) → k = (+1, −1) → pixel (4 + 2 − 1, 4 − 2 +
+<a href=#166 id=166 data-nosnippet>166</a>        // 1) = (5, 3).
+<a href=#167 id=167 data-nosnippet>167</a>        </span><span class="kw">let </span>tile = <span class="kw-2">&amp;</span>cell.data[<span class="number">6 </span>* <span class="number">9</span>..][..<span class="number">9</span>];
+<a href=#168 id=168 data-nosnippet>168</a>        <span class="macro">assert_eq!</span>(tile[<span class="number">2</span>], Complex32::new(<span class="number">5.0</span>, <span class="number">3.0</span>));
+<a href=#169 id=169 data-nosnippet>169</a>        <span class="comment">// Centre row (1, 1), the fifth tile; its centre tap is the plane
+<a href=#170 id=170 data-nosnippet>170</a>        // centre.
+<a href=#171 id=171 data-nosnippet>171</a>        </span><span class="kw">let </span>tile = <span class="kw-2">&amp;</span>cell.data[<span class="number">4 </span>* <span class="number">9</span>..][..<span class="number">9</span>];
+<a href=#172 id=172 data-nosnippet>172</a>        <span class="macro">assert_eq!</span>(tile[<span class="number">4</span>], Complex32::new(<span class="number">4.0</span>, <span class="number">4.0</span>));
+<a href=#173 id=173 data-nosnippet>173</a>    }
+<a href=#174 id=174 data-nosnippet>174</a>
+<a href=#175 id=175 data-nosnippet>175</a>    <span class="attr">#[test]
+<a href=#176 id=176 data-nosnippet>176</a>    </span><span class="kw">fn </span>quadrant_cells_mirror_negative_offsets() {
+<a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">let </span>side = <span class="number">6</span>;
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">let </span>quadrant = (<span class="number">0</span>..side * side)
+<a href=#179 id=179 data-nosnippet>179</a>            .map(|index| Complex32::new((index % side) <span class="kw">as </span>f32, (index / side) <span class="kw">as </span>f32))
+<a href=#180 id=180 data-nosnippet>180</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#181 id=181 data-nosnippet>181</a>        <span class="kw">let </span>cell = dense_cell_from_quadrant(<span class="kw-2">&amp;</span>quadrant, side, <span class="number">2</span>, <span class="number">1</span>);
+<a href=#182 id=182 data-nosnippet>182</a>        <span class="comment">// Row (0, 1), the fourth tile: off_x = −1, off_y = 0; tap (0, 1):
+<a href=#183 id=183 data-nosnippet>183</a>        // k = (−1, 0) → |−2 − 1| = 3 along x, 0 along y.
+<a href=#184 id=184 data-nosnippet>184</a>        </span><span class="kw">let </span>tile = <span class="kw-2">&amp;</span>cell.data[<span class="number">3 </span>* <span class="number">9</span>..][..<span class="number">9</span>];
+<a href=#185 id=185 data-nosnippet>185</a>        <span class="macro">assert_eq!</span>(tile[<span class="number">3</span>], Complex32::new(<span class="number">3.0</span>, <span class="number">0.0</span>));
+<a href=#186 id=186 data-nosnippet>186</a>        <span class="comment">// Tap (2, 1): k = (+1, 0) → |2 − 1| = 1.
+<a href=#187 id=187 data-nosnippet>187</a>        </span><span class="macro">assert_eq!</span>(tile[<span class="number">5</span>], Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>));
+<a href=#188 id=188 data-nosnippet>188</a>    }
+<a href=#189 id=189 data-nosnippet>189</a>}
 </code></pre></div></section></main></body></html>

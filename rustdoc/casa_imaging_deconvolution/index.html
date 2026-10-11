@@ -36,4 +36,9 @@ box, scanned x fastest with strictly-greater replacement. The box’s
 upper bounds are exclusive, as in casacore, and an axis no longer than
 the patch is searched from 0 to its last pixel exclusive.</dd><dt><a class="fn" href="fn.robust_noise.html" title="fn casa_imaging_deconvolution::robust_noise">robust_<wbr>noise</a></dt><dd>CASA’s robust noise of one plane (<code>SIImageStore::calcRobustRMS</code>): the
 median of the supported values and 1.4826 times their median absolute
-deviation. <code>None</code> when nothing is supported.</dd><dt><a class="fn" href="fn.run_plane.html" title="fn casa_imaging_deconvolution::run_plane">run_<wbr>plane</a></dt><dd>Run one plane’s minor cycle.</dd></dl></section></div></main></body></html>
+deviation. <code>None</code> when nothing is supported.</dd><dt><a class="fn" href="fn.run_plane.html" title="fn casa_imaging_deconvolution::run_plane">run_<wbr>plane</a></dt><dd>Run one plane’s minor cycle.</dd><dt><a class="fn" href="fn.solve_bytes.html" title="fn casa_imaging_deconvolution::solve_bytes">solve_<wbr>bytes</a></dt><dd>Heap bytes <a href="fn.run_plane.html" title="fn casa_imaging_deconvolution::run_plane"><code>run_plane</code></a> holds at most for one plane of <code>shape</code> with
+<code>terms</code> residual terms that places up to <code>components</code> components and
+traces <code>trace</code> of them: its residual copy, the cycle’s and the step’s
+updates, which hold an entry for each pixel a component adds flux to
+(<a href="trait.Solver.html#tymethod.component_cells" title="method casa_imaging_deconvolution::Solver::component_cells"><code>Solver::component_cells</code></a>) and at most every pixel, the trace, and
+the solver’s working state (<a href="trait.Solver.html#tymethod.working_bytes" title="method casa_imaging_deconvolution::Solver::working_bytes"><code>Solver::working_bytes</code></a>).</dd></dl></section></div></main></body></html>
