@@ -25,8 +25,8 @@ use std::sync::Arc;
 
 use casa_imaging_model::{
     CentreLaws, GeometryInput, ModelBounds, ModelLifecycleRequirements, NativeAwRequestInput,
-    NumericPrecision, ProblemSpecification, SequentialContinuumTransform,
-    UncorrectedImageMaskPolicy, UvwCoordinateLaw, WeightColumn as OwnerWeightColumn,
+    NumericPrecision, ProblemSpecification, SequentialContinuumTransform, UvwCoordinateLaw,
+    WeightColumn as OwnerWeightColumn,
 };
 use casa_imaging_operator::{AwCatalog, AwIndexing};
 use casa_imaging_products::{
@@ -141,7 +141,7 @@ pub(crate) fn prepare(
         },
         &observation_info,
     )?;
-    let primary_beam = primary_beam_model(request, &ms)?;
+    let primary_beam = primary_beam_model(request, &ms, &spectral)?;
     let deployment = deployment(request, context, &surveyed, &domains, primary_beam)?;
     let instrument = instrument::scientific_instrument_model(&request.gridder, &ms)?;
     let specification = specification::specification(
@@ -258,11 +258,7 @@ fn specification_inputs(
     let windows = &surveyed.survey.spectral_windows;
     Ok(SpecificationInputs {
         instrument,
-        uncorrected_mask: if primary_beam && request.pblimit >= 0.0 {
-            UncorrectedImageMaskPolicy::PrimaryBeam
-        } else {
-            UncorrectedImageMaskPolicy::None
-        },
+        primary_beam,
         w_projection: match &request.gridder {
             Gridder::Wproject { wprojplanes } => Some(specification::w_projection(
                 *wprojplanes,
@@ -340,10 +336,17 @@ fn geometry(
 
 /// The primary beam the products are written with: the mosaic
 /// sensitivity of a direction-dependent gridder, else the telescope's
-/// analytic beam when `.pb` or `.image.pbcor` is asked for.
+/// analytic beam.
+///
+/// CASA writes `.pb` for every gridder, and for the standard and
+/// W-projection gridders only when its VPManager knows the telescope
+/// (`SynthesisImager::makePBImage` warns "Not making PB" otherwise). So
+/// without `write_pb` or `pbcor` a telescope, dish set or band that has no
+/// analytic beam here means no PB, not a failed run.
 fn primary_beam_model(
     request: &ImagingRequest,
     ms: &MeasurementSet,
+    spectral: &spectral::PreparedSpectralAxis,
 ) -> Result<Option<AnalyticPrimaryBeamModel>, PrepareError> {
     Ok(match request.gridder {
         Gridder::Mosaic { .. } | Gridder::Awproject(_) => {
@@ -352,7 +355,31 @@ fn primary_beam_model(
         Gridder::Standard | Gridder::Wproject { .. } if request.write_pb || request.pbcor => {
             Some(instrument::standard_primary_beam_model(ms)?)
         }
-        Gridder::Standard | Gridder::Wproject { .. } => None,
+        Gridder::Standard | Gridder::Wproject { .. } => {
+            match instrument::standard_primary_beam_model(ms) {
+                Ok(model) => {
+                    let coordinate = spectral.coordinate();
+                    let channels = match request.deconvolver {
+                        Deconvolver::Mtmfs => 1,
+                        _ => spectral.output_channels,
+                    };
+                    (0..channels)
+                        .all(|channel| {
+                            coordinate
+                                .channel_centre_hz(channel)
+                                .is_some_and(|hz| model.supports_frequency(hz))
+                        })
+                        .then_some(model)
+                }
+                Err(
+                    PrepareError::NoTelescope
+                    | PrepareError::NoAnalyticPrimaryBeam { .. }
+                    | PrepareError::NoAntennaDishes
+                    | PrepareError::MixedAlmaDishes { .. },
+                ) => None,
+                Err(error) => return Err(error),
+            }
+        }
     })
 }
 

@@ -75,7 +75,16 @@ pub(super) fn assert_recovers_the_point(
     assert_eq!(
         products.suffixes(),
         BTreeSet::from(
-            [".image", ".mask", ".model", ".psf", ".residual", ".sumwt"].map(String::from)
+            [
+                ".image",
+                ".mask",
+                ".model",
+                ".pb",
+                ".psf",
+                ".residual",
+                ".sumwt"
+            ]
+            .map(String::from)
         )
     );
     observation.assert_image_wcs(image);

@@ -34,7 +34,9 @@ const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 /// What the specification needs besides the request and the spectral axis.
 pub(super) struct SpecificationInputs {
     pub(super) instrument: Option<InstrumentModel>,
-    pub(super) uncorrected_mask: UncorrectedImageMaskPolicy,
+    /// Whether the run has a primary beam: the mosaic sensitivity, or the
+    /// telescope's analytic beam.
+    pub(super) primary_beam: bool,
     pub(super) w_projection: Option<WProjectionContract>,
     pub(super) aw_projection: Option<AwProjectionContract>,
     pub(super) cube_density_padding: Option<usize>,
@@ -135,7 +137,12 @@ pub(super) fn specification(
         reconstruction,
         weighting,
         ProductRequirements::new(
-            requested_products(request, minor_cycle, direction_dependent),
+            requested_products(
+                request,
+                minor_cycle,
+                direction_dependent,
+                inputs.primary_beam,
+            ),
             normalization(request),
             if common_beam {
                 RestoringBeamPolicy::Common
@@ -151,7 +158,14 @@ pub(super) fn specification(
                     ProductBlankingPolicy::Zero,
                 )?,
             )
-            .with_uncorrected_mask(inputs.uncorrected_mask),
+            // CASA copies the PB's mask to `.residual` and `.image` when
+            // there is a PB and pblimit is not negative
+            // (`SIImageStore::divideResidualByWeight`, `restore`).
+            .with_uncorrected_mask(if inputs.primary_beam && request.pblimit >= 0.0 {
+                UncorrectedImageMaskPolicy::PrimaryBeam
+            } else {
+                UncorrectedImageMaskPolicy::None
+            }),
         ),
         transaction(request),
         NumericsContract::new(
@@ -269,11 +283,13 @@ fn weighting(request: &ImagingRequest) -> WeightingContract {
 
 /// The products of a run: the standard set, the mask when a minor cycle
 /// runs, the Taylor family for `mtmfs`, the weight image for a
-/// direction-dependent gridder, and the primary-beam products asked for.
+/// direction-dependent gridder, the PB whenever the run has one, as CASA
+/// writes it, and the PB-corrected products asked for.
 fn requested_products(
     request: &ImagingRequest,
     minor_cycle: bool,
     weight_image: bool,
+    primary_beam: bool,
 ) -> Vec<ProductKind> {
     let mtmfs = request.deconvolver == Deconvolver::Mtmfs;
     let mut products = vec![
@@ -297,7 +313,7 @@ fn requested_products(
     if weight_image {
         products.push(ProductKind::Weight);
     }
-    if request.write_pb || request.pbcor {
+    if primary_beam {
         products.push(ProductKind::PrimaryBeam);
     }
     if request.pbcor {
@@ -503,18 +519,26 @@ mod tests {
             request.gridder,
             Gridder::Standard | Gridder::Wproject { .. }
         );
-        requested_products(&request, minor_cycle, weight_image)
+        requested_products(&request, minor_cycle, weight_image, true)
             .into_iter()
             .collect()
     }
 
     #[test]
     fn a_dirty_run_writes_no_clean_mask() {
-        let dirty = products(serde_json::json!({ "write_pb": true }));
+        let dirty = products(serde_json::json!({}));
         assert!(!dirty.contains(&ProductKind::Mask));
         assert!(dirty.contains(&ProductKind::PrimaryBeam));
         let clean = products(serde_json::json!({ "niter": 10 }));
         assert!(clean.contains(&ProductKind::Mask));
+    }
+
+    #[test]
+    fn a_run_without_a_primary_beam_writes_none() {
+        let request = crate::request::tests::request(serde_json::json!({}));
+        assert!(
+            !requested_products(&request, false, false, false).contains(&ProductKind::PrimaryBeam)
+        );
     }
 
     #[test]

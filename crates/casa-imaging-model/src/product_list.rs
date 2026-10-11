@@ -804,11 +804,16 @@ impl<'a> ListBuilder<'a> {
         }
     }
 
+    /// CASA writes `.pb.tt0` alone, except that a standard-gridder `pbcor`
+    /// touches `pb(term)` for every Taylor term (`SIImageStore::pbcor`),
+    /// which writes `.pb.tt1` and on.
     fn primary_beam_terms(&self) -> Vec<ProductTerm> {
-        if self.products.contains(ProductKind::Weight) {
-            vec![self.primary_beam_term()]
-        } else {
+        if self.products.contains(ProductKind::PbCorrectedImage)
+            && !self.products.contains(ProductKind::Weight)
+        {
             self.image_terms()
+        } else {
+            vec![self.primary_beam_term()]
         }
     }
 

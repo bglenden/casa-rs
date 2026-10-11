@@ -592,12 +592,15 @@ fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contra
         ".residual.tt0",
         ".residual.tt1",
         ".pb.tt0",
-        ".pb.tt1",
         ".alpha",
         ".alpha.error",
     ] {
         assert_eq!(open(suffix).units(), "", "{suffix} CASA unit");
     }
+    assert!(
+        !PathBuf::from(format!("{}.pb.tt1", image_name.display())).exists(),
+        "CASA writes .pb.tt1 only for a standard-gridder pbcor"
+    );
     for suffix in [".model.tt0", ".model.tt1"] {
         assert_eq!(open(suffix).units(), "Jy/pixel", "{suffix} CASA unit");
     }
