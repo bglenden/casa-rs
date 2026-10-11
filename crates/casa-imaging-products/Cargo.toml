@@ -12,11 +12,16 @@ workspace = true
 
 [dependencies]
 tracing.workspace = true
+casa-coordinates = { path = "../casa-coordinates" }
 casa-fft = { path = "../casa-fft" }
+casa-images = { path = "../casa-images" }
 casa-imaging-deconvolution = { path = "../casa-imaging-deconvolution" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
 casa-numerics = { path = "../casa-numerics" }
+casa-types = { path = "../casa-types" }
+libc = "0.2"
 ndarray.workspace = true
 num-complex.workspace = true
+tempfile = "3"
 thiserror.workspace = true

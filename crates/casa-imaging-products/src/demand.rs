@@ -9,23 +9,24 @@ use casa_imaging_reconstruction::NormalStateCatalog;
 use num_complex::Complex64;
 
 use crate::{
-    ContinuumProductInputs, PlannedContinuumGeneration, ProductStoragePlan, ProductsError,
-    PublishedContinuumGeneration, PublishedMember, RestoringBeam,
+    CasaImageWriter, ContinuumProductInputs, PlannedContinuumGeneration, ProductStoragePlan,
+    ProductsError, PublishedContinuumGeneration, PublishedMember, RestoringBeam,
 };
 
 /// Checked owned-array and metadata demand for one planned continuum generation.
 ///
-/// This is deliberately non-persistent. It describes the current algorithm
-/// catalog's owned payload, validity, and working arrays so the runtime can
-/// acquire one bounded lease before production starts. The generated summary's
-/// owned metadata and temporary beam arrays are included; allocator bookkeeping,
-/// the borrowed plan and borrowed reconstruction inputs are not charged here.
+/// It describes the products' payload, validity and working arrays, and what
+/// the image writer holds, so the run admits the whole phase once before
+/// production starts. The generated summary's owned metadata and temporary
+/// beam arrays are included; allocator bookkeeping, the borrowed plan and
+/// borrowed reconstruction inputs are not charged here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContinuumGenerationDemand {
     storage_plan: ProductStoragePlan,
     algorithm_scratch_bytes: u64,
     retained_metadata_bytes: u64,
     beam_scratch_bytes: u64,
+    writer_bytes: u64,
     maximum_member_payload_bytes: u64,
     maximum_member_validity_bytes: u64,
     maximum_window_payload_bytes: u64,
@@ -70,6 +71,13 @@ impl ContinuumGenerationDemand {
         self.beam_scratch_bytes
     }
 
+    /// What the CASA image writer holds: one member's image buffers and
+    /// metadata, and the staged members' records.
+    #[must_use]
+    pub const fn writer_bytes(self) -> u64 {
+        self.writer_bytes
+    }
+
     /// Largest single member's binary32 payload.
     #[must_use]
     pub const fn maximum_member_payload_bytes(self) -> u64 {
@@ -82,7 +90,8 @@ impl ContinuumGenerationDemand {
         self.maximum_member_validity_bytes
     }
 
-    /// Bounded owned arrays plus retained metadata and temporary beam storage.
+    /// Bounded owned arrays, retained metadata, temporary beam storage and
+    /// the image writer: the products phase's one charge.
     #[must_use]
     pub const fn peak_residency_bytes(self) -> u64 {
         self.peak_residency_bytes
@@ -101,6 +110,7 @@ impl PlannedContinuumGeneration {
         &self,
         inputs: &ContinuumProductInputs<'_>,
         storage_plan: ProductStoragePlan,
+        writer: &CasaImageWriter,
     ) -> Result<ContinuumGenerationDemand, ProductsError> {
         let mut maximum_member_payload_bytes = 0_u64;
         let mut maximum_member_validity_bytes = 0_u64;
@@ -223,16 +233,26 @@ impl PlannedContinuumGeneration {
             )?
             .max(beam_scratch_bytes)
         };
+        let writer_bytes = writer.residency_bytes(
+            self,
+            maximum_window_payload_bytes,
+            maximum_window_validity_bytes,
+        )?;
         let peak_residency_bytes = checked_add(
-            retained_metadata_bytes,
-            transient_bytes,
-            "product generation residency",
+            checked_add(
+                retained_metadata_bytes,
+                transient_bytes,
+                "product generation residency",
+            )?,
+            writer_bytes,
+            "product generation and writer residency",
         )?;
         Ok(ContinuumGenerationDemand {
             storage_plan,
             algorithm_scratch_bytes,
             retained_metadata_bytes,
             beam_scratch_bytes,
+            writer_bytes,
             maximum_member_payload_bytes,
             maximum_member_validity_bytes,
             maximum_window_payload_bytes,

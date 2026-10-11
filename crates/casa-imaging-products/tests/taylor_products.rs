@@ -8,7 +8,7 @@
 mod common;
 use common::observation::source;
 use common::synthetic_pass::{Scene, two_cycle_round};
-use common::{GeneratedMember, GeneratedProducts, MemoryProductOutput, full_window};
+use common::{GeneratedMember, GeneratedProducts, ImageOutput, full_window};
 
 use casa_imaging_model::{
     AxisOrder, CentreLaws, DeclaredInnerProducts, DirectionCoordinateSpec, DirectionFrame,
@@ -237,7 +237,7 @@ fn generate_with_controls(
 ) -> GeneratedProducts {
     let inputs = ContinuumProductInputs::from_major_cycle(problem, join);
     let planned = PlannedContinuumGeneration::new(&inputs, &controls).expect("T44 Taylor plan");
-    let output = MemoryProductOutput::default();
+    let output = ImageOutput::for_problem(problem);
     let produced =
         produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &output)
             .expect("T44 Taylor product family");
@@ -517,11 +517,11 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
 
     let join = run_round(&problem);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join);
-    assert_eq!(
+    assert!(matches!(
         PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
             .expect_err("requested PB needs a bound model at planning"),
         ProductsError::UnsupportedProblem
-    );
+    ));
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
     let planned = PlannedContinuumGeneration::new(&inputs, &controls).expect("analytic PB plan");
@@ -698,7 +698,11 @@ fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
     let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
         .expect("Taylor plan");
     let demand = planned
-        .demand(&inputs, full_window(&planned))
+        .demand(
+            &inputs,
+            full_window(&planned),
+            &ImageOutput::for_problem(&problem),
+        )
         .expect("Taylor demand");
     let maximum = planned
         .members()
@@ -725,13 +729,14 @@ fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
         demand.algorithm_scratch_bytes()
             + demand.retained_metadata_bytes()
             + demand.beam_scratch_bytes()
+            + demand.writer_bytes()
     );
     let generated = produce_continuum_members(
         &planned,
         &inputs,
         full_window(&planned),
         &(),
-        &MemoryProductOutput::default(),
+        &ImageOutput::for_problem(&problem),
     )
     .unwrap();
     assert_eq!(

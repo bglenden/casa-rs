@@ -22,11 +22,12 @@ use crate::error::ProductsError;
 use crate::normalization::{MosaicSensitivity, normalize_plane, normalized_psf_value, psf_peak};
 use crate::restore::{rescale_residual_to_beam, restore_model_plane};
 use crate::source::ContinuumProductInputs;
-use crate::storage::{ProductMemberWriter, ProductOutput};
+use crate::storage::ProductMemberWriter;
 use crate::taylor::{
     TaylorProducts, analytic_alma_airy_primary_beam, analytic_evla_primary_beam,
     analytic_vla_primary_beam, primary_beam_frequency_supported,
 };
+use crate::writer::CasaImageWriter;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
 pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF;
@@ -175,6 +176,7 @@ fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
 pub struct PlannedContinuumGeneration {
     psf_cutoff: f32,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+    uses_weight_image: bool,
     members: Box<[PlannedMember]>,
 }
 
@@ -230,6 +232,10 @@ impl PlannedContinuumGeneration {
         Ok(Self {
             psf_cutoff: controls.psf_cutoff(),
             primary_beam_model: controls.primary_beam_model(),
+            uses_weight_image: list
+                .entries()
+                .iter()
+                .any(|entry| matches!(entry.role(), ProductRole::Weight(_))),
             members: members.into_boxed_slice(),
         })
     }
@@ -337,22 +343,22 @@ impl PlannedMember {
     }
 }
 
-/// Produce every planned member through the continuum algorithm catalog.
+/// Produce every planned member and write it to `output`'s staging.
 ///
 /// Runs restoring-beam fitting, restoration, residual scaling, normalization,
 /// validity, and metadata exactly once per member, in the planned publication
-/// order.
+/// order. [`CasaImageWriter::publish`] then replaces the targets.
 ///
 /// # Errors
 ///
-/// Rejects source/run mismatches, unsupported roles, failed beam fits, and
-/// generated non-finite payloads.
+/// Rejects source/run mismatches, unsupported roles, failed beam fits,
+/// generated non-finite payloads, and image writes that fail.
 pub fn produce_continuum_members(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
     storage_plan: ProductStoragePlan,
     execution: &impl crate::ProductWindowExecutor,
-    output: &dyn ProductOutput,
+    output: &CasaImageWriter,
 ) -> Result<PublishedContinuumGeneration, ProductsError> {
     if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
         return produce_taylor_members(planned, inputs, storage_plan, output);
@@ -474,8 +480,8 @@ pub fn produce_continuum_members(
             &fitted_beams,
             &restoring_beams,
         )?;
-        let writer = output.begin_member(member, layout, &member_beams)?;
-        let mut writer = ProductMemberWriter::new(layout, writer)?;
+        let image = output.begin(member, layout, &member_beams, planned.uses_weight_image)?;
+        let mut writer = ProductMemberWriter::new(layout, image);
         let window_count = channel_count.div_ceil(layout.maximum_channels());
         let workers = storage_plan.maximum_workers().min(window_count);
         let fft_threads = storage_plan.fft_threads(window_count);
@@ -634,7 +640,7 @@ fn produce_taylor_members(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
     storage_plan: ProductStoragePlan,
-    output: &dyn ProductOutput,
+    output: &CasaImageWriter,
 ) -> Result<PublishedContinuumGeneration, ProductsError> {
     let products = TaylorProducts::build(inputs, planned.psf_cutoff, planned.primary_beam_model)?;
     let requires_beam = planned
@@ -677,8 +683,8 @@ fn produce_taylor_members(
             &fitted_beams,
             &restoring_beams,
         )?;
-        let writer = output.begin_member(member, layout, &member_beams)?;
-        let mut writer = ProductMemberWriter::new(layout, writer)?;
+        let image = output.begin(member, layout, &member_beams, planned.uses_weight_image)?;
+        let mut writer = ProductMemberWriter::new(layout, image);
         writer.write_coupled(&payload, &validity)?;
         writer.finish()?;
     }

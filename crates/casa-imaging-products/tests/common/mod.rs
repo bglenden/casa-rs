@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Test-only direct output collection for the bounded product-generation API.
-//!
-//! The production API deliberately exposes no product readback. These
-//! fixtures collect the owned windows into ordinary test memory so scientific
-//! assertions can inspect the exact generated values without adding a backing
-//! or digest capability to the library. The submodules build the compiled
-//! problems and the major-cycle completions products are generated from.
+//! Products written as CASA images to a temporary directory and read back
+//! with `casa-images`, so each test sees what a reader of the published
+//! images sees. The submodules build the compiled problems and the
+//! major-cycle completions products are generated from.
 
 // The continuum and Taylor integration binaries exercise different fixture members.
 #![allow(dead_code)]
@@ -15,12 +12,16 @@ pub mod continuum;
 pub mod observation;
 pub mod synthetic_pass;
 
-use std::sync::{Arc, Mutex};
+use std::collections::BTreeMap;
+use std::ops::Deref;
+use std::path::PathBuf;
 
-use casa_imaging_model::ProductId;
+use casa_coordinates::CoordinateSystem;
+use casa_images::PagedImage;
+use casa_imaging_model::{CompiledProblem, ImageDomainRole, ProductId};
 use casa_imaging_products::{
-    PlannedContinuumGeneration, PlannedMember, ProductOutput, ProductStoragePlan, ProductWindow,
-    ProductWindowLayout, ProductWriter, ProductsError, PublishedContinuumGeneration, RestoringBeam,
+    CasaImageDomainOutput, CasaImageWriter, PlannedContinuumGeneration, PlannedMember,
+    ProductStoragePlan, PublishedContinuumGeneration, RestoringBeam,
 };
 
 /// Sum the actual owned summary fields independently of the production planner.
@@ -49,191 +50,104 @@ pub fn full_window(planned: &PlannedContinuumGeneration) -> ProductStoragePlan {
     .unwrap()
 }
 
-#[derive(Debug, Clone)]
-struct CapturedMember {
-    layout: ProductWindowLayout,
-    payload: Vec<f32>,
-    validity: Vec<bool>,
-    writes: usize,
-    finished: bool,
+/// A CASA image writer over a temporary directory, one output prefix per
+/// image domain of the problem.
+pub struct ImageOutput {
+    directory: tempfile::TempDir,
+    bases: BTreeMap<ImageDomainRole, PathBuf>,
+    writer: CasaImageWriter,
 }
 
-/// In-memory output used only by product algorithm tests.
-#[derive(Debug, Clone, Default)]
-pub struct MemoryProductOutput {
-    members: Arc<Mutex<Vec<(ProductId, CapturedMember)>>>,
-    fail_write: bool,
-    fail_finish: bool,
-}
-
-impl MemoryProductOutput {
-    /// Construct a collector that returns an output error on the first write.
-    #[must_use]
-    pub fn failing_write() -> Self {
-        Self {
-            fail_write: true,
-            ..Self::default()
-        }
-    }
-
-    /// Construct a collector that returns an output error when a member is finished.
-    #[must_use]
-    pub fn failing_finish() -> Self {
-        Self {
-            fail_finish: true,
-            ..Self::default()
-        }
-    }
-
-    /// Return the exact number of begun members.
-    #[must_use]
-    pub fn begun_members(&self) -> usize {
-        self.members.lock().unwrap().len()
-    }
-
-    /// Return the exact number of windows transferred to one member.
-    #[must_use]
-    pub fn write_count(&self, node: ProductId) -> usize {
-        self.members
-            .lock()
-            .unwrap()
+impl ImageOutput {
+    /// Write `problem`'s domains under a fresh temporary directory.
+    pub fn for_problem(problem: &CompiledProblem) -> Self {
+        let directory = tempfile::tempdir().expect("product output directory");
+        let bases = problem
+            .geometry()
+            .domains()
             .iter()
-            .find_map(|(member, captured)| (*member == node).then_some(captured.writes))
-            .unwrap_or(0)
-    }
-
-    /// Return whether the output owner received a successful finish for one member.
-    #[must_use]
-    pub fn finished(&self, node: ProductId) -> bool {
-        self.members
-            .lock()
-            .unwrap()
-            .iter()
-            .find_map(|(member, captured)| (*member == node).then_some(captured.finished))
-            .unwrap_or(false)
-    }
-
-    fn capture(&self, node: ProductId) -> CapturedMember {
-        self.members
-            .lock()
-            .unwrap()
-            .iter()
-            .find_map(|(member, captured)| (*member == node).then_some(captured.clone()))
-            .unwrap_or_else(|| panic!("generated member {node:?} was not written"))
-    }
-}
-
-impl ProductOutput for MemoryProductOutput {
-    fn begin_member<'a>(
-        &'a self,
-        member: &casa_imaging_products::PlannedMember,
-        layout: ProductWindowLayout,
-        _: &[Option<RestoringBeam>],
-    ) -> Result<Box<dyn ProductWriter + 'a>, ProductsError> {
-        let values = layout.values()?;
-        self.members.lock().unwrap().push((
-            member.id(),
-            CapturedMember {
-                layout,
-                payload: vec![0.0; values],
-                validity: vec![false; values],
-                writes: 0,
-                finished: false,
-            },
-        ));
-        Ok(Box::new(MemoryProductWriter {
-            output: self.members.clone(),
-            node: member.id(),
-            fail_write: self.fail_write,
-            fail_finish: self.fail_finish,
-        }))
-    }
-}
-
-#[derive(Debug)]
-struct MemoryProductWriter {
-    output: Arc<Mutex<Vec<(ProductId, CapturedMember)>>>,
-    node: ProductId,
-    fail_write: bool,
-    fail_finish: bool,
-}
-
-impl MemoryProductWriter {
-    fn indices(
-        layout: ProductWindowLayout,
-        start: [usize; 4],
-        shape: [usize; 4],
-    ) -> Result<Vec<usize>, ProductsError> {
-        let values = shape
-            .into_iter()
-            .try_fold(1usize, |count, extent| count.checked_mul(extent))
-            .ok_or(ProductsError::InvalidWindow)?;
-        if values > layout.maximum_values()
-            || (0..4).any(|axis| {
-                start[axis]
-                    .checked_add(shape[axis])
-                    .is_none_or(|end| end > layout.shape()[axis])
-            })
-        {
-            return Err(ProductsError::InvalidWindow);
-        }
-        Ok((0..values)
-            .map(|local| {
-                let mut remainder = local;
-                let mut coordinates = [0; 4];
-                for axis in (0..4).rev() {
-                    coordinates[axis] = remainder % shape[axis] + start[axis];
-                    remainder /= shape[axis];
-                }
-                coordinates
-                    .into_iter()
-                    .zip(layout.shape())
-                    .fold(0, |index, (coordinate, extent)| index * extent + coordinate)
-            })
-            .collect())
-    }
-}
-
-impl ProductWriter for MemoryProductWriter {
-    fn write(&mut self, window: ProductWindow) -> Result<(), ProductsError> {
-        if self.fail_write {
-            return Err(ProductsError::Storage("test write failure".to_string()));
-        }
-        let (start, shape, payload, validity) = window.into_parts();
-        let mut members = self.output.lock().unwrap();
-        let (_, captured) = members
-            .iter_mut()
-            .find(|(node, _)| *node == self.node)
-            .ok_or_else(|| ProductsError::Storage("test member disappeared".to_string()))?;
-        for (local, index) in Self::indices(captured.layout, start, shape)?
-            .into_iter()
             .enumerate()
-        {
-            captured.payload[index] = payload[local];
-            captured.validity[index] = validity[local];
+            .map(|(index, domain)| {
+                (
+                    domain.role().clone(),
+                    directory.path().join(format!("domain{index}")),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let writer = CasaImageWriter::for_domains(bases.iter().map(|(role, base)| {
+            CasaImageDomainOutput::new(role.clone(), base.clone(), CoordinateSystem::new())
+        }));
+        Self {
+            directory,
+            bases,
+            writer,
         }
-        captured.writes += 1;
-        Ok(())
     }
 
-    fn finish(self: Box<Self>) -> Result<(), ProductsError> {
-        if self.fail_finish {
-            return Err(ProductsError::Storage("test finish failure".to_string()));
-        }
-        let mut members = self.output.lock().unwrap();
-        let (_, captured) = members
-            .iter_mut()
-            .find(|(node, _)| *node == self.node)
-            .ok_or_else(|| ProductsError::Storage("test member disappeared".to_string()))?;
-        captured.finished = true;
-        Ok(())
+    /// The published image of `member`.
+    pub fn path(&self, member: &PlannedMember) -> PathBuf {
+        let mut path = self.bases[member.axes().domain()].clone().into_os_string();
+        path.push(member.name());
+        PathBuf::from(path)
+    }
+
+    /// Entries in the output directory: published images and any staging
+    /// left behind.
+    pub fn entries(&self) -> Vec<String> {
+        let mut entries = std::fs::read_dir(self.directory.path())
+            .expect("output directory")
+            .map(|entry| {
+                entry
+                    .expect("output entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>();
+        entries.sort();
+        entries
+    }
+
+    /// Read a published member's values and pixel mask in storage order;
+    /// a member without a mask is valid everywhere.
+    pub fn read(&self, member: &PlannedMember) -> (Vec<f32>, Vec<bool>) {
+        let image = PagedImage::<f32>::open(self.path(member)).expect("published image");
+        let shape = image.shape().to_vec();
+        assert_eq!(shape, member.shape(), "{} shape", member.name());
+        let start = vec![0; shape.len()];
+        let payload = image
+            .get_slice(&start, &shape)
+            .expect("image pixels")
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        let validity = match image.default_mask_name() {
+            Some(_) => image
+                .get_mask_slice(&start, &shape, &vec![1; shape.len()])
+                .expect("image mask")
+                .expect("default mask")
+                .iter()
+                .copied()
+                .collect(),
+            None => vec![true; payload.len()],
+        };
+        (payload, validity)
     }
 }
 
-/// A test-owned copy of one generated member's metadata and collected arrays.
+impl Deref for ImageOutput {
+    type Target = CasaImageWriter;
+
+    fn deref(&self) -> &CasaImageWriter {
+        &self.writer
+    }
+}
+
+/// A test-owned copy of one generated member's metadata and published
+/// arrays.
 #[derive(Debug, Clone)]
 pub struct GeneratedMember {
-    node: ProductId,
+    id: ProductId,
     name: String,
     contract: PlannedMember,
     resolved_beams: Box<[Option<RestoringBeam>]>,
@@ -244,7 +158,7 @@ pub struct GeneratedMember {
 impl GeneratedMember {
     #[must_use]
     pub const fn id(&self) -> ProductId {
-        self.node
+        self.id
     }
 
     #[must_use]
@@ -282,7 +196,7 @@ impl GeneratedMember {
     }
 }
 
-/// Test-owned generation result assembled from the direct output collector.
+/// A generation's published members, read back from their images.
 #[derive(Debug, Clone)]
 pub struct GeneratedProducts {
     fitted_beams: Box<[Option<RestoringBeam>]>,
@@ -291,26 +205,28 @@ pub struct GeneratedProducts {
 }
 
 impl GeneratedProducts {
-    /// Copy output arrays from a completed direct generation of `planned`.
+    /// Publish a completed generation of `planned` and read every member's
+    /// image back.
     #[must_use]
     pub fn from_output(
         planned: &PlannedContinuumGeneration,
         generation: &PublishedContinuumGeneration,
-        output: &MemoryProductOutput,
+        output: &ImageOutput,
     ) -> Self {
+        output.publish().expect("publish product images");
         let members = generation
             .members()
             .iter()
             .zip(planned.members())
             .map(|(member, planned)| {
-                let captured = output.capture(member.id());
+                let (payload, validity) = output.read(planned);
                 GeneratedMember {
-                    node: member.id(),
+                    id: member.id(),
                     name: member.name().to_string(),
                     contract: planned.clone(),
                     resolved_beams: member.resolved_beams().to_vec().into_boxed_slice(),
-                    payload: captured.payload,
-                    validity: captured.validity,
+                    payload,
+                    validity,
                 }
             })
             .collect::<Vec<_>>()

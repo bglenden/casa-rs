@@ -4,9 +4,10 @@
 //! The products of an imaging run (plan section 5.7).
 //!
 //! This crate turns a major cycle's final normal state and model into the
-//! members of the problem's product list: restoring-beam fitting,
-//! restoration, normalization, validity and metadata. It writes each member
-//! in bounded windows straight to its output.
+//! members of the problem's product list: normalization, restoring-beam
+//! fitting, restoration, Taylor products, PB and pbcor, validity and
+//! metadata. It writes each member in bounded windows to private staging
+//! beside its CASA image target, then replaces each target atomically.
 
 mod beam;
 mod demand;
@@ -18,6 +19,7 @@ mod source;
 mod storage;
 mod taylor;
 mod visibility;
+mod writer;
 
 pub use beam::{RestoringBeam, fit_restoring_beam};
 pub use demand::ContinuumGenerationDemand;
@@ -32,8 +34,6 @@ pub use restore::{
     ResidualBeamScaling, fft_convolve, gaussian_beam_image, rescale_residual_to_beam,
 };
 pub use source::ContinuumProductInputs;
-pub use storage::{
-    ProductOutput, ProductStoragePlan, ProductWindow, ProductWindowExecutor, ProductWindowLayout,
-    ProductWriter,
-};
+pub use storage::{ProductStoragePlan, ProductWindow, ProductWindowExecutor, ProductWindowLayout};
 pub use visibility::VisibilityProductCompletion;
+pub use writer::{CasaImageDomainOutput, CasaImageWriter};

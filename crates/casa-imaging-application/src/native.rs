@@ -250,7 +250,7 @@ struct Products {
     published: PublishedContinuumGeneration,
 }
 
-/// Generate every planned product member into the sink's private staging,
+/// Generate every planned product member into the writer's private staging,
 /// one output channel per window on the run's team, and publish them; a
 /// cancelled run publishes nothing.
 fn publish_products(
@@ -272,23 +272,23 @@ fn publish_products(
     }
     let planned = PlannedContinuumGeneration::new(&inputs, &publication.controls)?;
     let window = ProductStoragePlan::new(1, team.workers())?;
-    let demand = planned.demand(&inputs, window)?;
+    let demand = planned.demand(&inputs, window, &publication.writer)?;
     let held = admit(
         &runtime.host,
         &runtime.resource_policy,
         &Demand {
             phase: "products",
-            memory: demand.peak_residency_bytes()
-                + publication.sink.residency(&planned, &demand)?,
+            memory: demand.peak_residency_bytes(),
         },
     )?;
-    let published = produce_continuum_members(&planned, &inputs, window, team, &publication.sink)?;
+    let published =
+        produce_continuum_members(&planned, &inputs, window, team, &publication.writer)?;
     drop(held);
     if runtime.cancel.is_cancelled() {
-        // The staged members are removed when the sink drops.
+        // The staged members are removed when the writer drops.
         return Err(Cancelled.into());
     }
-    publication.sink.publish()?;
+    publication.writer.publish()?;
     Ok(Products {
         planned,
         scientific,

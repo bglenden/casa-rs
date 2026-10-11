@@ -536,10 +536,10 @@ mod tests {
                 .unwrap(),
             2.0
         );
-        assert_eq!(
+        assert!(matches!(
             MinorCycleImageResponse::new(ProductNormalization::UnitResponse, pb),
             Err(ProductsError::UnsupportedNormalization)
-        );
+        ));
     }
 
     /// CASA's `divideResidualByWeight` cutoffs, pblimit·pbmax² on

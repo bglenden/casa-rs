@@ -1,38 +1,40 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::{
-    collections::BTreeMap,
-    ffi::CString,
-    fs,
-    fs::File,
-    path::{Path, PathBuf},
-    sync::Mutex,
-    time::Instant,
-};
+//! The CASA image writer (plan section 5.7).
+//!
+//! Each member is written to a private staging directory beside its target.
+//! Publishing then replaces each target on its own: the staged image is
+//! renamed into place, or exchanged with an existing image in one call
+//! (`renamex_np` with `RENAME_SWAP` on macOS, `renameat2` with
+//! `RENAME_EXCHANGE` on Linux), and both directories are synced. A reader
+//! sees the old image or the new one, never a mixture. A member already
+//! replaced stays valid if a later one fails; the set is then incomplete
+//! and the run must be repeated.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::{CString, OsString};
+use std::fs::{self, File};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
+use std::time::Instant;
 
 use casa_coordinates::CoordinateSystem;
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
 use casa_imaging_model::{ImageDomainRole, ProductPixelMask, ProductRole, ProductUnit};
-use casa_imaging_products::{
-    ContinuumGenerationDemand, PlannedContinuumGeneration, PlannedMember, ProductOutput,
-    ProductWindow, ProductWindowLayout, ProductWriter, ProductsError, RestoringBeam,
-};
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
-struct StagedProduct {
-    _directory: tempfile::TempDir,
-    staging: PathBuf,
-    target: PathBuf,
-}
+use crate::storage::{ProductWindow, ProductWindowLayout};
+use crate::{PlannedContinuumGeneration, PlannedMember, ProductsError, RestoringBeam};
 
-/// Production sink for conventional independently published CASA image members.
-pub struct CasaImageProductSink {
+/// The CASA image member set of one run, staged until [`Self::publish`].
+pub struct CasaImageWriter {
     domains: BTreeMap<ImageDomainRole, CasaImageDomainOutput>,
-    staged: Mutex<Vec<StagedProduct>>,
+    staged: Mutex<Vec<StagedImage>>,
 }
 
-/// Storage binding for one compiled user-visible image domain.
+/// Where one compiled image domain's members are written, and their
+/// coordinates.
 #[derive(Clone)]
 pub struct CasaImageDomainOutput {
     role: ImageDomainRole,
@@ -41,7 +43,7 @@ pub struct CasaImageDomainOutput {
 }
 
 impl CasaImageDomainOutput {
-    /// Bind one compiled domain role to its output root and exact coordinates.
+    /// Bind one compiled domain role to its output prefix and coordinates.
     #[must_use]
     pub fn new(role: ImageDomainRole, base: PathBuf, coordinates: CoordinateSystem) -> Self {
         Self {
@@ -52,8 +54,14 @@ impl CasaImageDomainOutput {
     }
 }
 
-impl CasaImageProductSink {
-    /// Bind an output prefix and its complete CASA coordinate system.
+struct StagedImage {
+    _directory: tempfile::TempDir,
+    staging: PathBuf,
+    target: PathBuf,
+}
+
+impl CasaImageWriter {
+    /// Write the main domain's members under `base` with `coordinates`.
     #[must_use]
     pub fn new(base: PathBuf, coordinates: CoordinateSystem) -> Self {
         Self::for_domains([CasaImageDomainOutput::new(
@@ -63,17 +71,17 @@ impl CasaImageProductSink {
         )])
     }
 
-    /// Bind every compiled image-domain role to its output root and WCS.
+    /// Write every compiled image domain's members under its own prefix.
     ///
     /// # Panics
     ///
-    /// If two outputs share a role or a root, or none is the main domain.
+    /// If two outputs share a role or a prefix, or none is the main domain.
     /// Compiling a request refuses domains that name one output, and always
     /// compiles the main domain.
     #[must_use]
     pub fn for_domains(domains: impl IntoIterator<Item = CasaImageDomainOutput>) -> Self {
         let mut outputs = BTreeMap::new();
-        let mut roots = std::collections::BTreeSet::new();
+        let mut roots = BTreeSet::new();
         for output in domains {
             let new_root = roots.insert(output.base.clone());
             let new_role = outputs.insert(output.role.clone(), output).is_none();
@@ -91,19 +99,26 @@ impl CasaImageProductSink {
             staged: Mutex::new(Vec::new()),
         }
     }
-}
 
-impl CasaImageProductSink {
-    /// Bytes the sink holds while it writes `planned`: the image writer, its
-    /// cache and serialization workspace, and the registry of staged
-    /// members kept until [`CasaImageProductSink::publish`].
-    pub fn residency(
+    fn output(&self, role: &ImageDomainRole) -> &CasaImageDomainOutput {
+        self.domains
+            .get(role)
+            .expect("the writer binds every compiled image domain")
+    }
+
+    /// Bytes the writer holds while it writes `planned` a window at a time:
+    /// the image's tile cache and serialization buffers, its coordinates and
+    /// beam metadata, and the record of each staged member kept until
+    /// [`Self::publish`].
+    pub(crate) fn residency_bytes(
         &self,
         planned: &PlannedContinuumGeneration,
-        demand: &ContinuumGenerationDemand,
-    ) -> Result<u64, std::io::Error> {
-        const IMAGE_ADAPTER_ENVELOPE_BYTES: u64 = 4_096;
+        window_payload_bytes: u64,
+        window_validity_bytes: u64,
+    ) -> Result<u64, ProductsError> {
+        const IMAGE_ENVELOPE_BYTES: u64 = 4_096;
         const STAGED_MEMBER_RECORD_BYTES: u64 = 512;
+        let overflow = || ProductsError::ResourceDemandOverflow("CASA image writer");
         let coordinate_bytes = self.domains.values().try_fold(0_u64, |maximum, output| {
             let bytes = output
                 .coordinates
@@ -111,8 +126,8 @@ impl CasaImageProductSink {
                 .retained_heap_bytes()
                 .and_then(|bytes| bytes.checked_mul(4))
                 .and_then(|bytes| u64::try_from(bytes).ok())
-                .ok_or_else(|| std::io::Error::other("coordinate metadata residency overflow"))?;
-            Ok::<_, std::io::Error>(maximum.max(bytes))
+                .ok_or_else(overflow)?;
+            Ok::<_, ProductsError>(maximum.max(bytes))
         })?;
         let beam_bytes = planned
             .members()
@@ -124,96 +139,91 @@ impl CasaImageProductSink {
                         .spectral()
                         .output_channels()
                         .checked_mul(member.axes().polarization().len())
-                        .ok_or_else(|| std::io::Error::other("beam count overflow"))?
+                        .ok_or_else(overflow)?
                 } else {
                     0
                 };
-                Ok::<_, std::io::Error>(maximum.max(beam_metadata_residency_bytes(count)?))
+                Ok::<_, ProductsError>(maximum.max(beam_metadata_residency_bytes(count)?))
             })?;
         let registry_bytes = planned.members().iter().try_fold(0_u64, |total, member| {
-            let output = self.domains.get(member.axes().domain()).ok_or_else(|| {
-                std::io::Error::other("product domain has no CASA output binding")
-            })?;
-            let base_bytes = u64::try_from(output.base.to_string_lossy().len())
-                .map_err(|_| std::io::Error::other("product path length exceeds u64"))?;
-            let name_bytes = u64::try_from(member.name().len())
-                .map_err(|_| std::io::Error::other("product name length exceeds u64"))?;
-            let path_bytes = base_bytes
-                .checked_add(name_bytes)
+            let base = self.output(member.axes().domain()).base.as_os_str().len();
+            let path_bytes = base
+                .checked_add(member.name().len())
                 .and_then(|bytes| bytes.checked_mul(2))
-                .ok_or_else(|| std::io::Error::other("product path residency overflow"))?;
+                .and_then(|bytes| u64::try_from(bytes).ok())
+                .ok_or_else(overflow)?;
             total
                 .checked_add(path_bytes)
                 .and_then(|bytes| bytes.checked_add(STAGED_MEMBER_RECORD_BYTES))
-                .ok_or_else(|| std::io::Error::other("product registry residency overflow"))
+                .ok_or_else(overflow)
         })?;
-        let writer_bytes = demand
-            .maximum_window_payload_bytes()
+        window_payload_bytes
             .checked_mul(4)
-            .and_then(|bytes| {
-                bytes.checked_add(demand.maximum_window_validity_bytes().checked_mul(2)?)
-            })
-            .and_then(|bytes| bytes.checked_add(IMAGE_ADAPTER_ENVELOPE_BYTES))
+            .and_then(|bytes| bytes.checked_add(window_validity_bytes.checked_mul(2)?))
+            .and_then(|bytes| bytes.checked_add(IMAGE_ENVELOPE_BYTES))
             .and_then(|bytes| bytes.checked_add(coordinate_bytes))
             .and_then(|bytes| bytes.checked_add(beam_bytes))
-            .ok_or_else(|| std::io::Error::other("product staging residency overflow"))?;
-        writer_bytes
-            .checked_add(registry_bytes)
-            .ok_or_else(|| std::io::Error::other("product staging residency overflow"))
+            .and_then(|bytes| bytes.checked_add(registry_bytes))
+            .ok_or_else(overflow)
     }
 
-    /// Move every staged member to its target, in generation order. A
-    /// failure leaves the set incomplete; the run must be repeated.
-    pub fn publish(&self) -> Result<(), std::io::Error> {
+    /// Replace every staged member's target, in generation order.
+    ///
+    /// # Errors
+    ///
+    /// The first replacement that fails. Members replaced before it stay
+    /// replaced; the run must be repeated.
+    pub fn publish(&self) -> Result<(), ProductsError> {
         let staged =
-            std::mem::take(&mut *self.staged.lock().map_err(|_| {
-                std::io::Error::other("CASA product staging registry lock poisoned")
-            })?);
-        for product in staged {
-            promote_atomically(&product.staging, &product.target)?;
+            std::mem::take(&mut *self.staged.lock().unwrap_or_else(PoisonError::into_inner));
+        for image in staged {
+            promote_atomically(&image.staging, &image.target).map_err(|source| {
+                ProductsError::Io {
+                    operation: "replacing",
+                    path: image.target.clone(),
+                    source,
+                }
+            })?;
         }
         Ok(())
     }
-}
 
-impl ProductOutput for CasaImageProductSink {
-    fn begin_member<'a>(
-        &'a self,
-        member: &PlannedMember,
-        layout: ProductWindowLayout,
-        beams: &[Option<RestoringBeam>],
-    ) -> Result<Box<dyn ProductWriter + 'a>, ProductsError> {
-        self.begin_image(member, layout, beams)
-            .map(|writer| Box::new(writer) as Box<dyn ProductWriter>)
-            .map_err(|error| ProductsError::Storage(error.to_string()))
-    }
-}
-
-impl CasaImageProductSink {
-    fn begin_image(
+    /// Create one member's image in private staging beside its target, with
+    /// its units, beams and metadata.
+    pub(crate) fn begin(
         &self,
         member: &PlannedMember,
         layout: ProductWindowLayout,
         beams: &[Option<RestoringBeam>],
-    ) -> Result<CasaProductWriter<'_>, std::io::Error> {
-        let started = std::env::var_os("CASA_RS_PROFILE_PRODUCTS")
-            .is_some()
-            .then(Instant::now);
-        let output = self
-            .domains
-            .get(member.axes().domain())
-            .ok_or_else(|| std::io::Error::other("product domain has no CASA output binding"))?;
-        let target = PathBuf::from(format!("{}{}", output.base.display(), member.name()));
+        uses_weight_image: bool,
+    ) -> Result<MemberImage<'_>, ProductsError> {
+        let started = Instant::now();
+        let output = self.output(member.axes().domain());
+        let mut target = output.base.clone().into_os_string();
+        target.push(member.name());
+        let target = PathBuf::from(target);
+        let io = |operation, path: &Path| {
+            let path = path.to_path_buf();
+            move |source| ProductsError::Io {
+                operation,
+                path,
+                source,
+            }
+        };
         let parent = target.parent().unwrap_or_else(|| Path::new("."));
-        fs::create_dir_all(parent)?;
-        let target_name = target
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| std::io::Error::other("CASA product target is not UTF-8"))?;
+        fs::create_dir_all(parent).map_err(io("creating", parent))?;
+        let mut prefix = OsString::from(".");
+        prefix.push(target.file_name().expect("a product target names a file"));
+        prefix.push(".casa-rs-stage-");
         let directory = tempfile::Builder::new()
-            .prefix(&format!(".{target_name}.casa-rs-stage-"))
-            .tempdir_in(parent)?;
+            .prefix(&prefix)
+            .tempdir_in(parent)
+            .map_err(io("staging", parent))?;
         let staging = directory.path().join("image");
+        let image_error = |source| ProductsError::Image {
+            path: target.clone(),
+            source,
+        };
         let mut tile = layout.shape();
         tile[layout.spectral_axis()] = 1;
         let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
@@ -221,26 +231,21 @@ impl CasaImageProductSink {
             tile.to_vec(),
             output.coordinates.clone(),
             &staging,
-            layout
-                .maximum_values()
-                .checked_mul(4)
-                .ok_or_else(|| std::io::Error::other("image cache overflow"))?,
+            layout.maximum_values() * size_of::<f32>(),
         )
-        .map_err(|error| std::io::Error::other(error.to_string()))?;
+        .map_err(image_error)?;
         let storage = member.storage();
-        let explicit_mask = matches!(storage.pixel_mask(), ProductPixelMask::Explicit(_));
         image
             .set_units(storage.unit().map_or("", unit_label))
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
+            .map_err(image_error)?;
         let role = role_label(member.role());
-        let beam_set = if storage.attach_beam() {
-            persisted_beam_set(beams)
-        } else {
-            ImageBeamSet::default()
-        };
         image
             .set_image_info(&ImageInfo {
-                beam_set,
+                beam_set: if storage.attach_beam() {
+                    persisted_beam_set(beams)
+                } else {
+                    ImageBeamSet::default()
+                },
                 image_type: match role {
                     "psf" => ImageType::Beam,
                     "sumwt" => ImageType::Undefined,
@@ -248,115 +253,128 @@ impl CasaImageProductSink {
                 },
                 object_name: role.to_string(),
             })
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
+            .map_err(image_error)?;
+        let mut miscinfo = vec![RecordField::new(
+            "casars_imager_role",
+            Value::Scalar(ScalarValue::String(role.to_string())),
+        )];
+        // CASA tools read `.sumwt`'s `useweightimage` to learn whether the
+        // residual was divided by a weight image (`SIImageStore`
+        // `getUseWeightImage`).
+        if matches!(member.role(), ProductRole::SumWeights(_)) {
+            miscinfo.push(RecordField::new(
+                "useweightimage",
+                Value::Scalar(ScalarValue::Bool(uses_weight_image)),
+            ));
+        }
         image
-            .set_misc_info(RecordValue::new(vec![RecordField::new(
-                "casars_imager_role",
-                Value::Scalar(ScalarValue::String(role.to_string())),
-            )]))
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
-        Ok(CasaProductWriter {
+            .set_misc_info(RecordValue::new(miscinfo))
+            .map_err(image_error)?;
+        Ok(MemberImage {
             image,
-            explicit_mask,
-            sink: self,
-            profile: started.is_some(),
-            begin_nanos: started.map_or(0, |start| start.elapsed().as_nanos()),
-            window_nanos: 0,
-            staged: StagedProduct {
+            explicit_mask: matches!(storage.pixel_mask(), ProductPixelMask::Explicit(_)),
+            writer: self,
+            staged: StagedImage {
                 _directory: directory,
                 staging,
                 target,
             },
+            begin_nanos: started.elapsed().as_nanos(),
+            window_nanos: 0,
         })
     }
 }
 
-struct CasaProductWriter<'a> {
+/// One member's image in staging, written a window at a time.
+pub(crate) struct MemberImage<'a> {
     image: PagedImage<f32>,
     explicit_mask: bool,
-    sink: &'a CasaImageProductSink,
-    staged: StagedProduct,
-    profile: bool,
+    writer: &'a CasaImageWriter,
+    staged: StagedImage,
     begin_nanos: u128,
     window_nanos: u128,
 }
 
-impl ProductWriter for CasaProductWriter<'_> {
-    fn write(&mut self, window: ProductWindow) -> Result<(), ProductsError> {
-        let started = self.profile.then(Instant::now);
+impl MemberImage<'_> {
+    /// Write one generated window's values and, where the member stores
+    /// one, its pixel mask.
+    pub(crate) fn write(&mut self, window: ProductWindow) -> Result<(), ProductsError> {
+        let started = Instant::now();
         let (start, shape, payload, validity) = window.into_parts();
+        let image_error = |source| ProductsError::Image {
+            path: self.staged.target.clone(),
+            source,
+        };
         let data = ArrayD::from_shape_vec(IxDyn(&shape), payload)
-            .map_err(|error| ProductsError::Storage(error.to_string()))?;
+            .expect("a product window's payload fills its shape");
         self.image
             .put_slice_view(data.view(), &start)
-            .map_err(|error| ProductsError::Storage(error.to_string()))?;
+            .map_err(image_error)?;
         if self.explicit_mask {
             let mask = ArrayD::from_shape_vec(IxDyn(&shape), validity)
-                .map_err(|error| ProductsError::Storage(error.to_string()))?;
+                .expect("a product window's validity fills its shape");
             self.image
                 .put_mask_slice("mask0", &mask, &start)
-                .map_err(|error| ProductsError::Storage(error.to_string()))?;
+                .map_err(image_error)?;
         }
-        if let Some(started) = started {
-            self.window_nanos += started.elapsed().as_nanos();
-        }
+        self.window_nanos += started.elapsed().as_nanos();
         Ok(())
     }
-    fn finish(mut self: Box<Self>) -> Result<(), ProductsError> {
-        let started = self.profile.then(Instant::now);
+
+    /// Save the image in staging and register it for [`CasaImageWriter::publish`].
+    pub(crate) fn finish(mut self) -> Result<(), ProductsError> {
+        let started = Instant::now();
+        let target = self.staged.target.clone();
+        let image_error = |source| ProductsError::Image {
+            path: target.clone(),
+            source,
+        };
         if self.explicit_mask {
-            self.image
-                .set_default_mask("mask0")
-                .map_err(|error| ProductsError::Storage(error.to_string()))?;
+            self.image.set_default_mask("mask0").map_err(image_error)?;
         }
         self.image.prepare_relocation(&self.staged.target);
-        self.image
-            .save()
-            .map_err(|error| ProductsError::Storage(error.to_string()))?;
-        if std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some()
-            && let Some(stats) = self.image.tiled_io_stats()
-        {
-            eprintln!(
-                "imaging_product_pixels target={} pack_nanos={} swap_nanos={} write_nanos={} direct_bytes={} direct_calls={}",
-                self.staged.target.display(),
-                stats.direct_tile_pack_ns,
-                stats.direct_tile_swap_ns,
-                stats.direct_tile_write_ns,
-                stats.direct_tile_write_bytes,
-                stats.direct_tile_write_calls,
+        self.image.save().map_err(image_error)?;
+        if let Some(stats) = self.image.tiled_io_stats() {
+            tracing::debug!(
+                target = %self.staged.target.display(),
+                pack_nanos = stats.direct_tile_pack_ns,
+                swap_nanos = stats.direct_tile_swap_ns,
+                write_nanos = stats.direct_tile_write_ns,
+                direct_bytes = stats.direct_tile_write_bytes,
+                direct_calls = stats.direct_tile_write_calls,
+                "product image pixels written"
             );
         }
         let Self {
             image,
-            sink,
+            writer,
             staged,
             begin_nanos,
             window_nanos,
             ..
-        } = *self;
+        } = self;
         drop(image);
-        if let Some(started) = started {
-            eprintln!(
-                "imaging_product_writer target={} begin_nanos={begin_nanos} window_nanos={window_nanos} finish_nanos={}",
-                staged.target.display(),
-                started.elapsed().as_nanos(),
-            );
-        }
-        sink.staged
+        tracing::debug!(
+            target = %staged.target.display(),
+            begin_nanos,
+            window_nanos,
+            finish_nanos = started.elapsed().as_nanos(),
+            "product image staged"
+        );
+        writer
+            .staged
             .lock()
-            .map_err(|_| {
-                ProductsError::Storage("CASA product staging registry lock poisoned".into())
-            })?
+            .unwrap_or_else(PoisonError::into_inner)
             .push(staged);
         Ok(())
     }
 }
 
-fn beam_metadata_residency_bytes(count: usize) -> Result<u64, std::io::Error> {
+fn beam_metadata_residency_bytes(count: usize) -> Result<u64, ProductsError> {
     if count == 0 {
         return Ok(0);
     }
-    let overflow = || std::io::Error::other("beam metadata residency overflow");
+    let overflow = || ProductsError::ResourceDemandOverflow("beam metadata");
     let beam_record = GaussianBeam::new(1.0, 1.0, 0.0)
         .to_record()
         .retained_heap_bytes()
@@ -367,7 +385,7 @@ fn beam_metadata_residency_bytes(count: usize) -> Result<u64, std::io::Error> {
     // and the encoded control buffer; the record heap bounds its encoded form.
     let record = count
         .checked_add(2)
-        .and_then(|fields| fields.checked_mul(2 * std::mem::size_of::<RecordField>()))
+        .and_then(|fields| fields.checked_mul(2 * size_of::<RecordField>()))
         .and_then(|bytes| {
             bytes.checked_add(count.checked_mul(beam_record.checked_add(key_bytes)?)?)
         })
@@ -375,9 +393,7 @@ fn beam_metadata_residency_bytes(count: usize) -> Result<u64, std::io::Error> {
         .ok_or_else(overflow)?;
     let arrays = count
         .checked_mul(
-            std::mem::size_of::<RestoringBeam>()
-                + std::mem::size_of::<Vec<GaussianBeam>>()
-                + std::mem::size_of::<GaussianBeam>(),
+            size_of::<RestoringBeam>() + size_of::<Vec<GaussianBeam>>() + size_of::<GaussianBeam>(),
         )
         .ok_or_else(overflow)?;
     u64::try_from(record.checked_add(arrays).ok_or_else(overflow)?).map_err(|_| overflow())
@@ -532,10 +548,10 @@ fn exchange_directories(_: &Path, _: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CasaImageDomainOutput, CasaImageProductSink, persisted_beam_set};
+    use super::{CasaImageDomainOutput, CasaImageWriter, persisted_beam_set};
+    use crate::RestoringBeam;
     use casa_coordinates::CoordinateSystem;
     use casa_imaging_model::ImageDomainRole;
-    use casa_imaging_products::RestoringBeam;
 
     #[test]
     fn beam_metadata_demand_scales_with_planes_and_bounds_keyword_storage() {
@@ -570,8 +586,8 @@ mod tests {
             "north".into(),
             CoordinateSystem::new(),
         );
-        let sink = CasaImageProductSink::for_domains([main, outlier]);
-        assert_eq!(sink.domains.len(), 2);
+        let writer = CasaImageWriter::for_domains([main, outlier]);
+        assert_eq!(writer.domains.len(), 2);
     }
 
     #[test]

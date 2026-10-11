@@ -2,15 +2,34 @@
 
 //! Exact failure reasons for continuum product construction and output.
 
+use std::path::PathBuf;
+
 use casa_imaging_model::{ProductRole, ProductTerm};
 use thiserror::Error;
 
-/// Exact reason product planning, production, or authorization failed closed.
-#[derive(Debug, Clone, PartialEq, Error)]
+/// Why product planning, generation or writing failed.
+#[derive(Debug, Error)]
 pub enum ProductsError {
-    /// A physical product output could not write or flush a window.
-    #[error("product output failed: {0}")]
-    Storage(String),
+    /// A product image could not be created, written or saved.
+    #[error("writing {}: {source}", path.display())]
+    Image {
+        /// The image's published path.
+        path: PathBuf,
+        /// What the image layer reported.
+        #[source]
+        source: casa_images::ImageError,
+    },
+    /// Staging or replacing a product image failed.
+    #[error("{operation} {}: {source}", path.display())]
+    Io {
+        /// What the writer was doing.
+        operation: &'static str,
+        /// The directory or image it was doing it to.
+        path: PathBuf,
+        /// What the system reported.
+        #[source]
+        source: std::io::Error,
+    },
     /// A product window exceeded its shape or admitted capacity.
     #[error("product window exceeds its admitted shape or capacity")]
     InvalidWindow,

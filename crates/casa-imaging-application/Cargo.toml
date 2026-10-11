@@ -23,7 +23,6 @@ casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
 casa-imaging-runtime = { path = "../casa-imaging-runtime" }
 casa-ms = { path = "../casa-ms" }
 casa-types = { path = "../casa-types" }
-libc = "0.2"
 ndarray.workspace = true
 num-complex.workspace = true
 serde = { version = "1", features = ["derive"] }

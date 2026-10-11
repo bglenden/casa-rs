@@ -30,7 +30,7 @@ use casa_imaging_model::{
 };
 use casa_imaging_operator::{AwCatalog, AwIndexing};
 use casa_imaging_products::{
-    AnalyticPrimaryBeamModel, ContinuumProductControls, MinorCycleImageResponse,
+    AnalyticPrimaryBeamModel, CasaImageWriter, ContinuumProductControls, MinorCycleImageResponse,
 };
 use casa_imaging_reconstruction::ImageDomainReconstructionMaskPlans;
 use casa_ms::derived::engine::MsCalEngine;
@@ -42,8 +42,7 @@ use casa_types::measures::{MeasuresProvider, frame::MeasFrame};
 
 use crate::{
     ApplicationNative, ApplicationPublication, ApplicationRuntime, AwCatalogDeployment, AwCfSource,
-    AwProjection, CasaImageProductSink, Deconvolver, Gridder, ImagingRequest, NativeAwCachePolicy,
-    RunContext, SpecMode,
+    AwProjection, Deconvolver, Gridder, ImagingRequest, NativeAwCachePolicy, RunContext, SpecMode,
 };
 use direction::{Centre, ImageSpectralCoordinate};
 use domains::PreparedImageDomain;
@@ -472,7 +471,8 @@ impl AwPlan {
 }
 
 /// The native run's deployment: the runtime with the paged cube state
-/// beside the main image, the product controls and sink, and the AW plan.
+/// beside the main image, the product controls and image writer, and the AW
+/// plan.
 fn deployment(
     request: &ImagingRequest,
     context: &RunContext,
@@ -505,9 +505,7 @@ fn deployment(
         },
         publication: ApplicationPublication {
             controls,
-            sink: CasaImageProductSink::for_domains(
-                domains.iter().map(PreparedImageDomain::output),
-            ),
+            writer: CasaImageWriter::for_domains(domains.iter().map(PreparedImageDomain::output)),
         },
         output_directories: domains
             .iter()

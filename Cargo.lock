@@ -610,7 +610,6 @@ dependencies = [
  "casa-task-runtime",
  "casa-test-support",
  "casa-types",
- "libc",
  "ndarray",
  "num-complex",
  "serde",
@@ -680,13 +679,18 @@ dependencies = [
 name = "casa-imaging-products"
 version = "0.27.0"
 dependencies = [
+ "casa-coordinates",
  "casa-fft",
+ "casa-images",
  "casa-imaging-deconvolution",
  "casa-imaging-model",
  "casa-imaging-reconstruction",
  "casa-numerics",
+ "casa-types",
+ "libc",
  "ndarray",
  "num-complex",
+ "tempfile",
  "thiserror 2.0.18",
  "tracing",
 ]
