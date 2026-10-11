@@ -93,7 +93,7 @@ def native(args):
                        CASA_RS_T55_PREFLIGHT_IMAGE_SIZE="512",
                        CASA_RS_T55_PREFLIGHT_WORKERS=str(args.workers),
                        CASA_RS_T55_FULL_WORKERS=str(args.workers),
-                       CASA_RS_T55_PUBLICATION_PROBE="1", CASA_RS_PROFILE_CUBE="1")
+                       CASA_RS_T55_PUBLICATION_PROBE="1")
     test = ("t55_full_dataset_clark_timing" if args.rows == FULL_ROWS
             else "t55_q_band_rebaseline_preflight")
     command = [str(args.binary), f"t55_real_cube::{test}", "--exact", "--ignored",

@@ -390,7 +390,7 @@ rust_tclean_cmd=(
 )
 if [[ "$profile_rust" == true ]]; then
   time_json_stdout_stderr rust-tclean "$outdir/rust-tclean-wall-timing.json" "$outdir/rust-tclean-report.json" "$outdir/rust-tclean-profile.log" \
-    env CASA_RS_IMAGING_PROGRESS=1 "${rust_tclean_cmd[@]}"
+    "${rust_tclean_cmd[@]}"
 else
   time_json_stdout rust-tclean "$outdir/rust-tclean-wall-timing.json" "$outdir/rust-tclean-report.json" "${rust_tclean_cmd[@]}"
 fi
