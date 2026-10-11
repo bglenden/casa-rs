@@ -853,6 +853,10 @@ fn write_bandpass_caltable(
     })
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn write_bpoly_caltable(
     ms: &MeasurementSet,
     request: &BandpassSolveRequest,

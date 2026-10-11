@@ -1430,6 +1430,10 @@ fn optical_velocity_ms_from_axis_value(
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn optical_velocity_output_centers(
     source_frequencies_in_output_frame_hz: &[f64],
     source_channel_widths_hz: &[f64],

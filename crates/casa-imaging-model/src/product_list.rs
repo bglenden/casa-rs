@@ -405,6 +405,74 @@ impl<'a> ListBuilder<'a> {
         product: ProductKind,
     ) {
         match product {
+            ProductKind::Psf
+            | ProductKind::Residual
+            | ProductKind::Model
+            | ProductKind::RestoredImage
+            | ProductKind::SumWeights
+            | ProductKind::Weight => self.compile_term_images(domain_index, domain, product),
+            ProductKind::PrimaryBeam | ProductKind::PbCorrectedImage => {
+                self.compile_primary_beam(domain_index, domain, product);
+            }
+            ProductKind::SpectralIndex
+            | ProductKind::SpectralIndexError
+            | ProductKind::PbCorrectedSpectralIndex => {
+                self.compile_spectral_index(domain_index, domain, product);
+            }
+            ProductKind::Mask => {
+                self.add_image(
+                    domain_index,
+                    domain,
+                    ProductRole::CleanMask,
+                    ".mask".to_string(),
+                    ProductAxisKind::SkyImage,
+                    ProductUnit::Dimensionless,
+                    None,
+                    ProductBeamRule::None,
+                    ProductValidityRule::All,
+                );
+            }
+            ProductKind::Sensitivity => {
+                self.add_image(
+                    domain_index,
+                    domain,
+                    ProductRole::Sensitivity,
+                    ".sensitivity".to_string(),
+                    ProductAxisKind::SkyImage,
+                    ProductUnit::Dimensionless,
+                    None,
+                    ProductBeamRule::None,
+                    ProductValidityRule::All,
+                );
+            }
+            ProductKind::TaylorTerms => {
+                self.add_metadata(
+                    domain_index,
+                    domain,
+                    ProductRole::TaylorCoefficientSet,
+                    ProductBeamRule::None,
+                );
+            }
+            ProductKind::Beam => {
+                self.add_metadata(
+                    domain_index,
+                    domain,
+                    ProductRole::BeamMetadata,
+                    ProductBeamRule::Metadata(self.products.restoring_beam()),
+                );
+            }
+        }
+    }
+
+    /// The images with one entry per term: the PSF, residual, model,
+    /// restored image, sum of weights and weight image.
+    fn compile_term_images(
+        &mut self,
+        domain_index: usize,
+        domain: &CompiledImageDomain,
+        product: ProductKind,
+    ) {
+        match product {
             ProductKind::Psf => {
                 for term in self.convolution_terms() {
                     self.add_image(
@@ -484,19 +552,6 @@ impl<'a> ListBuilder<'a> {
                     );
                 }
             }
-            ProductKind::Mask => {
-                self.add_image(
-                    domain_index,
-                    domain,
-                    ProductRole::CleanMask,
-                    ".mask".to_string(),
-                    ProductAxisKind::SkyImage,
-                    ProductUnit::Dimensionless,
-                    None,
-                    ProductBeamRule::None,
-                    ProductValidityRule::All,
-                );
-            }
             ProductKind::Weight => {
                 for term in self.convolution_terms() {
                     self.add_image(
@@ -512,6 +567,18 @@ impl<'a> ListBuilder<'a> {
                     );
                 }
             }
+            _ => unreachable!("compile_product routes only per-term images here"),
+        }
+    }
+
+    /// The PB and the PB-corrected images.
+    fn compile_primary_beam(
+        &mut self,
+        domain_index: usize,
+        domain: &CompiledImageDomain,
+        product: ProductKind,
+    ) {
+        match product {
             ProductKind::PrimaryBeam => {
                 for term in self.primary_beam_terms() {
                     let validity = if term == self.primary_beam_term() {
@@ -548,19 +615,6 @@ impl<'a> ListBuilder<'a> {
                     );
                 }
             }
-            ProductKind::Sensitivity => {
-                self.add_image(
-                    domain_index,
-                    domain,
-                    ProductRole::Sensitivity,
-                    ".sensitivity".to_string(),
-                    ProductAxisKind::SkyImage,
-                    ProductUnit::Dimensionless,
-                    None,
-                    ProductBeamRule::None,
-                    ProductValidityRule::All,
-                );
-            }
             ProductKind::PbCorrectedImage => {
                 for term in self.image_terms() {
                     let restored = self.id(domain_index, ProductRole::RestoredImage(term));
@@ -577,14 +631,18 @@ impl<'a> ListBuilder<'a> {
                     );
                 }
             }
-            ProductKind::TaylorTerms => {
-                self.add_metadata(
-                    domain_index,
-                    domain,
-                    ProductRole::TaylorCoefficientSet,
-                    ProductBeamRule::None,
-                );
-            }
+            _ => unreachable!("compile_product routes only PB products here"),
+        }
+    }
+
+    /// The spectral index, its error and its PB-corrected image.
+    fn compile_spectral_index(
+        &mut self,
+        domain_index: usize,
+        domain: &CompiledImageDomain,
+        product: ProductKind,
+    ) {
+        match product {
             ProductKind::SpectralIndex => {
                 self.add_image(
                     domain_index,
@@ -628,14 +686,7 @@ impl<'a> ListBuilder<'a> {
                     },
                 );
             }
-            ProductKind::Beam => {
-                self.add_metadata(
-                    domain_index,
-                    domain,
-                    ProductRole::BeamMetadata,
-                    ProductBeamRule::Metadata(self.products.restoring_beam()),
-                );
-            }
+            _ => unreachable!("compile_product routes only spectral-index products here"),
         }
     }
 

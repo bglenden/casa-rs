@@ -836,6 +836,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     fn response_envelopes_round_trip_snapshot_and_error_variants() {
         let viewport = BrowserViewport::new(120, 32);
         let breadcrumb = vec![

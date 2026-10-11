@@ -1620,6 +1620,10 @@ impl TableDatContents {
     /// Each virtual column binding gets a separate DM entry (seq_nr 1, 2, ...).
     /// Virtual engine keywords are injected into the column descriptors.
     #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     pub(crate) fn from_snapshot_with_virtual(
         schema: &TableSchema,
         keywords: &RecordValue,

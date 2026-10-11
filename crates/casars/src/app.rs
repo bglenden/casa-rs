@@ -4104,6 +4104,10 @@ impl AppState {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     fn resolve_default_key_action(&self, key_event: KeyEvent) -> Option<AppAction> {
         let mode = self.input_mode();
         let plots_active = mode == InputMode::Result && self.result_tab_uses_plot_workspace();
@@ -9115,6 +9119,10 @@ impl AppState {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     fn handle_left_mouse_down(&mut self, mouse_event: MouseEvent, layout: &UiLayout) {
         self.dragging_image_workspace_divider = false;
         self.dragging_image_cursor = false;
@@ -10504,6 +10512,10 @@ impl AppState {
         );
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     fn start_browser_session(&mut self) {
         self.clear_output_selection();
         if let Some((name, error)) = self.parameter_edit_errors.iter().next() {
@@ -10829,6 +10841,10 @@ impl AppState {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     fn send_browser_command(&mut self, command: BrowserRequest) -> bool {
         let accepted_command = command.clone();
         let notebook_operation = self
@@ -15592,6 +15608,10 @@ impl AppState {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     fn finish_execution(&mut self, exit_code: Option<i32>, success: bool) {
         let Some(mut running) = self.running.take() else {
             return;

@@ -7592,6 +7592,10 @@ fn plot_document_payload(
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn listobs_plot_document(
     payload: &MeasurementSetPlotPayload,
     metadata: &PayloadMetadata,

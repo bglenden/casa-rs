@@ -981,6 +981,10 @@ fn parse_export_corrected_data_args(
     })))
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliAction, String> {
     let mut measurement_set = None;
     let mut output_table = None;

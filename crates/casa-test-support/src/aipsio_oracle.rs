@@ -544,6 +544,10 @@ fn byte_order_to_tag(byte_order: ByteOrder) -> u8 {
 }
 
 #[cfg(has_casacore_cpp)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn value_to_payload(value: &Value) -> Result<FfiPayload, AipsIoCrossError> {
     match value {
         Value::Scalar(s) => Ok(match s {
@@ -820,6 +824,10 @@ fn read_u64_le(data: &[u8], offset: usize) -> u64 {
 }
 
 #[cfg(has_casacore_cpp)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn payload_to_value(
     primitive: PrimitiveType,
     is_array: bool,

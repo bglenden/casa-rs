@@ -313,6 +313,10 @@ impl CorpusIndex {
         )
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     fn index_documents_internal(
         &self,
         documents: &[CorpusDocumentInput],

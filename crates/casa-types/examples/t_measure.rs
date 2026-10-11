@@ -16,6 +16,10 @@ use casa_types::measures::{
     position_to_record, radial_velocity_from_record, radial_velocity_to_record,
 };
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn main() {
     println!("=== Measures Demo ===");
     println!();

@@ -79,6 +79,10 @@ fn append_line(out: &mut String, line: &str) {
     out.push('\n');
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn do_io(do_excp: bool, writing: bool, io: &mut AipsIo, out: &mut String) -> AipsIoDemoResult<()> {
     let _ = do_excp;
 

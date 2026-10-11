@@ -633,6 +633,10 @@ impl StorageManager for CompositeStorage {
         self.load_with_row_hint(table_path, None)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     fn save(
         &self,
         table_path: &Path,
@@ -896,6 +900,10 @@ impl StorageManager for CompositeStorage {
 
 impl CompositeStorage {
     #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     pub(crate) fn save_borrowed(
         &self,
         table_path: &Path,
@@ -2057,6 +2065,10 @@ impl CompositeStorage {
     /// - Pass 1: Load stored columns from storage managers (StManAipsIO, StandardStMan).
     /// - Pass 2: Materialize virtual columns from virtual engines.
     /// - Pass 3: Reject any remaining unknown DM types.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     fn load_plain_table_filtered(
         &self,
         table_path: &Path,
@@ -3905,6 +3917,10 @@ impl CompositeStorage {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     pub(crate) fn save_with_bindings_and_column_overrides_borrowed(
         &self,
         table_path: &Path,

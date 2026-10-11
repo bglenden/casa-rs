@@ -852,6 +852,10 @@ fn merge_header_items(target: &mut Vec<MsPageHeaderItem>, extra: Vec<MsPageHeade
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, String> {
     let args = args.into_iter().collect::<Vec<_>>();
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {

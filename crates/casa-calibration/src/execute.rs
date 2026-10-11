@@ -719,6 +719,10 @@ pub fn execute_apply(
     Ok(report)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn execute_apply_plan(
     ms: &mut MeasurementSet,
     plan: ApplyPlan,
@@ -1604,6 +1608,10 @@ struct FeedAngleRow {
     receptor0_angle_rad: f64,
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn apply_row(
     row: &ApplyRowPlan,
     inputs: ExecutionRowInputs<'_>,

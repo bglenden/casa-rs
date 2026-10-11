@@ -1669,6 +1669,10 @@ fn read_ssm_indirect_cell(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn read_column_from_buckets(
     file: &mut File,
     header: &SsmHeader,
@@ -2161,6 +2165,10 @@ pub(crate) fn write_ssm_file_scalar_column_sources(
     )
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn write_ssm_file_impl(
     file_path: &Path,
     col_descs: &[ColumnDescContents],
@@ -2874,6 +2882,10 @@ fn write_cell_to_bucket(
 }
 
 /// Write a scalar or array value in the specified byte order.
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn write_value_canonical(
     dst: &mut [u8],
     data_type: CasacoreDataType,

@@ -1256,6 +1256,10 @@ pub struct MsPlotSpec {
 
 impl MsPlotSpec {
     /// Build the default specification for one preset.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     pub fn from_preset(preset: MsPlotPreset) -> Self {
         match preset {
             MsPlotPreset::UvCoverage => Self {
@@ -1615,6 +1619,10 @@ impl MsPlotSpec {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     fn validate_common(&self) -> Result<(), String> {
         if self.y_axes.is_empty() {
             return Err("msexplore requires at least one y axis per plot".to_string());
@@ -3599,6 +3607,10 @@ fn predecimate_visibility_rows(
     Ok(sampled)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn build_generic_visibility_scatter(
     ms: &MeasurementSet,
     selection: &MsSelection,
@@ -4525,6 +4537,10 @@ fn finalize_averaged_axis_value(
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn build_generic_visibility_scatter_with_averaging(
     ms: &MeasurementSet,
     selection: &MsSelection,
@@ -7201,6 +7217,10 @@ fn export_scatter_pdf(image: &DynamicImage, output_path: &Path, title: &str) -> 
     std::fs::write(output_path, bytes).map_err(|error| error.to_string())
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn render_scatter_panel(
     root: &BitmapArea<'_>,
     context: ScatterPanelRenderContext<'_>,
@@ -7967,6 +7987,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     fn axis_and_related_enums_cover_aliases_and_helper_flags() {
         let axis_cases = [
             (
@@ -8524,6 +8548,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     fn from_preset_and_validation_cover_supported_and_rejected_shapes() {
         for preset in MsPlotPreset::ALL {
             let spec = MsPlotSpec::from_preset(preset);

@@ -330,6 +330,10 @@ fn demo_2d_axis_stats() {
 // With axes=[0,1] (collapse spatial axes) each of the 64/256 "channel"
 // positions sorts a 512² or 1024² vector — the sort is the bottleneck.
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn demo_performance() {
     let perf_shape = perf_shape();
     println!("\n=== Performance timing: shape={perf_shape:?}, axes=[0,1] ===");

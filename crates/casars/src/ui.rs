@@ -772,6 +772,10 @@ fn draw_graphic_result(
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 fn draw_plot_workspace(
     frame: &mut Frame<'_>,
     app: &AppState,

@@ -473,6 +473,10 @@ where
 /// Produce values from traversal cursors and consume them in traversal order
 /// while allowing the mapping stage to run serially, pipelined, or in parallel.
 #[doc(hidden)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
 pub fn try_map_traversal_cursors_ordered_with_strategy<Out, State, Init, Map, Consume>(
     full_shape: &[usize],
     cursor_shape: &[usize],

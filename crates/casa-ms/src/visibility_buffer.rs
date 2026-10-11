@@ -582,6 +582,10 @@ impl MeasurementSet {
     /// per-channel flags/weights are laid out as `[channel][row][corr]` so
     /// plane-oriented imaging code can scan one output channel group without a
     /// per-row structure penalty.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "predates the function-length limit; #705"
+    )]
     pub fn fill_visibility_buffer(
         &self,
         request: &VisibilityBufferRequest,
