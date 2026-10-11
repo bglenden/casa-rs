@@ -207,18 +207,6 @@ impl SampleBuffer {
         }
     }
 
-    /// Borrow placements `range`, in insertion order, as a kernel block.
-    #[must_use]
-    pub fn block_range(&self, range: std::ops::Range<usize>) -> SampleBlock<'_> {
-        let npol = self.npol;
-        SampleBlock {
-            values: &self.values[range.start * npol..range.end * npol],
-            weights: &self.weights[range.start * npol..range.end * npol],
-            placements: &self.placements[range],
-            npol,
-        }
-    }
-
     /// Placements in insertion order.
     #[must_use]
     pub fn placements(&self) -> &[Placement] {

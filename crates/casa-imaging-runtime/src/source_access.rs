@@ -62,13 +62,13 @@ pub enum SourceAccessError {
 /// with the stream that converts its blocks for the passes.
 ///
 /// The storage owner supplies the requirement curve; the source takes its
-/// mandatory minimum and grows beyond it by at most the bootstrap budget and
-/// at most a quarter of what `policy` leaves free on `host` past that
-/// minimum, so the paged cube cache and the passes, admitted after it, keep
-/// the rest. Each row a block holds is also converted into the native
-/// blocks a pass's stream double-buffers, and predicted by a pass with a
-/// model ([`source_block_bytes`]), so the growth is shared between the
-/// source and the passes in proportion to their bytes per row. The
+/// mandatory minimum and grows beyond it by at most the bootstrap budget.
+/// Each row a block holds is also converted into the native blocks a pass's
+/// stream double-buffers, and predicted by a pass with a model
+/// ([`source_block_bytes`]); the source and that storage together grow by
+/// at most a quarter of what `policy` leaves free on `host` past the
+/// minimum, shared in proportion to their bytes per row, so the paged cube
+/// cache and the passes, admitted after them, keep the rest. The
 /// reservation holds the envelope the source plans and what the passes hold
 /// for its blocks, and the run keeps it while the source is open.
 pub fn finalize_source_access(
@@ -84,9 +84,8 @@ pub fn finalize_source_access(
         .maximum_live_blocks();
     let minimum = requirements.minimum_bytes()?;
     let free = usize::try_from(free_memory(host, policy)).unwrap_or(usize::MAX);
-    let growth = bootstrap_source_budget()
-        .available_bytes()
-        .min(free.saturating_sub(minimum) / 4);
+    let bootstrap = bootstrap_source_budget().available_bytes();
+    let quarter = free.saturating_sub(minimum) / 4;
     let budget = |growth: usize| {
         Ok::<_, SourceAccessError>(SelectedObservationContentBudget::new(
             minimum
@@ -99,13 +98,13 @@ pub fn finalize_source_access(
     let layout = row_layout(problem);
     let passes = |rows: usize| source_block_bytes(BlockShape { rows, ..layout });
     let passes_per_row = passes(1) - passes(0);
-    let unshared = requirements.plan(budget(growth)?)?;
+    let unshared = requirements.plan(budget(bootstrap.min(quarter))?)?;
     let source_per_row =
         (unshared.maximum_resident_bytes() / unshared.rows_per_block().max(1)) as u64;
-    let shared = u128::from(source_per_row) * growth as u128
+    let share = u128::from(source_per_row) * quarter as u128
         / u128::from((source_per_row + passes_per_row).max(1));
     let planned = requirements.plan(budget(
-        usize::try_from(shared).map_err(|_| SourceAccessError::Overflow)?,
+        bootstrap.min(usize::try_from(share).map_err(|_| SourceAccessError::Overflow)?),
     )?)?;
     let passes = passes(planned.rows_per_block());
     tracing::info!(

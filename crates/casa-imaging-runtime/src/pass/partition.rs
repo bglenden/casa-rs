@@ -195,7 +195,13 @@ impl WaveDemand<'_> {
         }
         bytes
             + self.workers as u64 * per_worker
-            + super::wave::chunk_bytes(self.domains, self.backend, self.block, self.workers)
+            + super::wave::chunk_bytes(
+                self.domains,
+                self.backend,
+                self.block,
+                self.workers,
+                self.modes.weight,
+            )
     }
 }
 
