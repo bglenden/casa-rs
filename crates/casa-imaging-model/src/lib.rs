@@ -8,7 +8,7 @@ mod measurement_equation;
 mod model_state;
 mod native_aw;
 mod observation;
-mod product_graph;
+mod product_list;
 mod selected_observation_sample;
 mod transaction;
 mod visibility_transform;
@@ -78,8 +78,8 @@ pub use selected_observation_sample::{
     SelectedSampleMetadata,
 };
 
-pub use product_graph::{
-    ProductAxes, ProductAxisKind, ProductBeamRule, ProductGraph, ProductNode, ProductNodeId,
+pub use product_list::{
+    ProductAxes, ProductAxisKind, ProductBeamRule, ProductEntry, ProductId, ProductList,
     ProductPixelMask, ProductPublication, ProductRole, ProductStorageContract, ProductTerm,
     ProductUnit, ProductValidityRule,
 };

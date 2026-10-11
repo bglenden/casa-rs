@@ -687,7 +687,6 @@ dependencies = [
  "casa-numerics",
  "ndarray",
  "num-complex",
- "sha2",
  "thiserror 2.0.18",
  "tracing",
 ]

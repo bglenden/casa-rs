@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
 
-//! Native continuum product algorithms and bounded write-only generation.
+//! The products of an imaging run (plan section 5.7).
 //!
-//! This owner turns one authoritative Major-Cycle result into complete,
-//! generation-consistent continuum products: restoring-beam fitting,
-//! restoration, residual scaling, normalization, validity, metadata, and the
-//! exact member set declared by the compiler-owned Product Graph. It owns the
-//! generation-construction capability and transfers bounded windows directly
-//! to a caller-owned write-only output.
+//! This crate turns a major cycle's final normal state and model into the
+//! members of the problem's product list: restoring-beam fitting,
+//! restoration, normalization, validity and metadata. It writes each member
+//! in bounded windows straight to its output.
 
 mod beam;
 mod demand;
@@ -24,9 +22,9 @@ pub use beam::{RestoringBeam, fit_restoring_beam};
 pub use demand::ContinuumGenerationDemand;
 pub use error::ProductsError;
 pub use generation::{
-    AnalyticPrimaryBeamModel, CONTINUUM_ALGORITHM_CATALOG_VERSION, ContinuumProductControls,
-    DEFAULT_PSF_CUTOFF, PlannedContinuumGeneration, PlannedMember, PublishedContinuumGeneration,
-    PublishedMember, produce_continuum_members,
+    AnalyticPrimaryBeamModel, ContinuumProductControls, DEFAULT_PSF_CUTOFF,
+    PlannedContinuumGeneration, PlannedMember, PublishedContinuumGeneration, PublishedMember,
+    produce_continuum_members,
 };
 pub use restore::{
     MosaicSensitivity, ResidualBeamScaling, fft_convolve, gaussian_beam_image, normalize_plane,
@@ -38,14 +36,3 @@ pub use storage::{
     ProductWriter,
 };
 pub use visibility::VisibilityProductCompletion;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn algorithm_catalog_version_is_pinned() {
-        // v10 publishes unit-peak PSFs and uses CASA's EVLA coefficient ties; bump this pin
-        // only together with a reviewed product-algorithm identity change.
-        assert_eq!(super::CONTINUUM_ALGORITHM_CATALOG_VERSION, 10);
-        assert_eq!(super::DEFAULT_PSF_CUTOFF, 0.35);
-    }
-}

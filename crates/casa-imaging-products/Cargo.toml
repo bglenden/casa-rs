@@ -19,5 +19,4 @@ casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
 casa-numerics = { path = "../casa-numerics" }
 ndarray.workspace = true
 num-complex.workspace = true
-sha2 = "0.10"
 thiserror.workspace = true

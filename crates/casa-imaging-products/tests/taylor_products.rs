@@ -461,11 +461,11 @@ fn t44_alpha_and_error_use_strict_principal_support_and_zero_false_blanking() {
 #[test]
 fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor() {
     let problem = taylor_problem(205, &PB_PRODUCTS, InstrumentResponse::Scalar);
-    let graph = problem.product_graph();
-    let names = graph
-        .nodes()
+    let list = problem.product_list();
+    let names = list
+        .entries()
         .iter()
-        .filter_map(|node| node.name())
+        .filter_map(|entry| entry.name())
         .collect::<Vec<_>>();
     assert!(names.contains(&".pb.tt0"));
     assert!(names.contains(&".pb.tt1"));
@@ -474,8 +474,8 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
     assert!(!names.iter().any(|name| name.starts_with(".weight")));
     assert!(!names.contains(&".alpha.pbcor"));
 
-    let pb0 = graph
-        .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
+    let pb0 = list
+        .entry(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
         .expect("Taylor-zero PB");
     assert_eq!(pb0.unit(), ProductUnit::Dimensionless);
     assert_eq!(
@@ -483,19 +483,18 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
         ProductValidityRule::PrimaryBeam(validity().primary_beam())
     );
     assert_eq!(
-        graph
-            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(1)))
+        list.entry(ProductRole::PrimaryBeam(ProductTerm::Taylor(1)))
             .expect("Taylor-one PB")
             .validity(),
         ProductValidityRule::All,
         "CASA masks only the principal primary-beam Taylor term",
     );
     for term in 0..TERMS {
-        let restored = graph
-            .node(ProductRole::RestoredImage(ProductTerm::Taylor(term)))
+        let restored = list
+            .entry(ProductRole::RestoredImage(ProductTerm::Taylor(term)))
             .expect("restored Taylor term");
-        let corrected = graph
-            .node(ProductRole::PbCorrectedImage(ProductTerm::Taylor(term)))
+        let corrected = list
+            .entry(ProductRole::PbCorrectedImage(ProductTerm::Taylor(term)))
             .expect("PB-corrected Taylor term");
         assert_eq!(corrected.unit(), ProductUnit::JyPerBeam);
         assert_eq!(
@@ -504,14 +503,13 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
         );
         assert_eq!(
             corrected.beam(),
-            ProductBeamRule::Inherit(restored.node_id()),
+            ProductBeamRule::Inherit(restored.id()),
             "every Taylor image correction keeps its restored term's beam"
         );
     }
 
     assert!(
-        graph
-            .nodes()
+        list.entries()
             .iter()
             .all(|node| !matches!(node.role(), ProductRole::Weight(ProductTerm::Taylor(_)))),
         "the frozen standard CASA row emits no standalone weight family"
@@ -661,10 +659,10 @@ fn t51_weight_derived_mtmfs_plan_matches_casa_eighteen_member_inventory() {
     ];
     let problem = taylor_problem(213, &products, InstrumentResponse::Scalar);
     let names = problem
-        .product_graph()
-        .nodes()
+        .product_list()
+        .entries()
         .iter()
-        .filter_map(|node| node.name())
+        .filter_map(|entry| entry.name())
         .collect::<std::collections::BTreeSet<_>>();
 
     assert_eq!(

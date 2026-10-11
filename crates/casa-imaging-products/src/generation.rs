@@ -2,14 +2,13 @@
 
 //! Direct, bounded continuum product generation.
 //!
-//! This owner compiles the exact Product Graph inventory, validates its
-//! scientific source association, and transfers every generated window to a
-//! write-only output owner. It retains useful contracts, beams, and run
-//! association for publication without hashing or rereading product content.
+//! Products are planned from the problem's product list and generated in
+//! its publication order, a bounded window at a time, straight to their
+//! output. Planning keeps each member's contract and the beams it carries.
 
 use casa_imaging_model::{
     AxisOrder, CompiledProblem, ImageAxis, ImageDomainRole, ProductAxes, ProductBeamRule,
-    ProductNodeId, ProductNormalization, ProductPixelMask, ProductRole, ProductStorageContract,
+    ProductId, ProductNormalization, ProductPixelMask, ProductRole, ProductStorageContract,
     ProductSupportComparison, ProductUnit, ProductValidityRule, ReconstructionBasis,
     RestoringBeamPolicy,
 };
@@ -30,9 +29,6 @@ use crate::taylor::{
     TaylorProducts, analytic_alma_airy_primary_beam, analytic_evla_primary_beam,
     analytic_vla_primary_beam, primary_beam_frequency_supported,
 };
-
-/// Version of the native continuum product-algorithm catalog.
-pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 10;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
 pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF;
@@ -113,14 +109,14 @@ impl ContinuumProductControls {
             problem.reconstruction().basis(),
             ReconstructionBasis::Taylor { .. }
         );
-        let graph = problem.product_graph();
-        let needs_beam = taylor || graph.publication().members().iter().any(|ordinal| {
-            let node = &graph.nodes()[ordinal.ordinal()];
+        let list = problem.product_list();
+        let needs_beam = taylor || list.publication().members().iter().any(|id| {
+            let entry = &list.entries()[id.ordinal()];
             let needs_validity = |rule| matches!(rule,
                 ProductValidityRule::PrimaryBeam(_) | ProductValidityRule::TaylorAndPrimaryBeam { .. });
-            matches!(node.role(), ProductRole::PrimaryBeam(_) | ProductRole::PbCorrectedImage(_))
-                || needs_validity(node.validity())
-                || matches!(node.storage().pixel_mask(), ProductPixelMask::Explicit(rule) if needs_validity(rule))
+            matches!(entry.role(), ProductRole::PrimaryBeam(_) | ProductRole::PbCorrectedImage(_))
+                || needs_validity(entry.validity())
+                || matches!(entry.storage().pixel_mask(), ProductPixelMask::Explicit(rule) if needs_validity(rule))
         });
         if !needs_beam {
             return Ok(());
@@ -171,10 +167,7 @@ fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
         | ProductRole::PbCorrectedSpectralIndex
         | ProductRole::Sensitivity
         | ProductRole::CleanMask => Ok(()),
-        role => Err(ProductsError::UnsupportedProductRole {
-            role,
-            catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
-        }),
+        role => Err(ProductsError::UnsupportedProductRole { role }),
     }
 }
 
@@ -194,14 +187,14 @@ impl PlannedContinuumGeneration {
         controls: &ContinuumProductControls,
     ) -> Result<Self, ProductsError> {
         controls.validate_for_problem(inputs.problem())?;
-        let graph = inputs.problem().product_graph();
-        let mut members = Vec::with_capacity(graph.publication().members().len());
-        for node_ordinal in graph.publication().members() {
-            let node = graph
-                .nodes()
-                .get(node_ordinal.ordinal())
+        let list = inputs.problem().product_list();
+        let mut members = Vec::with_capacity(list.publication().members().len());
+        for id in list.publication().members() {
+            let entry = list
+                .entries()
+                .get(id.ordinal())
                 .ok_or(ProductsError::UnsupportedProblem)?;
-            ensure_producible(node.role())?;
+            ensure_producible(entry.role())?;
             let needs_primary_beam = |rule| {
                 matches!(
                     rule,
@@ -209,13 +202,13 @@ impl PlannedContinuumGeneration {
                         | ProductValidityRule::TaylorAndPrimaryBeam { .. }
                 )
             };
-            let requires_primary_beam = needs_primary_beam(node.validity())
-                || matches!(node.storage().pixel_mask(), ProductPixelMask::Explicit(rule)
+            let requires_primary_beam = needs_primary_beam(entry.validity())
+                || matches!(entry.storage().pixel_mask(), ProductPixelMask::Explicit(rule)
                     if needs_primary_beam(rule));
             if requires_primary_beam && controls.primary_beam_model.is_none() {
                 return Err(ProductsError::UnsupportedProblem);
             }
-            let axes = node.axes();
+            let axes = entry.axes();
             let shape = axes.shape();
             let payload_values = shape
                 .iter()
@@ -223,17 +216,17 @@ impl PlannedContinuumGeneration {
                 .try_fold(1usize, |total, extent| total.checked_mul(extent))
                 .ok_or(ProductsError::ResourceDemandOverflow("product shape"))?;
             members.push(PlannedMember {
-                node: node.node_id(),
-                role: node.role(),
-                name: node.name().unwrap_or_default().to_string(),
+                id: entry.id(),
+                role: entry.role(),
+                name: entry.name().unwrap_or_default().to_string(),
                 shape,
                 payload_values,
-                unit: node.unit(),
+                unit: entry.unit(),
                 axes: axes.clone(),
-                normalization: node.normalization(),
-                beam_rule: node.beam(),
-                validity: node.validity(),
-                storage: node.storage(),
+                normalization: entry.normalization(),
+                beam_rule: entry.beam(),
+                validity: entry.validity(),
+                storage: entry.storage(),
             });
         }
         Ok(Self {
@@ -262,10 +255,10 @@ impl PlannedContinuumGeneration {
     }
 }
 
-/// One planned publication member in exact graph order.
+/// One planned publication member, in product-list order.
 #[derive(Debug, Clone)]
 pub struct PlannedMember {
-    node: ProductNodeId,
+    id: ProductId,
     role: ProductRole,
     name: String,
     shape: [usize; 4],
@@ -279,10 +272,10 @@ pub struct PlannedMember {
 }
 
 impl PlannedMember {
-    /// Return the graph-local node identity.
+    /// Return the member's position in the product list.
     #[must_use]
-    pub const fn node(&self) -> ProductNodeId {
-        self.node
+    pub const fn id(&self) -> ProductId {
+        self.id
     }
 
     /// Return the logical product role.
@@ -822,10 +815,7 @@ fn produce_plane_member(
                 inputs.problem().products().validity().primary_beam(),
             )
         }
-        role => Err(ProductsError::UnsupportedProductRole {
-            role,
-            catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
-        }),
+        role => Err(ProductsError::UnsupportedProductRole { role }),
     }
 }
 
@@ -1313,7 +1303,7 @@ fn published_generation(
     let mut members = Vec::with_capacity(planned.members.len());
     for member in &planned.members {
         members.push(PublishedMember {
-            node: member.node,
+            id: member.id,
             name: member.name.clone(),
             resolved_beams: beams_for_member(
                 member,
@@ -1334,16 +1324,16 @@ fn published_generation(
 /// Payload-free metadata for one generated member.
 #[derive(Debug, Clone)]
 pub struct PublishedMember {
-    node: ProductNodeId,
+    id: ProductId,
     name: String,
     resolved_beams: Box<[Option<RestoringBeam>]>,
 }
 
 impl PublishedMember {
-    /// Return the graph-local node identity.
+    /// Return the member's position in the product list.
     #[must_use]
-    pub const fn node(&self) -> ProductNodeId {
-        self.node
+    pub const fn id(&self) -> ProductId {
+        self.id
     }
 
     /// Return the compiled product name.
@@ -1389,7 +1379,7 @@ impl PublishedContinuumGeneration {
         &self.restoring_beams
     }
 
-    /// Return generated members in exact graph order.
+    /// Return generated members in product-list order.
     #[must_use]
     pub const fn members(&self) -> &[PublishedMember] {
         &self.members

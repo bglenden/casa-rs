@@ -65,7 +65,7 @@ pub enum NormalStateCatalog {
 /// It owns the model-dependent unnormalized residual with the PSF,
 /// sensitivity and sum weights, and the sample and block counts of the
 /// pass; it makes no promise that the state is fully resident, dense, or
-/// shift-invariant. It is not a Product Graph artifact.
+/// shift-invariant. Products are formed from it; it is not one.
 ///
 /// ```compile_fail
 /// use casa_imaging_reconstruction::FinalNormalState;

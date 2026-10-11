@@ -122,17 +122,17 @@ fn generate_for(
 }
 
 #[test]
-fn planned_generation_lists_the_graph_members() {
+fn planned_generation_lists_the_published_members() {
     let problem = continuum_problem(81, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
         .expect("planned generation");
 
-    let graph_members = problem.product_graph().publication().members();
-    assert_eq!(planned.members().len(), graph_members.len());
-    for (member, node) in planned.members().iter().zip(graph_members.iter()) {
-        assert_eq!(member.node(), *node);
+    let published = problem.product_list().publication().members();
+    assert_eq!(planned.members().len(), published.len());
+    for (member, id) in planned.members().iter().zip(published.iter()) {
+        assert_eq!(member.id(), *id);
         assert!(!member.name().is_empty());
         assert_eq!(member.shape()[2..], [1, 1]);
         assert_eq!(
@@ -161,12 +161,12 @@ fn planned_generation_lists_the_graph_members() {
         planned
             .members()
             .iter()
-            .map(|member| member.node())
+            .map(|member| member.id())
             .collect::<Vec<_>>(),
         replanned
             .members()
             .iter()
-            .map(|member| member.node())
+            .map(|member| member.id())
             .collect::<Vec<_>>()
     );
 }
@@ -185,14 +185,14 @@ fn direct_generation_writes_the_exact_member_set_once() {
 
     assert_eq!(generated.members().len(), planned.members().len());
     for (generated_member, planned_member) in generated.members().iter().zip(planned.members()) {
-        assert_eq!(generated_member.node(), planned_member.node());
+        assert_eq!(generated_member.id(), planned_member.id());
         assert_eq!(generated_member.name(), planned_member.name());
         assert_eq!(
-            output.write_count(planned_member.node()),
+            output.write_count(planned_member.id()),
             1,
             "full-window generation writes each member once"
         );
-        assert!(output.finished(planned_member.node()));
+        assert!(output.finished(planned_member.id()));
     }
     let beam = generated
         .restoring_beams()
@@ -359,10 +359,10 @@ fn direct_generation_publishes_metadata_without_payload_residency() {
     assert_eq!(generated.members().len(), planned.members().len());
     let collected = GeneratedProducts::from_output(&planned, &generated, &output);
     for (member, planned_member) in collected.members().iter().zip(planned.members()) {
-        assert_eq!(member.node(), planned_member.node());
+        assert_eq!(member.id(), planned_member.id());
         assert_eq!(member.name(), planned_member.name());
         assert_eq!(member.payload().len(), planned_member.payload_values());
-        assert!(output.finished(planned_member.node()));
+        assert!(output.finished(planned_member.id()));
     }
 }
 
@@ -394,8 +394,8 @@ fn direct_generation_counts_bounded_windows_and_finishes_each_member() {
     assert_eq!(generated.members().len(), planned.members().len());
     for member in planned.members() {
         let channels = member.axes().spectral().output_channels();
-        assert_eq!(output.write_count(member.node()), channels);
-        assert!(output.finished(member.node()));
+        assert_eq!(output.write_count(member.id()), channels);
+        assert!(output.finished(member.id()));
     }
     let bounded = GeneratedProducts::from_output(&planned, &generated, &output);
     let full = generate_for(&planned, &inputs);
@@ -450,8 +450,8 @@ fn direct_generation_counts_bounded_windows_and_finishes_each_member() {
         Err(ProductsError::GeneratedNonfinite)
     ));
     assert_eq!(failed_output.begun_members(), 0);
-    assert_eq!(failed_output.write_count(planned.members()[0].node()), 0);
-    assert!(!failed_output.finished(planned.members()[0].node()));
+    assert_eq!(failed_output.write_count(planned.members()[0].id()), 0);
+    assert!(!failed_output.finished(planned.members()[0].id()));
 }
 
 struct ReversedWindowCompletion {
@@ -519,7 +519,7 @@ fn output_errors_fail_generation_without_a_completion_receipt() {
         Err(ProductsError::Storage(_))
     ));
     assert_eq!(write_failure.begun_members(), 1);
-    assert!(!write_failure.finished(planned.members()[0].node()));
+    assert!(!write_failure.finished(planned.members()[0].id()));
 
     let finish_failure = MemoryProductOutput::failing_finish();
     assert!(matches!(
@@ -533,7 +533,7 @@ fn output_errors_fail_generation_without_a_completion_receipt() {
         Err(ProductsError::Storage(_))
     ));
     assert_eq!(finish_failure.begun_members(), 1);
-    assert!(!finish_failure.finished(planned.members()[0].node()));
+    assert!(!finish_failure.finished(planned.members()[0].id()));
 }
 
 #[test]
@@ -579,7 +579,7 @@ fn single_window_restoration_admits_inner_fft_workers_without_replica_buffers() 
                 .unwrap();
         let values = GeneratedProducts::from_output(&planned, &generated, &output);
         for (actual, expected) in values.members().iter().zip(serial_values.members()) {
-            assert_eq!(actual.node(), expected.node());
+            assert_eq!(actual.id(), expected.id());
             assert_eq!(actual.validity(), expected.validity());
             for (actual, expected) in actual.payload().iter().zip(expected.payload()) {
                 assert!((actual - expected).abs() <= 1.0e-6 * expected.abs().max(1.0));
@@ -786,7 +786,7 @@ fn cube_generation_demand_retains_channel_beams_and_charges_common_fit_scratch()
 
 #[test]
 fn weight_products_plan_and_produce_the_exact_normal_state_sensitivity_plane() {
-    // Weight members are required graph products: they plan like every other
+    // Weight members are required products: they plan like every other
     // member and carry the normal state's exact per-pixel sensitivity.
     let problem = continuum_problem(
         107,
@@ -1058,29 +1058,29 @@ fn restoration_adds_the_published_residual_without_scaling_the_convolved_model()
 }
 
 #[test]
-fn generated_members_carry_the_complete_graph_contract() {
-    // Every generated member is planned from its graph node: role, unit,
-    // WCS/axes law, beam rule with resolved fitted beam, and validity rule -
-    // not just name and payload.
+fn generated_members_carry_the_complete_product_contract() {
+    // Every generated member is planned from its product-list entry: role,
+    // unit, WCS/axes law, beam rule with resolved fitted beam, and validity
+    // rule - not just name and payload.
     let problem = continuum_problem(111, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem);
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
     let planned = planned_for(&inputs, &ContinuumProductControls::default());
     let generated = generate_for(&planned, &inputs);
 
-    let graph = problem.product_graph();
+    let list = problem.product_list();
     for member in generated.members() {
-        let node = graph
-            .nodes()
+        let entry = list
+            .entries()
             .iter()
-            .find(|node| node.node_id() == member.node())
-            .expect("generated member names a graph node");
+            .find(|entry| entry.id() == member.id())
+            .expect("generated member names a product-list entry");
         let contract = member.contract();
-        assert_eq!(contract.role(), node.role());
-        assert_eq!(contract.unit(), node.unit());
-        assert_eq!(contract.axes(), node.axes());
-        assert_eq!(contract.beam_rule(), node.beam());
-        assert_eq!(contract.validity(), node.validity());
+        assert_eq!(contract.role(), entry.role());
+        assert_eq!(contract.unit(), entry.unit());
+        assert_eq!(contract.axes(), entry.axes());
+        assert_eq!(contract.beam_rule(), entry.beam());
+        assert_eq!(contract.validity(), entry.validity());
     }
 
     // Beam-bearing members resolve the generation's fitted beam; beam-free

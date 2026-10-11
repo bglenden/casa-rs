@@ -577,12 +577,7 @@ fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contra
     let published = &result.products;
     assert_eq!(planned.members().len(), published.members().len());
     for (planned, published) in planned.members().iter().zip(published.members()) {
-        assert_eq!(
-            planned.node(),
-            published.node(),
-            "{} identity",
-            planned.name()
-        );
+        assert_eq!(planned.id(), published.id(), "{} identity", planned.name());
         assert_eq!(planned.name(), published.name());
     }
 
@@ -1184,7 +1179,7 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
         .iter()
         .zip(result.products.members())
     {
-        assert_eq!(planned.node(), published.node());
+        assert_eq!(planned.id(), published.id());
     }
 
     for (role, base, image_size, direction, expected_mask_pixels) in expected {

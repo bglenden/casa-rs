@@ -17,7 +17,7 @@ pub mod synthetic_pass;
 
 use std::sync::{Arc, Mutex};
 
-use casa_imaging_model::ProductNodeId;
+use casa_imaging_model::ProductId;
 use casa_imaging_products::{
     PlannedContinuumGeneration, PlannedMember, ProductOutput, ProductStoragePlan, ProductWindow,
     ProductWindowLayout, ProductWriter, ProductsError, PublishedContinuumGeneration, RestoringBeam,
@@ -61,7 +61,7 @@ struct CapturedMember {
 /// In-memory output used only by product algorithm tests.
 #[derive(Debug, Clone, Default)]
 pub struct MemoryProductOutput {
-    members: Arc<Mutex<Vec<(ProductNodeId, CapturedMember)>>>,
+    members: Arc<Mutex<Vec<(ProductId, CapturedMember)>>>,
     fail_write: bool,
     fail_finish: bool,
 }
@@ -93,7 +93,7 @@ impl MemoryProductOutput {
 
     /// Return the exact number of windows transferred to one member.
     #[must_use]
-    pub fn write_count(&self, node: ProductNodeId) -> usize {
+    pub fn write_count(&self, node: ProductId) -> usize {
         self.members
             .lock()
             .unwrap()
@@ -104,7 +104,7 @@ impl MemoryProductOutput {
 
     /// Return whether the output owner received a successful finish for one member.
     #[must_use]
-    pub fn finished(&self, node: ProductNodeId) -> bool {
+    pub fn finished(&self, node: ProductId) -> bool {
         self.members
             .lock()
             .unwrap()
@@ -113,7 +113,7 @@ impl MemoryProductOutput {
             .unwrap_or(false)
     }
 
-    fn capture(&self, node: ProductNodeId) -> CapturedMember {
+    fn capture(&self, node: ProductId) -> CapturedMember {
         self.members
             .lock()
             .unwrap()
@@ -132,7 +132,7 @@ impl ProductOutput for MemoryProductOutput {
     ) -> Result<Box<dyn ProductWriter + 'a>, ProductsError> {
         let values = layout.values()?;
         self.members.lock().unwrap().push((
-            member.node(),
+            member.id(),
             CapturedMember {
                 layout,
                 payload: vec![0.0; values],
@@ -143,7 +143,7 @@ impl ProductOutput for MemoryProductOutput {
         ));
         Ok(Box::new(MemoryProductWriter {
             output: self.members.clone(),
-            node: member.node(),
+            node: member.id(),
             fail_write: self.fail_write,
             fail_finish: self.fail_finish,
         }))
@@ -152,8 +152,8 @@ impl ProductOutput for MemoryProductOutput {
 
 #[derive(Debug)]
 struct MemoryProductWriter {
-    output: Arc<Mutex<Vec<(ProductNodeId, CapturedMember)>>>,
-    node: ProductNodeId,
+    output: Arc<Mutex<Vec<(ProductId, CapturedMember)>>>,
+    node: ProductId,
     fail_write: bool,
     fail_finish: bool,
 }
@@ -233,7 +233,7 @@ impl ProductWriter for MemoryProductWriter {
 /// A test-owned copy of one generated member's metadata and collected arrays.
 #[derive(Debug, Clone)]
 pub struct GeneratedMember {
-    node: ProductNodeId,
+    node: ProductId,
     name: String,
     contract: PlannedMember,
     resolved_beams: Box<[Option<RestoringBeam>]>,
@@ -243,7 +243,7 @@ pub struct GeneratedMember {
 
 impl GeneratedMember {
     #[must_use]
-    pub const fn node(&self) -> ProductNodeId {
+    pub const fn id(&self) -> ProductId {
         self.node
     }
 
@@ -303,9 +303,9 @@ impl GeneratedProducts {
             .iter()
             .zip(planned.members())
             .map(|(member, planned)| {
-                let captured = output.capture(member.node());
+                let captured = output.capture(member.id());
                 GeneratedMember {
-                    node: member.node(),
+                    node: member.id(),
                     name: member.name().to_string(),
                     contract: planned.clone(),
                     resolved_beams: member.resolved_beams().to_vec().into_boxed_slice(),

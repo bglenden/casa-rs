@@ -62,7 +62,6 @@ pub fn normalize_plane(
         }
         ProductNormalization::FlatSky => Err(ProductsError::UnsupportedProductRole {
             role: casa_imaging_model::ProductRole::Sensitivity,
-            catalog: crate::CONTINUUM_ALGORITHM_CATALOG_VERSION,
         }),
     }
 }

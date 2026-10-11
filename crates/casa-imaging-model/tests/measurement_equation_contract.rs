@@ -509,16 +509,16 @@ fn aw_projection_is_distinct_and_paired() {
     assert!(aw.products().products().contains(&ProductKind::Weight));
     assert!(!aw.products().products().contains(&ProductKind::Sensitivity));
     assert!(
-        aw.product_graph()
-            .nodes()
+        aw.product_list()
+            .entries()
             .iter()
-            .any(|node| node.name() == Some(".weight"))
+            .any(|entry| entry.name() == Some(".weight"))
     );
     assert!(
-        aw.product_graph()
-            .nodes()
+        aw.product_list()
+            .entries()
             .iter()
-            .all(|node| node.name() != Some(".sensitivity"))
+            .all(|entry| entry.name() != Some(".sensitivity"))
     );
     assert_eq!(
         aw.normal_equation()

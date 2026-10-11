@@ -343,12 +343,12 @@ impl TaylorProducts {
 
         let needs_beam = inputs
             .problem()
-            .product_graph()
+            .product_list()
             .publication()
             .members()
             .iter()
             .any(|ordinal| {
-                inputs.problem().product_graph().nodes()[ordinal.ordinal()].beam()
+                inputs.problem().product_list().entries()[ordinal.ordinal()].beam()
                     != casa_imaging_model::ProductBeamRule::None
             });
         let fitted_beam = needs_beam
@@ -387,13 +387,13 @@ impl TaylorProducts {
 
         let requests_primary_beam = inputs
             .problem()
-            .product_graph()
+            .product_list()
             .publication()
             .members()
             .iter()
             .any(|ordinal| {
                 matches!(
-                    inputs.problem().product_graph().nodes()[ordinal.ordinal()].role(),
+                    inputs.problem().product_list().entries()[ordinal.ordinal()].role(),
                     ProductRole::PrimaryBeam(_) | ProductRole::PbCorrectedImage(_)
                 )
             });
@@ -462,12 +462,12 @@ impl TaylorProducts {
         );
         let requests_pb_corrected_alpha = inputs
             .problem()
-            .product_graph()
+            .product_list()
             .publication()
             .members()
             .iter()
             .any(|ordinal| {
-                inputs.problem().product_graph().nodes()[ordinal.ordinal()].role()
+                inputs.problem().product_list().entries()[ordinal.ordinal()].role()
                     == ProductRole::PbCorrectedSpectralIndex
             });
         let alpha_pbcor = if requests_pb_corrected_alpha {
@@ -524,10 +524,7 @@ impl TaylorProducts {
     pub(crate) fn payload(&self, role: ProductRole) -> Result<Vec<f32>, ProductsError> {
         let term = |term: ProductTerm| match term {
             ProductTerm::Taylor(term) => Ok(term),
-            ProductTerm::Single => Err(ProductsError::UnsupportedProductRole {
-                role,
-                catalog: crate::CONTINUUM_ALGORITHM_CATALOG_VERSION,
-            }),
+            ProductTerm::Single => Err(ProductsError::UnsupportedProductRole { role }),
         };
         match role {
             ProductRole::Psf(value) => {
@@ -566,10 +563,7 @@ impl TaylorProducts {
             _ => None,
         }
         .cloned()
-        .ok_or(ProductsError::UnsupportedProductRole {
-            role,
-            catalog: crate::CONTINUUM_ALGORITHM_CATALOG_VERSION,
-        })
+        .ok_or(ProductsError::UnsupportedProductRole { role })
     }
 
     pub(crate) fn validity(&self, rule: ProductValidityRule) -> Result<Vec<bool>, ProductsError> {

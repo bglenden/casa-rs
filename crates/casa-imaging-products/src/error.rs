@@ -49,13 +49,11 @@ pub enum ProductsError {
         /// Output channel centre, in Hz.
         frequency_hz: f64,
     },
-    /// The Product Graph requested a role this catalog version cannot produce.
-    #[error("product role {role:?} is not producible by algorithm catalog {catalog}")]
+    /// The product list publishes a role the products cannot produce.
+    #[error("product role {role:?} cannot be produced")]
     UnsupportedProductRole {
         /// The first unsupported role encountered.
         role: ProductRole,
-        /// Algorithm catalog version consulted.
-        catalog: u32,
     },
     /// A Taylor term other than the zeroth coefficient was requested.
     #[error("Taylor term {term:?} exceeds the nterms=1 continuum algorithm catalog")]
@@ -83,7 +81,7 @@ pub enum ProductsError {
         /// Actual payload length.
         actual: usize,
     },
-    /// Beam fitting failed for a graph that requires fitted beam metadata.
+    /// Beam fitting failed for products that carry fitted beam metadata.
     #[error("restoring-beam fitting failed: {0}")]
     BeamFitFailed(String),
     /// Solver arithmetic produced a non-finite product value.
