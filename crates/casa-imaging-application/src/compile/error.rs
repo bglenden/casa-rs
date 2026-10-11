@@ -206,6 +206,11 @@ pub enum PrepareError {
     /// A source-frame cube needs an ephemeris phase centre.
     #[error("source-frame cube imaging requires a moving phase centre")]
     MovingPhaseCentre,
+    /// An analytic primary beam for a moving phase centre: CASA shifts each
+    /// field's beam with the source (`SynthesisImagerVi2::getMovingDirection`),
+    /// which casa-rs does not.
+    #[error("write_pb and pbcor need a fixed phase centre with the standard and wproject gridders")]
+    MovingAnalyticPrimaryBeam,
     /// A source-frame cube needs the source's rest frequency.
     #[error("source-frame cube imaging requires REST_FREQUENCY metadata")]
     RestFrequencyMissing,

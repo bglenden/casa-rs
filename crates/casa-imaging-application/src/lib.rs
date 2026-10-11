@@ -95,9 +95,11 @@ pub(crate) struct AwCatalogDeployment {
     pub(crate) resident_bytes: usize,
 }
 
-/// Product-generation controls and the CASA image writer.
+/// Product-generation controls, the analytic primary beam's pointings and
+/// the CASA image writer.
 pub(crate) struct ApplicationPublication {
     pub(crate) controls: ContinuumProductControls,
+    pub(crate) primary_beam_centres: Option<casa_imaging_products::PrimaryBeamCentres>,
     pub(crate) writer: casa_imaging_products::CasaImageWriter,
 }
 

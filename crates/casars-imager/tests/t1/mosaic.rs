@@ -12,7 +12,8 @@ use ndarray::Array2;
 use serde_json::json;
 
 use super::fixture::{
-    Component, Geometry, Observation, ProductContract, Setup, SpectralAxis, box_sum, peak,
+    Component, Geometry, Observation, PHASE_CENTER_RAD, ProductContract, Setup, SpectralAxis,
+    box_sum, peak,
 };
 
 /// What a cleaned, PB-corrected mosaic run publishes.
@@ -315,5 +316,72 @@ fn mosaic_flat_noise_is_flat_sky_times_the_pb() {
         } else {
             assert_eq!((*noise, *sky), (0.0, 0.0), "outside the PB support");
         }
+    }
+}
+
+/// The standard gridder's analytic PB (`write_pb`) is CASA's: a beam on
+/// each selected field's pointing, summed and divided by its peak, whatever
+/// the image centre (`SIMapper::addPB`, `SIImageStore::makePBImage`; #702).
+#[test]
+fn standard_gridder_pb_follows_the_pointings() {
+    let observation = Observation::synthesise_setup(setup(), &[("centre", CENTRE)]);
+    let centre = format!(
+        "J2000 {}rad {}rad",
+        PHASE_CENTER_RAD[0], PHASE_CENTER_RAD[1]
+    );
+    let pb = |name: &str, fields: &str| {
+        let (_, products) = observation.image(
+            name,
+            json!({
+                "weighting": "natural",
+                "niter": 0,
+                "field": fields,
+                "phasecenter": centre,
+                "write_pb": true,
+                // Below every beam value the sum compares, so nothing is
+                // zeroed before it is summed.
+                "pblimit": 1.0e-6,
+            }),
+        );
+        products.get(".pb").pixels.clone()
+    };
+    let reference = GEOMETRY.image_size / 2;
+    let spacing = SPACING_PX as usize;
+    let fields = ["0", "1", "2"].map(|field| pb(&format!("standard-pb-{field}"), field));
+
+    // The western field's beam is centred on its pointing, 80 cells west of
+    // the image centre (+x is west), not on the image centre.
+    let west = &fields[0];
+    assert_eq!(
+        west[[reference + spacing, reference]],
+        1.0,
+        "peak on the pointing"
+    );
+    for offset in [20, 40, spacing] {
+        let (inside, outside) = (
+            west[[reference + spacing - offset, reference]],
+            west[[reference + spacing + offset, reference]],
+        );
+        assert!(
+            (inside - outside).abs() < 1.0e-6,
+            "symmetric about the pointing at {offset} cells: {inside} and {outside}"
+        );
+    }
+    assert!(
+        west[[reference, reference]] < 0.9,
+        "the image centre is 80″ from the western beam's peak"
+    );
+
+    // All three fields: the beams summed, divided by the sum's peak.
+    let all = pb("standard-pb-all", "0,1,2");
+    let sum = &(&fields[0] + &fields[1]) + &fields[2];
+    let peak = sum.iter().fold(0.0_f32, |peak, value| peak.max(*value));
+    assert!(peak > 1.0, "overlapping beams sum above one");
+    for (actual, summed) in all.iter().zip(&sum) {
+        assert!(
+            (actual - summed / peak).abs() < 1.0e-5,
+            "PB {actual}, normalized sum {}",
+            summed / peak
+        );
     }
 }

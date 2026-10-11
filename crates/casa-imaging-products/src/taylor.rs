@@ -647,12 +647,19 @@ fn taylor_alpha_products(
     (alpha, alpha_error, validity)
 }
 
-pub(crate) fn analytic_evla_primary_beam(
+/// The beam centres (pixels), cell increments (radians) and frequency of
+/// one domain's plane.
+struct BeamGeometry {
+    centres: Vec<[f64; 2]>,
+    increment_rad: [f64; 2],
+    frequency_hz: f64,
+}
+
+fn beam_geometry(
     inputs: &ContinuumProductInputs<'_>,
     domain_role: &casa_imaging_model::ImageDomainRole,
-    shape: [usize; 2],
     output_channel: usize,
-) -> Result<Vec<f32>, ProductsError> {
+) -> Result<BeamGeometry, ProductsError> {
     let domain = inputs
         .problem()
         .geometry()
@@ -661,28 +668,66 @@ pub(crate) fn analytic_evla_primary_beam(
         .find(|domain| domain.role() == domain_role)
         .ok_or(ProductsError::UnsupportedProblem)?;
     let direction = domain.direction();
-    let reference_pixel = direction.reference_pixel();
-    let increment_rad = direction.increment_rad();
     let frequency_hz = inputs
         .problem()
         .geometry()
         .spectral()
         .channel_centre_hz(output_channel)
         .ok_or(ProductsError::UnsupportedProblem)?;
-    let coefficients = nearest_evla_common_coefficients(frequency_hz * 1.0e-6)
-        .ok_or(ProductsError::UnsupportedProblem)?;
-    Ok(evla_common_power_plane(
-        shape,
-        reference_pixel,
+    Ok(BeamGeometry {
+        centres: inputs.primary_beam_centres(domain_role, direction.reference_pixel()),
+        increment_rad: direction.increment_rad(),
+        frequency_hz,
+    })
+}
+
+/// CASA's analytic PB on one plane of `shape`: a beam centred on each
+/// pointing, summed (`SIMapper::addPB`), and divided by its peak where that
+/// exceeds one (`SIImageStore::makePBImage`). With no pointing it is zero.
+fn summed_beams(
+    shape: [usize; 2],
+    centres: &[[f64; 2]],
+    beam: impl Fn([f64; 2]) -> Vec<f32>,
+) -> Vec<f32> {
+    let Some((first, rest)) = centres.split_first() else {
+        return vec![0.0; shape[0] * shape[1]];
+    };
+    let mut sum = beam(*first);
+    for centre in rest {
+        for (total, value) in sum.iter_mut().zip(beam(*centre)) {
+            *total += value;
+        }
+    }
+    let peak = sum.iter().fold(0.0_f32, |peak, value| peak.max(*value));
+    if peak > 1.0 {
+        for value in &mut sum {
+            *value /= peak;
+        }
+    }
+    sum
+}
+
+pub(crate) fn analytic_evla_primary_beam(
+    inputs: &ContinuumProductInputs<'_>,
+    domain_role: &casa_imaging_model::ImageDomainRole,
+    shape: [usize; 2],
+    output_channel: usize,
+) -> Result<Vec<f32>, ProductsError> {
+    let BeamGeometry {
+        centres,
         increment_rad,
         frequency_hz,
-        coefficients,
-    ))
+    } = beam_geometry(inputs, domain_role, output_channel)?;
+    let coefficients = nearest_evla_common_coefficients(frequency_hz * 1.0e-6)
+        .ok_or(ProductsError::UnsupportedProblem)?;
+    Ok(summed_beams(shape, &centres, |centre| {
+        evla_common_power_plane(shape, centre, increment_rad, frequency_hz, coefficients)
+    }))
 }
 
 fn evla_common_power_plane(
     shape: [usize; 2],
-    reference_pixel: [f64; 2],
+    centre: [f64; 2],
     increment_rad: [f64; 2],
     frequency_hz: f64,
     coefficients: [f64; 4],
@@ -691,9 +736,9 @@ fn evla_common_power_plane(
     let increment_deg = increment_rad.map(f64::to_degrees);
     let frequency_factor = 60.0 * frequency_hz / 1.0e9;
     for x in 0..shape[0] {
-        let rx2 = ((x as f64 - reference_pixel[0]) * increment_deg[0]).powi(2) as f32;
+        let rx2 = ((x as f64 - centre[0]) * increment_deg[0]).powi(2) as f32;
         for y in 0..shape[1] {
-            let ry2 = ((y as f64 - reference_pixel[1]) * increment_deg[1]).powi(2) as f32;
+            let ry2 = ((y as f64 - centre[1]) * increment_deg[1]).powi(2) as f32;
             // PBMath1D::apply stores squared degree offsets and scaled radius
             // as Float. Rounding before the table lookup matters at bin edges.
             let radius_arcmin_ghz = (f64::from((rx2 + ry2).sqrt()) * frequency_factor) as f32;
@@ -710,30 +755,15 @@ pub(crate) fn analytic_vla_primary_beam(
     shape: [usize; 2],
     output_channel: usize,
 ) -> Result<Vec<f32>, ProductsError> {
-    let domain = inputs
-        .problem()
-        .geometry()
-        .domains()
-        .iter()
-        .find(|domain| domain.role() == domain_role)
-        .ok_or(ProductsError::UnsupportedProblem)?;
-    let direction = domain.direction();
-    let reference_pixel = direction.reference_pixel();
-    let increment_rad = direction.increment_rad();
-    let frequency_hz = inputs
-        .problem()
-        .geometry()
-        .spectral()
-        .channel_centre_hz(output_channel)
-        .ok_or(ProductsError::UnsupportedProblem)?;
-    let table = vla_band_voltage_table(frequency_hz)?;
-    Ok(annular_aperture_power_plane(
-        shape,
-        reference_pixel,
+    let BeamGeometry {
+        centres,
         increment_rad,
         frequency_hz,
-        &table,
-    ))
+    } = beam_geometry(inputs, domain_role, output_channel)?;
+    let table = vla_band_voltage_table(frequency_hz)?;
+    Ok(summed_beams(shape, &centres, |centre| {
+        annular_aperture_power_plane(shape, centre, increment_rad, frequency_hz, &table)
+    }))
 }
 
 pub(crate) fn analytic_alma_airy_primary_beam(
@@ -743,35 +773,20 @@ pub(crate) fn analytic_alma_airy_primary_beam(
     output_channel: usize,
     effective_diameter_m: f64,
 ) -> Result<Vec<f32>, ProductsError> {
-    let domain = inputs
-        .problem()
-        .geometry()
-        .domains()
-        .iter()
-        .find(|domain| domain.role() == domain_role)
-        .ok_or(ProductsError::UnsupportedProblem)?;
-    let direction = domain.direction();
-    let reference_pixel = direction.reference_pixel();
-    let increment_rad = direction.increment_rad();
-    let frequency_hz = inputs
-        .problem()
-        .geometry()
-        .spectral()
-        .channel_centre_hz(output_channel)
-        .ok_or(ProductsError::UnsupportedProblem)?;
-    let table = AnnularApertureVoltageTable::new(effective_diameter_m, 0.75, 3.568 * 60.0);
-    Ok(annular_aperture_power_plane(
-        shape,
-        reference_pixel,
+    let BeamGeometry {
+        centres,
         increment_rad,
         frequency_hz,
-        &table,
-    ))
+    } = beam_geometry(inputs, domain_role, output_channel)?;
+    let table = AnnularApertureVoltageTable::new(effective_diameter_m, 0.75, 3.568 * 60.0);
+    Ok(summed_beams(shape, &centres, |centre| {
+        annular_aperture_power_plane(shape, centre, increment_rad, frequency_hz, &table)
+    }))
 }
 
 fn annular_aperture_power_plane(
     shape: [usize; 2],
-    reference_pixel: [f64; 2],
+    centre: [f64; 2],
     increment_rad: [f64; 2],
     frequency_hz: f64,
     table: &AnnularApertureVoltageTable,
@@ -780,10 +795,10 @@ fn annular_aperture_power_plane(
     let increment_deg = increment_rad.map(f64::to_degrees);
     let frequency_factor = 60.0 * frequency_hz / 1.0e9;
     for x in 0..shape[0] {
-        let pixel_x = x as f64 - reference_pixel[0];
+        let pixel_x = x as f64 - centre[0];
         let rx2 = (pixel_x * increment_deg[0]).powi(2) as f32;
         for y in 0..shape[1] {
-            let pixel_y = y as f64 - reference_pixel[1];
+            let pixel_y = y as f64 - centre[1];
             let ry2 = (pixel_y * increment_deg[1]).powi(2) as f32;
             let radius_arcmin_ghz =
                 (f64::from((rx2 + ry2).sqrt()) * frequency_factor) as f32 as f64;

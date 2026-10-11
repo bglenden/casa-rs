@@ -7,13 +7,15 @@
 use std::path::Path;
 
 use casa_coordinates::{
-    CoordinateSystem, DirectionCoordinate, ObsInfo, Projection as CoordinateProjection,
-    ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
+    CoordinateSystem, CoordinateType, DirectionCoordinate, ObsInfo,
+    Projection as CoordinateProjection, ProjectionType, SpectralCoordinate, StokesCoordinate,
+    StokesType,
 };
 use casa_imaging_model::{
     DirectionCoordinateSpec, DirectionFrame, PhaseCentreLaw, PolarizationCoordinate, Projection,
     SkyDirection,
 };
+use casa_imaging_products::PrimaryBeamCentres;
 use casa_ms::{MeasurementSet, SelectedObservationContentBudget, SelectedObservationEphemeris};
 use casa_types::measures::{
     direction::{DirectionRef, MDirection},
@@ -22,6 +24,7 @@ use casa_types::measures::{
 };
 
 use super::PrepareError;
+use super::domains::PreparedImageDomain;
 use super::selection::Survey;
 use crate::ImagingRequest;
 
@@ -130,6 +133,68 @@ pub(super) fn resolve_centre(
         image_centre,
         field_id,
     })
+}
+
+/// Where an analytic primary beam is centred on each image domain: the
+/// pixel of every selected field's phase direction, in the domain's frame.
+///
+/// CASA centres one beam per field on its `PHASE_DIR` and sums them on every
+/// image, outliers included (`SynthesisImagerVi2::makePrimaryBeam`,
+/// `SIMapper::addPB`, `PBMath1D::apply`'s `toPixel`). A pointing the SIN
+/// projection cannot place, 90° or more from the domain's centre, adds
+/// nothing there.
+///
+/// # Errors
+///
+/// A moving phase centre, whose beams CASA shifts with the source
+/// (`SynthesisImagerVi2::getMovingDirection`); unreadable field directions
+/// or frame conversions.
+pub(super) fn primary_beam_centres(
+    domains: &[PreparedImageDomain],
+    survey: &Survey,
+    centre: &Centre,
+    engine: &casa_ms::derived::engine::MsCalEngine,
+) -> Result<PrimaryBeamCentres, PrepareError> {
+    if centre.ephemeris.is_some() {
+        return Err(PrepareError::MovingAnalyticPrimaryBeam);
+    }
+    let pointings = survey
+        .fields
+        .iter()
+        .map(|field| {
+            let field_id = usize::try_from(*field).expect("selected FIELD_IDs are nonnegative");
+            Ok(engine.field_direction_j2000(field_id)?.clone())
+        })
+        .collect::<Result<Vec<MDirection>, PrepareError>>()?;
+    domains
+        .iter()
+        .map(|domain| {
+            let frame = direction_ref(domain.direction.reference_direction().frame());
+            let coordinate = domain.coordinates.coordinate(
+                domain
+                    .coordinates
+                    .find_coordinate(CoordinateType::Direction)
+                    .expect("an image domain has a direction coordinate"),
+            );
+            let mut centres = Vec::with_capacity(pointings.len());
+            for pointing in &pointings {
+                let pointing = if frame == DirectionRef::J2000 {
+                    pointing.clone()
+                } else {
+                    let measures = engine.spectral_frame_observatory_direction(
+                        survey.first_time_mjd_seconds,
+                        pointing.clone(),
+                    )?;
+                    pointing.convert_to(frame, &measures)?
+                };
+                let (longitude, latitude) = pointing.as_angles();
+                if let Ok(pixel) = coordinate.to_pixel(&[longitude, latitude]) {
+                    centres.push([pixel[0], pixel[1]]);
+                }
+            }
+            Ok((domain.role.clone(), centres))
+        })
+        .collect()
 }
 
 /// The image's reference direction and the frame it records: ICRS at the
