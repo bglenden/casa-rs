@@ -582,4 +582,73 @@
 <a href=#582 id=582 data-nosnippet>582</a>        })
 <a href=#583 id=583 data-nosnippet>583</a>    }
 <a href=#584 id=584 data-nosnippet>584</a>}
+<a href=#585 id=585 data-nosnippet>585</a>
+<a href=#586 id=586 data-nosnippet>586</a><span class="doccomment">/// A C++ casacore image held open between reads, as a viewer holding an
+<a href=#587 id=587 data-nosnippet>587</a>/// image open does.
+<a href=#588 id=588 data-nosnippet>588</a>///
+<a href=#589 id=589 data-nosnippet>589</a>/// The image is opened with `TableLock::UserLocking`. Each
+<a href=#590 id=590 data-nosnippet>590</a>/// [`read`](Self::read) takes a read lock, reads every pixel and the default
+<a href=#591 id=591 data-nosnippet>591</a>/// mask, and releases the lock without closing the image. A writer that
+<a href=#592 id=592 data-nosnippet>592</a>/// replaces the image's directory under it is tested against this reader:
+<a href=#593 id=593 data-nosnippet>593</a>/// what it reads after the replacement shows whether it still sees one whole
+<a href=#594 id=594 data-nosnippet>594</a>/// image. Run it in another process than the writer, as `fcntl` locks belong
+<a href=#595 id=595 data-nosnippet>595</a>/// to a process.
+<a href=#596 id=596 data-nosnippet>596</a></span><span class="kw">pub struct </span>HeldCppImageReader {
+<a href=#597 id=597 data-nosnippet>597</a>    <span class="attr">#[cfg(has_casacore_cpp)]
+<a href=#598 id=598 data-nosnippet>598</a>    </span>handle: <span class="prelude-ty">Option</span>&lt;CppHeldImageReaderHandle&gt;,
+<a href=#599 id=599 data-nosnippet>599</a>}
+<a href=#600 id=600 data-nosnippet>600</a>
+<a href=#601 id=601 data-nosnippet>601</a><span class="doccomment">/// What a [`HeldCppImageReader`] read.
+<a href=#602 id=602 data-nosnippet>602</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq)]
+<a href=#603 id=603 data-nosnippet>603</a></span><span class="kw">pub struct </span>HeldImageRead {
+<a href=#604 id=604 data-nosnippet>604</a>    <span class="doccomment">/// The sum of every pixel.
+<a href=#605 id=605 data-nosnippet>605</a>    </span><span class="kw">pub </span>sum: f64,
+<a href=#606 id=606 data-nosnippet>606</a>    <span class="doccomment">/// The pixel count.
+<a href=#607 id=607 data-nosnippet>607</a>    </span><span class="kw">pub </span>values: u64,
+<a href=#608 id=608 data-nosnippet>608</a>    <span class="doccomment">/// The pixels the default mask leaves valid; every pixel without one.
+<a href=#609 id=609 data-nosnippet>609</a>    </span><span class="kw">pub </span>valid: u64,
+<a href=#610 id=610 data-nosnippet>610</a>}
+<a href=#611 id=611 data-nosnippet>611</a>
+<a href=#612 id=612 data-nosnippet>612</a><span class="attr">#[cfg_attr(not(has_casacore_cpp), allow(unused_variables))]
+<a href=#613 id=613 data-nosnippet>613</a></span><span class="kw">impl </span>HeldCppImageReader {
+<a href=#614 id=614 data-nosnippet>614</a>    <span class="doccomment">/// Open the `PagedImage&lt;Float&gt;` at `path` without taking a lock.
+<a href=#615 id=615 data-nosnippet>615</a>    </span><span class="kw">pub fn </span>open(path: <span class="kw-2">&amp;</span>std::path::Path) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, OracleError&gt; {
+<a href=#616 id=616 data-nosnippet>616</a>        <span class="macro">image_operation!</span>(<span class="string">"image.held_reader_open"</span>, {
+<a href=#617 id=617 data-nosnippet>617</a>            cpp_held_image_reader_open(path)
+<a href=#618 id=618 data-nosnippet>618</a>                .map(|handle| <span class="self">Self </span>{
+<a href=#619 id=619 data-nosnippet>619</a>                    handle: <span class="prelude-val">Some</span>(handle),
+<a href=#620 id=620 data-nosnippet>620</a>                })
+<a href=#621 id=621 data-nosnippet>621</a>                .map_err(|message| OracleError::CppFailure {
+<a href=#622 id=622 data-nosnippet>622</a>                    operation: <span class="string">"image.held_reader_open"</span>,
+<a href=#623 id=623 data-nosnippet>623</a>                    message,
+<a href=#624 id=624 data-nosnippet>624</a>                })
+<a href=#625 id=625 data-nosnippet>625</a>        })
+<a href=#626 id=626 data-nosnippet>626</a>    }
+<a href=#627 id=627 data-nosnippet>627</a>
+<a href=#628 id=628 data-nosnippet>628</a>    <span class="doccomment">/// Take a read lock, read the pixels and default mask, and release the
+<a href=#629 id=629 data-nosnippet>629</a>    /// lock, keeping the image open.
+<a href=#630 id=630 data-nosnippet>630</a>    </span><span class="kw">pub fn </span>read(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;HeldImageRead, OracleError&gt; {
+<a href=#631 id=631 data-nosnippet>631</a>        <span class="macro">image_operation!</span>(<span class="string">"image.held_reader_read"</span>, {
+<a href=#632 id=632 data-nosnippet>632</a>            <span class="kw">let </span>handle = <span class="self">self</span>.handle.as_mut().expect(<span class="string">"an open reader"</span>);
+<a href=#633 id=633 data-nosnippet>633</a>            cpp_held_image_reader_read(handle)
+<a href=#634 id=634 data-nosnippet>634</a>                .map(|(sum, values, valid)| HeldImageRead { sum, values, valid })
+<a href=#635 id=635 data-nosnippet>635</a>                .map_err(|message| OracleError::CppFailure {
+<a href=#636 id=636 data-nosnippet>636</a>                    operation: <span class="string">"image.held_reader_read"</span>,
+<a href=#637 id=637 data-nosnippet>637</a>                    message,
+<a href=#638 id=638 data-nosnippet>638</a>                })
+<a href=#639 id=639 data-nosnippet>639</a>        })
+<a href=#640 id=640 data-nosnippet>640</a>    }
+<a href=#641 id=641 data-nosnippet>641</a>}
+<a href=#642 id=642 data-nosnippet>642</a>
+<a href=#643 id=643 data-nosnippet>643</a><span class="kw">impl </span>Drop <span class="kw">for </span>HeldCppImageReader {
+<a href=#644 id=644 data-nosnippet>644</a>    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#645 id=645 data-nosnippet>645</a>        <span class="attr">#[cfg(has_casacore_cpp)]
+<a href=#646 id=646 data-nosnippet>646</a>        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(handle) = <span class="self">self</span>.handle.take() {
+<a href=#647 id=647 data-nosnippet>647</a>            <span class="kw">let </span>_guard = <span class="kw">crate</span>::oracle_runtime::CasacoreOracleRuntime::lock_operation(
+<a href=#648 id=648 data-nosnippet>648</a>                <span class="string">"image.held_reader_close"</span>,
+<a href=#649 id=649 data-nosnippet>649</a>            );
+<a href=#650 id=650 data-nosnippet>650</a>            cpp_held_image_reader_close(handle);
+<a href=#651 id=651 data-nosnippet>651</a>        }
+<a href=#652 id=652 data-nosnippet>652</a>    }
+<a href=#653 id=653 data-nosnippet>653</a>}
 </code></pre></div></section></main></body></html>
