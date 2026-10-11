@@ -426,7 +426,9 @@ impl AccumulatorLayout {
     /// Layout holding `modes` over `planes` × `pols` grid polarizations.
     ///
     /// `data_terms` is the number of Taylor terms (1 for other bases) and
-    /// `psf_terms` is `2·data_terms − 1`; the weight image has one term.
+    /// `psf_terms` is `2·data_terms − 1`. The weight image has the PSF's
+    /// terms: CASA's multi-term weight images are the PSF moments' Taylor
+    /// sums of the weight kernel (`MultiTermFTNew`, `.weight.tt0`…).
     #[must_use]
     pub fn new(
         geometry: GridGeometry,
@@ -449,7 +451,7 @@ impl AccumulatorLayout {
             pols,
             data_terms: if modes.data { data_terms } else { 0 },
             psf_terms: if modes.psf { psf_terms } else { 0 },
-            weight_terms: usize::from(modes.weight),
+            weight_terms: if modes.weight { psf_terms } else { 0 },
             tile,
         }
     }

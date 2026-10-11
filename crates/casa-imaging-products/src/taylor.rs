@@ -139,7 +139,10 @@ impl TaylorFamily {
                 .collect::<Vec<_>>();
             psf.push(normalize_plane(&approximation, principal_sum_weight));
             // CASA divides only weight.tt0 by the principal sum weight. Higher
-            // Taylor weight images retain their raw signed sensitivity moments.
+            // Taylor weight images retain their raw signed sensitivity moments
+            // (CASA 6.7.6 on `refim_alma_mosaic`: weight.tt1 and .tt2 are the
+            // raw Σ W·s^m moments, 0.0056 and 4.0, while weight.tt0 peaks at
+            // 0.69).
             let scale = if moment == 0
                 && primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
             {
@@ -222,6 +225,12 @@ impl TaylorFamily {
 
 /// The Taylor normal block at the PSF peak, inverted, and the principal
 /// solution's residuals it gives.
+///
+/// CASA forms the block from the published PSFs, every term divided by the
+/// term-0 PSF's peak (`SIImageStore::normPSF`, then
+/// `SDAlgorithmMSMFS::restore`), as the minor cycle does. The sum-weight
+/// normalized PSF peaks at one only for a gridder whose PSF peak is its
+/// sum of weights; a mosaic's does not.
 fn principal_residuals(
     psf: &[Vec<f32>],
     residual: &[Vec<f32>],
@@ -233,10 +242,11 @@ fn principal_residuals(
         .max_by(|(_, left), (_, right)| left.abs().total_cmp(&right.abs()))
         .map(|(index, _)| index)
         .expect("a PSF plane has pixels");
+    let psf_scale = f64::from(psf_peak(psf[0].iter().copied())?);
     let mut normal = vec![0.0; terms * terms];
     for row in 0..terms {
         for column in 0..terms {
-            normal[row * terms + column] = f64::from(psf[row + column][peak]);
+            normal[row * terms + column] = f64::from(psf[row + column][peak]) / psf_scale;
         }
     }
     let mut inverse = vec![0.0; terms * terms];
