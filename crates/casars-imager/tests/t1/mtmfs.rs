@@ -4,7 +4,9 @@
 
 use serde_json::json;
 
-use super::fixture::{Component, Observation, component_pixel, peak};
+use super::fixture::{
+    Component, Observation, ProductContract, SpectralAxis, component_pixel, peak,
+};
 
 const CHANNELS: usize = 16;
 const POINT: Component = Component {
@@ -28,6 +30,34 @@ fn mtmfs_two_terms_recover_flux_and_spectral_index() {
             "niter": 1000,
             "threshold": THRESHOLD,
         }),
+    );
+    // CASA's MT-MFS set, with `.pb.tt0` alone: no pbcor touches pb.tt1.
+    observation.assert_product_contract(
+        &products,
+        &ProductContract {
+            inventory: &[
+                ".alpha",
+                ".alpha.error",
+                ".image.tt0",
+                ".image.tt1",
+                ".mask",
+                ".model.tt0",
+                ".model.tt1",
+                ".pb.tt0",
+                ".psf.tt0",
+                ".psf.tt1",
+                ".psf.tt2",
+                ".residual.tt0",
+                ".residual.tt1",
+                ".sumwt.tt0",
+                ".sumwt.tt1",
+                ".sumwt.tt2",
+            ],
+            spectral: SpectralAxis::BandCentre,
+            natural: true,
+            pblimit: 0.2,
+            uncorrected_masks: true,
+        },
     );
     let tt0 = products.get(".image.tt0");
     observation.assert_image_wcs(tt0);

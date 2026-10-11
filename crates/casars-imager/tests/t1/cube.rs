@@ -6,7 +6,8 @@
 use serde_json::json;
 
 use super::fixture::{
-    Component, Observation, Products, component_pixel, fit_psf_main_lobe, off_source_rms, peak,
+    Component, Observation, ProductContract, Products, SpectralAxis, component_pixel,
+    fit_psf_main_lobe, off_source_rms, peak,
 };
 
 const CHANNELS: usize = 16;
@@ -92,10 +93,30 @@ fn sixteen_channel_cube_follows_the_injected_spectrum_under_natural_and_briggs()
         json!({ "weighting": "briggs", "robust": 0.5 }),
     );
 
-    // The LSRK axis keeps the native width to the Doppler factor and lies
-    // within half a channel of the native centres.
+    // Every product's LSRK axis lies within half a channel of the native
+    // centres, and the Q-band beam is CASA's default `.pb`.
+    for products in [&natural, &briggs] {
+        observation.assert_product_contract(
+            products,
+            &ProductContract {
+                inventory: &[
+                    ".image",
+                    ".mask",
+                    ".model",
+                    ".pb",
+                    ".psf",
+                    ".residual",
+                    ".sumwt",
+                ],
+                spectral: SpectralAxis::NativeChannels,
+                natural: false,
+                pblimit: 0.2,
+                uncorrected_masks: true,
+            },
+        );
+    }
+    // The LSRK axis keeps the native width to the Doppler factor.
     let image = natural.get(".image");
-    observation.assert_direction_and_stokes(image);
     let native = observation.channel_frequencies_hz();
     let width_hz = native[1] - native[0];
     assert!(
@@ -103,12 +124,6 @@ fn sixteen_channel_cube_follows_the_injected_spectrum_under_natural_and_briggs()
         "image channel width {} Hz, native {width_hz} Hz",
         image.channel_width_hz()
     );
-    for (channel, native_hz) in native.iter().enumerate() {
-        assert!(
-            (image.channel_frequency_hz(channel) - native_hz).abs() < 0.5 * width_hz,
-            "channel {channel}"
-        );
-    }
 
     assert_follows_the_spectrum(&observation, &natural, "natural");
     assert_follows_the_spectrum(&observation, &briggs, "briggs");

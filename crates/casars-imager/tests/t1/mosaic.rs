@@ -6,14 +6,27 @@
 //! root of the summed beam powers at the pointings, the flat-noise image
 //! carries it, and the PB-corrected image recovers the sky (IF-3, #652).
 
-use std::collections::BTreeSet;
-
 use casa_ms::SyntheticAntenna;
 use casa_numerics::AnnularApertureVoltageTable;
 use ndarray::Array2;
 use serde_json::json;
 
-use super::fixture::{Component, Geometry, Observation, Setup, box_sum, peak};
+use super::fixture::{
+    Component, Geometry, Observation, ProductContract, Setup, SpectralAxis, box_sum, peak,
+};
+
+/// What a cleaned, PB-corrected mosaic run publishes.
+const MOSAIC_INVENTORY: [&str; 9] = [
+    ".image",
+    ".image.pbcor",
+    ".mask",
+    ".model",
+    ".pb",
+    ".psf",
+    ".residual",
+    ".sumwt",
+    ".weight",
+];
 
 /// 50 GHz: a 119″ beam (CASA's 10.7 m ALMA aperture) over 4″ resolution.
 const FREQUENCY_HZ: f64 = 50.0e9;
@@ -196,28 +209,17 @@ fn mosaic_recovers_the_sky_under_the_summed_beams() {
         summary.clean_stop_reason,
     );
 
-    assert_eq!(
-        products.suffixes(),
-        BTreeSet::from(
-            [
-                ".image",
-                ".image.pbcor",
-                ".mask",
-                ".model",
-                ".pb",
-                ".psf",
-                ".residual",
-                ".sumwt",
-                ".weight",
-            ]
-            .map(String::from)
-        )
+    observation.assert_product_contract(
+        &products,
+        &ProductContract {
+            inventory: &MOSAIC_INVENTORY,
+            spectral: SpectralAxis::BandCentre,
+            natural: true,
+            pblimit: 0.2,
+            uncorrected_masks: true,
+        },
     );
     observation.assert_image_wcs(image);
-    assert_eq!(
-        f64::from(products.get(".sumwt").pixels[[0, 0]]),
-        observation.stokes_i_samples() as f64
-    );
     assert!(
         (pb_centre - 1.0).abs() < 1.0e-3,
         "pb at the mosaic centre {pb_centre}"
@@ -249,4 +251,68 @@ fn mosaic_recovers_the_sky_under_the_summed_beams() {
         "east flat-noise peak {east_flat_noise} Jy, sky × pb {}",
         EAST.flux_jy * pb_east
     );
+}
+
+/// Plan section 5.7's flat-noise and flat-sky rows: a dirty flat-noise
+/// residual divides by `pbmax·√weight`, a flat-sky one by the weight, so
+/// flat noise is flat sky times the PB inside the PB's support, and both
+/// are zero outside it. A negative pblimit keeps that support and leaves
+/// `.image` and `.residual` unmasked.
+#[test]
+fn mosaic_flat_noise_is_flat_sky_times_the_pb() {
+    let observation = Observation::synthesise_setup(setup(), &[("centre", CENTRE), ("east", EAST)]);
+    let run = |name: &str, normtype: &str, pblimit: f64| {
+        let (_, products) = observation.image(
+            name,
+            json!({
+                "weighting": "natural",
+                "niter": 0,
+                "field": "0,1,2",
+                "phasecenter_field": "1",
+                "gridder": "mosaic",
+                "normtype": normtype,
+                "pblimit": pblimit,
+            }),
+        );
+        observation.assert_product_contract(
+            &products,
+            &ProductContract {
+                inventory: &[
+                    ".image",
+                    ".model",
+                    ".pb",
+                    ".psf",
+                    ".residual",
+                    ".sumwt",
+                    ".weight",
+                ],
+                spectral: SpectralAxis::BandCentre,
+                natural: true,
+                pblimit: pblimit.abs() as f32,
+                uncorrected_masks: pblimit >= 0.0,
+            },
+        );
+        products
+    };
+    let flat_noise = run("mosaic-flatnoise", "flatnoise", 0.2);
+    let flat_sky = run("mosaic-flatsky", "flatsky", -0.2);
+    let pb = flat_noise.get(".pb").values();
+    assert_eq!(pb, flat_sky.get(".pb").values(), "one PB for both");
+    let (noise, sky) = (
+        flat_noise.get(".residual").values(),
+        flat_sky.get(".residual").values(),
+    );
+    let peak = noise
+        .iter()
+        .fold(0.0_f32, |peak, value| peak.max(value.abs()));
+    for ((noise, sky), pb) in noise.iter().zip(&sky).zip(&pb) {
+        if *pb > 0.2 {
+            assert!(
+                (noise - sky * pb).abs() <= 1.0e-5 * peak,
+                "flat noise {noise}, flat sky {sky} × PB {pb}"
+            );
+        } else {
+            assert_eq!((*noise, *sky), (0.0, 0.0), "outside the PB support");
+        }
+    }
 }
