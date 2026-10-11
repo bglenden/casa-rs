@@ -213,7 +213,7 @@ impl GeneratedProducts {
         generation: &PublishedContinuumGeneration,
         output: &ImageOutput,
     ) -> Self {
-        output.publish().expect("publish product images");
+        output.publish(|_| ()).expect("publish product images");
         let members = generation
             .members()
             .iter()

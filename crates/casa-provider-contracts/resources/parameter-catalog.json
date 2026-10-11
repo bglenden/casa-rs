@@ -3979,8 +3979,8 @@
       "unit_dimension": null,
       "semantic_role": "presentation",
       "documentation": {
-        "summary": "Log the Metal backend's timing for each gridding owner and pass",
-        "details": "With backend = metal, each gridding owner logs at INFO, under target casa_imaging::metal_stage_timing, when its pass ends: its dispatches, samples and sub-blocks, the kernel cells it uploaded, the host's preparation time and its waits for the device. A CPU run logs nothing.",
+        "summary": "Log the Metal backend's timing for each gridding owner and wave",
+        "details": "With backend = metal, each gridding owner logs at INFO, under target casa_imaging::metal_stage_timing, when its wave of a pass ends: whether its work completed, its dispatches, samples and sub-blocks (counted as requested, so a failed owner's include work never done), the kernel cells it uploaded, the host's preparation time and its waits for the device. A CPU run logs nothing.",
         "examples": [
           "true"
         ]

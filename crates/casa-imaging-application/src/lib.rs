@@ -43,7 +43,7 @@ use casa_imaging_products::{
 use casa_imaging_reconstruction::MajorCycleCompletion;
 use casa_imaging_runtime::run_phase;
 use casa_ms::resolve_selected_observation;
-use native::{NativeError, NativeInput, run_native};
+use native::NativeInput;
 
 /// Boxed application failure accepted by the native application composition.
 pub type ApplicationError = Box<dyn Error + Send + Sync>;
@@ -249,9 +249,13 @@ impl NativeMinorCycleStopReason {
 /// compile it against its MeasurementSet, check once that the
 /// implementation can run it ([`Unsupported`]), and run it.
 ///
-/// Preparation (validation, compile, availability) is the run's first
-/// phase. The context's summary target receives the [`RunSummary`] however
-/// the run ends; a completed run whose summary cannot be written fails.
+/// Preparation (validation, compile, availability, admitting the source and
+/// forming the team) is the run's first phase. The context's summary target
+/// receives the [`RunSummary`] however the run ends. A completed run whose
+/// summary cannot be written fails, though its products are published: the
+/// caller asked for the record and would otherwise read its absence as a
+/// run that never ended. A run that fails returns its own error, which
+/// matters more, and only logs a summary it cannot write.
 pub fn execute(
     request: &ImagingRequest,
     context: RunContext,
@@ -264,29 +268,27 @@ pub fn execute(
         context.policy.memory(&context.host),
         request.backend,
     );
-    let mut result = prepare_and_run(request, &context, &mut summary);
-    if let Ok(outcome) = &mut result {
-        outcome.summary.status = RunStatus::Completed;
-    }
+    let result = prepare_and_run(request, &context, &mut summary);
     let Some(target) = &context.summary else {
-        return result;
+        return result.map(|outcome| outcome(summary));
     };
     match result {
         Ok(outcome) => {
+            let outcome = outcome(summary);
             outcome
                 .summary
-                .write(&target.path)
+                .write(&RunStatus::Completed, &target.path)
                 .map_err(|error| ApplicationDispatchError::Native(Box::new(error)))?;
             Ok(outcome)
         }
         Err(error) => {
-            summary.status = match &error {
+            let status = match &error {
                 ApplicationDispatchError::Cancelled => RunStatus::Cancelled,
                 error => RunStatus::Failed {
                     error: error.to_string(),
                 },
             };
-            if let Err(write) = summary.write(&target.path) {
+            if let Err(write) = summary.write(&status, &target.path) {
                 tracing::warn!("the failed run's summary could not be written: {write}");
             }
             Err(error)
@@ -295,24 +297,25 @@ pub fn execute(
 }
 
 /// The preparation phase and the native run, recorded in `summary`; a
-/// completed run's outcome takes it.
+/// completed run's outcome takes it once the caller has finished it.
 fn prepare_and_run(
     request: &ImagingRequest,
     context: &RunContext,
     summary: &mut RunSummary,
-) -> Result<ImagingOutcome, ApplicationDispatchError> {
-    let (problem, input, native, _resident) = run_phase(
+) -> Result<impl FnOnce(RunSummary) -> ImagingOutcome + use<>, ApplicationDispatchError> {
+    // The Measures charge stays with the run.
+    let (problem, run, _resident) = run_phase(
         "preparation",
         &context.cancel,
         request.diagnostics,
         summary,
-        || compile_run(request, context),
+        || {
+            let (problem, input, deployed, resident) = compile_run(request, context)?;
+            let run = native::prepare(&problem, input, deployed)?;
+            Ok::<_, ApplicationDispatchError>((problem, run, resident))
+        },
     )?;
-    run_native(&problem, input, native, summary).map_err(|error| match error {
-        NativeError::Admission(admission) => ApplicationDispatchError::Admission(admission),
-        NativeError::Cancelled(_) => ApplicationDispatchError::Cancelled,
-        NativeError::Other(error) => ApplicationDispatchError::Native(error),
-    })
+    Ok(native::run(&problem, run, summary)?)
 }
 
 /// The charge of the process-wide caches every run fills and that keep what

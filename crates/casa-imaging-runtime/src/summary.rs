@@ -12,7 +12,7 @@ use casa_imaging_operator::GridPrecision;
 use serde::{Deserialize, Serialize, Serializer};
 
 use crate::pass::{BackendChoice, Cancel};
-use crate::resources::{reserved_memory, take_reserved_peak};
+use crate::resources::{ReservationWindow, reserved_memory};
 
 /// The `tracing` target of the [`Diagnostics::stage_timing`] events.
 pub const STAGE_TIMING: &str = "casa_imaging::stage_timing";
@@ -29,10 +29,10 @@ pub struct Diagnostics {
     /// One event per phase ([`STAGE_TIMING`]): the [`Phase`] the summary
     /// records.
     pub stage_timing: bool,
-    /// One event per Metal gridding owner and pass
-    /// (`casa_imaging::metal_stage_timing`): its dispatches, samples and
-    /// sub-blocks, the host's preparation time and its waits for the
-    /// device. A CPU run emits none.
+    /// One event per Metal gridding owner and wave
+    /// (`casa_imaging::metal_stage_timing`): whether its work completed, its
+    /// dispatches, samples and sub-blocks, the host's preparation time and
+    /// its waits for the device. A CPU run emits none.
     pub metal_stage_timing: bool,
     /// The controller's science quantities ([`SCIENCE_TRACE`]): the
     /// residual statistics each cleaning decision reads, each minor cycle's
@@ -40,28 +40,28 @@ pub struct Diagnostics {
     pub science_trace: bool,
 }
 
-/// What one run did, O(1) per phase.
+/// What one run did, O(1) per phase, written with how it ended
+/// ([`RunSummary::write`]).
 ///
-/// It is written for every outcome ([`RunStatus`]):
+/// Every step that can fail runs inside a phase, so for each outcome
+/// ([`RunStatus`]) the summary holds:
 /// - **completed:** every phase, the totals, the stop reason and the
 ///   products;
 /// - **failed:** the phases that ran, the last not completed, with the
-///   minor-cycle totals and stop reason as far as the run got, and the
-///   error; a run that fails in preparation (request validation, compile,
-///   availability) records only its preparation phase;
+///   minor-cycle totals and stop reason as far as the run got, any products
+///   published before the failure, and the error; a run that fails in
+///   preparation (request validation, compile, availability, admitting its
+///   source, forming its team) records only its preparation phase;
 /// - **cancelled:** the phases that ran before the cancellation took
 ///   effect, the totals so far, and no products, since nothing is
-///   published.
+///   published; a run cancelled before it starts records no phase.
 ///
 /// Memory is reported as the process sees it: the resident high-water mark
 /// and the reservations of every run in the process.
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct RunSummary {
     /// The request as its caller states it.
     pub request: serde_json::Value,
-    /// How the run ended.
-    #[serde(flatten)]
-    pub status: RunStatus,
     /// Why cleaning stopped, with CASA's `stopcode`; `None` for a dirty run,
     /// a run that stopped before deciding, or one whose last minor cycle
     /// cleaned nothing without a stop.
@@ -83,25 +83,29 @@ pub struct RunSummary {
     pub minor_cycles: usize,
     /// Minor-cycle iterations charged to the iteration budget.
     pub minor_iterations: usize,
-    /// Products published, by file name.
+    /// The product images published, by path, in the order they were.
     pub products: Vec<String>,
+    /// This run's view of the process's reservations, closed at each phase
+    /// end.
+    #[serde(skip)]
+    reservations: ReservationWindow,
 }
 
-/// How a run ended.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+/// How a run ended, written beside its [`RunSummary`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 pub enum RunStatus {
-    /// Still running: the state of a summary not yet written.
-    #[default]
-    Running,
     /// Every phase completed and the products are published.
     Completed,
-    /// A phase failed; nothing was published.
+    /// A phase failed. Publication replaces the product images one by one,
+    /// so a failure while publishing leaves the images published before it
+    /// in place, and the summary lists them; a failure before publishing
+    /// publishes nothing.
     Failed {
         /// Why.
         error: String,
     },
-    /// Cancellation was requested; nothing was published.
+    /// Cancellation took effect before publishing; nothing was published.
     Cancelled,
 }
 
@@ -119,9 +123,10 @@ pub struct Phase {
     /// the process ran, not this phase alone.
     pub process_peak_rss_bytes: u64,
     /// The most the process's memory reservations held at once from the end
-    /// of the previous phase to the end of this one, in bytes: what
-    /// admission had granted at its peak.
-    pub admitted_bytes: u64,
+    /// of the run's previous phase to the end of this one, in bytes: what
+    /// admission had granted at its peak, this run's and any other's in the
+    /// process.
+    pub peak_reserved_bytes: u64,
     /// The process's reservations still held when the phase ended, in
     /// bytes.
     pub reserved_bytes: u64,
@@ -143,13 +148,11 @@ pub struct Cancelled;
 
 impl RunSummary {
     /// The summary of a run about to start: `request` echoed, nothing run
-    /// yet. It starts the admission mark its first phase reports from.
+    /// yet. Its first phase's reservation peak starts here.
     #[must_use]
     pub fn begin(request: serde_json::Value, capacity_bytes: u64, backend: BackendChoice) -> Self {
-        let _ = take_reserved_peak();
         Self {
             request,
-            status: RunStatus::Running,
             stop: None,
             capacity_bytes,
             workers: 0,
@@ -159,18 +162,33 @@ impl RunSummary {
             minor_cycles: 0,
             minor_iterations: 0,
             products: Vec::new(),
+            reservations: ReservationWindow::open(),
         }
     }
 
-    /// Write the summary to `path` as pretty-printed JSON.
+    /// Write the summary of a run that ended as `status` to `path`, as
+    /// pretty-printed JSON with the status's fields first.
     ///
     /// # Errors
     ///
     /// The file could not be written.
-    pub fn write(&self, path: &Path) -> std::io::Result<()> {
-        let text = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
+    pub fn write(&self, status: &RunStatus, path: &Path) -> std::io::Result<()> {
+        let text = serde_json::to_string_pretty(&Written {
+            status,
+            summary: self,
+        })
+        .map_err(std::io::Error::other)?;
         std::fs::write(path, text + "\n")
     }
+}
+
+/// A summary as written: how the run ended, then what it did.
+#[derive(Serialize)]
+struct Written<'a> {
+    #[serde(flatten)]
+    status: &'a RunStatus,
+    #[serde(flatten)]
+    summary: &'a RunSummary,
 }
 
 /// Run one phase named `name`, unless `cancel` is set, and record in
@@ -198,7 +216,7 @@ pub fn run_phase<T, E: From<Cancelled>>(
         completed: result.is_ok(),
         seconds: started.elapsed().as_secs_f64(),
         process_peak_rss_bytes: peak_rss(),
-        admitted_bytes: take_reserved_peak(),
+        peak_reserved_bytes: summary.reservations.close(),
         reserved_bytes: reserved_memory(),
     };
     if diagnostics.stage_timing {
@@ -208,7 +226,7 @@ pub fn run_phase<T, E: From<Cancelled>>(
             completed = phase.completed,
             seconds = phase.seconds,
             process_peak_rss_bytes = phase.process_peak_rss_bytes,
-            admitted_bytes = phase.admitted_bytes,
+            peak_reserved_bytes = phase.peak_reserved_bytes,
             reserved_bytes = phase.reserved_bytes,
             "imaging phase"
         );
@@ -310,14 +328,50 @@ mod tests {
     }
 
     #[test]
+    fn another_runs_phases_take_nothing_from_this_runs_phase() {
+        let host = crate::HostResources {
+            threads: 1,
+            performance_cores: 1,
+            available_memory: 1 << 30,
+            metal: false,
+        };
+        let policy = crate::ResourcePolicy::Explicit {
+            workers: 1,
+            memory: 1 << 30,
+        };
+        let demand = crate::Demand {
+            phase: "transient",
+            memory: 5 << 20,
+        };
+        let cancel = Cancel::new();
+        let mut first = RunSummary::begin(serde_json::Value::Null, 1, BackendChoice::Cpu);
+        run_phase("first", &cancel, QUIET, &mut first, || {
+            drop(crate::admit(&host, &policy, &demand).expect("fits"));
+            let mut second = RunSummary::begin(serde_json::Value::Null, 1, BackendChoice::Cpu);
+            run_phase("second", &cancel, QUIET, &mut second, || {
+                Ok::<_, Cancelled>(())
+            })
+        })
+        .expect("runs");
+        // Other tests of this process may hold reservations too.
+        assert!(first.phases[0].peak_reserved_bytes >= 5 << 20);
+    }
+
+    #[test]
     fn the_summary_spells_its_status_stop_and_precision_as_the_catalog_and_casa_do() {
         let mut summary = RunSummary::begin(serde_json::Value::Null, 1 << 30, BackendChoice::Cpu);
-        summary.status = RunStatus::Failed {
-            error: "a pass failed".to_string(),
-        };
         summary.stop = Some(CleanStop::Threshold);
         summary.precision = Some(GridPrecision::F64);
-        let json = serde_json::to_value(&summary).expect("serializes");
+        let written = |status: &RunStatus| -> serde_json::Value {
+            serde_json::to_value(Written {
+                status,
+                summary: &summary,
+            })
+            .expect("serializes")
+        };
+        let json = written(&RunStatus::Failed {
+            error: "a pass failed".to_string(),
+        });
         assert_eq!(json["status"], "failed");
         assert_eq!(json["error"], "a pass failed");
         assert_eq!(
@@ -327,9 +381,10 @@ mod tests {
         assert_eq!(json["precision"], "f64");
         assert_eq!(json["backend"], "cpu");
         assert_eq!(json["capacity_bytes"], 1_u64 << 30);
-        summary.status = RunStatus::Cancelled;
-        let json = serde_json::to_value(&summary).expect("serializes");
+        assert!(json.get("reservations").is_none());
+        let json = written(&RunStatus::Cancelled);
         assert_eq!(json["status"], "cancelled");
         assert!(json.get("error").is_none());
+        assert_eq!(written(&RunStatus::Completed)["status"], "completed");
     }
 }

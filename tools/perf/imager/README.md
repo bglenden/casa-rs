@@ -376,10 +376,13 @@ memory, and a cube whose planes do not fit runs in waves. Each run writes
 `<imagename>.summary.json` however it ends: its status (`completed`,
 `failed` with the error, or `cancelled`), the policy's memory capacity, the
 worker count, the backend and resolved grid precision, the CASA stop reason,
-the minor-cycle totals and the products. Each phase records its wall time,
-the process's resident high-water mark sampled at its end, the most memory
-admission held during it and what admission still held at its end. FFTs run
-on one thread inside each worker.
+the minor-cycle totals and the product images published (on a failure while
+publishing, those published before it). Each phase records whether it
+completed, its wall time, the process's resident high-water mark sampled at
+its end, the most memory the process's reservations held during it
+(`peak_reserved_bytes`) and what they still held at its end. Every step that
+can fail is inside a phase, each minor cycle's preparation included. FFTs
+run on one thread inside each worker.
 
 Three diagnostic parameters add structured log events (`name=value` fields
 after the message), logged at INFO, so they reach stderr with
@@ -388,10 +391,10 @@ after the message), logged at INFO, so they reach stderr with
 - `stage_timing`: one `casa_imaging::stage_timing` event per phase, the
   summary's phase record. `scripts/bench-imager-vs-casa.sh` turns it on and
   reports the medians of each phase kind's total (`preparation`, `setup`,
-  `major_cycles`, `minor_cycles`, `model_prediction`, `products`, `total`)
-  as the Rust stage medians;
+  `major_cycles`, `minor_cycle_preparations`, `minor_cycles`,
+  `model_prediction`, `products`, `total`) as the Rust stage medians;
 - `metal_stage_timing`: one `casa_imaging::metal_stage_timing` event per
-  Metal gridding owner and pass;
+  Metal gridding owner and wave, with whether its work completed;
 - `science_trace`: `casa_imaging::science_trace` events for the residual
   statistics, controls and record of each cycle.
 

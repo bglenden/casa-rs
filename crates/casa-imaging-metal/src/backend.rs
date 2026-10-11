@@ -55,8 +55,10 @@ pub struct MetalBackend<'cf> {
     stage_timing: bool,
 }
 
-/// What a backend dispatched over its life, logged once when it drops if
-/// it was made with stage timing: the host's preparation time and its
+/// What a backend was asked to dispatch over its life, logged once when it
+/// drops if it was made with stage timing: the work is counted before it is
+/// dispatched, so after a failure the counts include work the device never
+/// did, and `failed` says so. Also the host's preparation time and its
 /// waits for the device.
 #[derive(Default)]
 struct Usage {
@@ -65,6 +67,7 @@ struct Usage {
     sub_blocks: u64,
     prepare: std::time::Duration,
     wait: std::time::Duration,
+    failed: bool,
 }
 
 /// A growing device array of kernel values.
@@ -346,10 +349,15 @@ impl<'cf> MetalBackend<'cf> {
                 drained = retired;
             }
         }
-        match dispatched {
+        let result = match dispatched {
             Ok(outcome) => outcome.and(drained),
-            Err(panic) => std::panic::resume_unwind(panic),
-        }
+            Err(panic) => {
+                self.usage.failed = true;
+                std::panic::resume_unwind(panic)
+            }
+        };
+        self.usage.failed |= result.is_err();
+        result
     }
 
     /// Write the records, values, weights and inverse norms of samples
@@ -575,10 +583,12 @@ impl Drop for MetalBackend<'_> {
             sub_blocks,
             prepare,
             wait,
+            failed,
         } = self.usage;
         if self.stage_timing && applies > 0 {
             tracing::info!(
                 target: crate::METAL_STAGE_TIMING,
+                completed = !failed && !std::thread::panicking(),
                 applies,
                 samples,
                 sub_blocks,

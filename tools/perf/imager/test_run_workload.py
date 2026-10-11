@@ -3564,7 +3564,7 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
                 "INFO casa_imaging::stage_timing (file crates/casa-imaging-runtime/"
                 f'src/summary.rs, line 205) imaging phase phase="{phase}" '
                 f"completed=true seconds={seconds} process_peak_rss_bytes=1 "
-                "admitted_bytes=2 reserved_bytes=1"
+                "peak_reserved_bytes=2 reserved_bytes=1"
             )
 
         run = "\n".join(
@@ -3574,8 +3574,10 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
                 event("preparation", 0.1),
                 event("setup", 0.01),
                 event("major cycle 1", 0.2),
+                event("minor-cycle preparation 1", 0.004),
                 event("minor cycle 1", 0.003),
                 event("major cycle 2", 0.3),
+                event("minor-cycle preparation 2", 0.002),
                 event("products", 0.05),
             ]
         )
@@ -3586,9 +3588,10 @@ cube_source_row_blocks rows_total=3086235 row_block_rows=32768 row_block_rows_so
                 "preparation": 100.0,
                 "setup": 10.0,
                 "major_cycles": 500.0,
+                "minor_cycle_preparations": 6.0,
                 "minor_cycles": 3.0,
                 "products": 50.0,
-                "total": 663.0,
+                "total": 669.0,
             },
             {kind: round(value, 6) for kind, value in medians.items()},
         )

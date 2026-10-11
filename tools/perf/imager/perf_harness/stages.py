@@ -10,11 +10,12 @@ from typing import Any
 
 
 # The kinds of `casars-imager` phase, as `stage_timing` logs them: a run's
-# major and minor cycles are summed over the run.
+# major cycles, minor cycles and their preparations are summed over the run.
 RUST_STAGE_FIELDS = {
     "preparation",
     "setup",
     "major_cycles",
+    "minor_cycle_preparations",
     "minor_cycles",
     "model_prediction",
     "products",
@@ -104,7 +105,7 @@ def rust_phase_milliseconds(stderr: str) -> dict[str, float]:
         if phase is None or seconds is None:
             raise ValueError(f"malformed stage-timing event: {line}")
         name = phase.group(1)
-        kind = re.sub(r" \d+$", "s", name).replace(" ", "_")
+        kind = re.sub(r" \d+$", "s", name).replace(" ", "_").replace("-", "_")
         if kind not in RUST_STAGE_FIELDS:
             raise ValueError(f"unknown casars-imager phase {name!r}: {line}")
         totals[kind] = totals.get(kind, 0.0) + 1000.0 * float(seconds.group(1))

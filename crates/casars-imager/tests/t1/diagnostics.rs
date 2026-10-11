@@ -112,7 +112,16 @@ fn stage_timing_logs_each_phase_record_and_switches_off_log_nothing() {
     for (line, phase) in lines.iter().zip(phases) {
         assert_eq!(field(line, "phase"), phase["name"], "{line}");
         assert_eq!(field(line, "completed"), "true", "{line}");
-        for bytes in ["process_peak_rss_bytes", "admitted_bytes", "reserved_bytes"] {
+        assert_eq!(
+            field(line, "seconds").parse::<f64>().ok(),
+            phase["seconds"].as_f64(),
+            "{line}"
+        );
+        for bytes in [
+            "process_peak_rss_bytes",
+            "peak_reserved_bytes",
+            "reserved_bytes",
+        ] {
             assert_eq!(
                 field(line, bytes).parse::<u64>().ok(),
                 phase[bytes].as_u64(),
@@ -166,6 +175,7 @@ fn metal_stage_timing_logs_each_gridding_owner() {
     let lines = events(&stderr, METAL_STAGE_TIMING);
     assert!(!lines.is_empty(), "{stderr}");
     for line in lines {
+        assert_eq!(field(line, "completed"), "true", "{line}");
         assert!(field(line, "applies").parse::<u64>().expect("applies") > 0);
         assert!(field(line, "samples").parse::<u64>().expect("samples") > 0);
         field(line, "wait_seconds")

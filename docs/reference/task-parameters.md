@@ -304,7 +304,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>backend</code> | <code>parameter.backend@r1</code> | <code>choice (2 values)</code> | <code>"cpu"</code>; optional | Stages | Gridding backend of the major-cycle passes: cpu, or metal on macOS |
 | <code>gridprecision</code> | <code>parameter.gridprecision@r1</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Stages | Grid arithmetic: auto, f32 or f64 |
 | <code>stage_timing</code> | <code>parameter.stage_timing@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log one timing event per imaging phase |
-| <code>metal_stage_timing</code> | <code>parameter.metal_stage_timing@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log the Metal backend's timing for each gridding owner and pass |
+| <code>metal_stage_timing</code> | <code>parameter.metal_stage_timing@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log the Metal backend's timing for each gridding owner and wave |
 | <code>science_trace</code> | <code>parameter.science_trace@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log the clean controller's science quantities at each cycle |
 
 <a id="surface-simobserve"></a>

@@ -312,19 +312,22 @@ applicable Rust/C++ RR, RC, CR, and CC matrix.
 
 Installed-implementation availability is an application-owned result checked
 once, by `availability::check` on the compiled problem, the run's backend and
-grid precision, and the host, before any phase, so a typed-unavailable request
-starts no work. A run leaves
+grid precision, and the host, during preparation and before any execution
+phase, so a typed-unavailable request starts no work. A run leaves
 one record beside its products, the run summary of plan section 8.3
 (`<imagename>.summary.json` for `casars-imager`): the request echo, the
 status (completed, failed with its error, or cancelled), the policy's
 memory capacity, the worker count, the backend and resolved grid
-precision, the CASA stop reason, the minor-cycle totals, the product list,
-and each phase, preparation first, with whether it completed, its wall
-time, the process's resident high-water mark at its end, and the most and
-the remaining memory admission held. The application writes it however the
-run ends (ADR-0014's final success/failure summary); a later failure keeps
-the totals of the cycles that completed, and a cancelled run publishes no
-product.
+precision, the CASA stop reason, the minor-cycle totals, the product images
+published, and each phase, preparation first, with whether it completed,
+its wall time, the process's resident high-water mark at its end, and the
+most and the remaining memory the process's reservations held. Every step
+that can fail runs inside a phase (each minor cycle's preparation is one),
+so a failed run's last phase is the one that failed. The application writes
+it however the run ends (ADR-0014's final success/failure summary); a later
+failure keeps the totals of the cycles that completed and lists any images
+published before a failure while publishing, and a cancelled run publishes
+no product.
 
 ## Runtime model
 

@@ -142,9 +142,11 @@ impl ImagingOutcome {
 /// the fresh residual whether cleaning is complete (`cleanComplete`);
 /// otherwise a minor cycle runs under its controls and a major cycle
 /// refreshes the residual. A minor cycle that cleans nothing ends the run
-/// without another major cycle. Each cycle is a phase of `summary`, which
-/// also takes the resolved precision, the minor-cycle totals as each cycle
-/// completes and the stop reason; a cancelled run stops at the next block
+/// without another major cycle. Each cycle, and each minor cycle's
+/// preparation (its masks and residual statistics), is a phase of
+/// `summary`, so every step that can fail is inside one; `summary` also
+/// takes the resolved precision, the minor-cycle totals as each cycle
+/// completes and the stop reason. A cancelled run stops at the next block
 /// boundary of a pass or before the next phase.
 pub(crate) fn run(
     inputs: ImagingInputs<'_>,
@@ -175,33 +177,50 @@ pub(crate) fn run(
     let mut cache = PsfCache::default();
     // What outlives each minor cycle: the masks it forms (the latest, and the
     // one an automatic mask evolves from) and a Clark refresh it caches.
-    let mut held = run.admit("reconstruction masks", 2 * mask_bytes(&outcome.scientific))?;
+    let mut held = Reservation::none();
+    // tclean skips the major cycle after a minor cycle that cleans nothing,
+    // updates the mask and still asks `hasConverged` for the stop it reports.
+    let mut cleaned_nothing = false;
     loop {
-        let preparing = run.admit(
-            "minor-cycle preparation",
-            prepare_bytes(
+        let ordinal = outcome.minor_cycles.len() + 1;
+        let name = format!("minor-cycle preparation {ordinal}");
+        let prepared = run_phase(name, &cancel, diagnostics, summary, || {
+            if ordinal == 1 {
+                held = run.admit("reconstruction masks", 2 * mask_bytes(&outcome.scientific))?;
+            }
+            let _preparing = run.admit(
+                "minor-cycle preparation",
+                prepare_bytes(
+                    &outcome.scientific,
+                    &mask_plans,
+                    &setup,
+                    &cache,
+                    run.team.workers(),
+                ),
+            )?;
+            Ok::<_, ImagingError>(prepare_minor_cycle(
                 &outcome.scientific,
                 &mask_plans,
                 &setup,
-                &cache,
-                run.team.workers(),
-            ),
-        )?;
-        let prepared = prepare_minor_cycle(
-            &outcome.scientific,
-            &mask_plans,
-            &setup,
-            &mut cache,
-            run.team,
-        )?;
-        drop(preparing);
+                &mut cache,
+                run.team,
+            )?)
+        })?;
         let statistics = prepared.statistics;
         if diagnostics.science_trace {
             trace::residual(outcome.major_cycle_count, &statistics);
         }
-        if let Some(stop) = controller.clean_complete(&statistics) {
+        let stop = controller.clean_complete(&statistics);
+        if let Some(stop) = stop {
             tracing::info!("imaging stopped: {stop:?} (stopcode {})", stop.code());
-            outcome.stop = Some(stop);
+        }
+        if cleaned_nothing {
+            outcome.stop = stop;
+            outcome.masks = Some(ReconstructionMaskSet::Domains(prepared.masks().clone()));
+            break;
+        }
+        if stop.is_some() {
+            outcome.stop = stop;
             outcome
                 .masks
                 .get_or_insert_with(|| ReconstructionMaskSet::Domains(prepared.masks().clone()));
@@ -209,23 +228,23 @@ pub(crate) fn run(
         }
         let cycle_controls = controller.cycle_controls(&statistics);
         if diagnostics.science_trace {
-            trace::cycle_controls(outcome.minor_cycles.len() + 1, &cycle_controls);
+            trace::cycle_controls(ordinal, &cycle_controls);
         }
         let started = Instant::now();
-        let name = format!("minor cycle {}", outcome.minor_cycles.len() + 1);
-        let cached = cache.refresh_bytes(&outcome.scientific);
-        let mut solving = run.admit(
-            "minor cycle",
-            run_bytes(
-                &outcome.scientific,
-                &setup,
-                &cycle_controls,
-                &cache,
-                run.team.workers(),
-            ),
-        )?;
-        let minor = run_phase(name, &cancel, diagnostics, summary, || {
-            Ok::<_, ImagingError>(run_minor_cycle(
+        let name = format!("minor cycle {ordinal}");
+        let (minor, next_plans) = run_phase(name, &cancel, diagnostics, summary, || {
+            let cached = cache.refresh_bytes(&outcome.scientific);
+            let mut solving = run.admit(
+                "minor cycle",
+                run_bytes(
+                    &outcome.scientific,
+                    &setup,
+                    &cycle_controls,
+                    &cache,
+                    run.team.workers(),
+                ),
+            )?;
+            let minor = run_minor_cycle(
                 prepared,
                 &outcome.scientific,
                 &setup,
@@ -233,13 +252,20 @@ pub(crate) fn run(
                 &mut cache,
                 run.team,
                 (&run.host, &run.policy),
-            )?)
+            )?;
+            let refresh = cache.refresh_bytes(&outcome.scientific);
+            if refresh > cached {
+                held.join(solving.split(refresh - cached));
+            }
+            let plans = next_masks(
+                &mask_plans,
+                &minor,
+                ordinal,
+                cycle_controls.threshold_reached,
+            )?;
+            Ok::<_, ImagingError>((minor, plans))
         })?;
-        let refresh = cache.refresh_bytes(&outcome.scientific);
-        if refresh > cached {
-            held.join(solving.split(refresh - cached));
-        }
-        drop(solving);
+        mask_plans = next_plans;
         let global_threshold = controls
             .threshold_jy_per_beam()
             .max(statistics.nsigma_threshold);
@@ -257,33 +283,9 @@ pub(crate) fn run(
             trace::minor_cycle(&outcome.minor_cycles[cycle - 1]);
         }
         let last = controller.budget_spent() || controller.last_cycle(&statistics);
-        mask_plans = next_masks(&mask_plans, &minor, cycle, cycle_controls.threshold_reached)?;
         if minor.summary.iterations == 0 {
-            // tclean skips the major cycle, updates the mask and still asks
-            // `hasConverged` for the stop it reports.
-            let _preparing = run.admit(
-                "minor-cycle preparation",
-                prepare_bytes(
-                    &outcome.scientific,
-                    &mask_plans,
-                    &setup,
-                    &cache,
-                    run.team.workers(),
-                ),
-            )?;
-            let prepared = prepare_minor_cycle(
-                &outcome.scientific,
-                &mask_plans,
-                &setup,
-                &mut cache,
-                run.team,
-            )?;
-            if diagnostics.science_trace {
-                trace::residual(outcome.major_cycle_count, &prepared.statistics);
-            }
-            outcome.stop = controller.clean_complete(&prepared.statistics);
-            outcome.masks = Some(ReconstructionMaskSet::Domains(prepared.masks().clone()));
-            break;
+            cleaned_nothing = true;
+            continue;
         }
         let name = format!("major cycle {}", outcome.major_cycle_count + 1);
         let scientific = outcome.scientific;

@@ -96,7 +96,10 @@ fn t44_application_mtmfs_publishes_frozen_casa_product_contract() -> Result<(), 
             .collect::<Vec<_>>(),
         PRODUCT_NAMES
     );
-    assert_eq!(outcome.summary.products, PRODUCT_NAMES);
+    assert_eq!(
+        outcome.summary.products,
+        PRODUCT_NAMES.map(|name| format!("{}{name}", output.display()))
+    );
 
     assert_persisted_inventory(&output)?;
     assert_persisted_metadata(&output)?;
