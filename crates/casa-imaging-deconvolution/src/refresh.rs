@@ -34,6 +34,23 @@ pub struct LinearRefresh {
 }
 
 impl LinearRefresh {
+    /// Heap bytes a refresh of `shape` planes holds at most: its two
+    /// spectra on the largest padded grid any PSF origin needs, `2·n − 1`
+    /// along each axis, the transform's planning scratch, and the sparse
+    /// batch.
+    #[must_use]
+    pub const fn bytes(shape: PlaneShape) -> u64 {
+        let Some(len) = RealFft2::<f32>::spectrum_len([
+            2 * shape.nx.saturating_sub(1) + 1,
+            2 * shape.ny.saturating_sub(1) + 1,
+        ]) else {
+            return u64::MAX;
+        };
+        2 * (len * size_of::<Complex32>()) as u64
+            + casa_fft::planning_bytes::<f32>(len)
+            + (SPARSE_COMPONENT_CAPACITY * size_of::<usize>()) as u64
+    }
+
     /// Prepare the refresh of `shape` planes by `psf`, whose peak is at
     /// storage index `peak`.
     ///

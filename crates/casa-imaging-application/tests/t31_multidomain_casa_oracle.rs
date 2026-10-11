@@ -55,7 +55,7 @@ fn t31_multidomain_geometry_matches_frozen_casa_dirty_and_hogbom() -> Result<(),
             iterations,
             json!({ "phasecenter": MAIN_PHASE_CENTRE }),
         )?;
-        assert_eq!(result.scientific.normal_state().domain_count(), 2);
+        assert_eq!(result.scientific().normal_state().domain_count(), 2);
         let expected_counts = if label == "dirty" { (0, 0) } else { (13, 14) };
         assert_eq!(
             (
@@ -157,8 +157,8 @@ fn issue607_representative_main_and_outlier_match_casa() -> Result<(), Box<dyn E
                 "mask_box": "192,192,319,319",
             }),
         )?;
-        assert_eq!(result.scientific.normal_state().domain_count(), 2);
-        assert_eq!(result.scientific.normal_state().sample_count(), 6_284_304);
+        assert_eq!(result.scientific().normal_state().domain_count(), 2);
+        assert_eq!(result.scientific().normal_state().sample_count(), 6_284_304);
 
         for (role, rust_prefix) in [("main", &rust_main), ("outlier", &rust_outlier)] {
             let casa_prefix = casa_root.join(label).join(role);

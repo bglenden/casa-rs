@@ -74,6 +74,23 @@ pub(crate) fn dense_cell(planes: &[OversampledPlane<'_>], half_support: [u16; 2]
     }
 }
 
+/// Bytes the taps of [`dense_cell`]'s cell of `planes` planes at `sampling`
+/// hold for `half_support`.
+pub(crate) const fn dense_cell_bytes(planes: usize, sampling: u16, half_support: [u16; 2]) -> u64 {
+    let rows = sampling as usize + 1;
+    let taps = (2 * half_support[0] as usize + 1) * (2 * half_support[1] as usize + 1);
+    (rows * rows * planes * taps * size_of::<Complex32>()) as u64
+}
+
+/// Bytes the taps of [`dense_cell_from_quadrant`]'s cell hold for
+/// `sampling` and `half_support`.
+pub(crate) const fn dense_cell_from_quadrant_bytes(sampling: u16, half_support: u16) -> u64 {
+    let oversampling = if sampling == 1 { 2 } else { sampling };
+    let rows = oversampling as usize + 1;
+    let taps = 2 * half_support as usize + 1;
+    (rows * rows * taps * taps * size_of::<Complex32>()) as u64
+}
+
 /// The dense cell of one even-symmetric kernel stored as its positive
 /// quadrant (`WPConvFunc`: `convFunc(abs(ix·sampling + off), abs(iy·sampling
 /// + off))`), `quadrant` being `side × side` values, x fastest, with the

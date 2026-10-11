@@ -80,7 +80,7 @@ fn t53_one_channel_standard_cubes_preserve_all_products() {
             .unwrap_or_else(|error| panic!("standard {interpolation:?}: {error}"));
         assert!(
             result
-                .scientific
+                .scientific()
                 .normal_state()
                 .sum_weights()
                 .iter()
@@ -172,7 +172,7 @@ fn t53_nonidentity_linear_sampling_preserves_affine_spectra() {
                 .unwrap_or_else(|error| panic!("standard affine={}: {error}", !unit));
         assert!(
             result
-                .scientific
+                .scientific()
                 .normal_state()
                 .sum_weights()
                 .iter()

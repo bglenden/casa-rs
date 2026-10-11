@@ -144,6 +144,17 @@ pub trait Solver {
         residual: &mut [Vec<f64>],
         delta: &Delta,
     ) -> Result<StepEnd, Error>;
+
+    /// Heap bytes one step's working state holds at most, transients
+    /// included, for planes of `shape` with `terms` residual terms; the view
+    /// and the driver's residual copy are the driver's
+    /// ([`crate::solve_bytes`]). The minor cycle admits this before it runs.
+    fn working_bytes(&self, shape: PlaneShape, terms: usize) -> u64;
+
+    /// Pixels one accepted component adds flux to at most, per term, on
+    /// planes of `shape`: one for a point component, a scale's support for
+    /// an extended one. It bounds the entries of a [`Delta`].
+    fn component_cells(&self, shape: PlaneShape) -> usize;
 }
 
 /// How a step ended.

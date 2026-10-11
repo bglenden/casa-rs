@@ -47,6 +47,12 @@ pub trait ModelSampleStorage: fmt::Debug + Send + Sync {
         precision: NumericPrecision,
         bound: f64,
     ) -> Result<f64, ModelLifecycleError>;
+
+    /// Heap bytes of samples held resident; paged storage reports zero, its
+    /// pages being charged by its cache.
+    fn resident_bytes(&self) -> u64 {
+        0
+    }
 }
 
 /// A canonical sparse increment evaluated at its owning model window.
@@ -91,6 +97,11 @@ fn add_with_precision(precision: NumericPrecision, left: f64, right: f64) -> f64
     }
 }
 
+/// Heap bytes queuing one update holds at most: the validated update, its
+/// copy in a pending window, and a window of its own.
+pub(crate) const QUEUED_UPDATE_BYTES: usize =
+    2 * size_of::<ModelSampleUpdate>() + size_of::<PendingWindow>();
+
 #[derive(Debug)]
 struct PendingWindow {
     range: Range<usize>,
@@ -109,6 +120,14 @@ pub trait ModelStorageFactory: fmt::Debug + Send + Sync {
         &self,
         sample_count: usize,
     ) -> Result<Box<dyn ModelSampleStorage>, ModelLifecycleError>;
+
+    /// Heap bytes a model of `sample_count` samples created here holds
+    /// resident. Paged storage holds its pages under its cache's charge and
+    /// reports zero.
+    fn resident_bytes(&self, sample_count: usize) -> u64 {
+        let _ = sample_count;
+        0
+    }
 }
 
 /// Admitted storage and maximum resident window for model lifecycle work.
@@ -158,6 +177,12 @@ impl ModelStoragePlan {
         Self::new(Arc::new(ResidentModelStorage), window_samples)
     }
 
+    /// Heap bytes a model of `count` samples holds resident in this storage.
+    #[must_use]
+    pub fn resident_bytes(&self, count: usize) -> u64 {
+        self.factory.resident_bytes(count)
+    }
+
     pub(crate) fn create(&self, count: usize) -> Result<ModelSamples, ModelLifecycleError> {
         let storage = self.factory.create(count)?;
         if storage.sample_count() != count {
@@ -184,6 +209,17 @@ pub(crate) struct ModelSamples {
 }
 
 impl ModelSamples {
+    /// Heap bytes held resident: the samples and the queued sparse updates.
+    pub(crate) fn resident_bytes(&self) -> u64 {
+        let pending = self.pending.capacity() * size_of::<PendingWindow>()
+            + self
+                .pending
+                .iter()
+                .map(|window| size_of_val(window.updates.as_ref()))
+                .sum::<usize>();
+        self.storage.resident_bytes() + pending as u64
+    }
+
     pub(crate) fn maximum_magnitude(&self) -> f64 {
         f64::from_bits(self.maximum_magnitude.load(Ordering::Relaxed))
     }
@@ -565,11 +601,19 @@ impl ModelStorageFactory for ResidentModelStorage {
             vec![ModelSample::invalid(); sample_count].into_boxed_slice(),
         )))
     }
+
+    fn resident_bytes(&self, sample_count: usize) -> u64 {
+        (sample_count * size_of::<ModelSample>()) as u64
+    }
 }
 
 impl ModelSampleStorage for RwLock<Box<[ModelSample]>> {
     fn sample_count(&self) -> usize {
         self.read().expect("model storage poisoned").len()
+    }
+
+    fn resident_bytes(&self) -> u64 {
+        size_of_val(&**self.read().expect("model storage poisoned")) as u64
     }
 
     fn read(

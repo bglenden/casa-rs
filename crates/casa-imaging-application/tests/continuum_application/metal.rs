@@ -169,7 +169,7 @@ fn metal_cube_with_coarse_output_channels_in_waves_equals_the_cpu_cube() {
         |backend| ResourcePolicy::Explicit {
             workers: 2,
             memory: match backend {
-                BackendChoice::Metal => COARSE_METAL_MEMORY_BYTES,
+                BackendChoice::Metal => COARSE_METAL_MEMORY_BYTES + compile_resident(),
                 BackendChoice::Cpu => 4 << 30,
             },
         },

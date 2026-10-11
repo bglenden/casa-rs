@@ -346,6 +346,14 @@ impl Solver for Scripted {
             refreshes: 0,
         })
     }
+
+    fn working_bytes(&self, _: PlaneShape, _: usize) -> u64 {
+        0
+    }
+
+    fn component_cells(&self, _: PlaneShape) -> usize {
+        1
+    }
 }
 
 /// `SDAlgorithmBase::deconvolve` notes the peak a step starts from

@@ -96,11 +96,15 @@ impl FinalNormalState {
     pub fn retire_obsolete(self) -> Result<(), SpectralOperatorError> {
         self.primitives.retire_obsolete()
     }
-    /// Live scalar payload already charged by its retained runtime allocation.
-    /// This is metadata-only; it does not load or verify any array contents.
-    #[doc(hidden)]
-    pub fn retained_resident_bytes(&self) -> Result<u64, SpectralOperatorError> {
-        self.primitives.retained_resident_bytes()
+    /// Heap bytes this state holds outside paged storage, which its cube
+    /// cache charges: the coupled primitives, or a channel-local state's
+    /// resident backings. Metadata only; no array contents are read.
+    ///
+    /// # Errors
+    ///
+    /// When the byte count overflows.
+    pub fn resident_bytes(&self) -> Result<u64, SpectralOperatorError> {
+        self.primitives.resident_bytes()
     }
 
     /// Maximum channel window supported by this generation's backing capability.
@@ -774,6 +778,19 @@ impl MajorCycleCompletion {
     #[must_use]
     pub const fn final_model(&self) -> &ModelGeneration {
         &self.final_model
+    }
+
+    /// Heap bytes the normal state and the final model hold resident, which
+    /// stay charged for as long as this completion lives.
+    ///
+    /// # Errors
+    ///
+    /// When the byte count overflows.
+    pub fn resident_bytes(&self) -> Result<u64, SpectralOperatorError> {
+        self.normal_state
+            .resident_bytes()?
+            .checked_add(self.final_model.resident_bytes())
+            .ok_or(SpectralOperatorError::ResidencyOverflow)
     }
 
     /// Release the normal state and the final model, which the next major

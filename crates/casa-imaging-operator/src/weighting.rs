@@ -80,6 +80,14 @@ impl DensityGridShape {
         self.width * self.height * self.planes
     }
 
+    /// Bytes a [`DensityGrid`] of this shape holds: an `f64` per cell and a
+    /// weight sum per plane. A weighting generation keeps its grid for the
+    /// whole run.
+    #[must_use]
+    pub const fn bytes(&self) -> u64 {
+        ((self.cells() + self.planes) * size_of::<f64>()) as u64
+    }
+
     /// Density plane of a placement: plane 0 for a global generation.
     fn plane_of(&self, placement_plane: u32) -> Option<usize> {
         if self.planes == 1 {

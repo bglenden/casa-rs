@@ -58,7 +58,7 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
     }));
     let result = execute(&request, imaging::context(request.resource_policy()))?;
     assert_eq!(
-        result.scientific.normal_state().sample_count(),
+        result.scientific().normal_state().sample_count(),
         SELECTED_SAMPLE_COUNT,
         "production traversal must retain all 1,024 channels and both parallel hands",
     );

@@ -113,7 +113,37 @@ pub struct SpectralOperatorPrimitives {
     validity: Box<[SpectralChannelValidity]>,
 }
 
+/// Heap bytes per image cell and polarization of resident primitives with
+/// `terms` residual terms: the residual as `Complex64`, and with `psf` the
+/// `moments` PSF moments as `Complex64` and their sensitivity as `f64`. A
+/// residual refresh keeps the PSF and sensitivity it started from, so it adds
+/// only the residual.
+#[must_use]
+pub const fn resident_bytes_per_cell(terms: usize, moments: usize, psf: bool) -> u64 {
+    let complex = size_of::<Complex64>() as u64;
+    let mut bytes = terms as u64 * complex;
+    if psf {
+        bytes += moments as u64 * (complex + size_of::<f64>() as u64);
+    }
+    bytes
+}
+
 impl SpectralOperatorPrimitives {
+    /// Heap bytes these primitives hold.
+    #[must_use]
+    pub fn resident_bytes(&self) -> u64 {
+        let cube_real = self.cube_real.as_ref().map_or(0, |fields| {
+            size_of_val(&*fields.dirty) + size_of_val(&*fields.psf)
+        });
+        (size_of_val(&*self.dirty)
+            + cube_real
+            + size_of_val(&*self.psf)
+            + size_of_val(&*self.sensitivity)
+            + size_of_val(&*self.sum_weights)
+            + size_of_val(&*self.published_sum_weights)
+            + size_of_val(&*self.validity)) as u64
+    }
+
     /// Return `[width, height]` shared by every plane.
     #[must_use]
     pub const fn shape(&self) -> [usize; 2] {
@@ -334,18 +364,8 @@ impl SpectralPrimitiveDomains {
     pub(crate) fn owned_bytes(&self) -> usize {
         self.iter()
             .map(|domain| {
-                let p = domain.primitives();
                 size_of::<SpectralDomainPrimitives>()
-                    + std::mem::size_of_val(p.dirty.as_ref())
-                    + p.cube_real.as_ref().map_or(0, |real| {
-                        std::mem::size_of_val(real.dirty.as_ref())
-                            + std::mem::size_of_val(real.psf.as_ref())
-                    })
-                    + std::mem::size_of_val(p.psf.as_ref())
-                    + std::mem::size_of_val(p.sensitivity.as_ref())
-                    + std::mem::size_of_val(p.sum_weights())
-                    + std::mem::size_of_val(p.published_sum_weights())
-                    + std::mem::size_of_val(p.channel_validity())
+                    + domain.primitives().resident_bytes() as usize
                     + match &domain.domain_role {
                         ImageDomainRole::Main => 0,
                         ImageDomainRole::Outlier(name) => name.capacity(),

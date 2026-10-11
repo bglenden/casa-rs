@@ -234,7 +234,7 @@ impl NormalStatePrimitives {
         }
         Ok(())
     }
-    pub(crate) fn retained_resident_bytes(&self) -> Result<u64, SpectralOperatorError> {
+    pub(crate) fn resident_bytes(&self) -> Result<u64, SpectralOperatorError> {
         match self {
             Self::ChannelLocal(domains) => domains.iter().try_fold(0u64, |bytes, domain| {
                 bytes
@@ -244,7 +244,7 @@ impl NormalStatePrimitives {
                     })
                     .ok_or(SpectralOperatorError::ResidencyOverflow)
             }),
-            Self::Coupled(_) => Ok(0),
+            Self::Coupled(domains) => Ok(domains.owned_bytes() as u64),
         }
     }
 

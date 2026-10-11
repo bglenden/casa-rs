@@ -184,6 +184,26 @@ impl BoundSelectedObservation {
         classes
     }
 
+    /// The most rows one block of this observation's streams holds
+    /// ([`SelectedObservationBlockSource::maximum_rows_per_block`]), known
+    /// before a stream opens, so that what a consumer derives from each
+    /// block can be admitted first.
+    #[must_use]
+    pub fn maximum_rows_per_block(&self) -> usize {
+        self.block_capacity().rows()
+    }
+
+    /// Room for one block of any source, the stream's refilled storage.
+    fn block_capacity(&self) -> SelectedObservationBufferCapacity {
+        self.sources
+            .iter()
+            .map(BoundObservationSource::buffer_capacity)
+            .fold(
+                SelectedObservationBufferCapacity::default(),
+                SelectedObservationBufferCapacity::union,
+            )
+    }
+
     #[cfg(unix)]
     pub(crate) fn single_source_content_requirements(
         problem: &CompiledProblem,
@@ -319,14 +339,7 @@ impl BoundSelectedObservation {
         problem: &CompiledProblem,
         window: Option<[f64; 2]>,
     ) -> SelectedObservationBlockSource<'_> {
-        let block_capacity = self
-            .sources
-            .iter()
-            .map(BoundObservationSource::buffer_capacity)
-            .fold(
-                SelectedObservationBufferCapacity::default(),
-                SelectedObservationBufferCapacity::union,
-            );
+        let block_capacity = self.block_capacity();
         SelectedObservationBlockSource {
             problem,
             observation: self,

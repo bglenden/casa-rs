@@ -22,7 +22,8 @@ pub use casa_imaging_model::{
 pub use casa_imaging_operator::GridPrecision;
 pub use casa_imaging_runtime::pass::{BackendChoice, Cancel};
 pub use casa_imaging_runtime::{
-    Admission, HostResources, Phase, ResourcePolicy, RunSummary, SummaryTarget, TracedComponent,
+    Admission, HostResources, Phase, ResourcePolicy, ReturningAllocator, RunSummary, SummaryTarget,
+    TracedComponent,
 };
 pub use casa_product_sink::{CasaImageDomainOutput, CasaImageProductSink};
 pub use compile::{OutlierProblem, PrepareError};
@@ -127,15 +128,35 @@ pub struct ImagingOutcome {
     /// The run's phases, team and totals; the caller adds the request echo
     /// before writing it beside the products.
     pub summary: RunSummary,
-    /// Final authoritative complete-data and model state.
-    pub scientific: MajorCycleCompletion,
+    /// Final authoritative complete-data and model state; borrowed through
+    /// [`Self::scientific`], so that it cannot outlive its charge.
+    scientific: MajorCycleCompletion,
     /// Planned product generation used before member production.
     pub planned_products: PlannedContinuumGeneration,
     /// Payload-free authorized generation retained after publication.
     pub products: PublishedContinuumGeneration,
+    /// The charge of the memory `scientific` holds resident, released when
+    /// the outcome drops.
+    _retained: casa_imaging_runtime::Reservation,
 }
 
 impl ImagingOutcome {
+    /// The final authoritative complete-data and model state.
+    ///
+    /// It stays charged against the process's memory until the outcome
+    /// drops, so it is only lent: a completion moved out of its outcome
+    /// would outlive its charge.
+    ///
+    /// ```compile_fail
+    /// fn detach(outcome: casa_imaging_application::ImagingOutcome) {
+    ///     let _ = outcome.scientific;
+    /// }
+    /// ```
+    #[must_use]
+    pub const fn scientific(&self) -> &MajorCycleCompletion {
+        &self.scientific
+    }
+
     /// The CASA suffixes of the published products, for example `.image`.
     #[must_use]
     pub fn product_names(&self) -> Vec<String> {
@@ -226,21 +247,100 @@ impl NativeMinorCycleStopReason {
 
 /// Run one imaging request on the installed implementation: validate it,
 /// compile it against its MeasurementSet, check once that the
-/// implementation can run it ([`Unsupported`]), and run it.
+/// implementation can run it ([`Unsupported`]), and run it. A run that
+/// fails before its native run starts writes the context's summary with
+/// the error, as the native run does.
 pub fn execute(
     request: &ImagingRequest,
     context: RunContext,
 ) -> Result<ImagingOutcome, ApplicationDispatchError> {
+    let target = context.summary.clone();
+    let (problem, input, native, _resident) =
+        compile_run(request, &context).inspect_err(|error| {
+            if let Some(target) = &target {
+                native::record_failure(target, error);
+            }
+        })?;
+    run_native(&problem, input, native).map_err(|error| match error {
+        NativeError::Admission(admission) => ApplicationDispatchError::Admission(admission),
+        NativeError::Cancelled(_) => ApplicationDispatchError::Cancelled,
+        NativeError::Other(error) => ApplicationDispatchError::Native(error),
+    })
+}
+
+/// The charge of the process-wide caches every run fills and that keep what
+/// they hold after it: the table-read cache, with the MeasurementSet's
+/// tiles, and FFTW's plan cache. The first run to be admitted takes it for
+/// the process.
+static PROCESS_CACHES: std::sync::OnceLock<casa_imaging_runtime::Reservation> =
+    std::sync::OnceLock::new();
+
+/// Bytes the process-wide caches hold at most.
+#[must_use]
+pub fn process_cache_bytes() -> u64 {
+    (casa_ms::table_read_cache_bytes() + casa_imaging_operator::FFT_PLAN_CACHE_BYTES) as u64
+}
+
+/// Charge the process-wide caches if no run has yet. Of runs admitted at
+/// once, one keeps its charge and the others release theirs.
+fn admit_process_caches(context: &RunContext) -> Result<(), ApplicationDispatchError> {
+    if PROCESS_CACHES.get().is_none() {
+        let charge = casa_imaging_runtime::admit(
+            &context.host,
+            &context.policy,
+            &casa_imaging_runtime::Demand {
+                phase: "process caches",
+                memory: process_cache_bytes(),
+            },
+        )
+        .map_err(ApplicationDispatchError::Admission)?;
+        // A concurrent run that set it first holds the charge.
+        let _ = PROCESS_CACHES.set(charge);
+    }
+    Ok(())
+}
+
+/// Compile `request` for its native run, with the charge of the Measures
+/// catalogs compiling loads for the run. They are admitted before compile
+/// opens anything, after the process's caches ([`admit_process_caches`]);
+/// the MeasurementSet walks are admitted once its rows are known
+/// ([`compile::prepare`]) and released once the selected observation is
+/// resolved.
+fn compile_run(
+    request: &ImagingRequest,
+    context: &RunContext,
+) -> Result<
+    (
+        CompiledProblem,
+        NativeInput,
+        ApplicationNative,
+        casa_imaging_runtime::Reservation,
+    ),
+    ApplicationDispatchError,
+> {
     request
         .validate()
         .map_err(ApplicationDispatchError::Request)?;
-    let prepared =
-        compile::prepare(request, &context).map_err(ApplicationDispatchError::Preparation)?;
+    admit_process_caches(context)?;
+    let resident = casa_imaging_runtime::admit(
+        &context.host,
+        &context.policy,
+        &casa_imaging_runtime::Demand {
+            phase: "measures",
+            memory: casa_ms::MEASURES_RUNTIME_BYTES as u64,
+        },
+    )
+    .map_err(ApplicationDispatchError::Admission)?;
+    let prepared = compile::prepare(request, context).map_err(|error| match error {
+        PrepareError::Admission(admission) => ApplicationDispatchError::Admission(admission),
+        error => ApplicationDispatchError::Preparation(error),
+    })?;
     let resolved = resolve_selected_observation(prepared.observation.clone())
         .map_err(|error| ApplicationDispatchError::Preparation(error.into()))?;
     let (snapshot, access) = resolved.into_parts();
     let observation = compile_observation(snapshot)
         .map_err(|error| ApplicationDispatchError::Preparation(error.into()))?;
+    drop(prepared.walks);
     let problem = compile(ProblemInput::new(
         prepared.specification,
         prepared.geometry,
@@ -267,11 +367,7 @@ pub fn execute(
         masks: prepared.masks,
         minor_cycle_image_response: prepared.minor_cycle_image_response,
     };
-    run_native(&problem, input, native).map_err(|error| match error {
-        NativeError::Admission(admission) => ApplicationDispatchError::Admission(admission),
-        NativeError::Cancelled(_) => ApplicationDispatchError::Cancelled,
-        NativeError::Other(error) => ApplicationDispatchError::Native(error),
-    })
+    Ok((problem, input, native, resident))
 }
 
 pub(crate) fn visibility_write_selection(

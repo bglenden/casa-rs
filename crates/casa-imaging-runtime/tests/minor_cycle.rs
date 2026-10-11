@@ -22,7 +22,8 @@ use casa_imaging_reconstruction::{
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{
-    MinorCycleOutcome, MinorCycleSetup, PsfCache, prepare_minor_cycle, run_minor_cycle,
+    HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache, ResourcePolicy,
+    prepare_minor_cycle, run_minor_cycle,
 };
 use problems::{empty_final_model, model_lifecycle, reconstruction_problem, validity};
 use synthetic_pass::{BLOCKS, SAMPLES, Scene};
@@ -108,10 +109,30 @@ fn minor_cycle(
     let prepared = prepare_minor_cycle(completion, &full_plane(problem), setup, &mut cache, &team)
         .expect("prepare");
     let peak = prepared.statistics.peak;
-    let outcome = run_minor_cycle(prepared, completion, setup, controls, &mut cache, &team)
-        .expect("minor cycle");
+    let outcome = run_minor_cycle(
+        prepared,
+        completion,
+        setup,
+        controls,
+        &mut cache,
+        &team,
+        (&HOST, &POLICY),
+    )
+    .expect("minor cycle");
     (peak, outcome)
 }
+
+/// A host and policy that admit every cycle here.
+const HOST: HostResources = HostResources {
+    threads: 8,
+    performance_cores: 8,
+    available_memory: 1 << 40,
+    metal: false,
+};
+const POLICY: ResourcePolicy = ResourcePolicy::Explicit {
+    workers: 8,
+    memory: 1 << 40,
+};
 
 /// `SIImageStore::divideResidualByWeight` divides the residual by the
 /// published `.sumwt` and the weight image by the PSF gridding's sum (the
