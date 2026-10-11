@@ -833,9 +833,12 @@ fn load<'a>(
 
 /// One plane's residual and PSF. Without a response both are divided by the
 /// PSF peak; with one the residual takes CASA's normalisation
-/// (`SIImageStore::divideResidualByWeight`: by the published sum of weights,
-/// and the weight image by the PSF gridding's) and the components convert
-/// back with `divideModelByWeight`. CASA normalises every (polarization,
+/// (`SIImageStore::divideResidualByWeight`) and the components convert back
+/// with `divideModelByWeight`. The residual divides by the published sum of
+/// weights and the weight image by the normal one; for one term both are
+/// the PSF gridding's `.sumwt` (`FTMachine::finalizeToSkyNew` writes it
+/// once), so they cancel as CASA's `divideImageByWeightVal` and
+/// `dividePSFByWeight` do. CASA normalises every (polarization,
 /// channel) plane by that plane's own sums and weight image, so a cube
 /// channel reads its own; a paged cube reads only this plane.
 fn read_single<'a>(

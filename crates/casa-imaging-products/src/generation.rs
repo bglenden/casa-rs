@@ -36,7 +36,8 @@ use crate::{ProductStoragePlan, ProductWindowExecutor};
 /// # Errors
 ///
 /// Unsupported roles, failed beam fits, generated non-finite payloads, and
-/// image writes that fail.
+/// image writes that fail. A failed generation discards every member it
+/// staged, so a later [`CasaImageWriter::publish`] publishes none of them.
 pub fn produce_continuum_members(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
@@ -44,9 +45,26 @@ pub fn produce_continuum_members(
     execution: &impl ProductWindowExecutor,
     output: &CasaImageWriter,
 ) -> Result<PublishedContinuumGeneration, ProductsError> {
-    if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
-        return produce_taylor_members(planned, inputs, storage_plan, output);
+    let kept = output.staged_count();
+    let produced =
+        if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+            produce_taylor_members(planned, inputs, storage_plan, output)
+        } else {
+            produce_plane_members(planned, inputs, storage_plan, execution, output)
+        };
+    if produced.is_err() {
+        output.discard_staged_after(kept);
     }
+    produced
+}
+
+fn produce_plane_members(
+    planned: &PlannedContinuumGeneration,
+    inputs: &ContinuumProductInputs<'_>,
+    storage_plan: ProductStoragePlan,
+    execution: &impl ProductWindowExecutor,
+    output: &CasaImageWriter,
+) -> Result<PublishedContinuumGeneration, ProductsError> {
     let fitted_beams = if planned.requires_beam() {
         fit_beams(planned, inputs, storage_plan, execution)?
     } else {

@@ -520,7 +520,7 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
     assert!(matches!(
         PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
             .expect_err("requested PB needs a bound model at planning"),
-        ProductsError::UnsupportedProblem
+        ProductsError::MissingPrimaryBeamModel
     ));
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);

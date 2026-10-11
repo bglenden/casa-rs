@@ -403,16 +403,16 @@ fn principal_primary_beam(
                 .weighted_primary_beam(inputs.problem().products().validity().primary_beam())?,
             None => MosaicSensitivity::primary_beam_from_weight(weight0)?,
         },
-        None if publishes(inputs, |role| {
-            matches!(
-                role,
-                ProductRole::PrimaryBeam(_) | ProductRole::PbCorrectedImage(_)
-            )
-        }) =>
-        {
-            return Err(ProductsError::UnsupportedProblem);
+        None => {
+            assert!(
+                !publishes(inputs, |role| matches!(
+                    role,
+                    ProductRole::PrimaryBeam(_) | ProductRole::PbCorrectedImage(_)
+                )),
+                "planning refuses a PB product without a primary-beam model"
+            );
+            MosaicSensitivity::primary_beam_from_weight(weight0)?
         }
-        None => MosaicSensitivity::primary_beam_from_weight(weight0)?,
     })
 }
 

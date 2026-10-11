@@ -281,12 +281,13 @@ fn publish_products(
     )?;
     let published =
         produce_continuum_members(&planned, &inputs, window, team, &publication.writer)?;
-    drop(held);
     if runtime.cancel.is_cancelled() {
         // The staged members are removed when the writer drops.
         return Err(Cancelled.into());
     }
     publication.writer.publish()?;
+    // The charge covers the staged records until they are published.
+    drop(held);
     Ok(Products {
         planned,
         scientific,

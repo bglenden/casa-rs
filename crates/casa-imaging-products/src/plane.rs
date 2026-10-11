@@ -328,7 +328,9 @@ pub(crate) fn product_plane_validity(
             )
         }
         ProductValidityRule::Taylor(_) | ProductValidityRule::TaylorAndPrimaryBeam { .. } => {
-            Err(ProductsError::UnsupportedProblem)
+            unreachable!(
+                "Taylor validity rules belong to Taylor members, which the Taylor path makes"
+            )
         }
     }
 }
@@ -363,7 +365,7 @@ fn primary_beam_plane(
         Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
             Ok(MosaicSensitivity::new(&plane.read_sensitivity()?)?.primary_beam())
         }
-        None => Err(ProductsError::UnsupportedProblem),
+        None => unreachable!("planning refuses a PB product or mask without a primary-beam model"),
     }
 }
 

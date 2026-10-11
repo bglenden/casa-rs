@@ -58,9 +58,14 @@ pub enum ProductsError {
     /// Production controls were outside their validated ranges.
     #[error("continuum production controls are invalid")]
     InvalidControls,
-    /// The compiled problem is not a supported single-plane continuum problem.
-    #[error("problem is not a supported single-plane constant-basis continuum problem")]
+    /// The compiled problem asks for a product rule these products do not
+    /// implement.
+    #[error("the compiled problem asks for a product rule the products do not implement")]
     UnsupportedProblem,
+    /// A PB product or PB-masked member was planned without a primary-beam
+    /// model in the controls.
+    #[error("a primary-beam product or mask needs a primary-beam model")]
+    MissingPrimaryBeamModel,
     /// The selected beam law cannot represent an output channel's frequency.
     #[error(
         "primary-beam model {model:?} does not support output channel {output_channel} at {frequency_hz} Hz"

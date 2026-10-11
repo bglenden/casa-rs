@@ -52,7 +52,8 @@ pub enum PrepareError {
     /// polarizations).
     #[error(transparent)]
     ModelBounds(#[from] casa_imaging_model::ModelContractError),
-    /// `normtype` has no direction-dependent image response.
+    /// The products refuse the compiled problem: a `normtype` with no
+    /// direction-dependent image response, or controls they cannot apply.
     #[error(transparent)]
     ImageResponse(#[from] casa_imaging_products::ProductsError),
     /// `pblimit` is outside the primary-beam validity contract.

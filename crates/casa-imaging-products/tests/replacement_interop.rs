@@ -3,8 +3,11 @@
 //! The CASA image writer replaces each image whole, against C++ casacore
 //! holding the old image open in another process.
 //!
-//! A reader that opened an image before a run replaced it keeps reading the
-//! old image, whole; a reader that opens it afterwards reads the new one.
+//! A reader that opened an image, and read it, before a run replaced it
+//! keeps reading the old image's pixels; a reader that opens it afterwards
+//! reads the new one, whole. casacore opens some storage, such as a pixel
+//! mask, by path on its first read, so a held reader that first reads it
+//! after the replacement reads the new image's (the writer's module doc).
 //! The held reader runs in a child process of this test binary, as `fcntl`
 //! locks belong to a process.
 

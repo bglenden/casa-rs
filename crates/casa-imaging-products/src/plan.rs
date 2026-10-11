@@ -195,7 +195,7 @@ impl PlannedContinuumGeneration {
                 || matches!(entry.storage().pixel_mask(), ProductPixelMask::Explicit(rule)
                     if needs_primary_beam(rule));
             if requires_primary_beam && controls.primary_beam_model.is_none() {
-                return Err(ProductsError::UnsupportedProblem);
+                return Err(ProductsError::MissingPrimaryBeamModel);
             }
             let axes = entry.axes();
             let shape = axes.shape();

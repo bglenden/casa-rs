@@ -466,6 +466,98 @@ fn bounded_windows_publish_the_members_one_window_does() {
     );
 }
 
+/// A generation that fails after members have finished discards their
+/// staging before the writer drops, so publishing it publishes nothing.
+#[test]
+fn a_late_failure_discards_the_members_already_staged() {
+    let products = [
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::SumWeights,
+    ];
+    let problem = continuum_problem_with_reconstruction(
+        97,
+        &products,
+        RestoringBeamPolicy::None,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Dirty,
+        2,
+    );
+    let round = run_continuum_round(&problem);
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
+    let planned = planned_for(&inputs, &ContinuumProductControls::default());
+    let storage_plan = ProductStoragePlan::new(1, 1).expect("one-channel windows");
+    let counting = FailingCall::new(usize::MAX);
+    produce_continuum_members(
+        &planned,
+        &inputs,
+        storage_plan,
+        &counting,
+        &ImageOutput::for_problem(&problem),
+    )
+    .expect("an unfailing generation");
+    let calls = counting.calls.into_inner();
+    // Fail every preparation in turn, the later ones after members finished.
+    for failing_call in 1..=calls {
+        let output = ImageOutput::for_problem(&problem);
+        let error = produce_continuum_members(
+            &planned,
+            &inputs,
+            storage_plan,
+            &FailingCall::new(failing_call),
+            &output,
+        )
+        .expect_err("the executor fails");
+        assert!(
+            matches!(error, ProductsError::GeneratedNonfinite),
+            "{error}"
+        );
+        assert!(
+            output.entries().is_empty(),
+            "call {failing_call}: the finished members' staging is gone: {:?}",
+            output.entries()
+        );
+        output.publish().expect("nothing staged to publish");
+        assert!(output.entries().is_empty(), "nothing published");
+    }
+}
+
+/// Runs preparations in order and fails the `failing`th, counting from one.
+struct FailingCall {
+    calls: std::sync::atomic::AtomicUsize,
+    failing: usize,
+}
+
+impl FailingCall {
+    fn new(failing: usize) -> Self {
+        Self {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            failing,
+        }
+    }
+}
+
+impl casa_imaging_products::ProductWindowExecutor for FailingCall {
+    fn prepare<T: Send>(
+        &self,
+        slots: &mut [Option<T>],
+        operation: &(dyn Fn(usize) -> Result<T, ProductsError> + Sync),
+    ) -> Result<(), ProductsError> {
+        for (index, slot) in slots.iter_mut().enumerate() {
+            let call = self
+                .calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                + 1;
+            if call == self.failing {
+                return Err(ProductsError::GeneratedNonfinite);
+            }
+            *slot = Some(operation(index)?);
+        }
+        Ok(())
+    }
+}
+
 struct ReversedWindowCompletion {
     fail: bool,
 }

@@ -6,10 +6,24 @@
 //! Publishing then replaces each target on its own: the staged image is
 //! renamed into place, or exchanged with an existing image in one call
 //! (`renamex_np` with `RENAME_SWAP` on macOS, `renameat2` with
-//! `RENAME_EXCHANGE` on Linux), and both directories are synced. A reader
-//! sees the old image or the new one, never a mixture. A member already
-//! replaced stays valid if a later one fails; the set is then incomplete
-//! and the run must be repeated.
+//! `RENAME_EXCHANGE` on Linux), and both directories are synced. An open
+//! after the replacement sees the whole new image, and one before it the
+//! whole old image. A member already replaced stays valid if a later one
+//! fails; the set is then incomplete and the run must be repeated.
+//!
+//! Limits:
+//! - **A held reader keeps only what it has opened.** casacore opens some
+//!   storage, such as a pixel mask, by path when it is first read. A reader
+//!   that holds the old image across a replacement and first reads such
+//!   storage afterwards reads the new image's, or fails if the new image has
+//!   none. Reopen an image after a run replaces it. CASA's own in-place
+//!   overwrite gives a held reader no coherence at all.
+//! - **Exchange needs local filesystem support.** A filesystem without an
+//!   atomic exchange (SMB, some NFS) refuses a run into an existing image,
+//!   with [`ProductsError::Io`].
+//! - **A killed run leaves its staging.** A failed generation discards what
+//!   it staged; a killed process leaves `.<name>.casa-rs-stage-*`
+//!   directories beside the targets, which are safe to delete.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{CString, OsString};
@@ -107,16 +121,20 @@ impl CasaImageWriter {
     }
 
     /// Bytes the writer holds while it writes `planned` a window at a time:
-    /// the image's tile cache and serialization buffers, its coordinates and
-    /// beam metadata, and the record of each staged member kept until
-    /// [`Self::publish`].
+    /// the image's tile cache and serialization buffers, the pixel mask's
+    /// cache (opened with the image's budget, so up to four windows of
+    /// validity), its coordinates and beam metadata, and the record of each
+    /// staged member kept until [`Self::publish`].
     pub(crate) fn residency_bytes(
         &self,
         planned: &PlannedContinuumGeneration,
         window_payload_bytes: u64,
         window_validity_bytes: u64,
     ) -> Result<u64, ProductsError> {
-        const IMAGE_ENVELOPE_BYTES: u64 = 4_096;
+        // The open image's table, data-manager and record metadata. An 8×8
+        // PB-only member with empty coordinates measured 46 kB live against
+        // 18 kB charged with a 4 kB envelope (review of #701).
+        const IMAGE_ENVELOPE_BYTES: u64 = 64 * 1024;
         const STAGED_MEMBER_RECORD_BYTES: u64 = 512;
         let overflow = || ProductsError::ResourceDemandOverflow("CASA image writer");
         let coordinate_bytes = self.domains.values().try_fold(0_u64, |maximum, output| {
@@ -159,12 +177,30 @@ impl CasaImageWriter {
         })?;
         window_payload_bytes
             .checked_mul(4)
-            .and_then(|bytes| bytes.checked_add(window_validity_bytes.checked_mul(2)?))
+            // The validity pack and its copy, and the mask's cache.
+            .and_then(|bytes| bytes.checked_add(window_validity_bytes.checked_mul(6)?))
             .and_then(|bytes| bytes.checked_add(IMAGE_ENVELOPE_BYTES))
             .and_then(|bytes| bytes.checked_add(coordinate_bytes))
             .and_then(|bytes| bytes.checked_add(beam_bytes))
             .and_then(|bytes| bytes.checked_add(registry_bytes))
             .ok_or_else(overflow)
+    }
+
+    /// The number of members staged and not yet published.
+    pub(crate) fn staged_count(&self) -> usize {
+        self.staged
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+
+    /// Discard the members staged after the first `kept`, deleting their
+    /// staging: a failed generation publishes none of its members.
+    pub(crate) fn discard_staged_after(&self, kept: usize) {
+        self.staged
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .truncate(kept);
     }
 
     /// Replace every staged member's target, in generation order.
