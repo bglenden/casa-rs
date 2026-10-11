@@ -3439,263 +3439,267 @@
 <a href=#3439 id=3439 data-nosnippet>3439</a>        table_path
 <a href=#3440 id=3440 data-nosnippet>3440</a>    }
 <a href=#3441 id=3441 data-nosnippet>3441</a>
-<a href=#3442 id=3442 data-nosnippet>3442</a>    <span class="kw">fn </span>create_type_matrix_browser(root: <span class="kw-2">&amp;</span>Path) -&gt; TableBrowser {
-<a href=#3443 id=3443 data-nosnippet>3443</a>        <span class="kw">let </span>child_path = root.join(<span class="string">"child.tab"</span>);
-<a href=#3444 id=3444 data-nosnippet>3444</a>        <span class="kw">let </span>root_path = root.join(<span class="string">"type_matrix.tab"</span>);
-<a href=#3445 id=3445 data-nosnippet>3445</a>
-<a href=#3446 id=3446 data-nosnippet>3446</a>        <span class="kw">let </span>child_schema = TableSchema::new(<span class="macro">vec!</span>[ColumnSchema::scalar(<span class="string">"id"</span>, PrimitiveType::Int32)])
-<a href=#3447 id=3447 data-nosnippet>3447</a>            .expect(<span class="string">"child schema"</span>);
-<a href=#3448 id=3448 data-nosnippet>3448</a>        <span class="kw">let </span><span class="kw-2">mut </span>child = Table::with_schema(child_schema);
-<a href=#3449 id=3449 data-nosnippet>3449</a>        child
-<a href=#3450 id=3450 data-nosnippet>3450</a>            .add_row(RecordValue::new(<span class="macro">vec!</span>[RecordField::new(
-<a href=#3451 id=3451 data-nosnippet>3451</a>                <span class="string">"id"</span>,
-<a href=#3452 id=3452 data-nosnippet>3452</a>                Value::Scalar(ScalarValue::Int32(<span class="number">99</span>)),
-<a href=#3453 id=3453 data-nosnippet>3453</a>            )]))
-<a href=#3454 id=3454 data-nosnippet>3454</a>            .expect(<span class="string">"child row"</span>);
-<a href=#3455 id=3455 data-nosnippet>3455</a>        child
-<a href=#3456 id=3456 data-nosnippet>3456</a>            .save(TableOptions::new(<span class="kw-2">&amp;</span>child_path))
-<a href=#3457 id=3457 data-nosnippet>3457</a>            .expect(<span class="string">"save child"</span>);
-<a href=#3458 id=3458 data-nosnippet>3458</a>
-<a href=#3459 id=3459 data-nosnippet>3459</a>        <span class="kw">let </span>schema = TableSchema::new(<span class="macro">vec!</span>[
-<a href=#3460 id=3460 data-nosnippet>3460</a>            ColumnSchema::scalar(<span class="string">"bool_scalar"</span>, PrimitiveType::Bool),
-<a href=#3461 id=3461 data-nosnippet>3461</a>            ColumnSchema::scalar(<span class="string">"u8_scalar"</span>, PrimitiveType::UInt8),
-<a href=#3462 id=3462 data-nosnippet>3462</a>            ColumnSchema::scalar(<span class="string">"u16_scalar"</span>, PrimitiveType::UInt16),
-<a href=#3463 id=3463 data-nosnippet>3463</a>            ColumnSchema::scalar(<span class="string">"u32_scalar"</span>, PrimitiveType::UInt32),
-<a href=#3464 id=3464 data-nosnippet>3464</a>            ColumnSchema::scalar(<span class="string">"i16_scalar"</span>, PrimitiveType::Int16),
-<a href=#3465 id=3465 data-nosnippet>3465</a>            ColumnSchema::scalar(<span class="string">"i32_scalar"</span>, PrimitiveType::Int32),
-<a href=#3466 id=3466 data-nosnippet>3466</a>            ColumnSchema::scalar(<span class="string">"i64_scalar"</span>, PrimitiveType::Int64),
-<a href=#3467 id=3467 data-nosnippet>3467</a>            ColumnSchema::scalar(<span class="string">"f32_scalar"</span>, PrimitiveType::Float32),
-<a href=#3468 id=3468 data-nosnippet>3468</a>            ColumnSchema::scalar(<span class="string">"f64_scalar"</span>, PrimitiveType::Float64),
-<a href=#3469 id=3469 data-nosnippet>3469</a>            ColumnSchema::scalar(<span class="string">"c32_scalar"</span>, PrimitiveType::Complex32),
-<a href=#3470 id=3470 data-nosnippet>3470</a>            ColumnSchema::scalar(<span class="string">"c64_scalar"</span>, PrimitiveType::Complex64),
-<a href=#3471 id=3471 data-nosnippet>3471</a>            ColumnSchema::scalar(<span class="string">"string_scalar"</span>, PrimitiveType::String),
-<a href=#3472 id=3472 data-nosnippet>3472</a>            ColumnSchema::array_fixed(<span class="string">"bool_array"</span>, PrimitiveType::Bool, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
-<a href=#3473 id=3473 data-nosnippet>3473</a>            ColumnSchema::array_fixed(<span class="string">"u8_array"</span>, PrimitiveType::UInt8, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
-<a href=#3474 id=3474 data-nosnippet>3474</a>            ColumnSchema::array_fixed(<span class="string">"u16_array"</span>, PrimitiveType::UInt16, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
-<a href=#3475 id=3475 data-nosnippet>3475</a>            ColumnSchema::array_fixed(<span class="string">"u32_array"</span>, PrimitiveType::UInt32, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
-<a href=#3476 id=3476 data-nosnippet>3476</a>            ColumnSchema::array_fixed(<span class="string">"i16_array"</span>, PrimitiveType::Int16, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
-<a href=#3477 id=3477 data-nosnippet>3477</a>            ColumnSchema::array_fixed(<span class="string">"i32_array"</span>, PrimitiveType::Int32, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
-<a href=#3478 id=3478 data-nosnippet>3478</a>            ColumnSchema::array_fixed(<span class="string">"i64_array"</span>, PrimitiveType::Int64, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
-<a href=#3479 id=3479 data-nosnippet>3479</a>            ColumnSchema::array_fixed(<span class="string">"f32_array"</span>, PrimitiveType::Float32, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
-<a href=#3480 id=3480 data-nosnippet>3480</a>            ColumnSchema::array_fixed(<span class="string">"f64_array"</span>, PrimitiveType::Float64, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
-<a href=#3481 id=3481 data-nosnippet>3481</a>            ColumnSchema::array_fixed(<span class="string">"c32_array"</span>, PrimitiveType::Complex32, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
-<a href=#3482 id=3482 data-nosnippet>3482</a>            ColumnSchema::array_fixed(<span class="string">"c64_array"</span>, PrimitiveType::Complex64, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
-<a href=#3483 id=3483 data-nosnippet>3483</a>            ColumnSchema::array_fixed(<span class="string">"string_array"</span>, PrimitiveType::String, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
-<a href=#3484 id=3484 data-nosnippet>3484</a>            ColumnSchema::record(<span class="string">"meta"</span>),
-<a href=#3485 id=3485 data-nosnippet>3485</a>        ])
-<a href=#3486 id=3486 data-nosnippet>3486</a>        .expect(<span class="string">"type matrix schema"</span>);
-<a href=#3487 id=3487 data-nosnippet>3487</a>        <span class="kw">let </span><span class="kw-2">mut </span>table = Table::with_schema(schema);
-<a href=#3488 id=3488 data-nosnippet>3488</a>
-<a href=#3489 id=3489 data-nosnippet>3489</a>        <span class="kw">let </span><span class="kw-2">mut </span>meta = RecordValue::default();
-<a href=#3490 id=3490 data-nosnippet>3490</a>        meta.upsert(<span class="string">"child_ref"</span>, Value::table_ref(<span class="string">"child.tab"</span>));
-<a href=#3491 id=3491 data-nosnippet>3491</a>        meta.upsert(
-<a href=#3492 id=3492 data-nosnippet>3492</a>            <span class="string">"nested"</span>,
-<a href=#3493 id=3493 data-nosnippet>3493</a>            Value::Record(RecordValue::new(<span class="macro">vec!</span>[RecordField::new(
-<a href=#3494 id=3494 data-nosnippet>3494</a>                <span class="string">"answer"</span>,
-<a href=#3495 id=3495 data-nosnippet>3495</a>                Value::Scalar(ScalarValue::Int32(<span class="number">42</span>)),
-<a href=#3496 id=3496 data-nosnippet>3496</a>            )])),
-<a href=#3497 id=3497 data-nosnippet>3497</a>        );
-<a href=#3498 id=3498 data-nosnippet>3498</a>        meta.upsert(<span class="string">"flag"</span>, Value::Scalar(ScalarValue::Bool(<span class="bool-val">true</span>)));
-<a href=#3499 id=3499 data-nosnippet>3499</a>
-<a href=#3500 id=3500 data-nosnippet>3500</a>        table
-<a href=#3501 id=3501 data-nosnippet>3501</a>            .add_row(RecordValue::new(<span class="macro">vec!</span>[
-<a href=#3502 id=3502 data-nosnippet>3502</a>                RecordField::new(<span class="string">"bool_scalar"</span>, Value::Scalar(ScalarValue::Bool(<span class="bool-val">true</span>))),
-<a href=#3503 id=3503 data-nosnippet>3503</a>                RecordField::new(<span class="string">"u8_scalar"</span>, Value::Scalar(ScalarValue::UInt8(<span class="number">8</span>))),
-<a href=#3504 id=3504 data-nosnippet>3504</a>                RecordField::new(<span class="string">"u16_scalar"</span>, Value::Scalar(ScalarValue::UInt16(<span class="number">16</span>))),
-<a href=#3505 id=3505 data-nosnippet>3505</a>                RecordField::new(<span class="string">"u32_scalar"</span>, Value::Scalar(ScalarValue::UInt32(<span class="number">32</span>))),
-<a href=#3506 id=3506 data-nosnippet>3506</a>                RecordField::new(<span class="string">"i16_scalar"</span>, Value::Scalar(ScalarValue::Int16(-<span class="number">16</span>))),
-<a href=#3507 id=3507 data-nosnippet>3507</a>                RecordField::new(<span class="string">"i32_scalar"</span>, Value::Scalar(ScalarValue::Int32(-<span class="number">32</span>))),
-<a href=#3508 id=3508 data-nosnippet>3508</a>                RecordField::new(<span class="string">"i64_scalar"</span>, Value::Scalar(ScalarValue::Int64(-<span class="number">64</span>))),
-<a href=#3509 id=3509 data-nosnippet>3509</a>                RecordField::new(<span class="string">"f32_scalar"</span>, Value::Scalar(ScalarValue::Float32(<span class="number">3.25</span>))),
-<a href=#3510 id=3510 data-nosnippet>3510</a>                RecordField::new(<span class="string">"f64_scalar"</span>, Value::Scalar(ScalarValue::Float64(<span class="number">6.5</span>))),
-<a href=#3511 id=3511 data-nosnippet>3511</a>                RecordField::new(
-<a href=#3512 id=3512 data-nosnippet>3512</a>                    <span class="string">"c32_scalar"</span>,
-<a href=#3513 id=3513 data-nosnippet>3513</a>                    Value::Scalar(ScalarValue::Complex32(Complex32::new(<span class="number">1.0</span>, -<span class="number">1.0</span>))),
-<a href=#3514 id=3514 data-nosnippet>3514</a>                ),
+<a href=#3442 id=3442 data-nosnippet>3442</a>    <span class="attr">#[expect(
+<a href=#3443 id=3443 data-nosnippet>3443</a>        clippy::too_many_lines,
+<a href=#3444 id=3444 data-nosnippet>3444</a>        reason = <span class="string">"predates the function-length limit; #705"
+<a href=#3445 id=3445 data-nosnippet>3445</a>    </span>)]
+<a href=#3446 id=3446 data-nosnippet>3446</a>    </span><span class="kw">fn </span>create_type_matrix_browser(root: <span class="kw-2">&amp;</span>Path) -&gt; TableBrowser {
+<a href=#3447 id=3447 data-nosnippet>3447</a>        <span class="kw">let </span>child_path = root.join(<span class="string">"child.tab"</span>);
+<a href=#3448 id=3448 data-nosnippet>3448</a>        <span class="kw">let </span>root_path = root.join(<span class="string">"type_matrix.tab"</span>);
+<a href=#3449 id=3449 data-nosnippet>3449</a>
+<a href=#3450 id=3450 data-nosnippet>3450</a>        <span class="kw">let </span>child_schema = TableSchema::new(<span class="macro">vec!</span>[ColumnSchema::scalar(<span class="string">"id"</span>, PrimitiveType::Int32)])
+<a href=#3451 id=3451 data-nosnippet>3451</a>            .expect(<span class="string">"child schema"</span>);
+<a href=#3452 id=3452 data-nosnippet>3452</a>        <span class="kw">let </span><span class="kw-2">mut </span>child = Table::with_schema(child_schema);
+<a href=#3453 id=3453 data-nosnippet>3453</a>        child
+<a href=#3454 id=3454 data-nosnippet>3454</a>            .add_row(RecordValue::new(<span class="macro">vec!</span>[RecordField::new(
+<a href=#3455 id=3455 data-nosnippet>3455</a>                <span class="string">"id"</span>,
+<a href=#3456 id=3456 data-nosnippet>3456</a>                Value::Scalar(ScalarValue::Int32(<span class="number">99</span>)),
+<a href=#3457 id=3457 data-nosnippet>3457</a>            )]))
+<a href=#3458 id=3458 data-nosnippet>3458</a>            .expect(<span class="string">"child row"</span>);
+<a href=#3459 id=3459 data-nosnippet>3459</a>        child
+<a href=#3460 id=3460 data-nosnippet>3460</a>            .save(TableOptions::new(<span class="kw-2">&amp;</span>child_path))
+<a href=#3461 id=3461 data-nosnippet>3461</a>            .expect(<span class="string">"save child"</span>);
+<a href=#3462 id=3462 data-nosnippet>3462</a>
+<a href=#3463 id=3463 data-nosnippet>3463</a>        <span class="kw">let </span>schema = TableSchema::new(<span class="macro">vec!</span>[
+<a href=#3464 id=3464 data-nosnippet>3464</a>            ColumnSchema::scalar(<span class="string">"bool_scalar"</span>, PrimitiveType::Bool),
+<a href=#3465 id=3465 data-nosnippet>3465</a>            ColumnSchema::scalar(<span class="string">"u8_scalar"</span>, PrimitiveType::UInt8),
+<a href=#3466 id=3466 data-nosnippet>3466</a>            ColumnSchema::scalar(<span class="string">"u16_scalar"</span>, PrimitiveType::UInt16),
+<a href=#3467 id=3467 data-nosnippet>3467</a>            ColumnSchema::scalar(<span class="string">"u32_scalar"</span>, PrimitiveType::UInt32),
+<a href=#3468 id=3468 data-nosnippet>3468</a>            ColumnSchema::scalar(<span class="string">"i16_scalar"</span>, PrimitiveType::Int16),
+<a href=#3469 id=3469 data-nosnippet>3469</a>            ColumnSchema::scalar(<span class="string">"i32_scalar"</span>, PrimitiveType::Int32),
+<a href=#3470 id=3470 data-nosnippet>3470</a>            ColumnSchema::scalar(<span class="string">"i64_scalar"</span>, PrimitiveType::Int64),
+<a href=#3471 id=3471 data-nosnippet>3471</a>            ColumnSchema::scalar(<span class="string">"f32_scalar"</span>, PrimitiveType::Float32),
+<a href=#3472 id=3472 data-nosnippet>3472</a>            ColumnSchema::scalar(<span class="string">"f64_scalar"</span>, PrimitiveType::Float64),
+<a href=#3473 id=3473 data-nosnippet>3473</a>            ColumnSchema::scalar(<span class="string">"c32_scalar"</span>, PrimitiveType::Complex32),
+<a href=#3474 id=3474 data-nosnippet>3474</a>            ColumnSchema::scalar(<span class="string">"c64_scalar"</span>, PrimitiveType::Complex64),
+<a href=#3475 id=3475 data-nosnippet>3475</a>            ColumnSchema::scalar(<span class="string">"string_scalar"</span>, PrimitiveType::String),
+<a href=#3476 id=3476 data-nosnippet>3476</a>            ColumnSchema::array_fixed(<span class="string">"bool_array"</span>, PrimitiveType::Bool, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
+<a href=#3477 id=3477 data-nosnippet>3477</a>            ColumnSchema::array_fixed(<span class="string">"u8_array"</span>, PrimitiveType::UInt8, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
+<a href=#3478 id=3478 data-nosnippet>3478</a>            ColumnSchema::array_fixed(<span class="string">"u16_array"</span>, PrimitiveType::UInt16, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
+<a href=#3479 id=3479 data-nosnippet>3479</a>            ColumnSchema::array_fixed(<span class="string">"u32_array"</span>, PrimitiveType::UInt32, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
+<a href=#3480 id=3480 data-nosnippet>3480</a>            ColumnSchema::array_fixed(<span class="string">"i16_array"</span>, PrimitiveType::Int16, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
+<a href=#3481 id=3481 data-nosnippet>3481</a>            ColumnSchema::array_fixed(<span class="string">"i32_array"</span>, PrimitiveType::Int32, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
+<a href=#3482 id=3482 data-nosnippet>3482</a>            ColumnSchema::array_fixed(<span class="string">"i64_array"</span>, PrimitiveType::Int64, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
+<a href=#3483 id=3483 data-nosnippet>3483</a>            ColumnSchema::array_fixed(<span class="string">"f32_array"</span>, PrimitiveType::Float32, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
+<a href=#3484 id=3484 data-nosnippet>3484</a>            ColumnSchema::array_fixed(<span class="string">"f64_array"</span>, PrimitiveType::Float64, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
+<a href=#3485 id=3485 data-nosnippet>3485</a>            ColumnSchema::array_fixed(<span class="string">"c32_array"</span>, PrimitiveType::Complex32, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
+<a href=#3486 id=3486 data-nosnippet>3486</a>            ColumnSchema::array_fixed(<span class="string">"c64_array"</span>, PrimitiveType::Complex64, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
+<a href=#3487 id=3487 data-nosnippet>3487</a>            ColumnSchema::array_fixed(<span class="string">"string_array"</span>, PrimitiveType::String, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>]),
+<a href=#3488 id=3488 data-nosnippet>3488</a>            ColumnSchema::record(<span class="string">"meta"</span>),
+<a href=#3489 id=3489 data-nosnippet>3489</a>        ])
+<a href=#3490 id=3490 data-nosnippet>3490</a>        .expect(<span class="string">"type matrix schema"</span>);
+<a href=#3491 id=3491 data-nosnippet>3491</a>        <span class="kw">let </span><span class="kw-2">mut </span>table = Table::with_schema(schema);
+<a href=#3492 id=3492 data-nosnippet>3492</a>
+<a href=#3493 id=3493 data-nosnippet>3493</a>        <span class="kw">let </span><span class="kw-2">mut </span>meta = RecordValue::default();
+<a href=#3494 id=3494 data-nosnippet>3494</a>        meta.upsert(<span class="string">"child_ref"</span>, Value::table_ref(<span class="string">"child.tab"</span>));
+<a href=#3495 id=3495 data-nosnippet>3495</a>        meta.upsert(
+<a href=#3496 id=3496 data-nosnippet>3496</a>            <span class="string">"nested"</span>,
+<a href=#3497 id=3497 data-nosnippet>3497</a>            Value::Record(RecordValue::new(<span class="macro">vec!</span>[RecordField::new(
+<a href=#3498 id=3498 data-nosnippet>3498</a>                <span class="string">"answer"</span>,
+<a href=#3499 id=3499 data-nosnippet>3499</a>                Value::Scalar(ScalarValue::Int32(<span class="number">42</span>)),
+<a href=#3500 id=3500 data-nosnippet>3500</a>            )])),
+<a href=#3501 id=3501 data-nosnippet>3501</a>        );
+<a href=#3502 id=3502 data-nosnippet>3502</a>        meta.upsert(<span class="string">"flag"</span>, Value::Scalar(ScalarValue::Bool(<span class="bool-val">true</span>)));
+<a href=#3503 id=3503 data-nosnippet>3503</a>
+<a href=#3504 id=3504 data-nosnippet>3504</a>        table
+<a href=#3505 id=3505 data-nosnippet>3505</a>            .add_row(RecordValue::new(<span class="macro">vec!</span>[
+<a href=#3506 id=3506 data-nosnippet>3506</a>                RecordField::new(<span class="string">"bool_scalar"</span>, Value::Scalar(ScalarValue::Bool(<span class="bool-val">true</span>))),
+<a href=#3507 id=3507 data-nosnippet>3507</a>                RecordField::new(<span class="string">"u8_scalar"</span>, Value::Scalar(ScalarValue::UInt8(<span class="number">8</span>))),
+<a href=#3508 id=3508 data-nosnippet>3508</a>                RecordField::new(<span class="string">"u16_scalar"</span>, Value::Scalar(ScalarValue::UInt16(<span class="number">16</span>))),
+<a href=#3509 id=3509 data-nosnippet>3509</a>                RecordField::new(<span class="string">"u32_scalar"</span>, Value::Scalar(ScalarValue::UInt32(<span class="number">32</span>))),
+<a href=#3510 id=3510 data-nosnippet>3510</a>                RecordField::new(<span class="string">"i16_scalar"</span>, Value::Scalar(ScalarValue::Int16(-<span class="number">16</span>))),
+<a href=#3511 id=3511 data-nosnippet>3511</a>                RecordField::new(<span class="string">"i32_scalar"</span>, Value::Scalar(ScalarValue::Int32(-<span class="number">32</span>))),
+<a href=#3512 id=3512 data-nosnippet>3512</a>                RecordField::new(<span class="string">"i64_scalar"</span>, Value::Scalar(ScalarValue::Int64(-<span class="number">64</span>))),
+<a href=#3513 id=3513 data-nosnippet>3513</a>                RecordField::new(<span class="string">"f32_scalar"</span>, Value::Scalar(ScalarValue::Float32(<span class="number">3.25</span>))),
+<a href=#3514 id=3514 data-nosnippet>3514</a>                RecordField::new(<span class="string">"f64_scalar"</span>, Value::Scalar(ScalarValue::Float64(<span class="number">6.5</span>))),
 <a href=#3515 id=3515 data-nosnippet>3515</a>                RecordField::new(
-<a href=#3516 id=3516 data-nosnippet>3516</a>                    <span class="string">"c64_scalar"</span>,
-<a href=#3517 id=3517 data-nosnippet>3517</a>                    Value::Scalar(ScalarValue::Complex64(Complex64::new(<span class="number">2.0</span>, -<span class="number">2.0</span>))),
+<a href=#3516 id=3516 data-nosnippet>3516</a>                    <span class="string">"c32_scalar"</span>,
+<a href=#3517 id=3517 data-nosnippet>3517</a>                    Value::Scalar(ScalarValue::Complex32(Complex32::new(<span class="number">1.0</span>, -<span class="number">1.0</span>))),
 <a href=#3518 id=3518 data-nosnippet>3518</a>                ),
 <a href=#3519 id=3519 data-nosnippet>3519</a>                RecordField::new(
-<a href=#3520 id=3520 data-nosnippet>3520</a>                    <span class="string">"string_scalar"</span>,
-<a href=#3521 id=3521 data-nosnippet>3521</a>                    Value::Scalar(ScalarValue::String(<span class="string">"matrix"</span>.to_string())),
+<a href=#3520 id=3520 data-nosnippet>3520</a>                    <span class="string">"c64_scalar"</span>,
+<a href=#3521 id=3521 data-nosnippet>3521</a>                    Value::Scalar(ScalarValue::Complex64(Complex64::new(<span class="number">2.0</span>, -<span class="number">2.0</span>))),
 <a href=#3522 id=3522 data-nosnippet>3522</a>                ),
 <a href=#3523 id=3523 data-nosnippet>3523</a>                RecordField::new(
-<a href=#3524 id=3524 data-nosnippet>3524</a>                    <span class="string">"bool_array"</span>,
-<a href=#3525 id=3525 data-nosnippet>3525</a>                    Value::Array(ArrayValue::Bool(
-<a href=#3526 id=3526 data-nosnippet>3526</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>])
-<a href=#3527 id=3527 data-nosnippet>3527</a>                            .expect(<span class="string">"bool array"</span>),
-<a href=#3528 id=3528 data-nosnippet>3528</a>                    )),
-<a href=#3529 id=3529 data-nosnippet>3529</a>                ),
-<a href=#3530 id=3530 data-nosnippet>3530</a>                RecordField::new(
-<a href=#3531 id=3531 data-nosnippet>3531</a>                    <span class="string">"u8_array"</span>,
-<a href=#3532 id=3532 data-nosnippet>3532</a>                    Value::Array(ArrayValue::UInt8(
-<a href=#3533 id=3533 data-nosnippet>3533</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>]).expect(<span class="string">"u8 array"</span>),
-<a href=#3534 id=3534 data-nosnippet>3534</a>                    )),
-<a href=#3535 id=3535 data-nosnippet>3535</a>                ),
-<a href=#3536 id=3536 data-nosnippet>3536</a>                RecordField::new(
-<a href=#3537 id=3537 data-nosnippet>3537</a>                    <span class="string">"u16_array"</span>,
-<a href=#3538 id=3538 data-nosnippet>3538</a>                    Value::Array(ArrayValue::UInt16(
-<a href=#3539 id=3539 data-nosnippet>3539</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>]).expect(<span class="string">"u16 array"</span>),
-<a href=#3540 id=3540 data-nosnippet>3540</a>                    )),
-<a href=#3541 id=3541 data-nosnippet>3541</a>                ),
-<a href=#3542 id=3542 data-nosnippet>3542</a>                RecordField::new(
-<a href=#3543 id=3543 data-nosnippet>3543</a>                    <span class="string">"u32_array"</span>,
-<a href=#3544 id=3544 data-nosnippet>3544</a>                    Value::Array(ArrayValue::UInt32(
-<a href=#3545 id=3545 data-nosnippet>3545</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>]).expect(<span class="string">"u32 array"</span>),
-<a href=#3546 id=3546 data-nosnippet>3546</a>                    )),
-<a href=#3547 id=3547 data-nosnippet>3547</a>                ),
-<a href=#3548 id=3548 data-nosnippet>3548</a>                RecordField::new(
-<a href=#3549 id=3549 data-nosnippet>3549</a>                    <span class="string">"i16_array"</span>,
-<a href=#3550 id=3550 data-nosnippet>3550</a>                    Value::Array(ArrayValue::Int16(
-<a href=#3551 id=3551 data-nosnippet>3551</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[-<span class="number">1</span>, -<span class="number">2</span>, -<span class="number">3</span>, -<span class="number">4</span>])
-<a href=#3552 id=3552 data-nosnippet>3552</a>                            .expect(<span class="string">"i16 array"</span>),
-<a href=#3553 id=3553 data-nosnippet>3553</a>                    )),
-<a href=#3554 id=3554 data-nosnippet>3554</a>                ),
-<a href=#3555 id=3555 data-nosnippet>3555</a>                RecordField::new(
-<a href=#3556 id=3556 data-nosnippet>3556</a>                    <span class="string">"i32_array"</span>,
-<a href=#3557 id=3557 data-nosnippet>3557</a>                    Value::Array(ArrayValue::Int32(
-<a href=#3558 id=3558 data-nosnippet>3558</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[-<span class="number">1</span>, -<span class="number">2</span>, -<span class="number">3</span>, -<span class="number">4</span>])
-<a href=#3559 id=3559 data-nosnippet>3559</a>                            .expect(<span class="string">"i32 array"</span>),
-<a href=#3560 id=3560 data-nosnippet>3560</a>                    )),
-<a href=#3561 id=3561 data-nosnippet>3561</a>                ),
-<a href=#3562 id=3562 data-nosnippet>3562</a>                RecordField::new(
-<a href=#3563 id=3563 data-nosnippet>3563</a>                    <span class="string">"i64_array"</span>,
-<a href=#3564 id=3564 data-nosnippet>3564</a>                    Value::Array(ArrayValue::Int64(
-<a href=#3565 id=3565 data-nosnippet>3565</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[-<span class="number">1</span>, -<span class="number">2</span>, -<span class="number">3</span>, -<span class="number">4</span>])
-<a href=#3566 id=3566 data-nosnippet>3566</a>                            .expect(<span class="string">"i64 array"</span>),
-<a href=#3567 id=3567 data-nosnippet>3567</a>                    )),
-<a href=#3568 id=3568 data-nosnippet>3568</a>                ),
-<a href=#3569 id=3569 data-nosnippet>3569</a>                RecordField::new(
-<a href=#3570 id=3570 data-nosnippet>3570</a>                    <span class="string">"f32_array"</span>,
-<a href=#3571 id=3571 data-nosnippet>3571</a>                    Value::Array(ArrayValue::Float32(
-<a href=#3572 id=3572 data-nosnippet>3572</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">1.5</span>, <span class="number">2.5</span>, <span class="number">3.5</span>, <span class="number">4.5</span>])
-<a href=#3573 id=3573 data-nosnippet>3573</a>                            .expect(<span class="string">"f32 array"</span>),
-<a href=#3574 id=3574 data-nosnippet>3574</a>                    )),
-<a href=#3575 id=3575 data-nosnippet>3575</a>                ),
-<a href=#3576 id=3576 data-nosnippet>3576</a>                RecordField::new(
-<a href=#3577 id=3577 data-nosnippet>3577</a>                    <span class="string">"f64_array"</span>,
-<a href=#3578 id=3578 data-nosnippet>3578</a>                    Value::Array(ArrayValue::Float64(
-<a href=#3579 id=3579 data-nosnippet>3579</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">1.5</span>, <span class="number">2.5</span>, <span class="number">3.5</span>, <span class="number">4.5</span>])
-<a href=#3580 id=3580 data-nosnippet>3580</a>                            .expect(<span class="string">"f64 array"</span>),
-<a href=#3581 id=3581 data-nosnippet>3581</a>                    )),
-<a href=#3582 id=3582 data-nosnippet>3582</a>                ),
-<a href=#3583 id=3583 data-nosnippet>3583</a>                RecordField::new(
-<a href=#3584 id=3584 data-nosnippet>3584</a>                    <span class="string">"c32_array"</span>,
-<a href=#3585 id=3585 data-nosnippet>3585</a>                    Value::Array(ArrayValue::Complex32(
-<a href=#3586 id=3586 data-nosnippet>3586</a>                        ArrayD::from_shape_vec(
-<a href=#3587 id=3587 data-nosnippet>3587</a>                            <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>],
-<a href=#3588 id=3588 data-nosnippet>3588</a>                            <span class="macro">vec!</span>[
-<a href=#3589 id=3589 data-nosnippet>3589</a>                                Complex32::new(<span class="number">1.0</span>, -<span class="number">1.0</span>),
-<a href=#3590 id=3590 data-nosnippet>3590</a>                                Complex32::new(<span class="number">2.0</span>, -<span class="number">2.0</span>),
-<a href=#3591 id=3591 data-nosnippet>3591</a>                                Complex32::new(<span class="number">3.0</span>, -<span class="number">3.0</span>),
-<a href=#3592 id=3592 data-nosnippet>3592</a>                                Complex32::new(<span class="number">4.0</span>, -<span class="number">4.0</span>),
-<a href=#3593 id=3593 data-nosnippet>3593</a>                            ],
-<a href=#3594 id=3594 data-nosnippet>3594</a>                        )
-<a href=#3595 id=3595 data-nosnippet>3595</a>                        .expect(<span class="string">"c32 array"</span>),
-<a href=#3596 id=3596 data-nosnippet>3596</a>                    )),
-<a href=#3597 id=3597 data-nosnippet>3597</a>                ),
-<a href=#3598 id=3598 data-nosnippet>3598</a>                RecordField::new(
-<a href=#3599 id=3599 data-nosnippet>3599</a>                    <span class="string">"c64_array"</span>,
-<a href=#3600 id=3600 data-nosnippet>3600</a>                    Value::Array(ArrayValue::Complex64(
-<a href=#3601 id=3601 data-nosnippet>3601</a>                        ArrayD::from_shape_vec(
-<a href=#3602 id=3602 data-nosnippet>3602</a>                            <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>],
-<a href=#3603 id=3603 data-nosnippet>3603</a>                            <span class="macro">vec!</span>[
-<a href=#3604 id=3604 data-nosnippet>3604</a>                                Complex64::new(<span class="number">1.0</span>, -<span class="number">1.0</span>),
-<a href=#3605 id=3605 data-nosnippet>3605</a>                                Complex64::new(<span class="number">2.0</span>, -<span class="number">2.0</span>),
-<a href=#3606 id=3606 data-nosnippet>3606</a>                                Complex64::new(<span class="number">3.0</span>, -<span class="number">3.0</span>),
-<a href=#3607 id=3607 data-nosnippet>3607</a>                                Complex64::new(<span class="number">4.0</span>, -<span class="number">4.0</span>),
-<a href=#3608 id=3608 data-nosnippet>3608</a>                            ],
-<a href=#3609 id=3609 data-nosnippet>3609</a>                        )
-<a href=#3610 id=3610 data-nosnippet>3610</a>                        .expect(<span class="string">"c64 array"</span>),
-<a href=#3611 id=3611 data-nosnippet>3611</a>                    )),
-<a href=#3612 id=3612 data-nosnippet>3612</a>                ),
-<a href=#3613 id=3613 data-nosnippet>3613</a>                RecordField::new(
-<a href=#3614 id=3614 data-nosnippet>3614</a>                    <span class="string">"string_array"</span>,
-<a href=#3615 id=3615 data-nosnippet>3615</a>                    Value::Array(ArrayValue::String(
-<a href=#3616 id=3616 data-nosnippet>3616</a>                        ArrayD::from_shape_vec(
-<a href=#3617 id=3617 data-nosnippet>3617</a>                            <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>],
-<a href=#3618 id=3618 data-nosnippet>3618</a>                            <span class="macro">vec!</span>[
-<a href=#3619 id=3619 data-nosnippet>3619</a>                                <span class="string">"one"</span>.to_string(),
-<a href=#3620 id=3620 data-nosnippet>3620</a>                                <span class="string">"two"</span>.to_string(),
-<a href=#3621 id=3621 data-nosnippet>3621</a>                                <span class="string">"three"</span>.to_string(),
-<a href=#3622 id=3622 data-nosnippet>3622</a>                                <span class="string">"four"</span>.to_string(),
-<a href=#3623 id=3623 data-nosnippet>3623</a>                            ],
-<a href=#3624 id=3624 data-nosnippet>3624</a>                        )
-<a href=#3625 id=3625 data-nosnippet>3625</a>                        .expect(<span class="string">"string array"</span>),
-<a href=#3626 id=3626 data-nosnippet>3626</a>                    )),
-<a href=#3627 id=3627 data-nosnippet>3627</a>                ),
-<a href=#3628 id=3628 data-nosnippet>3628</a>                RecordField::new(<span class="string">"meta"</span>, Value::Record(meta)),
-<a href=#3629 id=3629 data-nosnippet>3629</a>            ]))
-<a href=#3630 id=3630 data-nosnippet>3630</a>            .expect(<span class="string">"type matrix row"</span>);
-<a href=#3631 id=3631 data-nosnippet>3631</a>
-<a href=#3632 id=3632 data-nosnippet>3632</a>        <span class="kw">let </span>undefined_column = ColumnSchema::scalar(<span class="string">"undefined_scalar"</span>, PrimitiveType::Float64)
-<a href=#3633 id=3633 data-nosnippet>3633</a>            .with_options(ColumnOptions {
-<a href=#3634 id=3634 data-nosnippet>3634</a>                direct: <span class="bool-val">false</span>,
-<a href=#3635 id=3635 data-nosnippet>3635</a>                undefined: <span class="bool-val">true</span>,
-<a href=#3636 id=3636 data-nosnippet>3636</a>            })
-<a href=#3637 id=3637 data-nosnippet>3637</a>            .expect(<span class="string">"undefined scalar column"</span>);
-<a href=#3638 id=3638 data-nosnippet>3638</a>        table
-<a href=#3639 id=3639 data-nosnippet>3639</a>            .add_column(undefined_column, <span class="prelude-val">None</span>)
-<a href=#3640 id=3640 data-nosnippet>3640</a>            .expect(<span class="string">"add undefined column"</span>);
-<a href=#3641 id=3641 data-nosnippet>3641</a>        table
-<a href=#3642 id=3642 data-nosnippet>3642</a>            .keywords_mut()
-<a href=#3643 id=3643 data-nosnippet>3643</a>            .upsert(<span class="string">"CHILD"</span>, Value::table_ref(<span class="string">"child.tab"</span>));
-<a href=#3644 id=3644 data-nosnippet>3644</a>        <span class="kw">let </span>columns = build_columns(<span class="kw-2">&amp;</span>table).expect(<span class="string">"build columns"</span>);
-<a href=#3645 id=3645 data-nosnippet>3645</a>        <span class="kw">let </span>keyword_entries = build_keyword_entries(<span class="kw-2">&amp;</span>table);
-<a href=#3646 id=3646 data-nosnippet>3646</a>        <span class="kw">let </span>linked_tables = collect_linked_tables(<span class="kw-2">&amp;</span>table, <span class="kw-2">&amp;</span>root_path);
-<a href=#3647 id=3647 data-nosnippet>3647</a>        <span class="kw">let </span>overview_lines = build_overview_lines(<span class="kw-2">&amp;</span>table, <span class="kw-2">&amp;</span>columns, <span class="kw-2">&amp;</span>linked_tables);
-<a href=#3648 id=3648 data-nosnippet>3648</a>        TableBrowser {
-<a href=#3649 id=3649 data-nosnippet>3649</a>            stack: <span class="macro">vec!</span>[OpenedTable {
-<a href=#3650 id=3650 data-nosnippet>3650</a>                path: root_path.clone(),
-<a href=#3651 id=3651 data-nosnippet>3651</a>                table,
-<a href=#3652 id=3652 data-nosnippet>3652</a>                columns,
-<a href=#3653 id=3653 data-nosnippet>3653</a>                keyword_entries,
-<a href=#3654 id=3654 data-nosnippet>3654</a>                linked_tables,
-<a href=#3655 id=3655 data-nosnippet>3655</a>                overview_lines,
-<a href=#3656 id=3656 data-nosnippet>3656</a>            }],
-<a href=#3657 id=3657 data-nosnippet>3657</a>            view: TableBrowserView::Overview,
-<a href=#3658 id=3658 data-nosnippet>3658</a>            focus: BrowserFocus::Main,
-<a href=#3659 id=3659 data-nosnippet>3659</a>            viewport: BrowserViewport::default(),
-<a href=#3660 id=3660 data-nosnippet>3660</a>            status_line: <span class="macro">format!</span>(<span class="string">"Browsing {}."</span>, root_path.display()),
-<a href=#3661 id=3661 data-nosnippet>3661</a>            overview_scroll: <span class="number">0</span>,
-<a href=#3662 id=3662 data-nosnippet>3662</a>            columns_selected: <span class="number">0</span>,
-<a href=#3663 id=3663 data-nosnippet>3663</a>            columns_scroll: <span class="number">0</span>,
-<a href=#3664 id=3664 data-nosnippet>3664</a>            keywords_selected: <span class="number">0</span>,
-<a href=#3665 id=3665 data-nosnippet>3665</a>            keywords_scroll: <span class="number">0</span>,
-<a href=#3666 id=3666 data-nosnippet>3666</a>            cells_row_selected: <span class="number">0</span>,
-<a href=#3667 id=3667 data-nosnippet>3667</a>            cells_row_scroll: <span class="number">0</span>,
-<a href=#3668 id=3668 data-nosnippet>3668</a>            cells_column_selected: <span class="number">0</span>,
-<a href=#3669 id=3669 data-nosnippet>3669</a>            cells_column_offset: <span class="number">0</span>,
-<a href=#3670 id=3670 data-nosnippet>3670</a>            subtables_selected: <span class="number">0</span>,
-<a href=#3671 id=3671 data-nosnippet>3671</a>            subtables_scroll: <span class="number">0</span>,
-<a href=#3672 id=3672 data-nosnippet>3672</a>            inspector_path: Vec::new(),
-<a href=#3673 id=3673 data-nosnippet>3673</a>            inspector_selected_child: <span class="number">0</span>,
-<a href=#3674 id=3674 data-nosnippet>3674</a>            inspector_page_start: <span class="number">0</span>,
-<a href=#3675 id=3675 data-nosnippet>3675</a>            parameters: BrowserParameters::default(),
-<a href=#3676 id=3676 data-nosnippet>3676</a>            row_window_configured: <span class="bool-val">false</span>,
-<a href=#3677 id=3677 data-nosnippet>3677</a>        }
-<a href=#3678 id=3678 data-nosnippet>3678</a>    }
-<a href=#3679 id=3679 data-nosnippet>3679</a>
-<a href=#3680 id=3680 data-nosnippet>3680</a>    <span class="kw">fn </span>unpack_fixture_ms(archive_name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;(tempfile::TempDir, PathBuf)&gt; {
-<a href=#3681 id=3681 data-nosnippet>3681</a>        <span class="kw">let </span>archive_path = PathBuf::from(<span class="macro">env!</span>(<span class="string">"CARGO_MANIFEST_DIR"</span>))
-<a href=#3682 id=3682 data-nosnippet>3682</a>            .join(<span class="string">"../casa-ms/tests/fixtures"</span>)
-<a href=#3683 id=3683 data-nosnippet>3683</a>            .join(archive_name);
-<a href=#3684 id=3684 data-nosnippet>3684</a>        <span class="kw">if </span>!archive_path.is_file() {
-<a href=#3685 id=3685 data-nosnippet>3685</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#3686 id=3686 data-nosnippet>3686</a>        }
-<a href=#3687 id=3687 data-nosnippet>3687</a>        <span class="kw">let </span>temp = tempdir().expect(<span class="string">"tempdir"</span>);
-<a href=#3688 id=3688 data-nosnippet>3688</a>        <span class="kw">let </span>archive_file = File::open(<span class="kw-2">&amp;</span>archive_path).expect(<span class="string">"open fixture archive"</span>);
-<a href=#3689 id=3689 data-nosnippet>3689</a>        <span class="kw">let </span>decoder = GzDecoder::new(archive_file);
-<a href=#3690 id=3690 data-nosnippet>3690</a>        <span class="kw">let </span><span class="kw-2">mut </span>archive = tar::Archive::new(decoder);
-<a href=#3691 id=3691 data-nosnippet>3691</a>        archive.unpack(temp.path()).expect(<span class="string">"unpack fixture archive"</span>);
-<a href=#3692 id=3692 data-nosnippet>3692</a>        <span class="kw">let </span>root = std::fs::read_dir(temp.path())
-<a href=#3693 id=3693 data-nosnippet>3693</a>            .expect(<span class="string">"read unpacked fixture dir"</span>)
-<a href=#3694 id=3694 data-nosnippet>3694</a>            .filter_map(Result::ok)
-<a href=#3695 id=3695 data-nosnippet>3695</a>            .map(|entry| entry.path())
-<a href=#3696 id=3696 data-nosnippet>3696</a>            .find(|path| path.is_dir())
-<a href=#3697 id=3697 data-nosnippet>3697</a>            .expect(<span class="string">"fixture root directory"</span>);
-<a href=#3698 id=3698 data-nosnippet>3698</a>        <span class="prelude-val">Some</span>((temp, root))
-<a href=#3699 id=3699 data-nosnippet>3699</a>    }
-<a href=#3700 id=3700 data-nosnippet>3700</a>}
+<a href=#3524 id=3524 data-nosnippet>3524</a>                    <span class="string">"string_scalar"</span>,
+<a href=#3525 id=3525 data-nosnippet>3525</a>                    Value::Scalar(ScalarValue::String(<span class="string">"matrix"</span>.to_string())),
+<a href=#3526 id=3526 data-nosnippet>3526</a>                ),
+<a href=#3527 id=3527 data-nosnippet>3527</a>                RecordField::new(
+<a href=#3528 id=3528 data-nosnippet>3528</a>                    <span class="string">"bool_array"</span>,
+<a href=#3529 id=3529 data-nosnippet>3529</a>                    Value::Array(ArrayValue::Bool(
+<a href=#3530 id=3530 data-nosnippet>3530</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>])
+<a href=#3531 id=3531 data-nosnippet>3531</a>                            .expect(<span class="string">"bool array"</span>),
+<a href=#3532 id=3532 data-nosnippet>3532</a>                    )),
+<a href=#3533 id=3533 data-nosnippet>3533</a>                ),
+<a href=#3534 id=3534 data-nosnippet>3534</a>                RecordField::new(
+<a href=#3535 id=3535 data-nosnippet>3535</a>                    <span class="string">"u8_array"</span>,
+<a href=#3536 id=3536 data-nosnippet>3536</a>                    Value::Array(ArrayValue::UInt8(
+<a href=#3537 id=3537 data-nosnippet>3537</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>]).expect(<span class="string">"u8 array"</span>),
+<a href=#3538 id=3538 data-nosnippet>3538</a>                    )),
+<a href=#3539 id=3539 data-nosnippet>3539</a>                ),
+<a href=#3540 id=3540 data-nosnippet>3540</a>                RecordField::new(
+<a href=#3541 id=3541 data-nosnippet>3541</a>                    <span class="string">"u16_array"</span>,
+<a href=#3542 id=3542 data-nosnippet>3542</a>                    Value::Array(ArrayValue::UInt16(
+<a href=#3543 id=3543 data-nosnippet>3543</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>]).expect(<span class="string">"u16 array"</span>),
+<a href=#3544 id=3544 data-nosnippet>3544</a>                    )),
+<a href=#3545 id=3545 data-nosnippet>3545</a>                ),
+<a href=#3546 id=3546 data-nosnippet>3546</a>                RecordField::new(
+<a href=#3547 id=3547 data-nosnippet>3547</a>                    <span class="string">"u32_array"</span>,
+<a href=#3548 id=3548 data-nosnippet>3548</a>                    Value::Array(ArrayValue::UInt32(
+<a href=#3549 id=3549 data-nosnippet>3549</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>]).expect(<span class="string">"u32 array"</span>),
+<a href=#3550 id=3550 data-nosnippet>3550</a>                    )),
+<a href=#3551 id=3551 data-nosnippet>3551</a>                ),
+<a href=#3552 id=3552 data-nosnippet>3552</a>                RecordField::new(
+<a href=#3553 id=3553 data-nosnippet>3553</a>                    <span class="string">"i16_array"</span>,
+<a href=#3554 id=3554 data-nosnippet>3554</a>                    Value::Array(ArrayValue::Int16(
+<a href=#3555 id=3555 data-nosnippet>3555</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[-<span class="number">1</span>, -<span class="number">2</span>, -<span class="number">3</span>, -<span class="number">4</span>])
+<a href=#3556 id=3556 data-nosnippet>3556</a>                            .expect(<span class="string">"i16 array"</span>),
+<a href=#3557 id=3557 data-nosnippet>3557</a>                    )),
+<a href=#3558 id=3558 data-nosnippet>3558</a>                ),
+<a href=#3559 id=3559 data-nosnippet>3559</a>                RecordField::new(
+<a href=#3560 id=3560 data-nosnippet>3560</a>                    <span class="string">"i32_array"</span>,
+<a href=#3561 id=3561 data-nosnippet>3561</a>                    Value::Array(ArrayValue::Int32(
+<a href=#3562 id=3562 data-nosnippet>3562</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[-<span class="number">1</span>, -<span class="number">2</span>, -<span class="number">3</span>, -<span class="number">4</span>])
+<a href=#3563 id=3563 data-nosnippet>3563</a>                            .expect(<span class="string">"i32 array"</span>),
+<a href=#3564 id=3564 data-nosnippet>3564</a>                    )),
+<a href=#3565 id=3565 data-nosnippet>3565</a>                ),
+<a href=#3566 id=3566 data-nosnippet>3566</a>                RecordField::new(
+<a href=#3567 id=3567 data-nosnippet>3567</a>                    <span class="string">"i64_array"</span>,
+<a href=#3568 id=3568 data-nosnippet>3568</a>                    Value::Array(ArrayValue::Int64(
+<a href=#3569 id=3569 data-nosnippet>3569</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[-<span class="number">1</span>, -<span class="number">2</span>, -<span class="number">3</span>, -<span class="number">4</span>])
+<a href=#3570 id=3570 data-nosnippet>3570</a>                            .expect(<span class="string">"i64 array"</span>),
+<a href=#3571 id=3571 data-nosnippet>3571</a>                    )),
+<a href=#3572 id=3572 data-nosnippet>3572</a>                ),
+<a href=#3573 id=3573 data-nosnippet>3573</a>                RecordField::new(
+<a href=#3574 id=3574 data-nosnippet>3574</a>                    <span class="string">"f32_array"</span>,
+<a href=#3575 id=3575 data-nosnippet>3575</a>                    Value::Array(ArrayValue::Float32(
+<a href=#3576 id=3576 data-nosnippet>3576</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">1.5</span>, <span class="number">2.5</span>, <span class="number">3.5</span>, <span class="number">4.5</span>])
+<a href=#3577 id=3577 data-nosnippet>3577</a>                            .expect(<span class="string">"f32 array"</span>),
+<a href=#3578 id=3578 data-nosnippet>3578</a>                    )),
+<a href=#3579 id=3579 data-nosnippet>3579</a>                ),
+<a href=#3580 id=3580 data-nosnippet>3580</a>                RecordField::new(
+<a href=#3581 id=3581 data-nosnippet>3581</a>                    <span class="string">"f64_array"</span>,
+<a href=#3582 id=3582 data-nosnippet>3582</a>                    Value::Array(ArrayValue::Float64(
+<a href=#3583 id=3583 data-nosnippet>3583</a>                        ArrayD::from_shape_vec(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">1.5</span>, <span class="number">2.5</span>, <span class="number">3.5</span>, <span class="number">4.5</span>])
+<a href=#3584 id=3584 data-nosnippet>3584</a>                            .expect(<span class="string">"f64 array"</span>),
+<a href=#3585 id=3585 data-nosnippet>3585</a>                    )),
+<a href=#3586 id=3586 data-nosnippet>3586</a>                ),
+<a href=#3587 id=3587 data-nosnippet>3587</a>                RecordField::new(
+<a href=#3588 id=3588 data-nosnippet>3588</a>                    <span class="string">"c32_array"</span>,
+<a href=#3589 id=3589 data-nosnippet>3589</a>                    Value::Array(ArrayValue::Complex32(
+<a href=#3590 id=3590 data-nosnippet>3590</a>                        ArrayD::from_shape_vec(
+<a href=#3591 id=3591 data-nosnippet>3591</a>                            <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>],
+<a href=#3592 id=3592 data-nosnippet>3592</a>                            <span class="macro">vec!</span>[
+<a href=#3593 id=3593 data-nosnippet>3593</a>                                Complex32::new(<span class="number">1.0</span>, -<span class="number">1.0</span>),
+<a href=#3594 id=3594 data-nosnippet>3594</a>                                Complex32::new(<span class="number">2.0</span>, -<span class="number">2.0</span>),
+<a href=#3595 id=3595 data-nosnippet>3595</a>                                Complex32::new(<span class="number">3.0</span>, -<span class="number">3.0</span>),
+<a href=#3596 id=3596 data-nosnippet>3596</a>                                Complex32::new(<span class="number">4.0</span>, -<span class="number">4.0</span>),
+<a href=#3597 id=3597 data-nosnippet>3597</a>                            ],
+<a href=#3598 id=3598 data-nosnippet>3598</a>                        )
+<a href=#3599 id=3599 data-nosnippet>3599</a>                        .expect(<span class="string">"c32 array"</span>),
+<a href=#3600 id=3600 data-nosnippet>3600</a>                    )),
+<a href=#3601 id=3601 data-nosnippet>3601</a>                ),
+<a href=#3602 id=3602 data-nosnippet>3602</a>                RecordField::new(
+<a href=#3603 id=3603 data-nosnippet>3603</a>                    <span class="string">"c64_array"</span>,
+<a href=#3604 id=3604 data-nosnippet>3604</a>                    Value::Array(ArrayValue::Complex64(
+<a href=#3605 id=3605 data-nosnippet>3605</a>                        ArrayD::from_shape_vec(
+<a href=#3606 id=3606 data-nosnippet>3606</a>                            <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>],
+<a href=#3607 id=3607 data-nosnippet>3607</a>                            <span class="macro">vec!</span>[
+<a href=#3608 id=3608 data-nosnippet>3608</a>                                Complex64::new(<span class="number">1.0</span>, -<span class="number">1.0</span>),
+<a href=#3609 id=3609 data-nosnippet>3609</a>                                Complex64::new(<span class="number">2.0</span>, -<span class="number">2.0</span>),
+<a href=#3610 id=3610 data-nosnippet>3610</a>                                Complex64::new(<span class="number">3.0</span>, -<span class="number">3.0</span>),
+<a href=#3611 id=3611 data-nosnippet>3611</a>                                Complex64::new(<span class="number">4.0</span>, -<span class="number">4.0</span>),
+<a href=#3612 id=3612 data-nosnippet>3612</a>                            ],
+<a href=#3613 id=3613 data-nosnippet>3613</a>                        )
+<a href=#3614 id=3614 data-nosnippet>3614</a>                        .expect(<span class="string">"c64 array"</span>),
+<a href=#3615 id=3615 data-nosnippet>3615</a>                    )),
+<a href=#3616 id=3616 data-nosnippet>3616</a>                ),
+<a href=#3617 id=3617 data-nosnippet>3617</a>                RecordField::new(
+<a href=#3618 id=3618 data-nosnippet>3618</a>                    <span class="string">"string_array"</span>,
+<a href=#3619 id=3619 data-nosnippet>3619</a>                    Value::Array(ArrayValue::String(
+<a href=#3620 id=3620 data-nosnippet>3620</a>                        ArrayD::from_shape_vec(
+<a href=#3621 id=3621 data-nosnippet>3621</a>                            <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">2</span>],
+<a href=#3622 id=3622 data-nosnippet>3622</a>                            <span class="macro">vec!</span>[
+<a href=#3623 id=3623 data-nosnippet>3623</a>                                <span class="string">"one"</span>.to_string(),
+<a href=#3624 id=3624 data-nosnippet>3624</a>                                <span class="string">"two"</span>.to_string(),
+<a href=#3625 id=3625 data-nosnippet>3625</a>                                <span class="string">"three"</span>.to_string(),
+<a href=#3626 id=3626 data-nosnippet>3626</a>                                <span class="string">"four"</span>.to_string(),
+<a href=#3627 id=3627 data-nosnippet>3627</a>                            ],
+<a href=#3628 id=3628 data-nosnippet>3628</a>                        )
+<a href=#3629 id=3629 data-nosnippet>3629</a>                        .expect(<span class="string">"string array"</span>),
+<a href=#3630 id=3630 data-nosnippet>3630</a>                    )),
+<a href=#3631 id=3631 data-nosnippet>3631</a>                ),
+<a href=#3632 id=3632 data-nosnippet>3632</a>                RecordField::new(<span class="string">"meta"</span>, Value::Record(meta)),
+<a href=#3633 id=3633 data-nosnippet>3633</a>            ]))
+<a href=#3634 id=3634 data-nosnippet>3634</a>            .expect(<span class="string">"type matrix row"</span>);
+<a href=#3635 id=3635 data-nosnippet>3635</a>
+<a href=#3636 id=3636 data-nosnippet>3636</a>        <span class="kw">let </span>undefined_column = ColumnSchema::scalar(<span class="string">"undefined_scalar"</span>, PrimitiveType::Float64)
+<a href=#3637 id=3637 data-nosnippet>3637</a>            .with_options(ColumnOptions {
+<a href=#3638 id=3638 data-nosnippet>3638</a>                direct: <span class="bool-val">false</span>,
+<a href=#3639 id=3639 data-nosnippet>3639</a>                undefined: <span class="bool-val">true</span>,
+<a href=#3640 id=3640 data-nosnippet>3640</a>            })
+<a href=#3641 id=3641 data-nosnippet>3641</a>            .expect(<span class="string">"undefined scalar column"</span>);
+<a href=#3642 id=3642 data-nosnippet>3642</a>        table
+<a href=#3643 id=3643 data-nosnippet>3643</a>            .add_column(undefined_column, <span class="prelude-val">None</span>)
+<a href=#3644 id=3644 data-nosnippet>3644</a>            .expect(<span class="string">"add undefined column"</span>);
+<a href=#3645 id=3645 data-nosnippet>3645</a>        table
+<a href=#3646 id=3646 data-nosnippet>3646</a>            .keywords_mut()
+<a href=#3647 id=3647 data-nosnippet>3647</a>            .upsert(<span class="string">"CHILD"</span>, Value::table_ref(<span class="string">"child.tab"</span>));
+<a href=#3648 id=3648 data-nosnippet>3648</a>        <span class="kw">let </span>columns = build_columns(<span class="kw-2">&amp;</span>table).expect(<span class="string">"build columns"</span>);
+<a href=#3649 id=3649 data-nosnippet>3649</a>        <span class="kw">let </span>keyword_entries = build_keyword_entries(<span class="kw-2">&amp;</span>table);
+<a href=#3650 id=3650 data-nosnippet>3650</a>        <span class="kw">let </span>linked_tables = collect_linked_tables(<span class="kw-2">&amp;</span>table, <span class="kw-2">&amp;</span>root_path);
+<a href=#3651 id=3651 data-nosnippet>3651</a>        <span class="kw">let </span>overview_lines = build_overview_lines(<span class="kw-2">&amp;</span>table, <span class="kw-2">&amp;</span>columns, <span class="kw-2">&amp;</span>linked_tables);
+<a href=#3652 id=3652 data-nosnippet>3652</a>        TableBrowser {
+<a href=#3653 id=3653 data-nosnippet>3653</a>            stack: <span class="macro">vec!</span>[OpenedTable {
+<a href=#3654 id=3654 data-nosnippet>3654</a>                path: root_path.clone(),
+<a href=#3655 id=3655 data-nosnippet>3655</a>                table,
+<a href=#3656 id=3656 data-nosnippet>3656</a>                columns,
+<a href=#3657 id=3657 data-nosnippet>3657</a>                keyword_entries,
+<a href=#3658 id=3658 data-nosnippet>3658</a>                linked_tables,
+<a href=#3659 id=3659 data-nosnippet>3659</a>                overview_lines,
+<a href=#3660 id=3660 data-nosnippet>3660</a>            }],
+<a href=#3661 id=3661 data-nosnippet>3661</a>            view: TableBrowserView::Overview,
+<a href=#3662 id=3662 data-nosnippet>3662</a>            focus: BrowserFocus::Main,
+<a href=#3663 id=3663 data-nosnippet>3663</a>            viewport: BrowserViewport::default(),
+<a href=#3664 id=3664 data-nosnippet>3664</a>            status_line: <span class="macro">format!</span>(<span class="string">"Browsing {}."</span>, root_path.display()),
+<a href=#3665 id=3665 data-nosnippet>3665</a>            overview_scroll: <span class="number">0</span>,
+<a href=#3666 id=3666 data-nosnippet>3666</a>            columns_selected: <span class="number">0</span>,
+<a href=#3667 id=3667 data-nosnippet>3667</a>            columns_scroll: <span class="number">0</span>,
+<a href=#3668 id=3668 data-nosnippet>3668</a>            keywords_selected: <span class="number">0</span>,
+<a href=#3669 id=3669 data-nosnippet>3669</a>            keywords_scroll: <span class="number">0</span>,
+<a href=#3670 id=3670 data-nosnippet>3670</a>            cells_row_selected: <span class="number">0</span>,
+<a href=#3671 id=3671 data-nosnippet>3671</a>            cells_row_scroll: <span class="number">0</span>,
+<a href=#3672 id=3672 data-nosnippet>3672</a>            cells_column_selected: <span class="number">0</span>,
+<a href=#3673 id=3673 data-nosnippet>3673</a>            cells_column_offset: <span class="number">0</span>,
+<a href=#3674 id=3674 data-nosnippet>3674</a>            subtables_selected: <span class="number">0</span>,
+<a href=#3675 id=3675 data-nosnippet>3675</a>            subtables_scroll: <span class="number">0</span>,
+<a href=#3676 id=3676 data-nosnippet>3676</a>            inspector_path: Vec::new(),
+<a href=#3677 id=3677 data-nosnippet>3677</a>            inspector_selected_child: <span class="number">0</span>,
+<a href=#3678 id=3678 data-nosnippet>3678</a>            inspector_page_start: <span class="number">0</span>,
+<a href=#3679 id=3679 data-nosnippet>3679</a>            parameters: BrowserParameters::default(),
+<a href=#3680 id=3680 data-nosnippet>3680</a>            row_window_configured: <span class="bool-val">false</span>,
+<a href=#3681 id=3681 data-nosnippet>3681</a>        }
+<a href=#3682 id=3682 data-nosnippet>3682</a>    }
+<a href=#3683 id=3683 data-nosnippet>3683</a>
+<a href=#3684 id=3684 data-nosnippet>3684</a>    <span class="kw">fn </span>unpack_fixture_ms(archive_name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;(tempfile::TempDir, PathBuf)&gt; {
+<a href=#3685 id=3685 data-nosnippet>3685</a>        <span class="kw">let </span>archive_path = PathBuf::from(<span class="macro">env!</span>(<span class="string">"CARGO_MANIFEST_DIR"</span>))
+<a href=#3686 id=3686 data-nosnippet>3686</a>            .join(<span class="string">"../casa-ms/tests/fixtures"</span>)
+<a href=#3687 id=3687 data-nosnippet>3687</a>            .join(archive_name);
+<a href=#3688 id=3688 data-nosnippet>3688</a>        <span class="kw">if </span>!archive_path.is_file() {
+<a href=#3689 id=3689 data-nosnippet>3689</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#3690 id=3690 data-nosnippet>3690</a>        }
+<a href=#3691 id=3691 data-nosnippet>3691</a>        <span class="kw">let </span>temp = tempdir().expect(<span class="string">"tempdir"</span>);
+<a href=#3692 id=3692 data-nosnippet>3692</a>        <span class="kw">let </span>archive_file = File::open(<span class="kw-2">&amp;</span>archive_path).expect(<span class="string">"open fixture archive"</span>);
+<a href=#3693 id=3693 data-nosnippet>3693</a>        <span class="kw">let </span>decoder = GzDecoder::new(archive_file);
+<a href=#3694 id=3694 data-nosnippet>3694</a>        <span class="kw">let </span><span class="kw-2">mut </span>archive = tar::Archive::new(decoder);
+<a href=#3695 id=3695 data-nosnippet>3695</a>        archive.unpack(temp.path()).expect(<span class="string">"unpack fixture archive"</span>);
+<a href=#3696 id=3696 data-nosnippet>3696</a>        <span class="kw">let </span>root = std::fs::read_dir(temp.path())
+<a href=#3697 id=3697 data-nosnippet>3697</a>            .expect(<span class="string">"read unpacked fixture dir"</span>)
+<a href=#3698 id=3698 data-nosnippet>3698</a>            .filter_map(Result::ok)
+<a href=#3699 id=3699 data-nosnippet>3699</a>            .map(|entry| entry.path())
+<a href=#3700 id=3700 data-nosnippet>3700</a>            .find(|path| path.is_dir())
+<a href=#3701 id=3701 data-nosnippet>3701</a>            .expect(<span class="string">"fixture root directory"</span>);
+<a href=#3702 id=3702 data-nosnippet>3702</a>        <span class="prelude-val">Some</span>((temp, root))
+<a href=#3703 id=3703 data-nosnippet>3703</a>    }
+<a href=#3704 id=3704 data-nosnippet>3704</a>}
 </code></pre></div></section></main></body></html>

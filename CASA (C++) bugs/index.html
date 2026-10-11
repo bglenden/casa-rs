@@ -1004,6 +1004,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#the-multi-term-weight-normalization-override-is-never-called" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The multi-term weight normalization override is never called
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-analytic-pb-ignores-a-failed-topixel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The analytic PB ignores a failed toPixel
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1028,10 +1050,12 @@ CASA behaviours casa-rs follows for parity:
 <a href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection hand pairing</a>,
 <a href="#aw-projection-predicts-with-the-unrotated-w">AW-projection prediction w</a>,
 <a href="#matrixcleaner-counts-the-iteration-that-stops-it">MatrixCleaner's stop iteration</a>,
-<a href="#peak-searches-let-rounding-choose-between-equal-pixels">exact peak comparisons</a>.
+<a href="#peak-searches-let-rounding-choose-between-equal-pixels">exact peak comparisons</a>,
+<a href="#the-multi-term-weight-normalization-override-is-never-called">multi-term weight normalization</a>.
 CASA behaviours casa-rs does not follow:
 <a href="#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes">odd-size scale convolutions</a>,
-<a href="#matrixcleaners-step-residual-forgets-earlier-steps">MatrixCleaner's step residual</a>.</p>
+<a href="#matrixcleaners-step-residual-forgets-earlier-steps">MatrixCleaner's step residual</a>,
+<a href="#the-analytic-pb-ignores-a-failed-topixel">an unplaceable PB pointing</a>.</p>
 <h2 id="aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection pairs the partner hand's visibility with the conjugate-baseline cell<a class="headerlink" href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-09</li>
@@ -1273,6 +1297,37 @@ CASA's way and 3.1e-2 when it does not (as on <code>main</code>). Both outcomes 
 equally valid cleans; such rows cannot measure parity, so
 IF-5's multiscale and MT-MFS acceptance uses skies without the symmetry
 (<code>refim_twopoints_twochan</code>, <code>refim_eptwochan</code>).</p>
+<h2 id="the-multi-term-weight-normalization-override-is-never-called">The multi-term weight normalization override is never called<a class="headerlink" href="#the-multi-term-weight-normalization-override-is-never-called" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-11</li>
+<li>Status: likely CASA bug; casa-rs follows it for parity (#704, PR #707)</li>
+<li>Affected code: <code>synthesis/ImagerObjects/SIImageStore.h</code>,
+  <code>SIImageStoreMultiTerm.h</code>, <code>SynthesisNormalizer.cc</code>
+  (<code>divideWeightBySumWt</code>)</li>
+</ul>
+<p><code>SIImageStore</code> declares <code>virtual void divideWeightBySumwt()</code> (lower-case
+<code>wt</code>). <code>SIImageStoreMultiTerm</code> declares <code>void divideWeightBySumWt()</code> (upper
+case <code>W</code>), a different name, so it overrides nothing; its loop that divides
+every Taylor weight image by the principal sum of weights is never called.
+<code>SynthesisNormalizer::divideWeightBySumWt</code> calls
+<code>itsImages-&gt;divideWeightBySumwt()</code>, which reaches the base body and divides
+<code>weight()</code>, term 0, alone. <code>MultiTermFTNew::finalizeToSkyNew</code> writes each
+term's raw <code>getWeightImage</code> moment, so <code>.weight.tt1</code> and <code>.weight.tt2</code> stay
+the raw Σ W·s^N while <code>.weight.tt0</code> is normalized. CASA 6.7.6.14 on
+<code>refim_alma_mosaic</code> (mosaic, <code>nterms=2</code>) agrees: <code>weight.ttN / sumwt.ttN</code> is
+0.6913 for N = 0, 1 and 2. casa-rs publishes the same.</p>
+<h2 id="the-analytic-pb-ignores-a-failed-topixel">The analytic PB ignores a failed <code>toPixel</code><a class="headerlink" href="#the-analytic-pb-ignores-a-failed-topixel" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-11</li>
+<li>Status: likely CASA bug; casa-rs does not follow it (#702, PR #707)</li>
+<li>Affected code: <code>synthesis/TransformMachines/PBMath1D.cc</code> (<code>apply</code>)</li>
+</ul>
+<p><code>PBMath1D::apply</code> converts the pointing to a pixel with the image's direction
+coordinate (<code>toPixel</code>) and ignores the call's result, so a pointing the
+projection cannot place, such as one 90° or more from the image centre under
+SIN, is centred on whatever pixel the failed call left. casa-rs adds no beam
+for a pointing 90° or more from an image domain's centre and refuses any
+other projection failure.</p>
 
 
 

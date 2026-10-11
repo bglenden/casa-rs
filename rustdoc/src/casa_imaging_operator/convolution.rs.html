@@ -486,5 +486,14 @@
 <a href=#486 id=486 data-nosnippet>486</a>    </span><span class="kw">fn </span>corrects_weight_image(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
 <a href=#487 id=487 data-nosnippet>487</a>        <span class="bool-val">true
 <a href=#488 id=488 data-nosnippet>488</a>    </span>}
-<a href=#489 id=489 data-nosnippet>489</a>}
+<a href=#489 id=489 data-nosnippet>489</a>
+<a href=#490 id=490 data-nosnippet>490</a>    <span class="doccomment">/// Whether the weight (sensitivity) image is the magnitude of the
+<a href=#491 id=491 data-nosnippet>491</a>    /// polarization-combined complex transform rather than its real part.
+<a href=#492 id=492 data-nosnippet>492</a>    /// `AWProjectWBFT::makeWBSensitivityImage` averages the polarization
+<a href=#493 id=493 data-nosnippet>493</a>    /// planes and keeps `abs` of the average, so an odd Taylor moment,
+<a href=#494 id=494 data-nosnippet>494</a>    /// Σ W·s·K, which can be negative, publishes its magnitude.
+<a href=#495 id=495 data-nosnippet>495</a>    </span><span class="kw">fn </span>weight_image_magnitude(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#496 id=496 data-nosnippet>496</a>        <span class="bool-val">false
+<a href=#497 id=497 data-nosnippet>497</a>    </span>}
+<a href=#498 id=498 data-nosnippet>498</a>}
 </code></pre></div></section></main></body></html>

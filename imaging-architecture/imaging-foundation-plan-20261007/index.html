@@ -2060,9 +2060,9 @@ Philosophy of Software Design</em> (deep modules; define errors out of existence
 <li><strong>No narration.</strong> Comments say why, not what; no step numbering, no
     restated signatures, no historical notes ("formerly", "T41 added").
     Rustdoc on public items states the contract.</li>
-<li><strong>File and function size.</strong> A new or touched file over 1,500 lines or a
-    function over about 100 lines is split along a domain boundary in the same
-    ticket, unless the ticket names it as an accepted exception.</li>
+<li><strong>File and function size.</strong> No longer a review rule; the build enforces
+    it workspace-wide (#705): clippy's <code>too_many_lines</code> (threshold in
+    <code>clippy.toml</code>) and <code>scripts/check-file-length.py</code> in <code>just arch-check</code>.</li>
 <li><strong>Delete in the same change.</strong> A replacement migrates callers and deletes
     the displaced code, tests, docs and resources in one PR. Nothing is kept
     "for reference" in the tree; git history is the reference.</li>
