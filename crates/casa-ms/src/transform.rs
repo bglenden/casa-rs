@@ -800,19 +800,16 @@ fn mstransform_staged(request: &MsTransformRequest) -> Result<MsTransformReport,
     })
 }
 
-fn transform_progress_enabled() -> bool {
-    std::env::var_os("CASA_RS_MSTRANSFORM_PROGRESS").is_some()
-}
-
+/// Log one completed transform stage (`debug`, target
+/// `casa_ms::mstransform_progress`).
 fn maybe_log_transform_progress(stage: &str, stage_elapsed: Duration, total_elapsed: Duration) {
-    if transform_progress_enabled() {
-        eprintln!(
-            "mstransform stage={} stage_elapsed_s={:.3} total_elapsed_s={:.3}",
-            stage,
-            stage_elapsed.as_secs_f64(),
-            total_elapsed.as_secs_f64(),
-        );
-    }
+    tracing::debug!(
+        target: "casa_ms::mstransform_progress",
+        "mstransform stage={} stage_elapsed_s={:.3} total_elapsed_s={:.3}",
+        stage,
+        stage_elapsed.as_secs_f64(),
+        total_elapsed.as_secs_f64(),
+    );
 }
 
 fn transform_array_write_plan(

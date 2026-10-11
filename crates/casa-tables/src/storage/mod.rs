@@ -35,7 +35,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 use std::time::Instant;
 
 use casa_aipsio::ByteOrder;
@@ -129,18 +128,20 @@ fn reorder_row_to_requested_columns(row: &RecordValue, columns: &[&str]) -> Reco
     )
 }
 
+/// The `tracing` target of the storage save and load profile (`debug`).
+const STORAGE_PROFILE: &str = "casa_tables::storage_profile";
+/// The `tracing` target of the table-open stage profile (`debug`).
+pub(crate) const TABLE_OPEN_PROFILE: &str = "casa_tables::table_open_profile";
+
+/// Whether the logging configuration takes the storage profile; when it
+/// does not, the profiler takes no clock.
 fn storage_profile_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| match std::env::var("CASA_RS_STORAGE_PROFILE") {
-        Ok(value) => {
-            let trimmed = value.trim();
-            !trimmed.is_empty()
-                && trimmed != "0"
-                && !trimmed.eq_ignore_ascii_case("false")
-                && !trimmed.eq_ignore_ascii_case("off")
-        }
-        Err(_) => false,
-    })
+    tracing::enabled!(target: STORAGE_PROFILE, tracing::Level::DEBUG)
+}
+
+/// Whether the logging configuration takes the table-open stage profile.
+pub(crate) fn table_open_profile_enabled() -> bool {
+    tracing::enabled!(target: TABLE_OPEN_PROFILE, tracing::Level::DEBUG)
 }
 
 fn log_storage_profile(context: &str, phase: &str, delta: f64, total: f64, detail: Option<&str>) {
@@ -152,7 +153,7 @@ fn log_storage_profile(context: &str, phase: &str, delta: f64, total: f64, detai
         line.push(' ');
         line.push_str(detail);
     }
-    eprintln!("{line}");
+    tracing::debug!(target: STORAGE_PROFILE, "{line}");
 }
 
 pub(crate) struct StorageProfiler {
@@ -1290,10 +1291,10 @@ impl CompositeStorage {
         &self,
         table_path: &Path,
     ) -> Result<StorageSnapshot, StorageError> {
-        let profile_open = std::env::var_os("CASA_RS_TABLE_OPEN_PROFILE").is_some();
+        let profile_open = table_open_profile_enabled();
         let load_started_at = std::time::Instant::now();
         if profile_open {
-            eprintln!(
+            tracing::debug!(target: TABLE_OPEN_PROFILE,
                 "table_open_profile path={} stage=storage_load_metadata_only/start",
                 table_path.display(),
             );
@@ -1306,7 +1307,7 @@ impl CompositeStorage {
             return Err(StorageError::MissingControlFile(control_path));
         }
         if profile_open {
-            eprintln!(
+            tracing::debug!(target: TABLE_OPEN_PROFILE,
                 "table_open_profile path={} stage=storage_load_metadata_only/check_paths elapsed_s={:.3}",
                 table_path.display(),
                 load_started_at.elapsed().as_secs_f64(),
@@ -1315,7 +1316,7 @@ impl CompositeStorage {
 
         let table_dat = read_table_dat_dispatch(&control_path)?;
         if profile_open {
-            eprintln!(
+            tracing::debug!(target: TABLE_OPEN_PROFILE,
                 "table_open_profile path={} stage=storage_load_metadata_only/read_table_dat elapsed_s={:.3}",
                 table_path.display(),
                 load_started_at.elapsed().as_secs_f64(),
@@ -1325,7 +1326,7 @@ impl CompositeStorage {
             TableDatResult::Plain(table_dat) => {
                 let snapshot = self.load_plain_table_metadata(table_path, table_dat)?;
                 if profile_open {
-                    eprintln!(
+                    tracing::debug!(target: TABLE_OPEN_PROFILE,
                         "table_open_profile path={} stage=storage_load_metadata_only/plain_metadata rows={} dm_count={} elapsed_s={:.3}",
                         table_path.display(),
                         snapshot.row_count,
@@ -1341,7 +1342,7 @@ impl CompositeStorage {
                 let mut snapshot = self.load(table_path)?;
                 snapshot.rows.clear();
                 if profile_open {
-                    eprintln!(
+                    tracing::debug!(target: TABLE_OPEN_PROFILE,
                         "table_open_profile path={} stage=storage_load_metadata_only/full_loader_fallback rows={} elapsed_s={:.3}",
                         table_path.display(),
                         snapshot.row_count,

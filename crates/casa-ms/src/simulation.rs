@@ -2107,7 +2107,8 @@ fn populate_main_rows(
     let field_plan_started = Instant::now();
     let field_plans = build_field_plans(request, &windows, model)?;
     if trace_simobserve_setup() {
-        eprintln!(
+        tracing::debug!(
+            target: SETUP_TRACE,
             "simobserve_setup_trace stage=field_plans fields={} total_millis={}",
             field_plans.len(),
             elapsed_millis(field_plan_started.elapsed())
@@ -2137,7 +2138,6 @@ fn populate_main_rows(
         measures,
         observatory,
         row_pairs: observation_row_pairs(request),
-        uvw_production_trace: SimobserveUvwProductionTrace::from_env(),
         window_count: windows.len(),
         flag_counts: SampleFlagCounts::default(),
     };
@@ -2146,7 +2146,7 @@ fn populate_main_rows(
         let uvw_started = Instant::now();
         let field_id = sample % field_plans.len();
         let field_plan = &field_plans[field_id];
-        let rows = geometry.rows(sample, time, field_plan.phase_center_rad)?;
+        let rows = geometry.rows(time, field_plan.phase_center_rad)?;
         timing.uvw_and_row_setup += uvw_started.elapsed();
 
         for (window, prediction_workers) in windows.iter().zip(&window_prediction_workers) {
@@ -2227,7 +2227,6 @@ struct SampleGeometry<'a> {
     observatory: MPosition,
     elevation_margin_rad: f64,
     row_pairs: Vec<BaselinePair>,
-    uvw_production_trace: Option<SimobserveUvwProductionTrace>,
     window_count: usize,
     flag_counts: SampleFlagCounts,
 }
@@ -2242,12 +2241,7 @@ struct SampleRows {
 }
 
 impl SampleGeometry<'_> {
-    fn rows(
-        &mut self,
-        sample: usize,
-        time: f64,
-        phase_center_rad: [f64; 2],
-    ) -> MsResult<SampleRows> {
+    fn rows(&mut self, time: f64, phase_center_rad: [f64; 2]) -> MsResult<SampleRows> {
         let request = self.request;
         let antenna_uvws = antenna_uvw_positions(
             &request.antennas,
@@ -2258,7 +2252,7 @@ impl SampleGeometry<'_> {
         )?;
         let mut specs = Vec::with_capacity(self.row_pairs.len());
         let mut uvws = Vec::with_capacity(self.row_pairs.len());
-        for (baseline_index, pair) in self.row_pairs.iter().copied().enumerate() {
+        for pair in self.row_pairs.iter().copied() {
             let uvw = if pair.antenna1 == pair.antenna2 {
                 [0.0, 0.0, 0.0]
             } else {
@@ -2268,24 +2262,6 @@ impl SampleGeometry<'_> {
                     antenna_uvws[pair.antenna2][2] - antenna_uvws[pair.antenna1][2],
                 ]
             };
-            if self
-                .uvw_production_trace
-                .as_ref()
-                .is_some_and(|trace| trace.matches(pair.antenna1, pair.antenna2, time))
-            {
-                trace_simobserve_production_uvw(
-                    sample * self.row_pairs.len() * self.window_count + baseline_index,
-                    sample,
-                    pair.antenna1,
-                    pair.antenna2,
-                    time,
-                    phase_center_rad,
-                    &self.observatory,
-                    &request.antennas,
-                    &antenna_uvws,
-                    uvw,
-                );
-            }
             specs.push(MainRowVisibilitySpec {
                 antenna1: pair.antenna1,
                 antenna2: pair.antenna2,
@@ -3144,7 +3120,8 @@ fn build_channel_predictor_range(
         predictors.push(predictor);
     }
     if trace_simobserve_setup() {
-        eprintln!(
+        tracing::debug!(
+            target: SETUP_TRACE,
             "simobserve_setup_trace stage=channel_predictor_range start_channel={} end_channel={} channels={} total_millis={} primary_beam_millis={} orientation_millis={} fft_predictor_millis={}",
             start_channel,
             end_channel,
@@ -3851,6 +3828,9 @@ fn analytic_primary_beam_taper_for_direction(
     voltage * voltage
 }
 
+/// The fewest channels the automatic worker policy predicts in parallel.
+const CHANNEL_PARALLEL_MIN_CHANNELS: usize = 64;
+
 fn simobserve_channel_worker_count(
     request: &SyntheticObservationRequest,
     channel_count: usize,
@@ -3858,22 +3838,14 @@ fn simobserve_channel_worker_count(
     let available = thread::available_parallelism()
         .map(|parallelism| parallelism.get())
         .unwrap_or(1);
-    let requested = request.channel_workers.unwrap_or_else(|| {
-        std::env::var("CASA_RS_SIMOBSERVE_CHANNEL_WORKERS")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .filter(|value| *value > 0)
-            .unwrap_or(available)
-    });
-    let min_channels = std::env::var("CASA_RS_SIMOBSERVE_CHANNEL_PARALLEL_MIN_CHANNELS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(64);
+    let requested = request.channel_workers.unwrap_or(available);
     match request.worker_policy {
-        SyntheticWorkerPolicy::Auto => {
-            simobserve_channel_worker_count_for(channel_count, requested, available, min_channels)
-        }
+        SyntheticWorkerPolicy::Auto => simobserve_channel_worker_count_for(
+            channel_count,
+            requested,
+            available,
+            CHANNEL_PARALLEL_MIN_CHANNELS,
+        ),
         SyntheticWorkerPolicy::Fixed => requested.max(1).min(channel_count.max(1)),
     }
 }
@@ -3894,8 +3866,12 @@ fn simobserve_channel_worker_count_for(
         .max(1)
 }
 
+/// The `tracing` target of the simobserve setup timing (`debug`).
+const SETUP_TRACE: &str = "casa_ms::simobserve_setup";
+
+/// Whether the logging configuration takes the setup timing.
 fn trace_simobserve_setup() -> bool {
-    std::env::var("CASA_RS_SIMOBSERVE_TRACE_SETUP").is_ok_and(|value| value != "0")
+    tracing::enabled!(target: SETUP_TRACE, tracing::Level::DEBUG)
 }
 
 fn simobserve_row_worker_count(
@@ -3906,12 +3882,7 @@ fn simobserve_row_worker_count(
     let available = thread::available_parallelism()
         .map(|parallelism| parallelism.get())
         .unwrap_or(1);
-    let requested = request.row_workers.unwrap_or_else(|| {
-        std::env::var("CASA_RS_SIMOBSERVE_ROW_WORKERS")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(available)
-    });
+    let requested = request.row_workers.unwrap_or(available);
     match request.worker_policy {
         SyntheticWorkerPolicy::Auto => simobserve_row_worker_count_for(
             row_count,
@@ -5040,69 +5011,6 @@ fn antenna_centroid_position(antennas: &[SyntheticAntenna]) -> MPosition {
         sum
     });
     MPosition::new_itrf(x / count, y / count, z / count)
-}
-
-struct SimobserveUvwProductionTrace {
-    antenna1: usize,
-    antenna2: usize,
-    time_mjd_seconds: f64,
-    time_tolerance_seconds: f64,
-}
-
-impl SimobserveUvwProductionTrace {
-    fn from_env() -> Option<Self> {
-        let antenna_text = std::env::var("CASA_RS_SIMOBSERVE_TRACE_UVW_ANTENNAS").ok()?;
-        let (antenna1_text, antenna2_text) = antenna_text.split_once(',')?;
-        let time_text = std::env::var("CASA_RS_SIMOBSERVE_TRACE_UVW_TIME_S").ok()?;
-        let time_tolerance_seconds = std::env::var("CASA_RS_SIMOBSERVE_TRACE_UVW_TIME_TOL_S")
-            .ok()
-            .and_then(|value| value.parse::<f64>().ok())
-            .unwrap_or(1.0e-6);
-        Some(Self {
-            antenna1: antenna1_text.trim().parse().ok()?,
-            antenna2: antenna2_text.trim().parse().ok()?,
-            time_mjd_seconds: time_text.trim().parse().ok()?,
-            time_tolerance_seconds,
-        })
-    }
-
-    fn matches(&self, antenna1: usize, antenna2: usize, time_mjd_seconds: f64) -> bool {
-        self.antenna1 == antenna1
-            && self.antenna2 == antenna2
-            && (self.time_mjd_seconds - time_mjd_seconds).abs() <= self.time_tolerance_seconds
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn trace_simobserve_production_uvw(
-    row_number: usize,
-    sample: usize,
-    antenna1: usize,
-    antenna2: usize,
-    time_mjd_seconds: f64,
-    phase_center_rad: [f64; 2],
-    observatory: &MPosition,
-    antennas: &[SyntheticAntenna],
-    antenna_uvws: &[[f64; 3]],
-    row_uvw: [f64; 3],
-) {
-    let obs_itrf = observatory.as_itrf();
-    let ant1_itrf = antennas[antenna1].position_m;
-    let ant2_itrf = antennas[antenna2].position_m;
-    let ant1_baseline_itrf = [
-        obs_itrf[0] - ant1_itrf[0],
-        obs_itrf[1] - ant1_itrf[1],
-        obs_itrf[2] - ant1_itrf[2],
-    ];
-    let ant2_baseline_itrf = [
-        obs_itrf[0] - ant2_itrf[0],
-        obs_itrf[1] - ant2_itrf[1],
-        obs_itrf[2] - ant2_itrf[2],
-    ];
-    eprintln!(
-        "simobserve_uvw_production_trace row={row_number} sample={sample} ant1={antenna1} ant2={antenna2} time_s={time_mjd_seconds:.15} phase_center_rad={phase_center_rad:?} obs_itrf={obs_itrf:?} ant1_itrf={ant1_itrf:?} ant2_itrf={ant2_itrf:?} ant1_obs_minus_ant_itrf={ant1_baseline_itrf:?} ant2_obs_minus_ant_itrf={ant2_baseline_itrf:?} ant1_uvw={:?} ant2_uvw={:?} row_uvw={row_uvw:?}",
-        antenna_uvws[antenna1], antenna_uvws[antenna2],
-    );
 }
 
 fn project_j2000_baseline_to_uvw(

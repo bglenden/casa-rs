@@ -10,7 +10,9 @@ Checks, from `resources/imaging-architecture/dependency-policy.json`:
 3. packages in device-free layers pull no device crate;
 4. source rules: regexes that must not match outside grandfathered files.
    The grandfather list only shrinks: a listed file that no longer exists or
-   no longer matches fails the check so the entry is removed.
+   no longer matches fails the check so the entry is removed. Test code is
+   skipped unless a rule says otherwise: items gated by `#[cfg(test)]` and
+   the files of modules declared `#[cfg(test)] mod name;`.
 
 Run with `--grandfather` to print the files that currently violate each
 source rule, in policy form.
@@ -23,6 +25,7 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -208,14 +211,45 @@ def self_test() -> int:
         if found != expected:
             failures += 1
             print(f"imaging-dependencies self-test failed: {name}", file=sys.stderr)
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "writer").mkdir()
+        (root / "lib.rs").write_text("#[cfg(test)]\nmod tests;\nmod writer;\n", encoding="utf-8")
+        (root / "writer.rs").write_text("#[cfg(test)]\npub(crate) mod probe;\n", encoding="utf-8")
+        expected = {root / "tests.rs", root / "tests", root / "writer/probe.rs", root / "writer/probe"}
+        if set(test_module_paths(root)) != expected:
+            failures += 1
+            print("imaging-dependencies self-test failed: out-of-line test modules", file=sys.stderr)
     if failures == 0:
         print("imaging-dependencies: self-test ok")
     return 1 if failures else 0
 
 
+TEST_MODULE = re.compile(r"(?m)^[ \t]*#\[cfg\(test\)\][ \t]*\n[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?mod[ \t]+(\w+)[ \t]*;")
+
+
+def test_module_paths(root: Path) -> list[Path]:
+    """Files and directories under `root` that only `#[cfg(test)] mod name;`
+    declarations bring in: test code kept out of line, like an inline test
+    module. A test module's own submodules live under its directory."""
+    found: list[Path] = []
+    for path in sorted(root.rglob("*.rs")):
+        source = path.read_text(encoding="utf-8")
+        for name in TEST_MODULE.findall(source):
+            if path.name in ("mod.rs", "lib.rs", "main.rs"):
+                directory = path.parent
+            else:
+                directory = path.with_suffix("")
+            found += [directory / f"{name}.rs", directory / name]
+    return found
+
+
 def rule_files(rule: dict) -> list[Path]:
     roots = [REPO_ROOT / root for root in rule["roots"]]
     excluded = [REPO_ROOT / root for root in rule.get("exclude_roots", [])]
+    if rule.get("ignore_inline_tests", True):
+        for root in roots:
+            excluded += test_module_paths(root)
     extensions = tuple(rule["extensions"])
     files: list[Path] = []
     for root in roots:

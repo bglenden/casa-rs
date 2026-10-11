@@ -46,21 +46,21 @@ impl Table {
     /// parent table is opened automatically and the referenced rows are
     /// materialized into this table.
     pub fn open(options: TableOptions) -> Result<Self, TableError> {
-        let profile_open = std::env::var_os("CASA_RS_TABLE_OPEN_PROFILE").is_some();
+        let profile_open = crate::storage::table_open_profile_enabled();
         let open_started_at = std::time::Instant::now();
         tracing::info!(
             path = %options.path.display(),
             "opening CASA table"
         );
         if profile_open {
-            eprintln!(
+            tracing::debug!(target: crate::storage::TABLE_OPEN_PROFILE,
                 "table_open_profile path={} stage=start",
                 options.path.display()
             );
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
         if profile_open {
-            eprintln!(
+            tracing::debug!(target: crate::storage::TABLE_OPEN_PROFILE,
                 "table_open_profile path={} stage=invalidate_shared_tile_cache elapsed_s={:.3}",
                 options.path.display(),
                 open_started_at.elapsed().as_secs_f64(),
@@ -77,7 +77,7 @@ impl Table {
             error
         })?;
         if profile_open {
-            eprintln!(
+            tracing::debug!(target: crate::storage::TABLE_OPEN_PROFILE,
                 "table_open_profile path={} stage=load_metadata_only rows={} dm_count={} elapsed_s={:.3}",
                 options.path.display(),
                 snapshot.row_count,
@@ -117,7 +117,7 @@ impl Table {
             lock_state: None,
         };
         if profile_open {
-            eprintln!(
+            tracing::debug!(target: crate::storage::TABLE_OPEN_PROFILE,
                 "table_open_profile path={} stage=done row_hint={} rows={} elapsed_s={:.3}",
                 options.path.display(),
                 row_hint,

@@ -188,7 +188,7 @@
   },
   {
    "id": "no-env-in-imaging-libraries",
-   "message": "library crates read no environment variables; diagnostic switches are request fields (ADR-0016)",
+   "message": "library crates on the imaging path read no environment variables: switches are request fields or caller configuration, diagnostics are tracing events (ADR-0016, #658)",
    "roots": [
     "crates/casa-imaging-model/src",
     "crates/casa-imaging-operator/src",
@@ -198,17 +198,26 @@
     "crates/casa-imaging-runtime/src",
     "crates/casa-imaging-metal/src",
     "crates/casa-imaging-application/src",
-    "crates/casa-fft/src"
+    "crates/casa-fft/src",
+    "crates/casa-ms/src",
+    "crates/casa-tables/src"
+   ],
+   "exclude_roots": [
+    "crates/casa-ms/src/bin",
+    "crates/casa-ms/src/msexplore/cli.rs",
+    "crates/casa-tables/src/bin"
    ],
    "extensions": [
     ".rs"
    ],
    "regex": "\\benv::var(?:_os)?\\s*\\(|\\bstd::env\\b",
-   "grandfathered": []
+   "grandfathered": [
+    "crates/casa-ms/src/simulation_task.rs"
+   ]
   },
   {
    "id": "no-eprintln-in-imaging-crates",
-   "message": "imaging crates emit through tracing, never eprintln! (ADR-0016)",
+   "message": "library crates on the imaging path emit through tracing, never eprintln! (ADR-0016, #658)",
    "roots": [
     "crates/casa-imaging-model/src",
     "crates/casa-imaging-operator/src",
@@ -218,7 +227,14 @@
     "crates/casa-imaging-runtime/src",
     "crates/casa-imaging-metal/src",
     "crates/casa-imaging-application/src",
-    "crates/casa-fft/src"
+    "crates/casa-fft/src",
+    "crates/casa-ms/src",
+    "crates/casa-tables/src"
+   ],
+   "exclude_roots": [
+    "crates/casa-ms/src/bin",
+    "crates/casa-ms/src/msexplore/cli.rs",
+    "crates/casa-tables/src/bin"
    ],
    "extensions": [
     ".rs"

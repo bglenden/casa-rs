@@ -68,7 +68,7 @@ split(
 PY
 
 rust_bin="$repo_root/target/debug/mstransform"
-CASA_RS_MSTRANSFORM_PROGRESS=1 "$rust_bin" \
+"$rust_bin" --log-stderr-priority DEBUG \
   --ms "$ms12" \
   --out "$outdir/rust/M100_12m_CO.ms" \
   --spw "0" \
@@ -76,7 +76,7 @@ CASA_RS_MSTRANSFORM_PROGRESS=1 "$rust_bin" \
   --datacolumn DATA \
   --no-keepflags >"$outdir/rust/M100_12m_CO.mstransform.json" 2>"$outdir/logs/rust-12m-mstransform.log"
 
-CASA_RS_MSTRANSFORM_PROGRESS=1 "$rust_bin" \
+"$rust_bin" --log-stderr-priority DEBUG \
   --ms "$ms7" \
   --out "$outdir/rust/M100_7m_CO.ms" \
   --spw "3,5" \

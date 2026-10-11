@@ -16,7 +16,8 @@ use casa_tables::{ColumnSchema, ColumnType, DataManagerKind, Table, TableInfo, T
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use thiserror::Error;
 use tracing::field::{Field, Visit};
-use tracing::{Event, Level, Subscriber};
+use tracing::subscriber::Interest;
+use tracing::{Event, Level, Metadata, Subscriber};
 use tracing_subscriber::layer::{Context, SubscriberExt};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{Layer, Registry};
@@ -761,17 +762,27 @@ impl<S> Layer<S> for CasaLogLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
-        let metadata = event.metadata();
-        // Only a `casa.priority` field can raise an event above its level,
-        // so any other event below every sink's threshold is not formatted.
-        if metadata.fields().field("casa.priority").is_none()
-            && !self
+    // Sinks keep their thresholds for the process, but tests install
+    // subscribers with others, so interest is decided per event.
+    fn register_callsite(&self, _metadata: &'static Metadata<'static>) -> Interest {
+        Interest::sometimes()
+    }
+
+    /// An event below every sink's threshold is disabled, so it is never
+    /// formatted and `tracing::enabled!` reports it off; only a
+    /// `casa.priority` field can raise an event above its level.
+    fn enabled(&self, metadata: &Metadata<'_>, _ctx: Context<'_, S>) -> bool {
+        // Spans only name an event's location. `tracing::enabled!` asks with
+        // a hint, which is not an event but is filtered as one.
+        metadata.is_span()
+            || metadata.fields().field("casa.priority").is_some()
+            || self
                 .sink
                 .enabled(CasaPriority::from_tracing_level(metadata.level()))
-        {
-            return;
-        }
+    }
+
+    fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
+        let metadata = event.metadata();
         let mut visitor = EventVisitor::default();
         event.record(&mut visitor);
         let priority = visitor
@@ -1139,12 +1150,29 @@ mod tests {
     }
 
     #[test]
+    fn a_debug_sink_enables_debug_profiles() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let sink = Arc::new(MemorySink::new(CasaPriority::Debug1));
+        let subscriber = tracing_subscriber::registry().with(CasaLogLayer::new(sink.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(tracing::enabled!(target: "casa_tables::profile", tracing::Level::DEBUG));
+            assert!(!tracing::enabled!(target: "casa_tables::profile", tracing::Level::TRACE));
+            tracing::debug!(target: "casa_tables::profile", rows = 3_u64, "profile");
+        });
+        assert_eq!(sink.records().unwrap()[0].message, "profile rows=3");
+    }
+
+    #[test]
     fn an_event_logs_its_fields_after_its_message() {
         use tracing_subscriber::layer::SubscriberExt;
 
         let sink = Arc::new(MemorySink::new(CasaPriority::Info));
         let subscriber = tracing_subscriber::registry().with(CasaLogLayer::new(sink.clone()));
         tracing::subscriber::with_default(subscriber, || {
+            assert!(tracing::enabled!(tracing::Level::INFO));
+            assert!(!tracing::enabled!(tracing::Level::DEBUG));
+            tracing::debug!("below the threshold");
             tracing::info!("plain\n");
             tracing::info!(phase = ?"major cycle 1", seconds = 0.5, "imaging phase\n");
             tracing::info!(bytes = 7_u64);

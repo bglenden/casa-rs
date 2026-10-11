@@ -248,7 +248,7 @@ rust_transform_cmd=(
 )
 if [[ "$profile_rust" == true ]]; then
   time_json_stdout_stderr rust-transform "$outdir/rust-transform-wall-timing.json" "$outdir/rust-transform-report.json" "$outdir/rust-transform-profile.log" \
-    env CASA_RS_MSTRANSFORM_PROGRESS=1 "${rust_transform_cmd[@]}"
+    "${rust_transform_cmd[@]}" --log-stderr-priority DEBUG
 else
   time_json_stdout rust-transform "$outdir/rust-transform-wall-timing.json" "$outdir/rust-transform-report.json" "${rust_transform_cmd[@]}"
 fi
