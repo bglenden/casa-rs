@@ -342,7 +342,7 @@ fn geometry(
 /// W-projection gridders only when its VPManager knows the telescope
 /// (`SynthesisImager::makePBImage` warns "Not making PB" otherwise). So
 /// without `write_pb` or `pbcor` a telescope, dish set or band that has no
-/// analytic beam here means no PB, not a failed run.
+/// analytic beam here means no PB and the same warning, not a failed run.
 fn primary_beam_model(
     request: &ImagingRequest,
     ms: &MeasurementSet,
@@ -356,29 +356,35 @@ fn primary_beam_model(
             Some(instrument::standard_primary_beam_model(ms)?)
         }
         Gridder::Standard | Gridder::Wproject { .. } => {
-            match instrument::standard_primary_beam_model(ms) {
-                Ok(model) => {
-                    let coordinate = spectral.coordinate();
-                    let channels = match request.deconvolver {
-                        Deconvolver::Mtmfs => 1,
-                        _ => spectral.output_channels,
-                    };
-                    (0..channels)
-                        .all(|channel| {
-                            coordinate
-                                .channel_centre_hz(channel)
-                                .is_some_and(|hz| model.supports_frequency(hz))
-                        })
-                        .then_some(model)
-                }
+            let model = match instrument::standard_primary_beam_model(ms) {
+                Ok(model) => model,
                 Err(
-                    PrepareError::NoTelescope
+                    error @ (PrepareError::NoTelescope
                     | PrepareError::NoAnalyticPrimaryBeam { .. }
                     | PrepareError::NoAntennaDishes
-                    | PrepareError::MixedAlmaDishes { .. },
-                ) => None,
+                    | PrepareError::MixedAlmaDishes { .. }),
+                ) => {
+                    tracing::warn!("not making the PB: {error}");
+                    return Ok(None);
+                }
                 Err(error) => return Err(error),
+            };
+            let coordinate = spectral.coordinate();
+            let channels = match request.deconvolver {
+                Deconvolver::Mtmfs => 1,
+                _ => spectral.output_channels,
+            };
+            let covered = (0..channels).all(|channel| {
+                coordinate
+                    .channel_centre_hz(channel)
+                    .is_some_and(|hz| model.supports_frequency(hz))
+            });
+            if !covered {
+                tracing::warn!(
+                    "not making the PB: the analytic beam does not cover every output channel"
+                );
             }
+            covered.then_some(model)
         }
     })
 }
