@@ -17,7 +17,7 @@ use crate::convolution::{CellHold, ConvolutionFunctionSet, RowContext};
 use crate::error::OperatorError;
 use crate::geometry::{CellLocation, GridGeometry};
 use crate::operator::{Basis, MeasurementOperator};
-use crate::sample::{CfKey, Placement, SampleBuffer};
+use crate::sample::{CfKey, Placement, SampleBlock, SampleBuffer};
 use crate::weighting::{
     DensityCellRule, DensityGridShape, DensityUv, SPEED_OF_LIGHT_M_PER_S, WeightingGeneration,
 };
@@ -320,9 +320,9 @@ enum Source {
 /// a batch of its widest rows; a default scratch grows as batches need.
 #[derive(Debug, Default)]
 pub struct PredictionScratch {
-    buffer: Option<SampleBuffer>,
-    zeros: Vec<Complex32>,
-    ones: Vec<f32>,
+    /// The batch's placements: a prediction reads no values or weights.
+    placements: Vec<Placement>,
+    npol: usize,
     predicted: Vec<Complex32>,
     sources: Vec<usize>,
     values: Vec<Complex32>,
@@ -335,9 +335,8 @@ impl PredictionScratch {
     #[must_use]
     pub fn with_capacity(npol: usize, samples: usize, planes: usize) -> Self {
         Self {
-            buffer: Some(SampleBuffer::with_capacity(npol, samples)),
-            zeros: vec![Complex32::default(); npol],
-            ones: vec![1.0; npol],
+            placements: Vec::with_capacity(samples),
+            npol,
             predicted: Vec::with_capacity(samples * npol),
             sources: Vec::with_capacity(samples),
             values: Vec::with_capacity(planes * npol),
@@ -347,34 +346,23 @@ impl PredictionScratch {
     /// Bytes [`Self::with_capacity`] allocates.
     #[must_use]
     pub const fn bytes(npol: usize, samples: usize, planes: usize) -> u64 {
-        SampleBuffer::bytes(npol, samples)
-            + (npol * (size_of::<Complex32>() + size_of::<f32>())
-                + samples * (npol * size_of::<Complex32>() + size_of::<usize>())
-                + planes * npol * size_of::<Complex32>()) as u64
+        (samples * (size_of::<Placement>() + npol * size_of::<Complex32>() + size_of::<usize>())
+            + planes * npol * size_of::<Complex32>()) as u64
     }
 
     /// Bytes the scratch's buffers hold now, from their capacities.
     #[must_use]
     pub fn capacity_bytes(&self) -> u64 {
-        self.buffer.as_ref().map_or(0, SampleBuffer::capacity_bytes)
-            + (self.zeros.capacity() * size_of::<Complex32>()
-                + self.ones.capacity() * size_of::<f32>()
-                + self.predicted.capacity() * size_of::<Complex32>()
-                + self.sources.capacity() * size_of::<usize>()
-                + self.values.capacity() * size_of::<Complex32>()) as u64
+        (self.placements.capacity() * size_of::<Placement>()
+            + self.predicted.capacity() * size_of::<Complex32>()
+            + self.sources.capacity() * size_of::<usize>()
+            + self.values.capacity() * size_of::<Complex32>()) as u64
     }
 
     /// Start a batch of rows of `npol` correlations, clearing every buffer.
     pub fn begin(&mut self, npol: usize) {
-        if self.zeros.len() != npol {
-            self.zeros = vec![Complex32::default(); npol];
-            self.ones = vec![1.0; npol];
-        }
-        let buffer = self.buffer.get_or_insert_with(|| SampleBuffer::new(npol));
-        if buffer.npol() != npol {
-            *buffer = SampleBuffer::new(npol);
-        }
-        buffer.clear();
+        self.npol = npol;
+        self.placements.clear();
         self.sources.clear();
     }
 
@@ -390,15 +378,20 @@ impl PredictionScratch {
         cf: &dyn ConvolutionFunctionSet,
         model: &PreparedModelGrids,
     ) -> Result<(), OperatorError> {
-        let buffer = self.buffer.as_ref().expect("begin installs the buffer");
         self.predicted.clear();
         self.predicted
-            .resize(buffer.len() * buffer.npol(), Complex32::default());
-        if buffer.is_empty() {
+            .resize(self.placements.len() * self.npol, Complex32::default());
+        if self.placements.is_empty() {
             return Ok(());
         }
+        let block = SampleBlock {
+            placements: &self.placements,
+            values: &[],
+            weights: &[],
+            npol: self.npol,
+        };
         backend.apply(
-            &buffer.block(),
+            &block,
             cf,
             Work::Predict {
                 model,
@@ -1224,14 +1217,11 @@ impl SpectralResampler {
         let npol = operator.polarization().correlations().len();
         self.validate_row(operator, row, npol)?;
         let PredictionScratch {
-            buffer,
-            zeros,
-            ones,
+            placements,
             sources,
             ..
         } = scratch;
-        let buffer = buffer.as_mut().expect("begin installs the buffer");
-        let start = buffer.len();
+        let start = placements.len();
         if row.row_flag || is_autocorrelation(row) {
             return Ok(PlacedRow { start, end: start });
         }
@@ -1251,7 +1241,7 @@ impl SpectralResampler {
                 frequency_hz,
                 &mut placing,
             ) {
-                buffer.push(placement, zeros, ones);
+                placements.push(placement);
                 sources.push(source);
             }
         };
@@ -1279,7 +1269,7 @@ impl SpectralResampler {
         }
         Ok(PlacedRow {
             start,
-            end: buffer.len(),
+            end: placements.len(),
         })
     }
 

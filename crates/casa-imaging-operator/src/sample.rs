@@ -75,7 +75,9 @@ pub struct Placement {
 /// weights `W`. CASA's weighting rule gives every polarization of a sample
 /// the same weight and drops the sample when any selected correlation is
 /// flagged, so a placed sample has no zero weights; a kernel still skips a
-/// polarization whose weight is zero.
+/// polarization whose weight is zero. A block that is only predicted
+/// ([`Work::Predict`](crate::Work::Predict)) may hold no values or weights:
+/// a prediction reads only the placements.
 #[derive(Clone, Copy, Debug)]
 pub struct SampleBlock<'a> {
     /// Placed samples.

@@ -115,7 +115,8 @@ pub enum Work<'a> {
         acc: &'a mut GridAccumulator,
     },
     /// Predict raw visibilities (`npol` per placement, sample-major,
-    /// phase-centre phasor applied) from `model`.
+    /// phase-centre phasor applied) from `model`. Reads only the block's
+    /// placements, so its values and weights may be empty.
     Predict {
         /// Prepared model grids covering every plane in the block.
         model: &'a PreparedModelGrids,
