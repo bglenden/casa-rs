@@ -139,16 +139,18 @@
 <a href=#139 id=139 data-nosnippet>139</a>/// contract in plan section 5.3, selected by the runtime.
 <a href=#140 id=140 data-nosnippet>140</a></span><span class="kw">pub trait </span>GridBackend: Send {
 <a href=#141 id=141 data-nosnippet>141</a>    <span class="doccomment">/// Apply `work` to one block with kernel set `cf`; the work is complete
-<a href=#142 id=142 data-nosnippet>142</a>    /// when this returns.
-<a href=#143 id=143 data-nosnippet>143</a>    ///
-<a href=#144 id=144 data-nosnippet>144</a>    /// Every placement must lie on a plane the target holds and have its
-<a href=#145 id=145 data-nosnippet>145</a>    /// whole support inside the target's tile; the block's polarization
-<a href=#146 id=146 data-nosnippet>146</a>    /// count must equal the kernel set's visibility polarizations.
-<a href=#147 id=147 data-nosnippet>147</a>    </span><span class="kw">fn </span>apply(
-<a href=#148 id=148 data-nosnippet>148</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#149 id=149 data-nosnippet>149</a>        block: <span class="kw-2">&amp;</span>SampleBlock&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#150 id=150 data-nosnippet>150</a>        cf: <span class="kw-2">&amp;</span><span class="kw">dyn </span>ConvolutionFunctionSet,
-<a href=#151 id=151 data-nosnippet>151</a>        work: Work&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#152 id=152 data-nosnippet>152</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), OperatorError&gt;;
-<a href=#153 id=153 data-nosnippet>153</a>}
+<a href=#142 id=142 data-nosnippet>142</a>    /// when this returns, except that a device backend may leave grid-only
+<a href=#143 id=143 data-nosnippet>143</a>    /// work running on device cells, which the host's next access to the
+<a href=#144 id=144 data-nosnippet>144</a>    /// cells waits for ([`DeviceCells::defer`](crate::DeviceCells::defer)).
+<a href=#145 id=145 data-nosnippet>145</a>    ///
+<a href=#146 id=146 data-nosnippet>146</a>    /// Every placement must lie on a plane the target holds and have its
+<a href=#147 id=147 data-nosnippet>147</a>    /// whole support inside the target's tile; the block's polarization
+<a href=#148 id=148 data-nosnippet>148</a>    /// count must equal the kernel set's visibility polarizations.
+<a href=#149 id=149 data-nosnippet>149</a>    </span><span class="kw">fn </span>apply(
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#151 id=151 data-nosnippet>151</a>        block: <span class="kw-2">&amp;</span>SampleBlock&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#152 id=152 data-nosnippet>152</a>        cf: <span class="kw-2">&amp;</span><span class="kw">dyn </span>ConvolutionFunctionSet,
+<a href=#153 id=153 data-nosnippet>153</a>        work: Work&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#154 id=154 data-nosnippet>154</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), OperatorError&gt;;
+<a href=#155 id=155 data-nosnippet>155</a>}
 </code></pre></div></section></main></body></html>
