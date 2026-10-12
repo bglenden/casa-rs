@@ -4,8 +4,8 @@
 //! `tracing` events through `casa-logging`, and nothing else does. With
 //! `stage_timing` each phase logs one event carrying the phase record of the
 //! run summary; with `science_trace` the controller logs what it reads and
-//! decides; with `metal_stage_timing` each Metal gridding owner logs its
-//! timing. With every switch off, a run logging at INFO emits none of them.
+//! decides; with `metal_stage_timing` each Metal backend logs its timing.
+//! With every switch off, a run logging at INFO emits none of them.
 
 use std::path::Path;
 use std::process::Command;
@@ -170,11 +170,15 @@ fn stage_timing_logs_each_phase_record_and_switches_off_log_nothing() {
     }
 }
 
+/// Each Metal backend logs its timing: the gridding owners of a continuum
+/// clean, and in a linearly interpolated cube's later major cycle the row
+/// chunks' prediction backends, so the native-channel residual's model is
+/// degridded on the device.
 #[test]
-fn metal_stage_timing_logs_each_gridding_owner() {
+fn metal_stage_timing_logs_each_metal_backend() {
+    let metal = ["--backend", "metal", "--metal-stage-timing"];
     let observation = Observation::synthesise(&[("point", POINT)]);
-    let flags = ["--backend", "metal", "--metal-stage-timing"];
-    let stderr = match clean(&observation, "metal-timed", &flags) {
+    let stderr = match clean(&observation, "metal-timed", &metal) {
         Ok(stderr) => stderr,
         Err(stderr) if !cfg!(target_os = "macos") || stderr.contains("Metal 3 device") => {
             eprintln!("skipped: no Metal device");
@@ -182,19 +186,43 @@ fn metal_stage_timing_logs_each_gridding_owner() {
         }
         Err(stderr) => panic!("Metal run failed: {stderr}"),
     };
-    let lines = events(&stderr, METAL_STAGE_TIMING);
-    assert!(!lines.is_empty(), "{stderr}");
-    for line in lines {
-        assert_eq!(field(line, "completed"), "true", "{line}");
-        assert!(field(line, "applies").parse::<u64>().expect("applies") > 0);
-        assert!(field(line, "samples").parse::<u64>().expect("samples") > 0);
-        field(line, "wait_seconds")
-            .parse::<f64>()
-            .expect("a wait in seconds");
-    }
-    for target in [STAGE_TIMING, SCIENCE_TRACE] {
-        assert!(events(&stderr, target).is_empty(), "{target}:\n{stderr}");
-    }
+    let check = |stderr: &str| {
+        let lines = events(stderr, METAL_STAGE_TIMING);
+        assert!(!lines.is_empty(), "{stderr}");
+        for line in &lines {
+            assert_eq!(field(line, "completed"), "true", "{line}");
+            assert!(field(line, "applies").parse::<u64>().expect("applies") > 0);
+            assert!(field(line, "samples").parse::<u64>().expect("samples") > 0);
+            field(line, "wait_seconds")
+                .parse::<f64>()
+                .expect("a wait in seconds");
+        }
+        for target in [STAGE_TIMING, SCIENCE_TRACE] {
+            assert!(events(stderr, target).is_empty(), "{target}:\n{stderr}");
+        }
+        lines
+            .iter()
+            .map(|line| field(line, "predicted").parse::<u64>().expect("predicted"))
+            .sum::<u64>()
+    };
+    check(&stderr);
+
+    let band = Observation::synthesise_band(4, &[("point", POINT)]);
+    let cube = [
+        "--specmode",
+        "cube",
+        "--channel-count",
+        "4",
+        "--nmajor",
+        "2",
+    ];
+    let flags = [&metal[..], &cube[..]].concat();
+    let stderr = clean(&band, "metal-cube-timed", &flags)
+        .unwrap_or_else(|stderr| panic!("Metal cube failed: {stderr}"));
+    assert!(
+        check(&stderr) > 0,
+        "the cube's later major cycle predicts on the device:\n{stderr}"
+    );
 }
 
 /// The imaging log does not grow with the planes a cube cleans (plan

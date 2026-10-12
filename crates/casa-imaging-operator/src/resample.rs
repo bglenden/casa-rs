@@ -310,10 +310,14 @@ enum Source {
     Pair { left: usize, right_factor: f64 },
 }
 
-/// Reusable buffers for [`SpectralResampler::predict_row`]; one per worker.
+/// Reusable buffers for predicting a batch of rows; one per row chunk.
 ///
-/// [`SpectralResampler::prediction_scratch`] allocates them once for the
-/// widest row; a default scratch grows as rows need.
+/// A batch is [`Self::begin`], then [`SpectralResampler::place_prediction`]
+/// for each row, one [`Self::apply`] that degrids every placed sample in a
+/// single backend call, and [`SpectralResampler::finish_prediction`] for
+/// each row. [`SpectralResampler::predict_row`] is the batch of one row.
+/// [`SpectralResampler::prediction_scratch`] allocates the buffers once for
+/// a batch of its widest rows; a default scratch grows as batches need.
 #[derive(Debug, Default)]
 pub struct PredictionScratch {
     buffer: Option<SampleBuffer>,
@@ -360,8 +364,8 @@ impl PredictionScratch {
                 + self.values.capacity() * size_of::<Complex32>()) as u64
     }
 
-    /// Clear every buffer for a row of `npol` polarizations.
-    fn reset(&mut self, npol: usize) {
+    /// Start a batch of rows of `npol` correlations, clearing every buffer.
+    pub fn begin(&mut self, npol: usize) {
         if self.zeros.len() != npol {
             self.zeros = vec![Complex32::default(); npol];
             self.ones = vec![1.0; npol];
@@ -373,6 +377,43 @@ impl PredictionScratch {
         buffer.clear();
         self.sources.clear();
     }
+
+    /// Degrid every sample placed since [`Self::begin`] from `model` in one
+    /// [`Work::Predict`] on `backend`.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `backend` returns.
+    pub fn apply(
+        &mut self,
+        backend: &mut dyn GridBackend,
+        cf: &dyn ConvolutionFunctionSet,
+        model: &PreparedModelGrids,
+    ) -> Result<(), OperatorError> {
+        let buffer = self.buffer.as_ref().expect("begin installs the buffer");
+        self.predicted.clear();
+        self.predicted
+            .resize(buffer.len() * buffer.npol(), Complex32::default());
+        if buffer.is_empty() {
+            return Ok(());
+        }
+        backend.apply(
+            &buffer.block(),
+            cf,
+            Work::Predict {
+                model,
+                out: &mut self.predicted,
+            },
+        )
+    }
+}
+
+/// One row's degridded samples within a [`PredictionScratch`] batch, from
+/// [`SpectralResampler::place_prediction`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlacedRow {
+    start: usize,
+    end: usize,
 }
 
 /// CASA `FTMachine::interpolateFrequencyFromgrid`: output-channel
@@ -827,7 +868,7 @@ impl SpectralResampler {
         }
     }
 
-    /// Reusable buffers for [`Self::predict_row`] over rows of at most
+    /// Reusable buffers for predicting batches of `rows` rows of at most
     /// `channels` channels of `npol` correlations, allocated once at
     /// [`PredictionScratch::bytes`] for every resampler in `resamplers`.
     #[must_use]
@@ -835,9 +876,10 @@ impl SpectralResampler {
         resamplers: impl IntoIterator<Item = &'r Self>,
         npol: usize,
         channels: usize,
+        rows: usize,
     ) -> PredictionScratch {
         let (samples, planes) = Self::prediction_extent(resamplers, channels);
-        PredictionScratch::with_capacity(npol, samples, planes)
+        PredictionScratch::with_capacity(npol, rows * samples, planes)
     }
 
     /// Bytes [`Self::prediction_scratch`] holds for the same arguments.
@@ -846,9 +888,10 @@ impl SpectralResampler {
         resamplers: impl IntoIterator<Item = &'r Self>,
         npol: usize,
         channels: usize,
+        rows: usize,
     ) -> u64 {
         let (samples, planes) = Self::prediction_extent(resamplers, channels);
-        PredictionScratch::bytes(npol, samples, planes)
+        PredictionScratch::bytes(npol, rows * samples, planes)
     }
 
     /// The most samples and output planes any of `resamplers` predicts with
@@ -1086,7 +1129,15 @@ impl SpectralResampler {
     /// Only the planes `model` holds are degridded; a caller predicting a
     /// window of planes prepares the window's halo (see
     /// [`Self::model_planes`]).
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// This is the batch of one row; a caller predicting many rows places
+    /// them all into one [`PredictionScratch`] batch, so that one backend
+    /// call degrids them.
+    ///
+    /// # Errors
+    ///
+    /// A row inconsistent with `operator`, an `out` of another length than
+    /// the row's values, or whatever `backend` returns.
     pub fn predict_row(
         &self,
         operator: &MeasurementOperator,
@@ -1096,32 +1147,52 @@ impl SpectralResampler {
         scratch: &mut PredictionScratch,
         out: &mut [Complex32],
     ) -> Result<(), OperatorError> {
+        scratch.begin(operator.polarization().correlations().len());
+        let placed = self.place_prediction(operator, model, row, scratch)?;
+        scratch.apply(backend, operator.cf(), model)?;
+        self.finish_prediction(operator, row, placed, scratch, out)
+    }
+
+    /// Whether `row`'s prediction interpolates degridded output channels to
+    /// its native channels (see [`Self::predict_row`]).
+    fn linear_prediction(&self, row: &NativeRow<'_>) -> Option<SpectralAxis> {
+        match self.sampling {
+            Sampling::Linear(axis) if axis.channels > 1 && row.frequencies_hz.len() > 1 => {
+                Some(axis)
+            }
+            Sampling::Direct | Sampling::Nearest(_) | Sampling::Linear(_) => None,
+        }
+    }
+
+    /// Add `row`'s degridded samples to the batch `scratch` began, as
+    /// [`Self::predict_row`] degrids them; a flagged row or an
+    /// autocorrelation adds none.
+    ///
+    /// # Errors
+    ///
+    /// A row inconsistent with `operator`.
+    pub fn place_prediction(
+        &self,
+        operator: &MeasurementOperator,
+        model: &PreparedModelGrids,
+        row: &NativeRow<'_>,
+        scratch: &mut PredictionScratch,
+    ) -> Result<PlacedRow, OperatorError> {
         let npol = operator.polarization().correlations().len();
         self.validate_row(operator, row, npol)?;
-        if out.len() != row.values.len() {
-            return Err(OperatorError::NativeRow {
-                reason: "the prediction holds one value per selected sample",
-            });
-        }
-        out.fill(Complex32::default());
-        if row.row_flag || is_autocorrelation(row) {
-            return Ok(());
-        }
-        let native = row.frequencies_hz;
-        let linear = match self.sampling {
-            Sampling::Linear(axis) if axis.channels > 1 && native.len() > 1 => Some(axis),
-            Sampling::Direct | Sampling::Nearest(_) | Sampling::Linear(_) => None,
-        };
-        scratch.reset(npol);
         let PredictionScratch {
             buffer,
             zeros,
             ones,
-            predicted,
             sources,
-            values,
+            ..
         } = scratch;
-        let buffer = buffer.as_mut().expect("reset installs the buffer");
+        let buffer = buffer.as_mut().expect("begin installs the buffer");
+        let start = buffer.len();
+        if row.row_flag || is_autocorrelation(row) {
+            return Ok(PlacedRow { start, end: start });
+        }
+        let native = row.frequencies_hz;
         let prepared = model.layout().planes();
         let mut hold = CellHold::new();
         let mut place = |plane: u32, frequency_hz: f64, source: usize| {
@@ -1141,7 +1212,7 @@ impl SpectralResampler {
                 sources.push(source);
             }
         };
-        match linear {
+        match self.linear_prediction(row) {
             None => {
                 for (channel, frequency_hz) in native.iter().enumerate() {
                     let plane = match self.sampling {
@@ -1156,26 +1227,53 @@ impl SpectralResampler {
                 }
             }
             Some(axis) => {
-                let Some(channels) = degridded_channels(axis, native) else {
-                    return Ok(());
-                };
-                for channel in channels {
-                    place(channel, axis.centre_hz(channel), channel as usize);
+                if let Some(channels) = degridded_channels(axis, native) {
+                    for channel in channels {
+                        place(channel, axis.centre_hz(channel), channel as usize);
+                    }
                 }
             }
         }
-        predicted.resize(buffer.len() * npol, Complex32::default());
-        if !buffer.is_empty() {
-            backend.apply(
-                &buffer.block(),
-                operator.cf(),
-                Work::Predict {
-                    model,
-                    out: predicted,
-                },
-            )?;
+        Ok(PlacedRow {
+            start,
+            end: buffer.len(),
+        })
+    }
+
+    /// Write `row`'s model visibilities to `out` as `[channel][correlation]`
+    /// from its samples `placed` in the batch `scratch` applied, as
+    /// [`Self::predict_row`] does.
+    ///
+    /// # Errors
+    ///
+    /// An `out` of another length than the row's values.
+    pub fn finish_prediction(
+        &self,
+        operator: &MeasurementOperator,
+        row: &NativeRow<'_>,
+        placed: PlacedRow,
+        scratch: &mut PredictionScratch,
+        out: &mut [Complex32],
+    ) -> Result<(), OperatorError> {
+        if out.len() != row.values.len() {
+            return Err(OperatorError::NativeRow {
+                reason: "the prediction holds one value per selected sample",
+            });
         }
-        match linear {
+        out.fill(Complex32::default());
+        if placed.start == placed.end {
+            return Ok(());
+        }
+        let npol = operator.polarization().correlations().len();
+        let PredictionScratch {
+            predicted,
+            sources,
+            values,
+            ..
+        } = scratch;
+        let predicted = &predicted[placed.start * npol..placed.end * npol];
+        let sources = &sources[placed.start..placed.end];
+        match self.linear_prediction(row) {
             None => {
                 for (index, channel) in sources.iter().enumerate() {
                     for pol in 0..npol {

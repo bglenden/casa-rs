@@ -8,7 +8,8 @@ use std::ops::Range;
 use casa_imaging_metal::MetalBackend;
 use casa_imaging_operator::{
     CpuBackend, GridAccumulator, GridBackend, GridPrecision, Mode, NativeRow, NormalImages,
-    PlaneRange, PredictionScratch, PreparedModelGrids, SampleBuffer, SpectralResampler, Work,
+    PlacedRow, PlaneRange, PredictionScratch, PreparedModelGrids, SampleBuffer, SpectralResampler,
+    Work,
 };
 use num_complex::Complex32;
 
@@ -62,7 +63,7 @@ struct Domain<'w> {
 }
 
 /// One row chunk's placements on the wave's planes, by owner, its
-/// prediction scratch and its rows' native-channel residuals.
+/// prediction batch and its rows' native-channel residuals.
 ///
 /// Every buffer is allocated once, for a chunk's rows of the source's widest
 /// row ([`ChunkShape`]), and each owner's can take every placement of the
@@ -79,7 +80,8 @@ struct Chunk {
     /// over it.
     weight_owned: SampleBuffer,
     placed: u64,
-    backend: CpuBackend,
+    /// The chunk's rows' samples in the prediction batch.
+    placed_rows: Vec<PlacedRow>,
     prediction: PredictionScratch,
     predicted: Vec<Complex32>,
     residual: Vec<Complex32>,
@@ -106,8 +108,9 @@ struct ChunkShape {
     owners: usize,
     /// Whether the pass grids the weight image.
     weight: bool,
-    /// Bytes the prediction scratch holds
-    /// ([`SpectralResampler::prediction_scratch`]).
+    /// Bytes the prediction batch of the chunk's rows holds
+    /// ([`SpectralResampler::prediction_scratch`]) with each row's span in
+    /// it.
     prediction: u64,
 }
 
@@ -137,7 +140,8 @@ impl ChunkShape {
                 domains.iter().map(|domain| domain.resampler),
                 block.correlations,
                 block.channels(),
-            ),
+                rows,
+            ) + (rows * size_of::<PlacedRow>()) as u64,
         }
     }
 
@@ -154,7 +158,7 @@ impl ChunkShape {
 
     /// Bytes a chunk of this shape holds: one row's placements, each owner's
     /// and the weight owner's placements, one row's residual and model
-    /// visibilities, and its prediction scratch.
+    /// visibilities, and its prediction batch.
     const fn bytes(self) -> u64 {
         SampleBuffer::bytes(
             self.npol,
@@ -162,6 +166,29 @@ impl ChunkShape {
         ) + self.prediction
             + (2 * self.cells * size_of::<Complex32>()) as u64
     }
+}
+
+/// The backend that degrids one domain's prediction batch for one chunk:
+/// the pass's, so that on Metal the model is predicted on the device.
+type Predictor<'w> = Box<dyn GridBackend + 'w>;
+
+/// One predictor per domain on `backend`, for one chunk.
+fn predictors<'w>(
+    domains: &[PassDomain<'w>],
+    backend: BackendChoice,
+    stage_timing: bool,
+) -> Result<Vec<Predictor<'w>>, PassError> {
+    domains
+        .iter()
+        .map(|domain| {
+            Ok(match backend {
+                BackendChoice::Cpu => Box::new(CpuBackend::new()) as Predictor<'w>,
+                BackendChoice::Metal => {
+                    Box::new(MetalBackend::new(domain.operator.cf(), stage_timing)?)
+                }
+            })
+        })
+        .collect()
 }
 
 impl Chunk {
@@ -174,11 +201,12 @@ impl Chunk {
                 .collect(),
             weight_owned: SampleBuffer::with_capacity(shape.npol, shape.weight_placements()),
             placed: 0,
-            backend: CpuBackend::new(),
+            placed_rows: Vec::with_capacity(shape.rows),
             prediction: SpectralResampler::prediction_scratch(
                 domains.iter().map(|domain| domain.resampler),
                 shape.npol,
                 shape.channels,
+                shape.rows,
             ),
             predicted: Vec::with_capacity(shape.cells),
             residual: Vec::with_capacity(shape.cells),
@@ -196,6 +224,7 @@ impl Chunk {
                 .sum::<u64>()
             + self.weight_owned.capacity_bytes()
             + self.prediction.capacity_bytes()
+            + (self.placed_rows.capacity() * size_of::<PlacedRow>()) as u64
             + ((self.predicted.capacity() + self.residual.capacity()) * size_of::<Complex32>())
                 as u64
     }
@@ -208,22 +237,32 @@ const fn chunks(workers: usize) -> usize {
 
 /// Bytes a wave places with on `workers` workers over blocks of `block`,
 /// gridding the weight image when `weight`: its row chunks and, on Metal,
-/// each owner's staging. They grow with the source's block only up to
-/// [`CHUNK_PLACEMENTS`](super::CHUNK_PLACEMENTS) a chunk.
+/// each owner's staging and, with a model, each chunk's predictors' rings
+/// ([`casa_imaging_metal::ring_bytes`]). They grow with the source's block
+/// only up to [`CHUNK_PLACEMENTS`](super::CHUNK_PLACEMENTS) a chunk.
 pub(super) fn chunk_bytes(
     domains: &[PassDomain<'_>],
     backend: BackendChoice,
     block: BlockShape,
     workers: usize,
     weight: bool,
+    with_model: bool,
 ) -> u64 {
     let count = chunks(workers);
     let shape = ChunkShape::new(domains, block, weight, count);
-    let staging = match backend {
+    let device = match backend {
         BackendChoice::Cpu => 0,
-        BackendChoice::Metal => (domains.len() * shape.owners) as u64 * shape.staging_bytes(count),
+        BackendChoice::Metal => {
+            let staging = (domains.len() * shape.owners) as u64 * shape.staging_bytes(count);
+            let predictors = if with_model {
+                (count * domains.len()) as u64 * casa_imaging_metal::ring_bytes(shape.npol)
+            } else {
+                0
+            };
+            staging + predictors
+        }
     };
-    count as u64 * shape.bytes() + staging
+    count as u64 * shape.bytes() + device
 }
 
 /// Bytes the model visibilities of one block of `block` hold, which a wave
@@ -241,6 +280,8 @@ pub(super) struct Wave<'w, 'p> {
     /// What each chunk was allocated for.
     shape: ChunkShape,
     chunks: Vec<Chunk>,
+    /// Each chunk's [`Predictor`] per domain.
+    predictors: Vec<Vec<Predictor<'w>>>,
     predictions: Vec<Complex32>,
     samples: u64,
 }
@@ -329,6 +370,9 @@ impl<'w, 'p> Wave<'w, 'p> {
             chunks: (0..count)
                 .map(|_| Chunk::new(shape, pass.domains))
                 .collect(),
+            predictors: (0..count)
+                .map(|_| predictors(pass.domains, pass.backend, pass.metal_stage_timing))
+                .collect::<Result<_, _>>()?,
             predictions: Vec::with_capacity(predictions),
             samples: 0,
         })
@@ -384,14 +428,25 @@ impl<'w, 'p> Wave<'w, 'p> {
         // predictions are stored by position, unless the sink reads them in
         // the block's row order.
         let ordered = !sink_predictions;
+        self.predictions.clear();
         if self.native_residuals || sink_predictions {
-            let count = self.chunks.len().min(rows.max(1));
-            for (index, chunk) in self.chunks[..count].iter_mut().enumerate() {
-                chunk.rows = index * rows / count..(index + 1) * rows / count;
+            let cells = block.channels() * block.correlations();
+            self.predictions.resize(rows * cells, Complex32::default());
+            // The same slices as placement, so no chunk predicts more rows
+            // than its batch was allocated for.
+            let chunks = self.chunks.len();
+            for slice in slices(rows, chunks, self.shape.rows) {
+                let mut count = 0;
+                for (chunk, rows) in self
+                    .chunks
+                    .iter_mut()
+                    .zip(chunk_ranges(slice.clone(), chunks))
+                {
+                    chunk.rows = rows;
+                    count += 1;
+                }
+                self.predict(block, team, count, slice, ordered)?;
             }
-            self.predict(block, team, count, ordered)?;
-        } else {
-            self.predictions.clear();
         }
         if let Some(sink) = visibilities {
             let predictions: &[Complex32] = if sink.predictions {
@@ -579,25 +634,24 @@ impl<'w, 'p> Wave<'w, 'p> {
         Ok(chunks.iter().map(|chunk| chunk.placed).sum())
     }
 
-    /// Model visibilities of every selected sample of `block`, summed over
-    /// every domain's model (`SIMapperCollection::degrid`), `[row][channel]
-    /// [correlation]`, into `self.predictions`; zero without a model. Rows
-    /// are by position in the block's locality order when `ordered`
-    /// ([`row_at`]).
+    /// Model visibilities of every selected sample of the rows `slice` of
+    /// `block`, which the first `count` chunks hold, summed over every
+    /// domain's model (`SIMapperCollection::degrid`), `[row][channel]
+    /// [correlation]`, into their rows of `self.predictions`, which stay
+    /// zero without a model. Rows are by position in the block's locality
+    /// order when `ordered` ([`row_at`]).
     fn predict(
         &mut self,
         block: &NativeBlock,
         team: &WorkerTeam,
         count: usize,
+        slice: Range<usize>,
         ordered: bool,
     ) -> Result<(), PassError> {
-        let cells = block.channels() * block.correlations();
-        let rows = block.len();
-        self.predictions.clear();
-        self.predictions.resize(rows * cells, Complex32::default());
         if self.domains.iter().all(|domain| domain.model.is_none()) {
             return Ok(());
         }
+        let cells = block.channels() * block.correlations();
         let pass = self.pass;
         let shape = self.shape;
         let models = self
@@ -606,29 +660,44 @@ impl<'w, 'p> Wave<'w, 'p> {
             .map(|domain| domain.model)
             .collect::<Vec<_>>();
         let mut pieces = Vec::with_capacity(count);
-        let mut remaining = self.predictions.as_mut_slice();
-        for chunk in &mut self.chunks[..count] {
+        let mut remaining = &mut self.predictions[slice.start * cells..slice.end * cells];
+        for (chunk, predictors) in self.chunks[..count].iter_mut().zip(&mut self.predictors) {
             let (head, tail) = remaining.split_at_mut(chunk.rows.len() * cells);
             remaining = tail;
-            pieces.push((chunk, head));
+            pieces.push((chunk, predictors, head));
         }
-        team.for_each_mut(&mut pieces, |_, (chunk, out)| {
+        // Each chunk predicts each domain's model for all its rows in one
+        // batch, so the domain's predictor degrids them in one call; the
+        // domains' predictions sum in domain order.
+        team.for_each_mut(&mut pieces, |_, (chunk, predictors, out)| {
             chunk.predicted.resize(cells, Complex32::default());
-            for (local, position) in chunk.rows.clone().enumerate() {
-                let out = &mut out[local * cells..(local + 1) * cells];
-                let row = row_at(block, ordered, position);
-                for (index, (target, model)) in pass.domains.iter().zip(&models).enumerate() {
-                    let Some(model) = model else {
-                        continue;
-                    };
-                    target.resampler.predict_row(
+            for (index, (target, model)) in pass.domains.iter().zip(&models).enumerate() {
+                let Some(model) = model else {
+                    continue;
+                };
+                let npol = target.operator.polarization().correlations().len();
+                chunk.prediction.begin(npol);
+                chunk.placed_rows.clear();
+                for position in chunk.rows.clone() {
+                    chunk.placed_rows.push(target.resampler.place_prediction(
                         target.operator,
-                        &mut chunk.backend,
                         model,
-                        &block.row(index, row),
+                        &block.row(index, row_at(block, ordered, position)),
+                        &mut chunk.prediction,
+                    )?);
+                }
+                chunk
+                    .prediction
+                    .apply(predictors[index].as_mut(), target.operator.cf(), model)?;
+                for (local, position) in chunk.rows.clone().enumerate() {
+                    target.resampler.finish_prediction(
+                        target.operator,
+                        &block.row(index, row_at(block, ordered, position)),
+                        chunk.placed_rows[local],
                         &mut chunk.prediction,
                         &mut chunk.predicted,
                     )?;
+                    let out = &mut out[local * cells..(local + 1) * cells];
                     for (sum, value) in out.iter_mut().zip(&chunk.predicted) {
                         *sum += value;
                     }

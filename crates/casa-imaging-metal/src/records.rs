@@ -226,10 +226,20 @@ pub(crate) fn prepare(
     let rule = cf.normalisation();
     let geometry = targets.geometry();
     let mut powers = [0.0_f64; MAX_TERMS];
+    // Successive samples share a kernel cell almost always (rows run by
+    // baseline), so the table found for one serves the next.
+    let mut last: Option<(CfKey, &KnownTable)> = None;
     for (local, index) in range.enumerate() {
         let record = &mut records[local];
         let placement = &block.placements[index];
-        let table = &known[&(placement.cf, targets.kind)];
+        let table = match last {
+            Some((key, table)) if key == placement.cf => table,
+            _ => {
+                let table = &known[&(placement.cf, targets.kind)];
+                last = Some((placement.cf, table));
+                table
+            }
+        };
         let (u, v) = match targets.kind {
             TapsKind::Imaging => (placement.u, placement.v),
             TapsKind::Weight => (0.0, 0.0),

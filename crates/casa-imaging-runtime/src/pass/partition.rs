@@ -8,7 +8,7 @@ use casa_imaging_operator::{
 };
 use casa_imaging_reconstruction::resident_bytes_per_cell;
 
-use super::{BackendChoice, BlockShape, PassDomain, native_residuals};
+use super::{BackendChoice, BlockShape, PassDomain};
 
 /// How one pass divides an image domain's grid accumulation among owners
 /// (one per worker).
@@ -135,8 +135,8 @@ impl WaveDemand<'_> {
     /// transform plane and one image per grid polarization of the largest
     /// domain. On Metal the accumulators are device memory and cost nothing
     /// more; each owner adds its ring ([`casa_imaging_metal::ring_bytes`]),
-    /// and a pass that subtracts the model on the device adds the device
-    /// copy of the model grids. Per pass, whatever the wave: the row chunks
+    /// and a pass with a model adds the device copy of the model grids,
+    /// which the device degrids. Per pass, whatever the wave: the row chunks
     /// it places [`Self::block`]'s rows with, and planning one grid
     /// transform ([`grid_planning_bytes`]), which the process does one at a
     /// time. What grows with the source's block is the source's
@@ -181,8 +181,9 @@ impl WaveDemand<'_> {
                 let model_planes = planes
                     .saturating_add(2 * domain.resampler.model_halo(self.native_spacing_hz))
                     .min(total);
-                let fused = !native_residuals(self.domains, self.with_model);
-                let copies = if self.backend == BackendChoice::Metal && fused {
+                // Metal degrids the model on the device, fused into the
+                // residual or in the chunks' prediction batches.
+                let copies = if self.backend == BackendChoice::Metal {
                     2
                 } else {
                     1
@@ -211,6 +212,7 @@ impl WaveDemand<'_> {
                 self.block,
                 self.workers,
                 self.modes.weight,
+                self.with_model,
             )
     }
 }

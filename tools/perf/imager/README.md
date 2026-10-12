@@ -394,7 +394,8 @@ after the message), logged at INFO, so they reach stderr with
   `major_cycles`, `minor_cycle_preparations`, `minor_cycles`,
   `model_prediction`, `products`, `total`) as the Rust stage medians;
 - `metal_stage_timing`: one `casa_imaging::metal_stage_timing` event per
-  Metal gridding owner and wave, with whether its work completed;
+  Metal backend (gridding owner or row-chunk prediction batch) and wave,
+  with whether its work completed and how many samples it predicted;
 - `science_trace`: `casa_imaging::science_trace` events for the residual
   statistics, controls and record of each cycle.
 

@@ -62,12 +62,14 @@ pub struct MetalBackend<'cf> {
 /// What a backend was asked to dispatch over its life, logged once when it
 /// drops if it was made with stage timing: the work is counted before it is
 /// dispatched, so after a failure the counts include work the device never
-/// did, and `failed` says so. Also the host's preparation time and its
-/// waits for the device.
+/// did, and `failed` says so. `predicted` counts the samples of
+/// [`Work::Predict`] dispatches among `samples`. Also the host's
+/// preparation time and its waits for the device.
 #[derive(Default)]
 struct Usage {
     applies: u64,
     samples: u64,
+    predicted: u64,
     sub_blocks: u64,
     prepare: std::time::Duration,
     wait: std::time::Duration,
@@ -383,6 +385,9 @@ impl<'cf> MetalBackend<'cf> {
         let sub = samples.div_ceil(SPLIT).clamp(MIN_SUB, MAX_SUB);
         self.usage.applies += 1;
         self.usage.samples += samples as u64;
+        if kernel == Kernel::Predict {
+            self.usage.predicted += samples as u64;
+        }
         self.usage.sub_blocks += samples.div_ceil(sub) as u64;
         // A misplaced sample panics in `prepare` after earlier sub-blocks are
         // committed: drain the ring before the panic leaves `apply`, so the
@@ -676,6 +681,7 @@ impl Drop for MetalBackend<'_> {
         let Usage {
             applies,
             samples,
+            predicted,
             sub_blocks,
             prepare,
             wait,
@@ -687,11 +693,12 @@ impl Drop for MetalBackend<'_> {
                 completed = !failed && !std::thread::panicking(),
                 applies,
                 samples,
+                predicted,
                 sub_blocks,
                 kernel_cells = self.tables.len(),
                 prepare_seconds = prepare.as_secs_f64(),
                 wait_seconds = wait.as_secs_f64(),
-                "metal gridding owner"
+                "metal backend"
             );
         }
     }

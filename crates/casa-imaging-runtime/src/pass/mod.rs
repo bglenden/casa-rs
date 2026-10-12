@@ -26,7 +26,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use casa_imaging_operator::{
     DensityGrid, DensityGridShape, MeasurementOperator, ModeSet, NormalImages, OperatorError,
-    PlaneRange, PreparedModelGrids, SampleBuffer, SpectralResampler, WeightingGeneration,
+    PlacedRow, PlaneRange, PredictionScratch, PreparedModelGrids, SampleBuffer, SpectralResampler,
+    WeightingGeneration,
 };
 
 pub use block::{BlockShape, DomainProjection, NativeBlock, NativeRowHeader, RowAddress};
@@ -169,9 +170,11 @@ pub struct PassDomain<'a> {
 ///
 /// With [`BackendChoice::Metal`] each owner grids on the shared Metal
 /// device into an `f32` accumulator in device memory (D2), so every
-/// operator of the pass must be `f32`; placement and the native-channel
-/// predictions of a multi-domain or linearly interpolated residual stay on
-/// the CPU workers.
+/// operator of the pass must be `f32`. The model is degridded on the device
+/// too: fused into the residual, or, for the native-channel residual of a
+/// multi-domain or linearly interpolated pass, in each row chunk's
+/// prediction batch, whose interpolation and subtraction stay on the CPU
+/// workers with placement.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BackendChoice {
@@ -357,17 +360,30 @@ const fn chunk_rows(row: usize, block_rows: usize, chunks: usize, placements: us
     if rows == 0 { 1 } else { rows }
 }
 
+/// The most samples one native row produces in a major-cycle pass.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RowSamples {
+    /// Samples it places on the grid
+    /// ([`SpectralResampler::samples_per_row`]).
+    pub placed: usize,
+    /// Samples its model prediction degrids
+    /// ([`SpectralResampler::prediction_samples_per_row`]).
+    pub predicted: usize,
+}
+
 /// An upper bound of the bytes a pass's row chunks hold per row of the
-/// source's block, for rows of `layout` that each place at most `row`
-/// samples ([`SpectralResampler::samples_per_row`]) on `workers` workers,
-/// while a chunk's rows are a block's share rather than its placement cap:
-/// each owner's buffer and the weight owner's can take every placement of
-/// a row. The source sizes its blocks with it
+/// source's block, for rows of `layout` that each produce at most `row`
+/// samples on `workers` workers, while a chunk's rows are a block's share
+/// rather than its placement cap: each owner's buffer and the weight
+/// owner's can take every placement of a row, and the chunk's prediction
+/// batch every degridded sample. The source sizes its blocks with it
 /// ([`crate::finalize_source_access`]); [`WaveDemand::bytes`] charges the
 /// chunks exactly.
 #[must_use]
-pub const fn chunk_bytes_per_row(layout: BlockShape, row: usize, workers: usize) -> u64 {
-    (workers as u64 + 1) * SampleBuffer::bytes(layout.correlations, row)
+pub const fn chunk_bytes_per_row(layout: BlockShape, row: RowSamples, workers: usize) -> u64 {
+    (workers as u64 + 1) * SampleBuffer::bytes(layout.correlations, row.placed)
+        + PredictionScratch::bytes(layout.correlations, row.predicted, 0)
+        + size_of::<PlacedRow>() as u64
 }
 
 /// The slices of a block of `rows` rows split among `chunks` chunks of at

@@ -99,7 +99,7 @@ struct Run<'a> {
     lifecycle: ModelLifecycle,
     native_spacing_hz: f64,
     backend: BackendChoice,
-    /// Whether each Metal gridding owner logs its timing.
+    /// Whether each Metal backend logs its timing.
     metal_stage_timing: bool,
     visibility_write: Option<VisibilityWriteTarget>,
     /// Planes per wave of the most finely waved pass so far.
