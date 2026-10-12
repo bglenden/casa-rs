@@ -269,6 +269,9 @@ pub(crate) fn run(
         let global_threshold = controls
             .threshold_jy_per_beam()
             .max(statistics.nsigma_threshold);
+        // The outcome keeps every cycle's record, with a copy of its mask's
+        // support and its traced components (#706).
+        held.join(run.admit("minor-cycle record", record_bytes(&minor))?);
         let cycle = account_minor_cycle(
             &mut outcome,
             &mut controller,
@@ -900,6 +903,13 @@ fn cube_state(
 
 /// The record of one minor cycle; `global_threshold` is the run's
 /// threshold or n-sigma threshold, whichever is larger.
+/// Bytes [`minor_cycle_record`] copies from `outcome`: its primary mask's
+/// support and its traced components.
+fn record_bytes(outcome: &MinorCycleOutcome) -> u64 {
+    (std::mem::size_of_val(outcome.masks.primary().support())
+        + std::mem::size_of_val(outcome.summary.trace.as_slice())) as u64
+}
+
 fn minor_cycle_record(
     cycle: usize,
     outcome: &MinorCycleOutcome,
