@@ -40,12 +40,22 @@ fn residual_pass_of_the_predicted_model_vanishes() {
         assert_eq!((domain, planes), (0, PlaneRange::single(0)));
         Ok(model.clone())
     };
+    let domains = [PassDomain {
+        operator: &operator,
+        resampler: &resampler,
+        partition: Partition::regions(&operator, 2),
+    }];
+    let dirty = run(
+        &domains,
+        &mut rows,
+        &Run {
+            workers: 2,
+            modes: ModeSet::DATA,
+            ..Run::initial()
+        },
+    );
     let residual = run(
-        &[PassDomain {
-            operator: &operator,
-            resampler: &resampler,
-            partition: Partition::regions(&operator, 2),
-        }],
+        &domains,
         &mut rows,
         &Run {
             workers: 2,
@@ -54,9 +64,16 @@ fn residual_pass_of_the_predicted_model_vanishes() {
             ..Run::initial()
         },
     );
-    let peak = normalised_peak(&residual[0]);
+    let peak = normalised_peak(&residual[0], &dirty[0]);
     assert!(largest > 0.0);
     assert!(peak < 1.0e-5 * largest, "residual peak {peak} of {largest}");
+    assert!(
+        residual[0]
+            .planes
+            .iter()
+            .all(|plane| plane.sumwt.iter().all(|sum| *sum == 0.0)),
+        "a residual pass sums no weights"
+    );
 }
 
 /// Under the native spacing `spacing_hz` that sizes the waves' model halo:

@@ -606,12 +606,14 @@ impl AccumulatorLayout {
 }
 
 /// Per-worker grid: the cells of an [`AccumulatorLayout`] plus `sumwt`
-/// (one `f64` per block) accumulated in the kernel.
+/// (one `f64` per block) accumulated in the kernel, unless the accumulator
+/// was made [`Self::without_weight_sums`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct GridAccumulator {
     layout: AccumulatorLayout,
     storage: GridStorage,
     sumwt: Vec<f64>,
+    sums_weights: bool,
 }
 
 impl GridAccumulator {
@@ -638,7 +640,25 @@ impl GridAccumulator {
             layout,
             storage,
             sumwt,
+            sums_weights: true,
         }
+    }
+
+    /// This accumulator, leaving `sumwt` zero instead of summing it per
+    /// sample: for a residual pass, whose sums no one reads, since CASA keeps
+    /// the PSF gridding's `.sumwt` through the data passes
+    /// (`FTMachine::finalizeToSkyNew`). The pre-refactor cube skipped them
+    /// the same way.
+    #[must_use]
+    pub fn without_weight_sums(mut self) -> Self {
+        self.sums_weights = false;
+        self
+    }
+
+    /// Whether gridding sums `sumwt`.
+    #[must_use]
+    pub const fn sums_weights(&self) -> bool {
+        self.sums_weights
     }
 
     /// The layout.
@@ -741,20 +761,20 @@ impl GridAccumulator {
 
     /// Layout, cell storage and `sumwt` for a backend that dispatches on the
     /// storage itself: a device backend reads the buffer behind
-    /// [`GridStorage::Device`] and adds `sumwt` on the host.
-    pub fn backend_parts(&mut self) -> (&AccumulatorLayout, &GridStorage, &mut [f64]) {
-        (&self.layout, &self.storage, &mut self.sumwt)
+    /// [`GridStorage::Device`] and adds `sumwt` on the host. `sumwt` is
+    /// `None` when the accumulator does not sum weights.
+    pub fn backend_parts(&mut self) -> (&AccumulatorLayout, &GridStorage, Option<&mut [f64]>) {
+        let sumwt = self.sums_weights.then_some(self.sumwt.as_mut_slice());
+        (&self.layout, &self.storage, sumwt)
     }
 
-    /// Layout, cells and `sumwt` for a kernel at precision `T`.
+    /// Layout, cells and `sumwt` for a kernel at precision `T`; `sumwt` is
+    /// `None` when the accumulator does not sum weights.
     pub(crate) fn parts_mut<T: GridScalar>(
         &mut self,
-    ) -> (&AccumulatorLayout, &mut [Complex<T>], &mut [f64]) {
-        (
-            &self.layout,
-            T::cells_mut(&mut self.storage),
-            &mut self.sumwt,
-        )
+    ) -> (&AccumulatorLayout, &mut [Complex<T>], Option<&mut [f64]>) {
+        let sumwt = self.sums_weights.then_some(self.sumwt.as_mut_slice());
+        (&self.layout, T::cells_mut(&mut self.storage), sumwt)
     }
 }
 

@@ -313,7 +313,9 @@ impl<'w, 'p> Wave<'w, 'p> {
                         let (range, tile) = router.target(&domain.partition, planes, owner);
                         Ok(match pass.backend {
                             BackendChoice::Cpu => Owner {
-                                acc: Some(operator.accumulator(range, tile, pass.modes)),
+                                acc: Some(
+                                    pass.summing(operator.accumulator(range, tile, pass.modes)),
+                                ),
                                 backend: OwnerBackend::Cpu(CpuBackend::new()),
                                 images: None,
                             },
@@ -324,9 +326,9 @@ impl<'w, 'p> Wave<'w, 'p> {
                                     "Metal grids are f32 (D2)"
                                 );
                                 Owner {
-                                    acc: Some(MetalBackend::accumulator(
+                                    acc: Some(pass.summing(MetalBackend::accumulator(
                                         operator.accumulator_layout(range, tile, pass.modes),
-                                    )?),
+                                    )?)),
                                     backend: OwnerBackend::Metal {
                                         backend: Box::new(
                                             MetalBackend::new(
@@ -749,7 +751,8 @@ impl<'w, 'p> Wave<'w, 'p> {
                         ))
                     }
                     Partition::Regions { .. } => {
-                        let mut merged = operator.accumulator(planes, None, pass.modes);
+                        let mut merged =
+                            pass.summing(operator.accumulator(planes, None, pass.modes));
                         for owner in &domain.owners {
                             merged
                                 .merge_from(owner.acc.as_ref().expect("owners hold their tiles"))?;

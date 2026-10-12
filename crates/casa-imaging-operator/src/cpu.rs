@@ -48,7 +48,7 @@ impl CpuBackend {
         mode: Mode,
         acc: &mut GridAccumulator,
     ) -> Result<(), OperatorError> {
-        let (layout, cells, sumwt) = acc.parts_mut::<T>();
+        let (layout, cells, mut sumwt) = acc.parts_mut::<T>();
         let terms = layout
             .term_range(mode)
             .unwrap_or_else(|| panic!("accumulator holds no {mode:?} terms"));
@@ -77,7 +77,7 @@ impl CpuBackend {
             spread_sample(
                 layout,
                 cells,
-                sumwt,
+                sumwt.as_deref_mut(),
                 cf,
                 rule,
                 placement,
@@ -124,7 +124,7 @@ impl CpuBackend {
             assert_eq!(out.len(), block.len() * npol, "residual output length");
         }
         let rule = cf.normalisation();
-        let (layout, cells, sumwt) = acc.parts_mut::<T>();
+        let (layout, cells, mut sumwt) = acc.parts_mut::<T>();
         let terms = layout
             .term_range(Mode::Data)
             .expect("residual gridding needs the data terms");
@@ -163,7 +163,7 @@ impl CpuBackend {
             spread_sample(
                 layout,
                 cells,
-                sumwt,
+                sumwt.as_deref_mut(),
                 cf,
                 rule,
                 placement,
@@ -324,13 +324,13 @@ impl GridBackend for CpuBackend {
 }
 
 /// Spread one placement's values through every routed (grid pol,
-/// visibility pol) pair and term, accumulating `sumwt` by the set's rule:
-/// `W · s^t` times 1, `Re N` or `|N|`.
+/// visibility pol) pair and term, accumulating `sumwt`, when given, by the
+/// set's rule: `W · s^t` times 1, `Re N` or `|N|`.
 #[allow(clippy::too_many_arguments)]
 fn spread_sample<T: GridScalar>(
     layout: &AccumulatorLayout,
     cells: &mut [Complex<T>],
-    sumwt: &mut [f64],
+    mut sumwt: Option<&mut [f64]>,
     cf: &dyn ConvolutionFunctionSet,
     rule: KernelNormalisation,
     placement: &Placement,
@@ -359,12 +359,12 @@ fn spread_sample<T: GridScalar>(
                 Mode::Data => values[vpol],
                 Mode::Psf | Mode::Weight => Complex32::new(weight, 0.0),
             };
-            let norm = match rule {
-                KernelNormalisation::UnitSum => 1.0,
-                KernelNormalisation::RealSum => {
+            let norm = match (&sumwt, rule) {
+                (None, _) | (_, KernelNormalisation::UnitSum) => 1.0,
+                (_, KernelNormalisation::RealSum) => {
                     kernel::norm(taps, location, mueller, w_positive).re
                 }
-                KernelNormalisation::KernelSum => {
+                (_, KernelNormalisation::KernelSum) => {
                     kernel::norm(taps, location, mueller, w_positive).norm()
                 }
             };
@@ -384,7 +384,10 @@ fn spread_sample<T: GridScalar>(
                     placement.gradient,
                     value,
                 );
-                sumwt[layout.block_index(plane, gpol, term)] += f64::from(weight) * power * norm;
+                if let Some(sumwt) = sumwt.as_deref_mut() {
+                    sumwt[layout.block_index(plane, gpol, term)] +=
+                        f64::from(weight) * power * norm;
+                }
             }
         }
     }

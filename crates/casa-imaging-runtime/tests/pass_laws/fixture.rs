@@ -428,12 +428,14 @@ pub fn run(domains: &[PassDomain<'_>], source: &mut Rows, run: &Run<'_>) -> Vec<
     images
 }
 
-/// The largest absolute value of `images`' data planes, each divided by its
-/// `sumwt`.
-pub fn normalised_peak(images: &NormalImages) -> f64 {
+/// The largest absolute value of `images`' data planes, each divided by the
+/// `sumwt` of the same plane of `sums`: a pass without a model over the same
+/// rows, since a residual pass sums no weights.
+pub fn normalised_peak(images: &NormalImages, sums: &NormalImages) -> f64 {
+    assert_eq!(images.planes.len(), sums.planes.len());
     let mut peak = 0.0_f64;
     for plane in 0..images.planes.len() {
-        let sumwt = images.data_sumwt(plane, 0, 0);
+        let sumwt = sums.data_sumwt(plane, 0, 0);
         if sumwt <= 0.0 {
             continue;
         }

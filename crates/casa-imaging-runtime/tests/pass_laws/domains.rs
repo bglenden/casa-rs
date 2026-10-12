@@ -57,6 +57,15 @@ fn outlier_residuals_vanish_only_for_the_combined_model() {
             partition: Partition::regions(&outlier, 2),
         },
     ];
+    let dirty = run(
+        &domains,
+        &mut rows,
+        &Run {
+            workers: 2,
+            modes: ModeSet::DATA,
+            ..Run::initial()
+        },
+    );
     let residual = run(
         &domains,
         &mut rows,
@@ -68,7 +77,7 @@ fn outlier_residuals_vanish_only_for_the_combined_model() {
         },
     );
     for (domain, images) in residual.iter().enumerate() {
-        let peak = normalised_peak(images);
+        let peak = normalised_peak(images, &dirty[domain]);
         assert!(
             peak < 1.0e-5 * largest,
             "domain {domain}: residual peak {peak} of {largest}"
@@ -85,7 +94,7 @@ fn outlier_residuals_vanish_only_for_the_combined_model() {
         },
     );
     assert!(
-        normalised_peak(&main_alone[0]) > 1.0e-3 * largest,
+        normalised_peak(&main_alone[0], &dirty[0]) > 1.0e-3 * largest,
         "the outlier's source stays in a residual without its model"
     );
 }

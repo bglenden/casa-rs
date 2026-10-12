@@ -25,9 +25,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use casa_imaging_operator::{
-    DensityGrid, DensityGridShape, MeasurementOperator, ModeSet, NormalImages, OperatorError,
-    PlacedRow, PlaneRange, PredictionScratch, PreparedModelGrids, SampleBuffer, SpectralResampler,
-    WeightingGeneration,
+    DensityGrid, DensityGridShape, GridAccumulator, MeasurementOperator, ModeSet, NormalImages,
+    OperatorError, PlacedRow, PlaneRange, PredictionScratch, PreparedModelGrids, SampleBuffer,
+    SpectralResampler, WeightingGeneration,
 };
 
 pub use block::{BlockShape, DomainProjection, NativeBlock, NativeRowHeader, RowAddress};
@@ -224,6 +224,23 @@ fn native_residuals(domains: &[PassDomain<'_>], with_model: bool) -> bool {
 impl MajorCyclePass<'_> {
     fn native_residuals(&self) -> bool {
         native_residuals(self.domains, self.model.is_some())
+    }
+
+    /// Whether the pass sums `sumwt`: only without a model. A residual
+    /// pass's sums are not read, since CASA keeps the PSF gridding's
+    /// `.sumwt` through the data passes (`FTMachine::finalizeToSkyNew`), so
+    /// its images carry zero sums.
+    fn sums_weights(&self) -> bool {
+        self.model.is_none()
+    }
+
+    /// `acc`, summing `sumwt` only when the pass does.
+    fn summing(&self, acc: GridAccumulator) -> GridAccumulator {
+        if self.sums_weights() {
+            acc
+        } else {
+            acc.without_weight_sums()
+        }
     }
 
     /// Whether a wave must read whole rows: a native-channel prediction under
