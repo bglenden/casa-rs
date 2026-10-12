@@ -597,21 +597,38 @@ fn sample_weight(
     }
 }
 
-/// The oversampling and placement half support of the cell a row's last
-/// sample keyed: successive samples of a row almost always share a cell,
-/// so the set lends its taps once for them.
-#[derive(Default)]
-struct LastCell {
+/// What placing one row's samples works out once: the pointing gradient,
+/// which is the row's, and the oversampling and placement half support of
+/// the cell its last sample keyed (successive samples of a row almost
+/// always share a cell, so the set lends its taps once for them).
+struct RowPlacing {
+    hold: CellHold,
+    gradient: [f32; 2],
     key: Option<CfKey>,
     oversampling: u16,
     half_support: [u16; 2],
+}
+
+impl RowPlacing {
+    fn new(cf: &dyn ConvolutionFunctionSet, geometry: &GridGeometry, row: &NativeRow<'_>) -> Self {
+        Self {
+            hold: CellHold::new(),
+            gradient: if cf.pointing_ramp() {
+                geometry.pointing_gradient(row.pointing_offset_rad)
+            } else {
+                [0.0, 0.0]
+            },
+            key: None,
+            oversampling: 0,
+            half_support: [0, 0],
+        }
+    }
 }
 
 /// The placement of `row`'s sample at `frequency_hz` on `plane`: its cell,
 /// its pointing gradient when the set has a ramp (the kernels anchor the
 /// ramp at the sample's fine offset), and its phase-centre shift, when the
 /// cell's support fits the padded grid.
-#[allow(clippy::too_many_arguments)]
 fn locate_sample(
     cf: &dyn ConvolutionFunctionSet,
     geometry: &GridGeometry,
@@ -619,8 +636,7 @@ fn locate_sample(
     row: &NativeRow<'_>,
     plane: u32,
     frequency_hz: f64,
-    hold: &mut CellHold,
-    last: &mut LastCell,
+    placing: &mut RowPlacing,
 ) -> Option<(Placement, CellLocation)> {
     let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
     let w = row.uvw_m[2] * scale;
@@ -628,23 +644,17 @@ fn locate_sample(
         return None;
     }
     let key = cf.key(&row.context, frequency_hz, w);
-    if last.key != Some(key) {
-        *last = LastCell {
-            key: Some(key),
-            oversampling: cf.taps(key, hold).oversampling(),
-            half_support: cf.placement_half_support(key, hold),
-        };
+    if placing.key != Some(key) {
+        placing.key = Some(key);
+        placing.oversampling = cf.taps(key, &mut placing.hold).oversampling();
+        placing.half_support = cf.placement_half_support(key, &mut placing.hold);
     }
     let (u, v) = (row.uvw_m[0] * scale, row.uvw_m[1] * scale);
-    let location = geometry.locate(u, v, last.oversampling);
-    if !geometry.fits(location, last.half_support) {
+    let location = geometry.locate(u, v, placing.oversampling);
+    if !geometry.fits(location, placing.half_support) {
         return None;
     }
-    let gradient = if cf.pointing_ramp() {
-        geometry.pointing_gradient(row.pointing_offset_rad)
-    } else {
-        [0.0, 0.0]
-    };
+    let gradient = placing.gradient;
     let phase = std::f64::consts::TAU * row.phase_shift_m * scale;
     Some((
         Placement {
@@ -834,8 +844,7 @@ impl SpectralResampler {
         let mut values = [Complex32::default(); 4];
         let mut weights = [0.0_f32; 4];
         let (values, weights) = (&mut values[..npol], &mut weights[..npol]);
-        let mut hold = CellHold::new();
-        let mut last = LastCell::default();
+        let mut placing = RowPlacing::new(cf, geometry, row);
         self.for_each_sample(row, |plane, frequency_hz, source| {
             if sample_flagged(row, npol, source) {
                 return;
@@ -847,8 +856,7 @@ impl SpectralResampler {
                 row,
                 plane,
                 frequency_hz,
-                &mut hold,
-                &mut last,
+                &mut placing,
             ) else {
                 return;
             };
@@ -1220,8 +1228,7 @@ impl SpectralResampler {
         }
         let native = row.frequencies_hz;
         let prepared = model.layout().planes();
-        let mut hold = CellHold::new();
-        let mut last = LastCell::default();
+        let mut placing = RowPlacing::new(operator.cf(), operator.geometry(), row);
         let mut place = |plane: u32, frequency_hz: f64, source: usize| {
             if !prepared.contains(plane) {
                 return;
@@ -1233,8 +1240,7 @@ impl SpectralResampler {
                 row,
                 plane,
                 frequency_hz,
-                &mut hold,
-                &mut last,
+                &mut placing,
             ) {
                 buffer.push(placement, zeros, ones);
                 sources.push(source);

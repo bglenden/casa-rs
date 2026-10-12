@@ -180,6 +180,45 @@ impl KnownTable {
 /// The kernel cells a backend has given the device, by cell and kind.
 pub(crate) type KnownTables = HashMap<(CfKey, TapsKind), KnownTable>;
 
+/// A Mueller route: the plane that joins a grid and a visibility
+/// polarization.
+#[derive(Clone, Copy, Default)]
+struct Route {
+    gpol: usize,
+    vpol: usize,
+    plane: u8,
+}
+
+/// The routes of one Mueller table in its order (grid polarization, then
+/// visibility polarization), flat, so record preparation walks them per
+/// sample without the table's nested vectors.
+struct Routes {
+    routes: [Route; MAX_POLS * MAX_POLS],
+    len: usize,
+}
+
+impl Routes {
+    fn of(table: &[Vec<Option<u8>>]) -> Self {
+        let mut routes = Self {
+            routes: [Route::default(); MAX_POLS * MAX_POLS],
+            len: 0,
+        };
+        for (gpol, row) in table.iter().enumerate() {
+            for (vpol, plane) in row.iter().enumerate() {
+                if let Some(plane) = *plane {
+                    routes.routes[routes.len] = Route { gpol, vpol, plane };
+                    routes.len += 1;
+                }
+            }
+        }
+        routes
+    }
+
+    fn iter(&self) -> std::slice::Iter<'_, Route> {
+        self.routes[..self.len].iter()
+    }
+}
+
 /// What one dispatch reads and writes, for record preparation.
 pub(crate) struct Targets<'a> {
     /// Which taps the samples use.
@@ -219,13 +258,33 @@ pub(crate) fn prepare(
     targets: &Targets<'_>,
     mut sumwt: Option<&mut [f64]>,
     records: &mut [SampleRecord],
-    mut inverse_norms: Option<&mut [Complex32]>,
+    inverse_norms: Option<&mut [Complex32]>,
 ) {
     let npol = block.npol;
     let mueller = cf.mueller();
     let rule = cf.normalisation();
     let geometry = targets.geometry();
     let mut powers = [0.0_f64; MAX_TERMS];
+    // The records address the adjoint's tile, or the model's grid for a
+    // prediction; fixed for the dispatch, as are the Mueller routes of
+    // each sign of w.
+    let origin_layout = match &targets.adjoint {
+        Some((layout, _)) => *layout,
+        None => targets.model.expect("a prediction has model grids"),
+    };
+    let adjoint_routes =
+        [false, true].map(|w_positive| Routes::of(mueller.table(w_positive, false)));
+    let forward_routes =
+        [false, true].map(|w_positive| Routes::of(mueller.table(w_positive, true)));
+    let mut inverse_norms = inverse_norms.map(|inverse| {
+        let inverse = &mut inverse[..range.len() * npol];
+        inverse.fill(if rule == KernelNormalisation::KernelSum {
+            Complex32::default()
+        } else {
+            Complex32::new(1.0, 0.0)
+        });
+        inverse
+    });
     // Successive samples share a kernel cell almost always (rows run by
     // baseline), so the table found for one serves the next.
     let mut last: Option<(CfKey, &KnownTable)> = None;
@@ -247,21 +306,10 @@ pub(crate) fn prepare(
         let location = geometry.locate(u, v, table.oversampling);
         let w_positive = placement.w > 0.0;
         let prediction_w_positive = placement.prediction_w_positive;
-        let half = table.half_support;
-        let (origin, plane) = match &targets.adjoint {
-            Some((layout, _)) => (
-                tile_origin(layout, location, half),
-                layout.planes().local(placement.plane) as u32,
-            ),
-            None => (
-                tile_origin(
-                    targets.model.expect("a prediction has model grids"),
-                    location,
-                    half,
-                ),
-                0,
-            ),
-        };
+        let origin = tile_origin(origin_layout, location, table.half_support);
+        let plane = targets.adjoint.as_ref().map_or(0, |(layout, _)| {
+            layout.planes().local(placement.plane) as u32
+        });
         let model_plane = targets
             .model
             .map_or(0, |layout| layout.planes().local(placement.plane) as u32);
@@ -278,46 +326,40 @@ pub(crate) fn prepare(
         if let (Some((layout, terms)), Some(sumwt)) = (&targets.adjoint, sumwt.as_deref_mut()) {
             spectral_powers(&mut powers, placement.spectral, terms.len());
             let weights = block.weights_of(index);
-            for (gpol, row) in mueller.table(w_positive, false).iter().enumerate() {
-                for (vpol, plane_index) in row.iter().enumerate() {
-                    let Some(m) = *plane_index else {
-                        continue;
-                    };
-                    let weight = weights[vpol];
-                    if weight == 0.0 {
-                        continue;
-                    }
-                    let norm = match rule {
-                        KernelNormalisation::UnitSum => 1.0,
-                        KernelNormalisation::RealSum => table.norm(location, m, w_positive).re,
-                        KernelNormalisation::KernelSum => {
-                            table.norm(location, m, w_positive).norm()
-                        }
-                    };
-                    for (power, term) in powers.iter().zip(terms.clone()) {
-                        sumwt[layout.block_index(plane as usize, gpol, term)] +=
-                            f64::from(weight) * power * norm;
-                    }
+            for &Route {
+                gpol,
+                vpol,
+                plane: m,
+            } in adjoint_routes[usize::from(w_positive)].iter()
+            {
+                let weight = weights[vpol];
+                if weight == 0.0 {
+                    continue;
+                }
+                let norm = match rule {
+                    KernelNormalisation::UnitSum => 1.0,
+                    KernelNormalisation::RealSum => table.norm(location, m, w_positive).re,
+                    KernelNormalisation::KernelSum => table.norm(location, m, w_positive).norm(),
+                };
+                let first = layout.block_index(plane as usize, gpol, 0);
+                for (power, term) in powers.iter().zip(terms.clone()) {
+                    sumwt[first + term] += f64::from(weight) * power * norm;
                 }
             }
         }
+        if rule != KernelNormalisation::KernelSum {
+            continue;
+        }
         if let Some(inverse) = inverse_norms.as_deref_mut() {
             let inverse = &mut inverse[local * npol..(local + 1) * npol];
-            if rule != KernelNormalisation::KernelSum {
-                inverse.fill(Complex32::new(1.0, 0.0));
-                continue;
-            }
-            inverse.fill(Complex32::default());
             let mut norms = [Complex64::default(); MAX_POLS];
             // The forward norm sums the taps the gather multiplies the grid
             // by, conjugated for w ≤ 0 (`accumulateFromGrid.inc`): the
             // opposite conjugation from the adjoint's `sumwt` norm above.
-            for row in mueller.table(prediction_w_positive, true) {
-                for (vpol, plane_index) in row.iter().enumerate() {
-                    if let Some(m) = *plane_index {
-                        norms[vpol] += table.norm(location, m, !prediction_w_positive);
-                    }
-                }
+            for &Route { vpol, plane: m, .. } in
+                forward_routes[usize::from(prediction_w_positive)].iter()
+            {
+                norms[vpol] += table.norm(location, m, !prediction_w_positive);
             }
             for (target, norm) in inverse.iter_mut().zip(&norms) {
                 if *norm != Complex64::default() {
