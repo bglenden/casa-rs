@@ -29,6 +29,20 @@ impl<'cf> MetalBackend<'cf> {
     pub fn accumulator(_layout: AccumulatorLayout) -> Result<GridAccumulator, OperatorError> {
         Err(OperatorError::Device(DeviceFailure::Unavailable))
     }
+
+    /// Unreachable: no backend exists on this host.
+    pub fn defer_grid_completion(&mut self) {
+        match self.never {}
+    }
+
+    /// Unreachable: no backend exists on this host.
+    ///
+    /// # Errors
+    ///
+    /// None; no backend exists on this host.
+    pub fn complete(&mut self) -> Result<(), OperatorError> {
+        match self.never {}
+    }
 }
 
 impl GridBackend for MetalBackend<'_> {
