@@ -194,8 +194,21 @@ impl SampleBuffer {
         assert_eq!(values.len(), self.npol, "values per placement");
         assert_eq!(weights.len(), self.npol, "weights per placement");
         self.placements.push(placement);
-        self.values.extend_from_slice(values);
-        self.weights.extend_from_slice(weights);
+        // Element by element: a slice append of a few values is a library
+        // copy call per sample.
+        for (&value, &weight) in values.iter().zip(weights) {
+            self.values.push(value);
+            self.weights.push(weight);
+        }
+    }
+
+    /// Append every placement of `block`, which has this buffer's
+    /// polarizations, with its values and weights.
+    pub fn extend_from_block(&mut self, block: &SampleBlock<'_>) {
+        assert_eq!(block.npol, self.npol, "values per placement");
+        self.placements.extend_from_slice(block.placements);
+        self.values.extend_from_slice(block.values);
+        self.weights.extend_from_slice(block.weights);
     }
 
     /// Remove every placement, keeping the allocation.

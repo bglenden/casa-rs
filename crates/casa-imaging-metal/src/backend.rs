@@ -231,12 +231,18 @@ impl<'cf> MetalBackend<'cf> {
         ))
     }
 
-    /// Upload the taps of every cell of `kind` in `block` the device does
-    /// not hold yet.
-    fn learn(&mut self, block: &SampleBlock<'_>, kind: TapsKind) -> Result<(), OperatorError> {
+    /// Upload the taps of every cell of `kind` in samples `range` of `block`
+    /// the device does not hold yet. `run` calls it for each sub-block just
+    /// before preparing it, while its placements are in cache.
+    fn learn(
+        &mut self,
+        block: &SampleBlock<'_>,
+        range: Range<usize>,
+        kind: TapsKind,
+    ) -> Result<(), OperatorError> {
         let mut last = None;
         let known = self.tables.len();
-        for placement in block.placements {
+        for placement in &block.placements[range] {
             let key = placement.cf;
             if last == Some(key) || self.known.contains_key(&(key, kind)) {
                 last = Some(key);
@@ -400,6 +406,7 @@ impl<'cf> MetalBackend<'cf> {
                 self.next = (self.next + 1) % RING;
                 self.retire(slot, block, &mut readback)?;
                 let started = std::time::Instant::now();
+                self.learn(block, start..end, targets.kind)?;
                 let filled = self.fill(
                     slot,
                     kernel,
@@ -751,7 +758,6 @@ impl MetalBackend<'_> {
         acc: &mut GridAccumulator,
     ) -> Result<(), OperatorError> {
         let kind = TapsKind::of(mode);
-        self.learn(block, kind)?;
         let (layout, storage, sumwt) = acc.backend_parts();
         let terms = layout
             .term_range(mode)
@@ -786,7 +792,6 @@ impl MetalBackend<'_> {
             block.len() * block.npol,
             "prediction output length"
         );
-        self.learn(block, TapsKind::Imaging)?;
         let buffer = self.model_copy(model)?;
         let targets = Targets {
             kind: TapsKind::Imaging,
@@ -815,7 +820,6 @@ impl MetalBackend<'_> {
         acc: &mut GridAccumulator,
         residual_out: Option<&mut [Complex32]>,
     ) -> Result<(), OperatorError> {
-        self.learn(block, TapsKind::Imaging)?;
         let buffer = self.model_copy(model)?;
         let (layout, storage, sumwt) = acc.backend_parts();
         let terms = layout

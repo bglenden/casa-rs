@@ -71,8 +71,6 @@ struct Domain<'w> {
 /// among the owners.
 struct Chunk {
     rows: Range<usize>,
-    /// One row's placements.
-    scratch: SampleBuffer,
     /// Each owner's placements, in row order.
     owned: Vec<SampleBuffer>,
     /// Every placement of the chunk, in row order, when the weight image has
@@ -156,13 +154,13 @@ impl ChunkShape {
         if self.weight { self.placements } else { 0 }
     }
 
-    /// Bytes a chunk of this shape holds: one row's placements, each owner's
-    /// and the weight owner's placements, one row's residual and model
-    /// visibilities, and its prediction batch.
+    /// Bytes a chunk of this shape holds: each owner's and the weight
+    /// owner's placements, one row's residual and model visibilities, and
+    /// its prediction batch.
     const fn bytes(self) -> u64 {
         SampleBuffer::bytes(
             self.npol,
-            self.row + self.owners * self.placements + self.weight_placements(),
+            self.owners * self.placements + self.weight_placements(),
         ) + self.prediction
             + (2 * self.cells * size_of::<Complex32>()) as u64
     }
@@ -195,7 +193,6 @@ impl Chunk {
     fn new(shape: ChunkShape, domains: &[PassDomain<'_>]) -> Self {
         Self {
             rows: 0..0,
-            scratch: SampleBuffer::with_capacity(shape.npol, shape.row),
             owned: (0..shape.owners)
                 .map(|_| SampleBuffer::with_capacity(shape.npol, shape.placements))
                 .collect(),
@@ -216,12 +213,10 @@ impl Chunk {
     /// Bytes the chunk holds now, from its buffers' capacities: at most
     /// [`ChunkShape::bytes`] while every buffer is within the shape.
     fn capacity_bytes(&self) -> u64 {
-        self.scratch.capacity_bytes()
-            + self
-                .owned
-                .iter()
-                .map(SampleBuffer::capacity_bytes)
-                .sum::<u64>()
+        self.owned
+            .iter()
+            .map(SampleBuffer::capacity_bytes)
+            .sum::<u64>()
             + self.weight_owned.capacity_bytes()
             + self.prediction.capacity_bytes()
             + (self.placed_rows.capacity() * size_of::<PlacedRow>()) as u64
@@ -506,7 +501,6 @@ impl<'w, 'p> Wave<'w, 'p> {
                 .for_each(SampleBuffer::clear);
             chunk.weight_owned.clear();
             for position in chunk.rows.clone() {
-                chunk.scratch.clear();
                 let native = block.row(index, row_at(block, ordered, position));
                 let native = if native_residuals {
                     let model = &predictions[position * cells..(position + 1) * cells];
@@ -525,36 +519,30 @@ impl<'w, 'p> Wave<'w, 'p> {
                 } else {
                     native
                 };
-                target.resampler.place(
+                let mut row_samples = 0;
+                let (owned, weight_owned, placed) =
+                    (&mut chunk.owned, &mut chunk.weight_owned, &mut chunk.placed);
+                target.resampler.place_each(
                     target.operator,
                     pass.weighting,
                     &native,
-                    &mut chunk.scratch,
+                    |placement, values, weights| {
+                        row_samples += 1;
+                        if !planes.contains(placement.plane) {
+                            return;
+                        }
+                        let owner = router.owner(target.operator, &placement);
+                        owned[owner].push(placement, values, weights);
+                        if route_weight {
+                            weight_owned.push(placement, values, weights);
+                        }
+                        *placed += 1;
+                    },
                 )?;
                 debug_assert!(
-                    chunk.scratch.len() <= shape.row,
+                    row_samples <= shape.row,
                     "a row places within the chunk's per-row bound"
                 );
-                let placed = chunk.scratch.block();
-                for (sample, placement) in placed.placements.iter().enumerate() {
-                    if !planes.contains(placement.plane) {
-                        continue;
-                    }
-                    let owner = router.owner(target.operator, placement);
-                    chunk.owned[owner].push(
-                        *placement,
-                        placed.values_of(sample),
-                        placed.weights_of(sample),
-                    );
-                    if route_weight {
-                        chunk.weight_owned.push(
-                            *placement,
-                            placed.values_of(sample),
-                            placed.weights_of(sample),
-                        );
-                    }
-                    chunk.placed += 1;
-                }
             }
             debug_assert!(
                 chunk.placed as usize <= shape.placements
@@ -588,14 +576,7 @@ impl<'w, 'p> Wave<'w, 'p> {
                 OwnerBackend::Metal { backend, staging } => {
                     staging.clear();
                     for chunk in chunks {
-                        let block = chunk.owned[owner_index].block();
-                        for sample in 0..block.len() {
-                            staging.push(
-                                block.placements[sample],
-                                block.values_of(sample),
-                                block.weights_of(sample),
-                            );
-                        }
+                        staging.extend_from_block(&chunk.owned[owner_index].block());
                     }
                     if !staging.is_empty() {
                         let backend: &mut MetalBackend<'_> = backend;

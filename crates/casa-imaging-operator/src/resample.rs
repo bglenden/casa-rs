@@ -17,7 +17,7 @@ use crate::convolution::{CellHold, ConvolutionFunctionSet, RowContext};
 use crate::error::OperatorError;
 use crate::geometry::{CellLocation, GridGeometry};
 use crate::operator::{Basis, MeasurementOperator};
-use crate::sample::{Placement, SampleBuffer};
+use crate::sample::{CfKey, Placement, SampleBuffer};
 use crate::weighting::{
     DensityCellRule, DensityGridShape, DensityUv, SPEED_OF_LIGHT_M_PER_S, WeightingGeneration,
 };
@@ -597,10 +597,21 @@ fn sample_weight(
     }
 }
 
+/// The oversampling and placement half support of the cell a row's last
+/// sample keyed: successive samples of a row almost always share a cell,
+/// so the set lends its taps once for them.
+#[derive(Default)]
+struct LastCell {
+    key: Option<CfKey>,
+    oversampling: u16,
+    half_support: [u16; 2],
+}
+
 /// The placement of `row`'s sample at `frequency_hz` on `plane`: its cell,
 /// its pointing gradient when the set has a ramp (the kernels anchor the
 /// ramp at the sample's fine offset), and its phase-centre shift, when the
 /// cell's support fits the padded grid.
+#[allow(clippy::too_many_arguments)]
 fn locate_sample(
     cf: &dyn ConvolutionFunctionSet,
     geometry: &GridGeometry,
@@ -609,6 +620,7 @@ fn locate_sample(
     plane: u32,
     frequency_hz: f64,
     hold: &mut CellHold,
+    last: &mut LastCell,
 ) -> Option<(Placement, CellLocation)> {
     let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
     let w = row.uvw_m[2] * scale;
@@ -616,10 +628,16 @@ fn locate_sample(
         return None;
     }
     let key = cf.key(&row.context, frequency_hz, w);
+    if last.key != Some(key) {
+        *last = LastCell {
+            key: Some(key),
+            oversampling: cf.taps(key, hold).oversampling(),
+            half_support: cf.placement_half_support(key, hold),
+        };
+    }
     let (u, v) = (row.uvw_m[0] * scale, row.uvw_m[1] * scale);
-    let oversampling = cf.taps(key, hold).oversampling();
-    let location = geometry.locate(u, v, oversampling);
-    if !geometry.fits(location, cf.placement_half_support(key, hold)) {
+    let location = geometry.locate(u, v, last.oversampling);
+    if !geometry.fits(location, last.half_support) {
         return None;
     }
     let gradient = if cf.pointing_ramp() {
@@ -779,7 +797,29 @@ impl SpectralResampler {
         row: &NativeRow<'_>,
         out: &mut SampleBuffer,
     ) -> Result<(), OperatorError> {
-        let npol = self.validate(operator, row, out)?;
+        let npol = operator.polarization().correlations().len();
+        if out.npol() != npol {
+            return Err(OperatorError::NativeRow {
+                reason: "buffer polarizations must match the operator",
+            });
+        }
+        self.place_each(operator, weighting, row, |placement, values, weights| {
+            out.push(placement, values, weights);
+        })
+    }
+
+    /// [`Self::place`], handing each placed sample with its values and
+    /// weights to `sample` instead of a buffer, so a caller that routes
+    /// samples among buffers copies each once.
+    pub fn place_each(
+        &self,
+        operator: &MeasurementOperator,
+        weighting: &WeightingGeneration,
+        row: &NativeRow<'_>,
+        mut sample: impl FnMut(Placement, &[Complex32], &[f32]),
+    ) -> Result<(), OperatorError> {
+        let npol = operator.polarization().correlations().len();
+        self.validate_row(operator, row, npol)?;
         if is_autocorrelation(row) {
             return Ok(());
         }
@@ -795,6 +835,7 @@ impl SpectralResampler {
         let mut weights = [0.0_f32; 4];
         let (values, weights) = (&mut values[..npol], &mut weights[..npol]);
         let mut hold = CellHold::new();
+        let mut last = LastCell::default();
         self.for_each_sample(row, |plane, frequency_hz, source| {
             if sample_flagged(row, npol, source) {
                 return;
@@ -807,6 +848,7 @@ impl SpectralResampler {
                 plane,
                 frequency_hz,
                 &mut hold,
+                &mut last,
             ) else {
                 return;
             };
@@ -821,7 +863,7 @@ impl SpectralResampler {
                 values[pol] = Complex32::new(scaled.re as f32, scaled.im as f32);
                 weights[pol] = weight;
             }
-            out.push(placement, values, weights);
+            sample(placement, values, weights);
         });
         Ok(())
     }
@@ -976,22 +1018,6 @@ impl SpectralResampler {
                 .for_each_sample(row, visit),
         }
         Ok(())
-    }
-
-    fn validate(
-        &self,
-        operator: &MeasurementOperator,
-        row: &NativeRow<'_>,
-        out: &SampleBuffer,
-    ) -> Result<usize, OperatorError> {
-        let npol = operator.polarization().correlations().len();
-        if out.npol() != npol {
-            return Err(OperatorError::NativeRow {
-                reason: "buffer polarizations must match the operator",
-            });
-        }
-        self.validate_row(operator, row, npol)?;
-        Ok(npol)
     }
 
     fn validate_row(
@@ -1195,6 +1221,7 @@ impl SpectralResampler {
         let native = row.frequencies_hz;
         let prepared = model.layout().planes();
         let mut hold = CellHold::new();
+        let mut last = LastCell::default();
         let mut place = |plane: u32, frequency_hz: f64, source: usize| {
             if !prepared.contains(plane) {
                 return;
@@ -1207,6 +1234,7 @@ impl SpectralResampler {
                 plane,
                 frequency_hz,
                 &mut hold,
+                &mut last,
             ) {
                 buffer.push(placement, zeros, ones);
                 sources.push(source);
