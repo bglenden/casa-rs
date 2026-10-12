@@ -45,19 +45,13 @@ impl Owner<'_> {
 /// source block into `staging`, so each device dispatch is one block's
 /// worth of samples rather than one chunk's, and leaves that dispatch
 /// running while the workers place the next slice
-/// ([`MetalBackend::defer_grid_completion`]).
+/// ([`MetalBackend::with_deferred_grid_completion`]).
 enum OwnerBackend<'w> {
     Cpu(CpuBackend),
     Metal {
         backend: Box<MetalBackend<'w>>,
         staging: SampleBuffer,
     },
-}
-
-/// `backend`, deferring grid completion.
-fn deferring(mut backend: MetalBackend<'_>) -> MetalBackend<'_> {
-    backend.defer_grid_completion();
-    backend
 }
 
 /// One image domain's share of a wave.
@@ -293,10 +287,13 @@ impl<'w, 'p> Wave<'w, 'p> {
                                         operator.accumulator_layout(range, tile, pass.modes),
                                     )?),
                                     backend: OwnerBackend::Metal {
-                                        backend: Box::new(deferring(MetalBackend::new(
-                                            operator.cf(),
-                                            pass.metal_stage_timing,
-                                        )?)),
+                                        backend: Box::new(
+                                            MetalBackend::new(
+                                                operator.cf(),
+                                                pass.metal_stage_timing,
+                                            )?
+                                            .with_deferred_grid_completion(),
+                                        ),
                                         staging: SampleBuffer::with_capacity(
                                             shape.npol,
                                             count * shape.placements,

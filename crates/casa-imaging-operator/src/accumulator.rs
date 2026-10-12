@@ -309,7 +309,8 @@ pub type DeferredWork = Box<dyn FnOnce() + Send>;
 // `new`), and the owner and the pending wait are themselves `Send`.
 unsafe impl Send for DeviceCells {}
 // SAFETY: as for `Send`: shared access only reads, and the pending wait is
-// behind a mutex.
+// behind a mutex held until the wait returns, so a reader on any thread
+// reaches the cells only after the device's work is done.
 unsafe impl Sync for DeviceCells {}
 
 impl DeviceCells {
@@ -337,27 +338,46 @@ impl DeviceCells {
     }
 
     /// Record device work that may still write the cells: `wait` blocks
-    /// until it is done, and runs before the host next reads or writes the
-    /// cells. It replaces any work recorded before, so it must also cover
-    /// that work, as a device queue that completes the work on one buffer
-    /// in order does.
-    pub fn defer(&self, wait: DeferredWork) {
-        *self
-            .pending
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(wait);
+    /// until it is done, and the host's next read or write of the cells, on
+    /// any thread, waits for it first. It replaces any wait recorded before.
+    /// A wait that panics leaves the cells unreachable: every later access
+    /// panics.
+    ///
+    /// Recording a wait is unsafe, so code that can only read the cells
+    /// cannot replace a backend's wait with one that returns early:
+    ///
+    /// ```compile_fail,E0133
+    /// fn replace(cells: &casa_imaging_operator::DeviceCells) {
+    ///     cells.defer(Box::new(|| {}));
+    /// }
+    /// ```
+    ///
+    /// # Safety
+    ///
+    /// When `wait` returns, every device write to the cells issued so far
+    /// must be complete, including the writes an earlier wait covered (a
+    /// device queue that completes the commands writing one buffer in
+    /// commit order gives this by waiting for the last of them). The device
+    /// may write the cells afterwards only in work a later call records.
+    pub unsafe fn defer(&self, wait: DeferredWork) {
+        *self.pending() = Some(wait);
     }
 
-    /// Wait for any deferred device work.
+    /// Wait for any deferred device work. The lock is held through the
+    /// wait, so a reader on another thread waits for it too.
     fn settle(&self) {
-        let wait = self
-            .pending
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        if let Some(wait) = wait {
+        let mut pending = self.pending();
+        if let Some(wait) = pending.take() {
             wait();
         }
+    }
+
+    /// The pending wait. A wait that panicked may have returned before the
+    /// device finished, so its lock stays poisoned and this panics.
+    fn pending(&self) -> std::sync::MutexGuard<'_, Option<DeferredWork>> {
+        self.pending
+            .lock()
+            .expect("a wait for device work on these cells panicked")
     }
 
     /// The cells, once any deferred device work is done.

@@ -31,7 +31,8 @@ const MIN_SUB: usize = 512;
 /// The Metal implementation of [`GridBackend`] for one kernel set.
 ///
 /// Every dispatch is complete when [`GridBackend::apply`] returns, unless
-/// the backend defers grid completion ([`Self::defer_grid_completion`]).
+/// the backend defers grid completion
+/// ([`Self::with_deferred_grid_completion`]).
 /// Inside one `apply` the block is cut into sub-blocks over a ring of
 /// slots, so the host locates the samples of one sub-block while the
 /// device grids the previous ones. Accumulators must come from
@@ -173,14 +174,20 @@ impl<'cf> MetalBackend<'cf> {
         })
     }
 
-    /// Let grid-only work ([`Work::Grid`], and [`Work::ResidualGrid`]
-    /// without residual samples) still run on the device when `apply`
-    /// returns, so the host can prepare the next work meanwhile. The
-    /// accumulator's cells wait for it before the host next reaches them
-    /// ([`DeviceCells::defer`]); [`Self::complete`] waits for it and reports
-    /// whether it failed.
-    pub fn defer_grid_completion(&mut self) {
+    /// This backend, leaving grid-only work ([`Work::Grid`], and
+    /// [`Work::ResidualGrid`] without residual samples) running on the
+    /// device when `apply` returns, so the host can prepare the next work
+    /// meanwhile. The accumulator's cells wait for it before the host next
+    /// reaches them ([`DeviceCells::defer`]).
+    ///
+    /// Only [`Self::complete`], or a later `apply` that reuses the work's
+    /// slot, reports a deferred dispatch that failed; reading the cells or
+    /// dropping the backend does not, so a caller calls `complete` before
+    /// it trusts the grids.
+    #[must_use]
+    pub fn with_deferred_grid_completion(mut self) -> Self {
         self.defer_grid = true;
+        self
     }
 
     /// Wait for every dispatch still running, and report the first that
@@ -405,14 +412,17 @@ impl<'cf> MetalBackend<'cf> {
             Ok::<_, OperatorError>(())
         }));
         if defer && matches!(dispatched, Ok(Ok(()))) {
-            // The device writes the cells in commit order (each command
-            // depends on the one before it through the shared grid), so
-            // waiting for the last covers them all.
             let last = (self.next + RING - 1) % RING;
             if let Some(command) = self.ring[last].command.clone() {
-                cells
-                    .expect("deferred work has cells")
-                    .defer(Box::new(move || command.wait_until_completed()));
+                let cells = cells.expect("deferred work has cells");
+                // SAFETY: every command that writes these cells, from any
+                // backend, goes to the one process-wide queue
+                // (`Device::shared`), and the grid buffer is tracked, so
+                // the device runs them in commit order: once this apply's
+                // last command completes, every write issued so far has.
+                // Later device writes come only from later applies, which
+                // record their own wait.
+                unsafe { cells.defer(Box::new(move || command.wait_until_completed())) };
             }
             return Ok(());
         }
@@ -506,10 +516,10 @@ impl<'cf> MetalBackend<'cf> {
             let encoder = command.computeCommandEncoder().ok_or(failed)?;
             encoder.setComputePipelineState(&pipeline.state);
             let bind = |buffer: &Buffer, index: usize| {
-                // SAFETY: every bound buffer outlives the command: the slot,
-                // arena and table buffers belong to this backend, the grid
-                // and model to the caller's `apply`, and `apply` waits for
-                // the command before returning. Indices match the kernels.
+                // SAFETY: the command buffer retains every buffer it binds,
+                // so each outlives the command; the host reaches the slot
+                // buffers only after `wait`, and the grid's cells only
+                // through their deferred wait. Indices match the kernels.
                 unsafe { encoder.setBuffer_offset_atIndex(Some(&buffer.raw), 0, index) };
             };
             bind(&slot.records, 0);
@@ -655,11 +665,12 @@ impl Arena {
 
 impl Drop for MetalBackend<'_> {
     fn drop(&mut self) {
-        // `run` drains the ring before returning or unwinding; this only
-        // keeps a dropped backend from outliving work it committed.
+        // Deferred grid work may still run; a backend dropped without
+        // `complete` waits for it, and its usage says whether it failed.
         for slot in &mut self.ring {
             if let Some(Command(command)) = slot.command.take() {
                 command.waitUntilCompleted();
+                self.usage.failed |= command.status() == MTLCommandBufferStatus::Error;
             }
         }
         let Usage {

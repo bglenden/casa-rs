@@ -31,7 +31,8 @@ impl<'cf> MetalBackend<'cf> {
     }
 
     /// Unreachable: no backend exists on this host.
-    pub fn defer_grid_completion(&mut self) {
+    #[must_use]
+    pub fn with_deferred_grid_completion(self) -> Self {
         match self.never {}
     }
 
