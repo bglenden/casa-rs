@@ -407,6 +407,16 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// live here.
     fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey;
 
+    /// The one cell every sample keys, when the set's cell depends on
+    /// nothing (`GridFT`'s spheroidal). Such a set must also admit every w
+    /// ([`Self::admits`]) and predict with the image-frame w
+    /// ([`Self::prediction_w`]), so placement asks the set once rather than
+    /// three times per sample. `None` (the default) when cells vary by row,
+    /// frequency or w.
+    fn uniform_key(&self) -> Option<CfKey> {
+        None
+    }
+
     /// Imaging taps of a cell. A set that pages cells parks the cell in
     /// `hold` and lends from it; resident sets lend their own storage.
     fn taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s>;

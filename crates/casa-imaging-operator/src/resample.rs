@@ -598,12 +598,15 @@ fn sample_weight(
 }
 
 /// What placing one row's samples works out once: the pointing gradient,
-/// which is the row's, and the oversampling and placement half support of
-/// the cell its last sample keyed (successive samples of a row almost
-/// always share a cell, so the set lends its taps once for them).
+/// which is the row's; the set's one cell, when it has one
+/// ([`ConvolutionFunctionSet::uniform_key`]); and the oversampling and
+/// placement half support of the cell its last sample keyed (successive
+/// samples of a row almost always share a cell, so the set lends its taps
+/// once for them).
 struct RowPlacing {
     hold: CellHold,
     gradient: [f32; 2],
+    uniform: Option<CfKey>,
     key: Option<CfKey>,
     oversampling: u16,
     half_support: [u16; 2],
@@ -618,6 +621,7 @@ impl RowPlacing {
             } else {
                 [0.0, 0.0]
             },
+            uniform: cf.uniform_key(),
             key: None,
             oversampling: 0,
             half_support: [0, 0],
@@ -640,10 +644,11 @@ fn locate_sample(
 ) -> Option<(Placement, CellLocation)> {
     let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
     let w = row.uvw_m[2] * scale;
-    if !cf.admits(w) {
-        return None;
-    }
-    let key = cf.key(&row.context, frequency_hz, w);
+    let key = match placing.uniform {
+        Some(key) => key,
+        None if cf.admits(w) => cf.key(&row.context, frequency_hz, w),
+        None => return None,
+    };
     if placing.key != Some(key) {
         placing.key = Some(key);
         placing.oversampling = cf.taps(key, &mut placing.hold).oversampling();
@@ -661,7 +666,11 @@ fn locate_sample(
             u,
             v,
             w,
-            prediction_w_positive: cf.prediction_w(&row.context, frequency_hz, w) > 0.0,
+            prediction_w_positive: if placing.uniform.is_some() {
+                w > 0.0
+            } else {
+                cf.prediction_w(&row.context, frequency_hz, w) > 0.0
+            },
             phase,
             plane,
             spectral: basis.spectral(frequency_hz),
