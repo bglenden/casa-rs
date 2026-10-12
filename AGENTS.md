@@ -110,8 +110,11 @@ The internal disk is small. Do not fill it.
 ## Ask First
 
 - New top-level apps or product families
-- Adding or changing public APIs, persisted formats, provider-contract bundles,
-  or other external contracts (removing APIs inside approved work is fine)
+- Changing persisted formats, provider-contract bundles, or other external
+  contracts. Rust APIs between workspace crates are not external contracts:
+  add, change or remove them whenever that serves the work (a measured
+  performance gain, a simpler design) and record the change on the issue or
+  PR
 - Changing dependency direction, the runtime or concurrency model, or a major
   performance algorithm
 - Editing accepted ADRs
@@ -156,8 +159,9 @@ are the work contract. Each ticket body carries outcome, deletion rows and
 acceptance tests; plan section 10 is the review checklist; section 9.3 defines
 the review gates R1–R4. Gates per ticket are its T0/T1/T1.5 tests, clippy
 `-D warnings` on touched crates, the dependency checker and `just quick`;
-`just verify` runs once at IF-11. The Rust API changes, deletions and
-dependency-direction changes written in the plan are pre-approved; persisted
-CASA-interoperable formats, cleanup and release still need approval. Record
+`just verify` runs once at IF-11. Rust API changes need no approval (see Ask
+First); the deletions and dependency-direction changes written in the plan
+are pre-approved; persisted CASA-interoperable formats, cleanup and release
+still need approval. Record
 disagreements between plan and code under `## Deviations` on the ticket as
 they occur. Programme #486 and its rules are retired.
