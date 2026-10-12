@@ -185,5 +185,7 @@ fn metal_cube_with_coarse_output_channels_in_waves_equals_the_cpu_cube() {
 }
 
 /// Host memory for which the 128 × 128, 15-channel Metal cube needs waves
-/// but two owners' rings and one plane fit.
-const COARSE_METAL_MEMORY_BYTES: u64 = 28 << 20;
+/// but two owners' rings and one plane fit. With six-slot rings
+/// (`casa_imaging_metal::ring_bytes`, 18 MiB each here) one plane needs
+/// about 37 MiB and every plane fits from about 44 MiB.
+const COARSE_METAL_MEMORY_BYTES: u64 = 40 << 20;

@@ -29,16 +29,35 @@ struct Owner<'w> {
     images: Option<NormalImages>,
 }
 
+impl Owner<'_> {
+    /// Wait for the owner's grid work still on the device, reporting
+    /// whether it failed.
+    fn complete(&mut self) -> Result<(), PassError> {
+        match &mut self.backend {
+            OwnerBackend::Cpu(_) => Ok(()),
+            OwnerBackend::Metal { backend, .. } => Ok(backend.complete()?),
+        }
+    }
+}
+
 /// The backend an owner dispatches to. The CPU grids each placement chunk
 /// as it comes; a Metal owner first gathers its share of every chunk of a
 /// source block into `staging`, so each device dispatch is one block's
-/// worth of samples rather than one chunk's.
+/// worth of samples rather than one chunk's, and leaves that dispatch
+/// running while the workers place the next slice
+/// ([`MetalBackend::defer_grid_completion`]).
 enum OwnerBackend<'w> {
     Cpu(CpuBackend),
     Metal {
         backend: Box<MetalBackend<'w>>,
         staging: SampleBuffer,
     },
+}
+
+/// `backend`, deferring grid completion.
+fn deferring(mut backend: MetalBackend<'_>) -> MetalBackend<'_> {
+    backend.defer_grid_completion();
+    backend
 }
 
 /// One image domain's share of a wave.
@@ -274,10 +293,10 @@ impl<'w, 'p> Wave<'w, 'p> {
                                         operator.accumulator_layout(range, tile, pass.modes),
                                     )?),
                                     backend: OwnerBackend::Metal {
-                                        backend: Box::new(MetalBackend::new(
+                                        backend: Box::new(deferring(MetalBackend::new(
                                             operator.cf(),
                                             pass.metal_stage_timing,
-                                        )?),
+                                        )?)),
                                         staging: SampleBuffer::with_capacity(
                                             shape.npol,
                                             count * shape.placements,
@@ -629,7 +648,13 @@ impl<'w, 'p> Wave<'w, 'p> {
 
     /// Transform the accumulated grids into this wave's normal images, one
     /// per domain.
-    pub(super) fn finish(self, team: &WorkerTeam) -> Result<Vec<NormalImages>, PassError> {
+    pub(super) fn finish(mut self, team: &WorkerTeam) -> Result<Vec<NormalImages>, PassError> {
+        // Metal owners leave their last grid work running on the device:
+        // complete it, and learn whether it failed, before any accumulator is
+        // read.
+        for domain in &mut self.domains {
+            team.for_each_mut(&mut domain.owners, |_, owner| owner.complete())?;
+        }
         let pass = self.pass;
         let planes = self.planes;
         self.domains

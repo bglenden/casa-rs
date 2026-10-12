@@ -41,8 +41,14 @@ pub use unavailable::MetalBackend;
 pub const METAL_STAGE_TIMING: &str = "casa_imaging::metal_stage_timing";
 
 /// Ring slots of one backend: the host prepares one while the device runs
-/// the others.
-const RING: usize = 3;
+/// the others. Twice the sub-blocks of one apply ([`SPLIT`]), so that an
+/// apply whose grid work is left in flight
+/// (`MetalBackend::defer_grid_completion`) seldom waits for the apply
+/// before it.
+const RING: usize = 2 * SPLIT;
+/// Sub-blocks one apply is split into, so the host prepares one while the
+/// device runs another.
+const SPLIT: usize = 3;
 /// The most samples in one ring sub-block.
 const MAX_SUB: usize = 32_768;
 /// Device bytes per sample of a ring slot: the record, and per visibility

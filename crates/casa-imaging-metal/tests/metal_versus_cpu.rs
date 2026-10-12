@@ -420,13 +420,107 @@ fn one_backend_serves_successive_accumulators_and_empty_blocks() {
     }
 }
 
+/// A backend that defers grid completion leaves its grid work running when
+/// `apply` returns, and the host still never sees a partial grid: reading
+/// the cells straight after successive deferred applies (data, then PSF,
+/// several blocks) gives the CPU's grid. A prediction on the same backend
+/// between them reads back its own output, never a deferred grid
+/// command's, and `complete` then finds nothing failed.
+#[test]
+fn deferred_grid_work_is_done_before_the_host_reads_the_cells() {
+    let mut rng = Rng::new(41);
+    let operator = operator(
+        Kernels::Spheroidal,
+        Basis::ChannelLocal { planes: 3 },
+        &mut rng,
+    );
+    let Some(mut metal) = metal(&operator) else {
+        return;
+    };
+    metal.defer_grid_completion();
+    let prepared = operator
+        .prepare_model(&model(&operator, &mut rng), ModelPrescale::Unit)
+        .expect("model");
+    let planes = PlaneRange::new(0, 3);
+    let layout = operator.accumulator_layout(planes, None, ModeSet::DATA_PSF);
+    let mut device = MetalBackend::accumulator(layout).expect("device");
+    let mut cpu = operator.accumulator(planes, None, ModeSet::DATA_PSF);
+    for round in 0..3 {
+        let placed = placements(
+            &operator,
+            full(&operator),
+            SAMPLES + 500 * round,
+            3,
+            &mut rng,
+        );
+        let buffer = block(&placed, &mut rng);
+        for mode in [Mode::Data, Mode::Psf] {
+            CpuBackend::new()
+                .apply(
+                    &buffer.block(),
+                    operator.cf(),
+                    Work::Grid {
+                        mode,
+                        acc: &mut cpu,
+                    },
+                )
+                .expect("cpu");
+            metal
+                .apply(
+                    &buffer.block(),
+                    operator.cf(),
+                    Work::Grid {
+                        mode,
+                        acc: &mut device,
+                    },
+                )
+                .expect("metal");
+        }
+        let mut expected = vec![Complex32::default(); placed.len() * 2];
+        let mut predicted = vec![Complex32::default(); placed.len() * 2];
+        CpuBackend::new()
+            .apply(
+                &buffer.block(),
+                operator.cf(),
+                Work::Predict {
+                    model: &prepared,
+                    out: &mut expected,
+                },
+            )
+            .expect("cpu predict");
+        metal
+            .apply(
+                &buffer.block(),
+                operator.cf(),
+                Work::Predict {
+                    model: &prepared,
+                    out: &mut predicted,
+                },
+            )
+            .expect("metal predict");
+        assert_close(&predicted, &expected, &format!("round {round} prediction"));
+    }
+    assert_same_grids(&device, &cpu, "deferred grids");
+    metal.complete().expect("nothing failed");
+}
+
 #[test]
 fn misplaced_samples_and_host_accumulators_are_refused_before_the_device() {
+    refused_before_the_device(false);
+    // A refused apply drains the ring even when grid work is deferred, so
+    // the device never writes a tile its caller holds again.
+    refused_before_the_device(true);
+}
+
+fn refused_before_the_device(defer: bool) {
     let mut rng = Rng::new(37);
     let operator = operator(Kernels::Spheroidal, Basis::Constant, &mut rng);
     let Some(mut metal) = metal(&operator) else {
         return;
     };
+    if defer {
+        metal.defer_grid_completion();
+    }
     // 3,001 samples are three ring sub-blocks of 1,001; the one misplaced
     // sample (anchored left of the tile) sits in the third, so the panic
     // comes after two sub-blocks are committed.
