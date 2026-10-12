@@ -27,6 +27,9 @@ pub struct CpuBackend {
     powers: Vec<f64>,
     prediction: Vec<Complex64>,
     norms: Vec<Complex64>,
+    /// One grid polarization's gathers by Mueller plane, each summed over
+    /// the terms, for the visibility polarizations that share them.
+    gathered: Vec<(u8, Complex64)>,
     residual: Vec<Complex32>,
     hold: CellHold,
 }
@@ -178,7 +181,10 @@ impl CpuBackend {
     /// Fill `self.prediction` with the raw prediction `P` per visibility
     /// polarization (no phase-centre phasor) for one placement:
     /// `Σ_t s^t Σ_{gpol,m} Σ conj(tap'_m) · model[t][gpol]`, divided once by
-    /// `Σ_{gpol,m} norm_m` under [`KernelNormalisation::KernelSum`].
+    /// `Σ_{gpol,m} norm_m` under [`KernelNormalisation::KernelSum`]. The
+    /// gather of a grid polarization through a Mueller plane depends on
+    /// neither visibility polarization, so it is made once and added to
+    /// each that the plane routes (both correlations of Stokes I).
     fn predict_sample<T: GridScalar>(
         &mut self,
         cf: &dyn ConvolutionFunctionSet,
@@ -195,6 +201,7 @@ impl CpuBackend {
             powers,
             prediction,
             norms,
+            gathered,
             hold,
             ..
         } = self;
@@ -219,6 +226,7 @@ impl CpuBackend {
         norms.clear();
         norms.resize(npol, Complex64::default());
         for (gpol, row) in table.iter().enumerate() {
+            gathered.clear();
             for (vpol, mueller_plane) in row.iter().enumerate() {
                 let Some(mueller) = *mueller_plane else {
                     continue;
@@ -230,20 +238,27 @@ impl CpuBackend {
                     // the adjoint's (`w_positive`), as the gather does.
                     norms[vpol] += kernel::norm(&taps, location, mueller, !w_positive);
                 }
-                for (power, term) in powers.iter().zip(terms.clone()) {
-                    let offset = layout.block_offset(plane, gpol, term);
-                    let grid = &cells[offset..offset + layout.block_cells()];
-                    let sum = kernel::gather::<T>(
-                        grid,
-                        layout.tile(),
-                        location,
-                        &taps,
-                        mueller,
-                        w_positive,
-                        placement.gradient,
-                    );
-                    prediction[vpol] += sum * *power;
-                }
+                let sum = if let Some((_, sum)) = gathered.iter().find(|(m, _)| *m == mueller) {
+                    *sum
+                } else {
+                    let mut sum = Complex64::default();
+                    for (power, term) in powers.iter().zip(terms.clone()) {
+                        let offset = layout.block_offset(plane, gpol, term);
+                        let grid = &cells[offset..offset + layout.block_cells()];
+                        sum += kernel::gather::<T>(
+                            grid,
+                            layout.tile(),
+                            location,
+                            &taps,
+                            mueller,
+                            w_positive,
+                            placement.gradient,
+                        ) * *power;
+                    }
+                    gathered.push((mueller, sum));
+                    sum
+                };
+                prediction[vpol] += sum;
             }
         }
         if divide {

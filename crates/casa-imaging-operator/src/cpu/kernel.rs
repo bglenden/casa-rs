@@ -103,16 +103,10 @@ pub(super) fn gather<T: GridScalar>(
             let rx = &rows[usize::from(location.ox) * support..][..support];
             let ry = &rows[usize::from(location.oy) * support..][..support];
             let (x0, y0) = block_origin(tile, location, [support / 2, support / 2]);
-            let nx = tile.shape[0];
-            let mut sum = Complex::<T>::default();
-            for (iy, wy) in ry.iter().enumerate() {
-                let row = &grid[(y0 + iy) * nx + x0..][..support];
-                let mut row_sum = Complex::<T>::default();
-                for (cell, wx) in row.iter().zip(rx) {
-                    row_sum = row_sum + *cell * T::from_f32(*wx);
-                }
-                sum = sum + row_sum * T::from_f32(*wy);
-            }
+            let sum = match support {
+                7 => gather_separable::<T, 7>(grid, tile.shape[0], x0, y0, rx, ry),
+                _ => gather_separable_dyn(grid, tile.shape[0], x0, y0, rx, ry),
+            };
             Complex64::new(sum.re.into_f64(), sum.im.into_f64())
         }
         TapLayout::Dense {
@@ -236,6 +230,56 @@ fn spread_separable<T: GridScalar, const S: usize>(
     }
 }
 
+/// `Σ_y ry[y] · Σ_x rx[x] · grid[y][x]` over an `S × S` support, each row
+/// summed in `x` order and the rows in `y` order, as
+/// [`gather_separable_dyn`] sums them.
+fn gather_separable<T: GridScalar, const S: usize>(
+    grid: &[Complex<T>],
+    nx: usize,
+    x0: usize,
+    y0: usize,
+    rx: &[f32],
+    ry: &[f32],
+) -> Complex<T> {
+    let mut taps_x = [T::zero(); S];
+    for (target, tap) in taps_x.iter_mut().zip(rx) {
+        *target = T::from_f32(*tap);
+    }
+    let mut sum = Complex::<T>::default();
+    for (iy, wy) in ry.iter().enumerate() {
+        let row: &[Complex<T>; S] = (&grid[(y0 + iy) * nx + x0..][..S])
+            .try_into()
+            .expect("row has S cells");
+        let mut row_sum = Complex::<T>::default();
+        for (cell, tap) in row.iter().zip(&taps_x) {
+            row_sum = row_sum + *cell * *tap;
+        }
+        sum = sum + row_sum * T::from_f32(*wy);
+    }
+    sum
+}
+
+fn gather_separable_dyn<T: GridScalar>(
+    grid: &[Complex<T>],
+    nx: usize,
+    x0: usize,
+    y0: usize,
+    rx: &[f32],
+    ry: &[f32],
+) -> Complex<T> {
+    let support = rx.len();
+    let mut sum = Complex::<T>::default();
+    for (iy, wy) in ry.iter().enumerate() {
+        let row = &grid[(y0 + iy) * nx + x0..][..support];
+        let mut row_sum = Complex::<T>::default();
+        for (cell, wx) in row.iter().zip(rx) {
+            row_sum = row_sum + *cell * T::from_f32(*wx);
+        }
+        sum = sum + row_sum * T::from_f32(*wy);
+    }
+    sum
+}
+
 fn spread_separable_dyn<T: GridScalar>(
     grid: &mut [Complex<T>],
     nx: usize,
@@ -305,4 +349,45 @@ fn dense_tap(
         tap *= Complex64::from_polar(1.0, phase);
     }
     tap
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A deterministic pseudo-random value in `[-1, 1)` for index `i`.
+    fn noise(i: usize) -> f64 {
+        let mixed = (i as u64 ^ 0x9e37_79b9_7f4a_7c15).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        (mixed >> 11) as f64 / (1_u64 << 52) as f64 - 1.0
+    }
+
+    /// The seven-tap separable gather sums in the general gather's order,
+    /// so it equals it bit for bit, in both precisions and at every offset
+    /// of a block row.
+    fn seven_taps_gather_as_the_general_gather<T: GridScalar>() {
+        let nx = 13;
+        let grid = (0..nx * nx)
+            .map(|i| Complex::new(T::from_f64(noise(2 * i)), T::from_f64(noise(2 * i + 1))))
+            .collect::<Vec<_>>();
+        let taps = (0..14).map(|i| noise(1000 + i) as f32).collect::<Vec<_>>();
+        let (rx, ry) = taps.split_at(7);
+        for (x0, y0) in [(0, 0), (3, 5), (6, 6)] {
+            let seven = gather_separable::<T, 7>(&grid, nx, x0, y0, rx, ry);
+            let general = gather_separable_dyn(&grid, nx, x0, y0, rx, ry);
+            assert_eq!(
+                (seven.re.into_f64().to_bits(), seven.im.into_f64().to_bits()),
+                (
+                    general.re.into_f64().to_bits(),
+                    general.im.into_f64().to_bits()
+                ),
+                "offset ({x0}, {y0})"
+            );
+        }
+    }
+
+    #[test]
+    fn the_seven_tap_gather_equals_the_general_gather() {
+        seven_taps_gather_as_the_general_gather::<f32>();
+        seven_taps_gather_as_the_general_gather::<f64>();
+    }
 }
