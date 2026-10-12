@@ -337,7 +337,9 @@ mod tests {
         }
         assert_eq!(block.ordered_row(4), 4, "arrival order until ordered");
         block.order_rows_by_baseline();
-        let ordered = (0..9).map(|position| block.ordered_row(position)).collect::<Vec<_>>();
+        let ordered = (0..9)
+            .map(|position| block.ordered_row(position))
+            .collect::<Vec<_>>();
         assert_eq!(ordered, [0, 3, 6, 1, 4, 7, 2, 5, 8]);
         push(&mut block, 9);
         assert_eq!(block.ordered_row(1), 1, "appending restores arrival order");
