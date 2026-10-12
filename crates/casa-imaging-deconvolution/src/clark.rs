@@ -42,8 +42,10 @@ impl Clark {
     }
 }
 
+/// An active pixel: its `[x, y]`, kept rather than its storage index because
+/// every component's subtraction needs each pixel's offset from it.
 struct Active {
-    index: usize,
+    pixel: [u32; 2],
     value: f64,
 }
 
@@ -142,7 +144,9 @@ impl Solver for Clark {
                     return Err(Error::NonFinite);
                 }
                 return Ok(Next::Clean(Candidate::Pixel {
-                    index: pixel.index,
+                    index: state
+                        .shape
+                        .index(pixel.pixel[0] as usize, pixel.pixel[1] as usize),
                     scale: 0,
                     strength: pixel.value,
                 }));
@@ -178,7 +182,7 @@ impl Solver for Clark {
         let patch = state.patch;
         let psf = &view.psf[0];
         for pixel in &mut state.active {
-            let [tx, ty] = shape.pixel(pixel.index);
+            let [tx, ty] = pixel.pixel;
             let relative = [tx as isize - px as isize, ty as isize - py as isize];
             if relative[0] < -(patch.radius[0] as isize)
                 || relative[0] >= (patch.size[0] - patch.radius[0]) as isize
@@ -264,7 +268,11 @@ impl ClarkState {
             residual.iter().zip(view.support.as_slice()).enumerate()
         {
             if supported && value.abs() >= cutoff {
-                self.active.push(Active { index, value });
+                let [x, y] = self.shape.pixel(index);
+                self.active.push(Active {
+                    pixel: [x as u32, y as u32],
+                    value,
+                });
             }
         }
         let peak = self
