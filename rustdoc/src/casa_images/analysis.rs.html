@@ -3516,7 +3516,7 @@
 <a href=#3516 id=3516 data-nosnippet>3516</a>
 <a href=#3517 id=3517 data-nosnippet>3517</a><span class="kw">fn </span>centered_fft2(input: <span class="kw-2">&amp;</span>Array2&lt;Complex32&gt;) -&gt; Array2&lt;Complex32&gt; {
 <a href=#3518 id=3518 data-nosnippet>3518</a>    <span class="kw">let </span><span class="kw-2">mut </span>shifted = ifftshift2(input);
-<a href=#3519 id=3519 data-nosnippet>3519</a>    <span class="kw">let </span><span class="kw-2">mut </span>fft = Fft2::&lt;f32&gt;::new([shifted.shape()[<span class="number">0</span>], shifted.shape()[<span class="number">1</span>]])
+<a href=#3519 id=3519 data-nosnippet>3519</a>    <span class="kw">let </span><span class="kw-2">mut </span>fft = Fft2::&lt;f32&gt;::with_threads([shifted.shape()[<span class="number">0</span>], shifted.shape()[<span class="number">1</span>]], <span class="number">1</span>)
 <a href=#3520 id=3520 data-nosnippet>3520</a>        .expect(<span class="string">"valid feather FFT shape"</span>);
 <a href=#3521 id=3521 data-nosnippet>3521</a>    fft.transform(
 <a href=#3522 id=3522 data-nosnippet>3522</a>        shifted.as_slice_mut().expect(<span class="string">"contiguous feather plane"</span>),
@@ -3528,7 +3528,7 @@
 <a href=#3528 id=3528 data-nosnippet>3528</a>
 <a href=#3529 id=3529 data-nosnippet>3529</a><span class="kw">fn </span>centered_ifft2(input: <span class="kw-2">&amp;</span>Array2&lt;Complex32&gt;) -&gt; Array2&lt;Complex32&gt; {
 <a href=#3530 id=3530 data-nosnippet>3530</a>    <span class="kw">let </span><span class="kw-2">mut </span>shifted = ifftshift2(input);
-<a href=#3531 id=3531 data-nosnippet>3531</a>    <span class="kw">let </span><span class="kw-2">mut </span>fft = Fft2::&lt;f32&gt;::new([shifted.shape()[<span class="number">0</span>], shifted.shape()[<span class="number">1</span>]])
+<a href=#3531 id=3531 data-nosnippet>3531</a>    <span class="kw">let </span><span class="kw-2">mut </span>fft = Fft2::&lt;f32&gt;::with_threads([shifted.shape()[<span class="number">0</span>], shifted.shape()[<span class="number">1</span>]], <span class="number">1</span>)
 <a href=#3532 id=3532 data-nosnippet>3532</a>        .expect(<span class="string">"valid feather FFT shape"</span>);
 <a href=#3533 id=3533 data-nosnippet>3533</a>    fft.transform(
 <a href=#3534 id=3534 data-nosnippet>3534</a>        shifted.as_slice_mut().expect(<span class="string">"contiguous feather plane"</span>),

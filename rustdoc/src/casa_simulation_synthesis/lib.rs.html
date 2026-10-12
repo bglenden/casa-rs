@@ -350,7 +350,7 @@
 <a href=#350 id=350 data-nosnippet>350</a>
 <a href=#351 id=351 data-nosnippet>351</a><span class="kw">fn </span>centered_fft2(input: <span class="kw-2">&amp;</span>Array2&lt;Complex32&gt;) -&gt; Array2&lt;Complex32&gt; {
 <a href=#352 id=352 data-nosnippet>352</a>    <span class="kw">let </span><span class="kw-2">mut </span>transformed = shift2(input, <span class="bool-val">true</span>);
-<a href=#353 id=353 data-nosnippet>353</a>    <span class="kw">let </span><span class="kw-2">mut </span>fft = Fft2::&lt;f32&gt;::new([transformed.shape()[<span class="number">0</span>], transformed.shape()[<span class="number">1</span>]])
+<a href=#353 id=353 data-nosnippet>353</a>    <span class="kw">let </span><span class="kw-2">mut </span>fft = Fft2::&lt;f32&gt;::with_threads([transformed.shape()[<span class="number">0</span>], transformed.shape()[<span class="number">1</span>]], <span class="number">1</span>)
 <a href=#354 id=354 data-nosnippet>354</a>        .expect(<span class="string">"valid synthesis FFT shape"</span>);
 <a href=#355 id=355 data-nosnippet>355</a>    fft.transform(
 <a href=#356 id=356 data-nosnippet>356</a>        transformed

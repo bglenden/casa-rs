@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["available","ring_bytes"],"struct":["MetalBackend"]};
+window.SIDEBAR_ITEMS = {"constant":["METAL_STAGE_TIMING"],"fn":["available","ring_bytes"],"struct":["MetalBackend"]};

@@ -274,472 +274,475 @@
 <a href=#274 id=274 data-nosnippet>274</a>                                        operator.accumulator_layout(range, tile, pass.modes),
 <a href=#275 id=275 data-nosnippet>275</a>                                    )<span class="question-mark">?</span>),
 <a href=#276 id=276 data-nosnippet>276</a>                                    backend: OwnerBackend::Metal {
-<a href=#277 id=277 data-nosnippet>277</a>                                        backend: Box::new(MetalBackend::new(operator.cf())<span class="question-mark">?</span>),
-<a href=#278 id=278 data-nosnippet>278</a>                                        staging: SampleBuffer::with_capacity(
-<a href=#279 id=279 data-nosnippet>279</a>                                            shape.npol,
-<a href=#280 id=280 data-nosnippet>280</a>                                            count * shape.placements,
-<a href=#281 id=281 data-nosnippet>281</a>                                        ),
-<a href=#282 id=282 data-nosnippet>282</a>                                    },
-<a href=#283 id=283 data-nosnippet>283</a>                                    images: <span class="prelude-val">None</span>,
-<a href=#284 id=284 data-nosnippet>284</a>                                }
-<a href=#285 id=285 data-nosnippet>285</a>                            }
-<a href=#286 id=286 data-nosnippet>286</a>                        })
-<a href=#287 id=287 data-nosnippet>287</a>                    })
-<a href=#288 id=288 data-nosnippet>288</a>                    .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, PassError&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#289 id=289 data-nosnippet>289</a>                <span class="prelude-val">Ok</span>(Domain {
-<a href=#290 id=290 data-nosnippet>290</a>                    router,
-<a href=#291 id=291 data-nosnippet>291</a>                    owners,
-<a href=#292 id=292 data-nosnippet>292</a>                    model: models.map(|models| <span class="kw-2">&amp;</span>models[index]),
-<a href=#293 id=293 data-nosnippet>293</a>                })
-<a href=#294 id=294 data-nosnippet>294</a>            })
-<a href=#295 id=295 data-nosnippet>295</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, PassError&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#296 id=296 data-nosnippet>296</a>        <span class="comment">// A pass with a model predicts each block, for its native residuals or
-<a href=#297 id=297 data-nosnippet>297</a>        // for a visibility writer.
-<a href=#298 id=298 data-nosnippet>298</a>        </span><span class="kw">let </span>predictions = <span class="kw">if </span>pass.model.is_some() {
-<a href=#299 id=299 data-nosnippet>299</a>            block.rows * shape.cells
-<a href=#300 id=300 data-nosnippet>300</a>        } <span class="kw">else </span>{
-<a href=#301 id=301 data-nosnippet>301</a>            <span class="number">0
-<a href=#302 id=302 data-nosnippet>302</a>        </span>};
-<a href=#303 id=303 data-nosnippet>303</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-<a href=#304 id=304 data-nosnippet>304</a>            pass,
-<a href=#305 id=305 data-nosnippet>305</a>            planes,
-<a href=#306 id=306 data-nosnippet>306</a>            domains,
-<a href=#307 id=307 data-nosnippet>307</a>            native_residuals,
-<a href=#308 id=308 data-nosnippet>308</a>            check_spacing: <span class="bool-val">false</span>,
-<a href=#309 id=309 data-nosnippet>309</a>            shape,
-<a href=#310 id=310 data-nosnippet>310</a>            chunks: (<span class="number">0</span>..count)
-<a href=#311 id=311 data-nosnippet>311</a>                .map(|<span class="kw">_</span>| Chunk::new(shape, pass.domains))
-<a href=#312 id=312 data-nosnippet>312</a>                .collect(),
-<a href=#313 id=313 data-nosnippet>313</a>            predictions: Vec::with_capacity(predictions),
-<a href=#314 id=314 data-nosnippet>314</a>            samples: <span class="number">0</span>,
-<a href=#315 id=315 data-nosnippet>315</a>        })
-<a href=#316 id=316 data-nosnippet>316</a>    }
-<a href=#317 id=317 data-nosnippet>317</a>
-<a href=#318 id=318 data-nosnippet>318</a>    <span class="doccomment">/// Check every row's native spacing against the pass's
-<a href=#319 id=319 data-nosnippet>319</a>    /// `native_spacing_hz`, which sized this wave's model halo.
-<a href=#320 id=320 data-nosnippet>320</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>checking_spacing(<span class="kw-2">mut </span><span class="self">self</span>, check: bool) -&gt; <span class="self">Self </span>{
-<a href=#321 id=321 data-nosnippet>321</a>        <span class="self">self</span>.check_spacing = check;
-<a href=#322 id=322 data-nosnippet>322</a>        <span class="self">self
-<a href=#323 id=323 data-nosnippet>323</a>    </span>}
-<a href=#324 id=324 data-nosnippet>324</a>
-<a href=#325 id=325 data-nosnippet>325</a>    <span class="doccomment">/// Samples placed on the first domain so far.
-<a href=#326 id=326 data-nosnippet>326</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const fn </span>samples(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
-<a href=#327 id=327 data-nosnippet>327</a>        <span class="self">self</span>.samples
-<a href=#328 id=328 data-nosnippet>328</a>    }
-<a href=#329 id=329 data-nosnippet>329</a>
-<a href=#330 id=330 data-nosnippet>330</a>    <span class="doccomment">/// Place every row of `block` on every domain and accumulate the
-<a href=#331 id=331 data-nosnippet>331</a>    /// placements; with a visibility sink, first hand it the block, with
-<a href=#332 id=332 data-nosnippet>332</a>    /// every selected sample's prediction when it asks for them.
-<a href=#333 id=333 data-nosnippet>333</a>    ///
-<a href=#334 id=334 data-nosnippet>334</a>    /// When the wave forms residuals at native channels, each row's samples
-<a href=#335 id=335 data-nosnippet>335</a>    /// are placed from `V − Σ_d A_d·m_d` at its native channels and gridded
-<a href=#336 id=336 data-nosnippet>336</a>    /// as data; otherwise the domain's model is subtracted at each placed
-<a href=#337 id=337 data-nosnippet>337</a>    /// sample.
-<a href=#338 id=338 data-nosnippet>338</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>consume(
-<a href=#339 id=339 data-nosnippet>339</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#340 id=340 data-nosnippet>340</a>        block: <span class="kw-2">&amp;</span>NativeBlock,
-<a href=#341 id=341 data-nosnippet>341</a>        team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#342 id=342 data-nosnippet>342</a>        visibilities: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>VisibilitySink&lt;<span class="lifetime">'_</span>&gt;&gt;,
-<a href=#343 id=343 data-nosnippet>343</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PassError&gt; {
-<a href=#344 id=344 data-nosnippet>344</a>        <span class="kw">let </span>rows = block.len();
-<a href=#345 id=345 data-nosnippet>345</a>        <span class="kw">if </span><span class="self">self</span>.check_spacing {
-<a href=#346 id=346 data-nosnippet>346</a>            <span class="kw">let </span>bound_hz = <span class="self">self</span>.pass.native_spacing_hz;
-<a href=#347 id=347 data-nosnippet>347</a>            <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..rows {
-<a href=#348 id=348 data-nosnippet>348</a>                <span class="kw">let </span>observed_hz = block
-<a href=#349 id=349 data-nosnippet>349</a>                    .row(<span class="number">0</span>, row)
-<a href=#350 id=350 data-nosnippet>350</a>                    .frequencies_hz
-<a href=#351 id=351 data-nosnippet>351</a>                    .windows(<span class="number">2</span>)
-<a href=#352 id=352 data-nosnippet>352</a>                    .fold(<span class="number">0.0_f64</span>, |widest, pair| {
-<a href=#353 id=353 data-nosnippet>353</a>                        widest.max((pair[<span class="number">1</span>] - pair[<span class="number">0</span>]).abs())
-<a href=#354 id=354 data-nosnippet>354</a>                    });
-<a href=#355 id=355 data-nosnippet>355</a>                <span class="kw">if </span>observed_hz &gt; bound_hz {
-<a href=#356 id=356 data-nosnippet>356</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(PassError::NativeSpacing {
-<a href=#357 id=357 data-nosnippet>357</a>                        observed_hz,
-<a href=#358 id=358 data-nosnippet>358</a>                        bound_hz,
-<a href=#359 id=359 data-nosnippet>359</a>                    });
-<a href=#360 id=360 data-nosnippet>360</a>                }
-<a href=#361 id=361 data-nosnippet>361</a>            }
-<a href=#362 id=362 data-nosnippet>362</a>        }
-<a href=#363 id=363 data-nosnippet>363</a>        <span class="kw">let </span>sink_predictions = visibilities.as_ref().is_some_and(|sink| sink.predictions);
-<a href=#364 id=364 data-nosnippet>364</a>        <span class="kw">if </span><span class="self">self</span>.native_residuals || sink_predictions {
-<a href=#365 id=365 data-nosnippet>365</a>            <span class="kw">let </span>count = <span class="self">self</span>.chunks.len().min(rows.max(<span class="number">1</span>));
-<a href=#366 id=366 data-nosnippet>366</a>            <span class="kw">for </span>(index, chunk) <span class="kw">in </span><span class="self">self</span>.chunks[..count].iter_mut().enumerate() {
-<a href=#367 id=367 data-nosnippet>367</a>                chunk.rows = index * rows / count..(index + <span class="number">1</span>) * rows / count;
-<a href=#368 id=368 data-nosnippet>368</a>            }
-<a href=#369 id=369 data-nosnippet>369</a>            <span class="self">self</span>.predict(block, team, count)<span class="question-mark">?</span>;
-<a href=#370 id=370 data-nosnippet>370</a>        } <span class="kw">else </span>{
-<a href=#371 id=371 data-nosnippet>371</a>            <span class="self">self</span>.predictions.clear();
-<a href=#372 id=372 data-nosnippet>372</a>        }
-<a href=#373 id=373 data-nosnippet>373</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(sink) = visibilities {
-<a href=#374 id=374 data-nosnippet>374</a>            <span class="kw">let </span>predictions: <span class="kw-2">&amp;</span>[Complex32] = <span class="kw">if </span>sink.predictions {
-<a href=#375 id=375 data-nosnippet>375</a>                <span class="kw-2">&amp;</span><span class="self">self</span>.predictions
-<a href=#376 id=376 data-nosnippet>376</a>            } <span class="kw">else </span>{
-<a href=#377 id=377 data-nosnippet>377</a>                <span class="kw-2">&amp;</span>[]
-<a href=#378 id=378 data-nosnippet>378</a>            };
-<a href=#379 id=379 data-nosnippet>379</a>            (sink.write)(block, predictions).map_err(PassError::VisibilityWrite)<span class="question-mark">?</span>;
-<a href=#380 id=380 data-nosnippet>380</a>        }
-<a href=#381 id=381 data-nosnippet>381</a>        <span class="comment">// Slices of the block, each owner's in row order as a whole block's
-<a href=#382 id=382 data-nosnippet>382</a>        // would be, so the accumulation is the same.
-<a href=#383 id=383 data-nosnippet>383</a>        </span><span class="kw">let </span>chunks = <span class="self">self</span>.chunks.len();
-<a href=#384 id=384 data-nosnippet>384</a>        <span class="kw">for </span>slice <span class="kw">in </span>slices(rows, chunks, <span class="self">self</span>.shape.rows) {
-<a href=#385 id=385 data-nosnippet>385</a>            <span class="kw">let </span><span class="kw-2">mut </span>count = <span class="number">0</span>;
-<a href=#386 id=386 data-nosnippet>386</a>            <span class="kw">for </span>(chunk, rows) <span class="kw">in </span><span class="self">self</span>.chunks.iter_mut().zip(chunk_ranges(slice, chunks)) {
-<a href=#387 id=387 data-nosnippet>387</a>                chunk.rows = rows;
-<a href=#388 id=388 data-nosnippet>388</a>                count += <span class="number">1</span>;
-<a href=#389 id=389 data-nosnippet>389</a>            }
-<a href=#390 id=390 data-nosnippet>390</a>            <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..<span class="self">self</span>.domains.len() {
-<a href=#391 id=391 data-nosnippet>391</a>                <span class="kw">let </span>placed = <span class="self">self</span>.place(block, team, count, index)<span class="question-mark">?</span>;
-<a href=#392 id=392 data-nosnippet>392</a>                <span class="kw">if </span>index == <span class="number">0 </span>{
-<a href=#393 id=393 data-nosnippet>393</a>                    <span class="self">self</span>.samples += placed;
-<a href=#394 id=394 data-nosnippet>394</a>                }
-<a href=#395 id=395 data-nosnippet>395</a>            }
-<a href=#396 id=396 data-nosnippet>396</a>        }
-<a href=#397 id=397 data-nosnippet>397</a>        <span class="prelude-val">Ok</span>(())
-<a href=#398 id=398 data-nosnippet>398</a>    }
-<a href=#399 id=399 data-nosnippet>399</a>
-<a href=#400 id=400 data-nosnippet>400</a>    <span class="doccomment">/// Place the rows of `block` on domain `index` and accumulate them;
-<a href=#401 id=401 data-nosnippet>401</a>    /// returns the samples placed.
-<a href=#402 id=402 data-nosnippet>402</a>    </span><span class="kw">fn </span>place(
-<a href=#403 id=403 data-nosnippet>403</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#404 id=404 data-nosnippet>404</a>        block: <span class="kw-2">&amp;</span>NativeBlock,
-<a href=#405 id=405 data-nosnippet>405</a>        team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#406 id=406 data-nosnippet>406</a>        count: usize,
-<a href=#407 id=407 data-nosnippet>407</a>        index: usize,
-<a href=#408 id=408 data-nosnippet>408</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;u64, PassError&gt; {
-<a href=#409 id=409 data-nosnippet>409</a>        <span class="kw">let </span>pass = <span class="self">self</span>.pass;
-<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw">let </span>target = <span class="kw-2">&amp;</span>pass.domains[index];
-<a href=#411 id=411 data-nosnippet>411</a>        <span class="kw">let </span>domain = <span class="kw-2">&amp;mut </span><span class="self">self</span>.domains[index];
-<a href=#412 id=412 data-nosnippet>412</a>        <span class="kw">let </span>owners = domain.owners.len();
-<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">let </span>router = <span class="kw-2">&amp;</span>domain.router;
-<a href=#414 id=414 data-nosnippet>414</a>        <span class="kw">let </span>planes = <span class="self">self</span>.planes;
-<a href=#415 id=415 data-nosnippet>415</a>        <span class="kw">let </span>predictions = <span class="kw-2">&amp;</span><span class="self">self</span>.predictions;
-<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span>native_residuals = <span class="self">self</span>.native_residuals;
-<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">let </span>cells = block.channels() * block.correlations();
-<a href=#418 id=418 data-nosnippet>418</a>        <span class="kw">let </span>shape = <span class="self">self</span>.shape;
-<a href=#419 id=419 data-nosnippet>419</a>        <span class="comment">// With region owners the weight image has one owner, which must see
-<a href=#420 id=420 data-nosnippet>420</a>        // every placement; plane owners grid their own samples' weights.
-<a href=#421 id=421 data-nosnippet>421</a>        </span><span class="kw">let </span>route_weight = pass.modes.weight &amp;&amp; router.weight_owner().is_some();
-<a href=#422 id=422 data-nosnippet>422</a>        team.for_each_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>.chunks[..count], |<span class="kw">_</span>, chunk| {
-<a href=#423 id=423 data-nosnippet>423</a>            chunk.placed = <span class="number">0</span>;
-<a href=#424 id=424 data-nosnippet>424</a>            chunk.owned[..owners]
-<a href=#425 id=425 data-nosnippet>425</a>                .iter_mut()
-<a href=#426 id=426 data-nosnippet>426</a>                .for_each(SampleBuffer::clear);
-<a href=#427 id=427 data-nosnippet>427</a>            chunk.weight_owned.clear();
-<a href=#428 id=428 data-nosnippet>428</a>            <span class="kw">for </span>row <span class="kw">in </span>chunk.rows.clone() {
-<a href=#429 id=429 data-nosnippet>429</a>                chunk.scratch.clear();
-<a href=#430 id=430 data-nosnippet>430</a>                <span class="kw">let </span>native = block.row(index, row);
-<a href=#431 id=431 data-nosnippet>431</a>                <span class="kw">let </span>native = <span class="kw">if </span>native_residuals {
-<a href=#432 id=432 data-nosnippet>432</a>                    <span class="kw">let </span>model = <span class="kw-2">&amp;</span>predictions[row * cells..(row + <span class="number">1</span>) * cells];
-<a href=#433 id=433 data-nosnippet>433</a>                    chunk.residual.clear();
-<a href=#434 id=434 data-nosnippet>434</a>                    chunk.residual.extend(
-<a href=#435 id=435 data-nosnippet>435</a>                        native
-<a href=#436 id=436 data-nosnippet>436</a>                            .values
-<a href=#437 id=437 data-nosnippet>437</a>                            .iter()
-<a href=#438 id=438 data-nosnippet>438</a>                            .zip(model)
-<a href=#439 id=439 data-nosnippet>439</a>                            .map(|(value, model)| value - model),
-<a href=#440 id=440 data-nosnippet>440</a>                    );
-<a href=#441 id=441 data-nosnippet>441</a>                    NativeRow {
-<a href=#442 id=442 data-nosnippet>442</a>                        values: <span class="kw-2">&amp;</span>chunk.residual,
-<a href=#443 id=443 data-nosnippet>443</a>                        ..native
-<a href=#444 id=444 data-nosnippet>444</a>                    }
-<a href=#445 id=445 data-nosnippet>445</a>                } <span class="kw">else </span>{
-<a href=#446 id=446 data-nosnippet>446</a>                    native
-<a href=#447 id=447 data-nosnippet>447</a>                };
-<a href=#448 id=448 data-nosnippet>448</a>                target.resampler.place(
-<a href=#449 id=449 data-nosnippet>449</a>                    target.operator,
-<a href=#450 id=450 data-nosnippet>450</a>                    pass.weighting,
-<a href=#451 id=451 data-nosnippet>451</a>                    <span class="kw-2">&amp;</span>native,
-<a href=#452 id=452 data-nosnippet>452</a>                    <span class="kw-2">&amp;mut </span>chunk.scratch,
-<a href=#453 id=453 data-nosnippet>453</a>                )<span class="question-mark">?</span>;
-<a href=#454 id=454 data-nosnippet>454</a>                <span class="macro">debug_assert!</span>(
-<a href=#455 id=455 data-nosnippet>455</a>                    chunk.scratch.len() &lt;= shape.row,
-<a href=#456 id=456 data-nosnippet>456</a>                    <span class="string">"a row places within the chunk's per-row bound"
-<a href=#457 id=457 data-nosnippet>457</a>                </span>);
-<a href=#458 id=458 data-nosnippet>458</a>                <span class="kw">let </span>placed = chunk.scratch.block();
-<a href=#459 id=459 data-nosnippet>459</a>                <span class="kw">for </span>(sample, placement) <span class="kw">in </span>placed.placements.iter().enumerate() {
-<a href=#460 id=460 data-nosnippet>460</a>                    <span class="kw">if </span>!planes.contains(placement.plane) {
-<a href=#461 id=461 data-nosnippet>461</a>                        <span class="kw">continue</span>;
-<a href=#462 id=462 data-nosnippet>462</a>                    }
-<a href=#463 id=463 data-nosnippet>463</a>                    <span class="kw">let </span>owner = router.owner(target.operator, placement);
-<a href=#464 id=464 data-nosnippet>464</a>                    chunk.owned[owner].push(
-<a href=#465 id=465 data-nosnippet>465</a>                        <span class="kw-2">*</span>placement,
-<a href=#466 id=466 data-nosnippet>466</a>                        placed.values_of(sample),
-<a href=#467 id=467 data-nosnippet>467</a>                        placed.weights_of(sample),
-<a href=#468 id=468 data-nosnippet>468</a>                    );
-<a href=#469 id=469 data-nosnippet>469</a>                    <span class="kw">if </span>route_weight {
-<a href=#470 id=470 data-nosnippet>470</a>                        chunk.weight_owned.push(
-<a href=#471 id=471 data-nosnippet>471</a>                            <span class="kw-2">*</span>placement,
-<a href=#472 id=472 data-nosnippet>472</a>                            placed.values_of(sample),
-<a href=#473 id=473 data-nosnippet>473</a>                            placed.weights_of(sample),
-<a href=#474 id=474 data-nosnippet>474</a>                        );
-<a href=#475 id=475 data-nosnippet>475</a>                    }
-<a href=#476 id=476 data-nosnippet>476</a>                    chunk.placed += <span class="number">1</span>;
-<a href=#477 id=477 data-nosnippet>477</a>                }
-<a href=#478 id=478 data-nosnippet>478</a>            }
-<a href=#479 id=479 data-nosnippet>479</a>            <span class="macro">debug_assert!</span>(
-<a href=#480 id=480 data-nosnippet>480</a>                chunk.placed <span class="kw">as </span>usize &lt;= shape.placements
-<a href=#481 id=481 data-nosnippet>481</a>                    &amp;&amp; chunk.capacity_bytes() == shape.bytes(),
-<a href=#482 id=482 data-nosnippet>482</a>                <span class="string">"a chunk places within the placements it was allocated for"
-<a href=#483 id=483 data-nosnippet>483</a>            </span>);
-<a href=#484 id=484 data-nosnippet>484</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
-<a href=#485 id=485 data-nosnippet>485</a>        })<span class="question-mark">?</span>;
-<a href=#486 id=486 data-nosnippet>486</a>        <span class="kw">let </span>chunks = <span class="kw-2">&amp;</span><span class="self">self</span>.chunks[..count];
-<a href=#487 id=487 data-nosnippet>487</a>        <span class="kw">let </span>model = domain.model.filter(|<span class="kw">_</span>| !native_residuals);
-<a href=#488 id=488 data-nosnippet>488</a>        <span class="kw">let </span>weight_owner = router.weight_owner();
-<a href=#489 id=489 data-nosnippet>489</a>        team.for_each_mut(<span class="kw-2">&amp;mut </span>domain.owners, |owner_index, owner| {
-<a href=#490 id=490 data-nosnippet>490</a>            <span class="kw">let </span>acc = owner
-<a href=#491 id=491 data-nosnippet>491</a>                .acc
-<a href=#492 id=492 data-nosnippet>492</a>                .as_mut()
-<a href=#493 id=493 data-nosnippet>493</a>                .expect(<span class="string">"owners accumulate until finished"</span>);
-<a href=#494 id=494 data-nosnippet>494</a>            <span class="kw">let </span>operator = target.operator;
-<a href=#495 id=495 data-nosnippet>495</a>            <span class="comment">// Each owner grids the weight image over its own placements
-<a href=#496 id=496 data-nosnippet>496</a>            // unless the image has one owner, who grids every placement
-<a href=#497 id=497 data-nosnippet>497</a>            // below.
-<a href=#498 id=498 data-nosnippet>498</a>            </span><span class="kw">let </span>own_weight = weight_owner.is_none();
-<a href=#499 id=499 data-nosnippet>499</a>            <span class="kw">match </span><span class="kw-2">&amp;mut </span>owner.backend {
-<a href=#500 id=500 data-nosnippet>500</a>                OwnerBackend::Cpu(backend) =&gt; {
-<a href=#501 id=501 data-nosnippet>501</a>                    <span class="kw">for </span>chunk <span class="kw">in </span>chunks {
-<a href=#502 id=502 data-nosnippet>502</a>                        <span class="kw">let </span>block = chunk.owned[owner_index].block();
-<a href=#503 id=503 data-nosnippet>503</a>                        <span class="kw">if </span>!block.is_empty() {
-<a href=#504 id=504 data-nosnippet>504</a>                            accumulate(pass, operator, backend, <span class="kw-2">&amp;</span>block, model, acc, own_weight)<span class="question-mark">?</span>;
-<a href=#505 id=505 data-nosnippet>505</a>                        }
-<a href=#506 id=506 data-nosnippet>506</a>                    }
-<a href=#507 id=507 data-nosnippet>507</a>                }
-<a href=#508 id=508 data-nosnippet>508</a>                OwnerBackend::Metal { backend, staging } =&gt; {
-<a href=#509 id=509 data-nosnippet>509</a>                    staging.clear();
-<a href=#510 id=510 data-nosnippet>510</a>                    <span class="kw">for </span>chunk <span class="kw">in </span>chunks {
-<a href=#511 id=511 data-nosnippet>511</a>                        <span class="kw">let </span>block = chunk.owned[owner_index].block();
-<a href=#512 id=512 data-nosnippet>512</a>                        <span class="kw">for </span>sample <span class="kw">in </span><span class="number">0</span>..block.len() {
-<a href=#513 id=513 data-nosnippet>513</a>                            staging.push(
-<a href=#514 id=514 data-nosnippet>514</a>                                block.placements[sample],
-<a href=#515 id=515 data-nosnippet>515</a>                                block.values_of(sample),
-<a href=#516 id=516 data-nosnippet>516</a>                                block.weights_of(sample),
-<a href=#517 id=517 data-nosnippet>517</a>                            );
-<a href=#518 id=518 data-nosnippet>518</a>                        }
-<a href=#519 id=519 data-nosnippet>519</a>                    }
-<a href=#520 id=520 data-nosnippet>520</a>                    <span class="kw">if </span>!staging.is_empty() {
-<a href=#521 id=521 data-nosnippet>521</a>                        <span class="kw">let </span>backend: <span class="kw-2">&amp;mut </span>MetalBackend&lt;<span class="lifetime">'_</span>&gt; = backend;
-<a href=#522 id=522 data-nosnippet>522</a>                        accumulate(
-<a href=#523 id=523 data-nosnippet>523</a>                            pass,
-<a href=#524 id=524 data-nosnippet>524</a>                            operator,
-<a href=#525 id=525 data-nosnippet>525</a>                            backend,
-<a href=#526 id=526 data-nosnippet>526</a>                            <span class="kw-2">&amp;</span>staging.block(),
-<a href=#527 id=527 data-nosnippet>527</a>                            model,
-<a href=#528 id=528 data-nosnippet>528</a>                            acc,
-<a href=#529 id=529 data-nosnippet>529</a>                            own_weight,
-<a href=#530 id=530 data-nosnippet>530</a>                        )<span class="question-mark">?</span>;
-<a href=#531 id=531 data-nosnippet>531</a>                    }
-<a href=#532 id=532 data-nosnippet>532</a>                }
-<a href=#533 id=533 data-nosnippet>533</a>            }
-<a href=#534 id=534 data-nosnippet>534</a>            <span class="kw">if </span>pass.modes.weight &amp;&amp; weight_owner == <span class="prelude-val">Some</span>(owner_index) {
-<a href=#535 id=535 data-nosnippet>535</a>                <span class="kw">for </span>chunk <span class="kw">in </span>chunks {
-<a href=#536 id=536 data-nosnippet>536</a>                    <span class="kw">let </span>block = chunk.weight_owned.block();
-<a href=#537 id=537 data-nosnippet>537</a>                    <span class="kw">if </span>block.is_empty() {
-<a href=#538 id=538 data-nosnippet>538</a>                        <span class="kw">continue</span>;
-<a href=#539 id=539 data-nosnippet>539</a>                    }
-<a href=#540 id=540 data-nosnippet>540</a>                    <span class="kw">let </span>work = Work::Grid {
-<a href=#541 id=541 data-nosnippet>541</a>                        mode: Mode::Weight,
-<a href=#542 id=542 data-nosnippet>542</a>                        acc,
-<a href=#543 id=543 data-nosnippet>543</a>                    };
-<a href=#544 id=544 data-nosnippet>544</a>                    <span class="kw">match </span><span class="kw-2">&amp;mut </span>owner.backend {
-<a href=#545 id=545 data-nosnippet>545</a>                        OwnerBackend::Cpu(backend) =&gt; backend.apply(<span class="kw-2">&amp;</span>block, operator.cf(), work)<span class="question-mark">?</span>,
-<a href=#546 id=546 data-nosnippet>546</a>                        OwnerBackend::Metal { backend, .. } =&gt; {
-<a href=#547 id=547 data-nosnippet>547</a>                            backend.apply(<span class="kw-2">&amp;</span>block, operator.cf(), work)<span class="question-mark">?</span>;
-<a href=#548 id=548 data-nosnippet>548</a>                        }
-<a href=#549 id=549 data-nosnippet>549</a>                    }
-<a href=#550 id=550 data-nosnippet>550</a>                }
-<a href=#551 id=551 data-nosnippet>551</a>            }
-<a href=#552 id=552 data-nosnippet>552</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
-<a href=#553 id=553 data-nosnippet>553</a>        })<span class="question-mark">?</span>;
-<a href=#554 id=554 data-nosnippet>554</a>        <span class="prelude-val">Ok</span>(chunks.iter().map(|chunk| chunk.placed).sum())
-<a href=#555 id=555 data-nosnippet>555</a>    }
-<a href=#556 id=556 data-nosnippet>556</a>
-<a href=#557 id=557 data-nosnippet>557</a>    <span class="doccomment">/// Model visibilities of every selected sample of `block`, summed over
-<a href=#558 id=558 data-nosnippet>558</a>    /// every domain's model (`SIMapperCollection::degrid`), `[row][channel]
-<a href=#559 id=559 data-nosnippet>559</a>    /// [correlation]`, into `self.predictions`; zero without a model.
-<a href=#560 id=560 data-nosnippet>560</a>    </span><span class="kw">fn </span>predict(
-<a href=#561 id=561 data-nosnippet>561</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#562 id=562 data-nosnippet>562</a>        block: <span class="kw-2">&amp;</span>NativeBlock,
-<a href=#563 id=563 data-nosnippet>563</a>        team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#564 id=564 data-nosnippet>564</a>        count: usize,
-<a href=#565 id=565 data-nosnippet>565</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PassError&gt; {
-<a href=#566 id=566 data-nosnippet>566</a>        <span class="kw">let </span>cells = block.channels() * block.correlations();
-<a href=#567 id=567 data-nosnippet>567</a>        <span class="kw">let </span>rows = block.len();
-<a href=#568 id=568 data-nosnippet>568</a>        <span class="self">self</span>.predictions.clear();
-<a href=#569 id=569 data-nosnippet>569</a>        <span class="self">self</span>.predictions.resize(rows * cells, Complex32::default());
-<a href=#570 id=570 data-nosnippet>570</a>        <span class="kw">if </span><span class="self">self</span>.domains.iter().all(|domain| domain.model.is_none()) {
-<a href=#571 id=571 data-nosnippet>571</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#572 id=572 data-nosnippet>572</a>        }
-<a href=#573 id=573 data-nosnippet>573</a>        <span class="kw">let </span>pass = <span class="self">self</span>.pass;
-<a href=#574 id=574 data-nosnippet>574</a>        <span class="kw">let </span>shape = <span class="self">self</span>.shape;
-<a href=#575 id=575 data-nosnippet>575</a>        <span class="kw">let </span>models = <span class="self">self
-<a href=#576 id=576 data-nosnippet>576</a>            </span>.domains
-<a href=#577 id=577 data-nosnippet>577</a>            .iter()
-<a href=#578 id=578 data-nosnippet>578</a>            .map(|domain| domain.model)
-<a href=#579 id=579 data-nosnippet>579</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#580 id=580 data-nosnippet>580</a>        <span class="kw">let </span><span class="kw-2">mut </span>pieces = Vec::with_capacity(count);
-<a href=#581 id=581 data-nosnippet>581</a>        <span class="kw">let </span><span class="kw-2">mut </span>remaining = <span class="self">self</span>.predictions.as_mut_slice();
-<a href=#582 id=582 data-nosnippet>582</a>        <span class="kw">for </span>chunk <span class="kw">in </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.chunks[..count] {
-<a href=#583 id=583 data-nosnippet>583</a>            <span class="kw">let </span>(head, tail) = remaining.split_at_mut(chunk.rows.len() * cells);
-<a href=#584 id=584 data-nosnippet>584</a>            remaining = tail;
-<a href=#585 id=585 data-nosnippet>585</a>            pieces.push((chunk, head));
-<a href=#586 id=586 data-nosnippet>586</a>        }
-<a href=#587 id=587 data-nosnippet>587</a>        team.for_each_mut(<span class="kw-2">&amp;mut </span>pieces, |<span class="kw">_</span>, (chunk, out)| {
-<a href=#588 id=588 data-nosnippet>588</a>            chunk.predicted.resize(cells, Complex32::default());
-<a href=#589 id=589 data-nosnippet>589</a>            <span class="kw">for </span>(local, row) <span class="kw">in </span>chunk.rows.clone().enumerate() {
-<a href=#590 id=590 data-nosnippet>590</a>                <span class="kw">let </span>out = <span class="kw-2">&amp;mut </span>out[local * cells..(local + <span class="number">1</span>) * cells];
-<a href=#591 id=591 data-nosnippet>591</a>                <span class="kw">for </span>(index, (target, model)) <span class="kw">in </span>pass.domains.iter().zip(<span class="kw-2">&amp;</span>models).enumerate() {
-<a href=#592 id=592 data-nosnippet>592</a>                    <span class="kw">let </span><span class="prelude-val">Some</span>(model) = model <span class="kw">else </span>{
-<a href=#593 id=593 data-nosnippet>593</a>                        <span class="kw">continue</span>;
-<a href=#594 id=594 data-nosnippet>594</a>                    };
-<a href=#595 id=595 data-nosnippet>595</a>                    target.resampler.predict_row(
-<a href=#596 id=596 data-nosnippet>596</a>                        target.operator,
-<a href=#597 id=597 data-nosnippet>597</a>                        <span class="kw-2">&amp;mut </span>chunk.backend,
-<a href=#598 id=598 data-nosnippet>598</a>                        model,
-<a href=#599 id=599 data-nosnippet>599</a>                        <span class="kw-2">&amp;</span>block.row(index, row),
-<a href=#600 id=600 data-nosnippet>600</a>                        <span class="kw-2">&amp;mut </span>chunk.prediction,
-<a href=#601 id=601 data-nosnippet>601</a>                        <span class="kw-2">&amp;mut </span>chunk.predicted,
-<a href=#602 id=602 data-nosnippet>602</a>                    )<span class="question-mark">?</span>;
-<a href=#603 id=603 data-nosnippet>603</a>                    <span class="kw">for </span>(sum, value) <span class="kw">in </span>out.iter_mut().zip(<span class="kw-2">&amp;</span>chunk.predicted) {
-<a href=#604 id=604 data-nosnippet>604</a>                        <span class="kw-2">*</span>sum += value;
-<a href=#605 id=605 data-nosnippet>605</a>                    }
-<a href=#606 id=606 data-nosnippet>606</a>                }
-<a href=#607 id=607 data-nosnippet>607</a>            }
-<a href=#608 id=608 data-nosnippet>608</a>            <span class="macro">debug_assert_eq!</span>(
-<a href=#609 id=609 data-nosnippet>609</a>                chunk.capacity_bytes(),
-<a href=#610 id=610 data-nosnippet>610</a>                shape.bytes(),
-<a href=#611 id=611 data-nosnippet>611</a>                <span class="string">"a chunk predicts within the buffers it was allocated"
-<a href=#612 id=612 data-nosnippet>612</a>            </span>);
-<a href=#613 id=613 data-nosnippet>613</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
-<a href=#614 id=614 data-nosnippet>614</a>        })
-<a href=#615 id=615 data-nosnippet>615</a>    }
-<a href=#616 id=616 data-nosnippet>616</a>
-<a href=#617 id=617 data-nosnippet>617</a>    <span class="doccomment">/// Transform the accumulated grids into this wave's normal images, one
-<a href=#618 id=618 data-nosnippet>618</a>    /// per domain.
-<a href=#619 id=619 data-nosnippet>619</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>finish(<span class="self">self</span>, team: <span class="kw-2">&amp;</span>WorkerTeam) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;NormalImages&gt;, PassError&gt; {
-<a href=#620 id=620 data-nosnippet>620</a>        <span class="kw">let </span>pass = <span class="self">self</span>.pass;
-<a href=#621 id=621 data-nosnippet>621</a>        <span class="kw">let </span>planes = <span class="self">self</span>.planes;
-<a href=#622 id=622 data-nosnippet>622</a>        <span class="self">self</span>.domains
-<a href=#623 id=623 data-nosnippet>623</a>            .into_iter()
-<a href=#624 id=624 data-nosnippet>624</a>            .zip(pass.domains)
-<a href=#625 id=625 data-nosnippet>625</a>            .map(|(<span class="kw-2">mut </span>domain, target)| {
-<a href=#626 id=626 data-nosnippet>626</a>                <span class="kw">let </span>operator = target.operator;
-<a href=#627 id=627 data-nosnippet>627</a>                <span class="kw">match </span><span class="kw-2">&amp;</span>target.partition {
-<a href=#628 id=628 data-nosnippet>628</a>                    Partition::Planes { .. } =&gt; {
-<a href=#629 id=629 data-nosnippet>629</a>                        team.for_each_mut(<span class="kw-2">&amp;mut </span>domain.owners, |<span class="kw">_</span>, owner| {
-<a href=#630 id=630 data-nosnippet>630</a>                            <span class="kw">let </span>acc = owner.acc.take().expect(<span class="string">"each owner finishes once"</span>);
-<a href=#631 id=631 data-nosnippet>631</a>                            owner.images = <span class="prelude-val">Some</span>(operator.finish(acc)<span class="question-mark">?</span>);
-<a href=#632 id=632 data-nosnippet>632</a>                            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
-<a href=#633 id=633 data-nosnippet>633</a>                        })<span class="question-mark">?</span>;
-<a href=#634 id=634 data-nosnippet>634</a>                        <span class="prelude-val">Ok</span>(concatenate(
-<a href=#635 id=635 data-nosnippet>635</a>                            domain
-<a href=#636 id=636 data-nosnippet>636</a>                                .owners
-<a href=#637 id=637 data-nosnippet>637</a>                                .into_iter()
-<a href=#638 id=638 data-nosnippet>638</a>                                .map(|owner| owner.images.expect(<span class="string">"every owner finished"</span>)),
-<a href=#639 id=639 data-nosnippet>639</a>                        ))
-<a href=#640 id=640 data-nosnippet>640</a>                    }
-<a href=#641 id=641 data-nosnippet>641</a>                    Partition::Regions { .. } =&gt; {
-<a href=#642 id=642 data-nosnippet>642</a>                        <span class="kw">let </span><span class="kw-2">mut </span>merged = operator.accumulator(planes, <span class="prelude-val">None</span>, pass.modes);
-<a href=#643 id=643 data-nosnippet>643</a>                        <span class="kw">for </span>owner <span class="kw">in </span><span class="kw-2">&amp;</span>domain.owners {
-<a href=#644 id=644 data-nosnippet>644</a>                            merged
-<a href=#645 id=645 data-nosnippet>645</a>                                .merge_from(owner.acc.as_ref().expect(<span class="string">"owners hold their tiles"</span>))<span class="question-mark">?</span>;
-<a href=#646 id=646 data-nosnippet>646</a>                        }
-<a href=#647 id=647 data-nosnippet>647</a>                        drop(domain.owners);
-<a href=#648 id=648 data-nosnippet>648</a>                        <span class="prelude-val">Ok</span>(operator.finish(merged)<span class="question-mark">?</span>)
-<a href=#649 id=649 data-nosnippet>649</a>                    }
-<a href=#650 id=650 data-nosnippet>650</a>                }
-<a href=#651 id=651 data-nosnippet>651</a>            })
-<a href=#652 id=652 data-nosnippet>652</a>            .collect()
-<a href=#653 id=653 data-nosnippet>653</a>    }
-<a href=#654 id=654 data-nosnippet>654</a>}
-<a href=#655 id=655 data-nosnippet>655</a>
-<a href=#656 id=656 data-nosnippet>656</a><span class="doccomment">/// Grid one owner's share of a block in every mode the pass holds; with a
-<a href=#657 id=657 data-nosnippet>657</a>/// model the data terms receive the residual `V − A·m`.
-<a href=#658 id=658 data-nosnippet>658</a></span><span class="kw">fn </span>accumulate(
-<a href=#659 id=659 data-nosnippet>659</a>    pass: <span class="kw-2">&amp;</span>MajorCyclePass&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#660 id=660 data-nosnippet>660</a>    operator: <span class="kw-2">&amp;</span>casa_imaging_operator::MeasurementOperator,
-<a href=#661 id=661 data-nosnippet>661</a>    backend: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>GridBackend,
-<a href=#662 id=662 data-nosnippet>662</a>    block: <span class="kw-2">&amp;</span>casa_imaging_operator::SampleBlock&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#663 id=663 data-nosnippet>663</a>    model: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>PreparedModelGrids&gt;,
-<a href=#664 id=664 data-nosnippet>664</a>    acc: <span class="kw-2">&amp;mut </span>GridAccumulator,
-<a href=#665 id=665 data-nosnippet>665</a>    weight: bool,
-<a href=#666 id=666 data-nosnippet>666</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), PassError&gt; {
-<a href=#667 id=667 data-nosnippet>667</a>    <span class="kw">let </span>cf = operator.cf();
-<a href=#668 id=668 data-nosnippet>668</a>    <span class="kw">if </span>pass.modes.data {
-<a href=#669 id=669 data-nosnippet>669</a>        <span class="kw">let </span>work = <span class="kw">match </span>model {
-<a href=#670 id=670 data-nosnippet>670</a>            <span class="prelude-val">Some</span>(model) =&gt; Work::ResidualGrid {
-<a href=#671 id=671 data-nosnippet>671</a>                model,
-<a href=#672 id=672 data-nosnippet>672</a>                acc,
-<a href=#673 id=673 data-nosnippet>673</a>                residual_out: <span class="prelude-val">None</span>,
-<a href=#674 id=674 data-nosnippet>674</a>            },
-<a href=#675 id=675 data-nosnippet>675</a>            <span class="prelude-val">None </span>=&gt; Work::Grid {
-<a href=#676 id=676 data-nosnippet>676</a>                mode: Mode::Data,
-<a href=#677 id=677 data-nosnippet>677</a>                acc,
-<a href=#678 id=678 data-nosnippet>678</a>            },
-<a href=#679 id=679 data-nosnippet>679</a>        };
-<a href=#680 id=680 data-nosnippet>680</a>        backend.apply(block, cf, work)<span class="question-mark">?</span>;
-<a href=#681 id=681 data-nosnippet>681</a>    }
-<a href=#682 id=682 data-nosnippet>682</a>    <span class="kw">if </span>pass.modes.psf {
-<a href=#683 id=683 data-nosnippet>683</a>        backend.apply(
-<a href=#684 id=684 data-nosnippet>684</a>            block,
-<a href=#685 id=685 data-nosnippet>685</a>            cf,
-<a href=#686 id=686 data-nosnippet>686</a>            Work::Grid {
-<a href=#687 id=687 data-nosnippet>687</a>                mode: Mode::Psf,
-<a href=#688 id=688 data-nosnippet>688</a>                acc,
-<a href=#689 id=689 data-nosnippet>689</a>            },
-<a href=#690 id=690 data-nosnippet>690</a>        )<span class="question-mark">?</span>;
-<a href=#691 id=691 data-nosnippet>691</a>    }
-<a href=#692 id=692 data-nosnippet>692</a>    <span class="kw">if </span>pass.modes.weight &amp;&amp; weight {
-<a href=#693 id=693 data-nosnippet>693</a>        backend.apply(
-<a href=#694 id=694 data-nosnippet>694</a>            block,
-<a href=#695 id=695 data-nosnippet>695</a>            cf,
-<a href=#696 id=696 data-nosnippet>696</a>            Work::Grid {
-<a href=#697 id=697 data-nosnippet>697</a>                mode: Mode::Weight,
-<a href=#698 id=698 data-nosnippet>698</a>                acc,
-<a href=#699 id=699 data-nosnippet>699</a>            },
-<a href=#700 id=700 data-nosnippet>700</a>        )<span class="question-mark">?</span>;
-<a href=#701 id=701 data-nosnippet>701</a>    }
-<a href=#702 id=702 data-nosnippet>702</a>    <span class="prelude-val">Ok</span>(())
-<a href=#703 id=703 data-nosnippet>703</a>}
-<a href=#704 id=704 data-nosnippet>704</a>
-<a href=#705 id=705 data-nosnippet>705</a><span class="doccomment">/// Join per-owner images of consecutive plane ranges.
-<a href=#706 id=706 data-nosnippet>706</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>concatenate(parts: <span class="kw">impl </span>IntoIterator&lt;Item = NormalImages&gt;) -&gt; NormalImages {
-<a href=#707 id=707 data-nosnippet>707</a>    <span class="kw">let </span><span class="kw-2">mut </span>parts = parts.into_iter();
-<a href=#708 id=708 data-nosnippet>708</a>    <span class="kw">let </span><span class="kw-2">mut </span>joined = parts.next().expect(<span class="string">"a wave has at least one owner"</span>);
-<a href=#709 id=709 data-nosnippet>709</a>    <span class="kw">for </span>part <span class="kw">in </span>parts {
-<a href=#710 id=710 data-nosnippet>710</a>        <span class="macro">assert!</span>(
-<a href=#711 id=711 data-nosnippet>711</a>            part.pols == joined.pols
-<a href=#712 id=712 data-nosnippet>712</a>                &amp;&amp; part.data_terms == joined.data_terms
-<a href=#713 id=713 data-nosnippet>713</a>                &amp;&amp; part.psf_terms == joined.psf_terms
-<a href=#714 id=714 data-nosnippet>714</a>                &amp;&amp; part.first_plane == joined.first_plane + joined.planes.len() <span class="kw">as </span>u32,
-<a href=#715 id=715 data-nosnippet>715</a>            <span class="string">"owner images must continue the plane sequence with the same layout"
-<a href=#716 id=716 data-nosnippet>716</a>        </span>);
-<a href=#717 id=717 data-nosnippet>717</a>        joined.planes.extend(part.planes);
-<a href=#718 id=718 data-nosnippet>718</a>    }
-<a href=#719 id=719 data-nosnippet>719</a>    joined
-<a href=#720 id=720 data-nosnippet>720</a>}
-<a href=#721 id=721 data-nosnippet>721</a>
-<a href=#722 id=722 data-nosnippet>722</a><span class="attr">#[cfg(test)]
-<a href=#723 id=723 data-nosnippet>723</a></span><span class="kw">mod </span>tests {
-<a href=#724 id=724 data-nosnippet>724</a>    <span class="kw">use super</span>::{CHUNKS_PER_WORKER, chunk_placements, chunks};
-<a href=#725 id=725 data-nosnippet>725</a>
-<a href=#726 id=726 data-nosnippet>726</a>    <span class="doccomment">/// Every owner's buffer in a chunk can take all of the chunk's
-<a href=#727 id=727 data-nosnippet>727</a>    /// placements, and a pass has four chunks per worker and up to one
-<a href=#728 id=728 data-nosnippet>728</a>    /// owner per worker; past four owners a chunk takes proportionally
-<a href=#729 id=729 data-nosnippet>729</a>    /// fewer, so the chunks' storage grows linearly with the workers, and up
-<a href=#730 id=730 data-nosnippet>730</a>    /// to four a chunk takes the full cap.
-<a href=#731 id=731 data-nosnippet>731</a>    </span><span class="attr">#[test]
-<a href=#732 id=732 data-nosnippet>732</a>    </span><span class="kw">fn </span>chunk_storage_grows_linearly_with_workers() {
-<a href=#733 id=733 data-nosnippet>733</a>        <span class="kw">let </span>full = chunk_placements(<span class="number">1</span>);
-<a href=#734 id=734 data-nosnippet>734</a>        <span class="kw">for </span>workers <span class="kw">in </span><span class="number">1</span>..=<span class="number">128 </span>{
-<a href=#735 id=735 data-nosnippet>735</a>            <span class="kw">let </span>owners = workers;
-<a href=#736 id=736 data-nosnippet>736</a>            <span class="kw">let </span>storage = chunks(workers) * owners * chunk_placements(owners);
-<a href=#737 id=737 data-nosnippet>737</a>            <span class="macro">assert!</span>(
-<a href=#738 id=738 data-nosnippet>738</a>                storage &lt;= CHUNKS_PER_WORKER * <span class="number">4 </span>* full * workers,
-<a href=#739 id=739 data-nosnippet>739</a>                <span class="string">"{workers} workers place into {storage} placements of storage"
-<a href=#740 id=740 data-nosnippet>740</a>            </span>);
-<a href=#741 id=741 data-nosnippet>741</a>        }
-<a href=#742 id=742 data-nosnippet>742</a>        <span class="macro">assert_eq!</span>(chunk_placements(<span class="number">4</span>), full);
-<a href=#743 id=743 data-nosnippet>743</a>    }
-<a href=#744 id=744 data-nosnippet>744</a>}
+<a href=#277 id=277 data-nosnippet>277</a>                                        backend: Box::new(MetalBackend::new(
+<a href=#278 id=278 data-nosnippet>278</a>                                            operator.cf(),
+<a href=#279 id=279 data-nosnippet>279</a>                                            pass.metal_stage_timing,
+<a href=#280 id=280 data-nosnippet>280</a>                                        )<span class="question-mark">?</span>),
+<a href=#281 id=281 data-nosnippet>281</a>                                        staging: SampleBuffer::with_capacity(
+<a href=#282 id=282 data-nosnippet>282</a>                                            shape.npol,
+<a href=#283 id=283 data-nosnippet>283</a>                                            count * shape.placements,
+<a href=#284 id=284 data-nosnippet>284</a>                                        ),
+<a href=#285 id=285 data-nosnippet>285</a>                                    },
+<a href=#286 id=286 data-nosnippet>286</a>                                    images: <span class="prelude-val">None</span>,
+<a href=#287 id=287 data-nosnippet>287</a>                                }
+<a href=#288 id=288 data-nosnippet>288</a>                            }
+<a href=#289 id=289 data-nosnippet>289</a>                        })
+<a href=#290 id=290 data-nosnippet>290</a>                    })
+<a href=#291 id=291 data-nosnippet>291</a>                    .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, PassError&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#292 id=292 data-nosnippet>292</a>                <span class="prelude-val">Ok</span>(Domain {
+<a href=#293 id=293 data-nosnippet>293</a>                    router,
+<a href=#294 id=294 data-nosnippet>294</a>                    owners,
+<a href=#295 id=295 data-nosnippet>295</a>                    model: models.map(|models| <span class="kw-2">&amp;</span>models[index]),
+<a href=#296 id=296 data-nosnippet>296</a>                })
+<a href=#297 id=297 data-nosnippet>297</a>            })
+<a href=#298 id=298 data-nosnippet>298</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, PassError&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#299 id=299 data-nosnippet>299</a>        <span class="comment">// A pass with a model predicts each block, for its native residuals or
+<a href=#300 id=300 data-nosnippet>300</a>        // for a visibility writer.
+<a href=#301 id=301 data-nosnippet>301</a>        </span><span class="kw">let </span>predictions = <span class="kw">if </span>pass.model.is_some() {
+<a href=#302 id=302 data-nosnippet>302</a>            block.rows * shape.cells
+<a href=#303 id=303 data-nosnippet>303</a>        } <span class="kw">else </span>{
+<a href=#304 id=304 data-nosnippet>304</a>            <span class="number">0
+<a href=#305 id=305 data-nosnippet>305</a>        </span>};
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#307 id=307 data-nosnippet>307</a>            pass,
+<a href=#308 id=308 data-nosnippet>308</a>            planes,
+<a href=#309 id=309 data-nosnippet>309</a>            domains,
+<a href=#310 id=310 data-nosnippet>310</a>            native_residuals,
+<a href=#311 id=311 data-nosnippet>311</a>            check_spacing: <span class="bool-val">false</span>,
+<a href=#312 id=312 data-nosnippet>312</a>            shape,
+<a href=#313 id=313 data-nosnippet>313</a>            chunks: (<span class="number">0</span>..count)
+<a href=#314 id=314 data-nosnippet>314</a>                .map(|<span class="kw">_</span>| Chunk::new(shape, pass.domains))
+<a href=#315 id=315 data-nosnippet>315</a>                .collect(),
+<a href=#316 id=316 data-nosnippet>316</a>            predictions: Vec::with_capacity(predictions),
+<a href=#317 id=317 data-nosnippet>317</a>            samples: <span class="number">0</span>,
+<a href=#318 id=318 data-nosnippet>318</a>        })
+<a href=#319 id=319 data-nosnippet>319</a>    }
+<a href=#320 id=320 data-nosnippet>320</a>
+<a href=#321 id=321 data-nosnippet>321</a>    <span class="doccomment">/// Check every row's native spacing against the pass's
+<a href=#322 id=322 data-nosnippet>322</a>    /// `native_spacing_hz`, which sized this wave's model halo.
+<a href=#323 id=323 data-nosnippet>323</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>checking_spacing(<span class="kw-2">mut </span><span class="self">self</span>, check: bool) -&gt; <span class="self">Self </span>{
+<a href=#324 id=324 data-nosnippet>324</a>        <span class="self">self</span>.check_spacing = check;
+<a href=#325 id=325 data-nosnippet>325</a>        <span class="self">self
+<a href=#326 id=326 data-nosnippet>326</a>    </span>}
+<a href=#327 id=327 data-nosnippet>327</a>
+<a href=#328 id=328 data-nosnippet>328</a>    <span class="doccomment">/// Samples placed on the first domain so far.
+<a href=#329 id=329 data-nosnippet>329</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const fn </span>samples(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
+<a href=#330 id=330 data-nosnippet>330</a>        <span class="self">self</span>.samples
+<a href=#331 id=331 data-nosnippet>331</a>    }
+<a href=#332 id=332 data-nosnippet>332</a>
+<a href=#333 id=333 data-nosnippet>333</a>    <span class="doccomment">/// Place every row of `block` on every domain and accumulate the
+<a href=#334 id=334 data-nosnippet>334</a>    /// placements; with a visibility sink, first hand it the block, with
+<a href=#335 id=335 data-nosnippet>335</a>    /// every selected sample's prediction when it asks for them.
+<a href=#336 id=336 data-nosnippet>336</a>    ///
+<a href=#337 id=337 data-nosnippet>337</a>    /// When the wave forms residuals at native channels, each row's samples
+<a href=#338 id=338 data-nosnippet>338</a>    /// are placed from `V − Σ_d A_d·m_d` at its native channels and gridded
+<a href=#339 id=339 data-nosnippet>339</a>    /// as data; otherwise the domain's model is subtracted at each placed
+<a href=#340 id=340 data-nosnippet>340</a>    /// sample.
+<a href=#341 id=341 data-nosnippet>341</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>consume(
+<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#343 id=343 data-nosnippet>343</a>        block: <span class="kw-2">&amp;</span>NativeBlock,
+<a href=#344 id=344 data-nosnippet>344</a>        team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#345 id=345 data-nosnippet>345</a>        visibilities: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>VisibilitySink&lt;<span class="lifetime">'_</span>&gt;&gt;,
+<a href=#346 id=346 data-nosnippet>346</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PassError&gt; {
+<a href=#347 id=347 data-nosnippet>347</a>        <span class="kw">let </span>rows = block.len();
+<a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">if </span><span class="self">self</span>.check_spacing {
+<a href=#349 id=349 data-nosnippet>349</a>            <span class="kw">let </span>bound_hz = <span class="self">self</span>.pass.native_spacing_hz;
+<a href=#350 id=350 data-nosnippet>350</a>            <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..rows {
+<a href=#351 id=351 data-nosnippet>351</a>                <span class="kw">let </span>observed_hz = block
+<a href=#352 id=352 data-nosnippet>352</a>                    .row(<span class="number">0</span>, row)
+<a href=#353 id=353 data-nosnippet>353</a>                    .frequencies_hz
+<a href=#354 id=354 data-nosnippet>354</a>                    .windows(<span class="number">2</span>)
+<a href=#355 id=355 data-nosnippet>355</a>                    .fold(<span class="number">0.0_f64</span>, |widest, pair| {
+<a href=#356 id=356 data-nosnippet>356</a>                        widest.max((pair[<span class="number">1</span>] - pair[<span class="number">0</span>]).abs())
+<a href=#357 id=357 data-nosnippet>357</a>                    });
+<a href=#358 id=358 data-nosnippet>358</a>                <span class="kw">if </span>observed_hz &gt; bound_hz {
+<a href=#359 id=359 data-nosnippet>359</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(PassError::NativeSpacing {
+<a href=#360 id=360 data-nosnippet>360</a>                        observed_hz,
+<a href=#361 id=361 data-nosnippet>361</a>                        bound_hz,
+<a href=#362 id=362 data-nosnippet>362</a>                    });
+<a href=#363 id=363 data-nosnippet>363</a>                }
+<a href=#364 id=364 data-nosnippet>364</a>            }
+<a href=#365 id=365 data-nosnippet>365</a>        }
+<a href=#366 id=366 data-nosnippet>366</a>        <span class="kw">let </span>sink_predictions = visibilities.as_ref().is_some_and(|sink| sink.predictions);
+<a href=#367 id=367 data-nosnippet>367</a>        <span class="kw">if </span><span class="self">self</span>.native_residuals || sink_predictions {
+<a href=#368 id=368 data-nosnippet>368</a>            <span class="kw">let </span>count = <span class="self">self</span>.chunks.len().min(rows.max(<span class="number">1</span>));
+<a href=#369 id=369 data-nosnippet>369</a>            <span class="kw">for </span>(index, chunk) <span class="kw">in </span><span class="self">self</span>.chunks[..count].iter_mut().enumerate() {
+<a href=#370 id=370 data-nosnippet>370</a>                chunk.rows = index * rows / count..(index + <span class="number">1</span>) * rows / count;
+<a href=#371 id=371 data-nosnippet>371</a>            }
+<a href=#372 id=372 data-nosnippet>372</a>            <span class="self">self</span>.predict(block, team, count)<span class="question-mark">?</span>;
+<a href=#373 id=373 data-nosnippet>373</a>        } <span class="kw">else </span>{
+<a href=#374 id=374 data-nosnippet>374</a>            <span class="self">self</span>.predictions.clear();
+<a href=#375 id=375 data-nosnippet>375</a>        }
+<a href=#376 id=376 data-nosnippet>376</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(sink) = visibilities {
+<a href=#377 id=377 data-nosnippet>377</a>            <span class="kw">let </span>predictions: <span class="kw-2">&amp;</span>[Complex32] = <span class="kw">if </span>sink.predictions {
+<a href=#378 id=378 data-nosnippet>378</a>                <span class="kw-2">&amp;</span><span class="self">self</span>.predictions
+<a href=#379 id=379 data-nosnippet>379</a>            } <span class="kw">else </span>{
+<a href=#380 id=380 data-nosnippet>380</a>                <span class="kw-2">&amp;</span>[]
+<a href=#381 id=381 data-nosnippet>381</a>            };
+<a href=#382 id=382 data-nosnippet>382</a>            (sink.write)(block, predictions).map_err(PassError::VisibilityWrite)<span class="question-mark">?</span>;
+<a href=#383 id=383 data-nosnippet>383</a>        }
+<a href=#384 id=384 data-nosnippet>384</a>        <span class="comment">// Slices of the block, each owner's in row order as a whole block's
+<a href=#385 id=385 data-nosnippet>385</a>        // would be, so the accumulation is the same.
+<a href=#386 id=386 data-nosnippet>386</a>        </span><span class="kw">let </span>chunks = <span class="self">self</span>.chunks.len();
+<a href=#387 id=387 data-nosnippet>387</a>        <span class="kw">for </span>slice <span class="kw">in </span>slices(rows, chunks, <span class="self">self</span>.shape.rows) {
+<a href=#388 id=388 data-nosnippet>388</a>            <span class="kw">let </span><span class="kw-2">mut </span>count = <span class="number">0</span>;
+<a href=#389 id=389 data-nosnippet>389</a>            <span class="kw">for </span>(chunk, rows) <span class="kw">in </span><span class="self">self</span>.chunks.iter_mut().zip(chunk_ranges(slice, chunks)) {
+<a href=#390 id=390 data-nosnippet>390</a>                chunk.rows = rows;
+<a href=#391 id=391 data-nosnippet>391</a>                count += <span class="number">1</span>;
+<a href=#392 id=392 data-nosnippet>392</a>            }
+<a href=#393 id=393 data-nosnippet>393</a>            <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..<span class="self">self</span>.domains.len() {
+<a href=#394 id=394 data-nosnippet>394</a>                <span class="kw">let </span>placed = <span class="self">self</span>.place(block, team, count, index)<span class="question-mark">?</span>;
+<a href=#395 id=395 data-nosnippet>395</a>                <span class="kw">if </span>index == <span class="number">0 </span>{
+<a href=#396 id=396 data-nosnippet>396</a>                    <span class="self">self</span>.samples += placed;
+<a href=#397 id=397 data-nosnippet>397</a>                }
+<a href=#398 id=398 data-nosnippet>398</a>            }
+<a href=#399 id=399 data-nosnippet>399</a>        }
+<a href=#400 id=400 data-nosnippet>400</a>        <span class="prelude-val">Ok</span>(())
+<a href=#401 id=401 data-nosnippet>401</a>    }
+<a href=#402 id=402 data-nosnippet>402</a>
+<a href=#403 id=403 data-nosnippet>403</a>    <span class="doccomment">/// Place the rows of `block` on domain `index` and accumulate them;
+<a href=#404 id=404 data-nosnippet>404</a>    /// returns the samples placed.
+<a href=#405 id=405 data-nosnippet>405</a>    </span><span class="kw">fn </span>place(
+<a href=#406 id=406 data-nosnippet>406</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#407 id=407 data-nosnippet>407</a>        block: <span class="kw-2">&amp;</span>NativeBlock,
+<a href=#408 id=408 data-nosnippet>408</a>        team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#409 id=409 data-nosnippet>409</a>        count: usize,
+<a href=#410 id=410 data-nosnippet>410</a>        index: usize,
+<a href=#411 id=411 data-nosnippet>411</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;u64, PassError&gt; {
+<a href=#412 id=412 data-nosnippet>412</a>        <span class="kw">let </span>pass = <span class="self">self</span>.pass;
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">let </span>target = <span class="kw-2">&amp;</span>pass.domains[index];
+<a href=#414 id=414 data-nosnippet>414</a>        <span class="kw">let </span>domain = <span class="kw-2">&amp;mut </span><span class="self">self</span>.domains[index];
+<a href=#415 id=415 data-nosnippet>415</a>        <span class="kw">let </span>owners = domain.owners.len();
+<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span>router = <span class="kw-2">&amp;</span>domain.router;
+<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">let </span>planes = <span class="self">self</span>.planes;
+<a href=#418 id=418 data-nosnippet>418</a>        <span class="kw">let </span>predictions = <span class="kw-2">&amp;</span><span class="self">self</span>.predictions;
+<a href=#419 id=419 data-nosnippet>419</a>        <span class="kw">let </span>native_residuals = <span class="self">self</span>.native_residuals;
+<a href=#420 id=420 data-nosnippet>420</a>        <span class="kw">let </span>cells = block.channels() * block.correlations();
+<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">let </span>shape = <span class="self">self</span>.shape;
+<a href=#422 id=422 data-nosnippet>422</a>        <span class="comment">// With region owners the weight image has one owner, which must see
+<a href=#423 id=423 data-nosnippet>423</a>        // every placement; plane owners grid their own samples' weights.
+<a href=#424 id=424 data-nosnippet>424</a>        </span><span class="kw">let </span>route_weight = pass.modes.weight &amp;&amp; router.weight_owner().is_some();
+<a href=#425 id=425 data-nosnippet>425</a>        team.for_each_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>.chunks[..count], |<span class="kw">_</span>, chunk| {
+<a href=#426 id=426 data-nosnippet>426</a>            chunk.placed = <span class="number">0</span>;
+<a href=#427 id=427 data-nosnippet>427</a>            chunk.owned[..owners]
+<a href=#428 id=428 data-nosnippet>428</a>                .iter_mut()
+<a href=#429 id=429 data-nosnippet>429</a>                .for_each(SampleBuffer::clear);
+<a href=#430 id=430 data-nosnippet>430</a>            chunk.weight_owned.clear();
+<a href=#431 id=431 data-nosnippet>431</a>            <span class="kw">for </span>row <span class="kw">in </span>chunk.rows.clone() {
+<a href=#432 id=432 data-nosnippet>432</a>                chunk.scratch.clear();
+<a href=#433 id=433 data-nosnippet>433</a>                <span class="kw">let </span>native = block.row(index, row);
+<a href=#434 id=434 data-nosnippet>434</a>                <span class="kw">let </span>native = <span class="kw">if </span>native_residuals {
+<a href=#435 id=435 data-nosnippet>435</a>                    <span class="kw">let </span>model = <span class="kw-2">&amp;</span>predictions[row * cells..(row + <span class="number">1</span>) * cells];
+<a href=#436 id=436 data-nosnippet>436</a>                    chunk.residual.clear();
+<a href=#437 id=437 data-nosnippet>437</a>                    chunk.residual.extend(
+<a href=#438 id=438 data-nosnippet>438</a>                        native
+<a href=#439 id=439 data-nosnippet>439</a>                            .values
+<a href=#440 id=440 data-nosnippet>440</a>                            .iter()
+<a href=#441 id=441 data-nosnippet>441</a>                            .zip(model)
+<a href=#442 id=442 data-nosnippet>442</a>                            .map(|(value, model)| value - model),
+<a href=#443 id=443 data-nosnippet>443</a>                    );
+<a href=#444 id=444 data-nosnippet>444</a>                    NativeRow {
+<a href=#445 id=445 data-nosnippet>445</a>                        values: <span class="kw-2">&amp;</span>chunk.residual,
+<a href=#446 id=446 data-nosnippet>446</a>                        ..native
+<a href=#447 id=447 data-nosnippet>447</a>                    }
+<a href=#448 id=448 data-nosnippet>448</a>                } <span class="kw">else </span>{
+<a href=#449 id=449 data-nosnippet>449</a>                    native
+<a href=#450 id=450 data-nosnippet>450</a>                };
+<a href=#451 id=451 data-nosnippet>451</a>                target.resampler.place(
+<a href=#452 id=452 data-nosnippet>452</a>                    target.operator,
+<a href=#453 id=453 data-nosnippet>453</a>                    pass.weighting,
+<a href=#454 id=454 data-nosnippet>454</a>                    <span class="kw-2">&amp;</span>native,
+<a href=#455 id=455 data-nosnippet>455</a>                    <span class="kw-2">&amp;mut </span>chunk.scratch,
+<a href=#456 id=456 data-nosnippet>456</a>                )<span class="question-mark">?</span>;
+<a href=#457 id=457 data-nosnippet>457</a>                <span class="macro">debug_assert!</span>(
+<a href=#458 id=458 data-nosnippet>458</a>                    chunk.scratch.len() &lt;= shape.row,
+<a href=#459 id=459 data-nosnippet>459</a>                    <span class="string">"a row places within the chunk's per-row bound"
+<a href=#460 id=460 data-nosnippet>460</a>                </span>);
+<a href=#461 id=461 data-nosnippet>461</a>                <span class="kw">let </span>placed = chunk.scratch.block();
+<a href=#462 id=462 data-nosnippet>462</a>                <span class="kw">for </span>(sample, placement) <span class="kw">in </span>placed.placements.iter().enumerate() {
+<a href=#463 id=463 data-nosnippet>463</a>                    <span class="kw">if </span>!planes.contains(placement.plane) {
+<a href=#464 id=464 data-nosnippet>464</a>                        <span class="kw">continue</span>;
+<a href=#465 id=465 data-nosnippet>465</a>                    }
+<a href=#466 id=466 data-nosnippet>466</a>                    <span class="kw">let </span>owner = router.owner(target.operator, placement);
+<a href=#467 id=467 data-nosnippet>467</a>                    chunk.owned[owner].push(
+<a href=#468 id=468 data-nosnippet>468</a>                        <span class="kw-2">*</span>placement,
+<a href=#469 id=469 data-nosnippet>469</a>                        placed.values_of(sample),
+<a href=#470 id=470 data-nosnippet>470</a>                        placed.weights_of(sample),
+<a href=#471 id=471 data-nosnippet>471</a>                    );
+<a href=#472 id=472 data-nosnippet>472</a>                    <span class="kw">if </span>route_weight {
+<a href=#473 id=473 data-nosnippet>473</a>                        chunk.weight_owned.push(
+<a href=#474 id=474 data-nosnippet>474</a>                            <span class="kw-2">*</span>placement,
+<a href=#475 id=475 data-nosnippet>475</a>                            placed.values_of(sample),
+<a href=#476 id=476 data-nosnippet>476</a>                            placed.weights_of(sample),
+<a href=#477 id=477 data-nosnippet>477</a>                        );
+<a href=#478 id=478 data-nosnippet>478</a>                    }
+<a href=#479 id=479 data-nosnippet>479</a>                    chunk.placed += <span class="number">1</span>;
+<a href=#480 id=480 data-nosnippet>480</a>                }
+<a href=#481 id=481 data-nosnippet>481</a>            }
+<a href=#482 id=482 data-nosnippet>482</a>            <span class="macro">debug_assert!</span>(
+<a href=#483 id=483 data-nosnippet>483</a>                chunk.placed <span class="kw">as </span>usize &lt;= shape.placements
+<a href=#484 id=484 data-nosnippet>484</a>                    &amp;&amp; chunk.capacity_bytes() == shape.bytes(),
+<a href=#485 id=485 data-nosnippet>485</a>                <span class="string">"a chunk places within the placements it was allocated for"
+<a href=#486 id=486 data-nosnippet>486</a>            </span>);
+<a href=#487 id=487 data-nosnippet>487</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
+<a href=#488 id=488 data-nosnippet>488</a>        })<span class="question-mark">?</span>;
+<a href=#489 id=489 data-nosnippet>489</a>        <span class="kw">let </span>chunks = <span class="kw-2">&amp;</span><span class="self">self</span>.chunks[..count];
+<a href=#490 id=490 data-nosnippet>490</a>        <span class="kw">let </span>model = domain.model.filter(|<span class="kw">_</span>| !native_residuals);
+<a href=#491 id=491 data-nosnippet>491</a>        <span class="kw">let </span>weight_owner = router.weight_owner();
+<a href=#492 id=492 data-nosnippet>492</a>        team.for_each_mut(<span class="kw-2">&amp;mut </span>domain.owners, |owner_index, owner| {
+<a href=#493 id=493 data-nosnippet>493</a>            <span class="kw">let </span>acc = owner
+<a href=#494 id=494 data-nosnippet>494</a>                .acc
+<a href=#495 id=495 data-nosnippet>495</a>                .as_mut()
+<a href=#496 id=496 data-nosnippet>496</a>                .expect(<span class="string">"owners accumulate until finished"</span>);
+<a href=#497 id=497 data-nosnippet>497</a>            <span class="kw">let </span>operator = target.operator;
+<a href=#498 id=498 data-nosnippet>498</a>            <span class="comment">// Each owner grids the weight image over its own placements
+<a href=#499 id=499 data-nosnippet>499</a>            // unless the image has one owner, who grids every placement
+<a href=#500 id=500 data-nosnippet>500</a>            // below.
+<a href=#501 id=501 data-nosnippet>501</a>            </span><span class="kw">let </span>own_weight = weight_owner.is_none();
+<a href=#502 id=502 data-nosnippet>502</a>            <span class="kw">match </span><span class="kw-2">&amp;mut </span>owner.backend {
+<a href=#503 id=503 data-nosnippet>503</a>                OwnerBackend::Cpu(backend) =&gt; {
+<a href=#504 id=504 data-nosnippet>504</a>                    <span class="kw">for </span>chunk <span class="kw">in </span>chunks {
+<a href=#505 id=505 data-nosnippet>505</a>                        <span class="kw">let </span>block = chunk.owned[owner_index].block();
+<a href=#506 id=506 data-nosnippet>506</a>                        <span class="kw">if </span>!block.is_empty() {
+<a href=#507 id=507 data-nosnippet>507</a>                            accumulate(pass, operator, backend, <span class="kw-2">&amp;</span>block, model, acc, own_weight)<span class="question-mark">?</span>;
+<a href=#508 id=508 data-nosnippet>508</a>                        }
+<a href=#509 id=509 data-nosnippet>509</a>                    }
+<a href=#510 id=510 data-nosnippet>510</a>                }
+<a href=#511 id=511 data-nosnippet>511</a>                OwnerBackend::Metal { backend, staging } =&gt; {
+<a href=#512 id=512 data-nosnippet>512</a>                    staging.clear();
+<a href=#513 id=513 data-nosnippet>513</a>                    <span class="kw">for </span>chunk <span class="kw">in </span>chunks {
+<a href=#514 id=514 data-nosnippet>514</a>                        <span class="kw">let </span>block = chunk.owned[owner_index].block();
+<a href=#515 id=515 data-nosnippet>515</a>                        <span class="kw">for </span>sample <span class="kw">in </span><span class="number">0</span>..block.len() {
+<a href=#516 id=516 data-nosnippet>516</a>                            staging.push(
+<a href=#517 id=517 data-nosnippet>517</a>                                block.placements[sample],
+<a href=#518 id=518 data-nosnippet>518</a>                                block.values_of(sample),
+<a href=#519 id=519 data-nosnippet>519</a>                                block.weights_of(sample),
+<a href=#520 id=520 data-nosnippet>520</a>                            );
+<a href=#521 id=521 data-nosnippet>521</a>                        }
+<a href=#522 id=522 data-nosnippet>522</a>                    }
+<a href=#523 id=523 data-nosnippet>523</a>                    <span class="kw">if </span>!staging.is_empty() {
+<a href=#524 id=524 data-nosnippet>524</a>                        <span class="kw">let </span>backend: <span class="kw-2">&amp;mut </span>MetalBackend&lt;<span class="lifetime">'_</span>&gt; = backend;
+<a href=#525 id=525 data-nosnippet>525</a>                        accumulate(
+<a href=#526 id=526 data-nosnippet>526</a>                            pass,
+<a href=#527 id=527 data-nosnippet>527</a>                            operator,
+<a href=#528 id=528 data-nosnippet>528</a>                            backend,
+<a href=#529 id=529 data-nosnippet>529</a>                            <span class="kw-2">&amp;</span>staging.block(),
+<a href=#530 id=530 data-nosnippet>530</a>                            model,
+<a href=#531 id=531 data-nosnippet>531</a>                            acc,
+<a href=#532 id=532 data-nosnippet>532</a>                            own_weight,
+<a href=#533 id=533 data-nosnippet>533</a>                        )<span class="question-mark">?</span>;
+<a href=#534 id=534 data-nosnippet>534</a>                    }
+<a href=#535 id=535 data-nosnippet>535</a>                }
+<a href=#536 id=536 data-nosnippet>536</a>            }
+<a href=#537 id=537 data-nosnippet>537</a>            <span class="kw">if </span>pass.modes.weight &amp;&amp; weight_owner == <span class="prelude-val">Some</span>(owner_index) {
+<a href=#538 id=538 data-nosnippet>538</a>                <span class="kw">for </span>chunk <span class="kw">in </span>chunks {
+<a href=#539 id=539 data-nosnippet>539</a>                    <span class="kw">let </span>block = chunk.weight_owned.block();
+<a href=#540 id=540 data-nosnippet>540</a>                    <span class="kw">if </span>block.is_empty() {
+<a href=#541 id=541 data-nosnippet>541</a>                        <span class="kw">continue</span>;
+<a href=#542 id=542 data-nosnippet>542</a>                    }
+<a href=#543 id=543 data-nosnippet>543</a>                    <span class="kw">let </span>work = Work::Grid {
+<a href=#544 id=544 data-nosnippet>544</a>                        mode: Mode::Weight,
+<a href=#545 id=545 data-nosnippet>545</a>                        acc,
+<a href=#546 id=546 data-nosnippet>546</a>                    };
+<a href=#547 id=547 data-nosnippet>547</a>                    <span class="kw">match </span><span class="kw-2">&amp;mut </span>owner.backend {
+<a href=#548 id=548 data-nosnippet>548</a>                        OwnerBackend::Cpu(backend) =&gt; backend.apply(<span class="kw-2">&amp;</span>block, operator.cf(), work)<span class="question-mark">?</span>,
+<a href=#549 id=549 data-nosnippet>549</a>                        OwnerBackend::Metal { backend, .. } =&gt; {
+<a href=#550 id=550 data-nosnippet>550</a>                            backend.apply(<span class="kw-2">&amp;</span>block, operator.cf(), work)<span class="question-mark">?</span>;
+<a href=#551 id=551 data-nosnippet>551</a>                        }
+<a href=#552 id=552 data-nosnippet>552</a>                    }
+<a href=#553 id=553 data-nosnippet>553</a>                }
+<a href=#554 id=554 data-nosnippet>554</a>            }
+<a href=#555 id=555 data-nosnippet>555</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
+<a href=#556 id=556 data-nosnippet>556</a>        })<span class="question-mark">?</span>;
+<a href=#557 id=557 data-nosnippet>557</a>        <span class="prelude-val">Ok</span>(chunks.iter().map(|chunk| chunk.placed).sum())
+<a href=#558 id=558 data-nosnippet>558</a>    }
+<a href=#559 id=559 data-nosnippet>559</a>
+<a href=#560 id=560 data-nosnippet>560</a>    <span class="doccomment">/// Model visibilities of every selected sample of `block`, summed over
+<a href=#561 id=561 data-nosnippet>561</a>    /// every domain's model (`SIMapperCollection::degrid`), `[row][channel]
+<a href=#562 id=562 data-nosnippet>562</a>    /// [correlation]`, into `self.predictions`; zero without a model.
+<a href=#563 id=563 data-nosnippet>563</a>    </span><span class="kw">fn </span>predict(
+<a href=#564 id=564 data-nosnippet>564</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#565 id=565 data-nosnippet>565</a>        block: <span class="kw-2">&amp;</span>NativeBlock,
+<a href=#566 id=566 data-nosnippet>566</a>        team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#567 id=567 data-nosnippet>567</a>        count: usize,
+<a href=#568 id=568 data-nosnippet>568</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), PassError&gt; {
+<a href=#569 id=569 data-nosnippet>569</a>        <span class="kw">let </span>cells = block.channels() * block.correlations();
+<a href=#570 id=570 data-nosnippet>570</a>        <span class="kw">let </span>rows = block.len();
+<a href=#571 id=571 data-nosnippet>571</a>        <span class="self">self</span>.predictions.clear();
+<a href=#572 id=572 data-nosnippet>572</a>        <span class="self">self</span>.predictions.resize(rows * cells, Complex32::default());
+<a href=#573 id=573 data-nosnippet>573</a>        <span class="kw">if </span><span class="self">self</span>.domains.iter().all(|domain| domain.model.is_none()) {
+<a href=#574 id=574 data-nosnippet>574</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#575 id=575 data-nosnippet>575</a>        }
+<a href=#576 id=576 data-nosnippet>576</a>        <span class="kw">let </span>pass = <span class="self">self</span>.pass;
+<a href=#577 id=577 data-nosnippet>577</a>        <span class="kw">let </span>shape = <span class="self">self</span>.shape;
+<a href=#578 id=578 data-nosnippet>578</a>        <span class="kw">let </span>models = <span class="self">self
+<a href=#579 id=579 data-nosnippet>579</a>            </span>.domains
+<a href=#580 id=580 data-nosnippet>580</a>            .iter()
+<a href=#581 id=581 data-nosnippet>581</a>            .map(|domain| domain.model)
+<a href=#582 id=582 data-nosnippet>582</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#583 id=583 data-nosnippet>583</a>        <span class="kw">let </span><span class="kw-2">mut </span>pieces = Vec::with_capacity(count);
+<a href=#584 id=584 data-nosnippet>584</a>        <span class="kw">let </span><span class="kw-2">mut </span>remaining = <span class="self">self</span>.predictions.as_mut_slice();
+<a href=#585 id=585 data-nosnippet>585</a>        <span class="kw">for </span>chunk <span class="kw">in </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.chunks[..count] {
+<a href=#586 id=586 data-nosnippet>586</a>            <span class="kw">let </span>(head, tail) = remaining.split_at_mut(chunk.rows.len() * cells);
+<a href=#587 id=587 data-nosnippet>587</a>            remaining = tail;
+<a href=#588 id=588 data-nosnippet>588</a>            pieces.push((chunk, head));
+<a href=#589 id=589 data-nosnippet>589</a>        }
+<a href=#590 id=590 data-nosnippet>590</a>        team.for_each_mut(<span class="kw-2">&amp;mut </span>pieces, |<span class="kw">_</span>, (chunk, out)| {
+<a href=#591 id=591 data-nosnippet>591</a>            chunk.predicted.resize(cells, Complex32::default());
+<a href=#592 id=592 data-nosnippet>592</a>            <span class="kw">for </span>(local, row) <span class="kw">in </span>chunk.rows.clone().enumerate() {
+<a href=#593 id=593 data-nosnippet>593</a>                <span class="kw">let </span>out = <span class="kw-2">&amp;mut </span>out[local * cells..(local + <span class="number">1</span>) * cells];
+<a href=#594 id=594 data-nosnippet>594</a>                <span class="kw">for </span>(index, (target, model)) <span class="kw">in </span>pass.domains.iter().zip(<span class="kw-2">&amp;</span>models).enumerate() {
+<a href=#595 id=595 data-nosnippet>595</a>                    <span class="kw">let </span><span class="prelude-val">Some</span>(model) = model <span class="kw">else </span>{
+<a href=#596 id=596 data-nosnippet>596</a>                        <span class="kw">continue</span>;
+<a href=#597 id=597 data-nosnippet>597</a>                    };
+<a href=#598 id=598 data-nosnippet>598</a>                    target.resampler.predict_row(
+<a href=#599 id=599 data-nosnippet>599</a>                        target.operator,
+<a href=#600 id=600 data-nosnippet>600</a>                        <span class="kw-2">&amp;mut </span>chunk.backend,
+<a href=#601 id=601 data-nosnippet>601</a>                        model,
+<a href=#602 id=602 data-nosnippet>602</a>                        <span class="kw-2">&amp;</span>block.row(index, row),
+<a href=#603 id=603 data-nosnippet>603</a>                        <span class="kw-2">&amp;mut </span>chunk.prediction,
+<a href=#604 id=604 data-nosnippet>604</a>                        <span class="kw-2">&amp;mut </span>chunk.predicted,
+<a href=#605 id=605 data-nosnippet>605</a>                    )<span class="question-mark">?</span>;
+<a href=#606 id=606 data-nosnippet>606</a>                    <span class="kw">for </span>(sum, value) <span class="kw">in </span>out.iter_mut().zip(<span class="kw-2">&amp;</span>chunk.predicted) {
+<a href=#607 id=607 data-nosnippet>607</a>                        <span class="kw-2">*</span>sum += value;
+<a href=#608 id=608 data-nosnippet>608</a>                    }
+<a href=#609 id=609 data-nosnippet>609</a>                }
+<a href=#610 id=610 data-nosnippet>610</a>            }
+<a href=#611 id=611 data-nosnippet>611</a>            <span class="macro">debug_assert_eq!</span>(
+<a href=#612 id=612 data-nosnippet>612</a>                chunk.capacity_bytes(),
+<a href=#613 id=613 data-nosnippet>613</a>                shape.bytes(),
+<a href=#614 id=614 data-nosnippet>614</a>                <span class="string">"a chunk predicts within the buffers it was allocated"
+<a href=#615 id=615 data-nosnippet>615</a>            </span>);
+<a href=#616 id=616 data-nosnippet>616</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
+<a href=#617 id=617 data-nosnippet>617</a>        })
+<a href=#618 id=618 data-nosnippet>618</a>    }
+<a href=#619 id=619 data-nosnippet>619</a>
+<a href=#620 id=620 data-nosnippet>620</a>    <span class="doccomment">/// Transform the accumulated grids into this wave's normal images, one
+<a href=#621 id=621 data-nosnippet>621</a>    /// per domain.
+<a href=#622 id=622 data-nosnippet>622</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>finish(<span class="self">self</span>, team: <span class="kw-2">&amp;</span>WorkerTeam) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;NormalImages&gt;, PassError&gt; {
+<a href=#623 id=623 data-nosnippet>623</a>        <span class="kw">let </span>pass = <span class="self">self</span>.pass;
+<a href=#624 id=624 data-nosnippet>624</a>        <span class="kw">let </span>planes = <span class="self">self</span>.planes;
+<a href=#625 id=625 data-nosnippet>625</a>        <span class="self">self</span>.domains
+<a href=#626 id=626 data-nosnippet>626</a>            .into_iter()
+<a href=#627 id=627 data-nosnippet>627</a>            .zip(pass.domains)
+<a href=#628 id=628 data-nosnippet>628</a>            .map(|(<span class="kw-2">mut </span>domain, target)| {
+<a href=#629 id=629 data-nosnippet>629</a>                <span class="kw">let </span>operator = target.operator;
+<a href=#630 id=630 data-nosnippet>630</a>                <span class="kw">match </span><span class="kw-2">&amp;</span>target.partition {
+<a href=#631 id=631 data-nosnippet>631</a>                    Partition::Planes { .. } =&gt; {
+<a href=#632 id=632 data-nosnippet>632</a>                        team.for_each_mut(<span class="kw-2">&amp;mut </span>domain.owners, |<span class="kw">_</span>, owner| {
+<a href=#633 id=633 data-nosnippet>633</a>                            <span class="kw">let </span>acc = owner.acc.take().expect(<span class="string">"each owner finishes once"</span>);
+<a href=#634 id=634 data-nosnippet>634</a>                            owner.images = <span class="prelude-val">Some</span>(operator.finish(acc)<span class="question-mark">?</span>);
+<a href=#635 id=635 data-nosnippet>635</a>                            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
+<a href=#636 id=636 data-nosnippet>636</a>                        })<span class="question-mark">?</span>;
+<a href=#637 id=637 data-nosnippet>637</a>                        <span class="prelude-val">Ok</span>(concatenate(
+<a href=#638 id=638 data-nosnippet>638</a>                            domain
+<a href=#639 id=639 data-nosnippet>639</a>                                .owners
+<a href=#640 id=640 data-nosnippet>640</a>                                .into_iter()
+<a href=#641 id=641 data-nosnippet>641</a>                                .map(|owner| owner.images.expect(<span class="string">"every owner finished"</span>)),
+<a href=#642 id=642 data-nosnippet>642</a>                        ))
+<a href=#643 id=643 data-nosnippet>643</a>                    }
+<a href=#644 id=644 data-nosnippet>644</a>                    Partition::Regions { .. } =&gt; {
+<a href=#645 id=645 data-nosnippet>645</a>                        <span class="kw">let </span><span class="kw-2">mut </span>merged = operator.accumulator(planes, <span class="prelude-val">None</span>, pass.modes);
+<a href=#646 id=646 data-nosnippet>646</a>                        <span class="kw">for </span>owner <span class="kw">in </span><span class="kw-2">&amp;</span>domain.owners {
+<a href=#647 id=647 data-nosnippet>647</a>                            merged
+<a href=#648 id=648 data-nosnippet>648</a>                                .merge_from(owner.acc.as_ref().expect(<span class="string">"owners hold their tiles"</span>))<span class="question-mark">?</span>;
+<a href=#649 id=649 data-nosnippet>649</a>                        }
+<a href=#650 id=650 data-nosnippet>650</a>                        drop(domain.owners);
+<a href=#651 id=651 data-nosnippet>651</a>                        <span class="prelude-val">Ok</span>(operator.finish(merged)<span class="question-mark">?</span>)
+<a href=#652 id=652 data-nosnippet>652</a>                    }
+<a href=#653 id=653 data-nosnippet>653</a>                }
+<a href=#654 id=654 data-nosnippet>654</a>            })
+<a href=#655 id=655 data-nosnippet>655</a>            .collect()
+<a href=#656 id=656 data-nosnippet>656</a>    }
+<a href=#657 id=657 data-nosnippet>657</a>}
+<a href=#658 id=658 data-nosnippet>658</a>
+<a href=#659 id=659 data-nosnippet>659</a><span class="doccomment">/// Grid one owner's share of a block in every mode the pass holds; with a
+<a href=#660 id=660 data-nosnippet>660</a>/// model the data terms receive the residual `V − A·m`.
+<a href=#661 id=661 data-nosnippet>661</a></span><span class="kw">fn </span>accumulate(
+<a href=#662 id=662 data-nosnippet>662</a>    pass: <span class="kw-2">&amp;</span>MajorCyclePass&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#663 id=663 data-nosnippet>663</a>    operator: <span class="kw-2">&amp;</span>casa_imaging_operator::MeasurementOperator,
+<a href=#664 id=664 data-nosnippet>664</a>    backend: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>GridBackend,
+<a href=#665 id=665 data-nosnippet>665</a>    block: <span class="kw-2">&amp;</span>casa_imaging_operator::SampleBlock&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#666 id=666 data-nosnippet>666</a>    model: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>PreparedModelGrids&gt;,
+<a href=#667 id=667 data-nosnippet>667</a>    acc: <span class="kw-2">&amp;mut </span>GridAccumulator,
+<a href=#668 id=668 data-nosnippet>668</a>    weight: bool,
+<a href=#669 id=669 data-nosnippet>669</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), PassError&gt; {
+<a href=#670 id=670 data-nosnippet>670</a>    <span class="kw">let </span>cf = operator.cf();
+<a href=#671 id=671 data-nosnippet>671</a>    <span class="kw">if </span>pass.modes.data {
+<a href=#672 id=672 data-nosnippet>672</a>        <span class="kw">let </span>work = <span class="kw">match </span>model {
+<a href=#673 id=673 data-nosnippet>673</a>            <span class="prelude-val">Some</span>(model) =&gt; Work::ResidualGrid {
+<a href=#674 id=674 data-nosnippet>674</a>                model,
+<a href=#675 id=675 data-nosnippet>675</a>                acc,
+<a href=#676 id=676 data-nosnippet>676</a>                residual_out: <span class="prelude-val">None</span>,
+<a href=#677 id=677 data-nosnippet>677</a>            },
+<a href=#678 id=678 data-nosnippet>678</a>            <span class="prelude-val">None </span>=&gt; Work::Grid {
+<a href=#679 id=679 data-nosnippet>679</a>                mode: Mode::Data,
+<a href=#680 id=680 data-nosnippet>680</a>                acc,
+<a href=#681 id=681 data-nosnippet>681</a>            },
+<a href=#682 id=682 data-nosnippet>682</a>        };
+<a href=#683 id=683 data-nosnippet>683</a>        backend.apply(block, cf, work)<span class="question-mark">?</span>;
+<a href=#684 id=684 data-nosnippet>684</a>    }
+<a href=#685 id=685 data-nosnippet>685</a>    <span class="kw">if </span>pass.modes.psf {
+<a href=#686 id=686 data-nosnippet>686</a>        backend.apply(
+<a href=#687 id=687 data-nosnippet>687</a>            block,
+<a href=#688 id=688 data-nosnippet>688</a>            cf,
+<a href=#689 id=689 data-nosnippet>689</a>            Work::Grid {
+<a href=#690 id=690 data-nosnippet>690</a>                mode: Mode::Psf,
+<a href=#691 id=691 data-nosnippet>691</a>                acc,
+<a href=#692 id=692 data-nosnippet>692</a>            },
+<a href=#693 id=693 data-nosnippet>693</a>        )<span class="question-mark">?</span>;
+<a href=#694 id=694 data-nosnippet>694</a>    }
+<a href=#695 id=695 data-nosnippet>695</a>    <span class="kw">if </span>pass.modes.weight &amp;&amp; weight {
+<a href=#696 id=696 data-nosnippet>696</a>        backend.apply(
+<a href=#697 id=697 data-nosnippet>697</a>            block,
+<a href=#698 id=698 data-nosnippet>698</a>            cf,
+<a href=#699 id=699 data-nosnippet>699</a>            Work::Grid {
+<a href=#700 id=700 data-nosnippet>700</a>                mode: Mode::Weight,
+<a href=#701 id=701 data-nosnippet>701</a>                acc,
+<a href=#702 id=702 data-nosnippet>702</a>            },
+<a href=#703 id=703 data-nosnippet>703</a>        )<span class="question-mark">?</span>;
+<a href=#704 id=704 data-nosnippet>704</a>    }
+<a href=#705 id=705 data-nosnippet>705</a>    <span class="prelude-val">Ok</span>(())
+<a href=#706 id=706 data-nosnippet>706</a>}
+<a href=#707 id=707 data-nosnippet>707</a>
+<a href=#708 id=708 data-nosnippet>708</a><span class="doccomment">/// Join per-owner images of consecutive plane ranges.
+<a href=#709 id=709 data-nosnippet>709</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>concatenate(parts: <span class="kw">impl </span>IntoIterator&lt;Item = NormalImages&gt;) -&gt; NormalImages {
+<a href=#710 id=710 data-nosnippet>710</a>    <span class="kw">let </span><span class="kw-2">mut </span>parts = parts.into_iter();
+<a href=#711 id=711 data-nosnippet>711</a>    <span class="kw">let </span><span class="kw-2">mut </span>joined = parts.next().expect(<span class="string">"a wave has at least one owner"</span>);
+<a href=#712 id=712 data-nosnippet>712</a>    <span class="kw">for </span>part <span class="kw">in </span>parts {
+<a href=#713 id=713 data-nosnippet>713</a>        <span class="macro">assert!</span>(
+<a href=#714 id=714 data-nosnippet>714</a>            part.pols == joined.pols
+<a href=#715 id=715 data-nosnippet>715</a>                &amp;&amp; part.data_terms == joined.data_terms
+<a href=#716 id=716 data-nosnippet>716</a>                &amp;&amp; part.psf_terms == joined.psf_terms
+<a href=#717 id=717 data-nosnippet>717</a>                &amp;&amp; part.first_plane == joined.first_plane + joined.planes.len() <span class="kw">as </span>u32,
+<a href=#718 id=718 data-nosnippet>718</a>            <span class="string">"owner images must continue the plane sequence with the same layout"
+<a href=#719 id=719 data-nosnippet>719</a>        </span>);
+<a href=#720 id=720 data-nosnippet>720</a>        joined.planes.extend(part.planes);
+<a href=#721 id=721 data-nosnippet>721</a>    }
+<a href=#722 id=722 data-nosnippet>722</a>    joined
+<a href=#723 id=723 data-nosnippet>723</a>}
+<a href=#724 id=724 data-nosnippet>724</a>
+<a href=#725 id=725 data-nosnippet>725</a><span class="attr">#[cfg(test)]
+<a href=#726 id=726 data-nosnippet>726</a></span><span class="kw">mod </span>tests {
+<a href=#727 id=727 data-nosnippet>727</a>    <span class="kw">use super</span>::{CHUNKS_PER_WORKER, chunk_placements, chunks};
+<a href=#728 id=728 data-nosnippet>728</a>
+<a href=#729 id=729 data-nosnippet>729</a>    <span class="doccomment">/// Every owner's buffer in a chunk can take all of the chunk's
+<a href=#730 id=730 data-nosnippet>730</a>    /// placements, and a pass has four chunks per worker and up to one
+<a href=#731 id=731 data-nosnippet>731</a>    /// owner per worker; past four owners a chunk takes proportionally
+<a href=#732 id=732 data-nosnippet>732</a>    /// fewer, so the chunks' storage grows linearly with the workers, and up
+<a href=#733 id=733 data-nosnippet>733</a>    /// to four a chunk takes the full cap.
+<a href=#734 id=734 data-nosnippet>734</a>    </span><span class="attr">#[test]
+<a href=#735 id=735 data-nosnippet>735</a>    </span><span class="kw">fn </span>chunk_storage_grows_linearly_with_workers() {
+<a href=#736 id=736 data-nosnippet>736</a>        <span class="kw">let </span>full = chunk_placements(<span class="number">1</span>);
+<a href=#737 id=737 data-nosnippet>737</a>        <span class="kw">for </span>workers <span class="kw">in </span><span class="number">1</span>..=<span class="number">128 </span>{
+<a href=#738 id=738 data-nosnippet>738</a>            <span class="kw">let </span>owners = workers;
+<a href=#739 id=739 data-nosnippet>739</a>            <span class="kw">let </span>storage = chunks(workers) * owners * chunk_placements(owners);
+<a href=#740 id=740 data-nosnippet>740</a>            <span class="macro">assert!</span>(
+<a href=#741 id=741 data-nosnippet>741</a>                storage &lt;= CHUNKS_PER_WORKER * <span class="number">4 </span>* full * workers,
+<a href=#742 id=742 data-nosnippet>742</a>                <span class="string">"{workers} workers place into {storage} placements of storage"
+<a href=#743 id=743 data-nosnippet>743</a>            </span>);
+<a href=#744 id=744 data-nosnippet>744</a>        }
+<a href=#745 id=745 data-nosnippet>745</a>        <span class="macro">assert_eq!</span>(chunk_placements(<span class="number">4</span>), full);
+<a href=#746 id=746 data-nosnippet>746</a>    }
+<a href=#747 id=747 data-nosnippet>747</a>}
 </code></pre></div></section></main></body></html>
