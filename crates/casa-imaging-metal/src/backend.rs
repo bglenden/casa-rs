@@ -57,6 +57,9 @@ pub struct MetalBackend<'cf> {
     stage_timing: bool,
     /// Whether grid-only work may still run when `apply` returns.
     defer_grid: bool,
+    /// The output of a prediction [`Self::submit_prediction`] left on the
+    /// device, until [`Self::collect_prediction`] reads it back.
+    pending_prediction: Option<Vec<Complex32>>,
 }
 
 /// What a backend was asked to dispatch over its life, logged once when it
@@ -173,6 +176,7 @@ impl<'cf> MetalBackend<'cf> {
             usage: Usage::default(),
             stage_timing,
             defer_grid: false,
+            pending_prediction: None,
         })
     }
 
@@ -208,6 +212,54 @@ impl<'cf> MetalBackend<'cf> {
         }
         self.usage.failed |= result.is_err();
         result
+    }
+
+    /// Commit the prediction of every sample of `block` from `model`
+    /// ([`Work::Predict`]) and return without waiting for it, so the host
+    /// prepares other work while the device predicts. `out` holds the
+    /// predictions; [`Self::collect_prediction`], with the same block, waits
+    /// for them and hands it back. The backend dispatches nothing else in
+    /// between.
+    ///
+    /// # Errors
+    ///
+    /// As [`GridBackend::apply`] with [`Work::Predict`].
+    pub fn submit_prediction(
+        &mut self,
+        block: &SampleBlock<'_>,
+        model: &PreparedModelGrids,
+        mut out: Vec<Complex32>,
+    ) -> Result<(), OperatorError> {
+        out.clear();
+        out.resize(block.len() * block.npol, Complex32::default());
+        self.predict(block, model, &mut out, true)?;
+        self.pending_prediction = Some(out);
+        Ok(())
+    }
+
+    /// Wait for the prediction [`Self::submit_prediction`] committed for
+    /// `block`, and return it: `npol` values a sample, sample-major.
+    ///
+    /// # Errors
+    ///
+    /// [`OperatorError::Device`] when a dispatch failed on the device.
+    pub fn collect_prediction(
+        &mut self,
+        block: &SampleBlock<'_>,
+    ) -> Result<Vec<Complex32>, OperatorError> {
+        let mut out = self
+            .pending_prediction
+            .take()
+            .expect("a prediction is submitted before it is collected");
+        let mut result = Ok(());
+        for slot in 0..RING {
+            let retired = self.retire(slot, block, &mut Readback::Prediction(&mut out));
+            if result.is_ok() {
+                result = retired;
+            }
+        }
+        self.usage.failed |= result.is_err();
+        result.map(|()| out)
     }
 
     /// A zeroed accumulator for `layout` whose cells live in memory the
@@ -366,7 +418,9 @@ impl<'cf> MetalBackend<'cf> {
 
     /// Prepare, commit and complete `kernel` over every sample of `block`.
     /// Grid-only work into `cells` is left running when the backend defers
-    /// grid completion; the cells then wait for it.
+    /// grid completion; the cells then wait for it. With `leave_readback`
+    /// the read-back of the last sub-blocks is left for
+    /// [`Self::collect_prediction`].
     #[allow(clippy::too_many_arguments)]
     fn run(
         &mut self,
@@ -377,8 +431,13 @@ impl<'cf> MetalBackend<'cf> {
         cells: Option<&DeviceCells>,
         model: Option<&Buffer>,
         mut readback: Readback<'_>,
+        leave_readback: bool,
         params: Params,
     ) -> Result<(), OperatorError> {
+        assert!(
+            self.pending_prediction.is_none(),
+            "a submitted prediction is collected before the backend dispatches again"
+        );
         let grid = cells.map(|cells| {
             cells
                 .owner()
@@ -423,6 +482,9 @@ impl<'cf> MetalBackend<'cf> {
             }
             Ok::<_, OperatorError>(())
         }));
+        if leave_readback && matches!(dispatched, Ok(Ok(()))) {
+            return Ok(());
+        }
         if defer && matches!(dispatched, Ok(Ok(()))) {
             let last = (self.next + RING - 1) % RING;
             if let Some(command) = self.ring[last].command.clone() {
@@ -739,7 +801,7 @@ impl GridBackend for MetalBackend<'_> {
         }
         match work {
             Work::Grid { mode, acc } => self.grid(block, mode, acc),
-            Work::Predict { model, out } => self.predict(block, model, out),
+            Work::Predict { model, out } => self.predict(block, model, out, false),
             Work::ResidualGrid {
                 model,
                 acc,
@@ -776,6 +838,7 @@ impl MetalBackend<'_> {
             Some(device_cells(storage)),
             None,
             Readback::None,
+            false,
             params,
         )
     }
@@ -786,6 +849,7 @@ impl MetalBackend<'_> {
         block: &SampleBlock<'_>,
         model: &PreparedModelGrids,
         out: &mut [Complex32],
+        leave_readback: bool,
     ) -> Result<(), OperatorError> {
         assert_eq!(
             out.len(),
@@ -807,6 +871,7 @@ impl MetalBackend<'_> {
             None,
             Some(buffer),
             Readback::Prediction(out),
+            leave_readback,
             params,
         )
     }
@@ -851,6 +916,7 @@ impl MetalBackend<'_> {
             Some(device_cells(storage)),
             Some(buffer),
             readback,
+            false,
             params,
         )
     }

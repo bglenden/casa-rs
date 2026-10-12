@@ -366,6 +366,26 @@ impl PredictionScratch {
         self.sources.clear();
     }
 
+    /// The samples placed since [`Self::begin`], as the block a backend
+    /// predicts: placements only.
+    #[must_use]
+    pub fn placed(&self) -> SampleBlock<'_> {
+        SampleBlock {
+            placements: &self.placements,
+            values: &[],
+            weights: &[],
+            npol: self.npol,
+        }
+    }
+
+    /// The predictions [`Self::apply`] writes and
+    /// [`SpectralResampler::finish_prediction`] reads, `npol` a placed
+    /// sample. A caller that has the batch ([`Self::placed`]) predicted
+    /// elsewhere, on a device that returns later, puts them here.
+    pub fn predictions_mut(&mut self) -> &mut Vec<Complex32> {
+        &mut self.predicted
+    }
+
     /// Degrid every sample placed since [`Self::begin`] from `model` in one
     /// [`Work::Predict`] on `backend`.
     ///

@@ -171,6 +171,66 @@ fn predictions_match_the_cpu_for_both_tap_layouts() {
     }
 }
 
+/// Predictions submitted to two backends and collected only after both are
+/// committed, as a wave's chunks do, equal the CPU's; each backend then
+/// serves the next batch. The second round's second batch has more
+/// sub-blocks than the ring holds, so its submission reads its first ones
+/// back itself.
+#[test]
+fn submitted_predictions_collected_later_match_the_cpu() {
+    for kernels in ALL_KERNELS {
+        let mut rng = Rng::new(47);
+        let operator = operator(kernels, TAYLOR, &mut rng);
+        let (Some(mut first), Some(mut second)) = (metal(&operator), metal(&operator)) else {
+            return;
+        };
+        let prepared = operator
+            .prepare_model(&model(&operator, &mut rng), ModelPrescale::Unit)
+            .expect("model");
+        for (round, larger) in [SAMPLES / 2 + 7, 7 * 32_768 + 5].into_iter().enumerate() {
+            let blocks = [SAMPLES, larger].map(|count| {
+                let placed = placements(&operator, full(&operator), count, 1, &mut rng);
+                block(&placed, &mut rng)
+            });
+            let expected = blocks.each_ref().map(|buffer| {
+                let mut out = vec![Complex32::default(); buffer.len() * 2];
+                CpuBackend::new()
+                    .apply(
+                        &buffer.block(),
+                        operator.cf(),
+                        Work::Predict {
+                            model: &prepared,
+                            out: &mut out,
+                        },
+                    )
+                    .expect("cpu predict");
+                out
+            });
+            first
+                .submit_prediction(&blocks[0].block(), &prepared, Vec::new())
+                .expect("submit");
+            second
+                .submit_prediction(&blocks[1].block(), &prepared, Vec::new())
+                .expect("submit");
+            let collected = [
+                first
+                    .collect_prediction(&blocks[0].block())
+                    .expect("collect"),
+                second
+                    .collect_prediction(&blocks[1].block())
+                    .expect("collect"),
+            ];
+            for (index, (collected, expected)) in collected.iter().zip(&expected).enumerate() {
+                assert_close(
+                    collected,
+                    expected,
+                    &format!("{kernels:?} round {round} backend {index}"),
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn fused_residuals_match_the_cpu_with_and_without_the_residual_samples() {
     for kernels in ALL_KERNELS {

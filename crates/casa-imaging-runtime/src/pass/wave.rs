@@ -167,8 +167,12 @@ impl ChunkShape {
 }
 
 /// The backend that degrids one domain's prediction batch for one chunk:
-/// the pass's, so that on Metal the model is predicted on the device.
-type Predictor<'w> = Box<dyn GridBackend + 'w>;
+/// the pass's, so that on Metal the model is predicted on the device, which
+/// works on one chunk's batch while the host places the next chunk's.
+enum Predictor<'w> {
+    Cpu(CpuBackend),
+    Metal(Box<MetalBackend<'w>>),
+}
 
 /// One predictor per domain on `backend`, for one chunk.
 fn predictors<'w>(
@@ -180,10 +184,11 @@ fn predictors<'w>(
         .iter()
         .map(|domain| {
             Ok(match backend {
-                BackendChoice::Cpu => Box::new(CpuBackend::new()) as Predictor<'w>,
-                BackendChoice::Metal => {
-                    Box::new(MetalBackend::new(domain.operator.cf(), stage_timing)?)
-                }
+                BackendChoice::Cpu => Predictor::Cpu(CpuBackend::new()),
+                BackendChoice::Metal => Predictor::Metal(Box::new(MetalBackend::new(
+                    domain.operator.cf(),
+                    stage_timing,
+                )?)),
             })
         })
         .collect()
@@ -647,16 +652,18 @@ impl<'w, 'p> Wave<'w, 'p> {
             remaining = tail;
             pieces.push((chunk, predictors, head));
         }
-        // Each chunk predicts each domain's model for all its rows in one
-        // batch, so the domain's predictor degrids them in one call; the
-        // domains' predictions sum in domain order.
-        team.for_each_mut(&mut pieces, |_, (chunk, predictors, out)| {
-            chunk.predicted.resize(cells, Complex32::default());
-            for (index, (target, model)) in pass.domains.iter().zip(&models).enumerate() {
-                let Some(model) = model else {
-                    continue;
-                };
-                let npol = target.operator.polarization().correlations().len();
+        // Domain by domain, every chunk places its rows' samples in one batch
+        // and hands it to its predictor, a device predicting one chunk's
+        // batch while the host places the next chunk's; then every chunk
+        // reads its predictions back, interpolates them to its rows'
+        // channels and adds them, so the domains' predictions sum in domain
+        // order.
+        for (index, (target, model)) in pass.domains.iter().zip(&models).enumerate() {
+            let Some(model) = *model else {
+                continue;
+            };
+            let npol = target.operator.polarization().correlations().len();
+            team.for_each_mut(&mut pieces, |_, (chunk, predictors, _)| {
                 chunk.prediction.begin(npol);
                 chunk.placed_rows.clear();
                 for position in chunk.rows.clone() {
@@ -667,9 +674,25 @@ impl<'w, 'p> Wave<'w, 'p> {
                         &mut chunk.prediction,
                     )?);
                 }
-                chunk
-                    .prediction
-                    .apply(predictors[index].as_mut(), target.operator.cf(), model)?;
+                match &mut predictors[index] {
+                    Predictor::Cpu(backend) => {
+                        chunk
+                            .prediction
+                            .apply(backend, target.operator.cf(), model)?;
+                    }
+                    Predictor::Metal(backend) => {
+                        let out = std::mem::take(chunk.prediction.predictions_mut());
+                        backend.submit_prediction(&chunk.prediction.placed(), model, out)?;
+                    }
+                }
+                Ok::<_, PassError>(())
+            })?;
+            team.for_each_mut(&mut pieces, |_, (chunk, predictors, out)| {
+                if let Predictor::Metal(backend) = &mut predictors[index] {
+                    let predicted = backend.collect_prediction(&chunk.prediction.placed())?;
+                    *chunk.prediction.predictions_mut() = predicted;
+                }
+                chunk.predicted.resize(cells, Complex32::default());
                 for (local, position) in chunk.rows.clone().enumerate() {
                     target.resampler.finish_prediction(
                         target.operator,
@@ -683,14 +706,16 @@ impl<'w, 'p> Wave<'w, 'p> {
                         *sum += value;
                     }
                 }
-            }
-            debug_assert_eq!(
-                chunk.capacity_bytes(),
-                shape.bytes(),
-                "a chunk predicts within the buffers it was allocated"
-            );
-            Ok::<_, PassError>(())
-        })
+                Ok::<_, PassError>(())
+            })?;
+        }
+        debug_assert!(
+            pieces
+                .iter()
+                .all(|(chunk, ..)| chunk.capacity_bytes() == shape.bytes()),
+            "a chunk predicts within the buffers it was allocated"
+        );
+        Ok(())
     }
 
     /// Transform the accumulated grids into this wave's normal images, one

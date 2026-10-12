@@ -6,8 +6,9 @@ use std::marker::PhantomData;
 
 use casa_imaging_operator::{
     AccumulatorLayout, ConvolutionFunctionSet, DeviceFailure, GridAccumulator, GridBackend,
-    OperatorError, SampleBlock, Work,
+    OperatorError, PreparedModelGrids, SampleBlock, Work,
 };
+use num_complex::Complex32;
 
 /// The Metal gridding backend; this host has no Metal, so
 /// [`MetalBackend::new`] always fails with [`DeviceFailure::Unavailable`].
@@ -42,6 +43,32 @@ impl<'cf> MetalBackend<'cf> {
     ///
     /// None; no backend exists on this host.
     pub fn complete(&mut self) -> Result<(), OperatorError> {
+        match self.never {}
+    }
+
+    /// Unreachable: no backend exists on this host.
+    ///
+    /// # Errors
+    ///
+    /// None; no backend exists on this host.
+    pub fn submit_prediction(
+        &mut self,
+        _block: &SampleBlock<'_>,
+        _model: &PreparedModelGrids,
+        _out: Vec<Complex32>,
+    ) -> Result<(), OperatorError> {
+        match self.never {}
+    }
+
+    /// Unreachable: no backend exists on this host.
+    ///
+    /// # Errors
+    ///
+    /// None; no backend exists on this host.
+    pub fn collect_prediction(
+        &mut self,
+        _block: &SampleBlock<'_>,
+    ) -> Result<Vec<Complex32>, OperatorError> {
         match self.never {}
     }
 }
