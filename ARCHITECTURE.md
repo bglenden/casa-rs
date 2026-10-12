@@ -600,10 +600,13 @@ the Metal device: `casa-imaging-metal` implements the operator's
 atomic adds) into accumulators whose cells live in shared device memory
 (`GridStorage::Device`). The host locates every sample with the operator's
 rounding rule and accumulates `sumwt` in `f64`, so tap selection and `sumwt`
-equal the CPU's; every dispatch completes inside `apply`, cut into
-sub-blocks over a three-slot ring. Operators are `f32` for every basis on
-Metal (D2). Placement and the native-channel predictions of multi-domain or
-linearly interpolated residuals stay on the CPU workers.
+equal the CPU's. Each `apply` is cut into three sub-blocks over a six-slot
+ring. A pass's Metal owners leave grid-only work running when `apply`
+returns, and the accumulator's cells (`DeviceCells`) make the host's next
+access wait for it; other dispatches complete inside `apply`. Operators are
+`f32` for every basis on Metal (D2). Placement and the native-channel
+predictions of multi-domain or linearly interpolated residuals stay on the
+CPU workers.
 Metal grids the standard kernel set only; W projection, mosaics and AW
 projection run on the CPU, and `availability::check` refuses them on Metal.
 Application availability is the capability boundary: component presence alone
