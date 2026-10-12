@@ -49,6 +49,25 @@ struct Active {
     value: f64,
 }
 
+/// ABSMAXF: the first pixel of largest magnitude in list order, as a scan
+/// that keeps the first pixel unless a later one is strictly larger finds
+/// it (so a NaN first pixel is the peak, and a later NaN never is). It runs
+/// once per component over the whole list, so the magnitude is found first
+/// in a branch-free pass the compiler vectorises.
+fn first_largest(active: &[Active]) -> Option<&Active> {
+    let first = active.first()?;
+    if first.value.is_nan() {
+        return Some(first);
+    }
+    let largest = active
+        .iter()
+        .fold(0.0_f64, |largest, pixel| largest.max(pixel.value.abs()));
+    active
+        .iter()
+        .find(|pixel| pixel.value.abs() == largest)
+        .or(Some(first))
+}
+
 /// Working state of one Clark step.
 pub struct ClarkState {
     shape: PlaneShape,
@@ -128,14 +147,7 @@ impl Solver for Clark {
         residual: &mut [Vec<f64>],
     ) -> Result<Next, Error> {
         loop {
-            // ABSMAXF: the first largest in list order.
-            let peak = state.active.iter().fold(None::<&Active>, |best, pixel| {
-                if best.is_none_or(|current| pixel.value.abs() > current.value.abs()) {
-                    Some(pixel)
-                } else {
-                    best
-                }
-            });
+            let peak = first_largest(&state.active);
             if state.cycle_iterations < state.maximum_cycle_iterations
                 && let Some(pixel) = peak
                 && pixel.value.abs() > state.iteration_flux_limit
@@ -181,7 +193,17 @@ impl Solver for Clark {
         let [px, py] = shape.pixel(index);
         let patch = state.patch;
         let psf = &view.psf[0];
-        for pixel in &mut state.active {
+        // The list runs x outer, so the pixels whose x lies in the patch
+        // are one run of it; only they can change.
+        let first_x = px as isize - patch.radius[0] as isize;
+        let end_x = px as isize + (patch.size[0] - patch.radius[0]) as isize;
+        let start = state
+            .active
+            .partition_point(|pixel| (pixel.pixel[0] as isize) < first_x);
+        let end = state
+            .active
+            .partition_point(|pixel| (pixel.pixel[0] as isize) < end_x);
+        for pixel in &mut state.active[start..end] {
             let [tx, ty] = pixel.pixel;
             let relative = [tx as isize - px as isize, ty as isize - py as isize];
             if relative[0] < -(patch.radius[0] as isize)
@@ -310,5 +332,55 @@ impl ClarkState {
             self.maximum_cycle_iterations = 10;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Active, first_largest};
+
+    /// The scan `first_largest` replaces: keep the first pixel unless a
+    /// later one is strictly larger.
+    fn scan(active: &[Active]) -> Option<&Active> {
+        active.iter().fold(None::<&Active>, |best, pixel| {
+            if best.is_none_or(|current| pixel.value.abs() > current.value.abs()) {
+                Some(pixel)
+            } else {
+                best
+            }
+        })
+    }
+
+    #[test]
+    fn the_first_largest_pixel_is_the_scans() {
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        // Few distinct magnitudes, so ties are common, and the edge values.
+        let specials = [
+            0.0,
+            -0.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            2.0,
+            -2.0,
+        ];
+        for length in 0..40 {
+            for _ in 0..200 {
+                let active = (0..length)
+                    .map(|index| Active {
+                        pixel: [index, 0],
+                        value: specials[(next() % specials.len() as u64) as usize],
+                    })
+                    .collect::<Vec<_>>();
+                let found = first_largest(&active).map(|pixel| pixel.pixel);
+                assert_eq!(found, scan(&active).map(|pixel| pixel.pixel));
+            }
+        }
     }
 }
