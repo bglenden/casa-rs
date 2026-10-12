@@ -748,8 +748,11 @@ impl SpectralResampler {
             .cube_padding()
             .map(|padding| self.density_axis(padding))
             .transpose()?;
-        let mut values = vec![Complex32::default(); npol];
-        let mut weights = vec![0.0_f32; npol];
+        // One feed basis selects at most four correlations; per-row heap
+        // buffers cost a measurable share of placement.
+        let mut values = [Complex32::default(); 4];
+        let mut weights = [0.0_f32; 4];
+        let (values, weights) = (&mut values[..npol], &mut weights[..npol]);
         let mut hold = CellHold::new();
         self.for_each_sample(row, |plane, frequency_hz, source| {
             if sample_flagged(row, npol, source) {
@@ -777,7 +780,7 @@ impl SpectralResampler {
                 values[pol] = Complex32::new(scaled.re as f32, scaled.im as f32);
                 weights[pol] = weight;
             }
-            out.push(placement, &values, &weights);
+            out.push(placement, values, weights);
         });
         Ok(())
     }

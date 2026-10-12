@@ -139,7 +139,9 @@ pub enum Work<'a> {
 /// contract in plan section 5.3, selected by the runtime.
 pub trait GridBackend: Send {
     /// Apply `work` to one block with kernel set `cf`; the work is complete
-    /// when this returns.
+    /// when this returns, except that a device backend may leave grid-only
+    /// work running on device cells, which the host's next access to the
+    /// cells waits for ([`DeviceCells::defer`](crate::DeviceCells::defer)).
     ///
     /// Every placement must lie on a plane the target holds and have its
     /// whole support inside the target's tile; the block's polarization

@@ -31,6 +31,7 @@ tempfile = "3"
 thiserror.workspace = true
 
 [dev-dependencies]
+casa-imaging-metal = { path = "../casa-imaging-metal" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 casa-test-support = { path = "../casa-test-support" }

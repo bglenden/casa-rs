@@ -286,22 +286,31 @@ impl PartialEq for GridStorage {
 /// `f32` cells in memory another allocator owns: a buffer a device and the
 /// host share.
 ///
-/// A device backend completes every dispatch against these cells before
-/// its [`GridBackend::apply`](crate::GridBackend::apply) returns, so between
-/// dispatches the host owns them exclusively through the accumulator that
-/// holds them. The owner keeps the memory alive and is dropped with the
+/// A device backend dispatches against these cells only while it holds the
+/// accumulator in [`GridBackend::apply`](crate::GridBackend::apply). Work it
+/// leaves running when `apply` returns it records with
+/// [`DeviceCells::defer`], and the host's next read or write of the cells
+/// waits for that work first, so the host never sees cells the device is
+/// still writing. The owner keeps the memory alive and is dropped with the
 /// cells; a backend reads it back with [`DeviceCells::owner`].
 pub struct DeviceCells {
     cells: std::ptr::NonNull<Complex32>,
     len: usize,
     owner: Box<dyn std::any::Any + Send + Sync>,
+    /// Waits for device work that may still write the cells.
+    pending: std::sync::Mutex<Option<DeferredWork>>,
 }
 
+/// Blocks until device work that writes a [`DeviceCells`] is done.
+pub type DeferredWork = Box<dyn FnOnce() + Send>;
+
 // SAFETY: the cells are plain `f32` pairs reached only through `&self` or
-// `&mut self` of this value (see `new`), and the owner is itself
-// `Send + Sync`.
+// `&mut self` of this value after any deferred device work is done (see
+// `new`), and the owner and the pending wait are themselves `Send`.
 unsafe impl Send for DeviceCells {}
-// SAFETY: as for `Send`: shared access only reads.
+// SAFETY: as for `Send`: shared access only reads, and the pending wait is
+// behind a mutex held until the wait returns, so a reader on any thread
+// reaches the cells only after the device's work is done.
 unsafe impl Sync for DeviceCells {}
 
 impl DeviceCells {
@@ -312,26 +321,78 @@ impl DeviceCells {
     /// `cells` must point to `len` initialised, aligned `Complex32` values
     /// that stay valid for as long as `owner` lives, and nothing may read or
     /// write them except through the returned value: a device may write
-    /// them only while its backend holds `&mut` access to this value.
+    /// them only while its backend holds `&mut` access to this value, or
+    /// afterwards while the work it recorded with [`Self::defer`] runs.
     #[must_use]
     pub unsafe fn new(
         cells: std::ptr::NonNull<Complex32>,
         len: usize,
         owner: Box<dyn std::any::Any + Send + Sync>,
     ) -> Self {
-        Self { cells, len, owner }
+        Self {
+            cells,
+            len,
+            owner,
+            pending: std::sync::Mutex::new(None),
+        }
     }
 
-    /// The cells.
+    /// Record device work that may still write the cells: `wait` blocks
+    /// until it is done, and the host's next read or write of the cells, on
+    /// any thread, waits for it first. It replaces any wait recorded before.
+    /// A wait that panics leaves the cells unreachable: every later access
+    /// panics.
+    ///
+    /// Recording a wait is unsafe, so code that can only read the cells
+    /// cannot replace a backend's wait with one that returns early:
+    ///
+    /// ```compile_fail,E0133
+    /// fn replace(cells: &casa_imaging_operator::DeviceCells) {
+    ///     cells.defer(Box::new(|| {}));
+    /// }
+    /// ```
+    ///
+    /// # Safety
+    ///
+    /// When `wait` returns, every device write to the cells issued so far
+    /// must be complete, including the writes an earlier wait covered (a
+    /// device queue that completes the commands writing one buffer in
+    /// commit order gives this by waiting for the last of them). The device
+    /// may write the cells afterwards only in work a later call records.
+    pub unsafe fn defer(&self, wait: DeferredWork) {
+        *self.pending() = Some(wait);
+    }
+
+    /// Wait for any deferred device work. The lock is held through the
+    /// wait, so a reader on another thread waits for it too.
+    fn settle(&self) {
+        let mut pending = self.pending();
+        if let Some(wait) = pending.take() {
+            wait();
+        }
+    }
+
+    /// The pending wait. A wait that panicked may have returned before the
+    /// device finished, so its lock stays poisoned and this panics.
+    fn pending(&self) -> std::sync::MutexGuard<'_, Option<DeferredWork>> {
+        self.pending
+            .lock()
+            .expect("a wait for device work on these cells panicked")
+    }
+
+    /// The cells, once any deferred device work is done.
     #[must_use]
     pub fn cells(&self) -> &[Complex32] {
-        // SAFETY: `new`'s contract.
+        self.settle();
+        // SAFETY: `new`'s contract; the device's work is done.
         unsafe { std::slice::from_raw_parts(self.cells.as_ptr(), self.len) }
     }
 
-    /// The cells, mutably.
+    /// The cells, mutably, once any deferred device work is done.
     pub fn cells_mut(&mut self) -> &mut [Complex32] {
-        // SAFETY: `new`'s contract; `&mut self` is the only access.
+        self.settle();
+        // SAFETY: `new`'s contract; `&mut self` is the only access and the
+        // device's work is done.
         unsafe { std::slice::from_raw_parts_mut(self.cells.as_ptr(), self.len) }
     }
 

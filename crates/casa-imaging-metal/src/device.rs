@@ -143,10 +143,12 @@ pub(crate) struct Buffer {
     pub bytes: usize,
 }
 
-// SAFETY: `MTLBuffer` objects are thread-safe; their contents are reached
-// only through `&mut self` (writes) or `&self` (reads) while no command that
-// writes them is pending, which every caller in this crate guarantees by
-// completing its commands before handing the buffer back.
+// SAFETY: `MTLBuffer` objects are thread-safe, and a command buffer retains
+// those it binds. The host reaches the contents only through `&mut self`
+// (writes) or `&self` (reads), never bytes a pending command writes: the
+// backend waits for a slot's command before touching its buffers, appends
+// to kernel tables only past the records in flight, and reaches a grid only
+// through its `DeviceCells`, which wait for deferred work.
 unsafe impl Send for Buffer {}
 // SAFETY: as for `Send`.
 unsafe impl Sync for Buffer {}

@@ -13,8 +13,11 @@
 //! order of the `f32` grid additions differs.
 //!
 //! Accumulators live in memory the device addresses
-//! ([`MetalBackend::accumulator`]); every dispatch completes before `apply`
-//! returns, so the host reads them like any other accumulator. Without a
+//! ([`MetalBackend::accumulator`]). Every dispatch completes before `apply`
+//! returns, except grid work a backend made with
+//! [`MetalBackend::with_deferred_grid_completion`] leaves running; the
+//! accumulator's cells wait for that work, so the host reads them like any
+//! other accumulator. Without a
 //! unified-memory Metal 3 device, constructors return
 //! [`DeviceFailure::Unavailable`](casa_imaging_operator::DeviceFailure).
 //!
@@ -41,8 +44,14 @@ pub use unavailable::MetalBackend;
 pub const METAL_STAGE_TIMING: &str = "casa_imaging::metal_stage_timing";
 
 /// Ring slots of one backend: the host prepares one while the device runs
-/// the others.
-const RING: usize = 3;
+/// the others. Twice the sub-blocks of one apply ([`SPLIT`]), so that an
+/// apply whose grid work is left in flight
+/// (`MetalBackend::with_deferred_grid_completion`) seldom waits for the apply
+/// before it.
+const RING: usize = 2 * SPLIT;
+/// Sub-blocks one apply is split into, so the host prepares one while the
+/// device runs another.
+const SPLIT: usize = 3;
 /// The most samples in one ring sub-block.
 const MAX_SUB: usize = 32_768;
 /// Device bytes per sample of a ring slot: the record, and per visibility

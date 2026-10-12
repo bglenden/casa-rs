@@ -420,12 +420,165 @@ fn one_backend_serves_successive_accumulators_and_empty_blocks() {
     }
 }
 
+/// A backend that defers grid completion leaves its grid work running when
+/// `apply` returns, and the host's first read of the cells, with nothing
+/// between that waits for the device (no prediction or readback, no
+/// `complete`, no drop), sees the CPU's grids. The applies before it cover
+/// data, PSF, weight and residual gridding without residual samples, and
+/// later ones upload kernel tables and taps while earlier ones run: the
+/// first block meets one of the two dense cells, the next both, and the
+/// weight mode the weight taps.
+#[test]
+fn deferred_grids_are_whole_at_the_hosts_first_read() {
+    let mut rng = Rng::new(43);
+    let operator = operator(Kernels::Dense, Basis::ChannelLocal { planes: 3 }, &mut rng);
+    let Some(metal) = metal(&operator) else {
+        return;
+    };
+    let mut metal = metal.with_deferred_grid_completion();
+    let prepared = operator
+        .prepare_model(&model(&operator, &mut rng), ModelPrescale::Unit)
+        .expect("model");
+    let placed = placements(&operator, full(&operator), 4 * SAMPLES, 3, &mut rng);
+    let one_cell: Vec<_> = placed
+        .iter()
+        .filter(|placement| placement.cf.cube == 0)
+        .copied()
+        .collect();
+    let (first, rest) = (block(&one_cell, &mut rng), block(&placed, &mut rng));
+    let planes = PlaneRange::new(0, 3);
+    let mut device =
+        MetalBackend::accumulator(operator.accumulator_layout(planes, None, ModeSet::ALL))
+            .expect("device");
+    let mut cpu = operator.accumulator(planes, None, ModeSet::ALL);
+    for (backend, acc) in [
+        (&mut CpuBackend::new() as &mut dyn GridBackend, &mut cpu),
+        (&mut metal, &mut device),
+    ] {
+        for (buffer, mode) in [
+            (&first, Mode::Data),
+            (&rest, Mode::Psf),
+            (&rest, Mode::Weight),
+        ] {
+            backend
+                .apply(&buffer.block(), operator.cf(), Work::Grid { mode, acc })
+                .expect("grid");
+        }
+        backend
+            .apply(
+                &rest.block(),
+                operator.cf(),
+                Work::ResidualGrid {
+                    model: &prepared,
+                    acc,
+                    residual_out: None,
+                },
+            )
+            .expect("residual grid");
+    }
+    assert_same_grids(&device, &cpu, "first read after deferred grids");
+    metal.complete().expect("nothing failed");
+}
+
+/// A prediction between deferred grid applies on the same backend reads
+/// back its own output, never a deferred grid command's, and the grids
+/// still equal the CPU's.
+#[test]
+fn predictions_between_deferred_grids_read_back_their_own_output() {
+    let mut rng = Rng::new(41);
+    let operator = operator(
+        Kernels::Spheroidal,
+        Basis::ChannelLocal { planes: 3 },
+        &mut rng,
+    );
+    let Some(metal) = metal(&operator) else {
+        return;
+    };
+    let mut metal = metal.with_deferred_grid_completion();
+    let prepared = operator
+        .prepare_model(&model(&operator, &mut rng), ModelPrescale::Unit)
+        .expect("model");
+    let planes = PlaneRange::new(0, 3);
+    let layout = operator.accumulator_layout(planes, None, ModeSet::DATA_PSF);
+    let mut device = MetalBackend::accumulator(layout).expect("device");
+    let mut cpu = operator.accumulator(planes, None, ModeSet::DATA_PSF);
+    for round in 0..3 {
+        let placed = placements(
+            &operator,
+            full(&operator),
+            SAMPLES + 500 * round,
+            3,
+            &mut rng,
+        );
+        let buffer = block(&placed, &mut rng);
+        for mode in [Mode::Data, Mode::Psf] {
+            CpuBackend::new()
+                .apply(
+                    &buffer.block(),
+                    operator.cf(),
+                    Work::Grid {
+                        mode,
+                        acc: &mut cpu,
+                    },
+                )
+                .expect("cpu");
+            metal
+                .apply(
+                    &buffer.block(),
+                    operator.cf(),
+                    Work::Grid {
+                        mode,
+                        acc: &mut device,
+                    },
+                )
+                .expect("metal");
+        }
+        let mut expected = vec![Complex32::default(); placed.len() * 2];
+        let mut predicted = vec![Complex32::default(); placed.len() * 2];
+        CpuBackend::new()
+            .apply(
+                &buffer.block(),
+                operator.cf(),
+                Work::Predict {
+                    model: &prepared,
+                    out: &mut expected,
+                },
+            )
+            .expect("cpu predict");
+        metal
+            .apply(
+                &buffer.block(),
+                operator.cf(),
+                Work::Predict {
+                    model: &prepared,
+                    out: &mut predicted,
+                },
+            )
+            .expect("metal predict");
+        assert_close(&predicted, &expected, &format!("round {round} prediction"));
+    }
+    assert_same_grids(&device, &cpu, "deferred grids");
+    metal.complete().expect("nothing failed");
+}
+
 #[test]
 fn misplaced_samples_and_host_accumulators_are_refused_before_the_device() {
+    refused_before_the_device(false);
+    // A refused apply drains the ring even when grid work is deferred, so
+    // the device never writes a tile its caller holds again.
+    refused_before_the_device(true);
+}
+
+fn refused_before_the_device(defer: bool) {
     let mut rng = Rng::new(37);
     let operator = operator(Kernels::Spheroidal, Basis::Constant, &mut rng);
-    let Some(mut metal) = metal(&operator) else {
+    let Some(metal) = metal(&operator) else {
         return;
+    };
+    let mut metal = if defer {
+        metal.with_deferred_grid_completion()
+    } else {
+        metal
     };
     // 3,001 samples are three ring sub-blocks of 1,001; the one misplaced
     // sample (anchored left of the tile) sits in the third, so the panic

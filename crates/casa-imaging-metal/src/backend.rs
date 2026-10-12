@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! [`MetalBackend`]: one dispatch path (prepare on the host, map, commit,
-//! complete) over a three-slot ring.
+//! complete) over a ring of slots.
 
 use std::ops::Range;
 
@@ -22,18 +22,20 @@ use crate::records::{
     KnownTable, KnownTables, MAX_POLS, MAX_TERMS, Params, SampleRecord, TableRecord, TapsKind,
     Targets, prepare,
 };
-use crate::{MAX_SUB, RING};
+use crate::{MAX_SUB, RING, SPLIT};
 
 /// The fewest samples in one sub-block: an `apply` is cut into at least
-/// [`RING`] sub-blocks once it holds `RING · MIN_SUB` samples.
+/// [`SPLIT`] sub-blocks once it holds `SPLIT · MIN_SUB` samples.
 const MIN_SUB: usize = 512;
 
 /// The Metal implementation of [`GridBackend`] for one kernel set.
 ///
-/// Every dispatch is complete when [`GridBackend::apply`] returns. Inside
-/// one `apply` the block is cut into sub-blocks over a three-slot ring, so
-/// the host locates the samples of one sub-block while the device grids
-/// the previous ones. Accumulators must come from
+/// Every dispatch is complete when [`GridBackend::apply`] returns, unless
+/// the backend defers grid completion
+/// ([`Self::with_deferred_grid_completion`]).
+/// Inside one `apply` the block is cut into sub-blocks over a ring of
+/// slots, so the host locates the samples of one sub-block while the
+/// device grids the previous ones. Accumulators must come from
 /// [`MetalBackend::accumulator`] (their cells live in memory the device
 /// addresses); model grids are copied to the device once and the copy is
 /// kept in the grids. Grids are `f32` (D2): an `f64` accumulator or model
@@ -53,6 +55,8 @@ pub struct MetalBackend<'cf> {
     next: usize,
     usage: Usage,
     stage_timing: bool,
+    /// Whether grid-only work may still run when `apply` returns.
+    defer_grid: bool,
 }
 
 /// What a backend was asked to dispatch over its life, logged once when it
@@ -79,6 +83,9 @@ struct Arena {
 /// One ring slot: the buffers of one sub-block and the command using them.
 struct Slot {
     command: Option<Command>,
+    /// Whether the command's output is read back; a grid-only command,
+    /// perhaps left running by an earlier `apply`, is only waited for.
+    reads_back: bool,
     range: Range<usize>,
     capacity: usize,
     npol: usize,
@@ -90,12 +97,20 @@ struct Slot {
 }
 
 /// A committed command buffer.
+#[derive(Clone)]
 struct Command(Retained<ProtocolObject<dyn MTLCommandBuffer>>);
 
 // SAFETY: a committed command buffer is only waited on and queried, which
 // Metal allows from any thread; the backend that owns it is used by one
-// thread at a time (`GridBackend` is `Send`, not `Sync`).
+// thread at a time (`GridBackend` is `Send`, not `Sync`), and a clone handed
+// to `DeviceCells::defer` is only waited on.
 unsafe impl Send for Command {}
+
+impl Command {
+    fn wait_until_completed(&self) {
+        self.0.waitUntilCompleted();
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kernel {
@@ -126,6 +141,7 @@ impl<'cf> MetalBackend<'cf> {
         for _ in 0..RING {
             ring.push(Slot {
                 command: None,
+                reads_back: false,
                 range: 0..0,
                 capacity: 0,
                 npol: 0,
@@ -154,7 +170,42 @@ impl<'cf> MetalBackend<'cf> {
             next: 0,
             usage: Usage::default(),
             stage_timing,
+            defer_grid: false,
         })
+    }
+
+    /// This backend, leaving grid-only work ([`Work::Grid`], and
+    /// [`Work::ResidualGrid`] without residual samples) running on the
+    /// device when `apply` returns, so the host can prepare the next work
+    /// meanwhile. The accumulator's cells wait for it before the host next
+    /// reaches them ([`DeviceCells::defer`]).
+    ///
+    /// Only [`Self::complete`], or a later `apply` that reuses the work's
+    /// slot, reports a deferred dispatch that failed; reading the cells or
+    /// dropping the backend does not, so a caller calls `complete` before
+    /// it trusts the grids.
+    #[must_use]
+    pub fn with_deferred_grid_completion(mut self) -> Self {
+        self.defer_grid = true;
+        self
+    }
+
+    /// Wait for every dispatch still running, and report the first that
+    /// failed.
+    ///
+    /// # Errors
+    ///
+    /// [`OperatorError::Device`] when a dispatch failed on the device.
+    pub fn complete(&mut self) -> Result<(), OperatorError> {
+        let mut result = Ok(());
+        for slot in 0..RING {
+            let waited = self.wait(slot).map(|_| ());
+            if result.is_ok() {
+                result = waited;
+            }
+        }
+        self.usage.failed |= result.is_err();
+        result
     }
 
     /// A zeroed accumulator for `layout` whose cells live in memory the
@@ -165,10 +216,12 @@ impl<'cf> MetalBackend<'cf> {
         let buffer = device.buffer(cells * size_of::<Complex32>())?;
         let pointer = buffer.contents().cast::<Complex32>();
         // SAFETY: the buffer holds `cells` zeroed, 16-byte aligned complex
-        // values and lives as long as its owner box. The host reaches it only
-        // through these cells, and the device writes it only inside `apply`,
-        // which holds `&mut` to the accumulator and completes before
-        // returning.
+        // values and lives as long as its owner box (and as long as any
+        // command that binds it, which Metal retains). The host reaches it
+        // only through these cells. The device writes it inside `apply`,
+        // which holds `&mut` to the accumulator, and afterwards only while
+        // work recorded with `DeviceCells::defer` runs, which the cells wait
+        // for before the host reaches them.
         let cells = unsafe { DeviceCells::new(pointer, cells, Box::new(buffer)) };
         Ok(GridAccumulator::with_storage(
             layout,
@@ -180,7 +233,7 @@ impl<'cf> MetalBackend<'cf> {
     /// not hold yet.
     fn learn(&mut self, block: &SampleBlock<'_>, kind: TapsKind) -> Result<(), OperatorError> {
         let mut last = None;
-        let mut added = false;
+        let known = self.tables.len();
         for placement in block.placements {
             let key = placement.cf;
             if last == Some(key) || self.known.contains_key(&(key, kind)) {
@@ -221,16 +274,21 @@ impl<'cf> MetalBackend<'cf> {
             self.tables.push(table);
             self.known
                 .insert((key, kind), KnownTable::new(index, &taps));
-            added = true;
         }
-        if added {
+        if self.tables.len() > known {
+            // Commands still running read only the records before `known`:
+            // a grown buffer is new (they keep the old one), and the current
+            // one gains records only after them.
             let bytes = self.tables.len() * size_of::<TableRecord>();
-            if self.table_buffer.bytes < bytes {
+            let from = if self.table_buffer.bytes < bytes {
                 self.table_buffer = self.device.buffer(2 * bytes)?;
-            }
+                0
+            } else {
+                known
+            };
             self.table_buffer
-                .slice_mut::<TableRecord>(self.tables.len())
-                .copy_from_slice(&self.tables);
+                .slice_mut::<TableRecord>(self.tables.len())[from..]
+                .copy_from_slice(&self.tables[from..]);
         }
         Ok(())
     }
@@ -299,6 +357,8 @@ impl<'cf> MetalBackend<'cf> {
     }
 
     /// Prepare, commit and complete `kernel` over every sample of `block`.
+    /// Grid-only work into `cells` is left running when the backend defers
+    /// grid completion; the cells then wait for it.
     #[allow(clippy::too_many_arguments)]
     fn run(
         &mut self,
@@ -306,13 +366,21 @@ impl<'cf> MetalBackend<'cf> {
         block: &SampleBlock<'_>,
         targets: &Targets<'_>,
         mut sumwt: Option<&mut [f64]>,
-        grid: Option<&Buffer>,
+        cells: Option<&DeviceCells>,
         model: Option<&Buffer>,
         mut readback: Readback<'_>,
         params: Params,
     ) -> Result<(), OperatorError> {
+        let grid = cells.map(|cells| {
+            cells
+                .owner()
+                .downcast_ref::<Buffer>()
+                .expect("the Metal backend grids into accumulators from MetalBackend::accumulator")
+        });
+        let reads_back = !matches!(readback, Readback::None);
+        let defer = self.defer_grid && !reads_back && cells.is_some();
         let samples = block.len();
-        let sub = samples.div_ceil(RING).clamp(MIN_SUB, MAX_SUB);
+        let sub = samples.div_ceil(SPLIT).clamp(MIN_SUB, MAX_SUB);
         self.usage.applies += 1;
         self.usage.samples += samples as u64;
         self.usage.sub_blocks += samples.div_ceil(sub) as u64;
@@ -338,10 +406,26 @@ impl<'cf> MetalBackend<'cf> {
                 self.usage.prepare += started.elapsed();
                 filled?;
                 self.commit(slot, kernel, grid, model, params, start..end)?;
+                self.ring[slot].reads_back = reads_back;
                 start = end;
             }
             Ok::<_, OperatorError>(())
         }));
+        if defer && matches!(dispatched, Ok(Ok(()))) {
+            let last = (self.next + RING - 1) % RING;
+            if let Some(command) = self.ring[last].command.clone() {
+                let cells = cells.expect("deferred work has cells");
+                // SAFETY: every command that writes these cells, from any
+                // backend, goes to the one process-wide queue
+                // (`Device::shared`), and the grid buffer is tracked, so
+                // the device runs them in commit order: once this apply's
+                // last command completes, every write issued so far has.
+                // Later device writes come only from later applies, which
+                // record their own wait.
+                unsafe { cells.defer(Box::new(move || command.wait_until_completed())) };
+            }
+            return Ok(());
+        }
         let mut drained = Ok(());
         for slot in 0..RING {
             let retired = self.retire(slot, block, &mut readback);
@@ -432,10 +516,10 @@ impl<'cf> MetalBackend<'cf> {
             let encoder = command.computeCommandEncoder().ok_or(failed)?;
             encoder.setComputePipelineState(&pipeline.state);
             let bind = |buffer: &Buffer, index: usize| {
-                // SAFETY: every bound buffer outlives the command: the slot,
-                // arena and table buffers belong to this backend, the grid
-                // and model to the caller's `apply`, and `apply` waits for
-                // the command before returning. Indices match the kernels.
+                // SAFETY: the command buffer retains every buffer it binds,
+                // so each outlives the command; the host reaches the slot
+                // buffers only after `wait`, and the grid's cells only
+                // through their deferred wait. Indices match the kernels.
                 unsafe { encoder.setBuffer_offset_atIndex(Some(&buffer.raw), 0, index) };
             };
             bind(&slot.records, 0);
@@ -485,16 +569,12 @@ impl<'cf> MetalBackend<'cf> {
         })
     }
 
-    /// Wait for slot `slot`'s command, if any, and read its output back.
-    fn retire(
-        &mut self,
-        slot: usize,
-        block: &SampleBlock<'_>,
-        readback: &mut Readback<'_>,
-    ) -> Result<(), OperatorError> {
+    /// Wait for slot `slot`'s command, if any: the samples whose output it
+    /// reads back, when it reads any.
+    fn wait(&mut self, slot: usize) -> Result<Option<Range<usize>>, OperatorError> {
         let slot = &mut self.ring[slot];
         let Some(Command(command)) = slot.command.take() else {
-            return Ok(());
+            return Ok(None);
         };
         let started = std::time::Instant::now();
         command.waitUntilCompleted();
@@ -503,8 +583,21 @@ impl<'cf> MetalBackend<'cf> {
             let code = command.error().map_or(-1, |error| error.code() as i64);
             return Err(OperatorError::Device(DeviceFailure::CommandFailed { code }));
         }
+        Ok(slot.reads_back.then(|| slot.range.clone()))
+    }
+
+    /// Wait for slot `slot`'s command, if any, and read its output back.
+    fn retire(
+        &mut self,
+        slot: usize,
+        block: &SampleBlock<'_>,
+        readback: &mut Readback<'_>,
+    ) -> Result<(), OperatorError> {
+        let Some(range) = self.wait(slot)? else {
+            return Ok(());
+        };
+        let slot = &self.ring[slot];
         let npol = block.npol;
-        let range = slot.range.clone();
         let device = slot.out.slice::<Complex32>(range.len() * npol);
         let (out, residual) = match readback {
             Readback::None => return Ok(()),
@@ -551,7 +644,9 @@ impl<'cf> MetalBackend<'cf> {
 
 impl Arena {
     /// Append `values`, growing the device array when full; returns their
-    /// first index. Called only while no command is pending.
+    /// first index. Commands still running read only values appended before
+    /// them, which this never rewrites: a grown array is a new buffer, and
+    /// they keep the old one.
     fn append<T: Copy>(&mut self, device: &Device, values: &[T]) -> Result<u32, OperatorError> {
         let needed = (self.used + values.len()) * size_of::<T>();
         if self.buffer.bytes < needed {
@@ -570,11 +665,12 @@ impl Arena {
 
 impl Drop for MetalBackend<'_> {
     fn drop(&mut self) {
-        // `run` drains the ring before returning or unwinding; this only
-        // keeps a dropped backend from outliving work it committed.
+        // Deferred grid work may still run; a backend dropped without
+        // `complete` waits for it, and its usage says whether it failed.
         for slot in &mut self.ring {
             if let Some(Command(command)) = slot.command.take() {
                 command.waitUntilCompleted();
+                self.usage.failed |= command.status() == MTLCommandBufferStatus::Error;
             }
         }
         let Usage {
@@ -601,12 +697,10 @@ impl Drop for MetalBackend<'_> {
     }
 }
 
-/// The device buffer behind an accumulator from
-/// [`MetalBackend::accumulator`].
-fn grid_buffer(storage: &GridStorage) -> &Buffer {
+/// The device cells of an accumulator from [`MetalBackend::accumulator`].
+fn device_cells(storage: &GridStorage) -> &DeviceCells {
     storage
         .device()
-        .and_then(|cells| cells.owner().downcast_ref::<Buffer>())
         .expect("the Metal backend grids into accumulators from MetalBackend::accumulator")
 }
 
@@ -661,13 +755,12 @@ impl MetalBackend<'_> {
             model: None,
         };
         let params = self.params(block, &targets, mode != Mode::Data);
-        let grid = grid_buffer(storage);
         self.run(
             Kernel::Spread,
             block,
             &targets,
             Some(sumwt),
-            Some(grid),
+            Some(device_cells(storage)),
             None,
             Readback::None,
             params,
@@ -739,13 +832,12 @@ impl MetalBackend<'_> {
             }
             None => Readback::None,
         };
-        let grid = grid_buffer(storage);
         self.run(
             Kernel::Residual,
             block,
             &targets,
             Some(sumwt),
-            Some(grid),
+            Some(device_cells(storage)),
             Some(buffer),
             readback,
             params,

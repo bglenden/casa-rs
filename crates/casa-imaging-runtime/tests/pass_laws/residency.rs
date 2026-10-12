@@ -1,21 +1,23 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Residency: the planned waves fit the budget and equal one resident pass;
-//! a policy below one plane is refused at admission; a writing pass in
-//! waves and rows wider apart than the planned spacing are typed errors.
+//! a policy below one plane is refused at admission; a writing pass hands
+//! each row its own prediction; a writing pass in waves and rows wider
+//! apart than the planned spacing are typed errors.
 
 use casa_imaging_operator::{
-    Basis, GridPrecision, ModeSet, PlaneRange, SpectralAxis, SpectralKernel, SpectralResampler,
-    WeightingGeneration,
+    Basis, CpuBackend, GridPrecision, ModeSet, PlaneRange, PredictionScratch, SpectralAxis,
+    SpectralKernel, SpectralResampler, WeightingGeneration,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, BoundedSource, Cancel, MajorCyclePass, PassError, Residency, VisibilitySink,
-    WaveDemand, WorkerTeam, run_major_cycle,
+    BackendChoice, BoundedSource, Cancel, MajorCyclePass, NativeBlock, PassError, Residency,
+    SourceError, VisibilitySink, WaveDemand, WorkerTeam, run_major_cycle,
 };
 use casa_imaging_runtime::{Admission, Demand, HostResources, ResourcePolicy, admit};
+use num_complex::Complex32;
 
 use crate::fixture::{
-    IMAGE, Rows, Run, WIDTH_HZ, nearest_cube, operator, planes, run, sparse_model, try_run,
-    window_of, worst_relative,
+    IMAGE, Rows, Run, WIDTH_HZ, nearest_cube, offset_linear_cube, operator, planes, run,
+    sparse_model, try_run, window_of, worst_relative,
 };
 
 /// A host whose memory never binds, so the policy's ceiling does.
@@ -167,6 +169,83 @@ fn a_writing_pass_in_waves_is_a_typed_error() {
         matches!(result, Err(PassError::VisibilityWriteWaves)),
         "{result:?}"
     );
+}
+
+/// A pass that writes visibilities hands its sink each row with the
+/// prediction made from that row, although a pass otherwise takes a block's
+/// rows grouped by baseline and the fixture's rows interleave five
+/// baselines: every physical row arrives once, with its own prediction.
+#[test]
+fn a_writing_pass_hands_each_row_its_own_prediction() {
+    let resampler = offset_linear_cube();
+    let operator = operator(GridPrecision::F64, resampler.basis());
+    let model = sparse_model(IMAGE, 3, 59);
+    let prepare = |_: usize, planes: PlaneRange| -> Result<_, PassError> {
+        Ok(window_of(&operator, &model, planes))
+    };
+    let mut rows = Rows::random(100, 61, operator.geometry());
+    let whole = window_of(&operator, &model, PlaneRange::new(0, 3));
+    let mut scratch = PredictionScratch::default();
+    let expected = (0..rows.rows.len())
+        .map(|index| {
+            let mut predicted = vec![Complex32::default(); rows.rows[index].values.len()];
+            resampler
+                .predict_row(
+                    &operator,
+                    &mut CpuBackend::new(),
+                    &whole,
+                    &rows.native(0, index),
+                    &mut scratch,
+                    &mut predicted,
+                )
+                .expect("predict");
+            predicted
+        })
+        .collect::<Vec<_>>();
+    let weighting = WeightingGeneration::Natural { taper: None };
+    for workers in [1, 3] {
+        let domains = [planes(&operator, &resampler, workers)];
+        let pass = MajorCyclePass {
+            domains: &domains,
+            weighting: &weighting,
+            modes: ModeSet::DATA,
+            model: Some(&prepare),
+            residency: Residency::All,
+            native_spacing_hz: WIDTH_HZ,
+            backend: BackendChoice::Cpu,
+            metal_stage_timing: false,
+        };
+        let mut written = vec![None; expected.len()];
+        let mut write = |block: &NativeBlock, predictions: &[Complex32]| {
+            let cells = block.channels() * block.correlations();
+            for index in 0..block.len() {
+                let row = block.header(index).address.physical_row as usize;
+                assert!(written[row].is_none(), "row {row} is written once");
+                written[row] = Some(predictions[index * cells..(index + 1) * cells].to_vec());
+            }
+            Ok::<_, SourceError>(())
+        };
+        let mut sink = VisibilitySink {
+            predictions: true,
+            write: &mut write,
+        };
+        run_major_cycle(
+            &pass,
+            &mut rows,
+            &WorkerTeam::new(workers).expect("team"),
+            &Cancel::new(),
+            &mut |_, _| Ok(()),
+            Some(&mut sink),
+        )
+        .expect("pass");
+        for (row, (written, expected)) in written.iter().zip(&expected).enumerate() {
+            assert_eq!(
+                written.as_ref(),
+                Some(expected),
+                "{workers} workers, row {row}"
+            );
+        }
+    }
 }
 
 /// A wave's model halo is sized from the planned native spacing; a row

@@ -50,8 +50,8 @@ mod weighting;
 mod wplanes;
 
 pub use accumulator::{
-    AccumulatorLayout, DeviceCells, GridAccumulator, GridPrecision, GridScalar, GridStorage, Mode,
-    ModeSet, PlaneRange, Tile,
+    AccumulatorLayout, DeferredWork, DeviceCells, GridAccumulator, GridPrecision, GridScalar,
+    GridStorage, Mode, ModeSet, PlaneRange, Tile,
 };
 pub use aw::{
     AwCatalog, AwCatalogError, AwIndexing, EvlaApertureGrid, EvlaApertureModel, EvlaAwWorkspace,

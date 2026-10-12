@@ -135,7 +135,7 @@ impl Rows {
             weights: &row.weights,
             flags: &row.flags,
             row_flag: false,
-            context: context(),
+            context: context(index),
         }
     }
 
@@ -179,11 +179,14 @@ impl Rows {
     }
 }
 
-pub fn context() -> RowContext {
+/// Row `index`'s context: successive rows cycle through five baselines, as
+/// a measurement set's time-ordered rows do, so a pass that groups a
+/// block's rows by baseline reorders them.
+pub fn context(index: usize) -> RowContext {
     RowContext {
         original_w_m: None,
         time_s: 0.0,
-        antennas: [0, 1],
+        antennas: [0, 1 + (index % 5) as u32],
         antenna_types: [0, 0],
         parallactic_angle_rad: [0.0; 2],
         field: 0,
@@ -209,7 +212,7 @@ impl BoundedSource for Rows {
             block.push_row(
                 NativeRowHeader {
                     row_flag: false,
-                    context: context(),
+                    context: context(self.next + index),
                     address: RowAddress {
                         physical_row: (self.next + index) as u64,
                         data_description: 0,
