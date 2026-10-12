@@ -16,7 +16,9 @@ pub(super) const fn bytes(block: BlockShape) -> u64 {
 }
 
 /// Traverse `source` to exhaustion, handing each filled block to `consume`
-/// in source order. Returns the number of blocks consumed.
+/// in source order, its rows ordered by baseline
+/// ([`NativeBlock::order_rows_by_baseline`]). Returns the number of blocks
+/// consumed.
 ///
 /// The producer stops at the next block boundary after `cancel` is set or
 /// `consume` fails; both threads are joined before this returns.
@@ -42,7 +44,11 @@ pub(super) fn stream_blocks(
                         return;
                     }
                     let filled = match source.fill(&mut block) {
-                        Ok(true) => Ok(block),
+                        // Ordered here, off the consumer's path.
+                        Ok(true) => {
+                            block.order_rows_by_baseline();
+                            Ok(block)
+                        }
                         Ok(false) => return,
                         Err(error) => Err(error),
                     };

@@ -364,12 +364,16 @@ impl<'w, 'p> Wave<'w, 'p> {
             }
         }
         let sink_predictions = visibilities.as_ref().is_some_and(|sink| sink.predictions);
+        // Chunks take rows by position in the block's locality order, and
+        // predictions are stored by position, unless the sink reads them in
+        // the block's row order.
+        let ordered = !sink_predictions;
         if self.native_residuals || sink_predictions {
             let count = self.chunks.len().min(rows.max(1));
             for (index, chunk) in self.chunks[..count].iter_mut().enumerate() {
                 chunk.rows = index * rows / count..(index + 1) * rows / count;
             }
-            self.predict(block, team, count)?;
+            self.predict(block, team, count, ordered)?;
         } else {
             self.predictions.clear();
         }
@@ -381,8 +385,8 @@ impl<'w, 'p> Wave<'w, 'p> {
             };
             (sink.write)(block, predictions).map_err(PassError::VisibilityWrite)?;
         }
-        // Slices of the block, each owner's in row order as a whole block's
-        // would be, so the accumulation is the same.
+        // Slices of the block, each owner's in the block's order as a whole
+        // block's would be, so the accumulation is the same.
         let chunks = self.chunks.len();
         for slice in slices(rows, chunks, self.shape.rows) {
             let mut count = 0;
@@ -391,7 +395,7 @@ impl<'w, 'p> Wave<'w, 'p> {
                 count += 1;
             }
             for index in 0..self.domains.len() {
-                let placed = self.place(block, team, count, index)?;
+                let placed = self.place(block, team, count, index, ordered)?;
                 if index == 0 {
                     self.samples += placed;
                 }
@@ -401,13 +405,15 @@ impl<'w, 'p> Wave<'w, 'p> {
     }
 
     /// Place the rows of `block` on domain `index` and accumulate them;
-    /// returns the samples placed.
+    /// returns the samples placed. Chunks hold positions in the block's
+    /// locality order when `ordered`, else row indices ([`row_at`]).
     fn place(
         &mut self,
         block: &NativeBlock,
         team: &WorkerTeam,
         count: usize,
         index: usize,
+        ordered: bool,
     ) -> Result<u64, PassError> {
         let pass = self.pass;
         let target = &pass.domains[index];
@@ -428,11 +434,11 @@ impl<'w, 'p> Wave<'w, 'p> {
                 .iter_mut()
                 .for_each(SampleBuffer::clear);
             chunk.weight_owned.clear();
-            for row in chunk.rows.clone() {
+            for position in chunk.rows.clone() {
                 chunk.scratch.clear();
-                let native = block.row(index, row);
+                let native = block.row(index, row_at(block, ordered, position));
                 let native = if native_residuals {
-                    let model = &predictions[row * cells..(row + 1) * cells];
+                    let model = &predictions[position * cells..(position + 1) * cells];
                     chunk.residual.clear();
                     chunk.residual.extend(
                         native
@@ -559,12 +565,15 @@ impl<'w, 'p> Wave<'w, 'p> {
 
     /// Model visibilities of every selected sample of `block`, summed over
     /// every domain's model (`SIMapperCollection::degrid`), `[row][channel]
-    /// [correlation]`, into `self.predictions`; zero without a model.
+    /// [correlation]`, into `self.predictions`; zero without a model. Rows
+    /// are by position in the block's locality order when `ordered`
+    /// ([`row_at`]).
     fn predict(
         &mut self,
         block: &NativeBlock,
         team: &WorkerTeam,
         count: usize,
+        ordered: bool,
     ) -> Result<(), PassError> {
         let cells = block.channels() * block.correlations();
         let rows = block.len();
@@ -589,8 +598,9 @@ impl<'w, 'p> Wave<'w, 'p> {
         }
         team.for_each_mut(&mut pieces, |_, (chunk, out)| {
             chunk.predicted.resize(cells, Complex32::default());
-            for (local, row) in chunk.rows.clone().enumerate() {
+            for (local, position) in chunk.rows.clone().enumerate() {
                 let out = &mut out[local * cells..(local + 1) * cells];
+                let row = row_at(block, ordered, position);
                 for (index, (target, model)) in pass.domains.iter().zip(&models).enumerate() {
                     let Some(model) = model else {
                         continue;
@@ -653,6 +663,16 @@ impl<'w, 'p> Wave<'w, 'p> {
                 }
             })
             .collect()
+    }
+}
+
+/// The row at `position`: of the block's locality order when `ordered`
+/// ([`NativeBlock::ordered_row`]), else the row itself.
+fn row_at(block: &NativeBlock, ordered: bool, position: usize) -> usize {
+    if ordered {
+        block.ordered_row(position)
+    } else {
+        position
     }
 }
 
