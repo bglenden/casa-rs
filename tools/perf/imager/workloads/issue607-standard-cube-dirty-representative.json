@@ -29,7 +29,7 @@
     "deconvolver": "hogbom",
     "niter": 0,
     "minor_cycle_length": 2,
-    "casa_pblimit": -0.2,
+    "pblimit": -0.2,
     "write_pb": true,
     "pbcor": false,
     "wterm": "none"
@@ -59,6 +59,10 @@
         ".image": {
           "beam_area_relative": 0.001,
           "beam_kernel_nrmse": 0.001
+        },
+        ".pb": {
+          "require_topology_parity": true,
+          "mask_mismatch_fraction": 0.00001
         }
       }
     }

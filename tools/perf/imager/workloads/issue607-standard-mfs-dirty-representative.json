@@ -26,7 +26,7 @@
     "minor_cycle_length": 25,
     "write_pb": true,
     "savemodel": "none",
-    "casa_pblimit": -0.2,
+    "pblimit": -0.2,
     "standard_mfs_acceleration": "cpu"
   },
   "run": {
@@ -61,6 +61,10 @@
           "beam_major_relative": 0.001,
           "beam_minor_relative": 0.001,
           "beam_pa_degrees": 0.1
+        },
+        ".pb": {
+          "require_topology_parity": true,
+          "mask_mismatch_fraction": 0.00001
         }
       }
     }

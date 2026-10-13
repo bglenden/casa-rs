@@ -2965,7 +2965,19 @@ def _validate_native_spatial_evidence(value: Any, *, source: str) -> None:
         "central_mask_mismatch_pixels",
         "workspace_lifecycle",
     }
-    _allowed_fields(evidence, allowed, source)
+    magnitudes = {
+        "paired_raw_left_abs_max",
+        "paired_raw_right_abs_max",
+        "paired_raw_diff_abs_max",
+    }
+    _allowed_fields(evidence, allowed | magnitudes, source)
+    for key in magnitudes:
+        if key in evidence:
+            magnitude = finite_number(
+                evidence[key], field=f"{source}: {key}", optional=False
+            )
+            if magnitude < 0:
+                raise ContractError(f"{source}: {key} must be non-negative")
     for key in (
         "method",
         "storage",
