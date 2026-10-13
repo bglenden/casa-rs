@@ -17,8 +17,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use casa_imaging_metal::MetalBackend;
 use casa_imaging_operator::{
     Basis, CpuBackend, GridBackend, GridScalar, MeasurementOperator, Mode, ModeSet, ModelPrescale,
-    NO_CELL, NativeModel, NativeSource, NativeTarget, NativeTerm, PlaneRange, SampleBuffer, Tile,
-    Work,
+    NO_CELL, NativeModel, NativeSource, NativeTarget, NativeTerm, PlaneRange, SampleBlock,
+    SampleBuffer, Tile, Work,
 };
 use common::{
     ALL_KERNELS, Kernels, Rng, assert_close, assert_same_grids, block, metal, model, operator,
@@ -122,6 +122,68 @@ fn every_kernel_set_grids_data_psf_and_weight_like_the_cpu() {
                 &format!("{kernels:?} {basis:?} tiled {tiled}"),
             );
         }
+    }
+}
+
+/// A block gridded from parts ([`MetalBackend::apply_parts`]), one of them
+/// empty and the others cut across ring sub-blocks, grids as the CPU grids
+/// the whole block, in every mode, with `sumwt` summed in the same order.
+#[test]
+fn parts_grid_as_the_whole_block() {
+    for kernels in ALL_KERNELS {
+        let mut rng = Rng::new(23);
+        let operator = operator(kernels, Basis::ChannelLocal { planes: 3 }, &mut rng);
+        let Some(mut metal) = metal(&operator) else {
+            return;
+        };
+        let placed = placements(&operator, full(&operator), SAMPLES, 3, &mut rng);
+        let whole = block(&placed, &mut rng);
+        let whole = whole.block();
+        let parts = [0, 1_100, 1_100, 3_000, SAMPLES]
+            .windows(2)
+            .map(|cut| SampleBlock {
+                placements: &whole.placements[cut[0]..cut[1]],
+                values: &whole.values[cut[0] * 2..cut[1] * 2],
+                weights: &whole.weights[cut[0] * 2..cut[1] * 2],
+                sources: &[],
+                npol: 2,
+            })
+            .collect::<Vec<_>>();
+        let modes = match kernels {
+            Kernels::Spheroidal => ModeSet::DATA_PSF,
+            Kernels::Separable | Kernels::Dense | Kernels::WideDense => ModeSet::ALL,
+        };
+        let planes = PlaneRange::new(0, operator.basis().planes());
+        let mut cpu = operator.accumulator(planes, None, modes);
+        let mut device =
+            MetalBackend::accumulator(operator.accumulator_layout(planes, None, modes))
+                .expect("device");
+        for mode in [Mode::Data, Mode::Psf, Mode::Weight] {
+            if !modes.contains(mode) {
+                continue;
+            }
+            CpuBackend::new()
+                .apply(
+                    &whole,
+                    operator.cf(),
+                    Work::Grid {
+                        mode,
+                        acc: &mut cpu,
+                    },
+                )
+                .expect("cpu grid");
+            metal
+                .apply_parts(
+                    &parts,
+                    operator.cf(),
+                    Work::Grid {
+                        mode,
+                        acc: &mut device,
+                    },
+                )
+                .expect("metal grid");
+        }
+        assert_same_grids(&device, &cpu, &format!("{kernels:?} parts"));
     }
 }
 

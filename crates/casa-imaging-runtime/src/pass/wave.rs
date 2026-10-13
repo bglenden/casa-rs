@@ -36,23 +36,20 @@ impl Owner<'_> {
     fn complete(&mut self) -> Result<(), PassError> {
         match &mut self.backend {
             OwnerBackend::Cpu(_) => Ok(()),
-            OwnerBackend::Metal { backend, .. } => Ok(backend.complete()?),
+            OwnerBackend::Metal(backend) => Ok(backend.complete()?),
         }
     }
 }
 
 /// The backend an owner dispatches to. The CPU grids each placement chunk
-/// as it comes; a Metal owner first gathers its share of every chunk of a
-/// source block into `staging`, so each device dispatch is one block's
-/// worth of samples rather than one chunk's, and leaves that dispatch
-/// running while the workers place the next slice
+/// as it comes; a Metal owner dispatches its share of every chunk of a slice
+/// at once, read from the chunks' buffers ([`MetalBackend::apply_parts`]),
+/// so each device dispatch is a slice's worth of samples rather than one
+/// chunk's, and leaves it running while the workers place the next slice
 /// ([`MetalBackend::with_deferred_grid_completion`]).
 enum OwnerBackend<'w> {
     Cpu(CpuBackend),
-    Metal {
-        backend: Box<MetalBackend<'w>>,
-        staging: SampleBuffer,
-    },
+    Metal(Box<MetalBackend<'w>>),
 }
 
 /// One image domain's share of a wave.
@@ -181,12 +178,6 @@ impl ChunkShape {
         }
     }
 
-    /// Bytes a Metal owner's staging holds: its share of every chunk of a
-    /// slice, at most the whole slice.
-    const fn staging_bytes(self, chunks: usize) -> u64 {
-        self.buffer_bytes(chunks * self.placements)
-    }
-
     /// Placements the weight-owner buffer takes.
     const fn weight_placements(self) -> usize {
         if self.weight { self.placements } else { 0 }
@@ -266,9 +257,9 @@ const fn chunks(workers: usize) -> usize {
 }
 
 /// Bytes a wave places with on `workers` workers over blocks of `block`,
-/// gridding the weight image when `weight`: its row chunks and, on Metal,
-/// each owner's staging and, with a model, each chunk's predictors' rings
-/// and prediction batches ([`casa_imaging_metal::ring_bytes`],
+/// gridding the weight image when `weight`: its row chunks and, on Metal
+/// with a model, each chunk's predictors' rings and prediction batches
+/// ([`casa_imaging_metal::ring_bytes`],
 /// [`casa_imaging_metal::batch_bytes`]). They grow with the source's block
 /// only up to [`CHUNK_PLACEMENTS`](super::CHUNK_PLACEMENTS) a chunk.
 pub(super) fn chunk_bytes(
@@ -284,17 +275,12 @@ pub(super) fn chunk_bytes(
     let shape = ChunkShape::new(domains, block, weight, sourced, count);
     let device = match backend {
         BackendChoice::Cpu => 0,
-        BackendChoice::Metal => {
-            let staging = (domains.len() * shape.owners) as u64 * shape.staging_bytes(count);
-            let predictors = if with_model {
-                (count * domains.len()) as u64
-                    * (casa_imaging_metal::ring_bytes(shape.npol)
-                        + casa_imaging_metal::batch_bytes(shape.npol, shape.predicted))
-            } else {
-                0
-            };
-            staging + predictors
+        BackendChoice::Metal if with_model => {
+            (count * domains.len()) as u64
+                * (casa_imaging_metal::ring_bytes(shape.npol)
+                    + casa_imaging_metal::batch_bytes(shape.npol, shape.predicted))
         }
+        BackendChoice::Metal => 0,
     };
     count as u64 * shape.bytes() + device
 }
@@ -378,16 +364,10 @@ impl<'w, 'p> Wave<'w, 'p> {
                                     acc: Some(pass.summing(MetalBackend::accumulator(
                                         operator.accumulator_layout(range, tile, pass.modes),
                                     )?)),
-                                    backend: OwnerBackend::Metal {
-                                        backend: Box::new(
-                                            MetalBackend::new(
-                                                operator.cf(),
-                                                pass.metal_stage_timing,
-                                            )?
+                                    backend: OwnerBackend::Metal(Box::new(
+                                        MetalBackend::new(operator.cf(), pass.metal_stage_timing)?
                                             .with_deferred_grid_completion(),
-                                        ),
-                                        staging: shape.buffer(count * shape.placements),
-                                    },
+                                    )),
                                     images: None,
                                 }
                             }
@@ -639,39 +619,26 @@ impl<'w, 'p> Wave<'w, 'p> {
             // unless the image has one owner, who grids every placement
             // below.
             let own_weight = weight_owner.is_none();
+            let subtract = Subtract { model, native };
+            let cf = operator.cf();
             match &mut owner.backend {
                 OwnerBackend::Cpu(backend) => {
                     for chunk in chunks {
                         let block = chunk.owned[owner_index].block();
                         if !block.is_empty() {
-                            accumulate(
-                                pass,
-                                operator,
-                                backend,
-                                &block,
-                                Subtract { model, native },
-                                acc,
-                                own_weight,
-                            )?;
+                            let mut apply = |work: Work<'_>| backend.apply(&block, cf, work);
+                            accumulate(pass, &mut apply, subtract, acc, own_weight)?;
                         }
                     }
                 }
-                OwnerBackend::Metal { backend, staging } => {
-                    staging.clear();
-                    for chunk in chunks {
-                        staging.extend_from_block(&chunk.owned[owner_index].block());
-                    }
-                    if !staging.is_empty() {
-                        let backend: &mut MetalBackend<'_> = backend;
-                        accumulate(
-                            pass,
-                            operator,
-                            backend,
-                            &staging.block(),
-                            Subtract { model, native },
-                            acc,
-                            own_weight,
-                        )?;
+                OwnerBackend::Metal(backend) => {
+                    let parts = chunks
+                        .iter()
+                        .map(|chunk| chunk.owned[owner_index].block())
+                        .collect::<Vec<_>>();
+                    if parts.iter().any(|part| !part.is_empty()) {
+                        let mut apply = |work: Work<'_>| backend.apply_parts(&parts, cf, work);
+                        accumulate(pass, &mut apply, subtract, acc, own_weight)?;
                     }
                 }
             }
@@ -686,10 +653,8 @@ impl<'w, 'p> Wave<'w, 'p> {
                         acc,
                     };
                     match &mut owner.backend {
-                        OwnerBackend::Cpu(backend) => backend.apply(&block, operator.cf(), work)?,
-                        OwnerBackend::Metal { backend, .. } => {
-                            backend.apply(&block, operator.cf(), work)?;
-                        }
+                        OwnerBackend::Cpu(backend) => backend.apply(&block, cf, work)?,
+                        OwnerBackend::Metal(backend) => backend.apply(&block, cf, work)?,
                     }
                 }
             }
@@ -906,18 +871,16 @@ struct Subtract<'a> {
     native: Option<NativeModel<'a>>,
 }
 
-/// Grid one owner's share of a block in every mode the pass holds; the data
-/// terms receive the residual of what `subtract` names.
+/// Grid one owner's share of a slice, through `apply`, in every mode the
+/// pass holds; the data terms receive the residual of what `subtract`
+/// names.
 fn accumulate(
     pass: &MajorCyclePass<'_>,
-    operator: &casa_imaging_operator::MeasurementOperator,
-    backend: &mut dyn GridBackend,
-    block: &casa_imaging_operator::SampleBlock<'_>,
+    apply: &mut dyn FnMut(Work<'_>) -> Result<(), casa_imaging_operator::OperatorError>,
     subtract: Subtract<'_>,
     acc: &mut GridAccumulator,
     weight: bool,
 ) -> Result<(), PassError> {
-    let cf = operator.cf();
     if pass.modes.data {
         let work = match subtract {
             Subtract {
@@ -936,27 +899,19 @@ fn accumulate(
                 acc,
             },
         };
-        backend.apply(block, cf, work)?;
+        apply(work)?;
     }
     if pass.modes.psf {
-        backend.apply(
-            block,
-            cf,
-            Work::Grid {
-                mode: Mode::Psf,
-                acc,
-            },
-        )?;
+        apply(Work::Grid {
+            mode: Mode::Psf,
+            acc,
+        })?;
     }
     if pass.modes.weight && weight {
-        backend.apply(
-            block,
-            cf,
-            Work::Grid {
-                mode: Mode::Weight,
-                acc,
-            },
-        )?;
+        apply(Work::Grid {
+            mode: Mode::Weight,
+            acc,
+        })?;
     }
     Ok(())
 }

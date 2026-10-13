@@ -49,6 +49,20 @@ impl<'cf> MetalBackend<'cf> {
     pub fn complete(&mut self) -> Result<(), OperatorError> {
         match self.never {}
     }
+
+    /// Unreachable: no backend exists on this host.
+    ///
+    /// # Errors
+    ///
+    /// None; no backend exists on this host.
+    pub fn apply_parts(
+        &mut self,
+        _parts: &[SampleBlock<'_>],
+        _cf: &dyn ConvolutionFunctionSet,
+        _work: Work<'_>,
+    ) -> Result<(), OperatorError> {
+        match self.never {}
+    }
 }
 
 impl GridBackend for MetalBackend<'_> {
