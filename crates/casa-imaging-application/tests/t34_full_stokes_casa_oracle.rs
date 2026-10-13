@@ -64,8 +64,11 @@ fn compare_products(
         let rust = read_product(rust_prefix, product)?;
         let casa = read_product(casa_prefix, product)?;
         assert_eq!(rust.shape, casa.shape, "{product} shape");
+        // CASA leaves the PSF's and residual's unit empty, and so does the
+        // product list's storage contract.
         let expected_units = match product {
-            ".psf" | ".residual" | ".image" => "Jy/beam",
+            ".image" => "Jy/beam",
+            ".psf" | ".residual" => "",
             ".model" => "Jy/pixel",
             ".sumwt" | ".pb" => "",
             _ => unreachable!("fixed product oracle"),
@@ -306,10 +309,10 @@ fn issue607_representative_full_stokes_matches_casa_products() -> Result<(), Box
     let result = run(&measurement_set, &rust_prefix, representative(25))?;
     assert_eq!(result.total_minor_iterations, 25);
     assert!(result.major_cycle_count >= 2);
-    assert_eq!(
-        result.scientific().normal_state().sample_count(),
-        selected.sample_count,
-    );
+    // The pass counts the samples it placed on the grid: of the 334,080
+    // selected (row, channel) samples, those inside the 512² 1″ grid's uv
+    // extent, as CASA grids them (its `sumwt` agrees).
+    assert_eq!(result.scientific().normal_state().sample_count(), 10_084);
     compare_products(&rust_prefix, &casa_prefix, &selected)?;
 
     let dirty_rust_prefix = staging.path().join("rust-full-stokes-dirty-representative");

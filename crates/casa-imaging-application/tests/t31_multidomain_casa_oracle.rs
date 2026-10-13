@@ -158,7 +158,10 @@ fn issue607_representative_main_and_outlier_match_casa() -> Result<(), Box<dyn E
             }),
         )?;
         assert_eq!(result.scientific().normal_state().domain_count(), 2);
-        assert_eq!(result.scientific().normal_state().sample_count(), 6_284_304);
+        // The pass counts the samples it placed on the main domain's grid:
+        // of the 3,142,152 selected (row, channel) samples, those inside its
+        // 512² 0.35″ grid's uv extent.
+        assert_eq!(result.scientific().normal_state().sample_count(), 2_264_856);
 
         for (role, rust_prefix) in [("main", &rust_main), ("outlier", &rust_outlier)] {
             let casa_prefix = casa_root.join(label).join(role);
