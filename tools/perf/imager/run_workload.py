@@ -654,11 +654,28 @@ def build_plan(
         "IMAGER_BENCH_PROFILE_REPEATS": profile_repeats,
     }
     prepared_aw_casa_cache = os.environ.get("CASA_RS_BENCH_PREPARED_AW_CASA_CACHE")
+    native_aw_cf_cache = os.environ.get("CASA_RS_BENCH_NATIVE_AW_CF_CACHE")
     prepared_aw_output_prefix = os.environ.get(
         "CASA_RS_BENCH_PREPARED_AW_OUTPUT_PREFIX"
     )
     if prepared_aw_casa_cache:
         env["IMAGER_BENCH_PREPARED_AW_CASA_CACHE"] = prepared_aw_casa_cache
+    if native_aw_cf_cache:
+        # casars-imager generates its native EVLA catalog here; CASA builds
+        # its own cfcache inside tclean as always.
+        env["IMAGER_BENCH_NATIVE_AW_CF_CACHE"] = native_aw_cf_cache
+        env["IMAGER_BENCH_EVLA_SURFACE"] = os.environ.get(
+            "CASA_RS_BENCH_EVLA_SURFACE"
+        ) or os.path.expanduser("~/.casa/data/nrao/VLA/VLA.surface")
+        for name in (
+            "NATIVE_CF_WORKING_SIZE",
+            "NATIVE_CF_OVERSAMPLING",
+            "NATIVE_CF_CACHE_BYTES",
+            "NATIVE_CF_MAXIMUM_CELLS",
+        ):
+            if os.environ.get(f"CASA_RS_BENCH_{name}"):
+                env[f"IMAGER_BENCH_{name}"] = os.environ[f"CASA_RS_BENCH_{name}"]
+    if prepared_aw_casa_cache or native_aw_cf_cache:
         env["IMAGER_BENCH_AW_CF_RESIDENT_MB"] = os.environ.get(
             "CASA_RS_BENCH_AW_CF_RESIDENT_MB"
         ) or str(int_value(imaging, "cf_resident_mb", 384))
