@@ -110,7 +110,7 @@ fn every_kernel_set_grids_data_psf_and_weight_like_the_cpu() {
             let buffer = block(&placed, &mut rng);
             let modes = match kernels {
                 Kernels::Spheroidal => ModeSet::DATA_PSF,
-                Kernels::Separable | Kernels::Dense => ModeSet::ALL,
+                Kernels::Separable | Kernels::Dense | Kernels::WideDense => ModeSet::ALL,
             };
             grid_both(
                 &operator,

@@ -80,7 +80,8 @@ pub(crate) struct Params {
     pub model_terms: u32,
     pub weighted: u32,
     pub write_residual: u32,
-    pub pad: u32,
+    /// Threads serving one sample: 1, or a SIMD group's width.
+    pub lanes: u32,
     pub tile_shape: [u32; 2],
     pub tile_origin: [u32; 2],
     pub grid_shape: [u32; 2],

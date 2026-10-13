@@ -86,9 +86,17 @@ pub enum Kernels {
     Separable,
     /// Complex dense taps on two Mueller planes with leakage routing.
     Dense,
+    /// The dense set with eleven taps per axis: wider than one thread
+    /// serves, so each sample takes a SIMD group.
+    WideDense,
 }
 
-pub const ALL_KERNELS: [Kernels; 3] = [Kernels::Spheroidal, Kernels::Separable, Kernels::Dense];
+pub const ALL_KERNELS: [Kernels; 4] = [
+    Kernels::Spheroidal,
+    Kernels::Separable,
+    Kernels::Dense,
+    Kernels::WideDense,
+];
 
 /// An `f32` operator over `[XX, YY]` with the kernel set `kernels`.
 pub fn operator(kernels: Kernels, basis: Basis, rng: &mut Rng) -> MeasurementOperator {
@@ -96,6 +104,7 @@ pub fn operator(kernels: Kernels, basis: Basis, rng: &mut Rng) -> MeasurementOpe
         Kernels::Spheroidal => Box::new(Spheroidal::new(&geometry(), &routing())),
         Kernels::Separable => Box::new(Separable::new(5, 4, rng)),
         Kernels::Dense => Box::new(Dense::new(5, 4, rng)),
+        Kernels::WideDense => Box::new(Dense::new(11, 4, rng)),
     };
     MeasurementOperator::new(geometry(), basis, routing(), cf, GridPrecision::F32)
 }

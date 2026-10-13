@@ -28,6 +28,12 @@ use crate::{MAX_SUB, RING, SPLIT};
 /// [`SPLIT`] sub-blocks once it holds `SPLIT · MIN_SUB` samples.
 const MIN_SUB: usize = 512;
 
+/// The most taps per kernel cell for which one thread serves a whole
+/// sample, as the pre-refactor cube kernels did for their 7 × 7 taps;
+/// wider supports give each sample a SIMD group, whose lanes share its
+/// taps.
+const THREAD_TAPS: usize = 81;
+
 /// The Metal implementation of [`GridBackend`] for one kernel set.
 ///
 /// Every dispatch is complete when [`GridBackend::apply`] returns, unless
@@ -48,6 +54,8 @@ pub struct MetalBackend<'cf> {
     kernels: &'cf dyn ConvolutionFunctionSet,
     known: KnownTables,
     tables: Vec<TableRecord>,
+    /// The most taps of any cell in `tables`.
+    widest: usize,
     table_buffer: Buffer,
     rows: Arena,
     dense: Arena,
@@ -162,6 +170,7 @@ impl<'cf> MetalBackend<'cf> {
             kernels,
             known: KnownTables::new(),
             tables: Vec::new(),
+            widest: 0,
             table_buffer: device.buffer(0)?,
             rows: Arena {
                 buffer: device.buffer(0)?,
@@ -331,6 +340,9 @@ impl<'cf> MetalBackend<'cf> {
                     dense: 1,
                 },
             };
+            self.widest = self
+                .widest
+                .max(usize::from(table.support[0]) * usize::from(table.support[1]));
             self.tables.push(table);
             self.known
                 .insert((key, kind), KnownTable::new(index, &taps));
@@ -404,7 +416,7 @@ impl<'cf> MetalBackend<'cf> {
             model_terms: model_terms as u32,
             weighted: u32::from(weighted),
             write_residual: 0,
-            pad: 0,
+            lanes: 0,
             tile_shape: shape(tile.shape),
             tile_origin: shape(tile.origin),
             grid_shape: shape(targets.adjoint.as_ref().map_or_else(
@@ -584,6 +596,12 @@ impl<'cf> MetalBackend<'cf> {
             Kernel::Residual => &device.residual,
         };
         params.samples = range.len() as u32;
+        let (lanes, samples_per_group) = if self.widest <= THREAD_TAPS {
+            (1, pipeline.threads)
+        } else {
+            (pipeline.width, pipeline.samples_per_group)
+        };
+        params.lanes = lanes as u32;
         let slot = &mut self.ring[slot_index];
         objc2::rc::autoreleasepool(|_| {
             let command = device.queue.commandBuffer().ok_or(failed.clone())?;
@@ -625,7 +643,7 @@ impl<'cf> MetalBackend<'cf> {
             unsafe { encoder.setBytes_length_atIndex(pointer, size_of::<Params>(), 7) };
             encoder.dispatchThreadgroups_threadsPerThreadgroup(
                 MTLSize {
-                    width: range.len().div_ceil(pipeline.samples_per_group),
+                    width: range.len().div_ceil(samples_per_group),
                     height: 1,
                     depth: 1,
                 },
