@@ -211,7 +211,7 @@ impl<'a> MeasurementSetSource<'a> {
             let header = NativeRowHeader {
                 row_flag: numeric.row.row_flag || nonfinite_uvw,
                 context: RowContext {
-                    original_w_m: Some(coordinates.raw_uvw_m[2]),
+                    original_uvw_m: Some(coordinates.raw_uvw_m),
                     time_s: coordinates.time.mjd_days() * SECONDS_PER_DAY,
                     antennas: [metadata.antenna1 as u32, metadata.antenna2 as u32],
                     antenna_types: antenna_types(metadata.antenna_responses, &self.dish_classes),

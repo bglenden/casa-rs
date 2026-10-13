@@ -853,8 +853,9 @@ impl ConvolutionFunctionSet for AwCatalog {
     /// phase-centre rotation, while `DataToGrid` reads the rotated
     /// `uvw_p` (#667).
     fn prediction_w(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> f64 {
-        row.original_w_m
-            .map_or(w_lambda, |w_m| w_m * freq_hz / SPEED_OF_LIGHT_M_PER_S)
+        row.original_uvw_m.map_or(w_lambda, |uvw_m| {
+            uvw_m[2] * freq_hz / SPEED_OF_LIGHT_M_PER_S
+        })
     }
 
     fn image_correction(&self) -> &ImageCorrection {

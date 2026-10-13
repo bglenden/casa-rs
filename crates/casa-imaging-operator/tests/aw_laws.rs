@@ -111,7 +111,7 @@ fn indexing(conjugate_beams: bool) -> AwIndexing {
 
 fn context(pa_deg: f64, spectral_window: u32) -> RowContext {
     RowContext {
-        original_w_m: None,
+        original_uvw_m: None,
         time_s: 0.0,
         antennas: [0, 1],
         antenna_types: [0, 0],
@@ -340,7 +340,7 @@ fn prediction_uses_original_ms_w_while_gridding_uses_rotated_w() {
         (-700.0, 700.0, 1, 1),
     ] {
         let row = RowContext {
-            original_w_m: Some(original_w / scale),
+            original_uvw_m: Some([0.0, 0.0, original_w / scale]),
             ..context(17.0, 0)
         };
         let key = catalog.key(&row, frequency, rotated_w);
@@ -362,7 +362,7 @@ fn prediction_uses_original_ms_w_while_gridding_uses_rotated_w() {
         flags: &[false; 2],
         row_flag: false,
         context: RowContext {
-            original_w_m: Some(-1.0 / scale),
+            original_uvw_m: Some([0.0, 0.0, -1.0 / scale]),
             ..context(17.0, 0)
         },
     };

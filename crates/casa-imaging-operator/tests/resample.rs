@@ -22,7 +22,7 @@ const STOKES_I: [PolarizationCoordinate; 1] = [PolarizationCoordinate::StokesI];
 
 fn context() -> RowContext {
     RowContext {
-        original_w_m: None,
+        original_uvw_m: None,
         time_s: 0.0,
         antennas: [0, 1],
         antenna_types: [0, 0],
@@ -92,6 +92,65 @@ fn placed_with(
         .iter()
         .map(|p| (p.plane, (p.u * C / 10.0 / 1.0e6).round() / 1.0e3))
         .collect()
+}
+
+/// CASA's `VisImagingWeight` bins and looks up the MeasurementSet uvw, not
+/// the uvw the gridder rotates to the phase centre (`FTMachine::rotateUVW`):
+/// a mosaic's fields weigh by their own uvw. Two rows with the same stored
+/// uvw but different rotated uvw therefore share one density cell.
+#[test]
+fn the_standard_density_bins_the_measurement_set_uvw() {
+    let operator = operator(GridPrecision::F64, Basis::Constant, &XX_YY, &STOKES_I);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("resampler");
+    let frequencies = [1.0e9];
+    let values = [Complex32::new(1.0, 0.0); 2];
+    let weights = [2.0; 2];
+    let flags = [false; 2];
+    let stored = [500.0, 120.0, 7.0];
+    let row = |rotated: [f64; 3]| NativeRow {
+        uvw_m: rotated,
+        phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
+        frequencies_hz: &frequencies,
+        values: &values,
+        weights: &weights,
+        flags: &flags,
+        row_flag: false,
+        context: RowContext {
+            original_uvw_m: Some(stored),
+            ..context()
+        },
+    };
+    let shape = DensityGridShape {
+        width: 64,
+        height: 64,
+        planes: 1,
+        padding: 0,
+        increment_rad: [-2.0e-5, 2.0e-5],
+        rule: DensityCellRule::Standard,
+    };
+    let mut density = SampleBuffer::new(1);
+    resampler
+        .place_density(&operator, &row([300.0, -150.0, 20.0]), &shape, &mut density)
+        .expect("density");
+    let expected = DensityUv::casa(stored, frequencies[0]);
+    assert_eq!(density.placements()[0].u, f64::from(expected.u));
+    assert_eq!(density.placements()[0].v, f64::from(expected.v));
+
+    // Uniform weighting: a row rotated elsewhere still finds the density
+    // its stored uvw accumulated (2), so it weighs 2 / 2.
+    let uniform = WeightingGeneration::density(
+        build_density_grid(std::iter::once(density.block()), shape),
+        None,
+        None,
+        None,
+    )
+    .expect("uniform");
+    let mut out = SampleBuffer::new(2);
+    resampler
+        .place(&operator, &uniform, &row([-400.0, 260.0, -5.0]), &mut out)
+        .expect("place");
+    assert_eq!(out.block().weights_of(0), &[1.0, 1.0]);
 }
 
 #[test]

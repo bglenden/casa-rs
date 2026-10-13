@@ -403,13 +403,20 @@ fn sample_weight(
             None => placement.plane,
         };
         let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+        // `VisImagingWeight` weighs, tapers and bins the MeasurementSet
+        // uvw; the cube weightor grids through an FTMachine, which rotates
+        // them to the phase centre first.
+        let uvw_m = match density_axis {
+            Some(_) => row.uvw_m,
+            None => row.context.original_uvw_m.unwrap_or(row.uvw_m),
+        };
         let native = Placement {
-            u: row.uvw_m[0] * scale,
-            v: row.uvw_m[1] * scale,
+            u: uvw_m[0] * scale,
+            v: uvw_m[1] * scale,
             plane,
             ..*placement
         };
-        weighting.imaging_weight(&native, DensityUv::casa(row.uvw_m, frequency_hz), input)
+        weighting.imaging_weight(&native, DensityUv::casa(uvw_m, frequency_hz), input)
     };
     match source {
         Source::Pair { left, right_factor } if density_axis.is_some() => {
@@ -839,8 +846,11 @@ impl SpectralResampler {
             let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
             let w = row.uvw_m[2] * scale;
             let (u, v) = match rule {
+                // `VisImagingWeight` bins the MeasurementSet uvw, before
+                // the gridder's phase-centre rotation.
                 DensityCellRule::Standard => {
-                    let uv = DensityUv::casa(row.uvw_m, frequency_hz);
+                    let uvw_m = row.context.original_uvw_m.unwrap_or(row.uvw_m);
+                    let uv = DensityUv::casa(uvw_m, frequency_hz);
                     (f64::from(uv.u), f64::from(uv.v))
                 }
                 DensityCellRule::Cube => (row.uvw_m[0] * scale, row.uvw_m[1] * scale),

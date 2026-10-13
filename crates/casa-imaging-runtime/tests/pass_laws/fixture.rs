@@ -184,7 +184,7 @@ impl Rows {
 /// block's rows by baseline reorders them.
 pub fn context(index: usize) -> RowContext {
     RowContext {
-        original_w_m: None,
+        original_uvw_m: None,
         time_s: 0.0,
         antennas: [0, 1 + (index % 5) as u32],
         antenna_types: [0, 0],

@@ -327,7 +327,7 @@ mod tests {
         NativeRowHeader {
             row_flag: false,
             context: RowContext {
-                original_w_m: None,
+                original_uvw_m: None,
                 time_s: row as f64,
                 antennas,
                 antenna_types: [0, 0],
