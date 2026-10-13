@@ -461,29 +461,56 @@ impl DirectionCoordinate {
         )
     }
 
-    /// Celestial (lon, lat) to native spherical (phi, theta).
+    /// Celestial (lon, lat) to native spherical (phi, theta), as WCSLIB's
+    /// `sphs2x` forms them: the native latitude exactly when the longitude
+    /// offset is a multiple of 180°, and from `acos` of the native
+    /// longitude's arguments where `|sin θ| > 0.99`, since `asin` near ±1
+    /// loses half the precision (up to 1.5e-8 rad at the reference
+    /// direction itself, 0.009 of a 0.35″ pixel). The native longitude keeps
+    /// this coordinate's range, `longpole ± π`.
     fn celestial_to_native(&self, lon: f64, lat: f64) -> (f64, f64) {
         let (alpha_p, delta_p) = (self.native_pole[0], self.native_pole[1]);
-        let phi_p = self.longpole;
+        let to_degrees = 180.0 / PI;
+        let latitude_degrees = lat * to_degrees;
+        let euler_1 = 90.0 - delta_p * to_degrees;
+        let (euler_4, euler_3) = wcslib_sin_cos_degrees(euler_1);
+        let (sin_lat, cos_lat) = wcslib_sin_cos_degrees(latitude_degrees);
+        let dlng = (lon - alpha_p) * to_degrees;
+        let (sin_dlng, cos_dlng) = wcslib_sin_cos_degrees(dlng);
 
-        let sin_lat = lat.sin();
-        let cos_lat = lat.cos();
-        let sin_dp = delta_p.sin();
-        let cos_dp = delta_p.cos();
-        let da = lon - alpha_p;
-        let sin_da = da.sin();
-        let cos_da = da.cos();
+        let cos_lat_3 = cos_lat * euler_3;
+        let cos_lat_4 = cos_lat * euler_4;
+        let sin_lat_3 = sin_lat * euler_3;
+        let sin_lat_4 = sin_lat * euler_4;
 
-        // Native latitude
-        let sin_theta = sin_lat * sin_dp + cos_lat * cos_dp * cos_da;
-        let theta = sin_theta.clamp(-1.0, 1.0).asin();
+        // Native longitude.
+        let mut x = sin_lat_4 - cos_lat_3 * cos_dlng;
+        if x.abs() < 1.0e-5 {
+            x = -wcslib_cos_degrees(latitude_degrees + euler_1) + cos_lat_3 * (1.0 - cos_dlng);
+        }
+        let y = -cos_lat * sin_dlng;
+        let phi = self.longpole + y.atan2(x);
 
-        // Native longitude
-        let num = -cos_lat * sin_da;
-        let den = sin_lat * cos_dp - cos_lat * sin_dp * cos_da;
-        let phi = phi_p + num.atan2(den);
+        // Native latitude.
+        let theta_degrees = if dlng % 180.0 == 0.0 {
+            let mut theta = latitude_degrees + cos_dlng * euler_1;
+            if theta > 90.0 {
+                theta = 180.0 - theta;
+            }
+            if theta < -90.0 {
+                theta = -180.0 - theta;
+            }
+            theta
+        } else {
+            let z = sin_lat_3 + cos_lat_4 * cos_dlng;
+            if z.abs() > 0.99 {
+                z.signum() * wcslib_acos_degrees((x * x + y * y).sqrt())
+            } else {
+                wcslib_asin_degrees(z)
+            }
+        };
 
-        (phi, theta)
+        (phi, theta_degrees / to_degrees)
     }
 }
 
@@ -794,6 +821,42 @@ mod tests {
             back[1],
             pixel[1]
         );
+    }
+
+    /// The issue607 standard-MFS VLA image's coordinate (SIN, 0.35″ cells).
+    fn make_vla_sin_coord() -> DirectionCoordinate {
+        DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [4.712391234768306, -0.4014237887039714],
+            [-1.696847883883376e-6, 1.696847883883376e-6],
+            [256.0, 256.0],
+        )
+    }
+
+    #[test]
+    fn reference_value_gives_reference_pixel_exactly() {
+        // `asin` of the native latitude's sine put this 0.0088 pixel off
+        // in latitude, and with it an analytic primary beam's centre.
+        let coord = make_vla_sin_coord();
+        let pixel = coord.to_pixel(&coord.crval).unwrap();
+        assert!(
+            (pixel[0] - 256.0).abs() < 1e-9 && (pixel[1] - 256.0).abs() < 1e-9,
+            "reference value maps to {pixel:?}"
+        );
+    }
+
+    #[test]
+    fn roundtrip_within_a_pixel_of_the_reference() {
+        let coord = make_vla_sin_coord();
+        for pixel in [[256.25, 255.75], [255.5, 256.5], [256.0, 256.01]] {
+            let world = coord.to_world(&pixel).unwrap();
+            let back = coord.to_pixel(&world).unwrap();
+            assert!(
+                (back[0] - pixel[0]).abs() < 1e-8 && (back[1] - pixel[1]).abs() < 1e-8,
+                "{pixel:?} round-trips to {back:?}"
+            );
+        }
     }
 
     #[test]
