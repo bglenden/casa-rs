@@ -187,8 +187,22 @@ fn metal_stage_timing_logs_each_metal_backend() {
         Err(stderr) => panic!("Metal run failed: {stderr}"),
     };
     let check = |stderr: &str| {
-        let lines = events(stderr, METAL_STAGE_TIMING);
+        // Each Metal backend logs its usage as it drops, and each pass its
+        // source stream's waits.
+        let (streams, lines): (Vec<&str>, Vec<&str>) = events(stderr, METAL_STAGE_TIMING)
+            .into_iter()
+            .partition(|line| line.contains("source stream"));
         assert!(!lines.is_empty(), "{stderr}");
+        assert!(
+            !streams.is_empty(),
+            "each pass logs its source stream:\n{stderr}"
+        );
+        for line in &streams {
+            assert!(field(line, "blocks").parse::<u64>().expect("blocks") > 0);
+            field(line, "consumer_wait_seconds")
+                .parse::<f64>()
+                .expect("a wait in seconds");
+        }
         for line in &lines {
             assert_eq!(field(line, "completed"), "true", "{line}");
             assert!(field(line, "applies").parse::<u64>().expect("applies") > 0);
