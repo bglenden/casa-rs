@@ -30,13 +30,14 @@ pub(crate) struct Pipeline {
     pub samples_per_group: usize,
 }
 
-/// The device, its queue and the three kernels of the contract.
+/// The device, its queue and the kernels of the contract.
 pub(crate) struct Device {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     pub spread: Pipeline,
     pub predict: Pipeline,
     pub residual: Pipeline,
+    pub native: Pipeline,
 }
 
 // SAFETY: Metal documents `MTLDevice`, `MTLCommandQueue` and
@@ -108,6 +109,7 @@ impl Device {
             spread: pipeline("spread"),
             predict: pipeline("predict"),
             residual: pipeline("residual"),
+            native: pipeline("native_model"),
             device,
             queue,
         })

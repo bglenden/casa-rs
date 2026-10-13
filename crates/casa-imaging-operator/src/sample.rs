@@ -3,6 +3,8 @@
 
 use num_complex::Complex32;
 
+use crate::native::NativeSource;
+
 /// Two-level convolution-function cell key (HPG `CFSimpleIndexer`).
 ///
 /// `group` linearises the variable-support axes of a kernel set (w-plane,
@@ -77,7 +79,10 @@ pub struct Placement {
 /// flagged, so a placed sample has no zero weights; a kernel still skips a
 /// polarization whose weight is zero. A block that is only predicted
 /// ([`Work::Predict`](crate::Work::Predict)) may hold no values or weights:
-/// a prediction reads only the placements.
+/// a prediction reads only the placements. A block gridded as a residual at
+/// native channels ([`Work::NativeResidualGrid`](crate::Work::NativeResidualGrid))
+/// also holds each placement's native endpoints in `sources`; other blocks
+/// hold none.
 #[derive(Clone, Copy, Debug)]
 pub struct SampleBlock<'a> {
     /// Placed samples.
@@ -86,6 +91,8 @@ pub struct SampleBlock<'a> {
     pub values: &'a [Complex32],
     /// Imaging weight `W` per placement and polarization.
     pub weights: &'a [f32],
+    /// Native endpoints per placement, or none.
+    pub sources: &'a [NativeSource],
     /// Visibility polarizations per placement.
     pub npol: usize,
 }
@@ -126,6 +133,7 @@ pub struct SampleBuffer {
     placements: Vec<Placement>,
     values: Vec<Complex32>,
     weights: Vec<f32>,
+    sources: Vec<NativeSource>,
     npol: usize,
 }
 
@@ -138,6 +146,7 @@ impl SampleBuffer {
             placements: Vec::new(),
             values: Vec::new(),
             weights: Vec::new(),
+            sources: Vec::new(),
             npol,
         }
     }
@@ -152,7 +161,19 @@ impl SampleBuffer {
             placements: Vec::with_capacity(placements),
             values: Vec::with_capacity(placements * npol),
             weights: Vec::with_capacity(placements * npol),
+            sources: Vec::new(),
             npol,
+        }
+    }
+
+    /// [`Self::with_capacity`] with room for each placement's native
+    /// endpoints too ([`Self::push_sourced`]), within
+    /// [`Self::sourced_bytes`].
+    #[must_use]
+    pub fn with_source_capacity(npol: usize, placements: usize) -> Self {
+        Self {
+            sources: Vec::with_capacity(placements),
+            ..Self::with_capacity(npol, placements)
         }
     }
 
@@ -164,13 +185,21 @@ impl SampleBuffer {
             as u64
     }
 
-    /// Bytes the buffer holds now, from its capacities: [`Self::bytes`] for
-    /// a buffer [`Self::with_capacity`] made that has not grown.
+    /// Bytes [`Self::with_source_capacity`] allocates.
+    #[must_use]
+    pub const fn sourced_bytes(npol: usize, placements: usize) -> u64 {
+        Self::bytes(npol, placements) + (placements * size_of::<NativeSource>()) as u64
+    }
+
+    /// Bytes the buffer holds now, from its capacities: [`Self::bytes`] or
+    /// [`Self::sourced_bytes`] for a buffer made with that room that has
+    /// not grown.
     #[must_use]
     pub fn capacity_bytes(&self) -> u64 {
         (self.placements.capacity() * size_of::<Placement>()
             + self.values.capacity() * size_of::<Complex32>()
-            + self.weights.capacity() * size_of::<f32>()) as u64
+            + self.weights.capacity() * size_of::<f32>()
+            + self.sources.capacity() * size_of::<NativeSource>()) as u64
     }
 
     /// Visibility polarizations per placement.
@@ -204,13 +233,32 @@ impl SampleBuffer {
         }
     }
 
+    /// [`Self::push`], with the placement's native endpoints. A buffer holds
+    /// endpoints for every placement or for none.
+    pub fn push_sourced(
+        &mut self,
+        placement: Placement,
+        values: &[Complex32],
+        weights: &[f32],
+        source: NativeSource,
+    ) {
+        debug_assert_eq!(
+            self.sources.len(),
+            self.placements.len(),
+            "every placement has its endpoints"
+        );
+        self.push(placement, values, weights);
+        self.sources.push(source);
+    }
+
     /// Append every placement of `block`, which has this buffer's
-    /// polarizations, with its values and weights.
+    /// polarizations, with its values, weights and any native endpoints.
     pub fn extend_from_block(&mut self, block: &SampleBlock<'_>) {
         assert_eq!(block.npol, self.npol, "values per placement");
         self.placements.extend_from_slice(block.placements);
         self.values.extend_from_slice(block.values);
         self.weights.extend_from_slice(block.weights);
+        self.sources.extend_from_slice(block.sources);
     }
 
     /// Remove every placement, keeping the allocation.
@@ -218,6 +266,7 @@ impl SampleBuffer {
         self.placements.clear();
         self.values.clear();
         self.weights.clear();
+        self.sources.clear();
     }
 
     /// Borrow the contents as a kernel block.
@@ -227,6 +276,7 @@ impl SampleBuffer {
             placements: &self.placements,
             values: &self.values,
             weights: &self.weights,
+            sources: &self.sources,
             npol: self.npol,
         }
     }

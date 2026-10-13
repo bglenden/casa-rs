@@ -9,15 +9,18 @@
 //! flags (`interpolateFrequencyTogrid`), except that a one-channel image or
 //! a one-channel row bypasses interpolation and maps like `nearest`.
 
+mod prediction;
+
 use num_complex::{Complex32, Complex64};
 
+pub use self::prediction::{PlacedRow, PredictionScratch};
 use crate::accumulator::PlaneRange;
-use crate::backend::{GridBackend, PreparedModelGrids, Work};
 use crate::convolution::{CellHold, ConvolutionFunctionSet, RowContext};
 use crate::error::OperatorError;
 use crate::geometry::{CellLocation, GridGeometry};
+use crate::native::{NO_CELL, NativeSource};
 use crate::operator::{Basis, MeasurementOperator};
-use crate::sample::{CfKey, Placement, SampleBlock, SampleBuffer};
+use crate::sample::{CfKey, Placement, SampleBuffer};
 use crate::weighting::{
     DensityCellRule, DensityGridShape, DensityUv, SPEED_OF_LIGHT_M_PER_S, WeightingGeneration,
 };
@@ -310,210 +313,26 @@ enum Source {
     Pair { left: usize, right_factor: f64 },
 }
 
-/// Reusable buffers for predicting a batch of rows; one per row chunk.
-///
-/// A batch is [`Self::begin`], then [`SpectralResampler::place_prediction`]
-/// for each row, one [`Self::apply`] that degrids every placed sample in a
-/// single backend call, and [`SpectralResampler::finish_prediction`] for
-/// each row. [`SpectralResampler::predict_row`] is the batch of one row.
-/// [`SpectralResampler::prediction_scratch`] allocates the buffers once for
-/// a batch of its widest rows; a default scratch grows as batches need.
-#[derive(Debug, Default)]
-pub struct PredictionScratch {
-    /// The batch's placements: a prediction reads no values or weights.
-    placements: Vec<Placement>,
-    npol: usize,
-    predicted: Vec<Complex32>,
-    sources: Vec<usize>,
-    values: Vec<Complex32>,
-}
-
-impl PredictionScratch {
-    /// Scratch for `npol` correlations with room for `samples` degridded
-    /// samples and `planes` output planes, so that predicting rows within
-    /// them never grows it beyond [`Self::bytes`].
-    #[must_use]
-    pub fn with_capacity(npol: usize, samples: usize, planes: usize) -> Self {
-        Self {
-            placements: Vec::with_capacity(samples),
-            npol,
-            predicted: Vec::with_capacity(samples * npol),
-            sources: Vec::with_capacity(samples),
-            values: Vec::with_capacity(planes * npol),
-        }
-    }
-
-    /// Bytes [`Self::with_capacity`] allocates.
-    #[must_use]
-    pub const fn bytes(npol: usize, samples: usize, planes: usize) -> u64 {
-        (samples * (size_of::<Placement>() + npol * size_of::<Complex32>() + size_of::<usize>())
-            + planes * npol * size_of::<Complex32>()) as u64
-    }
-
-    /// Bytes the scratch's buffers hold now, from their capacities.
-    #[must_use]
-    pub fn capacity_bytes(&self) -> u64 {
-        (self.placements.capacity() * size_of::<Placement>()
-            + self.predicted.capacity() * size_of::<Complex32>()
-            + self.sources.capacity() * size_of::<usize>()
-            + self.values.capacity() * size_of::<Complex32>()) as u64
-    }
-
-    /// Start a batch of rows of `npol` correlations, clearing every buffer.
-    pub fn begin(&mut self, npol: usize) {
-        self.npol = npol;
-        self.placements.clear();
-        self.sources.clear();
-    }
-
-    /// The samples placed since [`Self::begin`], as the block a backend
-    /// predicts: placements only.
-    #[must_use]
-    pub fn placed(&self) -> SampleBlock<'_> {
-        SampleBlock {
-            placements: &self.placements,
-            values: &[],
-            weights: &[],
-            npol: self.npol,
-        }
-    }
-
-    /// The predictions [`Self::apply`] writes and
-    /// [`SpectralResampler::finish_prediction`] reads, `npol` a placed
-    /// sample. A caller that has the batch ([`Self::placed`]) predicted
-    /// elsewhere, on a device that returns later, puts them here.
-    pub fn predictions_mut(&mut self) -> &mut Vec<Complex32> {
-        &mut self.predicted
-    }
-
-    /// Degrid every sample placed since [`Self::begin`] from `model` in one
-    /// [`Work::Predict`] on `backend`.
-    ///
-    /// # Errors
-    ///
-    /// Whatever `backend` returns.
-    pub fn apply(
-        &mut self,
-        backend: &mut dyn GridBackend,
-        cf: &dyn ConvolutionFunctionSet,
-        model: &PreparedModelGrids,
-    ) -> Result<(), OperatorError> {
-        self.predicted.clear();
-        self.predicted
-            .resize(self.placements.len() * self.npol, Complex32::default());
-        if self.placements.is_empty() {
-            return Ok(());
-        }
-        let block = SampleBlock {
-            placements: &self.placements,
-            values: &[],
-            weights: &[],
-            npol: self.npol,
-        };
-        backend.apply(
-            &block,
-            cf,
-            Work::Predict {
-                model,
-                out: &mut self.predicted,
-            },
-        )
-    }
-}
-
-/// One row's degridded samples within a [`PredictionScratch`] batch, from
-/// [`SpectralResampler::place_prediction`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PlacedRow {
-    start: usize,
-    end: usize,
-}
-
-/// CASA `FTMachine::interpolateFrequencyFromgrid`: output-channel
-/// predictions `values` (`[channel][pol]`, zero where the row was not
-/// degridded) on CASA's image-frequency grid, refined to `floor(width
-/// ratio)` repeated points per channel when output channels are wider than
-/// native ones, interpolated linearly to every native channel that maps to
-/// the axis or lies in its linear halo (`chanMap` 0… or −2; −1 stays
-/// zero); the end pair extrapolates (casacore `InterpolateArray1D` linear).
-fn interpolate_from_grid(
-    axis: SpectralAxis,
-    row: &NativeRow<'_>,
-    values: &[Complex32],
-    npol: usize,
-    out: &mut [Complex32],
-) {
-    let native = row.frequencies_hz;
-    let width = (axis.increment_hz / (native[1] - native[0])).abs();
-    let per_channel = if width > 1.0 {
-        width.floor() as usize
-    } else {
-        1
+/// The native endpoints of a sample from `source`, the row's cells numbered
+/// from `first_cell`, with the factors [`SpectralResampler::value`] gives
+/// them: one endpoint where the value takes one channel's.
+fn native_source(source: Source, first_cell: u32, scale: Complex32) -> NativeSource {
+    let cell = |channel: usize| first_cell + channel as u32;
+    let one = |channel: usize| NativeSource {
+        cells: [cell(channel), NO_CELL],
+        factors: [1.0, 0.0],
+        scale,
     };
-    let fine_increment = axis.increment_hz / per_channel as f64;
-    let fine_start = if per_channel > 1 {
-        axis.first_hz - axis.increment_hz / 2.0 + fine_increment / 2.0
-    } else {
-        axis.first_hz
-    };
-    let points = axis.channels as usize * per_channel;
-    let point = |index: usize| fine_start + index as f64 * fine_increment;
-    let native_width_hz = native[1] - native[0];
-    for (channel, frequency_hz) in native.iter().enumerate() {
-        if axis.nearest_channel(*frequency_hz).is_none()
-            && !axis.in_linear_halo(*frequency_hz, native_width_hz)
-        {
-            continue;
-        }
-        let position = (frequency_hz - fine_start) / fine_increment;
-        let left = (position.floor().max(0.0) as usize).min(points - 2);
-        let fraction = ((frequency_hz - point(left)) / (point(left + 1) - point(left))) as f32;
-        let (low, high) = (left / per_channel, (left + 1) / per_channel);
-        for pol in 0..npol {
-            if !row.flags[channel * npol + pol] {
-                let a = values[low * npol + pol];
-                let b = values[high * npol + pol];
-                out[channel * npol + pol] = a + (b - a) * fraction;
-            }
-        }
+    match source {
+        Source::Channel(channel) => one(channel),
+        Source::Pair { left, right_factor } if right_factor <= f64::EPSILON => one(left),
+        Source::Pair { left, right_factor } if right_factor >= 1.0 - f64::EPSILON => one(left + 1),
+        Source::Pair { left, right_factor } => NativeSource {
+            cells: [cell(left), cell(left + 1)],
+            factors: [(1.0 - right_factor) as f32, right_factor as f32],
+            scale,
+        },
     }
-}
-
-/// The output channels CASA degrids for one row under linear mapping
-/// (`FTMachine::getInterpolateArrays`, after `GridFT::get` returns early
-/// when no native maps): each native's `chanMap` is its channel, −2 in the
-/// linear halo or −1; −1 is replaced by the maximum, and the channels from
-/// the minimum to the maximum are degridded, from channel 0 when the
-/// minimum is the halo's −2 or equals the maximum. When every native lies
-/// in the halo the maximum is −2 and CASA's unsigned loop flags nothing, so
-/// every channel is degridded. `None` when nothing maps.
-fn degridded_channels(axis: SpectralAxis, native: &[f64]) -> Option<std::ops::RangeInclusive<u32>> {
-    let native_width_hz = native[1] - native[0];
-    let map = |frequency_hz: f64| match axis.nearest_channel(frequency_hz) {
-        Some(channel) => i64::from(channel),
-        None if axis.in_linear_halo(frequency_hz, native_width_hz) => -2,
-        None => -1,
-    };
-    let maximum = native.iter().map(|frequency_hz| map(*frequency_hz)).max()?;
-    if maximum == -1 {
-        return None;
-    }
-    if maximum == -2 {
-        return Some(0..=axis.channels - 1);
-    }
-    let minimum = native
-        .iter()
-        .map(|frequency_hz| match map(*frequency_hz) {
-            -1 => maximum,
-            channel => channel,
-        })
-        .min()?;
-    let first = if minimum == maximum {
-        0
-    } else {
-        minimum.max(0)
-    };
-    Some(first as u32..=maximum as u32)
 }
 
 /// CASA's flag of a sample: the row flag, then any selected correlation of
@@ -850,6 +669,60 @@ impl SpectralResampler {
         row: &NativeRow<'_>,
         mut sample: impl FnMut(Placement, &[Complex32], &[f32]),
     ) -> Result<(), OperatorError> {
+        self.place_with(
+            operator,
+            weighting,
+            row,
+            false,
+            |placement, values, weights, _, _| {
+                sample(placement, values, weights);
+            },
+        )
+    }
+
+    /// [`Self::place_each`], handing each sample its native endpoints too:
+    /// the row's cells numbered from `first_cell`, for a residual formed at
+    /// native channels ([`Work::NativeResidualGrid`](crate::Work::NativeResidualGrid)).
+    /// The endpoints and factors are those the sample's value interpolates,
+    /// one endpoint where the value takes one channel's. Each value is the
+    /// interpolated visibility times the endpoints' `scale` in `f32`, the
+    /// arithmetic a backend forms the model's share with, so data equal to
+    /// the model at native channels leave exactly no residual.
+    pub fn place_each_sourced(
+        &self,
+        operator: &MeasurementOperator,
+        weighting: &WeightingGeneration,
+        row: &NativeRow<'_>,
+        first_cell: u32,
+        mut sample: impl FnMut(Placement, &[Complex32], &[f32], NativeSource),
+    ) -> Result<(), OperatorError> {
+        self.place_with(
+            operator,
+            weighting,
+            row,
+            true,
+            |placement, values, weights, source, scale| {
+                sample(
+                    placement,
+                    values,
+                    weights,
+                    native_source(source, first_cell, scale),
+                );
+            },
+        )
+    }
+
+    /// [`Self::place_each`], with each sample's native source and its
+    /// `W·e^{iφ}` in `f32`; with `narrow_scale` the values are scaled by
+    /// that `f32` factor rather than in `f64`.
+    fn place_with(
+        &self,
+        operator: &MeasurementOperator,
+        weighting: &WeightingGeneration,
+        row: &NativeRow<'_>,
+        narrow_scale: bool,
+        mut sample: impl FnMut(Placement, &[Complex32], &[f32], Source, Complex32),
+    ) -> Result<(), OperatorError> {
         let npol = operator.polarization().correlations().len();
         self.validate_row(operator, row, npol)?;
         if is_autocorrelation(row) {
@@ -887,13 +760,18 @@ impl SpectralResampler {
                 return;
             }
             let phasor = Complex64::from_polar(f64::from(weight), placement.phase);
+            let scale = Complex32::new(phasor.re as f32, phasor.im as f32);
             for pol in 0..npol {
                 let value = self.value(row, npol, source, pol);
-                let scaled = Complex64::new(f64::from(value.re), f64::from(value.im)) * phasor;
-                values[pol] = Complex32::new(scaled.re as f32, scaled.im as f32);
+                values[pol] = if narrow_scale {
+                    value * scale
+                } else {
+                    let scaled = Complex64::new(f64::from(value.re), f64::from(value.im)) * phasor;
+                    Complex32::new(scaled.re as f32, scaled.im as f32)
+                };
                 weights[pol] = weight;
             }
-            sample(placement, values, weights);
+            sample(placement, values, weights, source, scale);
         });
         Ok(())
     }
@@ -927,63 +805,6 @@ impl SpectralResampler {
             }
             _ => spectrum.channels,
         }
-    }
-
-    /// The most samples [`Self::predict_row`] degrids for one native row of
-    /// `channels` channels: one per channel, or under linear interpolation
-    /// one per output channel.
-    #[must_use]
-    pub fn prediction_samples_per_row(&self, channels: usize) -> usize {
-        match self.sampling {
-            Sampling::Direct | Sampling::Nearest(_) => channels,
-            Sampling::Linear(axis) => channels.max(axis.channels as usize),
-        }
-    }
-
-    /// Reusable buffers for predicting batches of `rows` rows of at most
-    /// `channels` channels of `npol` correlations, allocated once at
-    /// [`PredictionScratch::bytes`] for every resampler in `resamplers`.
-    #[must_use]
-    pub fn prediction_scratch<'r>(
-        resamplers: impl IntoIterator<Item = &'r Self>,
-        npol: usize,
-        channels: usize,
-        rows: usize,
-    ) -> PredictionScratch {
-        let (samples, planes) = Self::prediction_extent(resamplers, channels);
-        PredictionScratch::with_capacity(npol, rows * samples, planes)
-    }
-
-    /// Bytes [`Self::prediction_scratch`] holds for the same arguments.
-    #[must_use]
-    pub fn prediction_scratch_bytes<'r>(
-        resamplers: impl IntoIterator<Item = &'r Self>,
-        npol: usize,
-        channels: usize,
-        rows: usize,
-    ) -> u64 {
-        let (samples, planes) = Self::prediction_extent(resamplers, channels);
-        PredictionScratch::bytes(npol, rows * samples, planes)
-    }
-
-    /// The most samples and output planes any of `resamplers` predicts with
-    /// for rows of at most `channels` channels.
-    fn prediction_extent<'r>(
-        resamplers: impl IntoIterator<Item = &'r Self>,
-        channels: usize,
-    ) -> (usize, usize) {
-        resamplers
-            .into_iter()
-            .fold((0, 0), |(samples, planes), resampler| {
-                let linear = match resampler.sampling {
-                    Sampling::Linear(axis) => axis.channels as usize,
-                    Sampling::Direct | Sampling::Nearest(_) => 0,
-                };
-                (
-                    samples.max(resampler.prediction_samples_per_row(channels)),
-                    planes.max(linear),
-                )
-            })
     }
 
     /// Place one row's density-pass samples for a grid of `shape`: one
@@ -1166,187 +987,6 @@ impl SpectralResampler {
             }
         };
         (weight.is_finite() && weight > 0.0).then_some(weight)
-    }
-
-    /// The model visibility of every selected sample of `row`, written to
-    /// `out` as `[channel][correlation]`, the way CASA predicts `MODEL_DATA`
-    /// (`GridFT::get`, then `FTMachine::interpolateFrequencyFromgrid`).
-    ///
-    /// A flagged row, a flagged correlation, a native channel off the output
-    /// axis and a sample whose kernel leaves the grid predict zero.
-    /// A constant or Taylor basis, `nearest` mapping and the one-channel
-    /// bypass degrid each native channel at its own frequency on its mapped
-    /// plane. `linear` mapping degrids the output channels CASA degrids for
-    /// the row (see `degridded_channels`) at the channel centre, repeats
-    /// each value `floor(width ratio)` times on CASA's fine grid when output
-    /// channels are wider than native ones, and interpolates linearly to the
-    /// native frequencies on the axis and in its halo (extrapolating from the
-    /// end pair); unmapped output channels contribute zeros to that grid.
-    /// Only the planes `model` holds are degridded; a caller predicting a
-    /// window of planes prepares the window's halo (see
-    /// [`Self::model_planes`]).
-    ///
-    /// This is the batch of one row; a caller predicting many rows places
-    /// them all into one [`PredictionScratch`] batch, so that one backend
-    /// call degrids them.
-    ///
-    /// # Errors
-    ///
-    /// A row inconsistent with `operator`, an `out` of another length than
-    /// the row's values, or whatever `backend` returns.
-    pub fn predict_row(
-        &self,
-        operator: &MeasurementOperator,
-        backend: &mut dyn GridBackend,
-        model: &PreparedModelGrids,
-        row: &NativeRow<'_>,
-        scratch: &mut PredictionScratch,
-        out: &mut [Complex32],
-    ) -> Result<(), OperatorError> {
-        scratch.begin(operator.polarization().correlations().len());
-        let placed = self.place_prediction(operator, model, row, scratch)?;
-        scratch.apply(backend, operator.cf(), model)?;
-        self.finish_prediction(operator, row, placed, scratch, out)
-    }
-
-    /// Whether `row`'s prediction interpolates degridded output channels to
-    /// its native channels (see [`Self::predict_row`]).
-    fn linear_prediction(&self, row: &NativeRow<'_>) -> Option<SpectralAxis> {
-        match self.sampling {
-            Sampling::Linear(axis) if axis.channels > 1 && row.frequencies_hz.len() > 1 => {
-                Some(axis)
-            }
-            Sampling::Direct | Sampling::Nearest(_) | Sampling::Linear(_) => None,
-        }
-    }
-
-    /// Add `row`'s degridded samples to the batch `scratch` began, as
-    /// [`Self::predict_row`] degrids them; a flagged row or an
-    /// autocorrelation adds none.
-    ///
-    /// # Errors
-    ///
-    /// A row inconsistent with `operator`.
-    pub fn place_prediction(
-        &self,
-        operator: &MeasurementOperator,
-        model: &PreparedModelGrids,
-        row: &NativeRow<'_>,
-        scratch: &mut PredictionScratch,
-    ) -> Result<PlacedRow, OperatorError> {
-        let npol = operator.polarization().correlations().len();
-        self.validate_row(operator, row, npol)?;
-        let PredictionScratch {
-            placements,
-            sources,
-            ..
-        } = scratch;
-        let start = placements.len();
-        if row.row_flag || is_autocorrelation(row) {
-            return Ok(PlacedRow { start, end: start });
-        }
-        let native = row.frequencies_hz;
-        let prepared = model.layout().planes();
-        let mut placing = RowPlacing::new(operator.cf(), operator.geometry(), row);
-        let mut place = |plane: u32, frequency_hz: f64, source: usize| {
-            if !prepared.contains(plane) {
-                return;
-            }
-            if let Some((placement, _)) = locate_sample(
-                operator.cf(),
-                operator.geometry(),
-                self.basis,
-                row,
-                plane,
-                frequency_hz,
-                &mut placing,
-            ) {
-                placements.push(placement);
-                sources.push(source);
-            }
-        };
-        match self.linear_prediction(row) {
-            None => {
-                for (channel, frequency_hz) in native.iter().enumerate() {
-                    let plane = match self.sampling {
-                        Sampling::Direct => Some(0),
-                        Sampling::Nearest(axis) | Sampling::Linear(axis) => {
-                            axis.nearest_channel(*frequency_hz)
-                        }
-                    };
-                    if let Some(plane) = plane {
-                        place(plane, *frequency_hz, channel);
-                    }
-                }
-            }
-            Some(axis) => {
-                if let Some(channels) = degridded_channels(axis, native) {
-                    for channel in channels {
-                        place(channel, axis.centre_hz(channel), channel as usize);
-                    }
-                }
-            }
-        }
-        Ok(PlacedRow {
-            start,
-            end: placements.len(),
-        })
-    }
-
-    /// Write `row`'s model visibilities to `out` as `[channel][correlation]`
-    /// from its samples `placed` in the batch `scratch` applied, as
-    /// [`Self::predict_row`] does.
-    ///
-    /// # Errors
-    ///
-    /// An `out` of another length than the row's values.
-    pub fn finish_prediction(
-        &self,
-        operator: &MeasurementOperator,
-        row: &NativeRow<'_>,
-        placed: PlacedRow,
-        scratch: &mut PredictionScratch,
-        out: &mut [Complex32],
-    ) -> Result<(), OperatorError> {
-        if out.len() != row.values.len() {
-            return Err(OperatorError::NativeRow {
-                reason: "the prediction holds one value per selected sample",
-            });
-        }
-        out.fill(Complex32::default());
-        if placed.start == placed.end {
-            return Ok(());
-        }
-        let npol = operator.polarization().correlations().len();
-        let PredictionScratch {
-            predicted,
-            sources,
-            values,
-            ..
-        } = scratch;
-        let predicted = &predicted[placed.start * npol..placed.end * npol];
-        let sources = &sources[placed.start..placed.end];
-        match self.linear_prediction(row) {
-            None => {
-                for (index, channel) in sources.iter().enumerate() {
-                    for pol in 0..npol {
-                        if !row.flags[channel * npol + pol] {
-                            out[channel * npol + pol] = predicted[index * npol + pol];
-                        }
-                    }
-                }
-            }
-            Some(axis) => {
-                values.clear();
-                values.resize(axis.channels as usize * npol, Complex32::default());
-                for (index, channel) in sources.iter().enumerate() {
-                    values[channel * npol..(channel + 1) * npol]
-                        .copy_from_slice(&predicted[index * npol..(index + 1) * npol]);
-                }
-                interpolate_from_grid(axis, row, values, npol, out);
-            }
-        }
-        Ok(())
     }
 
     /// The value of a sample: its channel's, or the linear interpolation of

@@ -6,8 +6,9 @@ use std::ops::Range;
 
 use casa_imaging_operator::{
     AccumulatorLayout, CellHold, ConvolutionFunctionSet, DeviceCells, DeviceFailure,
-    GridAccumulator, GridBackend, GridScalar, GridStorage, Mode, OperatorError, PreparedModelGrids,
-    SampleBlock, TapLayout, Tile, Work,
+    DeviceNativeCells, GridAccumulator, GridBackend, GridScalar, GridStorage, Mode, NativeModel,
+    NativeSource, NativeTarget, NativeTerm, OperatorError, PreparedModelGrids, SampleBlock,
+    TapLayout, Tile, Work,
 };
 use num_complex::{Complex32, Complex64};
 use objc2::rc::Retained;
@@ -65,9 +66,9 @@ pub struct MetalBackend<'cf> {
     stage_timing: bool,
     /// Whether grid-only work may still run when `apply` returns.
     defer_grid: bool,
-    /// The output of a prediction [`Self::submit_prediction`] left on the
-    /// device, until [`Self::collect_prediction`] reads it back.
-    pending_prediction: Option<Vec<Complex32>>,
+    /// The predictions of a [`Work::PredictNative`] batch, which stay on
+    /// the device for the native model.
+    batch: Buffer,
 }
 
 /// What a backend was asked to dispatch over its life, logged once when it
@@ -127,6 +128,9 @@ struct Slot {
     weights: Buffer,
     norms: Buffer,
     out: Buffer,
+    /// Native endpoints of a residual at native channels, or the native
+    /// terms of a native model.
+    sources: Buffer,
 }
 
 /// A committed command buffer.
@@ -150,6 +154,12 @@ enum Kernel {
     Spread,
     Predict,
     Residual,
+    /// [`Kernel::Predict`] into the backend's batch buffer, phasor applied.
+    PredictNative,
+    /// The model at native cells from the batch buffer.
+    NativeModel,
+    /// [`Kernel::Spread`] of values less the model at native cells.
+    NativeResidual,
 }
 
 /// What the host does with a slot's output once its command completes.
@@ -183,6 +193,7 @@ impl<'cf> MetalBackend<'cf> {
                 weights: device.buffer(0)?,
                 norms: device.buffer(0)?,
                 out: device.buffer(0)?,
+                sources: device.buffer(0)?,
             });
         }
         Ok(Self {
@@ -205,7 +216,7 @@ impl<'cf> MetalBackend<'cf> {
             usage: Usage::default(),
             stage_timing,
             defer_grid: false,
-            pending_prediction: None,
+            batch: device.buffer(0)?,
         })
     }
 
@@ -243,52 +254,17 @@ impl<'cf> MetalBackend<'cf> {
         result
     }
 
-    /// Commit the prediction of every sample of `block` from `model`
-    /// ([`Work::Predict`]) and return without waiting for it, so the host
-    /// prepares other work while the device predicts. `out` holds the
-    /// predictions; [`Self::collect_prediction`], with the same block, waits
-    /// for them and hands it back. The backend dispatches nothing else in
-    /// between.
-    ///
-    /// # Errors
-    ///
-    /// As [`GridBackend::apply`] with [`Work::Predict`].
-    pub fn submit_prediction(
-        &mut self,
-        block: &SampleBlock<'_>,
-        model: &PreparedModelGrids,
-        mut out: Vec<Complex32>,
-    ) -> Result<(), OperatorError> {
-        out.clear();
-        out.resize(block.len() * block.npol, Complex32::default());
-        self.predict(block, model, &mut out, true)?;
-        self.pending_prediction = Some(out);
-        Ok(())
-    }
-
-    /// Wait for the prediction [`Self::submit_prediction`] committed for
-    /// `block`, and return it: `npol` values a sample, sample-major.
-    ///
-    /// # Errors
-    ///
-    /// [`OperatorError::Device`] when a dispatch failed on the device.
-    pub fn collect_prediction(
-        &mut self,
-        block: &SampleBlock<'_>,
-    ) -> Result<Vec<Complex32>, OperatorError> {
-        let mut out = self
-            .pending_prediction
-            .take()
-            .expect("a prediction is submitted before it is collected");
-        let mut result = Ok(());
-        for slot in 0..RING {
-            let retired = self.retire(slot, block, &mut Readback::Prediction(&mut out));
-            if result.is_ok() {
-                result = retired;
-            }
-        }
-        self.usage.failed |= result.is_err();
-        result.map(|()| out)
+    /// `len` zeroed model values at native cells (`npol` per cell) in memory
+    /// the device addresses, for [`Work::PredictNative`] to form and
+    /// [`Work::NativeResidualGrid`] to read on any backend of this device.
+    pub fn native_cells(len: usize) -> Result<DeviceNativeCells, OperatorError> {
+        let device = Device::shared()?;
+        let buffer = device.buffer(len * size_of::<Complex32>())?;
+        let pointer = buffer.contents().cast::<Complex32>();
+        // SAFETY: the buffer holds `len` zeroed, aligned complex values and
+        // lives as long as its owner box (and as long as any command that
+        // binds it, which Metal retains); only device commands write it.
+        Ok(unsafe { DeviceNativeCells::new(pointer, len, Box::new(buffer)) })
     }
 
     /// A zeroed accumulator for `layout` whose cells live in memory the
@@ -437,6 +413,10 @@ impl<'cf> MetalBackend<'cf> {
             weighted: u32::from(weighted),
             write_residual: 0,
             lanes: 0,
+            batch_offset: 0,
+            native: 0,
+            add: 0,
+            pad: 0,
             tile_shape: shape(tile.shape),
             tile_origin: shape(tile.origin),
             grid_shape: shape(targets.adjoint.as_ref().map_or_else(
@@ -450,9 +430,10 @@ impl<'cf> MetalBackend<'cf> {
 
     /// Prepare, commit and complete `kernel` over every sample of `block`.
     /// Grid-only work into `cells` is left running when the backend defers
-    /// grid completion; the cells then wait for it. With `leave_readback`
-    /// the read-back of the last sub-blocks is left for
-    /// [`Self::collect_prediction`].
+    /// grid completion; the cells then wait for it. With `leave_running`
+    /// every sub-block is left running: work that writes only device
+    /// buffers later device work reads ([`Kernel::PredictNative`]), its
+    /// slots retired on reuse or by [`Self::complete`].
     #[allow(clippy::too_many_arguments)]
     fn run(
         &mut self,
@@ -462,14 +443,11 @@ impl<'cf> MetalBackend<'cf> {
         mut sumwt: Option<&mut [f64]>,
         cells: Option<&DeviceCells>,
         model: Option<&Buffer>,
+        native: Option<&Buffer>,
         mut readback: Readback<'_>,
-        leave_readback: bool,
+        leave_running: bool,
         params: Params,
     ) -> Result<(), OperatorError> {
-        assert!(
-            self.pending_prediction.is_none(),
-            "a submitted prediction is collected before the backend dispatches again"
-        );
         let grid = cells.map(|cells| {
             cells
                 .owner()
@@ -482,7 +460,7 @@ impl<'cf> MetalBackend<'cf> {
         let sub = samples.div_ceil(SPLIT).clamp(MIN_SUB, MAX_SUB);
         self.usage.applies += 1;
         self.usage.samples += samples as u64;
-        if kernel == Kernel::Predict {
+        if matches!(kernel, Kernel::Predict | Kernel::PredictNative) {
             self.usage.predicted += samples as u64;
         }
         self.usage.sub_blocks += samples.div_ceil(sub) as u64;
@@ -508,13 +486,13 @@ impl<'cf> MetalBackend<'cf> {
                 );
                 self.usage.prepare += started.elapsed();
                 filled?;
-                self.commit(slot, kernel, grid, model, params, start..end)?;
+                self.commit(slot, kernel, grid, model, native, params, start..end)?;
                 self.ring[slot].reads_back = reads_back;
                 start = end;
             }
             Ok::<_, OperatorError>(())
         }));
-        if leave_readback && matches!(dispatched, Ok(Ok(()))) {
+        if leave_running && matches!(dispatched, Ok(Ok(()))) {
             return Ok(());
         }
         if defer && matches!(dispatched, Ok(Ok(()))) {
@@ -572,10 +550,14 @@ impl<'cf> MetalBackend<'cf> {
             slot.weights = device.buffer(capacity * npol * size_of::<f32>())?;
             slot.norms = device.buffer(capacity * npol * size_of::<Complex32>())?;
             slot.out = device.buffer(capacity * npol * size_of::<Complex32>())?;
+            slot.sources = device.buffer(capacity * size_of::<NativeSource>())?;
             slot.capacity = capacity;
             slot.npol = npol;
         }
-        let forward = kernel != Kernel::Spread;
+        let forward = matches!(
+            kernel,
+            Kernel::Predict | Kernel::PredictNative | Kernel::Residual
+        );
         prepare(
             self.kernels,
             &self.known,
@@ -586,42 +568,76 @@ impl<'cf> MetalBackend<'cf> {
             slot.records.slice_mut(count),
             forward.then(|| slot.norms.slice_mut(count * npol)),
         );
-        if kernel != Kernel::Predict {
-            let values = range.start * npol..range.end * npol;
-            slot.values
-                .slice_mut(count * npol)
-                .copy_from_slice(&block.values[values.clone()]);
-            slot.weights
-                .slice_mut(count * npol)
-                .copy_from_slice(&block.weights[values]);
+        match kernel {
+            Kernel::Predict | Kernel::NativeModel => {}
+            Kernel::PredictNative => {
+                // The phase-centre phasor of each prediction, `e^{−iφ}`,
+                // taken in f64 on the host.
+                for (phasor, placement) in slot
+                    .values
+                    .slice_mut::<Complex32>(count)
+                    .iter_mut()
+                    .zip(&block.placements[range])
+                {
+                    let value = Complex64::from_polar(1.0, -placement.phase);
+                    *phasor = Complex32::new(value.re as f32, value.im as f32);
+                }
+            }
+            Kernel::Spread | Kernel::Residual | Kernel::NativeResidual => {
+                let values = range.start * npol..range.end * npol;
+                slot.values
+                    .slice_mut(count * npol)
+                    .copy_from_slice(&block.values[values.clone()]);
+                slot.weights
+                    .slice_mut(count * npol)
+                    .copy_from_slice(&block.weights[values]);
+                if kernel == Kernel::NativeResidual {
+                    slot.sources
+                        .slice_mut(count)
+                        .copy_from_slice(&block.sources[range]);
+                }
+            }
         }
         Ok(())
     }
 
-    /// Encode and commit `kernel` over the samples in slot `slot`.
+    /// Encode and commit `kernel` over the samples (or, for
+    /// [`Kernel::NativeModel`], the native terms) in slot `slot`.
+    #[allow(clippy::too_many_arguments)]
     fn commit(
         &mut self,
         slot_index: usize,
         kernel: Kernel,
         grid: Option<&Buffer>,
         model: Option<&Buffer>,
+        native: Option<&Buffer>,
         mut params: Params,
         range: Range<usize>,
     ) -> Result<(), OperatorError> {
         let failed = OperatorError::Device(DeviceFailure::CommandFailed { code: -1 });
         let device = self.device;
         let pipeline: &Pipeline = match kernel {
-            Kernel::Spread => &device.spread,
-            Kernel::Predict => &device.predict,
+            Kernel::Spread | Kernel::NativeResidual => &device.spread,
+            Kernel::Predict | Kernel::PredictNative => &device.predict,
             Kernel::Residual => &device.residual,
+            Kernel::NativeModel => &device.native,
         };
         params.samples = range.len() as u32;
-        let (lanes, samples_per_group) = if self.widest <= THREAD_TAPS {
-            (1, pipeline.threads)
-        } else {
-            (pipeline.width, pipeline.samples_per_group)
-        };
+        params.native = u32::from(matches!(
+            kernel,
+            Kernel::PredictNative | Kernel::NativeResidual
+        ));
+        if kernel == Kernel::PredictNative {
+            params.batch_offset = u32::try_from(range.start).expect("a batch fits u32 indices");
+        }
+        let (lanes, samples_per_group) =
+            if self.widest <= THREAD_TAPS || kernel == Kernel::NativeModel {
+                (1, pipeline.threads)
+            } else {
+                (pipeline.width, pipeline.samples_per_group)
+            };
         params.lanes = lanes as u32;
+        let batch = &self.batch;
         let slot = &mut self.ring[slot_index];
         objc2::rc::autoreleasepool(|_| {
             let command = device.queue.commandBuffer().ok_or(failed.clone())?;
@@ -634,22 +650,39 @@ impl<'cf> MetalBackend<'cf> {
                 // through their deferred wait. Indices match the kernels.
                 unsafe { encoder.setBuffer_offset_atIndex(Some(&buffer.raw), 0, index) };
             };
-            bind(&slot.records, 0);
             bind(&self.table_buffer, 3);
             bind(&self.rows.buffer, 4);
             bind(&self.dense.buffer, 5);
             match kernel {
-                Kernel::Spread => {
+                Kernel::Spread | Kernel::NativeResidual => {
+                    bind(&slot.records, 0);
                     bind(&slot.values, 1);
                     bind(&slot.weights, 2);
                     bind(grid.expect("spreading has a grid"), 6);
+                    // Read only for a residual at native channels.
+                    bind(&slot.sources, 8);
+                    bind(native.unwrap_or(&slot.out), 9);
                 }
-                Kernel::Predict => {
+                Kernel::Predict | Kernel::PredictNative => {
+                    bind(&slot.records, 0);
                     bind(&slot.norms, 1);
+                    // The phasors, read only for a native prediction.
+                    bind(&slot.values, 2);
                     bind(model.expect("prediction has a model"), 6);
-                    bind(&slot.out, 8);
+                    let out = if kernel == Kernel::Predict {
+                        &slot.out
+                    } else {
+                        batch
+                    };
+                    bind(out, 8);
+                }
+                Kernel::NativeModel => {
+                    bind(&slot.sources, 0);
+                    bind(batch, 8);
+                    bind(native.expect("the native model has cells"), 9);
                 }
                 Kernel::Residual => {
+                    bind(&slot.records, 0);
                     bind(&slot.values, 1);
                     bind(&slot.weights, 2);
                     bind(grid.expect("the residual has a grid"), 6);
@@ -844,17 +877,41 @@ impl GridBackend for MetalBackend<'_> {
             cf.mueller().visibility_pols(),
             "block polarizations must match the kernel set routing"
         );
+        if let Work::PredictNative {
+            grids,
+            terms,
+            model,
+            add,
+        } = work
+        {
+            // Rows that placed nothing still have their cells written.
+            let NativeTarget::Device(cells) = model else {
+                panic!(
+                    "the Metal backend forms the model in cells from MetalBackend::native_cells"
+                );
+            };
+            return self.predict_native(block, grids, terms, cells, add);
+        }
         if block.is_empty() {
             return Ok(());
         }
         match work {
             Work::Grid { mode, acc } => self.grid(block, mode, acc),
-            Work::Predict { model, out } => self.predict(block, model, out, false),
+            Work::Predict { model, out } => self.predict(block, model, out),
             Work::ResidualGrid {
                 model,
                 acc,
                 residual_out,
             } => self.residual(block, model, acc, residual_out),
+            Work::NativeResidualGrid { model, acc } => {
+                let NativeModel::Device(cells) = model else {
+                    panic!(
+                        "the Metal backend reads the model from cells from MetalBackend::native_cells"
+                    );
+                };
+                self.native_residual(block, cells, acc)
+            }
+            Work::PredictNative { .. } => unreachable!("dispatched above"),
         }
     }
 }
@@ -885,6 +942,7 @@ impl MetalBackend<'_> {
             sumwt,
             Some(device_cells(storage)),
             None,
+            None,
             Readback::None,
             false,
             params,
@@ -897,7 +955,6 @@ impl MetalBackend<'_> {
         block: &SampleBlock<'_>,
         model: &PreparedModelGrids,
         out: &mut [Complex32],
-        leave_readback: bool,
     ) -> Result<(), OperatorError> {
         assert_eq!(
             out.len(),
@@ -918,8 +975,123 @@ impl MetalBackend<'_> {
             None,
             None,
             Some(buffer),
+            None,
             Readback::Prediction(out),
-            leave_readback,
+            false,
+            params,
+        )
+    }
+
+    /// [`Work::PredictNative`]: predict the batch into the backend's batch
+    /// buffer, then form the model at each term's cell, leaving both
+    /// running: device work that reads the cells later runs after them
+    /// (one queue, tracked buffers), and their slots are retired on reuse
+    /// or by [`Self::complete`].
+    fn predict_native(
+        &mut self,
+        block: &SampleBlock<'_>,
+        grids: &PreparedModelGrids,
+        terms: &[NativeTerm],
+        cells: &DeviceNativeCells,
+        add: bool,
+    ) -> Result<(), OperatorError> {
+        let native = cells
+            .owner()
+            .downcast_ref::<Buffer>()
+            .expect("the Metal backend forms the model in cells from MetalBackend::native_cells");
+        let bytes = block.len() * block.npol * size_of::<Complex32>();
+        if self.batch.bytes < bytes {
+            // Commands still running keep the old buffer.
+            self.batch = self.device.buffer(bytes.max(2 * self.batch.bytes))?;
+        }
+        let targets = Targets {
+            kind: TapsKind::Imaging,
+            adjoint: None,
+            model: Some(grids.layout()),
+        };
+        let mut params = self.params(block, &targets, false);
+        if !block.is_empty() {
+            let buffer = self.model_copy(grids)?;
+            self.run(
+                Kernel::PredictNative,
+                block,
+                &targets,
+                None,
+                None,
+                Some(buffer),
+                None,
+                Readback::None,
+                true,
+                params,
+            )?;
+        }
+        params.add = u32::from(add);
+        for part in terms.chunks(MAX_SUB) {
+            let slot = self.next;
+            self.next = (self.next + 1) % RING;
+            self.retire(slot, block, &mut Readback::None)?;
+            let started = std::time::Instant::now();
+            let ring_slot = &mut self.ring[slot];
+            if ring_slot.sources.bytes < size_of_val(part) {
+                ring_slot.sources = self.device.buffer(size_of_val(part))?;
+            }
+            ring_slot
+                .sources
+                .slice_mut::<NativeTerm>(part.len())
+                .copy_from_slice(part);
+            self.usage.prepare += started.elapsed();
+            self.usage.sub_blocks += 1;
+            self.commit(
+                slot,
+                Kernel::NativeModel,
+                None,
+                None,
+                Some(native),
+                params,
+                0..part.len(),
+            )?;
+            self.ring[slot].reads_back = false;
+        }
+        Ok(())
+    }
+
+    /// [`Work::NativeResidualGrid`]: spread each sample's values less the
+    /// model at its native endpoints.
+    fn native_residual(
+        &mut self,
+        block: &SampleBlock<'_>,
+        cells: &DeviceNativeCells,
+        acc: &mut GridAccumulator,
+    ) -> Result<(), OperatorError> {
+        assert_eq!(
+            block.sources.len(),
+            block.len(),
+            "a native residual block holds every placement's endpoints"
+        );
+        let native = cells
+            .owner()
+            .downcast_ref::<Buffer>()
+            .expect("the Metal backend reads the model from cells from MetalBackend::native_cells");
+        let (layout, storage, sumwt) = acc.backend_parts();
+        let terms = layout
+            .term_range(Mode::Data)
+            .expect("residual gridding needs the data terms");
+        let targets = Targets {
+            kind: TapsKind::Imaging,
+            adjoint: Some((layout, terms)),
+            model: None,
+        };
+        let params = self.params(block, &targets, false);
+        self.run(
+            Kernel::NativeResidual,
+            block,
+            &targets,
+            sumwt,
+            Some(device_cells(storage)),
+            None,
+            Some(native),
+            Readback::None,
+            false,
             params,
         )
     }
@@ -963,6 +1135,7 @@ impl MetalBackend<'_> {
             sumwt,
             Some(device_cells(storage)),
             Some(buffer),
+            None,
             readback,
             false,
             params,

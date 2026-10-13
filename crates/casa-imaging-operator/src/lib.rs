@@ -41,6 +41,7 @@ mod error;
 mod fft;
 mod geometry;
 mod mosaic;
+mod native;
 mod operator;
 mod polarization;
 mod resample;
@@ -68,6 +69,7 @@ pub use geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent};
 pub use mosaic::{
     AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicScreens, MosaicWindow, pair_plane,
 };
+pub use native::{DeviceNativeCells, NO_CELL, NativeModel, NativeSource, NativeTarget, NativeTerm};
 pub use operator::{
     Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, NormalPlane,
 };

@@ -26,7 +26,9 @@ pub(crate) const MAX_POLS: usize = 4;
 const _: () = {
     assert!(size_of::<SampleRecord>() == crate::SAMPLE_BYTES);
     assert!(size_of::<TableRecord>() == 16);
-    assert!(size_of::<Params>() == 128);
+    assert!(size_of::<Params>() == 144);
+    assert!(size_of::<casa_imaging_operator::NativeTerm>() == 20);
+    assert!(size_of::<casa_imaging_operator::NativeSource>() == 24);
 };
 
 /// One located sample (`Sample` in the kernels).
@@ -82,6 +84,14 @@ pub(crate) struct Params {
     pub write_residual: u32,
     /// Threads serving one sample: 1, or a SIMD group's width.
     pub lanes: u32,
+    /// Batch index of a native prediction's first sample.
+    pub batch_offset: u32,
+    /// 1: a prediction stays in the batch buffer, phasor applied; a spread
+    /// subtracts the model at native cells.
+    pub native: u32,
+    /// 1: the native model adds to the cells instead of writing them.
+    pub add: u32,
+    pub pad: u32,
     pub tile_shape: [u32; 2],
     pub tile_origin: [u32; 2],
     pub grid_shape: [u32; 2],

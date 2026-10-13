@@ -47,11 +47,33 @@ struct Params {
     uint weighted;          // 1: spread the weight (PSF, weight image)
     uint write_residual;    // 1: hand the residual samples back
     uint lanes;             // threads per sample: 1, or the SIMD width
+    uint batch_offset;      // batch index of a native prediction's first sample
+    uint native;            // 1: predict into the batch / subtract the native model
+    uint add;               // 1: the native model adds to the cells
+    uint pad;
     uint2 tile_shape;
     uint2 tile_origin;
     uint2 grid_shape;
     char adjoint[2][16];    // [w > 0][gpol * 4 + vpol]: Mueller plane or -1
     char forward[2][16];
+};
+
+#define NO_CELL 0xffffffffu
+
+// The model at one native cell from a batch of predictions (`NativeTerm`).
+struct NativeTerm {
+    uint cell;
+    uint low;
+    uint high;
+    float fraction;
+    uint flags;             // bit vpol: flagged, the model stays zero
+};
+
+// A sample's native endpoints (`NativeSource`).
+struct NativeSource {
+    uint2 cells;
+    float2 factors;
+    float2 scale;           // W·e^{iφ}
 };
 
 static inline float2 cmul(float2 a, float2 b) {
@@ -274,6 +296,8 @@ kernel void spread(device const Sample *samples [[buffer(0)]],
                    device const float2 *dense [[buffer(5)]],
                    device atomic_float *grid [[buffer(6)]],
                    constant Params &p [[buffer(7)]],
+                   device const NativeSource *sources [[buffer(8)]],
+                   device const float2 *native_model [[buffer(9)]],
                    uint position [[thread_position_in_grid]],
                    uint group [[threadgroup_position_in_grid]],
                    uint simdgroup [[simdgroup_index_in_threadgroup]],
@@ -291,11 +315,56 @@ kernel void spread(device const Sample *samples [[buffer(0)]],
         spread[vpol] = p.weighted != 0u ? float2(weights[index * p.npol + vpol], 0.0f)
                                         : values[index * p.npol + vpol];
     }
+    if (p.native != 0u) {
+        // The observed value less the model at the same native endpoints,
+        // with the same factors and W·e^{iφ}: a residual at native channels.
+        NativeSource source = sources[index];
+        for (uint vpol = 0; vpol < p.npol; ++vpol) {
+            float2 model = float2(0.0f);
+            for (uint end = 0; end < 2; ++end) {
+                uint cell = end == 0 ? source.cells.x : source.cells.y;
+                if (cell != NO_CELL) {
+                    float factor = end == 0 ? source.factors.x : source.factors.y;
+                    model += native_model[ulong(cell) * p.npol + vpol] * factor;
+                }
+            }
+            spread[vpol] -= cmul(source.scale, model);
+        }
+    }
     spread_values(s, tables[s.table], spread, weights, index, rows, dense, grid, p, l.lane, l.width);
+}
+
+// One thread per native term: the model at its cell from the batch's
+// predictions, written, or added for a later image domain.
+kernel void native_model(device const NativeTerm *terms [[buffer(0)]],
+                         constant Params &p [[buffer(7)]],
+                         device const float2 *predicted [[buffer(8)]],
+                         device float2 *model [[buffer(9)]],
+                         uint index [[thread_position_in_grid]]) {
+    if (index >= p.samples) {
+        return;
+    }
+    NativeTerm t = terms[index];
+    for (uint vpol = 0; vpol < p.npol; ++vpol) {
+        float2 m = float2(0.0f);
+        if (((t.flags >> vpol) & 1u) == 0u) {
+            float2 a = t.low == NO_CELL ? float2(0.0f) : predicted[ulong(t.low) * p.npol + vpol];
+            if (t.low == t.high) {
+                m = a;
+            } else {
+                float2 b = t.high == NO_CELL ? float2(0.0f)
+                                             : predicted[ulong(t.high) * p.npol + vpol];
+                m = a + (b - a) * t.fraction;
+            }
+        }
+        ulong at = ulong(t.cell) * p.npol + vpol;
+        model[at] = p.add != 0u ? model[at] + m : m;
+    }
 }
 
 kernel void predict(device const Sample *samples [[buffer(0)]],
                     device const float2 *inverse_norms [[buffer(1)]],
+                    device const float2 *phasors [[buffer(2)]],
                     device const Table *tables [[buffer(3)]],
                     device const float *rows [[buffer(4)]],
                     device const float2 *dense [[buffer(5)]],
@@ -317,8 +386,18 @@ kernel void predict(device const Sample *samples [[buffer(0)]],
     float2 result[MAX_POLS];
     gather(s, tables[s.table], inverse_norms, index, rows, dense, model, p, l.lane, l.width, result);
     if (l.lane == 0) {
-        for (uint vpol = 0; vpol < p.npol; ++vpol) {
-            predicted[index * p.npol + vpol] = result[vpol];
+        if (p.native != 0u) {
+            // A native prediction stays on the device for `native_model`:
+            // the whole batch in one buffer, phase-centre phasor applied
+            // (computed on the host in f64).
+            ulong at = ulong(p.batch_offset + index) * p.npol;
+            for (uint vpol = 0; vpol < p.npol; ++vpol) {
+                predicted[at + vpol] = cmul(result[vpol], phasors[index]);
+            }
+        } else {
+            for (uint vpol = 0; vpol < p.npol; ++vpol) {
+                predicted[index * p.npol + vpol] = result[vpol];
+            }
         }
     }
 }

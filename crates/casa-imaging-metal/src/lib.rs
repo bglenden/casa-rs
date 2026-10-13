@@ -57,17 +57,27 @@ const RING: usize = 2 * SPLIT;
 const SPLIT: usize = 3;
 /// The most samples in one ring sub-block.
 const MAX_SUB: usize = 32_768;
-/// Device bytes per sample of a ring slot: the record, and per visibility
-/// polarization a value, a weight, an inverse norm and an output.
+/// Device bytes per sample of a ring slot: the record, its native endpoints
+/// (or a native term), and per visibility polarization a value, a weight,
+/// an inverse norm and an output.
 const SAMPLE_BYTES: usize = 40;
+const SOURCE_BYTES: usize = 24;
 const POLARIZATION_BYTES: usize = 8 + 4 + 8 + 8;
 
 /// The most device memory one backend's ring holds for blocks of `npol`
 /// visibility polarizations; kernel tables add one copy of the taps of the
-/// cells the backend has met.
+/// cells the backend has met, and a native prediction its batch
+/// ([`batch_bytes`]).
 #[must_use]
 pub const fn ring_bytes(npol: usize) -> u64 {
-    (RING * MAX_SUB * (SAMPLE_BYTES + npol * POLARIZATION_BYTES)) as u64
+    (RING * MAX_SUB * (SAMPLE_BYTES + SOURCE_BYTES + npol * POLARIZATION_BYTES)) as u64
+}
+
+/// The device memory a backend's predictions of a native-prediction batch
+/// of `samples` samples of `npol` polarizations hold.
+#[must_use]
+pub const fn batch_bytes(npol: usize, samples: usize) -> u64 {
+    (samples * npol * size_of::<num_complex::Complex32>()) as u64
 }
 
 /// Whether this host has a Metal device the backend can use: Metal 3 with

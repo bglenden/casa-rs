@@ -11,6 +11,9 @@ use crate::accumulator::{
 };
 use crate::convolution::ConvolutionFunctionSet;
 use crate::error::OperatorError;
+#[cfg(doc)]
+use crate::native::NativeSource;
+use crate::native::{NativeModel, NativeTarget, NativeTerm};
 use crate::sample::SampleBlock;
 
 /// Model grids ready for degridding: the forward FFT of the corrected,
@@ -133,6 +136,36 @@ pub enum Work<'a> {
         acc: &'a mut GridAccumulator,
         /// `npol × placements` raw residual visibilities, when wanted.
         residual_out: Option<&'a mut [Complex32]>,
+    },
+    /// Predict the block's placements from `grids`, phase-centre phasor
+    /// applied, as [`Work::Predict`] does, and interpolate the predictions
+    /// to native cells ([`NativeTerm`]): the model of each term's cell is
+    /// written into `model`, or with `add` added to it, so that several
+    /// image domains' predictions sum before the residual is formed
+    /// (`SIMapperCollection::degrid`). Reads only the block's placements.
+    ///
+    /// A device backend may leave the work running when `apply` returns;
+    /// later device work that reads `model` runs after it, and the host
+    /// reads device cells only once the backend has completed it.
+    PredictNative {
+        /// Prepared model grids covering every plane in the block.
+        grids: &'a PreparedModelGrids,
+        /// One term per native cell to form.
+        terms: &'a [NativeTerm],
+        /// Where the model at native cells goes.
+        model: NativeTarget<'a>,
+        /// Add to the cells instead of writing them.
+        add: bool,
+    },
+    /// Grid the residual at native channels into the data terms of `acc`:
+    /// each placement's values (`W·V·e^{iφ}` interpolated between its native
+    /// endpoints) less `scale · Σ factors · M[cells]` of its endpoints
+    /// ([`SampleBlock::sources`], [`NativeSource`]) in `model`.
+    NativeResidualGrid {
+        /// The model at native cells, from [`Work::PredictNative`].
+        model: NativeModel<'a>,
+        /// Target accumulator; it must hold the data terms.
+        acc: &'a mut GridAccumulator,
     },
 }
 

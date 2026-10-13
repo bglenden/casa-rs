@@ -11,6 +11,7 @@ use crate::backend::{GridBackend, PreparedModelGrids, Work};
 use crate::convolution::{CellHold, ConvolutionFunctionSet, KernelNormalisation, TapLayout};
 use crate::error::OperatorError;
 use crate::geometry::CellLocation;
+use crate::native::{NativeModel, NativeTarget, interpolate_terms, residual_values};
 use crate::sample::{Placement, SampleBlock};
 
 /// The CPU implementation of [`GridBackend`].
@@ -31,6 +32,8 @@ pub struct CpuBackend {
     /// the terms, for the visibility polarizations that share them.
     gathered: Vec<(u8, Complex64)>,
     residual: Vec<Complex32>,
+    /// A block's predictions, or its residual values at native channels.
+    batch: Vec<Complex32>,
     hold: CellHold,
 }
 
@@ -317,8 +320,72 @@ impl GridBackend for CpuBackend {
                 }
                 Ok(())
             }
+            Work::PredictNative {
+                grids,
+                terms,
+                model,
+                add,
+            } => {
+                let NativeTarget::Host { cells, first } = model else {
+                    panic!("the CPU backend forms the model in host cells");
+                };
+                let mut predicted = std::mem::take(&mut self.batch);
+                predicted.clear();
+                predicted.resize(block.len() * block.npol, Complex32::default());
+                match grids.precision() {
+                    GridPrecision::F32 => self.predict::<f32>(block, cf, grids, &mut predicted),
+                    GridPrecision::F64 => self.predict::<f64>(block, cf, grids, &mut predicted),
+                }
+                interpolate_terms(&predicted, block.npol, terms, cells, first, add);
+                self.batch = predicted;
+                Ok(())
+            }
+            Work::NativeResidualGrid { model, acc } => self.native_residual(block, cf, model, acc),
         };
         self.hold.clear();
+        result
+    }
+}
+
+impl CpuBackend {
+    /// [`Work::NativeResidualGrid`]: the block's values less the model at
+    /// their native endpoints, gridded as data.
+    fn native_residual(
+        &mut self,
+        block: &SampleBlock<'_>,
+        cf: &dyn ConvolutionFunctionSet,
+        model: NativeModel<'_>,
+        acc: &mut GridAccumulator,
+    ) -> Result<(), OperatorError> {
+        let NativeModel::Host { cells, first } = model else {
+            panic!("the CPU backend reads the model from host cells");
+        };
+        assert_eq!(
+            block.sources.len(),
+            block.len(),
+            "a native residual block holds every placement's endpoints"
+        );
+        let npol = block.npol;
+        let mut values = std::mem::take(&mut self.batch);
+        values.clear();
+        values.resize(block.len() * npol, Complex32::default());
+        for (index, (source, out)) in block
+            .sources
+            .iter()
+            .zip(values.chunks_exact_mut(npol))
+            .enumerate()
+        {
+            residual_values(block.values_of(index), source, cells, first, out);
+        }
+        let residual = SampleBlock {
+            values: &values,
+            ..*block
+        };
+        let result = match acc.precision() {
+            GridPrecision::F32 => self.grid::<f32>(&residual, cf, Mode::Data, acc),
+            GridPrecision::F64 => self.grid::<f64>(&residual, cf, Mode::Data, acc),
+        };
+        self.batch = values;
         result
     }
 }

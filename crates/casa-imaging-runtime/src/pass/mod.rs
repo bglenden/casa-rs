@@ -173,8 +173,8 @@ pub struct PassDomain<'a> {
 /// operator of the pass must be `f32`. The model is degridded on the device
 /// too: fused into the residual, or, for the native-channel residual of a
 /// multi-domain or linearly interpolated pass, in each row chunk's
-/// prediction batch, whose interpolation and subtraction stay on the CPU
-/// workers with placement.
+/// prediction batch, which the device interpolates to native cells and
+/// subtracts from each placed sample without handing it back.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BackendChoice {
@@ -393,14 +393,15 @@ pub struct RowSamples {
 /// source's block, for rows of `layout` that each produce at most `row`
 /// samples on `workers` workers, while a chunk's rows are a block's share
 /// rather than its placement cap: each owner's buffer and the weight
-/// owner's can take every placement of a row, and the chunk's prediction
-/// batch every degridded sample. The source sizes its blocks with it
+/// owner's can take every placement of a row with its native endpoints, and
+/// the chunk's prediction batch every degridded sample and the row's native
+/// terms. The source sizes its blocks with it
 /// ([`crate::finalize_source_access`]); [`WaveDemand::bytes`] charges the
 /// chunks exactly.
 #[must_use]
 pub const fn chunk_bytes_per_row(layout: BlockShape, row: RowSamples, workers: usize) -> u64 {
-    (workers as u64 + 1) * SampleBuffer::bytes(layout.correlations, row.placed)
-        + PredictionScratch::bytes(layout.correlations, row.predicted, 0)
+    (workers as u64 + 1) * SampleBuffer::sourced_bytes(layout.correlations, row.placed)
+        + PredictionScratch::bytes(layout.correlations, row.predicted, 0, layout.channels())
         + size_of::<PlacedRow>() as u64
 }
 
