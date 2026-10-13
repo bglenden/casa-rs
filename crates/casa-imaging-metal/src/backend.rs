@@ -75,7 +75,7 @@ pub struct MetalBackend<'cf> {
 /// dispatched, so after a failure the counts include work the device never
 /// did, and `failed` says so. `predicted` counts the samples of
 /// [`Work::Predict`] dispatches among `samples`. Also the host's
-/// preparation time and its waits for the device.
+/// preparation time and its waits for the device, and the device's time.
 #[derive(Default)]
 struct Usage {
     applies: u64,
@@ -84,7 +84,27 @@ struct Usage {
     sub_blocks: u64,
     prepare: std::time::Duration,
     wait: std::time::Duration,
+    /// Seconds the device spent on this backend's commands
+    /// (`GPUEndTime − GPUStartTime`, summed), and the host-time span from
+    /// the first command's start to the last one's end. Commands of
+    /// several backends can run at once, so their sums can exceed the
+    /// wall time.
+    gpu: f64,
+    gpu_span: Option<(f64, f64)>,
     failed: bool,
+}
+
+impl Usage {
+    /// Count a completed command's device time.
+    fn completed(&mut self, command: &ProtocolObject<dyn MTLCommandBuffer>) {
+        let (start, end) = (command.GPUStartTime(), command.GPUEndTime());
+        if start > 0.0 && end >= start {
+            self.gpu += end - start;
+            self.gpu_span = Some(self.gpu_span.map_or((start, end), |(first, last)| {
+                (first.min(start), last.max(end))
+            }));
+        }
+    }
 }
 
 /// A growing device array of kernel values.
@@ -671,6 +691,9 @@ impl<'cf> MetalBackend<'cf> {
         let started = std::time::Instant::now();
         command.waitUntilCompleted();
         self.usage.wait += started.elapsed();
+        if self.stage_timing {
+            self.usage.completed(&command);
+        }
         if command.status() == MTLCommandBufferStatus::Error {
             let code = command.error().map_or(-1, |error| error.code() as i64);
             return Err(OperatorError::Device(DeviceFailure::CommandFailed { code }));
@@ -762,6 +785,9 @@ impl Drop for MetalBackend<'_> {
         for slot in &mut self.ring {
             if let Some(Command(command)) = slot.command.take() {
                 command.waitUntilCompleted();
+                if self.stage_timing {
+                    self.usage.completed(&command);
+                }
                 self.usage.failed |= command.status() == MTLCommandBufferStatus::Error;
             }
         }
@@ -772,6 +798,8 @@ impl Drop for MetalBackend<'_> {
             sub_blocks,
             prepare,
             wait,
+            gpu,
+            gpu_span,
             failed,
         } = self.usage;
         if self.stage_timing && applies > 0 {
@@ -785,6 +813,8 @@ impl Drop for MetalBackend<'_> {
                 kernel_cells = self.tables.len(),
                 prepare_seconds = prepare.as_secs_f64(),
                 wait_seconds = wait.as_secs_f64(),
+                gpu_seconds = gpu,
+                gpu_span_seconds = gpu_span.map_or(0.0, |(first, last)| last - first),
                 "metal backend"
             );
         }

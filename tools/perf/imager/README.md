@@ -395,7 +395,11 @@ after the message), logged at INFO, so they reach stderr with
   `model_prediction`, `products`, `total`) as the Rust stage medians;
 - `metal_stage_timing`: one `casa_imaging::metal_stage_timing` event per
   Metal backend (gridding owner or row-chunk prediction batch) and wave,
-  with whether its work completed and how many samples it predicted;
+  with whether its work completed, how many samples it predicted, the host's
+  preparation and wait times and the device's time on its commands; and one
+  `source stream` event per wave with the producer's fill time and the
+  pass's waits for blocks (`consumer_wait_seconds`), which says whether
+  reading the MeasurementSet is on the critical path;
 - `science_trace`: `casa_imaging::science_trace` events for the residual
   statistics, controls and record of each cycle.
 

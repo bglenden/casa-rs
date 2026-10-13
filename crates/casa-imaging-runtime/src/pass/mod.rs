@@ -322,7 +322,8 @@ pub fn run_major_cycle(
             team.workers(),
         )?
         .checking_spacing(!restrict && pass.residency != Residency::All);
-        summary.blocks += stream_blocks(source, cancel, |block| {
+        let timing = pass.metal_stage_timing && pass.backend == BackendChoice::Metal;
+        summary.blocks += stream_blocks(source, cancel, timing, |block| {
             wave.consume(block, team, visibilities.as_deref_mut())
         })?;
         summary.samples += wave.samples();
@@ -469,7 +470,7 @@ pub fn run_density_pass(
     let mut chunks = (0..count)
         .map(|_| (0..0, SampleBuffer::with_capacity(1, placements)))
         .collect::<Vec<_>>();
-    stream_blocks(source, cancel, |block| {
+    stream_blocks(source, cancel, false, |block| {
         for slice in slices(block.len(), count, rows_per_chunk) {
             let mut used = 0;
             for ((range, _), rows) in chunks.iter_mut().zip(chunk_ranges(slice, count)) {

@@ -40,7 +40,10 @@ pub use unavailable::MetalBackend;
 
 /// The `tracing` target of the event a backend made with stage timing logs
 /// when it drops: its dispatches, samples and sub-blocks, the kernel cells
-/// it uploaded, the host's preparation time and its waits for the device.
+/// it uploaded, the host's preparation time and its waits for the device,
+/// and the device's time on its commands (summed, and the span from the
+/// first start to the last end). A pass also logs, once per wave, its
+/// source stream: the producer's fill time and the pass's waits for it.
 pub const METAL_STAGE_TIMING: &str = "casa_imaging::metal_stage_timing";
 
 /// Ring slots of one backend: the host prepares one while the device runs
