@@ -177,19 +177,52 @@ impl NativeBlock {
         flags: &[bool],
     ) {
         let cells = self.channels() * self.correlations();
-        assert_eq!(projections.len(), self.domains, "one projection per domain");
-        assert_eq!(frequencies_hz.len(), self.channels(), "frequencies per row");
         assert!(
             values.len() == cells && weights.len() == cells && flags.len() == cells,
             "values, weights and flags per row must be channels × correlations"
         );
+        self.push_row_with(header, projections, frequencies_hz, |v, w, f| {
+            v.copy_from_slice(values);
+            w.copy_from_slice(weights);
+            f.copy_from_slice(flags);
+            Ok::<_, std::convert::Infallible>(())
+        })
+        .unwrap_or_else(|never| match never {});
+    }
+
+    /// [`Self::push_row`], with `fill` writing the row's values, weights and
+    /// flags in place: it receives them zeroed, `channels × correlations`
+    /// each, so a source copies each sample once. When `fill` fails the
+    /// block is left as it was and the error returned.
+    pub fn push_row_with<E>(
+        &mut self,
+        header: NativeRowHeader,
+        projections: &[DomainProjection],
+        frequencies_hz: &[f64],
+        fill: impl FnOnce(&mut [Complex32], &mut [f32], &mut [bool]) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let cells = self.channels() * self.correlations();
+        assert_eq!(projections.len(), self.domains, "one projection per domain");
+        assert_eq!(frequencies_hz.len(), self.channels(), "frequencies per row");
+        let start = self.values.len();
+        self.values.resize(start + cells, Complex32::default());
+        self.weights.resize(start + cells, 0.0);
+        self.flags.resize(start + cells, false);
+        if let Err(error) = fill(
+            &mut self.values[start..],
+            &mut self.weights[start..],
+            &mut self.flags[start..],
+        ) {
+            self.values.truncate(start);
+            self.weights.truncate(start);
+            self.flags.truncate(start);
+            return Err(error);
+        }
         self.rows.push(header);
         self.order.clear();
         self.projections.extend_from_slice(projections);
         self.frequencies_hz.extend_from_slice(frequencies_hz);
-        self.values.extend_from_slice(values);
-        self.weights.extend_from_slice(weights);
-        self.flags.extend_from_slice(flags);
+        Ok(())
     }
 
     /// Order the rows for locality: by antenna pair, a baseline's rows in
