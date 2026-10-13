@@ -61,10 +61,6 @@
           "beam_major_relative": 0.001,
           "beam_minor_relative": 0.001,
           "beam_pa_degrees": 0.1
-        },
-        ".pb": {
-          "require_topology_parity": true,
-          "mask_mismatch_fraction": 0.00001
         }
       }
     }

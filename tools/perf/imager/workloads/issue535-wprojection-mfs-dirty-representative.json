@@ -88,10 +88,6 @@
           "centroid_pixels": 0.05,
           "integrated_flux_relative": 0.001,
           "peak_relative": 0.001
-        },
-        ".pb": {
-          "require_topology_parity": true,
-          "mask_mismatch_fraction": 0.00001
         }
       }
     }
