@@ -594,6 +594,34 @@ impl AwCatalog {
         Ok(())
     }
 
+    /// Experiment (#659): the time to read every group from its images, and
+    /// with a generator attached the time to form every group, each in group
+    /// order and on this thread; the per-group costs a cache miss pays.
+    ///
+    /// # Panics
+    ///
+    /// A group cannot be read or formed.
+    #[must_use]
+    pub fn time_group_sources(&self) -> (std::time::Duration, Option<std::time::Duration>) {
+        let start = std::time::Instant::now();
+        for (index, group) in self.groups.iter().enumerate() {
+            load_group(group, self.oversampling)
+                .unwrap_or_else(|error| panic!("AW cell group {index} cannot be read: {error}"));
+        }
+        let read = start.elapsed();
+        let formed = self.generator.as_ref().map(|generator| {
+            let mut generator = generator.lock().expect("generator lock");
+            let start = std::time::Instant::now();
+            for (index, group) in self.groups.iter().enumerate() {
+                generate_group(group, index, &mut generator, self.oversampling).unwrap_or_else(
+                    |error| panic!("AW cell group {index} cannot be formed: {error}"),
+                );
+            }
+            start.elapsed()
+        });
+        (read, formed)
+    }
+
     /// Generate every cell of `input` natively into `root` as CASA-format
     /// images (`CFS_<pa>_0_CF_<f>_<w>_<m>.im` and the `WTCFS_` partner, one
     /// baseline type) so [`AwCatalog::open_casa`] serves them. Existing

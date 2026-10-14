@@ -342,6 +342,18 @@ fn kernel_set(
                     .and_then(|value| value.parse().ok())
                     .unwrap_or(12);
                 catalog.generate_on_miss(input, apertures)?;
+                // Experiment (#659): time reading and forming every group,
+                // then stop.
+                if std::env::var_os("CASA_RS_EXPERIMENT_AW_BENCH").is_some() {
+                    let (read, formed) = catalog.time_group_sources();
+                    eprintln!(
+                        "aw group sources: {} groups read in {:.3} s, formed in {:.3} s",
+                        catalog.groups(),
+                        read.as_secs_f64(),
+                        formed.map_or(f64::NAN, |formed| formed.as_secs_f64())
+                    );
+                    std::process::exit(0);
+                }
             }
             let kernels = admission.admit(PHASE, catalog.charge_bytes(admission.workers))?;
             (Box::new(catalog), kernels)
