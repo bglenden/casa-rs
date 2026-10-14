@@ -487,10 +487,25 @@ impl BoundObservationSource {
             },
         )
         .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        // Experiment (#659): walk the selection one DATA_DESCRIPTION at a
+        // time, so the rows of a spectral window arrive together.
+        let walk = if std::env::var_os("CASA_RS_EXPERIMENT_DDID_WALK").is_some()
+            && self.coordinates.len() > 1
+        {
+            self.coordinates
+                .iter()
+                .map(|coordinates| i64::from(coordinates.data_description.data_description_id()))
+                .collect()
+        } else {
+            Vec::new()
+        };
         Ok(SelectedRowReplay {
             cursor: self.measurement_set.main_row_selection_cursor(plan)?,
             pending: None,
             selected_rows: 0,
+            plan,
+            walk,
+            stage: 0,
         })
     }
 
@@ -700,6 +715,11 @@ pub(super) struct SelectedRowReplay {
     cursor: MainRowSelectionCursor,
     pending: Option<SelectedObservationRow>,
     selected_rows: u64,
+    plan: MsReadPlan,
+    /// DATA_DESCRIPTION ids walked one after another, each over the whole
+    /// MAIN table; empty walks the table once in storage order.
+    walk: Vec<i64>,
+    stage: usize,
 }
 
 impl SelectedRowReplay {
@@ -716,13 +736,25 @@ impl SelectedRowReplay {
         if let Some(row) = self.pending.take() {
             return Ok(Some(row));
         }
-        while let Some(row) = self.cursor.next(&source.measurement_set)? {
-            if source.row_predicate.matches(row) {
-                self.selected_rows += 1;
-                return Ok(Some(row));
+        loop {
+            let only = self.walk.get(self.stage).copied();
+            while let Some(row) = self.cursor.next(&source.measurement_set)? {
+                if only.is_some_and(|ddid| i64::from(row.data_description_id()) != ddid) {
+                    continue;
+                }
+                if source.row_predicate.matches(row) {
+                    self.selected_rows += 1;
+                    return Ok(Some(row));
+                }
             }
+            if self.stage + 1 >= self.walk.len() {
+                return Ok(None);
+            }
+            self.stage += 1;
+            self.cursor = source
+                .measurement_set
+                .main_row_selection_cursor(self.plan)?;
         }
-        Ok(None)
     }
 }
 

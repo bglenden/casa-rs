@@ -476,6 +476,7 @@ impl AwPlan {
             root: self.root,
             indexing: self.indexing,
             resident_bytes: self.resident_bytes,
+            native: self.native.map(|(_, input)| input),
         })
     }
 }

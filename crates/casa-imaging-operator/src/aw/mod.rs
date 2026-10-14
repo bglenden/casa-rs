@@ -257,6 +257,58 @@ pub struct AwCatalog {
     mueller: MuellerRouting,
     correction: ImageCorrection,
     lru: Mutex<Lru>,
+    /// Experiment (#659): forms a missed group from the native request
+    /// instead of reading its images ([`AwCatalog::generate_on_miss`]).
+    generator: Option<Mutex<CellGenerator>>,
+}
+
+/// Experiment (#659): the native request a catalog was generated from, the
+/// aperture model, a workspace holding a few prepared apertures, and per
+/// catalog group and Mueller plane the request's indices.
+struct CellGenerator {
+    input: NativeAwRequestInput,
+    model: EvlaApertureModel,
+    workspace: EvlaAwWorkspace,
+    /// Per catalog group: the request's (PA, frequency, w) indices.
+    groups: Vec<[usize; 3]>,
+    /// Per catalog Mueller plane: the request's Mueller index.
+    mueller: Vec<usize>,
+}
+
+/// The cell request of `input`'s (PA, frequency, w, Mueller) indices, as
+/// [`AwCatalog::generate_native`] forms it.
+fn native_request(
+    input: &NativeAwRequestInput,
+    [ipa, inu, iw]: [usize; 3],
+    im: usize,
+) -> EvlaAwCellRequest {
+    let frequency = input.frequencies[inu].cf_frequency_hz;
+    let conjugate = conjugate_frequency(frequency, input.reference_frequency_hz);
+    let conjugate_frequency = if input.terms.conjugate_beams {
+        nearest(
+            &input
+                .frequencies
+                .iter()
+                .map(|group| group.cf_frequency_hz)
+                .collect::<Vec<_>>(),
+            conjugate,
+        )
+        .1
+    } else {
+        frequency
+    };
+    EvlaAwCellRequest {
+        size: input.grid.size,
+        sky_increment_rad: input.grid.sky_increment_rad,
+        frequency_hz: frequency,
+        conjugate_frequency_hz: conjugate_frequency,
+        w_wavelengths: input.w_values[iw],
+        parallactic_angle_rad: input.pa_values[ipa],
+        mueller: input.mueller_elements[im],
+        oversampling: input.grid.oversampling,
+        prolate_spheroidal: input.terms.prolate_spheroidal,
+        aperture: input.terms.aperture,
+    }
 }
 
 impl std::fmt::Debug for AwCatalog {
@@ -467,7 +519,79 @@ impl AwCatalog {
                 bytes: 0,
                 bound: bound_bytes,
             }),
+            generator: None,
         })
+    }
+
+    /// Experiment (#659): serve cache misses by forming the group's cells
+    /// from `input`, the request this catalog was generated from, with a
+    /// workspace holding up to `apertures` prepared apertures, instead of
+    /// reading the cell images. The images still index the catalog.
+    ///
+    /// # Errors
+    ///
+    /// A catalog PA, frequency, w or Mueller element has no counterpart in
+    /// `input`, or the workspace cannot be allocated.
+    pub fn generate_on_miss(
+        &mut self,
+        input: &NativeAwRequestInput,
+        apertures: usize,
+    ) -> Result<(), AwCatalogError> {
+        let unmatched = |what: &str| cache_error(&self.root, format!("no request {what}"));
+        let closest = |values: &[f64], value: f64| {
+            values
+                .iter()
+                .enumerate()
+                .min_by(|a, b| (a.1 - value).abs().total_cmp(&(b.1 - value).abs()))
+                .map(|(index, _)| index)
+        };
+        let request_pa = input
+            .pa_values
+            .iter()
+            .map(|pa| pa.to_degrees())
+            .collect::<Vec<_>>();
+        let request_frequencies = input
+            .frequencies
+            .iter()
+            .map(|group| group.cf_frequency_hz)
+            .collect::<Vec<_>>();
+        let mut groups = Vec::with_capacity(self.groups.len());
+        for pa in &self.pa_deg {
+            let ipa = closest(&request_pa, *pa).ok_or_else(|| unmatched("PA"))?;
+            for frequency in &self.frequencies_hz {
+                let inu = closest(&request_frequencies, *frequency)
+                    .filter(|&inu| (request_frequencies[inu] - frequency).abs() < 1e-6 * frequency)
+                    .ok_or_else(|| unmatched("frequency"))?;
+                for w in &self.w_values {
+                    let iw = input
+                        .w_values
+                        .iter()
+                        .position(|listed| listed.to_bits() == w.to_bits())
+                        .ok_or_else(|| unmatched("w"))?;
+                    groups.push([ipa, inu, iw]);
+                }
+            }
+        }
+        let mueller = self
+            .mueller_elements
+            .iter()
+            .map(|element| {
+                input
+                    .mueller_elements
+                    .iter()
+                    .position(|listed| *listed == *element as usize)
+                    .ok_or_else(|| unmatched("Mueller element"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let workspace = EvlaAwWorkspace::with_apertures(native_request(input, groups[0], 0), apertures)?;
+        self.generator = Some(Mutex::new(CellGenerator {
+            input: input.clone(),
+            model: EvlaApertureModel::new(input.surface.clone()),
+            workspace,
+            groups,
+            mueller,
+        }));
+        Ok(())
     }
 
     /// Generate every cell of `input` natively into `root` as CASA-format
@@ -509,8 +633,11 @@ impl AwCatalog {
                 } else {
                     frequency
                 };
-                for (iw, &w) in input.w_values.iter().enumerate() {
-                    for (im, &mueller) in input.mueller_elements.iter().enumerate() {
+                // Only the W screen depends on w: the aperture and the weight
+                // cell are formed once per (PA, frequency, Mueller element).
+                for (im, &mueller) in input.mueller_elements.iter().enumerate() {
+                    let mut prepared = false;
+                    for (iw, &w) in input.w_values.iter().enumerate() {
                         let suffix = format!("{ipa}_0_CF_{inu}_{iw}_{im}.im");
                         let imaging_path = root.join(format!("{IMAGING_PREFIX}{suffix}"));
                         let weight_path = root.join(format!("{WEIGHT_PREFIX}{suffix}"));
@@ -533,7 +660,11 @@ impl AwCatalog {
                             Some(workspace) => workspace,
                             None => workspace.insert(EvlaAwWorkspace::new(request)?),
                         };
-                        let pair = workspace.generate(&model, request)?;
+                        if !prepared {
+                            workspace.prepare(&model, request)?;
+                            prepared = true;
+                        }
+                        let pair = workspace.realize(request)?;
                         let misc = CellMisc {
                             sampling: grid.oversampling as f64,
                             pa_deg: pa.to_degrees(),
@@ -702,11 +833,19 @@ impl AwCatalog {
         let largest = self.groups.iter().map(group).max().unwrap_or(0);
         let reading = self.groups.iter().map(read).max().unwrap_or(0);
         let bound = self.lru.lock().expect("cache lock").bound as u64;
+        let generating = self.generator.as_ref().map_or(0, |generator| {
+            generator
+                .lock()
+                .expect("generator lock")
+                .workspace
+                .resident_bytes() as u64
+        });
         index as u64
             + self.correction.resident_bytes()
             + bound
             + (holders as u64 + 1) * largest
             + holders as u64 * reading
+            + generating
     }
 
     /// The parallactic-angle cell of `pa_deg`: the nearest listed angle on
@@ -764,8 +903,16 @@ impl AwCatalog {
             loaded.last_use = now;
             return (loaded.imaging.clone(), loaded.weight.clone());
         }
-        let mut loaded = load_group(&self.groups[group], self.oversampling)
-            .unwrap_or_else(|error| panic!("AW cell group {group} cannot be read: {error}"));
+        let mut loaded = match &self.generator {
+            Some(generator) => generate_group(
+                &self.groups[group],
+                group,
+                &mut generator.lock().expect("generator lock"),
+                self.oversampling,
+            ),
+            None => load_group(&self.groups[group], self.oversampling),
+        }
+        .unwrap_or_else(|error| panic!("AW cell group {group} cannot be read: {error}"));
         loaded.last_use = now;
         let pair = (loaded.imaging.clone(), loaded.weight.clone());
         lru.bytes += loaded.bytes();
@@ -1186,6 +1333,61 @@ fn load_group(group: &Group, sampling: u16) -> Result<Loaded, AwCatalogError> {
     Ok(Loaded {
         imaging: build(|cell| &cell.imaging, group.imaging_half_support)?,
         weight: build(|cell| &cell.weight, group.weight_half_support)?,
+        last_use: 0,
+    })
+}
+
+/// Experiment (#659): [`load_group`] with each cell formed from the native
+/// request rather than read, normalised and padded the same way; a formed
+/// cell whose support differs from its image's is an error.
+fn generate_group(
+    group: &Group,
+    index: usize,
+    generator: &mut CellGenerator,
+    sampling: u16,
+) -> Result<Loaded, AwCatalogError> {
+    let CellGenerator {
+        input,
+        model,
+        workspace,
+        groups,
+        mueller,
+    } = generator;
+    let mut imaging = Vec::with_capacity(group.cells.len());
+    let mut weight = Vec::with_capacity(group.cells.len());
+    for (plane, cell) in group.cells.iter().enumerate() {
+        let request = native_request(input, groups[index], mueller[plane]);
+        workspace.prepare(model, request)?;
+        let pair = workspace.realize(request)?;
+        for (formed, header, out) in [
+            (&pair.imaging, &cell.imaging, &mut imaging),
+            (&pair.weight, &cell.weight, &mut weight),
+        ] {
+            let support = u16::try_from(formed.support).unwrap_or(u16::MAX);
+            if [support; 2] != header.support || [formed.size; 2] != header.shape {
+                return Err(cache_error(
+                    &header.path,
+                    format!(
+                        "formed cell has support {} and size {}, the image {:?} and {:?}",
+                        formed.support, formed.size, header.support, header.shape
+                    ),
+                ));
+            }
+            let mut values = formed.values.to_vec();
+            let area = cf_area(&values, header.shape, header.support, header.sampling);
+            if !(area.norm().is_finite() && area.norm() > 0.0) {
+                return Err(cache_error(&header.path, "cell area is not positive"));
+            }
+            let scale = Complex32::new((1.0 / area).re as f32, (1.0 / area).im as f32);
+            for value in &mut values {
+                *value *= scale;
+            }
+            out.push((values, header.shape, header.support));
+        }
+    }
+    Ok(Loaded {
+        imaging: Arc::new(dense_cell_padded(&imaging, group.imaging_half_support, sampling)),
+        weight: Arc::new(dense_cell_padded(&weight, group.weight_half_support, sampling)),
         last_use: 0,
     })
 }

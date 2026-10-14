@@ -35,25 +35,63 @@ pub struct NativeAwPair<'a> {
     pub weight: NativeAwPlane<'a>,
 }
 
-/// Reusable one-cell numerical workspace: six square `Complex32` planes and
-/// one FFT plan, independent of catalog size.
+/// Reusable cell workspace: six square `Complex32` working planes, one FFT
+/// plan and up to `capacity` prepared apertures, independent of catalog
+/// size.
+///
+/// A cell is the sky Mueller element times the W screen, transformed; only
+/// the screen depends on w. [`Self::prepare`] forms the w-independent part
+/// once (the aperture plane and the whole weight cell) and
+/// [`Self::realize`] then forms the imaging cell of each w from it with one
+/// transform, the arithmetic [`Self::generate`] performs per cell.
 pub struct EvlaAwWorkspace {
     size: usize,
     fft: PlaneFft<f32>,
     jones: Vec<Complex32>,
     imaging: Vec<Complex32>,
     weight: Vec<Complex32>,
-    realized: Option<[(usize, usize); 2]>,
+    /// Prepared apertures, the least recently used replaced first.
+    prepared: Vec<Prepared>,
+    capacity: usize,
+    clock: u64,
+    /// The prepared aperture and the imaging crop of the last realized pair.
+    realized: Option<(usize, (usize, usize))>,
+}
+
+/// The w-independent part of one cell ([`EvlaAwWorkspace::prepare`]).
+struct Prepared {
+    /// The cell request at w = 0.
+    key: EvlaAwCellRequest,
+    /// The sky Mueller element at the cell frequency.
+    aperture: Vec<Complex32>,
+    /// The cropped, normalised weight cell and its `(size, support)`.
+    weight: Vec<Complex32>,
+    weight_crop: (usize, usize),
+    last_use: u64,
 }
 
 impl EvlaAwWorkspace {
-    /// Allocate the working grid of `request`'s size; the same allocation
-    /// serves every cell of that size.
+    /// Allocate the working grid of `request`'s size, holding one prepared
+    /// aperture; the same allocation serves every cell of that size.
     ///
     /// # Errors
     ///
     /// The request is invalid or the FFT cannot be planned.
     pub fn new(request: EvlaAwCellRequest) -> Result<Self, NativeAwGenerationError> {
+        Self::with_apertures(request, 1)
+    }
+
+    /// [`Self::new`] holding up to `capacity` prepared apertures, so cells
+    /// of several (PA, frequency, Mueller element) keys are realized
+    /// without preparing again.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::new`].
+    pub fn with_apertures(
+        request: EvlaAwCellRequest,
+        capacity: usize,
+    ) -> Result<Self, NativeAwGenerationError> {
         request
             .validate()
             .map_err(|_| NativeAwGenerationError::InvalidGrid)?;
@@ -65,23 +103,27 @@ impl EvlaAwWorkspace {
             jones: vec![Complex32::default(); 4 * n],
             imaging: vec![Complex32::default(); n],
             weight: vec![Complex32::default(); n],
+            prepared: Vec::with_capacity(capacity.max(1)),
+            capacity: capacity.max(1),
+            clock: 0,
             realized: None,
         })
     }
 
-    /// Bytes of the working planes.
+    /// Bytes the workspace holds at most: its working planes and, per
+    /// prepared aperture, the aperture plane and a weight cell no larger
+    /// than a plane.
     #[must_use]
     pub fn resident_bytes(&self) -> usize {
-        6 * self.size * self.size * size_of::<Complex32>()
+        (6 + 2 * self.capacity) * self.size * self.size * size_of::<Complex32>()
     }
 
     /// Borrow the last successfully realized pair, with no pixel copies.
     #[must_use]
     pub fn pair(&self) -> Option<NativeAwPair<'_>> {
-        let [
-            (imaging_size, imaging_support),
-            (weight_size, weight_support),
-        ] = self.realized?;
+        let (index, (imaging_size, imaging_support)) = self.realized?;
+        let prepared = &self.prepared[index];
+        let (weight_size, weight_support) = prepared.weight_crop;
         Some(NativeAwPair {
             imaging: NativeAwPlane {
                 size: imaging_size,
@@ -91,7 +133,7 @@ impl EvlaAwWorkspace {
             weight: NativeAwPlane {
                 size: weight_size,
                 support: weight_support,
-                values: &self.weight[..weight_size * weight_size],
+                values: &prepared.weight,
             },
         })
     }
@@ -112,6 +154,24 @@ impl EvlaAwWorkspace {
         model: &EvlaApertureModel,
         request: EvlaAwCellRequest,
     ) -> Result<NativeAwPair<'_>, NativeAwGenerationError> {
+        self.prepare(model, request)?;
+        self.realize(request)
+    }
+
+    /// Form the w-independent part of `request`'s cell, unless it is
+    /// already held: the sky Mueller element at the cell frequency, kept for
+    /// [`Self::realize`], and the whole weight cell, which carries no W
+    /// phase. `request.w_wavelengths` is ignored. A full workspace replaces
+    /// its least recently used aperture.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::generate`].
+    pub fn prepare(
+        &mut self,
+        model: &EvlaApertureModel,
+        request: EvlaAwCellRequest,
+    ) -> Result<(), NativeAwGenerationError> {
         self.realized = None;
         request
             .validate()
@@ -119,14 +179,39 @@ impl EvlaAwWorkspace {
         if self.size != request.size {
             return Err(NativeAwGenerationError::WorkspaceMismatch);
         }
+        let key = EvlaAwCellRequest {
+            w_wavelengths: 0.0,
+            ..request
+        };
+        self.clock += 1;
+        let now = self.clock;
+        if let Some(held) = self.prepared.iter_mut().find(|held| held.key == key) {
+            held.last_use = now;
+            return Ok(());
+        }
+        let mut aperture = if self.prepared.len() < self.capacity {
+            vec![Complex32::default(); request.size * request.size]
+        } else {
+            let oldest = self
+                .prepared
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, held)| held.last_use)
+                .map(|(index, _)| index)
+                .expect("a full workspace holds an aperture");
+            self.prepared.swap_remove(oldest).aperture
+        };
         let Self {
+            fft, jones, weight, ..
+        } = self;
+        fill_sky_mueller(
+            model,
+            request,
+            request.frequency_hz,
             fft,
             jones,
-            imaging,
-            weight,
-            ..
-        } = self;
-        fill_sky_mueller(model, request, request.frequency_hz, fft, jones, imaging)?;
+            &mut aperture,
+        )?;
         fill_sky_mueller(
             model,
             request,
@@ -139,24 +224,72 @@ impl EvlaAwWorkspace {
         let inner_half = (request.size / request.oversampling / 2) as isize;
         for y in 0..request.size {
             let iy = y as isize - origin;
+            for x in 0..request.size {
+                let ix = x as isize - origin;
+                let p = prolate(request, inner_half, ix, iy);
+                let pixel = x + request.size * y;
+                weight[pixel] =
+                    Complex32::new(p * p, 0.0) * (aperture[pixel] * weight[pixel].conj());
+            }
+        }
+        // CASA's copy back from the FFT image excludes the final row and
+        // column; the pre-transform edges survive in the spent Jones planes.
+        let edges = &mut jones[..2 * request.size];
+        save_edges(weight, request.size, edges);
+        transform(fft, weight)?;
+        restore_edges(weight, request.size, edges);
+        let weight_crop = crop_normalize(weight, request)?;
+        let weight = weight[..weight_crop.0 * weight_crop.0].to_vec();
+        self.prepared.push(Prepared {
+            key,
+            aperture,
+            weight,
+            weight_crop,
+            last_use: now,
+        });
+        Ok(())
+    }
+
+    /// Form the imaging cell of `request` at its w from the aperture
+    /// [`Self::prepare`] formed for the same request: the aperture times the
+    /// W screen and the optional prolate spheroidal, transformed,
+    /// peak-normalised and cropped, beside the prepared weight cell.
+    ///
+    /// # Errors
+    ///
+    /// The workspace holds no aperture for `request` (other than its w), or
+    /// a value or normalisation is not finite.
+    pub fn realize(
+        &mut self,
+        request: EvlaAwCellRequest,
+    ) -> Result<NativeAwPair<'_>, NativeAwGenerationError> {
+        self.realized = None;
+        let key = EvlaAwCellRequest {
+            w_wavelengths: 0.0,
+            ..request
+        };
+        let Some(index) = self.prepared.iter().position(|held| held.key == key) else {
+            return Err(NativeAwGenerationError::WorkspaceMismatch);
+        };
+        self.clock += 1;
+        self.prepared[index].last_use = self.clock;
+        let Self {
+            fft,
+            jones,
+            imaging,
+            prepared,
+            ..
+        } = self;
+        let aperture = &prepared[index].aperture;
+        let origin = (request.size / 2) as isize;
+        let inner_half = (request.size / request.oversampling / 2) as isize;
+        for y in 0..request.size {
+            let iy = y as isize - origin;
             let m = request.sky_increment_rad[1] * iy as f64;
             for x in 0..request.size {
                 let ix = x as isize - origin;
-                let p = if request.prolate_spheroidal {
-                    if (-inner_half..inner_half).contains(&ix)
-                        && (-inner_half..inner_half).contains(&iy)
-                    {
-                        (grdsf(ix as f64 / inner_half as f64) as f32)
-                            * (grdsf(iy as f64 / inner_half as f64) as f32)
-                    } else {
-                        0.0
-                    }
-                } else {
-                    1.0
-                };
+                let p = prolate(request, inner_half, ix, iy);
                 let pixel = x + request.size * y;
-                weight[pixel] =
-                    Complex32::new(p * p, 0.0) * (imaging[pixel] * weight[pixel].conj());
                 let l = request.sky_increment_rad[0] * ix as f64;
                 let rsq = l * l + m * m;
                 let mut screen = Complex32::new(p, 0.0);
@@ -166,18 +299,13 @@ impl EvlaAwWorkspace {
                     let (sin, cos) = phase.sin_cos();
                     screen *= Complex32::new(cos as f32, sin as f32);
                 }
-                imaging[pixel] *= screen;
+                imaging[pixel] = aperture[pixel] * screen;
             }
         }
-        // CASA's copy back from the FFT image excludes the final row and
-        // column; the pre-transform edges survive in the spent Jones planes.
-        let edges = &mut jones[..4 * request.size];
-        save_edges(imaging, request.size, &mut edges[..2 * request.size]);
-        save_edges(weight, request.size, &mut edges[2 * request.size..]);
+        let edges = &mut jones[..2 * request.size];
+        save_edges(imaging, request.size, edges);
         transform(fft, imaging)?;
-        transform(fft, weight)?;
-        restore_edges(imaging, request.size, &edges[..2 * request.size]);
-        restore_edges(weight, request.size, &edges[2 * request.size..]);
+        restore_edges(imaging, request.size, edges);
         let mut peak = imaging[0];
         for value in &imaging[1..] {
             if value.norm_sqr() > peak.norm_sqr() {
@@ -190,11 +318,21 @@ impl EvlaAwWorkspace {
         for value in imaging.iter_mut() {
             *value /= peak;
         }
-        self.realized = Some([
-            crop_normalize(imaging, request)?,
-            crop_normalize(weight, request)?,
-        ]);
+        self.realized = Some((index, crop_normalize(imaging, request)?));
         Ok(self.pair().expect("both crops succeeded"))
+    }
+}
+
+/// The prolate-spheroidal anti-aliasing factor at pixel offset `(ix, iy)`
+/// of the working grid, or one without it.
+fn prolate(request: EvlaAwCellRequest, inner_half: isize, ix: isize, iy: isize) -> f32 {
+    if !request.prolate_spheroidal {
+        return 1.0;
+    }
+    if (-inner_half..inner_half).contains(&ix) && (-inner_half..inner_half).contains(&iy) {
+        (grdsf(ix as f64 / inner_half as f64) as f32) * (grdsf(iy as f64 / inner_half as f64) as f32)
+    } else {
+        0.0
     }
 }
 
@@ -378,6 +516,96 @@ mod tests {
         invalid.size *= 2;
         assert!(workspace.generate(&model, invalid).is_err());
         assert!(workspace.pair().is_none());
+    }
+
+    #[test]
+    fn one_prepared_aperture_realizes_every_w_as_generate_does() {
+        let model = EvlaApertureModel::new(surface());
+        let request = EvlaAwCellRequest {
+            size: 128,
+            sky_increment_rad: [-0.001, 0.001],
+            frequency_hz: 3e9,
+            conjugate_frequency_hz: 3.1e9,
+            w_wavelengths: 0.0,
+            parallactic_angle_rad: 0.31,
+            mueller: 15,
+            oversampling: 4,
+            prolate_spheroidal: true,
+            aperture: true,
+        };
+        let mut whole = EvlaAwWorkspace::new(request).expect("workspace");
+        let mut factored = EvlaAwWorkspace::new(request).expect("workspace");
+        factored.prepare(&model, request).expect("prepare");
+        for w in [0.0, 40.0, 100.0, 250.0] {
+            let at_w = EvlaAwCellRequest {
+                w_wavelengths: w,
+                ..request
+            };
+            let expected = whole.generate(&model, at_w).expect("pair");
+            let expected = (
+                expected.imaging.values.to_vec(),
+                expected.imaging.support,
+                expected.weight.values.to_vec(),
+            );
+            let pair = factored.realize(at_w).expect("realized");
+            assert_eq!(pair.imaging.values, expected.0, "imaging cell at w = {w}");
+            assert_eq!(pair.imaging.support, expected.1);
+            assert_eq!(pair.weight.values, expected.2, "weight cell at w = {w}");
+        }
+        let other = EvlaAwCellRequest {
+            frequency_hz: 3.2e9,
+            ..request
+        };
+        assert!(factored.realize(other).is_err());
+    }
+
+    #[test]
+    fn held_apertures_realize_their_cells_in_any_order() {
+        let model = EvlaApertureModel::new(surface());
+        let base = EvlaAwCellRequest {
+            size: 128,
+            sky_increment_rad: [-0.001, 0.001],
+            frequency_hz: 3e9,
+            conjugate_frequency_hz: 3.1e9,
+            w_wavelengths: 0.0,
+            parallactic_angle_rad: 0.31,
+            mueller: 0,
+            oversampling: 4,
+            prolate_spheroidal: false,
+            aperture: true,
+        };
+        let keys = [
+            base,
+            EvlaAwCellRequest { mueller: 15, ..base },
+            EvlaAwCellRequest {
+                frequency_hz: 3.2e9,
+                ..base
+            },
+        ];
+        let mut whole = EvlaAwWorkspace::new(base).expect("workspace");
+        let mut held = EvlaAwWorkspace::with_apertures(base, 2).expect("workspace");
+        for (step, (key, w)) in [(0, 60.0), (1, 60.0), (0, 120.0), (2, 30.0), (1, 30.0)]
+            .into_iter()
+            .enumerate()
+        {
+            let request = EvlaAwCellRequest {
+                w_wavelengths: w,
+                ..keys[key]
+            };
+            let expected = whole.generate(&model, request).expect("pair");
+            let expected = (
+                expected.imaging.values.to_vec(),
+                expected.weight.values.to_vec(),
+            );
+            held.prepare(&model, request).expect("prepare");
+            let pair = held.realize(request).expect("realize");
+            assert_eq!(pair.imaging.values, expected.0, "imaging cell, step {step}");
+            assert_eq!(pair.weight.values, expected.1, "weight cell, step {step}");
+        }
+        // Capacity two holds the two keys used last (2 and 1); key 0 was
+        // replaced and must be prepared again.
+        assert!(held.realize(keys[2]).is_ok());
+        assert!(held.realize(keys[0]).is_err());
     }
 
     #[test]

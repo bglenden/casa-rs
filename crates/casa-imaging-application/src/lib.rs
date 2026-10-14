@@ -94,6 +94,9 @@ pub(crate) struct AwCatalogDeployment {
     pub(crate) root: PathBuf,
     pub(crate) indexing: casa_imaging_operator::AwIndexing,
     pub(crate) resident_bytes: usize,
+    /// Experiment (#659): the native request the catalog was generated
+    /// from, when it is native.
+    pub(crate) native: Option<casa_imaging_model::NativeAwRequestInput>,
 }
 
 /// Product-generation controls, the analytic primary beam's pointings and

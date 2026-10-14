@@ -324,13 +324,25 @@ fn kernel_set(
             let deployment = aw_catalog.ok_or(ImagingError::Unsupported {
                 reason: "an A-projection run needs its convolution-function catalog",
             })?;
-            let catalog = AwCatalog::open_casa(
+            let mut catalog = AwCatalog::open_casa(
                 &deployment.root,
                 deployment.indexing,
                 geometry,
                 polarization,
                 deployment.resident_bytes,
             )?;
+            // Experiment (#659): form missed groups from the native request,
+            // holding the variable's number of prepared apertures (12 when
+            // it is not a number).
+            if let Some(apertures) = std::env::var_os("CASA_RS_EXPERIMENT_AW_GENERATE")
+                && let Some(input) = &deployment.native
+            {
+                let apertures = apertures
+                    .to_str()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(12);
+                catalog.generate_on_miss(input, apertures)?;
+            }
             let kernels = admission.admit(PHASE, catalog.charge_bytes(admission.workers))?;
             (Box::new(catalog), kernels)
         }
