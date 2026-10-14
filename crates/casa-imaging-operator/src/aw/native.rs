@@ -56,6 +56,16 @@ pub struct EvlaAwWorkspace {
     clock: u64,
     /// The prepared aperture and the imaging crop of the last realized pair.
     realized: Option<(usize, (usize, usize))>,
+    /// Per working-grid pixel, the largest ring [`crop_normalize`]'s
+    /// support search samples it on (zero when none does).
+    rings: Vec<u16>,
+    /// `√(1 − l² − m²) − 1` over one quadrant of pixel offsets
+    /// `(|ix|, |iy|)`, for the sky increments it was formed for; the W
+    /// screen's phase is `2π·w` times it.
+    depth: Vec<f64>,
+    depth_increment: Option<[f64; 2]>,
+    /// The W screen's phase factors over the same quadrant, for one w.
+    phases: Vec<Complex32>,
 }
 
 /// The w-independent part of one cell ([`EvlaAwWorkspace::prepare`]).
@@ -96,6 +106,7 @@ impl EvlaAwWorkspace {
             .validate()
             .map_err(|_| NativeAwGenerationError::InvalidGrid)?;
         let n = request.size * request.size;
+        let quadrant = (request.size / 2 + 1) * (request.size / 2 + 1);
         Ok(Self {
             size: request.size,
             fft: PlaneFft::<f32>::new([request.size; 2], false)
@@ -107,15 +118,22 @@ impl EvlaAwWorkspace {
             capacity: capacity.max(1),
             clock: 0,
             realized: None,
+            rings: ring_table(request.size),
+            depth: vec![0.0; quadrant],
+            depth_increment: None,
+            phases: vec![Complex32::default(); quadrant],
         })
     }
 
-    /// Bytes the workspace holds at most: its working planes and, per
-    /// prepared aperture, the aperture plane and a weight cell no larger
-    /// than a plane.
+    /// Bytes the workspace holds at most: its working planes, the ring and
+    /// screen tables and, per prepared aperture, the aperture plane and a
+    /// weight cell no larger than a plane.
     #[must_use]
     pub fn resident_bytes(&self) -> usize {
+        let quadrant = (self.size / 2 + 1) * (self.size / 2 + 1);
         (6 + 2 * self.capacity) * self.size * self.size * size_of::<Complex32>()
+            + self.size * self.size * size_of::<u16>()
+            + quadrant * (size_of::<f64>() + size_of::<Complex32>())
     }
 
     /// Borrow the last successfully realized pair, with no pixel copies.
@@ -202,7 +220,11 @@ impl EvlaAwWorkspace {
             self.prepared.swap_remove(oldest).aperture
         };
         let Self {
-            fft, jones, weight, ..
+            fft,
+            jones,
+            weight,
+            rings,
+            ..
         } = self;
         fill_sky_mueller(
             model,
@@ -238,7 +260,7 @@ impl EvlaAwWorkspace {
         save_edges(weight, request.size, edges);
         transform(fft, weight)?;
         restore_edges(weight, request.size, edges);
-        let weight_crop = crop_normalize(weight, request)?;
+        let weight_crop = crop_normalize(weight, request, rings)?;
         let weight = weight[..weight_crop.0 * weight_crop.0].to_vec();
         self.prepared.push(Prepared {
             key,
@@ -278,26 +300,54 @@ impl EvlaAwWorkspace {
             jones,
             imaging,
             prepared,
+            rings,
+            depth,
+            depth_increment,
+            phases,
             ..
         } = self;
         let aperture = &prepared[index].aperture;
-        let origin = (request.size / 2) as isize;
+        // The screen's phase depends on (l², m²) alone, so one quadrant of
+        // |offsets| serves all four; the same expressions as per pixel.
+        let half = request.size / 2;
+        let stride = half + 1;
+        if *depth_increment != Some(request.sky_increment_rad) {
+            for ay in 0..=half {
+                let m = request.sky_increment_rad[1] * ay as f64;
+                for ax in 0..=half {
+                    let l = request.sky_increment_rad[0] * ax as f64;
+                    let rsq = l * l + m * m;
+                    depth[ax + stride * ay] = if rsq < 1.0 {
+                        (1.0 - rsq).sqrt() - 1.0
+                    } else {
+                        f64::NAN
+                    };
+                }
+            }
+            *depth_increment = Some(request.sky_increment_rad);
+        }
+        let screened = request.w_wavelengths > 0.0;
+        if screened {
+            for (phase, depth) in phases.iter_mut().zip(depth.iter()) {
+                if !depth.is_nan() {
+                    let (sin, cos) =
+                        (std::f64::consts::TAU * request.w_wavelengths * depth).sin_cos();
+                    *phase = Complex32::new(cos as f32, sin as f32);
+                }
+            }
+        }
+        let origin = half as isize;
         let inner_half = (request.size / request.oversampling / 2) as isize;
         for y in 0..request.size {
             let iy = y as isize - origin;
-            let m = request.sky_increment_rad[1] * iy as f64;
             for x in 0..request.size {
                 let ix = x as isize - origin;
                 let p = prolate(request, inner_half, ix, iy);
                 let pixel = x + request.size * y;
-                let l = request.sky_increment_rad[0] * ix as f64;
-                let rsq = l * l + m * m;
                 let mut screen = Complex32::new(p, 0.0);
-                if request.w_wavelengths > 0.0 && rsq < 1.0 {
-                    let phase =
-                        std::f64::consts::TAU * request.w_wavelengths * ((1.0 - rsq).sqrt() - 1.0);
-                    let (sin, cos) = phase.sin_cos();
-                    screen *= Complex32::new(cos as f32, sin as f32);
+                let quadrant = ix.unsigned_abs() + stride * iy.unsigned_abs();
+                if screened && !depth[quadrant].is_nan() {
+                    screen *= phases[quadrant];
                 }
                 imaging[pixel] = aperture[pixel] * screen;
             }
@@ -318,9 +368,44 @@ impl EvlaAwWorkspace {
         for value in imaging.iter_mut() {
             *value /= peak;
         }
-        self.realized = Some((index, crop_normalize(imaging, request)?));
+        let crop = crop_normalize(imaging, request, rings)?;
+        self.realized = Some((index, crop));
         Ok(self.pair().expect("both crops succeeded"))
     }
+}
+
+/// `AWConvFunc::resizeCF`'s support radius: the outermost ring with a
+/// sample above `1e-3` of the centre, read from [`ring_table`] instead of
+/// walking the rings.
+fn support_radius(values: &[Complex32], size: usize, rings: &[u16]) -> Option<usize> {
+    let origin = size / 2;
+    let threshold = (f64::from(values[origin * (size + 1)].norm()) * 1e-3) as f32;
+    let mut largest = 0_u16;
+    for (value, &ring) in values.iter().zip(rings) {
+        if ring > largest && value.norm() > threshold {
+            largest = ring;
+        }
+    }
+    (largest >= 2).then_some(usize::from(largest))
+}
+
+/// Per pixel of a `size × size` working grid, the largest ring
+/// [`crop_normalize`]'s support search samples it on, zero when none does:
+/// ring `r` samples the pixels at `origin + (r·sin θ, r·cos θ)` for
+/// `θ = 2π·k/r`, `k < 90·r` (`AWConvFunc::resizeCF`), so the search's radius
+/// is the largest entry over the pixels above its threshold.
+fn ring_table(size: usize) -> Vec<u16> {
+    let origin = size / 2;
+    let mut rings = vec![0_u16; size * size];
+    for r in 2..=origin - 2 {
+        for pixel in 0..90 * r {
+            let angle = std::f64::consts::TAU * pixel as f64 / r as f64;
+            let x = (origin as f64 + r as f64 * angle.sin()) as usize;
+            let y = (origin as f64 + r as f64 * angle.cos()) as usize;
+            rings[x + size * y] = u16::try_from(r).unwrap_or(u16::MAX);
+        }
+    }
+    rings
 }
 
 /// The prolate-spheroidal anti-aliasing factor at pixel offset `(ix, iy)`
@@ -420,22 +505,11 @@ fn restore_edges(values: &mut [Complex32], size: usize, edges: &[Complex32]) {
 fn crop_normalize(
     values: &mut [Complex32],
     request: EvlaAwCellRequest,
+    rings: &[u16],
 ) -> Result<(usize, usize), NativeAwGenerationError> {
     let origin = request.size / 2;
-    let threshold = (f64::from(values[origin * (request.size + 1)].norm()) * 1e-3) as f32;
-    let mut radius = None;
-    'radii: for r in (2..=origin - 2).rev() {
-        for pixel in 0..90 * r {
-            let angle = std::f64::consts::TAU * pixel as f64 / r as f64;
-            let x = (origin as f64 + r as f64 * angle.sin()) as usize;
-            let y = (origin as f64 + r as f64 * angle.cos()) as usize;
-            if values[x + request.size * y].norm() > threshold {
-                radius = Some(r);
-                break 'radii;
-            }
-        }
-    }
-    let radius = radius.ok_or(NativeAwGenerationError::InvalidNumerics)?;
+    let radius = support_radius(values, request.size, rings)
+        .ok_or(NativeAwGenerationError::InvalidNumerics)?;
     let mut support = (0.5_f32 + radius as f32 / request.oversampling as f32) as usize + 1;
     if support * request.oversampling + (request.oversampling as f32 / 2.0 + 0.5) as usize > origin
     {
@@ -606,6 +680,51 @@ mod tests {
         // replaced and must be prepared again.
         assert!(held.realize(keys[2]).is_ok());
         assert!(held.realize(keys[0]).is_err());
+    }
+
+    /// `AWConvFunc::resizeCF`'s ring walk, as `crop_normalize` once did it.
+    fn walked_radius(values: &[Complex32], size: usize) -> Option<usize> {
+        let origin = size / 2;
+        let threshold = (f64::from(values[origin * (size + 1)].norm()) * 1e-3) as f32;
+        for r in (2..=origin - 2).rev() {
+            for pixel in 0..90 * r {
+                let angle = std::f64::consts::TAU * pixel as f64 / r as f64;
+                let x = (origin as f64 + r as f64 * angle.sin()) as usize;
+                let y = (origin as f64 + r as f64 * angle.cos()) as usize;
+                if values[x + size * y].norm() > threshold {
+                    return Some(r);
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn the_ring_table_finds_the_walks_support_radius() {
+        for size in [64, 128, 256] {
+            let rings = ring_table(size);
+            let origin = (size / 2) as f64;
+            for (width, spike) in [(2.0, None), (9.5, None), (31.0, Some(17)), (3.0, Some(5))] {
+                let mut values = (0..size * size)
+                    .map(|pixel| {
+                        let dx = (pixel % size) as f64 - origin;
+                        let dy = (pixel / size) as f64 - origin;
+                        let g = (-(dx * dx + dy * dy) / (2.0 * width * width)).exp() as f32;
+                        Complex32::new(g, 0.5 * g)
+                    })
+                    .collect::<Vec<_>>();
+                if let Some(offset) = spike {
+                    // An isolated sample beyond the core, off the axes.
+                    values[(size / 2 + offset) + size * (size / 2 + offset / 2)] =
+                        Complex32::new(0.01, 0.0);
+                }
+                assert_eq!(
+                    support_radius(&values, size, &rings),
+                    walked_radius(&values, size),
+                    "size {size}, width {width}, spike {spike:?}"
+                );
+            }
+        }
     }
 
     #[test]
