@@ -509,8 +509,10 @@ impl AwCatalog {
                 } else {
                     frequency
                 };
-                for (iw, &w) in input.w_values.iter().enumerate() {
-                    for (im, &mueller) in input.mueller_elements.iter().enumerate() {
+                // Only the W screen depends on w: the aperture and the weight
+                // cell are formed once per (PA, frequency, Mueller element).
+                for (im, &mueller) in input.mueller_elements.iter().enumerate() {
+                    for (iw, &w) in input.w_values.iter().enumerate() {
                         let suffix = format!("{ipa}_0_CF_{inu}_{iw}_{im}.im");
                         let imaging_path = root.join(format!("{IMAGING_PREFIX}{suffix}"));
                         let weight_path = root.join(format!("{WEIGHT_PREFIX}{suffix}"));
@@ -533,7 +535,8 @@ impl AwCatalog {
                             Some(workspace) => workspace,
                             None => workspace.insert(EvlaAwWorkspace::new(request)?),
                         };
-                        let pair = workspace.generate(&model, request)?;
+                        workspace.prepare(&model, request)?;
+                        let pair = workspace.realize(request)?;
                         let misc = CellMisc {
                             sampling: grid.oversampling as f64,
                             pa_deg: pa.to_degrees(),
