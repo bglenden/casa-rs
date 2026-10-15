@@ -26,8 +26,10 @@ use crate::sample::{Placement, SampleBlock};
 #[derive(Debug, Default)]
 pub struct CpuBackend {
     powers: Vec<f64>,
-    prediction: Vec<Complex64>,
-    norms: Vec<Complex64>,
+    /// One sample's prediction and kernel norm per visibility polarization
+    /// (at most four), reset per sample without a library call.
+    prediction: [Complex64; 4],
+    norms: [Complex64; 4],
     /// One grid polarization's gathers by Mueller plane, each summed over
     /// the terms, for the visibility polarizations that share them.
     gathered: Vec<(u8, Complex64)>,
@@ -212,11 +214,11 @@ impl CpuBackend {
         let location = layout
             .geometry()
             .locate(placement.u, placement.v, taps.oversampling());
+        debug_assert!(npol <= prediction.len(), "at most four correlations");
+        *prediction = [Complex64::default(); 4];
         if !layout.geometry().fits(location, taps.half_support()) {
             // `GridToData` skips a row whose prediction cell overruns the
             // grid; its model visibility stays zero.
-            prediction.clear();
-            prediction.resize(npol, Complex64::default());
             return;
         }
         let w_positive = placement.prediction_w_positive;
@@ -224,10 +226,7 @@ impl CpuBackend {
         let plane = layout.planes().local(placement.plane);
         let divide = cf.normalisation() == KernelNormalisation::KernelSum;
         spectral_powers(powers, placement.spectral, terms.len());
-        prediction.clear();
-        prediction.resize(npol, Complex64::default());
-        norms.clear();
-        norms.resize(npol, Complex64::default());
+        *norms = [Complex64::default(); 4];
         for (gpol, row) in table.iter().enumerate() {
             gathered.clear();
             for (vpol, mueller_plane) in row.iter().enumerate() {
@@ -265,7 +264,7 @@ impl CpuBackend {
             }
         }
         if divide {
-            for (prediction, norm) in prediction.iter_mut().zip(norms.iter()) {
+            for (prediction, norm) in prediction[..npol].iter_mut().zip(&norms[..npol]) {
                 *prediction = if *norm == Complex64::default() {
                     Complex64::default()
                 } else {
