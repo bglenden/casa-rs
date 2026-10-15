@@ -533,7 +533,11 @@ requirements before any phase, and runs the cycle loop directly.
 `casa-imaging-runtime` detects the host once per process (`HostResources`:
 threads, performance cores, free memory, a Metal device). The run's
 `ResourcePolicy` (interactive, balanced, exclusive, or explicit ceilings) sets
-its worker team and its memory, and each phase admits the bytes its owners
+its memory and its core allocation (`ResourcePolicy::cores`): a compute team
+for the minor cycles and products, and a streaming team for the passes, one
+worker narrower when the source's producer thread would otherwise take the
+run past the policy's core budget (the performance cores, for balanced). Each
+phase admits the bytes its owners
 report (`admit`: the source envelope, the paged cube cache, one wave of each
 pass, the product writer) and holds them in a `Reservation` until it ends; a
 phase that does not fit is refused, typed, before it starts. Frontends neither

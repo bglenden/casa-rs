@@ -33,7 +33,7 @@ use casa_imaging_operator::{
 
 pub use block::{BlockShape, DomainProjection, NativeBlock, NativeRowHeader, RowAddress};
 pub use partition::{Partition, Region, Residency, WaveDemand};
-pub use team::{WORKER_STACK_BYTES, WorkerTeam};
+pub use team::{WORKER_STACK_BYTES, WorkerTeam, WorkerTeams};
 pub use weights::WeightCache;
 
 use stream::stream_blocks;

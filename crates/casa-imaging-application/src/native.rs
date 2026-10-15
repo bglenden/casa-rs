@@ -12,7 +12,7 @@ use casa_imaging_products::{
 use casa_imaging_reconstruction::{
     ImageDomainReconstructionMaskPlans, MajorCycleCompletion, ReconstructionMaskSet,
 };
-use casa_imaging_runtime::pass::{PassError, WorkerTeam};
+use casa_imaging_runtime::pass::{PassError, WorkerTeam, WorkerTeams};
 use casa_imaging_runtime::{
     Admission, Cancelled, Demand, Reservation, RunSummary, SourceAccessError, admit,
     finalize_source_access, run_phase,
@@ -109,7 +109,7 @@ impl From<std::io::Error> for NativeError {
     }
 }
 
-/// A native run ready to start: its admitted source, its worker team and
+/// A native run ready to start: its admitted source, its worker teams and
 /// what its passes, cycles and products need.
 pub(crate) struct NativeRun {
     runtime: ApplicationRuntime,
@@ -119,13 +119,16 @@ pub(crate) struct NativeRun {
     access: ResolvedSelectedObservationAccess,
     /// The source's charge, held while it is open.
     source: Reservation,
-    team: WorkerTeam,
+    teams: WorkerTeams,
     masks: ImageDomainReconstructionMaskPlans,
     image_response: Option<MinorCycleImageResponse>,
 }
 
 /// The end of a run's preparation: check the products against `problem`,
-/// resolve any visibility write, admit the source and form the worker team.
+/// resolve any visibility write, admit the source and form the worker teams
+/// of the policy's core allocation ([`ResourcePolicy::cores`]).
+///
+/// [`ResourcePolicy::cores`]: casa_imaging_runtime::ResourcePolicy::cores
 pub(crate) fn prepare(
     problem: &CompiledProblem,
     input: NativeInput,
@@ -154,7 +157,13 @@ pub(crate) fn prepare(
         &runtime.host,
         &runtime.resource_policy,
     )?;
-    let team = WorkerTeam::new(runtime.resource_policy.workers(&runtime.host))?;
+    let cores = runtime.resource_policy.cores(&runtime.host);
+    tracing::info!(
+        "workers: {} computing, {} streaming beside the source's producer",
+        cores.workers,
+        cores.streaming_workers
+    );
+    let teams = WorkerTeams::new(cores)?;
     Ok(NativeRun {
         runtime,
         publication,
@@ -162,7 +171,7 @@ pub(crate) fn prepare(
         visibility_write,
         access,
         source,
-        team,
+        teams,
         masks: input.masks,
         image_response: input.minor_cycle_image_response,
     })
@@ -177,7 +186,7 @@ pub(crate) fn run(
     run: NativeRun,
     summary: &mut RunSummary,
 ) -> Result<impl FnOnce(RunSummary) -> ImagingOutcome + use<>, NativeError> {
-    summary.workers = run.team.workers();
+    summary.workers = run.teams.compute().workers();
     let NativeRun {
         runtime,
         publication,
@@ -185,7 +194,7 @@ pub(crate) fn run(
         visibility_write,
         access,
         source,
-        team,
+        teams,
         masks,
         image_response,
     } = run;
@@ -198,7 +207,7 @@ pub(crate) fn run(
             visibility_write,
             host: runtime.host,
             policy: runtime.resource_policy,
-            team: &team,
+            teams: &teams,
             cancel: runtime.cancel.clone(),
             spill_directory: &runtime.spill_directory,
             aw_catalog,
@@ -222,14 +231,14 @@ pub(crate) fn run(
                 outcome.masks,
                 &runtime,
                 publication,
-                &team,
+                teams.compute(),
                 &mut published,
             )
         },
     );
     summary.products = published;
     let products = products?;
-    let workers = team.workers();
+    let workers = teams.compute().workers();
     let problem = problem.clone();
     Ok(move |summary| ImagingOutcome {
         problem,

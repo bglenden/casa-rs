@@ -81,6 +81,46 @@ impl WorkerTeam {
     }
 }
 
+/// A run's worker teams, one per width of its [`CoreAllocation`]: the
+/// phases that compute in memory run on [`Self::compute`], the phases that
+/// stream the source on [`Self::streaming`]. One team serves both when the
+/// widths agree.
+///
+/// [`CoreAllocation`]: crate::CoreAllocation
+#[derive(Debug)]
+pub struct WorkerTeams {
+    compute: WorkerTeam,
+    streaming: Option<WorkerTeam>,
+}
+
+impl WorkerTeams {
+    /// The teams of `cores`.
+    pub fn new(cores: crate::CoreAllocation) -> Result<Self, PassError> {
+        let compute = WorkerTeam::new(cores.workers)?;
+        let streaming = (cores.streaming_workers != cores.workers)
+            .then(|| WorkerTeam::new(cores.streaming_workers))
+            .transpose()?;
+        Ok(Self { compute, streaming })
+    }
+
+    /// The team of the phases that compute on data in memory: minor cycles
+    /// and products.
+    #[must_use]
+    pub const fn compute(&self) -> &WorkerTeam {
+        &self.compute
+    }
+
+    /// The team of the phases that stream the source beside its producer:
+    /// the major-cycle and imaging-weight passes.
+    #[must_use]
+    pub const fn streaming(&self) -> &WorkerTeam {
+        match &self.streaming {
+            Some(team) => team,
+            None => &self.compute,
+        }
+    }
+}
+
 impl casa_imaging_products::ProductWindowExecutor for WorkerTeam {
     fn prepare<T: Send>(
         &self,

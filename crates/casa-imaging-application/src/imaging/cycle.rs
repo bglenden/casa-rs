@@ -24,7 +24,7 @@ use casa_imaging_reconstruction::{
 use casa_imaging_runtime::pass::{
     BackendChoice, BoundedSource, Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain,
     PassError, PassSummary, Residency, VisibilitySink, WaveDemand, WeightCache, WorkerTeam,
-    density_pass_bytes, run_density_pass, run_major_cycle,
+    WorkerTeams, density_pass_bytes, run_density_pass, run_major_cycle,
 };
 use casa_imaging_runtime::{
     CubeState, Demand, Diagnostics, HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache,
@@ -52,8 +52,9 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) visibility_write: Option<VisibilityWriteTarget>,
     pub(crate) host: HostResources,
     pub(crate) policy: ResourcePolicy,
-    /// The run's one worker team, which products reuse.
-    pub(crate) team: &'a WorkerTeam,
+    /// The run's worker teams: the passes stream on one, the minor cycles
+    /// and the products compute on the other.
+    pub(crate) teams: &'a WorkerTeams,
     pub(crate) cancel: Cancel,
     /// Where the paged cube state of a channel-local run lives.
     pub(crate) spill_directory: &'a Path,
@@ -89,7 +90,7 @@ struct Run<'a> {
     weighting: WeightingGeneration,
     /// The charge of the weighting's density grid, held with it.
     _weights: Reservation,
-    team: &'a WorkerTeam,
+    teams: &'a WorkerTeams,
     cancel: Cancel,
     host: HostResources,
     policy: ResourcePolicy,
@@ -200,7 +201,7 @@ pub(crate) fn run(
                     &mask_plans,
                     &setup,
                     &cache,
-                    run.team.workers(),
+                    run.teams.compute().workers(),
                 ),
             )?;
             let prepared = prepare_minor_cycle(
@@ -208,7 +209,7 @@ pub(crate) fn run(
                 &mask_plans,
                 &setup,
                 &mut cache,
-                run.team,
+                run.teams.compute(),
             )?;
             let kept = preparing.split(prepared.retained_bytes());
             Ok::<_, ImagingError>((prepared, kept))
@@ -248,7 +249,7 @@ pub(crate) fn run(
                     &setup,
                     &cycle_controls,
                     &cache,
-                    run.team.workers(),
+                    run.teams.compute().workers(),
                 )
                 .saturating_sub(prepared.retained_bytes()),
             )?;
@@ -258,7 +259,7 @@ pub(crate) fn run(
                 &setup,
                 &cycle_controls,
                 &mut cache,
-                run.team,
+                run.teams.compute(),
                 (&run.host, &run.policy),
             )?;
             let refresh = cache.refresh_bytes(&outcome.scientific);
@@ -398,7 +399,7 @@ fn minor_setup(
 }
 
 impl<'a> Run<'a> {
-    /// The operators, worker team, source and imaging weights of a run.
+    /// The operators, worker teams, source and imaging weights of a run.
     fn open(inputs: ImagingInputs<'a>) -> Result<Self, ImagingError> {
         let problem = inputs.problem;
         let backend = inputs.backend;
@@ -409,10 +410,11 @@ impl<'a> Run<'a> {
             .open(problem)
             .map_err(|error| ImagingError::Observation(Box::new(error)))?;
         let dish_classes = selected.antenna_response_classes();
+        // The passes' workers hold the kernels.
         let admission = KernelAdmission {
             host: &inputs.host,
             policy: &inputs.policy,
-            workers: inputs.team.workers(),
+            workers: inputs.teams.streaming().workers(),
         };
         let domains = problem
             .geometry()
@@ -437,8 +439,8 @@ impl<'a> Run<'a> {
                 reason: "visibilities are written back for one image domain",
             });
         }
-        let team = inputs.team;
-        let workers = team.workers();
+        let teams = inputs.teams;
+        let streaming = teams.streaming();
         let cancel = inputs.cancel;
         let main = &domains[0].operator;
         let mut source = MeasurementSetSource::new(
@@ -457,16 +459,21 @@ impl<'a> Run<'a> {
             problem,
             &domains[0],
             &mut source,
-            team,
+            streaming,
             &cancel,
             (&host, &policy),
         )?;
         tracing::info!(
-            "imaging weights: {workers} workers, {:.2} s",
+            "imaging weights: {} workers, {:.2} s",
+            streaming.workers(),
             started.elapsed().as_secs_f64()
         );
+        // The minor cycles, the widest team, access the cube state's planes.
         let cube = matches!(main.basis(), Basis::ChannelLocal { .. })
-            .then(|| cube_state(problem, inputs.spill_directory, workers, &host, &policy))
+            .then(|| {
+                let workers = teams.compute().workers();
+                cube_state(problem, inputs.spill_directory, workers, &host, &policy)
+            })
             .transpose()?;
         let lifecycle = ModelLifecycle::new(
             problem,
@@ -481,7 +488,7 @@ impl<'a> Run<'a> {
             source,
             weighting,
             _weights: weights,
-            team,
+            teams,
             cancel,
             host,
             policy,
@@ -680,13 +687,14 @@ impl<'a> Run<'a> {
         with_model: bool,
         besides: u64,
     ) -> Result<(Residency, Reservation), ImagingError> {
-        let domains = pass_domains(&self.domains, self.team.workers());
+        let workers = self.teams.streaming().workers();
+        let domains = pass_domains(&self.domains, workers);
         let demand = WaveDemand {
             domains: &domains,
             modes,
             with_model,
             native_spacing_hz: self.native_spacing_hz,
-            workers: self.team.workers(),
+            workers,
             backend: self.backend,
             block: self.source.maximum_block(),
         };
@@ -750,7 +758,8 @@ impl<'a> Run<'a> {
         if self.kept_weights.is_none() {
             self.kept_weights = self.keep_weights(residency);
         }
-        let domains = pass_domains(&self.domains, self.team.workers());
+        let team = self.teams.streaming();
+        let domains = pass_domains(&self.domains, team.workers());
         let prepare = |domain: usize, planes: PlaneRange| {
             let generation = model.expect("the closure is installed only with a model");
             prepare_model(&self.domains[domain].operator, generation, domain, planes)
@@ -779,7 +788,7 @@ impl<'a> Run<'a> {
         Ok(run_major_cycle(
             &pass,
             &mut self.source,
-            self.team,
+            team,
             &self.cancel,
             &mut |domain, images| {
                 let basis = self.domains[domain].operator.basis();

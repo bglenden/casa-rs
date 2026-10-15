@@ -149,9 +149,10 @@ pub fn finalize_source_access(
     let layout = row_layout(problem);
     let passes = |rows: usize| source_block_bytes(BlockShape { rows, ..layout });
     // The passes' row chunks also grow with the block, under the passes'
-    // own charge, until they reach their cap.
-    let passes_per_row =
-        passes(1) - passes(0) + chunk_bytes_per_row(layout, row, policy.workers(host));
+    // own charge, until they reach their cap; the passes stream on the
+    // allocation's streaming workers.
+    let workers = policy.cores(host).streaming_workers;
+    let passes_per_row = passes(1) - passes(0) + chunk_bytes_per_row(layout, row, workers);
     let unshared = requirements.plan(budget(bootstrap.min(quarter))?)?;
     let source_per_row =
         (unshared.maximum_resident_bytes() / unshared.rows_per_block().max(1)) as u64;

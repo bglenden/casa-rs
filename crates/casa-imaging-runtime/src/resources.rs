@@ -63,18 +63,48 @@ impl HostResources {
     }
 }
 
+/// Threads a streamed phase keeps busy beside its workers: the producer
+/// that fills the source's next block while the workers place the current
+/// one (`imaging-source`).
+pub const STREAM_PRODUCERS: usize = 1;
+
+/// How one run's phases use the host's cores ([`ResourcePolicy::cores`]).
+///
+/// A phase that computes on data in memory (minor cycles, products) runs
+/// `workers` workers. A phase that streams the source (the major-cycle and
+/// imaging-weight passes) also keeps the source's producer busy
+/// ([`STREAM_PRODUCERS`]), so it runs `streaming_workers`: as many workers
+/// as fit beside the producer within the policy's core budget. Threads past
+/// that budget run on efficiency cores or contend for the performance
+/// cores' caches and memory bandwidth, which costs more cycles for the same
+/// work (#659: four placing workers and the producer on four performance
+/// cores took 1.13× the cycles of three and the producer).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CoreAllocation {
+    /// Workers of a phase that computes on data in memory.
+    pub workers: usize,
+    /// Workers of a phase that streams the source; at least one, at most
+    /// `workers`.
+    pub streaming_workers: usize,
+}
+
 /// How much of the host one run may use.
+///
+/// Each policy sets a budget of busy threads: its workers and, while a
+/// phase streams the source, the source's producer ([`CoreAllocation`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResourcePolicy {
     /// Half the threads, rounded up, and half the free memory.
     Interactive,
     /// Three quarters of the threads, rounded up and at most the
-    /// performance cores, and three quarters of the free memory.
+    /// performance cores, and three quarters of the free memory. A streamed
+    /// phase's producer shares the performance cores: its workers are as
+    /// many as fit beside it there.
     Balanced,
     /// Every thread and all the free memory.
     Exclusive,
-    /// At most `workers` threads and `memory` bytes, each capped at what the
-    /// host has.
+    /// At most `workers` threads, a streamed phase's producer among them,
+    /// and `memory` bytes, each capped at what the host has.
     Explicit {
         /// Worker ceiling.
         workers: usize,
@@ -95,6 +125,24 @@ impl ResourcePolicy {
             Self::Explicit { workers, .. } => workers.min(threads),
         }
         .max(1)
+    }
+
+    /// How a run's phases use `host`: [`Self::workers`] for a phase that
+    /// computes in memory, and for a phase that streams the source the
+    /// workers that fit beside its producer within the policy's budget of
+    /// busy threads. That budget is the performance cores for
+    /// [`Self::Balanced`] and the workers for the other policies.
+    #[must_use]
+    pub fn cores(&self, host: &HostResources) -> CoreAllocation {
+        let workers = self.workers(host);
+        let budget = match *self {
+            Self::Balanced => host.performance_cores,
+            Self::Interactive | Self::Exclusive | Self::Explicit { .. } => workers,
+        };
+        CoreAllocation {
+            workers,
+            streaming_workers: budget.saturating_sub(STREAM_PRODUCERS).min(workers).max(1),
+        }
     }
 
     /// Bytes of memory a run may use on `host`, before reservations.
@@ -421,6 +469,41 @@ mod tests {
         for (policy, workers, memory) in cases {
             assert_eq!(policy.workers(&HOST), workers, "{policy:?}");
             assert_eq!(policy.memory(&HOST), memory, "{policy:?}");
+        }
+    }
+
+    #[test]
+    fn a_streamed_phase_keeps_its_producer_within_the_core_budget() {
+        let host = |threads, performance_cores| HostResources {
+            threads,
+            performance_cores,
+            ..HOST
+        };
+        let explicit = |workers| ResourcePolicy::Explicit {
+            workers,
+            memory: u64::MAX,
+        };
+        let cores = |workers, streaming_workers| CoreAllocation {
+            workers,
+            streaming_workers,
+        };
+        let cases = [
+            // Four performance and six efficiency cores (M4): the producer
+            // takes a performance core from the placing workers.
+            (ResourcePolicy::Balanced, host(10, 4), cores(4, 3)),
+            // Twelve performance cores of sixteen threads.
+            (ResourcePolicy::Balanced, host(16, 12), cores(12, 11)),
+            // No core classes: three quarters of the threads leave room.
+            (ResourcePolicy::Balanced, host(32, 32), cores(24, 24)),
+            (ResourcePolicy::Balanced, host(1, 1), cores(1, 1)),
+            (ResourcePolicy::Interactive, host(10, 4), cores(5, 4)),
+            (ResourcePolicy::Exclusive, host(10, 4), cores(10, 9)),
+            (explicit(4), host(10, 4), cores(4, 3)),
+            // One worker streams beside its producer.
+            (explicit(1), host(10, 4), cores(1, 1)),
+        ];
+        for (policy, host, expected) in cases {
+            assert_eq!(policy.cores(&host), expected, "{policy:?} on {host:?}");
         }
     }
 
