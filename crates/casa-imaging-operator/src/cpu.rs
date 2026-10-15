@@ -393,6 +393,10 @@ impl CpuBackend {
 /// Spread one placement's values through every routed (grid pol,
 /// visibility pol) pair and term, accumulating `sumwt`, when given, by the
 /// set's rule: `W · s^t` times 1, `Re N` or `|N|`.
+///
+/// The visibility polarizations a grid polarization takes through the same
+/// Mueller plane share its taps (both correlations of Stokes I), so their
+/// values are summed and spread once; `sumwt` still adds each one's weight.
 #[allow(clippy::too_many_arguments)]
 fn spread_sample<T: GridScalar>(
     layout: &AccumulatorLayout,
@@ -414,6 +418,9 @@ fn spread_sample<T: GridScalar>(
     let plane = layout.planes().local(placement.plane);
     let block_cells = layout.block_cells();
     for (gpol, row) in table.iter().enumerate() {
+        // One value per Mueller plane this grid polarization takes.
+        let mut planes = [(0_u8, Complex64::default()); 4];
+        let mut used = 0;
         for (vpol, mueller_plane) in row.iter().enumerate() {
             let Some(mueller) = *mueller_plane else {
                 continue;
@@ -422,24 +429,37 @@ fn spread_sample<T: GridScalar>(
             if weight == 0.0 {
                 continue;
             }
-            let base = match mode {
+            let base = widen(match mode {
                 Mode::Data => values[vpol],
                 Mode::Psf | Mode::Weight => Complex32::new(weight, 0.0),
+            });
+            match planes[..used].iter_mut().find(|(held, _)| *held == mueller) {
+                Some((_, sum)) => *sum += base,
+                None => {
+                    planes[used] = (mueller, base);
+                    used += 1;
+                }
+            }
+            let Some(sumwt) = sumwt.as_deref_mut() else {
+                continue;
             };
-            let norm = match (&sumwt, rule) {
-                (None, _) | (_, KernelNormalisation::UnitSum) => 1.0,
-                (_, KernelNormalisation::RealSum) => {
+            let norm = match rule {
+                KernelNormalisation::UnitSum => 1.0,
+                KernelNormalisation::RealSum => {
                     kernel::norm(taps, location, mueller, w_positive).re
                 }
-                (_, KernelNormalisation::KernelSum) => {
+                KernelNormalisation::KernelSum => {
                     kernel::norm(taps, location, mueller, w_positive).norm()
                 }
             };
             for (power, term) in powers.iter().zip(terms.clone()) {
-                let value = Complex::new(
-                    T::from_f64(f64::from(base.re) * power),
-                    T::from_f64(f64::from(base.im) * power),
-                );
+                sumwt[layout.block_index(plane, gpol, term)] += f64::from(weight) * power * norm;
+            }
+        }
+        for &(mueller, base) in &planes[..used] {
+            for (power, term) in powers.iter().zip(terms.clone()) {
+                let value =
+                    Complex::new(T::from_f64(base.re * power), T::from_f64(base.im * power));
                 let offset = layout.block_offset(plane, gpol, term);
                 kernel::spread::<T>(
                     &mut cells[offset..offset + block_cells],
@@ -451,10 +471,6 @@ fn spread_sample<T: GridScalar>(
                     placement.gradient,
                     value,
                 );
-                if let Some(sumwt) = sumwt.as_deref_mut() {
-                    sumwt[layout.block_index(plane, gpol, term)] +=
-                        f64::from(weight) * power * norm;
-                }
             }
         }
     }
