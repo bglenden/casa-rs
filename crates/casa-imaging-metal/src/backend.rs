@@ -21,7 +21,7 @@ use objc2_metal::{
 use crate::device::{Buffer, Device, Pipeline};
 use crate::records::{
     KnownTable, KnownTables, MAX_POLS, MAX_TERMS, Params, SampleRecord, TableRecord, TapsKind,
-    Targets, prepare,
+    Targets, permutation_stride, prepare,
 };
 use crate::{MAX_SUB, RING, SPLIT};
 
@@ -416,7 +416,7 @@ impl<'cf> MetalBackend<'cf> {
             batch_offset: 0,
             native: 0,
             add: 0,
-            pad: 0,
+            stride: 0,
             tile_shape: shape(tile.shape),
             tile_origin: shape(tile.origin),
             grid_shape: shape(targets.adjoint.as_ref().map_or_else(
@@ -660,6 +660,14 @@ impl<'cf> MetalBackend<'cf> {
             kernel,
             Kernel::PredictNative | Kernel::NativeResidual
         ));
+        // Kernels that add into the grid serve samples in a spread order
+        // (`permutation_stride`); predictions read the model in sample order.
+        params.stride = match kernel {
+            Kernel::Spread | Kernel::NativeResidual | Kernel::Residual => {
+                permutation_stride(range.len())
+            }
+            Kernel::Predict | Kernel::PredictNative | Kernel::NativeModel => 0,
+        };
         if kernel == Kernel::PredictNative {
             params.batch_offset = u32::try_from(range.start).expect("a batch fits u32 indices");
         }

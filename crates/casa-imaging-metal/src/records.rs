@@ -91,12 +91,42 @@ pub(crate) struct Params {
     pub native: u32,
     /// 1: the native model adds to the cells instead of writing them.
     pub add: u32,
-    pub pad: u32,
+    /// Sample slot `k` serves sample `k · stride mod samples`
+    /// ([`permutation_stride`]); 0 serves sample `k`.
+    pub stride: u32,
     pub tile_shape: [u32; 2],
     pub tile_origin: [u32; 2],
     pub grid_shape: [u32; 2],
     pub adjoint: [[i8; 16]; 2],
     pub forward: [[i8; 16]; 2],
+}
+
+/// The [`Params::stride`] that spreads an accumulating dispatch of
+/// `samples` samples over its threads: the integer coprime to `samples`
+/// nearest `samples / φ`, so `k ↦ k · stride mod samples` is a bijection and,
+/// by the three-gap property of golden-ratio steps, any run of neighbouring
+/// sample slots serves samples spread over the whole dispatch. Neighbouring
+/// samples (adjacent channels and integrations of one baseline) spread
+/// nearly the same cells; on GPUs whose float atomics retry under contention
+/// (Apple M1/M2), slots that hit the same cells at once serialize (#716).
+/// Zero, sample `k` in slot `k`, below two samples.
+pub(crate) fn permutation_stride(samples: usize) -> u32 {
+    if samples < 2 {
+        return 0;
+    }
+    let gcd = |mut a: usize, mut b: usize| {
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        a
+    };
+    let target = ((samples as f64) * 0.618_033_988_749_894_9).round() as usize;
+    let coprime = |stride: usize| (1..samples).contains(&stride) && gcd(stride, samples) == 1;
+    let stride = (0..samples)
+        .flat_map(|distance| [target + distance, target.wrapping_sub(distance)])
+        .find(|&stride| coprime(stride))
+        .expect("1 is coprime to every count");
+    u32::try_from(stride).expect("a dispatch's samples fit u32")
 }
 
 /// Which taps of a cell a dispatch reads.
@@ -406,4 +436,38 @@ fn tile_origin(layout: &AccumulatorLayout, location: CellLocation, half: [u16; 2
         "sample support lies outside the accumulator tile"
     );
     [x0 as u32, y0 as u32]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::permutation_stride;
+
+    #[test]
+    fn the_stride_permutes_every_dispatch_size() {
+        for samples in (0..=1500).chain([4095, 4096, 10_923, 32_767, 32_768]) {
+            let stride = permutation_stride(samples) as usize;
+            if samples < 2 {
+                assert_eq!(stride, 0, "{samples} samples keep their order");
+                continue;
+            }
+            let mut seen = vec![false; samples];
+            for slot in 0..samples {
+                let sample = slot * stride % samples;
+                assert!(!seen[sample], "{samples} samples: {sample} served twice");
+                seen[sample] = true;
+            }
+        }
+    }
+
+    #[test]
+    fn neighbouring_slots_serve_samples_far_apart() {
+        for samples in [64, 100, 512, 4096, 10_923, 32_768] {
+            let stride = permutation_stride(samples) as usize;
+            let gap = stride.min(samples - stride);
+            assert!(
+                4 * gap >= samples,
+                "{samples} samples: neighbouring slots only {gap} apart"
+            );
+        }
+    }
 }

@@ -50,7 +50,7 @@ struct Params {
     uint batch_offset;      // batch index of a native prediction's first sample
     uint native;            // 1: predict into the batch / subtract the native model
     uint add;               // 1: the native model adds to the cells
-    uint pad;
+    uint stride;            // thread t serves sample t * stride mod samples; 0: sample t
     uint2 tile_shape;
     uint2 tile_origin;
     uint2 grid_shape;
@@ -273,6 +273,12 @@ struct Lane {
     uint width;
 };
 
+// With `p.stride` (coprime to `p.samples`), the k-th sample slot serves
+// sample k * stride mod samples, a bijection that sends neighbouring slots to
+// samples far apart: neighbouring samples (adjacent channels and
+// integrations of one baseline) spread nearly the same cells, and on GPUs
+// whose float atomics retry under contention (Apple M1/M2) slots hitting the
+// same cells at once serialize (#716).
 static inline Lane lane_of(constant Params &p, uint position, uint group, uint simdgroup,
                            uint simdgroups, uint simd_lane, uint simd_width) {
     Lane l;
@@ -284,6 +290,9 @@ static inline Lane lane_of(constant Params &p, uint position, uint group, uint s
         l.index = group * simdgroups + simdgroup;
         l.lane = simd_lane;
         l.width = simd_width;
+    }
+    if (p.stride != 0u && l.index < p.samples) {
+        l.index = uint((ulong(l.index) * ulong(p.stride)) % ulong(p.samples));
     }
     return l;
 }
