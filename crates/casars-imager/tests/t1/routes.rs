@@ -58,6 +58,8 @@ fn command_line_and_json_runs_resolve_one_request_and_write_the_same_products() 
     let image_size = geometry.image_size.to_string();
     let cell = geometry.cell_arcsec.to_string();
 
+    // Both routes grid on the CPU: on the GPU the order of `f32` atomic adds
+    // changes from run to run, which is not what this law compares.
     imager(
         &directory,
         &[
@@ -75,6 +77,8 @@ fn command_line_and_json_runs_resolve_one_request_and_write_the_same_products() 
             "200",
             "--threshold-jy",
             "0.005",
+            "--backend",
+            "cpu",
         ],
     );
     let request = json!({
@@ -87,6 +91,7 @@ fn command_line_and_json_runs_resolve_one_request_and_write_the_same_products() 
             "deconvolver": "hogbom",
             "niter": 200,
             "threshold": "0.005Jy",
+            "backend": "cpu",
         },
     });
     let request_path = directory.join("request.json");
