@@ -30,6 +30,13 @@ pub enum Unsupported {
     /// Metal grids the standard kernel set; W, mosaic and AW wait for gate
     /// R2 (#653).
     KernelSetOnMetal,
+    /// Facets image a constant-basis (MFS) image; CASA also facets Taylor
+    /// images, which wait for a CASA comparison, and a cube's density rule
+    /// would see each facet's rotated uvw.
+    FacetedBasis,
+    /// Facets grid with the standard kernel set. CASA refuses AW and mosaic
+    /// facets; W-projection facets wait for a per-facet W set.
+    FacetedKernelSet,
 }
 
 impl fmt::Display for Unsupported {
@@ -53,6 +60,12 @@ impl fmt::Display for Unsupported {
                 "the Metal backend grids the standard kernel set only; W projection, mosaic and \
                  AW projection run on the CPU",
             ),
+            Self::FacetedBasis => {
+                formatter.write_str("facets image a single-term MFS image (specmode mfs)")
+            }
+            Self::FacetedKernelSet => {
+                formatter.write_str("facets grid with the standard gridder only")
+            }
         }
     }
 }
@@ -115,6 +128,20 @@ pub fn check(
             unsupported.push(Unsupported::MultiDomainTaylorBasis);
         }
     }
+    if problem
+        .required_capabilities()
+        .contains(&RequiredCapability::FacetedGeometry)
+    {
+        if !matches!(
+            problem.reconstruction().basis(),
+            ReconstructionBasis::Constant
+        ) {
+            unsupported.push(Unsupported::FacetedBasis);
+        }
+        if !crate::imaging::standard_kernel_set(problem) {
+            unsupported.push(Unsupported::FacetedKernelSet);
+        }
+    }
     if backend == BackendChoice::Metal {
         if !host.metal {
             unsupported.push(Unsupported::NoMetalDevice);
@@ -135,13 +162,14 @@ pub fn check(
     }
 }
 
-/// Scientific capabilities of the major-cycle pass. Faceted geometry has no
-/// pass implementation (#664); the primary-beam-corrected spectral index
-/// has none.
+/// Scientific capabilities of the major-cycle pass. The
+/// primary-beam-corrected spectral index and full-Mueller responses have no
+/// implementation.
 const fn supports_capability(capability: RequiredCapability) -> bool {
     matches!(
         capability,
         RequiredCapability::Polarization(_)
+            | RequiredCapability::FacetedGeometry
             | RequiredCapability::WProjection
             | RequiredCapability::AwProjection
             | RequiredCapability::PrimaryBeamResponse
@@ -200,15 +228,15 @@ mod tests {
             RequiredCapability::Product(ProductKind::PbCorrectedImage),
             RequiredCapability::Polarization(PolarizationCoordinate::StokesQ),
             RequiredCapability::Polarization(PolarizationCoordinate::CircularRl),
+            RequiredCapability::FacetedGeometry,
         ] {
             assert!(supports_capability(capability), "{capability:?}");
         }
     }
 
     #[test]
-    fn faceting_full_mueller_and_the_corrected_spectral_index_wait() {
+    fn full_mueller_and_the_corrected_spectral_index_wait() {
         for capability in [
-            RequiredCapability::FacetedGeometry,
             RequiredCapability::FullMuellerResponse,
             RequiredCapability::Product(ProductKind::PbCorrectedSpectralIndex),
         ] {

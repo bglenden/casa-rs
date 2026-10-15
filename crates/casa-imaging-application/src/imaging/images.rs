@@ -11,6 +11,7 @@ use casa_imaging_reconstruction::{ModelGeneration, PassImages};
 use ndarray::Array2;
 
 use super::ImagingError;
+use super::charts::FacetBox;
 
 /// The pass images of domain `domain` in the normal state's x-major layout.
 ///
@@ -95,17 +96,23 @@ fn push_x_major(out: &mut Vec<f32>, image: &Array2<f32>) {
     }
 }
 
-/// Model images of `planes` on domain `domain` of `generation`: one plane
-/// per output channel of a channel-local basis, the Taylor terms of one
-/// plane otherwise. Pixels outside the model's support predict nothing.
+/// Model images of `planes` on domain `domain` of `generation`, cropped to
+/// a facet's `window` when it has one (each CASA facet mapper degrids its
+/// own window, `SIMapperCollection::degrid`): one plane per output channel
+/// of a channel-local basis, the Taylor terms of one plane otherwise.
+/// Pixels outside the model's support predict nothing.
 pub(crate) fn model_images(
     generation: &ModelGeneration,
-    domain: usize,
+    (domain, window): (usize, Option<FacetBox>),
     planes: PlaneRange,
     channel_local: bool,
 ) -> Result<ModelImages, ImagingError> {
     let shape = generation.shape();
-    let [width, height] = shape.domains()[domain].pixels();
+    let full_width = shape.domains()[domain].pixels()[0];
+    let (origin, [width, height]) = window.map_or(
+        ([0, 0], shape.domains()[domain].pixels()),
+        |window| (window.origin, window.shape()),
+    );
     let pols = shape.polarizations();
     let terms = if channel_local {
         1
@@ -120,7 +127,7 @@ pub(crate) fn model_images(
             for pol in 0..pols {
                 let samples = generation.read_plane(domain, coefficient, pol)?;
                 images.push(Array2::from_shape_fn((height, width), |(y, x)| {
-                    let sample = samples[y * width + x];
+                    let sample = samples[(origin[1] + y) * full_width + origin[0] + x];
                     match sample.support() {
                         ModelSupport::Valid => sample.value().value() as f32,
                         ModelSupport::Invalid => 0.0,
@@ -136,15 +143,16 @@ pub(crate) fn model_images(
     })
 }
 
-/// Prepared model grids of `planes` of domain `domain`.
+/// Prepared model grids of `planes` of a chart: domain `domain`, or its
+/// facet `window`.
 pub(crate) fn prepare_model(
     operator: &MeasurementOperator,
     generation: &ModelGeneration,
-    domain: usize,
+    chart: (usize, Option<FacetBox>),
     planes: PlaneRange,
 ) -> Result<PreparedModelGrids, ImagingError> {
     let channel_local = matches!(operator.basis(), Basis::ChannelLocal { .. });
-    let images = model_images(generation, domain, planes, channel_local)?;
+    let images = model_images(generation, chart, planes, channel_local)?;
     Ok(operator.prepare_model(&images, ModelPrescale::Unit)?)
 }
 

@@ -33,6 +33,7 @@ use casa_imaging_runtime::{
 };
 use casa_ms::ResolvedSelectedObservationAccess;
 
+use super::charts::{Chart, ChartStitch, charts};
 use super::images::{pass_images, prepare_model};
 use super::measurement::{
     DomainOperator, KernelAdmission, density_shape, domain_operator, native_spacing_hz,
@@ -85,7 +86,12 @@ pub(crate) struct ImagingOutcome {
 /// Fixed parts of one run shared by every pass.
 struct Run<'a> {
     problem: &'a CompiledProblem,
+    /// One operator per chart, the pass domains.
     domains: Vec<DomainOperator>,
+    /// Each pass domain's image domain and facet.
+    charts: Vec<Chart>,
+    /// The image domains' images from their charts.
+    stitch: ChartStitch,
     source: MeasurementSetSource<'a>,
     weighting: WeightingGeneration,
     /// The charge of the weighting's density grid, held with it.
@@ -418,14 +424,15 @@ impl<'a> Run<'a> {
             policy: &inputs.policy,
             workers: inputs.teams.streaming().workers(),
         };
-        let domains = problem
-            .geometry()
-            .domains()
+        // One operator per chart: each image domain, or each facet of a
+        // faceted one.
+        let charts = charts(problem);
+        let domains = charts
             .iter()
-            .map(|domain| {
+            .map(|chart| {
                 domain_operator(
                     problem,
-                    domain,
+                    chart.extent(&problem.geometry().domains()[chart.domain])?,
                     &correlations,
                     backend,
                     inputs.grid_precision,
@@ -436,7 +443,7 @@ impl<'a> Run<'a> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let weight_image = domains.iter().any(|domain| domain.weight_image);
-        if inputs.visibility_write.is_some() && domains.len() > 1 {
+        if inputs.visibility_write.is_some() && problem.geometry().domains().len() > 1 {
             return Err(ImagingError::Unsupported {
                 reason: "visibilities are written back for one image domain",
             });
@@ -493,6 +500,8 @@ impl<'a> Run<'a> {
         let run = Self {
             problem,
             domains,
+            stitch: ChartStitch::new(problem, charts.clone()),
+            charts,
             source,
             weighting,
             _weights: weights,
@@ -768,10 +777,17 @@ impl<'a> Run<'a> {
         }
         let team = self.teams.streaming();
         let domains = pass_domains(&self.domains, team.workers());
-        let prepare = |domain: usize, planes: PlaneRange| {
+        let charts = &self.charts;
+        let prepare = |chart: usize, planes: PlaneRange| {
             let generation = model.expect("the closure is installed only with a model");
-            prepare_model(&self.domains[domain].operator, generation, domain, planes)
-                .map_err(|error| PassError::Model(Box::new(error)))
+            let Chart { domain, window } = charts[chart];
+            prepare_model(
+                &self.domains[chart].operator,
+                generation,
+                (domain, window),
+                planes,
+            )
+            .map_err(|error| PassError::Model(Box::new(error)))
         };
         let pass = MajorCyclePass {
             domains: &domains,
@@ -798,11 +814,18 @@ impl<'a> Run<'a> {
             &mut self.source,
             team,
             &self.cancel,
-            &mut |domain, images| {
-                let basis = self.domains[domain].operator.basis();
-                state
-                    .append(pass_images(domain, &images, initial, basis))
-                    .map_err(|error| PassError::Images(Box::new(error)))
+            &mut |chart, images| {
+                let basis = self.domains[chart].operator.basis();
+                let images = self
+                    .stitch
+                    .accept(chart, pass_images(chart, &images, initial, basis))
+                    .map_err(|error| PassError::Images(error.into()))?;
+                match images {
+                    Some(images) => state
+                        .append(images)
+                        .map_err(|error| PassError::Images(Box::new(error))),
+                    None => Ok(()),
+                }
             },
             sink.as_mut(),
         )?)

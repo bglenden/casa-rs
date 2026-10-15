@@ -197,7 +197,7 @@ pub(crate) fn prepare(
                 specification::normalization(request),
                 specification::primary_beam_validity(request)?,
             )?),
-            Gridder::Standard | Gridder::Wproject { .. } => None,
+            Gridder::Standard { .. } | Gridder::Wproject { .. } => None,
         },
         observation,
         write_model_column: request.savemodel,
@@ -359,10 +359,10 @@ fn primary_beam_model(
         Gridder::Mosaic { .. } | Gridder::Awproject(_) => {
             Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
         }
-        Gridder::Standard | Gridder::Wproject { .. } if request.write_pb || request.pbcor => {
+        Gridder::Standard { .. } | Gridder::Wproject { .. } if request.write_pb || request.pbcor => {
             Some(instrument::standard_primary_beam_model(ms)?)
         }
-        Gridder::Standard | Gridder::Wproject { .. } => None,
+        Gridder::Standard { .. } | Gridder::Wproject { .. } => None,
     })
 }
 

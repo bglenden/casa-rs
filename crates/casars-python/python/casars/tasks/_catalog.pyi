@@ -257,6 +257,7 @@ def imager(
     pbcor: bool = ...,
     pblimit: float = ...,
     gridder: Literal['awproject', 'mosaic', 'standard', 'wproject'] = ...,
+    facets: int = ...,
     parallel: bool = ...,
     uvrange: str = ...,
     intent: str = ...,

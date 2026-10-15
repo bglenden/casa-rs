@@ -461,7 +461,9 @@ pub(crate) fn scatter_image_polarization_plane<T: Copy>(
     }
 }
 
-/// Write one plane's scalar state, such as its sum of weights.
+/// Write one plane's scalar state, such as its sum of weights, at every
+/// direction pixel: one per facet of a faceted domain, which all carry
+/// facet 0's value (#664), else the single pixel.
 pub(crate) fn scatter_polarization_plane_state(
     payload: &mut [f32],
     axes: &ProductAxes,
@@ -470,15 +472,26 @@ pub(crate) fn scatter_polarization_plane_state(
     output_channel: usize,
     value: f32,
 ) {
-    let offset = product_offset(
-        axes.order(),
-        storage_shape,
-        0,
-        0,
-        polarization,
-        output_channel,
-    );
-    payload[offset] = value;
+    let extent = |axis| {
+        axes.order()
+            .positions()
+            .iter()
+            .position(|candidate| *candidate == axis)
+            .map_or(1, |position| storage_shape[position])
+    };
+    for longitude in 0..extent(ImageAxis::DirectionLongitude) {
+        for latitude in 0..extent(ImageAxis::DirectionLatitude) {
+            let offset = product_offset(
+                axes.order(),
+                storage_shape,
+                longitude,
+                latitude,
+                polarization,
+                output_channel,
+            );
+            payload[offset] = value;
+        }
+    }
 }
 
 fn product_offset(

@@ -137,9 +137,14 @@ impl<'a> MeasurementSetSource<'a> {
         let domains = problem.geometry().domains();
         Self {
             problem,
-            domains: domains.len(),
+            // One projection per pass domain, each facet of a faceted
+            // domain one (casa-ms emits them domain-major, facet-minor).
+            domains: row_layout(problem).domains,
             pointing: if pointing_ramp {
-                domains.iter().map(|domain| domain.direction()).collect()
+                domains
+                    .iter()
+                    .flat_map(|domain| std::iter::repeat_n(domain.direction(), domain.facets().len()))
+                    .collect()
             } else {
                 Vec::new()
             },

@@ -157,7 +157,8 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
     }
 }
 
-/// The operator of `domain` with the kernel set the problem names: the
+/// The operator of a chart of `extent` (an image domain, or one of its
+/// facets) with the kernel set the problem names: the
 /// standard spheroidal set, W-projection planes sized by the W contract,
 /// the mosaic primary beams of the selected windows, or the AW catalog of
 /// `aw_catalog`, in the requested precision or the one `backend` grids at.
@@ -170,7 +171,7 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn domain_operator(
     problem: &CompiledProblem,
-    domain: &CompiledImageDomain,
+    extent: ImageExtent,
     correlations: &[CorrelationType],
     backend: BackendChoice,
     requested_precision: Option<GridPrecision>,
@@ -179,11 +180,12 @@ pub(crate) fn domain_operator(
     admission: KernelAdmission<'_>,
 ) -> Result<DomainOperator, ImagingError> {
     let kind = kernel_set_kind(problem);
+    // Each CASA facet's GridFT pads its own facet grid.
     let padding = match kind {
         KernelSetKind::Standard | KernelSetKind::WPlanes => GridPadding::CasaComposite,
         KernelSetKind::Mosaic | KernelSetKind::Aw => GridPadding::None,
     };
-    let geometry = GridGeometry::new(image_extent(domain)?, padding)?;
+    let geometry = GridGeometry::new(extent, padding)?;
     let polarization = PolarizationRouting::compile(
         correlations,
         problem.reconstruction().polarization().coordinates(),
@@ -375,7 +377,7 @@ fn mosaic_windows(problem: &CompiledProblem) -> Result<Vec<MosaicWindow>, Imagin
     Ok(windows)
 }
 
-fn image_extent(domain: &CompiledImageDomain) -> Result<ImageExtent, ImagingError> {
+pub(crate) fn image_extent(domain: &CompiledImageDomain) -> Result<ImageExtent, ImagingError> {
     let direction = domain.direction();
     let reference = direction.reference_pixel();
     if reference

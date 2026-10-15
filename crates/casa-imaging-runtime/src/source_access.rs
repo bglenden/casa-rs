@@ -36,7 +36,14 @@ pub fn row_layout(problem: &CompiledProblem) -> BlockShape {
             .map(|selection| selection.products().len())
             .max()
             .unwrap_or(0),
-        domains: problem.geometry().domains().len(),
+        // One projection per pass domain: each facet of a faceted image
+        // domain is one (#664).
+        domains: problem
+            .geometry()
+            .domains()
+            .iter()
+            .map(|domain| domain.facets().len())
+            .sum(),
     }
 }
 

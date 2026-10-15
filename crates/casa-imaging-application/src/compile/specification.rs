@@ -72,7 +72,7 @@ pub(super) fn normalization(request: &ImagingRequest) -> ProductNormalization {
         Gridder::Mosaic { normtype, .. } | Gridder::Awproject(AwProjection { normtype, .. }) => {
             *normtype
         }
-        Gridder::Standard | Gridder::Wproject { .. } => ProductNormalization::UnitResponse,
+        Gridder::Standard { .. } | Gridder::Wproject { .. } => ProductNormalization::UnitResponse,
     }
 }
 
@@ -95,7 +95,7 @@ pub(super) fn specification(
 ) -> Result<ProblemSpecification, PrepareError> {
     let direction_dependent = !matches!(
         request.gridder,
-        Gridder::Standard | Gridder::Wproject { .. }
+        Gridder::Standard { .. } | Gridder::Wproject { .. }
     );
     let algorithm = reconstruction_algorithm(request);
     let basis = match request.deconvolver {
@@ -510,7 +510,7 @@ mod tests {
             && request.iterations() > 0;
         let weight_image = !matches!(
             request.gridder,
-            Gridder::Standard | Gridder::Wproject { .. }
+            Gridder::Standard { .. } | Gridder::Wproject { .. }
         );
         requested_products(&request, minor_cycle, weight_image)
             .into_iter()

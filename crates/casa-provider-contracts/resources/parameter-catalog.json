@@ -2880,6 +2880,33 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.facets",
+      "semantic_revision": 3,
+      "casa_name": "facets",
+      "value_domain": {
+        "kind": "integer"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "positive"
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Number of wide-field image facets",
+        "details": "The main image splits into facets-by-facets facets, each gridded about its own centre (CASA's facets=N). The standard gridder with a constant-basis MFS image runs it; an image size not divisible by facets, and other gridders or spectral bases, fail closed.",
+        "examples": [
+          "1",
+          "2"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.featherimage",
       "semantic_revision": 1,
       "casa_name": "featherimage",
