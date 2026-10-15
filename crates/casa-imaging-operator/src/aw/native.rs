@@ -44,7 +44,11 @@ pub struct NativeAwPair<'a> {
 /// once (the aperture plane and the whole weight cell) and
 /// [`Self::realize`] then forms the imaging cell of each w from it with one
 /// transform, the arithmetic [`Self::generate`] performs per cell.
+///
+/// The workspace serves one aperture model, bound when it is made, so a
+/// prepared aperture always belongs to the model its cells are asked of.
 pub struct EvlaAwWorkspace {
+    model: EvlaApertureModel,
     size: usize,
     fft: PlaneFft<f32>,
     jones: Vec<Complex32>,
@@ -71,19 +75,23 @@ pub struct EvlaAwWorkspace {
 }
 
 impl EvlaAwWorkspace {
-    /// Allocate the working grid of `request`'s size; the same allocation
-    /// serves every cell of that size.
+    /// Allocate the working grid of `request`'s size for `model`'s cells;
+    /// the same allocation serves every cell of that size.
     ///
     /// # Errors
     ///
     /// The request is invalid or the FFT cannot be planned.
-    pub fn new(request: EvlaAwCellRequest) -> Result<Self, NativeAwGenerationError> {
+    pub fn new(
+        model: EvlaApertureModel,
+        request: EvlaAwCellRequest,
+    ) -> Result<Self, NativeAwGenerationError> {
         request
             .validate()
             .map_err(|_| NativeAwGenerationError::InvalidGrid)?;
         let n = request.size * request.size;
         let quadrant = (request.size / 2 + 1) * (request.size / 2 + 1);
         Ok(Self {
+            model,
             size: request.size,
             fft: PlaneFft::<f32>::new([request.size; 2], false)
                 .map_err(|_| NativeAwGenerationError::WorkspaceMismatch)?,
@@ -141,10 +149,9 @@ impl EvlaAwWorkspace {
     /// unsupported, or a value or normalisation is not finite.
     pub fn generate(
         &mut self,
-        model: &EvlaApertureModel,
         request: EvlaAwCellRequest,
     ) -> Result<NativeAwPair<'_>, NativeAwGenerationError> {
-        self.prepare(model, request)?;
+        self.prepare(request)?;
         self.realize(request)
     }
 
@@ -156,11 +163,7 @@ impl EvlaAwWorkspace {
     /// # Errors
     ///
     /// As [`Self::generate`].
-    pub fn prepare(
-        &mut self,
-        model: &EvlaApertureModel,
-        request: EvlaAwCellRequest,
-    ) -> Result<(), NativeAwGenerationError> {
+    pub fn prepare(&mut self, request: EvlaAwCellRequest) -> Result<(), NativeAwGenerationError> {
         self.realized = None;
         request
             .validate()
@@ -177,6 +180,7 @@ impl EvlaAwWorkspace {
         }
         self.prepared = None;
         let Self {
+            model,
             fft,
             jones,
             aperture,
@@ -522,16 +526,75 @@ mod tests {
             prolate_spheroidal: false,
             aperture: true,
         };
-        let mut workspace = EvlaAwWorkspace::new(request).expect("workspace");
-        let pair = workspace.generate(&model, request).expect("pair");
+        let mut workspace = EvlaAwWorkspace::new(model, request).expect("workspace");
+        let pair = workspace.generate(request).expect("pair");
         let first = (pair.imaging.values.to_vec(), pair.weight.values.to_vec());
-        let pair = workspace.generate(&model, request).expect("pair");
+        let pair = workspace.generate(request).expect("pair");
         assert_eq!(pair.imaging.values, first.0);
         assert_eq!(pair.weight.values, first.1);
         let mut invalid = request;
         invalid.size *= 2;
-        assert!(workspace.generate(&model, invalid).is_err());
+        assert!(workspace.generate(invalid).is_err());
         assert!(workspace.pair().is_none());
+    }
+
+    /// A dish surface whose sag is `scale` times [`surface`]'s.
+    fn scaled_surface(scale: f64) -> EvlaDishSurface {
+        EvlaDishSurface::new(
+            (0..=125)
+                .map(|i| {
+                    let r = i as f64 / 10.0;
+                    [r, r * r / (36.0 * scale), r / (18.0 * scale)]
+                })
+                .collect(),
+        )
+        .expect("surface")
+    }
+
+    /// A reused workspace, its preparation kept or replaced as requests
+    /// alternate, forms exactly what a fresh workspace forms for each
+    /// request, and the cells are its own model's: two surfaces give
+    /// different cells (Astra's probe on #712 reused one workspace for two
+    /// models and got the first model's cells, 0.033 NRMS from the second's).
+    #[test]
+    fn a_reused_workspace_forms_its_own_models_cells_whatever_it_prepared_before() {
+        let request = EvlaAwCellRequest {
+            size: 128,
+            sky_increment_rad: [-0.001, 0.001],
+            frequency_hz: 3e9,
+            conjugate_frequency_hz: 3.1e9,
+            w_wavelengths: 100.0,
+            parallactic_angle_rad: 0.31,
+            mueller: 0,
+            oversampling: 4,
+            prolate_spheroidal: false,
+            aperture: true,
+        };
+        let other = EvlaAwCellRequest {
+            frequency_hz: 3.4e9,
+            w_wavelengths: 40.0,
+            ..request
+        };
+        let fresh = |model: &EvlaApertureModel, request| {
+            let mut workspace = EvlaAwWorkspace::new(model.clone(), request).expect("workspace");
+            let pair = workspace.generate(request).expect("pair");
+            (pair.imaging.values.to_vec(), pair.weight.values.to_vec())
+        };
+        let models = [1.0, 1.01].map(|scale| EvlaApertureModel::new(scaled_surface(scale)));
+        for model in &models {
+            let mut reused = EvlaAwWorkspace::new(model.clone(), request).expect("workspace");
+            for at in [request, other, request, other] {
+                let pair = reused.generate(at).expect("pair");
+                let expected = fresh(model, at);
+                assert_eq!(pair.imaging.values, expected.0);
+                assert_eq!(pair.weight.values, expected.1);
+            }
+        }
+        assert_ne!(
+            fresh(&models[0], request),
+            fresh(&models[1], request),
+            "the two surfaces form different cells"
+        );
     }
 
     #[test]
@@ -549,15 +612,15 @@ mod tests {
             prolate_spheroidal: true,
             aperture: true,
         };
-        let mut whole = EvlaAwWorkspace::new(request).expect("workspace");
-        let mut factored = EvlaAwWorkspace::new(request).expect("workspace");
-        factored.prepare(&model, request).expect("prepare");
+        let mut whole = EvlaAwWorkspace::new(model.clone(), request).expect("workspace");
+        let mut factored = EvlaAwWorkspace::new(model, request).expect("workspace");
+        factored.prepare(request).expect("prepare");
         for w in [0.0, 40.0, 100.0, 250.0] {
             let at_w = EvlaAwCellRequest {
                 w_wavelengths: w,
                 ..request
             };
-            let expected = whole.generate(&model, at_w).expect("pair");
+            let expected = whole.generate(at_w).expect("pair");
             let expected = (
                 expected.imaging.values.to_vec(),
                 expected.imaging.support,
@@ -578,10 +641,12 @@ mod tests {
     #[test]
     fn the_quadrant_screen_is_the_per_pixel_screen() {
         let model = EvlaApertureModel::new(surface());
-        for prolate_spheroidal in [false, true] {
+        // At 0.012 rad a pixel the grid's corners lie past l² + m² = 1,
+        // where the screen carries no W phase.
+        for (prolate_spheroidal, increment) in [(false, 0.0021), (true, 0.0021), (true, 0.012)] {
             let request = EvlaAwCellRequest {
                 size: 128,
-                sky_increment_rad: [-0.0021, 0.0021],
+                sky_increment_rad: [-increment, increment],
                 frequency_hz: 3e9,
                 conjugate_frequency_hz: 3.1e9,
                 w_wavelengths: 180.0,
@@ -591,8 +656,8 @@ mod tests {
                 prolate_spheroidal,
                 aperture: true,
             };
-            let mut workspace = EvlaAwWorkspace::new(request).expect("workspace");
-            workspace.prepare(&model, request).expect("prepare");
+            let mut workspace = EvlaAwWorkspace::new(model.clone(), request).expect("workspace");
+            workspace.prepare(request).expect("prepare");
             // The imaging plane before its transform, screened pixel by
             // pixel as the generator once did.
             let origin = (request.size / 2) as isize;
@@ -705,8 +770,8 @@ mod tests {
             prolate_spheroidal: true,
             aperture: false,
         };
-        let mut workspace = EvlaAwWorkspace::new(request).expect("workspace");
-        let pair = workspace.generate(&model, request).expect("pair");
+        let mut workspace = EvlaAwWorkspace::new(model, request).expect("workspace");
+        let pair = workspace.generate(request).expect("pair");
         for plane in [pair.imaging, pair.weight] {
             let mut area = num_complex::Complex64::default();
             for ix in -(plane.support as isize)..plane.support as isize {

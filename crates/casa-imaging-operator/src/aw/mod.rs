@@ -533,9 +533,9 @@ impl AwCatalog {
                         };
                         let workspace = match &mut workspace {
                             Some(workspace) => workspace,
-                            None => workspace.insert(EvlaAwWorkspace::new(request)?),
+                            None => workspace.insert(EvlaAwWorkspace::new(model.clone(), request)?),
                         };
-                        workspace.prepare(&model, request)?;
+                        workspace.prepare(request)?;
                         let pair = workspace.realize(request)?;
                         let misc = CellMisc {
                             sampling: grid.oversampling as f64,
