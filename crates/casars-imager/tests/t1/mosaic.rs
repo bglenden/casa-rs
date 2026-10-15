@@ -125,23 +125,23 @@ fn setup() -> Setup {
 }
 
 /// The beam power `VP²` of one 12 m dish `radius_px` cells from its
-/// pointing, through CASA's Airy table.
-fn beam_power(radius_px: f64) -> f64 {
+/// pointing at `frequency_hz`, through CASA's Airy table.
+fn beam_power(radius_px: f64, frequency_hz: f64) -> f64 {
     let table = AnnularApertureVoltageTable::new(
         ALMA_APERTURE_M,
         ALMA_BLOCKAGE_M,
         ALMA_TABLE_RADIUS_ARCMIN_GHZ,
     );
-    let radius = radius_px * GEOMETRY.cell_arcsec / 60.0 * FREQUENCY_HZ / 1.0e9;
+    let radius = radius_px * GEOMETRY.cell_arcsec / 60.0 * frequency_hz / 1.0e9;
     f64::from(table.evaluate(radius)).powi(2)
 }
 
-/// `Σ PB_f²` at `x` cells east of the mosaic centre, over the three
-/// pointings: the mosaic weight image's law.
-fn summed_beam_power(x_px: f64) -> f64 {
+/// `Σ PB_f²` at `x` cells east of the mosaic centre at `frequency_hz`, over
+/// the three pointings: the mosaic weight image's law.
+fn summed_beam_power(x_px: f64, frequency_hz: f64) -> f64 {
     [-SPACING_PX, 0, SPACING_PX]
         .iter()
-        .map(|pointing| beam_power((x_px - f64::from(*pointing)).abs()).powi(2))
+        .map(|pointing| beam_power((x_px - f64::from(*pointing)).abs(), frequency_hz).powi(2))
         .sum()
 }
 
@@ -191,8 +191,9 @@ fn mosaic_recovers_the_sky_under_the_summed_beams() {
     // of the summed beam powers.
     let pb_centre = f64::from(pb.pixels[centre_pixel]);
     let pb_east = f64::from(pb.pixels[east_pixel]);
-    let expected_pb_east =
-        (summed_beam_power(f64::from(SPACING_PX)) / summed_beam_power(0.0)).sqrt();
+    let expected_pb_east = (summed_beam_power(f64::from(SPACING_PX), FREQUENCY_HZ)
+        / summed_beam_power(0.0, FREQUENCY_HZ))
+    .sqrt();
     let (centre_peak, centre_at, centre_offset) = local_peak(&pbcor.pixels, centre_pixel, 6);
     let (east_peak, east_at, east_offset) = local_peak(&pbcor.pixels, east_pixel, 6);
     let east_flat_noise = f64::from(image.pixels[east_pixel]);
@@ -251,6 +252,105 @@ fn mosaic_recovers_the_sky_under_the_summed_beams() {
         (east_flat_noise - EAST.flux_jy * pb_east).abs() < 0.04 * EAST.flux_jy,
         "east flat-noise peak {east_flat_noise} Jy, sky × pb {}",
         EAST.flux_jy * pb_east
+    );
+}
+
+/// A mosaic cube (#672, #659): every channel keeps its own weight image. At
+/// 50 and 75 GHz the beams differ by 1.5×, so each channel's `.pb` follows
+/// the summed-beam law at that channel's frequency: at the eastern pointing,
+/// and halfway to it, where the two channels' laws differ by about a
+/// quarter. Each channel's PB-corrected image recovers both points.
+#[test]
+fn a_mosaic_cube_keeps_each_channels_weight_image() {
+    let mut setup = setup();
+    setup.spectral = casa_ms::SyntheticSpectralSetup {
+        name: "t1-50-75ghz".to_string(),
+        start_frequency_hz: FREQUENCY_HZ,
+        channel_width_hz: 25.0e9,
+        channel_count: 2,
+    };
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE), ("east", EAST)]);
+    let (summary, products) = observation.image(
+        "mosaic-cube",
+        json!({
+            "specmode": "cube",
+            "weighting": "natural",
+            "deconvolver": "hogbom",
+            "niter": 3000,
+            "threshold": THRESHOLD,
+            "field": "0,1,2",
+            "phasecenter_field": "1",
+            "gridder": "mosaic",
+            "pbcor": true,
+            "write_pb": true,
+        }),
+    );
+    observation.assert_product_contract(
+        &products,
+        &ProductContract {
+            inventory: &MOSAIC_INVENTORY,
+            spectral: SpectralAxis::NativeChannels,
+            natural: true,
+            pblimit: 0.2,
+            uncorrected_masks: true,
+        },
+    );
+    let geometry = observation.geometry();
+    let (centre_pixel, east_pixel) = (geometry.pixel(CENTRE), geometry.pixel(EAST));
+    let midway_pixel = geometry.pixel(Component {
+        offset_px: [-SPACING_PX / 2, 0],
+        ..CENTRE
+    });
+    let (pb, pbcor) = (products.get(".pb"), products.get(".image.pbcor"));
+    let mut pb_midway = Vec::new();
+    for (channel, &frequency_hz) in observation.channel_frequencies_hz().iter().enumerate() {
+        let pb_plane = pb.plane(channel);
+        let law = |x_px: i32| {
+            (summed_beam_power(f64::from(x_px), frequency_hz)
+                / summed_beam_power(0.0, frequency_hz))
+            .sqrt()
+        };
+        let (law_east, law_midway) = (law(SPACING_PX), law(SPACING_PX / 2));
+        let (centre_peak, centre_at, _) = local_peak(&pbcor.plane(channel), centre_pixel, 6);
+        let (east_peak, east_at, _) = local_peak(&pbcor.plane(channel), east_pixel, 6);
+        eprintln!(
+            "T1 mosaic cube channel {channel} ({:.1} GHz): pb centre {:.5}, midway {:.5} (law \
+             {law_midway:.5}), east {:.5} (law {law_east:.5}); pbcor centre {centre_peak:.5} Jy \
+             at {centre_at:?}, east {east_peak:.5} Jy at {east_at:?}; {} minor iterations, \
+             stop {:?}",
+            frequency_hz / 1.0e9,
+            pb_plane[centre_pixel],
+            pb_plane[midway_pixel],
+            pb_plane[east_pixel],
+            summary.actual_minor_iterations,
+            summary.clean_stop_reason,
+        );
+        assert!((f64::from(pb_plane[centre_pixel]) - 1.0).abs() < 1.0e-3);
+        for (pixel, law, at) in [
+            (midway_pixel, law_midway, "midway"),
+            (east_pixel, law_east, "at the eastern pointing"),
+        ] {
+            assert!(
+                (f64::from(pb_plane[pixel]) - law).abs() < 0.03,
+                "channel {channel}: pb {at} {}, summed-beam law {law}",
+                pb_plane[pixel]
+            );
+        }
+        assert_eq!((centre_at, east_at), (centre_pixel, east_pixel), "channel {channel}");
+        assert!(
+            (f64::from(centre_peak) - CENTRE.flux_jy).abs() < 0.02 * CENTRE.flux_jy,
+            "channel {channel}: centre PB-corrected peak {centre_peak} Jy"
+        );
+        assert!(
+            (f64::from(east_peak) - EAST.flux_jy).abs() < 0.04 * EAST.flux_jy,
+            "channel {channel}: east PB-corrected peak {east_peak} Jy"
+        );
+        pb_midway.push(pb_plane[midway_pixel]);
+    }
+    // One weight image read for both channels would give them one `.pb`.
+    assert!(
+        (pb_midway[0] - pb_midway[1]).abs() > 0.1,
+        "the channels' PBs midway between the pointings {pb_midway:?}"
     );
 }
 

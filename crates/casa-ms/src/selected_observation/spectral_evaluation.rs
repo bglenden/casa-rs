@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Storage-owned source and output-frame spectral evaluation.
 
+use std::collections::BTreeMap;
+
 use casa_imaging_model::FrequencyFrame;
 
-use casa_types::measures::{direction::MDirection, frame::MeasFrame, frequency::FrequencyRef};
+use casa_types::measures::{
+    direction::MDirection,
+    frequency::{FrequencyRef, MFrequencyConverter},
+};
 
 use crate::{
     MeasurementSet, MsError, MsResult, MsSelectionIoBudget,
@@ -115,26 +120,42 @@ impl SelectedObservationSpectralEnvelope {
 }
 
 /// Bounded reducer that observes the canonical selected-row traversal in place.
+///
+/// It follows CASA's `MSUtil::getFreqRangeInSpw` (`fromEdge`), which
+/// `SynthesisUtilMethods::buildCoordinateSystem` uses for the MFS spectral
+/// axis. The selected rows' `TIME·(DATA_DESC_ID+1)` keys are kept unique and
+/// sorted ascending. Each spectral window then converts its selected channel
+/// edges, low edge first, at every key of its data descriptions in that
+/// order, through **one** `MFrequency::Convert`. That converter's aberration
+/// and dUT1 are anchored at the first key and extrapolated across 0.04 days
+/// (`MFrequencyConverter`), which moves the far end of a long track by
+/// about 1e-12. A fresh exact conversion per row would not.
 pub struct SelectedObservationSpectralEnvelopeReducer<'a> {
     measurement_set: &'a MeasurementSet,
     row_selection: &'a SelectedObservationRowSelection,
     geometry_engine: &'a MsCalEngine,
     output_frequency_reference: FrequencyRef,
     windows: Vec<SelectedWindowEdges>,
-    selected_edges_hz: [f64; 2],
-    last_key: Option<(u64, i32, i32)>,
-    last_transform: Option<(EnvelopeTransformKey, PreparedFrequencyFrameConversion)>,
-    source_frame: Option<(i32, u64, MeasFrame)>,
-    field_direction: Option<(i32, MDirection)>,
+    epochs: Vec<EnvelopeEpoch>,
+    epoch_limit: usize,
+    last_key_bits: Option<u64>,
     retained_bytes: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct EnvelopeTransformKey {
+/// One row of the selection standing for its `TIME·(DATA_DESC_ID+1)` key:
+/// the first row with that key in traversal order, as CASA keeps.
+#[derive(Debug, Clone, Copy)]
+struct EnvelopeEpoch {
+    time_mjd_seconds: f64,
     field_id: i32,
-    time_mjd_seconds_bits: u64,
-    source_ref: FrequencyRef,
-    output_ref: FrequencyRef,
+    data_description_id: u32,
+}
+
+impl EnvelopeEpoch {
+    /// CASA's sort key: the time scaled by the one-based data description.
+    fn key(self) -> f64 {
+        self.time_mjd_seconds * (f64::from(self.data_description_id) + 1.0)
+    }
 }
 
 impl<'a> SelectedObservationSpectralEnvelopeReducer<'a> {
@@ -175,12 +196,21 @@ impl<'a> SelectedObservationSpectralEnvelopeReducer<'a> {
                 )));
             }
         }
+        // Every key stands for at least one row, so the MS row count bounds
+        // the epochs; CASA itself reads the whole TIME, DATA_DESC_ID and
+        // FIELD_ID columns (16 bytes a row).
+        let epoch_limit = measurement_set.row_count();
+        let overflow =
+            || MsError::InvalidInput("spectral-envelope residency overflows usize".to_string());
         let retained_bytes = windows
             .capacity()
             .checked_mul(std::mem::size_of::<SelectedWindowEdges>())
-            .ok_or_else(|| {
-                MsError::InvalidInput("spectral-envelope residency overflows usize".to_string())
-            })?;
+            .and_then(|windows| {
+                epoch_limit
+                    .checked_mul(std::mem::size_of::<EnvelopeEpoch>())?
+                    .checked_add(windows)
+            })
+            .ok_or_else(overflow)?;
         if retained_bytes > available_bytes {
             return Err(MsError::InvalidInput(format!(
                 "selected spectral envelope requires {retained_bytes} retained bytes but the budget has {available_bytes} bytes"
@@ -192,11 +222,9 @@ impl<'a> SelectedObservationSpectralEnvelopeReducer<'a> {
             geometry_engine,
             output_frequency_reference,
             windows,
-            selected_edges_hz: [f64::INFINITY, f64::NEG_INFINITY],
-            last_key: None,
-            last_transform: None,
-            source_frame: None,
-            field_direction: None,
+            epochs: Vec::new(),
+            epoch_limit,
+            last_key_bits: None,
             retained_bytes,
         })
     }
@@ -209,114 +237,112 @@ impl<'a> SelectedObservationSpectralEnvelopeReducer<'a> {
 
     /// Observe one row from the canonical selected-row traversal.
     pub fn observe(&mut self, row: super::SelectedObservationRow) -> MsResult<()> {
-        let key = (
-            row.time_mjd_seconds().to_bits(),
-            row.field_id(),
-            row.data_description_id(),
-        );
-        if self.last_key == Some(key) {
-            return Ok(());
-        }
-        self.last_key = Some(key);
         let data_description_id = u32::try_from(row.data_description_id()).map_err(|_| {
             MsError::InvalidInput(
                 "selected spectral envelope observed a negative DATA_DESC_ID".to_string(),
             )
         })?;
-        let description = self
+        let epoch = EnvelopeEpoch {
+            time_mjd_seconds: row.time_mjd_seconds(),
+            field_id: row.field_id(),
+            data_description_id,
+        };
+        // CASA rejects consecutive repeats of a key before it sorts
+        // (`rejectConsecutive`).
+        let key_bits = epoch.key().to_bits();
+        if self.last_key_bits == Some(key_bits) {
+            return Ok(());
+        }
+        self.last_key_bits = Some(key_bits);
+        if !self
             .row_selection
             .data_descriptions()
             .iter()
-            .find(|description| description.data_description_id() == data_description_id)
-            .ok_or_else(|| {
-                MsError::InvalidInput(format!(
-                    "selected DATA_DESC_ID {data_description_id} has no storage binding"
-                ))
-            })?;
-        let window = self
-            .windows
-            .iter()
-            .find(|window| window.spectral_window_id == description.spectral_window_id())
-            .expect("constructor validates every selected data description");
-        let source_ref = window.source_frequency_reference;
-        let time_mjd_seconds = row.time_mjd_seconds();
-        let time_bits = time_mjd_seconds.to_bits();
-        let transform_key = EnvelopeTransformKey {
-            field_id: row.field_id(),
-            time_mjd_seconds_bits: time_bits,
-            source_ref,
-            output_ref: self.output_frequency_reference,
-        };
-        let conversion = if let Some((cached_key, conversion)) = self.last_transform
-            && cached_key == transform_key
+            .any(|description| description.data_description_id() == data_description_id)
         {
-            conversion
-        } else if source_ref == self.output_frequency_reference {
-            PreparedFrequencyFrameConversion::new(
-                source_ref,
-                self.output_frequency_reference,
-                None,
-                None,
-            )?
-        } else {
-            let field_id = usize::try_from(row.field_id()).map_err(|_| {
-                MsError::InvalidInput(
-                    "selected spectral envelope observed a negative FIELD_ID".to_string(),
-                )
-            })?;
-            let source_frame = match &mut self.source_frame {
-                Some((cached_field, cached_time, frame))
-                    if *cached_field == row.field_id() && *cached_time == time_bits =>
-                {
-                    frame
-                }
-                slot => {
-                    let direction = match &mut self.field_direction {
-                        Some((cached_field, direction)) if *cached_field == row.field_id() => {
-                            direction.clone()
-                        }
-                        slot => {
-                            let direction =
-                                raw_field_phase_direction(self.measurement_set, field_id)?;
-                            *slot = Some((row.field_id(), direction.clone()));
-                            direction
-                        }
-                    };
-                    let frame = self
-                        .geometry_engine
-                        .spectral_frame_observatory_direction(time_mjd_seconds, direction)?;
-                    *slot = Some((row.field_id(), time_bits, frame));
-                    &slot.as_ref().expect("source frame was inserted").2
-                }
-            };
-            PreparedFrequencyFrameConversion::new(
-                source_ref,
-                self.output_frequency_reference,
-                Some(source_frame),
-                Some(source_frame),
-            )?
-        };
-        self.last_transform = Some((transform_key, conversion));
-        let first_hz = conversion.convert_hz(window.lower_hz);
-        let second_hz = conversion.convert_hz(window.upper_hz);
-        self.selected_edges_hz[0] = self.selected_edges_hz[0].min(first_hz.min(second_hz));
-        self.selected_edges_hz[1] = self.selected_edges_hz[1].max(first_hz.max(second_hz));
+            return Err(MsError::InvalidInput(format!(
+                "selected DATA_DESC_ID {data_description_id} has no storage binding"
+            )));
+        }
+        if self.epochs.len() == self.epoch_limit {
+            return Err(MsError::InvalidInput(
+                "selected spectral envelope observed more keys than MAIN has rows".to_string(),
+            ));
+        }
+        if self.epochs.len() == self.epochs.capacity() {
+            // Grow geometrically but never past the charged bound.
+            let room = self.epoch_limit - self.epochs.len();
+            self.epochs
+                .reserve_exact(self.epochs.capacity().max(64).min(room));
+        }
+        self.epochs.push(epoch);
         Ok(())
     }
 
     /// Complete the reduction after the shared selected-row pass.
-    pub fn finish(self) -> MsResult<SelectedObservationSpectralEnvelope> {
-        if !self.selected_edges_hz[0].is_finite()
-            || !self.selected_edges_hz[1].is_finite()
-            || self.selected_edges_hz[1] <= self.selected_edges_hz[0]
-        {
+    pub fn finish(mut self) -> MsResult<SelectedObservationSpectralEnvelope> {
+        // CASA sorts the keys ascending and keeps one row per key
+        // (`GenSortIndirect`, `NoDuplicates`); a stable sort keeps the first.
+        self.epochs
+            .sort_by(|left, right| left.key().total_cmp(&right.key()));
+        self.epochs.dedup_by(|later, earlier| later.key() == earlier.key());
+        let window_of = self
+            .row_selection
+            .data_descriptions()
+            .iter()
+            .map(|description| {
+                (
+                    description.data_description_id(),
+                    description.spectral_window_id(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut directions = BTreeMap::<i32, MDirection>::new();
+        let mut edges_hz = [f64::INFINITY, f64::NEG_INFINITY];
+        let mut fold = |hz: f64| {
+            edges_hz[0] = edges_hz[0].min(hz);
+            edges_hz[1] = edges_hz[1].max(hz);
+        };
+        for window in &self.windows {
+            let source = window.source_frequency_reference;
+            // CASA takes REST edges, and edges already in a non-TOPO output
+            // frame, as they are.
+            if source == FrequencyRef::REST
+                || (source == self.output_frequency_reference && source != FrequencyRef::TOPO)
+            {
+                fold(window.lower_hz);
+                fold(window.upper_hz);
+                continue;
+            }
+            let mut converter = MFrequencyConverter::new(source, self.output_frequency_reference);
+            for epoch in self.epochs.iter().filter(|epoch| {
+                window_of.get(&epoch.data_description_id) == Some(&window.spectral_window_id)
+            }) {
+                let direction = if let Some(direction) = directions.get(&epoch.field_id) {
+                    direction.clone()
+                } else {
+                    let field_id = usize::try_from(epoch.field_id).map_err(|_| {
+                        MsError::InvalidInput(
+                            "selected spectral envelope observed a negative FIELD_ID".to_string(),
+                        )
+                    })?;
+                    let direction = raw_field_phase_direction(self.measurement_set, field_id)?;
+                    directions.insert(epoch.field_id, direction.clone());
+                    direction
+                };
+                let frame = self
+                    .geometry_engine
+                    .spectral_frame_observatory_direction(epoch.time_mjd_seconds, direction)?;
+                fold(converter.convert_hz(window.lower_hz, &frame)?.hz());
+                fold(converter.convert_hz(window.upper_hz, &frame)?.hz());
+            }
+        }
+        if !edges_hz[0].is_finite() || !edges_hz[1].is_finite() || edges_hz[1] <= edges_hz[0] {
             return Err(MsError::InvalidInput(
                 "selected spectral envelope produced no finite output interval".to_string(),
             ));
         }
-        Ok(SelectedObservationSpectralEnvelope {
-            edges_hz: self.selected_edges_hz,
-        })
+        Ok(SelectedObservationSpectralEnvelope { edges_hz })
     }
 }
 

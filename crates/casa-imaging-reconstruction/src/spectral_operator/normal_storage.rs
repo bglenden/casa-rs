@@ -109,11 +109,6 @@ mod tests;
 /// Runtime allocation capability for an exact logical Normal State array.
 #[doc(hidden)]
 pub trait NormalStorageFactory: fmt::Debug + Send + Sync {
-    /// The natural-weight cube's sensitivity is one scalar per channel; no
-    /// image-sized backing is needed for that repeated value.
-    fn scalar_sensitivity(&self) -> bool {
-        false
-    }
     /// Allocate storage whose complete logical contents will be owner-written.
     /// Slots are `2 * domain` for epoch arrays and `2 * domain + 1` for invariants.
     fn create(
@@ -443,18 +438,23 @@ impl NormalArrayStorage for Box<[f64]> {
 
 /// Logical field offsets with epoch arrays before immutable arrays. Physical
 /// invariant offsets subtract `epoch_scalars`; the two allocations never alias.
+///
+/// Every field is a complex-scalar span, so a paged backing holds whole
+/// planes. A real field (the compact residual, PSF and weight image) keeps
+/// its values at even offsets. The sensitivity is either such a real weight
+/// image beside the PSF, which a residual refresh shares, or empty when it is
+/// each plane's `sumwt` alone.
 #[derive(Debug, Clone)]
 struct ChannelNormalFields {
     dirty: Range<usize>,
     psf: Range<usize>,
     sensitivity: Range<usize>,
-    scalar_sensitivity: bool,
     scalars: usize,
     epoch_scalars: usize,
 }
 
 impl ChannelNormalFields {
-    fn new(values: usize, scalar_sensitivity: bool) -> Result<Self, SpectralOperatorError> {
+    fn new(values: usize, dense_sensitivity: bool) -> Result<Self, SpectralOperatorError> {
         let complex = values
             .checked_mul(2)
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
@@ -469,15 +469,20 @@ impl ChannelNormalFields {
         let dirty = field(complex)?;
         let epoch_scalars = dirty.end;
         let psf = field(complex)?;
-        let sensitivity = field(if scalar_sensitivity { 0 } else { values })?;
+        let sensitivity = field(if dense_sensitivity { complex } else { 0 })?;
         Ok(Self {
             dirty,
             psf,
             sensitivity,
-            scalar_sensitivity,
             scalars: end,
             epoch_scalars,
         })
+    }
+
+    /// Whether the sensitivity is a stored image rather than each plane's
+    /// `sumwt`.
+    fn dense_sensitivity(&self) -> bool {
+        !self.sensitivity.is_empty()
     }
 }
 
@@ -613,14 +618,11 @@ impl<'a> FinalNormalPlaneReader<'a> {
     pub fn read_sensitivity(&self) -> Result<Cow<'a, [f64]>, SpectralOperatorError> {
         let offset = self.plane * self.cells;
         match self.backing {
-            NormalPlaneBacking::Stored(d) => {
-                if d.fields.scalar_sensitivity {
-                    Ok(Cow::Owned(vec![d.sum_weights[self.plane]; self.cells]))
-                } else {
-                    let start = d.fields.sensitivity.start + offset;
-                    d.read_scalars(start..start + self.cells)
-                }
-            }
+            NormalPlaneBacking::Stored(d) => Ok(Cow::Owned(if d.fields.dense_sensitivity() {
+                d.read_widened(&d.fields.sensitivity, offset, self.cells)?
+            } else {
+                vec![d.sum_weights[self.plane]; self.cells]
+            })),
             NormalPlaneBacking::Resident(d) => {
                 let values = d
                     .sensitivity()
@@ -726,7 +728,13 @@ impl StoredChannelNormalDomain {
         let values = planes
             .checked_mul(checked_cells(p.shape)?)
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        let fields = ChannelNormalFields::new(values, plan.factory.scalar_sensitivity())?;
+        // The first window decides: a gridded weight image makes the
+        // sensitivity dense, its absence one `sumwt` per plane.
+        let dense = p
+            .cube_real
+            .as_ref()
+            .map_or(!p.sensitivity.is_empty(), |real| real.sensitivity.is_some());
+        let fields = ChannelNormalFields::new(values, dense)?;
         let storage = plan
             .factory
             .create(first.domain_ordinal * 2, fields.epoch_scalars)?;
@@ -770,6 +778,10 @@ impl StoredChannelNormalDomain {
         if range.start != self.next_channel {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
+        let dense = compact.map_or(!p.sensitivity.is_empty(), |real| real.sensitivity.is_some());
+        if dense != self.fields.dense_sensitivity() {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        }
         if range.len() > self.window_channels {
             return Err(SpectralOperatorError::NormalStorage(
                 "normal-state write exceeds the admitted channel window".into(),
@@ -805,23 +817,23 @@ impl StoredChannelNormalDomain {
                 }
             }
         }
-        if !self.fields.scalar_sensitivity {
+        if dense {
             let invariant = Arc::get_mut(&mut self.invariants)
                 .ok_or(SpectralOperatorError::IncompleteCoverage)?;
-            let start = self.fields.sensitivity.start - self.fields.epoch_scalars + offset;
-            if compact.is_some() {
-                let mut window = [0.0; 512];
-                for (plane, &weight) in p.sum_weights.iter().enumerate() {
-                    window.fill(weight);
-                    for chunk in (0..cells).step_by(window.len()) {
-                        invariant.write(
-                            start + plane * cells + chunk,
-                            &window[..window.len().min(cells - chunk)],
-                        )?;
+            let start = self.fields.sensitivity.start - self.fields.epoch_scalars + 2 * offset;
+            match compact.and_then(|real| real.sensitivity.as_deref()) {
+                Some(weight) => invariant.write_real(start, weight)?,
+                None => {
+                    // Complete-data windows carry the widened f64 response;
+                    // write it as (value, 0) pairs on the real field's span.
+                    let mut pairs = [0.0_f64; 512];
+                    for (index, chunk) in p.sensitivity.chunks(pairs.len() / 2).enumerate() {
+                        for (pair, &value) in pairs.as_chunks_mut::<2>().0.iter_mut().zip(chunk) {
+                            *pair = [value, 0.0];
+                        }
+                        invariant.write(start + index * pairs.len(), &pairs[..chunk.len() * 2])?;
                     }
                 }
-            } else {
-                invariant.write(start, &p.sensitivity)?;
             }
         }
         self.sum_weights[plane_offset..plane_offset + planes].copy_from_slice(&p.sum_weights);
@@ -836,19 +848,22 @@ impl StoredChannelNormalDomain {
         self.next_channel == self.total_channels
     }
 
-    fn read_scalars(&self, range: Range<usize>) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
-        let result = if range.start >= self.fields.epoch_scalars {
-            self.invariants
-                .read(range.start - self.fields.epoch_scalars, range.len())?
-        } else {
-            self.storage.read(range.start, range.len())?
-        };
-        if result.len() != range.len() {
-            return Err(SpectralOperatorError::NormalStorage(
-                "normal backing returned an incorrect window length".into(),
-            ));
+    /// A real field's values widened to f64: the paged backing's Float plane
+    /// as it is, otherwise the real parts of the resident `(value, 0)` pairs.
+    fn read_widened(
+        &self,
+        field: &Range<usize>,
+        offset: usize,
+        values: usize,
+    ) -> Result<Vec<f64>, SpectralOperatorError> {
+        if let Some(real) = self.read_real(field, offset, values)? {
+            return Ok(real.iter().map(|&value| f64::from(value)).collect());
         }
-        Ok(result)
+        Ok(self
+            .read_complex(field, offset, values)?
+            .iter()
+            .map(|value| value.re)
+            .collect())
     }
 
     fn read_complex(
@@ -933,18 +948,14 @@ impl StoredChannelNormalDomain {
                     .read_complex(&self.fields.psf, offset, values)?
                     .into_owned()
                     .into_boxed_slice(),
-                sensitivity: if self.fields.scalar_sensitivity {
+                sensitivity: if self.fields.dense_sensitivity() {
+                    self.read_widened(&self.fields.sensitivity, offset, values)?
+                        .into_boxed_slice()
+                } else {
                     self.sum_weights[plane_range.clone()]
                         .iter()
                         .flat_map(|&weight| std::iter::repeat_n(weight, cells))
                         .collect()
-                } else {
-                    self.read_scalars(
-                        self.fields.sensitivity.start + offset
-                            ..self.fields.sensitivity.start + offset + values,
-                    )?
-                    .into_owned()
-                    .into_boxed_slice()
                 },
                 sum_weights: self.sum_weights[plane_range.clone()].into(),
                 published_sum_weights: self.published_sum_weights[plane_range.clone()].into(),

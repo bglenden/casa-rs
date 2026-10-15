@@ -129,7 +129,6 @@ fn domain(range: Range<usize>, published_differ: bool) -> SpectralDomainPrimitiv
 struct ObservedFactory {
     maximum_access: Arc<AtomicUsize>,
     allowed: usize,
-    scalar_sensitivity: bool,
 }
 
 #[derive(Debug)]
@@ -140,10 +139,6 @@ struct ObservedStorage {
 }
 
 impl NormalStorageFactory for ObservedFactory {
-    fn scalar_sensitivity(&self) -> bool {
-        self.scalar_sensitivity
-    }
-
     fn create(
         &self,
         _domain: usize,
@@ -558,7 +553,6 @@ fn owned_residual_wave_writes_in_admitted_windows_without_partition_copies() {
         Arc::new(ObservedFactory {
             maximum_access: maximum_access.clone(),
             allowed,
-            scalar_sensitivity: false,
         }),
         1,
     )
@@ -640,7 +634,6 @@ fn normal_storage_preserves_field_order_and_bits_across_windows() {
                 Arc::new(ObservedFactory {
                     maximum_access: maximum_access.clone(),
                     allowed,
-                    scalar_sensitivity: false,
                 }),
                 width,
             )
@@ -686,7 +679,13 @@ fn normal_storage_preserves_field_order_and_bits_across_windows() {
 
 #[test]
 fn natural_cube_scalar_sensitivity_reconstructs_each_plane_without_a_dense_backing() {
+    // A window without a weight image: the response is each plane's sumwt.
     let scalar_domain = |range: Range<usize>| {
+        let mut domain = domain(range, false);
+        domain.primitives.sensitivity = Box::new([]);
+        domain
+    };
+    let widened_domain = |range: Range<usize>| {
         let mut domain = domain(range, false);
         domain.primitives.sensitivity = domain
             .primitives
@@ -700,24 +699,154 @@ fn natural_cube_scalar_sensitivity_reconstructs_each_plane_without_a_dense_backi
         Arc::new(ObservedFactory {
             maximum_access: Arc::new(AtomicUsize::new(0)),
             allowed: 2 * CELLS * POLARIZATIONS,
-            scalar_sensitivity: true,
         }),
         1,
     )
     .unwrap();
     let mut stored = StoredChannelNormalDomain::begin(scalar_domain(0..1), &plan).unwrap();
-    assert!(stored.fields.scalar_sensitivity);
+    assert!(!stored.fields.dense_sensitivity());
     assert!(stored.fields.sensitivity.is_empty());
+    assert_eq!(
+        stored.append(domain(1..2, false)),
+        Err(SpectralOperatorError::ProblemMismatch),
+        "a window with a weight image cannot join scalar storage"
+    );
     for channel in 1..CHANNELS {
         stored.append(scalar_domain(channel..channel + 1)).unwrap();
     }
     for channel in 0..CHANNELS {
         assert_same_primitives(
             &stored.read_window(channel..channel + 1).unwrap().primitives,
-            &scalar_domain(channel..channel + 1).primitives,
+            &widened_domain(channel..channel + 1).primitives,
         );
     }
     let state = NormalStatePrimitives::ChannelLocal(vec![stored].into());
     let reader = state.read_plane(0, 3, 1).unwrap();
     assert_eq!(reader.read_sensitivity().unwrap().as_ref(), &[8.0; CELLS]);
+}
+
+/// A backing like the runtime's paged one: one Float per complex pair,
+/// read back through `read_real`.
+#[derive(Debug)]
+struct FloatStorage(Box<[f32]>);
+
+impl NormalStorageFactory for FloatStorage {
+    fn create(
+        &self,
+        _domain: usize,
+        scalars: usize,
+    ) -> Result<Box<dyn NormalArrayStorage>, SpectralOperatorError> {
+        assert!(scalars.is_multiple_of(2 * CELLS), "whole complex planes");
+        Ok(Box::new(Self(vec![f32::NAN; scalars / 2].into())))
+    }
+}
+
+impl NormalArrayStorage for FloatStorage {
+    fn len(&self) -> usize {
+        self.0.len() * 2
+    }
+    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
+        Ok(Cow::Owned(
+            (start..start + len)
+                .map(|scalar| {
+                    if scalar.is_multiple_of(2) {
+                        f64::from(self.0[scalar / 2])
+                    } else {
+                        0.0
+                    }
+                })
+                .collect(),
+        ))
+    }
+    fn read_real(
+        &self,
+        start: usize,
+        values: usize,
+    ) -> Result<Option<Cow<'_, [f32]>>, SpectralOperatorError> {
+        Ok(Some(Cow::Borrowed(&self.0[start / 2..start / 2 + values])))
+    }
+    fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
+        for (index, value) in values.iter().enumerate().step_by(2) {
+            self.0[(start + index) / 2] = *value as f32;
+        }
+        Ok(())
+    }
+    fn write_real(&mut self, start: usize, values: &[f32]) -> Result<(), SpectralOperatorError> {
+        self.0[start / 2..start / 2 + values.len()].copy_from_slice(values);
+        Ok(())
+    }
+}
+
+/// Compact pass output for `range`, with each plane's weight image when
+/// `weighted`: distinct per channel, polarization and pixel.
+fn compact_domain(range: Range<usize>, weighted: bool) -> SpectralDomainPrimitives {
+    let planes = range.start * POLARIZATIONS..range.end * POLARIZATIONS;
+    let values = planes.start * CELLS..planes.end * CELLS;
+    let image = |scale: f32| values.clone().map(|i| i as f32 * scale).collect();
+    let mut domain = domain(range, false);
+    domain.primitives.dirty = Box::new([]);
+    domain.primitives.psf = Box::new([]);
+    domain.primitives.sensitivity = Box::new([]);
+    domain.primitives.cube_real = Some(CubeRealFields {
+        dirty: image(0.5),
+        psf: image(-0.25),
+        sensitivity: weighted.then(|| values.clone().map(|i| 1.0 + i as f32 / 64.0).collect()),
+    });
+    domain
+}
+
+#[test]
+fn a_gridded_weight_image_is_each_planes_own_sensitivity_resident_and_paged() {
+    let weight = |plane: usize| -> Vec<f64> {
+        (plane * CELLS..(plane + 1) * CELLS)
+            .map(|i| f64::from(1.0 + i as f32 / 64.0))
+            .collect()
+    };
+    for (name, plan) in [
+        ("resident", NormalStoragePlan::resident(1).unwrap()),
+        (
+            "paged",
+            NormalStoragePlan::new(Arc::new(FloatStorage(Box::new([]))), 1).unwrap(),
+        ),
+    ] {
+        let mut stored = StoredChannelNormalDomain::begin(compact_domain(0..1, true), &plan).unwrap();
+        assert!(stored.fields.dense_sensitivity(), "{name}");
+        assert_eq!(
+            stored.append(compact_domain(1..2, false)),
+            Err(SpectralOperatorError::ProblemMismatch),
+            "{name}: a window without a weight image cannot join dense storage"
+        );
+        for channel in 1..CHANNELS {
+            stored.append(compact_domain(channel..channel + 1, true)).unwrap();
+        }
+        for channel in 0..CHANNELS {
+            let window = stored.read_window(channel..channel + 1).unwrap().primitives;
+            let planes = channel * POLARIZATIONS..(channel + 1) * POLARIZATIONS;
+            assert_eq!(
+                window.sensitivity().dense().unwrap(),
+                planes.flat_map(weight).collect::<Vec<_>>(),
+                "{name}: channel {channel}'s window"
+            );
+        }
+        // A residual refresh shares the invariants, the weight image with
+        // the PSF, and replaces only the residual.
+        let mut next = stored.refresh(&plan).unwrap();
+        next.append_residual_planes(0..CHANNELS, [3, 2], &[0.75; CHANNELS * POLARIZATIONS * CELLS])
+            .unwrap();
+        let state = NormalStatePrimitives::ChannelLocal(vec![next].into());
+        for channel in 0..CHANNELS {
+            for polarization in 0..POLARIZATIONS {
+                let reader = state.read_plane(0, channel, polarization).unwrap();
+                assert_eq!(
+                    reader.read_sensitivity().unwrap().as_ref(),
+                    weight(channel * POLARIZATIONS + polarization),
+                    "{name}: channel {channel}, polarization {polarization}"
+                );
+                assert_eq!(
+                    reader.read_residual().unwrap().as_ref(),
+                    &[Complex64::new(0.75, 0.0); CELLS]
+                );
+            }
+        }
+    }
 }

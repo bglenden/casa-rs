@@ -474,7 +474,13 @@ impl<'a> Run<'a> {
         let cube = matches!(main.basis(), Basis::ChannelLocal { .. })
             .then(|| {
                 let workers = teams.compute().workers();
-                cube_state(problem, inputs.spill_directory, workers, &host, &policy)
+                cube_state(
+                    problem,
+                    inputs.spill_directory,
+                    (workers, weight_image),
+                    &host,
+                    &policy,
+                )
             })
             .transpose()?;
         let lifecycle = ModelLifecycle::new(
@@ -926,11 +932,12 @@ fn plane_bounds(problem: &CompiledProblem) -> Option<PlaneBounds> {
 
 /// The paged cube state of a channel-local run, with a cache as large as
 /// the whole cube when a quarter of the free memory allows; the state holds
-/// the cache's reservation for as long as its storage lives.
+/// the cache's reservation for as long as its storage lives. With a weight
+/// image (a mosaic cube) each plane keeps its own beside the PSF.
 fn cube_state(
     problem: &CompiledProblem,
     directory: &Path,
-    workers: usize,
+    (workers, weight_image): (usize, bool),
     host: &HostResources,
     policy: &ResourcePolicy,
 ) -> Result<CubeState, ImagingError> {
@@ -941,7 +948,8 @@ fn cube_state(
         .map(|domain| domain.pixels())
         .collect::<Vec<_>>();
     let planes = target.coefficients() * target.polarizations();
-    let (minimum, full) = CubeState::cache_limits(directory, &domains, planes, workers)?;
+    let (minimum, full) =
+        CubeState::cache_limits(directory, &domains, planes, weight_image, workers)?;
     let quarter = usize::try_from(free_memory(host, policy) / 4).unwrap_or(usize::MAX);
     let cache = full.min(minimum.max(quarter));
     let reservation = admit(
@@ -952,7 +960,13 @@ fn cube_state(
             memory: cache as u64,
         },
     )?;
-    Ok(CubeState::new(directory, &domains, planes, reservation)?)
+    Ok(CubeState::new(
+        directory,
+        &domains,
+        planes,
+        weight_image,
+        reservation,
+    )?)
 }
 
 /// The record of one minor cycle; `global_threshold` is the run's

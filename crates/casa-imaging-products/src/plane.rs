@@ -82,8 +82,10 @@ pub(crate) fn produce_plane_member(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
         ) => {
             let scale = if primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
-                if !plane.sum_weight().is_finite() || plane.sum_weight() <= 0.0 {
-                    return Err(ProductsError::GeneratedNonfinite);
+                // CASA publishes an empty plane's weight as zeros
+                // (`SIImageStore::divideImageByWeightVal`).
+                if !valid {
+                    return Ok(vec![0.0; cells]);
                 }
                 plane.sum_weight()
             } else {
@@ -170,8 +172,11 @@ pub(crate) fn apparent_model(
         return Ok(model);
     }
     let sensitivity = plane.read_sensitivity()?;
-    let response =
-        MosaicSensitivity::new(&sensitivity)?.with_normal_sum_weight(plane.sum_weight())?;
+    // A plane no sample reached holds no model; CASA leaves it as it is.
+    let Some(response) = MosaicSensitivity::try_new(&sensitivity)? else {
+        return Ok(model);
+    };
+    let response = response.with_normal_sum_weight(plane.sum_weight())?;
     model
         .into_iter()
         .enumerate()
@@ -363,7 +368,11 @@ fn primary_beam_plane(
             6.25,
         ),
         Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
-            Ok(MosaicSensitivity::new(&plane.read_sensitivity()?)?.primary_beam())
+            let shape = plane.shape();
+            Ok(MosaicSensitivity::try_new(&plane.read_sensitivity()?)?
+                .map_or_else(|| vec![0.0; shape[0] * shape[1]], |sensitivity| {
+                    sensitivity.primary_beam()
+                }))
         }
         None => unreachable!("planning refuses a PB product or mask without a primary-beam model"),
     }

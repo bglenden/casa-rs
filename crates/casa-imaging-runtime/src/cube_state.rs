@@ -14,8 +14,9 @@ use crate::managed_model::ManagedModelFactory;
 use crate::managed_normal::ManagedNormalFactory;
 
 /// Planes of one channel-local run kept in a bounded cache and paged to
-/// disk: two model generations, an invariant PSF and two residual epochs of
-/// every image domain, each domain at its own size.
+/// disk: two model generations, the invariants (the PSF, and a mosaic's
+/// weight image beside it) and two residual epochs of every image domain,
+/// each domain at its own size.
 pub struct CubeState {
     residency: Arc<CubeResidency>,
     model: Arc<ManagedModelFactory>,
@@ -39,8 +40,12 @@ fn footprint(
     directory: &Path,
     domains: &[[usize; 2]],
     planes: usize,
+    dense_sensitivity: bool,
     workers: usize,
 ) -> io::Result<Footprint> {
+    // The invariant array holds the PSF's planes, and with a dense
+    // sensitivity the weight image's as many again.
+    let invariant_planes = planes * (1 + usize::from(dense_sensitivity));
     let mut owners = 0;
     let mut active = 0;
     let mut creation = 0;
@@ -48,16 +53,29 @@ fn footprint(
     let mut disk = 0;
     for &[width, height] in domains {
         let value = ManagedPlaneArray::<f32>::footprint(directory, height, width, planes)?;
+        let invariant =
+            ManagedPlaneArray::<f32>::footprint(directory, height, width, invariant_planes)?;
         let support = ManagedPlaneArray::<bool>::footprint(directory, height, width, planes)?;
-        owners += 5 * (value.owner_bytes + value.registry_bytes + value.staging_bytes)
+        owners += 4 * (value.owner_bytes + value.registry_bytes + value.staging_bytes)
+            + invariant.owner_bytes
+            + invariant.registry_bytes
+            + invariant.staging_bytes
             + 2 * (support.owner_bytes + support.registry_bytes + support.staging_bytes);
+        // A plane access pins one field's block at a time.
         active = usize::max(
             active,
             workers * (3 * value.block_bytes + 2 * support.block_bytes),
         );
-        creation = usize::max(creation, value.creation_bytes.max(support.creation_bytes));
-        payload += planes * (5 * value.block_bytes + 2 * support.block_bytes);
-        disk += 5 * value.storage_bytes + 2 * support.storage_bytes;
+        creation = usize::max(
+            creation,
+            value
+                .creation_bytes
+                .max(invariant.creation_bytes)
+                .max(support.creation_bytes),
+        );
+        payload += planes * (4 * value.block_bytes + 2 * support.block_bytes)
+            + invariant_planes * invariant.block_bytes;
+        disk += 4 * value.storage_bytes + invariant.storage_bytes + 2 * support.storage_bytes;
     }
     let operation = CubeResidency::operation_overhead(5 * workers)?;
     let overhead = CubeResidency::fixed_owner_bytes() + owners + operation;
@@ -73,13 +91,15 @@ impl CubeState {
     /// Cache bytes below which a run of `planes` planes of each
     /// `[width, height]` in `domains` cannot proceed, and above which every
     /// plane stays resident, for `workers` concurrent plane accesses.
+    /// `dense_sensitivity` keeps each plane's weight image beside its PSF.
     pub fn cache_limits(
         directory: &Path,
         domains: &[[usize; 2]],
         planes: usize,
+        dense_sensitivity: bool,
         workers: usize,
     ) -> io::Result<(usize, usize)> {
-        let footprint = footprint(directory, domains, planes, workers)?;
+        let footprint = footprint(directory, domains, planes, dense_sensitivity, workers)?;
         Ok((
             footprint.minimum,
             (footprint.overhead + footprint.payload).max(footprint.minimum),
@@ -88,7 +108,8 @@ impl CubeState {
 
     /// A cache of the bytes `cache` holds over files in `directory` for
     /// `planes` planes of each `[width, height]` in `domains` (each domain's
-    /// planes are its channels × polarizations).
+    /// planes are its channels × polarizations), with each plane's weight
+    /// image too when `dense_sensitivity`.
     ///
     /// The reservation is released when the last storage this state hands
     /// out drops, so a completed run's model and normal state stay charged
@@ -101,11 +122,12 @@ impl CubeState {
         directory: &Path,
         domains: &[[usize; 2]],
         planes: usize,
+        dense_sensitivity: bool,
         cache: Reservation,
     ) -> io::Result<Self> {
         let cache_bytes = usize::try_from(cache.memory())
             .map_err(|_| io::Error::other("the cube cache exceeds the address space"))?;
-        let disk = footprint(directory, domains, planes, 1)?.disk;
+        let disk = footprint(directory, domains, planes, dense_sensitivity, 1)?.disk;
         let available = fs2::available_space(directory)?;
         if available < disk as u64 {
             return Err(io::Error::new(

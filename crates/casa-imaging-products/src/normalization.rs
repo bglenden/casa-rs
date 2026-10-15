@@ -138,19 +138,29 @@ impl<'a> MosaicSensitivity<'a> {
     /// Empty or non-finite sensitivity, or sensitivity with no positive
     /// value: no weighted sample reached the plane.
     pub fn new(values: &'a [f64]) -> Result<Self, ProductsError> {
+        Self::try_new(values)?.ok_or(ProductsError::UnsupportedSensitivity)
+    }
+
+    /// Bind finite sensitivity, or `None` for a plane no weighted sample
+    /// reached (a flagged or unmapped cube channel). CASA skips such a plane
+    /// and publishes zeros for it (`SIImageStore::makePBFromWeight`,
+    /// `divideResidualByWeight`, `divideModelByWeight` when its
+    /// `pbmax <= 0`).
+    ///
+    /// # Errors
+    ///
+    /// Empty or non-finite sensitivity.
+    pub fn try_new(values: &'a [f64]) -> Result<Option<Self>, ProductsError> {
         if values.is_empty() || values.iter().any(|value| !value.is_finite()) {
             return Err(ProductsError::GeneratedNonfinite);
         }
         let peak = values.iter().copied().fold(0.0_f64, f64::max);
-        if peak <= 0.0 {
-            return Err(ProductsError::UnsupportedSensitivity);
-        }
-        Ok(Self {
+        Ok((peak > 0.0).then(|| Self {
             values,
             peak,
             normal_sum_weight: 1.0,
             model_pb_scale: (peak as f32).sqrt(),
-        })
+        }))
     }
 
     /// Bind the sum of weights that forms CASA's published Float weight

@@ -189,14 +189,12 @@ pub(crate) fn domain_operator(
         problem.reconstruction().polarization().coordinates(),
     )?;
     let basis = basis(problem)?;
-    if matches!(basis, Basis::ChannelLocal { .. })
-        && matches!(kind, KernelSetKind::Mosaic | KernelSetKind::Aw)
-    {
-        // The channel-local normal state keeps a scalar sumwt per plane;
-        // the dense sensitivity these sets grid has no plane to live in
-        // until the cube tickets.
+    if matches!(basis, Basis::ChannelLocal { .. }) && matches!(kind, KernelSetKind::Aw) {
+        // A mosaic cube keeps each channel's weight image as its plane's
+        // sensitivity; an AW cube would too, but its per-plane weights have
+        // no CASA comparison yet.
         return Err(ImagingError::Unsupported {
-            reason: "cube mosaic and A-projection imaging wait for the cube tickets' per-plane sensitivity",
+            reason: "cube A-projection imaging waits for its per-plane weight check (#719)",
         });
     }
     let resampler = resampler(problem, basis)?;

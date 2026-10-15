@@ -131,6 +131,9 @@ impl<'a> NormalPlane<'a> {
 pub enum SensitivityValues<'a> {
     /// Spatially varying response.
     Dense(&'a [f64]),
+    /// Spatially varying response as gridded, in compact channel-local
+    /// primitives before the normal state stores them.
+    Real(&'a [f32]),
     /// One scalar response per image plane, without a repeated image buffer.
     PerPlane {
         /// Response of each plane, in storage order.
@@ -141,25 +144,31 @@ pub enum SensitivityValues<'a> {
 }
 
 impl<'a> SensitivityValues<'a> {
-    /// Borrow an existing dense response, if the response is spatially varying.
+    /// Borrow an existing dense f64 response, if the response is spatially
+    /// varying and already widened.
     pub fn dense(self) -> Option<&'a [f64]> {
         match self {
             Self::Dense(v) => Some(v),
-            Self::PerPlane { .. } => None,
+            Self::Real(_) | Self::PerPlane { .. } => None,
         }
     }
 
     /// Iterate logical values without constructing a repeated response array.
     pub fn iter(self) -> impl Iterator<Item = f64> + 'a {
-        let (dense, weights, cells): (&[f64], &[f64], usize) = match self {
-            Self::Dense(v) => (v, &[], 0),
-            Self::PerPlane { weights, cells } => (&[], weights, cells),
+        let (dense, real, weights, cells): (&[f64], &[f32], &[f64], usize) = match self {
+            Self::Dense(v) => (v, &[], &[], 0),
+            Self::Real(v) => (&[], v, &[], 0),
+            Self::PerPlane { weights, cells } => (&[], &[], weights, cells),
         };
-        dense.iter().copied().chain(
-            weights
-                .iter()
-                .flat_map(move |&weight| std::iter::repeat_n(weight, cells)),
-        )
+        dense
+            .iter()
+            .copied()
+            .chain(real.iter().map(|&value| f64::from(value)))
+            .chain(
+                weights
+                    .iter()
+                    .flat_map(move |&weight| std::iter::repeat_n(weight, cells)),
+            )
     }
 }
 
