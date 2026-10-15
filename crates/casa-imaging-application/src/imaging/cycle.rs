@@ -184,11 +184,13 @@ pub(crate) fn run(
     loop {
         let ordinal = outcome.minor_cycles.len() + 1;
         let name = format!("minor-cycle preparation {ordinal}");
-        let prepared = run_phase(name, &cancel, diagnostics, summary, || {
+        // A plane preparation keeps for the solve stays charged until the
+        // solve, which the minor cycle's charge then leaves out.
+        let (prepared, _kept) = run_phase(name, &cancel, diagnostics, summary, || {
             if ordinal == 1 {
                 held = run.admit("reconstruction masks", 2 * mask_bytes(&outcome.scientific))?;
             }
-            let _preparing = run.admit(
+            let mut preparing = run.admit(
                 "minor-cycle preparation",
                 prepare_bytes(
                     &outcome.scientific,
@@ -198,13 +200,15 @@ pub(crate) fn run(
                     run.team.workers(),
                 ),
             )?;
-            Ok::<_, ImagingError>(prepare_minor_cycle(
+            let prepared = prepare_minor_cycle(
                 &outcome.scientific,
                 &mask_plans,
                 &setup,
                 &mut cache,
                 run.team,
-            )?)
+            )?;
+            let kept = preparing.split(prepared.retained_bytes());
+            Ok::<_, ImagingError>((prepared, kept))
         })?;
         let statistics = prepared.statistics;
         if diagnostics.science_trace {
@@ -242,7 +246,8 @@ pub(crate) fn run(
                     &cycle_controls,
                     &cache,
                     run.team.workers(),
-                ),
+                )
+                .saturating_sub(prepared.retained_bytes()),
             )?;
             let minor = run_minor_cycle(
                 prepared,

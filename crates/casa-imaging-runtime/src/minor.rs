@@ -287,8 +287,21 @@ pub struct PreparedMinorCycle {
     masks: ImageDomainReconstructionMasks,
     auto_masks: Box<[Option<AutoMultithreshEvidence>]>,
     planes: Vec<(PlaneKey, PlaneStatistics)>,
+    /// A single plane's load, kept for its solve ([`Self::retained_bytes`]).
+    retained: Option<RetainedPlane>,
     /// The measurements of every plane and field, for the controller.
     pub statistics: ResidualStatistics,
+}
+
+/// The load of a cycle's only plane, without a direction-dependent
+/// response: preparation measures it and the solve cleans it, so it is read
+/// once a cycle.
+struct RetainedPlane {
+    key: PlaneKey,
+    residual: Vec<Vec<f64>>,
+    psf: Vec<Vec<f64>>,
+    support: Support,
+    valid: Support,
 }
 
 impl PreparedMinorCycle {
@@ -302,6 +315,24 @@ impl PreparedMinorCycle {
     #[must_use]
     pub fn auto_masks(&self) -> &[Option<AutoMultithreshEvidence>] {
         &self.auto_masks
+    }
+
+    /// Bytes the plane kept for the solve holds: its residual and PSF terms
+    /// and its two supports, within what [`prepare_bytes`] charged for its
+    /// load. The cycle's [`run_bytes`] charges a load the solve then skips,
+    /// so a caller moves this much of the preparation's charge to the solve
+    /// and charges the solve this much less.
+    #[must_use]
+    pub fn retained_bytes(&self) -> u64 {
+        self.retained.as_ref().map_or(0, |plane| {
+            let values = plane
+                .residual
+                .iter()
+                .chain(&plane.psf)
+                .map(Vec::len)
+                .sum::<usize>();
+            (values * size_of::<f64>() + 2 * plane.support.shape().len() * size_of::<bool>()) as u64
+        })
     }
 }
 
@@ -400,14 +431,17 @@ pub fn prepare_minor_cycle(
     };
     let mut slots = keys
         .iter()
-        .map(|key| (*key, None::<Measured>))
+        .map(|key| (*key, None::<Measured>, None::<RetainedPlane>))
         .collect::<Vec<_>>();
     let missing = keys
         .iter()
         .filter(|key| !cache.summaries.contains_key(key))
         .count();
+    // A cycle's only plane is solved straight after it is measured, so its
+    // load is kept for the solve rather than read twice.
+    let retain = keys.len() == 1 && setup.response.is_none();
     let shared = &*cache;
-    team.for_each_mut(&mut slots, |_, (key, out)| {
+    team.for_each_mut(&mut slots, |_, (key, out, kept)| {
         let Some(plane) = load(&inputs, *key)? else {
             return Ok(());
         };
@@ -426,11 +460,21 @@ pub fn prepare_minor_cycle(
             statistics,
             summary,
         });
+        if retain && plane.response.is_none() {
+            *kept = Some(RetainedPlane {
+                key: *key,
+                residual: plane.residual,
+                psf: plane.psf,
+                support: plane.support,
+                valid: plane.valid,
+            });
+        }
         Ok::<_, MinorCycleRunError>(())
     })?;
     let mut planes = Vec::with_capacity(keys.len());
     let mut sidelobes = Vec::with_capacity(keys.len());
-    for (key, measured) in slots {
+    let mut retained = None;
+    for (key, measured, kept) in slots {
         let Some(Measured {
             statistics,
             summary,
@@ -441,6 +485,7 @@ pub fn prepare_minor_cycle(
         sidelobes.push(summary.sidelobe());
         cache.summaries.entry(key).or_insert(summary);
         planes.push((key, statistics));
+        retained = retained.or(kept);
     }
     // Each image domain is one CASA image store.
     let mut statistics = ResidualStatistics::empty();
@@ -467,6 +512,7 @@ pub fn prepare_minor_cycle(
         masks,
         auto_masks,
         planes,
+        retained,
         statistics,
     })
 }
@@ -503,6 +549,7 @@ pub fn run_minor_cycle(
         masks,
         auto_masks,
         planes,
+        retained,
         ..
     } = prepared;
     let normal = completion.normal_state();
@@ -520,7 +567,13 @@ pub fn run_minor_cycle(
         let clark = &mut cache.clark;
         results.push(team.install(|| {
             solve(
-                &inputs, admission, *key, &summary, statistics, controls, clark,
+                &inputs,
+                admission,
+                (*key, retained),
+                &summary,
+                statistics,
+                controls,
+                clark,
             )
         })?);
     } else {
@@ -538,7 +591,7 @@ pub fn run_minor_cycle(
             slot.solved = Some(solve(
                 &inputs,
                 admission,
-                slot.key,
+                (slot.key, None),
                 &summary,
                 &slot.statistics,
                 controls,
@@ -997,21 +1050,32 @@ struct Solved {
     charge: Reservation,
 }
 
-/// Read and clean one plane, and admit its terms on `host` under `policy`
-/// before forming them. Clark takes `clark`'s refresh, when it serves this
-/// PSF, and leaves its own there for the next cycle.
+/// Read and clean one plane, or clean the load preparation kept for it, and
+/// admit its terms on `host` under `policy` before forming them. Clark
+/// takes `clark`'s refresh, when it serves this PSF, and leaves its own
+/// there for the next cycle.
 #[allow(clippy::too_many_arguments)]
 fn solve(
     inputs: &Inputs<'_>,
     (host, policy): (&HostResources, &ResourcePolicy),
-    key: PlaneKey,
+    (key, retained): (PlaneKey, Option<RetainedPlane>),
     summary: &PsfSummary,
     statistics: &PlaneStatistics,
     controls: &CycleControls,
     clark: &mut Option<LinearRefresh>,
 ) -> Result<Solved, MinorCycleRunError> {
     let setup = inputs.setup;
-    let plane = load(inputs, key)?.expect("prepared planes have valid data");
+    let plane = match retained {
+        Some(kept) if kept.key == key => PlaneData {
+            shape: kept.support.shape(),
+            residual: kept.residual,
+            psf: kept.psf,
+            support: kept.support,
+            valid: kept.valid,
+            response: None,
+        },
+        _ => load(inputs, key)?.expect("prepared planes have valid data"),
+    };
     let view = MinorCycleView {
         shape: plane.shape,
         residual: &plane.residual,
