@@ -189,8 +189,9 @@ pub(crate) fn run(
         let ordinal = outcome.minor_cycles.len() + 1;
         let name = format!("minor-cycle preparation {ordinal}");
         // A plane preparation keeps for the solve stays charged until the
-        // solve, which the minor cycle's charge then leaves out.
-        let (prepared, _kept) = run_phase(name, &cancel, diagnostics, summary, || {
+        // solve, which the minor cycle's charge then leaves out; the solve
+        // drops the plane, and the charge goes with the minor cycle.
+        let (prepared, kept) = run_phase(name, &cancel, diagnostics, summary, || {
             if ordinal == 1 {
                 held = run.admit("reconstruction masks", 2 * mask_bytes(&outcome.scientific))?;
             }
@@ -274,6 +275,7 @@ pub(crate) fn run(
             )?;
             Ok::<_, ImagingError>((minor, plans))
         })?;
+        drop(kept);
         mask_plans = next_plans;
         let global_threshold = controls
             .threshold_jy_per_beam()
