@@ -19,7 +19,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 4 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 4 | <code>calibration</code> | 49 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 22 | <code>imager</code> | 81 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 23 | <code>imager</code> | 81 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 4 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
 | [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 3 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
 | [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 3 | <code>image_browser</code> | 17 | browse persistent casacore images |
@@ -219,7 +219,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `22`
+- Contract version: `23`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -303,7 +303,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>native_cf_cache_bytes</code> | <code>parameter.native_cf_cache_bytes@r1</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW durable-storage ceiling<br><em>Surface:</em> Explicit catalog-wide storage bound in bytes, independent of cropped cell size. This is a request bound, not saved cache inventory. |
 | <code>native_cf_maximum_cells</code> | <code>parameter.native_cf_maximum_cells@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Native AW maximum catalog cells<br><em>Surface:</em> Explicit maximum admitted metadata-only paired-cell count, not serialized compiled catalog state. |
 | <code>backend</code> | <code>parameter.backend@r1</code> | <code>choice (2 values)</code> | <code>"cpu"</code>; optional | Stages | Gridding backend of the major-cycle passes: cpu, or metal on macOS |
-| <code>gridprecision</code> | <code>parameter.gridprecision@r1</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Stages | Grid arithmetic: auto, f32 or f64 |
+| <code>gridprecision</code> | <code>parameter.gridprecision@r2</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Stages | Grid arithmetic: auto, f32 or f64 |
 | <code>stage_timing</code> | <code>parameter.stage_timing@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log one timing event per imaging phase |
 | <code>metal_stage_timing</code> | <code>parameter.metal_stage_timing@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log the Metal backend's timing for each gridding owner, prediction batch and wave |
 | <code>science_trace</code> | <code>parameter.science_trace@r1</code> | <code>bool</code> | <code>false</code>; optional | Stages | Log the clean controller's science quantities at each cycle |

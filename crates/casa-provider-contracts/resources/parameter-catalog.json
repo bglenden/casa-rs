@@ -3944,7 +3944,7 @@
     },
     {
       "id": "parameter.gridprecision",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "gridprecision",
       "value_domain": {
         "kind": "choice",
@@ -3962,7 +3962,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Grid arithmetic: auto, f32 or f64",
-        "details": "auto grids in f64 on the CPU for continuum and Taylor imaging and in f32 for cubes and on Metal; f32 halves the memory of every grid. Metal accumulates in f32 only, so f64 is refused with backend = metal.",
+        "details": "auto grids in f64 on the CPU, as CASA does, and in f32 on Metal; f32 halves the memory of every grid, at the cost of a running sum that drifts with the number of samples each grid cell takes. Metal accumulates in f32 only, so f64 is refused with backend = metal.",
         "examples": [
           "auto",
           "f32"

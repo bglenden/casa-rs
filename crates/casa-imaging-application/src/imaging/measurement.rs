@@ -102,23 +102,25 @@ pub(crate) fn reference_frequency_hz(problem: &CompiledProblem) -> Result<f64, I
     }
 }
 
-/// The grid precision: the requested one, else plan decision D2's rule
-/// (`gridprecision = auto`): f32 on Metal, which accumulates in `f32` for
-/// every basis; on the CPU f64 for the constant and Taylor bases and f32
-/// for channel-local cubes.
+/// The grid precision: the requested one, else plan decision D2's rule as
+/// the owner amended it on 2026-10-15 (`gridprecision = auto`): f64 on the
+/// CPU for every basis, since CASA accumulates its grids in double
+/// (`useDoublePrec`, `SynthesisUtilMethods.cc:3722`), and f32 on Metal,
+/// which accumulates in `f32` only.
+///
+/// A cube is no exception: an f32 running sum drifts with the number of
+/// samples a cell takes, and a mosaic's weight image takes every sample of
+/// a channel at the uv origin (#659).
 pub(crate) const fn precision(
-    basis: Basis,
     backend: BackendChoice,
     requested: Option<GridPrecision>,
 ) -> GridPrecision {
     if let Some(precision) = requested {
         return precision;
     }
-    match (backend, basis) {
-        (BackendChoice::Cpu, Basis::Constant | Basis::Taylor { .. }) => GridPrecision::F64,
-        (BackendChoice::Cpu, Basis::ChannelLocal { .. }) | (BackendChoice::Metal, _) => {
-            GridPrecision::F32
-        }
+    match backend {
+        BackendChoice::Cpu => GridPrecision::F64,
+        BackendChoice::Metal => GridPrecision::F32,
     }
 }
 
@@ -214,7 +216,7 @@ pub(crate) fn domain_operator(
             basis,
             polarization,
             cf,
-            precision(basis, backend, requested_precision),
+            precision(backend, requested_precision),
         ),
         resampler,
         weight_image: matches!(kind, KernelSetKind::Mosaic | KernelSetKind::Aw),

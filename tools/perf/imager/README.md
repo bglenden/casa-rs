@@ -367,9 +367,10 @@ name on `--json-run`, or as command-line flags). The execution controls are:
   `false`, the default, runs one worker.
 - `backend`: `cpu` or `metal`. Metal grids the standard kernel set in `f32`;
   W projection, mosaics and AW projection run on the CPU.
-- `gridprecision`: `auto` (on the CPU, channel-local cubes in `f32` and the
-  continuum and Taylor terms in `f64`; on Metal, `f32`), `f32` or `f64`.
-  Metal refuses `f64`.
+- `gridprecision`: `auto` (`f64` on the CPU for every basis, cubes included;
+  `f32` on Metal), `f32` or `f64`. Metal refuses `f64`. CPU cube timings
+  recorded before 2026-10-15 ran at `f32`; set `gridprecision` explicitly
+  to repeat one.
 
 Memory is not a parameter: each phase is admitted against the host's free
 memory, and a cube whose planes do not fit runs in waves. Each run writes

@@ -88,9 +88,9 @@ fn t53_one_channel_standard_cubes_preserve_all_products() {
         );
         products.push((image_name, result.product_names()));
     }
-    // Plan decision D2 grids channel-local cubes in single precision and the
-    // continuum in double, so the one-channel cube equals the continuum
-    // image to single-precision accumulation, not bit for bit.
+    // The one-channel cube and the continuum run different bases through
+    // the pass, so they agree to rounding, not bit for bit; the tolerance
+    // also admits a cube gridded with `gridprecision = f32`.
     for candidate in &products[1..] {
         assert_eq!(products[0].1, candidate.1, "standard product inventory");
         for suffix in &products[0].1 {

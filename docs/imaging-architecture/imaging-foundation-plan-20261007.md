@@ -87,6 +87,12 @@ unless the owner strikes one.
   on CPU and f32 for channel-local cubes and for Metal. `f32` halves grid and
   accumulator memory so large problems become tractable on this workstation;
   the CPU backend supports both precisions for every convolution-function set.
+  **Amended by the owner 2026-10-15 (#659):** `auto` selects f64 on the CPU
+  for every basis, channel-local cubes included, and f32 on Metal. An f32
+  running sum drifts with the number of samples a grid cell takes: a mosaic
+  cube's weight image, which takes every sample of a channel at the uv
+  origin, missed CASA (which accumulates in double) by 2.6e-3. `f32` stays a
+  user choice for large problems, and choosing the GPU accepts it.
 - **D3 AW convolution-function cache.** Replace the private content-addressed
   prepared-artifact store (manifest schema 7, 18 hash domains, eviction
   ledger; about 15k lines across `aw_cache.rs`, `prepared_aw_phase.rs`,
