@@ -153,6 +153,71 @@ fn the_standard_density_bins_the_measurement_set_uvw() {
     assert_eq!(out.block().weights_of(0), &[1.0, 1.0]);
 }
 
+/// CASA's `BriggsCubeWeightor` grids the cube density through `GridFT::put`,
+/// which rotates the uvw to the phase centre (`GridFT.cc:778`), but looks
+/// each row up at the unrotated `vb.uvw()` (`getWeightUniform`,
+/// `BriggsCubeWeightor.cc:826, 860-861`): two frames for one grid, a CASA
+/// bug casa-rs does not follow (`docs/CASA (C++) bugs.md`). The cube rule
+/// bins and looks up the rotated uvw, so two rows with the same rotated uvw
+/// share one density cell whatever their stored uvw.
+#[test]
+fn the_cube_density_bins_and_looks_up_the_rotated_uvw() {
+    let resampler = SpectralResampler::channel_local(axis(1.0, 0.1, 2), SpectralKernel::Linear);
+    let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
+    let frequencies = [1.0e9, 1.1e9];
+    let values = [Complex32::new(1.0, 0.0); 4];
+    let weights = [2.0; 4];
+    let flags = [false; 4];
+    let rotated = [300.0, -150.0, 20.0];
+    let row = |stored: [f64; 3]| NativeRow {
+        uvw_m: rotated,
+        phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
+        frequencies_hz: &frequencies,
+        values: &values,
+        weights: &weights,
+        flags: &flags,
+        row_flag: false,
+        context: RowContext {
+            original_uvw_m: Some(stored),
+            ..context()
+        },
+    };
+    let shape = density_shape(&resampler, 0);
+    let mut density = SampleBuffer::new(1);
+    resampler
+        .place_density(&operator, &row([500.0, 120.0, 7.0]), &shape, &mut density)
+        .expect("density");
+    assert_eq!(density.len(), 2, "one density sample a plane");
+    for (placement, frequency) in density.placements().iter().zip(frequencies) {
+        let scale = frequency / C;
+        assert_eq!(
+            (placement.u, placement.v),
+            (rotated[0] * scale, rotated[1] * scale)
+        );
+    }
+
+    // Uniform weighting: a row with the same rotated uvw but another stored
+    // uvw finds the density the first accumulated (2), so it weighs 2 / 2
+    // on both planes; looked up at its stored uvw, as CASA does, it would
+    // find an empty cell and weigh nothing.
+    let uniform = WeightingGeneration::density(
+        build_density_grid(std::iter::once(density.block()), shape),
+        None,
+        None,
+        None,
+    )
+    .expect("uniform");
+    let mut out = SampleBuffer::new(2);
+    resampler
+        .place(&operator, &uniform, &row([-400.0, 260.0, -5.0]), &mut out)
+        .expect("place");
+    assert_eq!(out.len(), 2, "one sample a plane");
+    for index in 0..out.len() {
+        assert_eq!(out.block().weights_of(index), &[1.0, 1.0], "plane {index}");
+    }
+}
+
 #[test]
 fn direct_sampling_places_every_unflagged_channel_on_plane_zero() {
     let operator = operator(GridPrecision::F64, Basis::Constant, &XX_YY, &STOKES_I);

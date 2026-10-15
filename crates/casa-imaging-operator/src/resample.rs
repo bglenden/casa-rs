@@ -406,8 +406,11 @@ fn sample_weight(
         };
         let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
         // `VisImagingWeight` weighs, tapers and bins the MeasurementSet
-        // uvw; the cube weightor grids through an FTMachine, which rotates
-        // them to the phase centre first.
+        // uvw. The cube weightor grids its density through an FTMachine,
+        // which rotates them to the phase centre first; CASA then looks
+        // rows up at the unrotated uvw, which casa-rs does not follow: the
+        // cube rule bins and looks up the rotated uvw (`docs/CASA (C++)
+        // bugs.md`).
         let uvw_m = match density_axis {
             Some(_) => row.uvw_m,
             None => row.context.original_uvw_m.unwrap_or(row.uvw_m),
