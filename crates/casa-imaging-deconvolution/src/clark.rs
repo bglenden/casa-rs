@@ -239,6 +239,13 @@ impl Solver for Clark {
         let psf = &view.psf[0];
         // The list runs x outer, so the pixels whose x lies in the patch
         // are one run of it; only they can change.
+        debug_assert!(
+            state
+                .active
+                .windows(2)
+                .all(|pair| pair[0].pixel[0] <= pair[1].pixel[0]),
+            "the active list runs x outer (`begin`'s order)"
+        );
         let first_x = px as isize - patch.radius[0] as isize;
         let end_x = px as isize + (patch.size[0] - patch.radius[0]) as isize;
         let start = state
@@ -424,14 +431,15 @@ mod tests {
             -2.0,
             1.5,
         ];
-        let mut value = || specials[(next() % specials.len() as u64) as usize];
+        let value = |draw: u64| specials[(draw % specials.len() as u64) as usize];
         let mut blocks = Vec::new();
+        let mut multi_block_runs = 0;
         for length in (0..40).chain([BLOCK - 1, BLOCK, BLOCK + 1, 3 * BLOCK + 7]) {
             for _ in 0..200 {
                 let mut active = (0..length)
                     .map(|index| Active {
                         pixel: [index as u32, 0],
-                        value: value(),
+                        value: value(next()),
                     })
                     .collect::<Vec<_>>();
                 block_maxima(&active, &mut blocks);
@@ -440,15 +448,24 @@ mod tests {
                 if length == 0 {
                     continue;
                 }
-                let start = (value().to_bits() as usize) % length;
-                let end = (start + 1 + (value().to_bits() as usize) % BLOCK).min(length);
+                // A run of 1 to 2·BLOCK pixels from anywhere, so runs cross
+                // block edges.
+                let start = (next() % length as u64) as usize;
+                let end = (start + 1 + (next() % (2 * BLOCK) as u64) as usize).min(length);
+                if start / BLOCK != (end - 1) / BLOCK {
+                    multi_block_runs += 1;
+                }
                 for pixel in &mut active[start..end] {
-                    pixel.value = value();
+                    pixel.value = value(next());
                 }
                 refresh_blocks(&active, &mut blocks, start..end);
                 let found = first_largest(&active, &blocks).map(|pixel| pixel.pixel);
                 assert_eq!(found, scan(&active).map(|pixel| pixel.pixel));
             }
         }
+        assert!(
+            multi_block_runs > 100,
+            "only {multi_block_runs} refreshed runs crossed a block edge"
+        );
     }
 }
