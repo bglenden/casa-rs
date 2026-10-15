@@ -26,7 +26,9 @@ pub(crate) const MAX_POLS: usize = 4;
 const _: () = {
     assert!(size_of::<SampleRecord>() == crate::SAMPLE_BYTES);
     assert!(size_of::<TableRecord>() == 16);
-    assert!(size_of::<Params>() == 128);
+    assert!(size_of::<Params>() == 144);
+    assert!(size_of::<casa_imaging_operator::NativeTerm>() == 20);
+    assert!(size_of::<casa_imaging_operator::NativeSource>() == 24);
 };
 
 /// One located sample (`Sample` in the kernels).
@@ -80,12 +82,51 @@ pub(crate) struct Params {
     pub model_terms: u32,
     pub weighted: u32,
     pub write_residual: u32,
-    pub pad: u32,
+    /// Threads serving one sample: 1, or a SIMD group's width.
+    pub lanes: u32,
+    /// Batch index of a native prediction's first sample.
+    pub batch_offset: u32,
+    /// 1: a prediction stays in the batch buffer, phasor applied; a spread
+    /// subtracts the model at native cells.
+    pub native: u32,
+    /// 1: the native model adds to the cells instead of writing them.
+    pub add: u32,
+    /// Sample slot `k` serves sample `k · stride mod samples`
+    /// ([`permutation_stride`]); 0 serves sample `k`.
+    pub stride: u32,
     pub tile_shape: [u32; 2],
     pub tile_origin: [u32; 2],
     pub grid_shape: [u32; 2],
     pub adjoint: [[i8; 16]; 2],
     pub forward: [[i8; 16]; 2],
+}
+
+/// The [`Params::stride`] that spreads an accumulating dispatch of
+/// `samples` samples over its threads: the integer coprime to `samples`
+/// nearest `samples / φ`, so `k ↦ k · stride mod samples` is a bijection and,
+/// by the three-gap property of golden-ratio steps, any run of neighbouring
+/// sample slots serves samples spread over the whole dispatch. Neighbouring
+/// samples (adjacent channels and integrations of one baseline) spread
+/// nearly the same cells; on GPUs whose float atomics retry under contention
+/// (Apple M1/M2), slots that hit the same cells at once serialize (#716).
+/// Zero, sample `k` in slot `k`, below two samples.
+pub(crate) fn permutation_stride(samples: usize) -> u32 {
+    if samples < 2 {
+        return 0;
+    }
+    let gcd = |mut a: usize, mut b: usize| {
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        a
+    };
+    let target = ((samples as f64) * 0.618_033_988_749_894_9).round() as usize;
+    let coprime = |stride: usize| (1..samples).contains(&stride) && gcd(stride, samples) == 1;
+    let stride = (0..samples)
+        .flat_map(|distance| [target + distance, target.wrapping_sub(distance)])
+        .find(|&stride| coprime(stride))
+        .expect("1 is coprime to every count");
+    u32::try_from(stride).expect("a dispatch's samples fit u32")
 }
 
 /// Which taps of a cell a dispatch reads.
@@ -180,6 +221,45 @@ impl KnownTable {
 /// The kernel cells a backend has given the device, by cell and kind.
 pub(crate) type KnownTables = HashMap<(CfKey, TapsKind), KnownTable>;
 
+/// A Mueller route: the plane that joins a grid and a visibility
+/// polarization.
+#[derive(Clone, Copy, Default)]
+struct Route {
+    gpol: usize,
+    vpol: usize,
+    plane: u8,
+}
+
+/// The routes of one Mueller table in its order (grid polarization, then
+/// visibility polarization), flat, so record preparation walks them per
+/// sample without the table's nested vectors.
+struct Routes {
+    routes: [Route; MAX_POLS * MAX_POLS],
+    len: usize,
+}
+
+impl Routes {
+    fn of(table: &[Vec<Option<u8>>]) -> Self {
+        let mut routes = Self {
+            routes: [Route::default(); MAX_POLS * MAX_POLS],
+            len: 0,
+        };
+        for (gpol, row) in table.iter().enumerate() {
+            for (vpol, plane) in row.iter().enumerate() {
+                if let Some(plane) = *plane {
+                    routes.routes[routes.len] = Route { gpol, vpol, plane };
+                    routes.len += 1;
+                }
+            }
+        }
+        routes
+    }
+
+    fn iter(&self) -> std::slice::Iter<'_, Route> {
+        self.routes[..self.len].iter()
+    }
+}
+
 /// What one dispatch reads and writes, for record preparation.
 pub(crate) struct Targets<'a> {
     /// Which taps the samples use.
@@ -219,17 +299,47 @@ pub(crate) fn prepare(
     targets: &Targets<'_>,
     mut sumwt: Option<&mut [f64]>,
     records: &mut [SampleRecord],
-    mut inverse_norms: Option<&mut [Complex32]>,
+    inverse_norms: Option<&mut [Complex32]>,
 ) {
     let npol = block.npol;
     let mueller = cf.mueller();
     let rule = cf.normalisation();
     let geometry = targets.geometry();
     let mut powers = [0.0_f64; MAX_TERMS];
+    // The records address the adjoint's tile, or the model's grid for a
+    // prediction; fixed for the dispatch, as are the Mueller routes of
+    // each sign of w.
+    let origin_layout = match &targets.adjoint {
+        Some((layout, _)) => *layout,
+        None => targets.model.expect("a prediction has model grids"),
+    };
+    let adjoint_routes =
+        [false, true].map(|w_positive| Routes::of(mueller.table(w_positive, false)));
+    let forward_routes =
+        [false, true].map(|w_positive| Routes::of(mueller.table(w_positive, true)));
+    let mut inverse_norms = inverse_norms.map(|inverse| {
+        let inverse = &mut inverse[..range.len() * npol];
+        inverse.fill(if rule == KernelNormalisation::KernelSum {
+            Complex32::default()
+        } else {
+            Complex32::new(1.0, 0.0)
+        });
+        inverse
+    });
+    // Successive samples share a kernel cell almost always (rows run by
+    // baseline), so the table found for one serves the next.
+    let mut last: Option<(CfKey, &KnownTable)> = None;
     for (local, index) in range.enumerate() {
         let record = &mut records[local];
         let placement = &block.placements[index];
-        let table = &known[&(placement.cf, targets.kind)];
+        let table = match last {
+            Some((key, table)) if key == placement.cf => table,
+            _ => {
+                let table = &known[&(placement.cf, targets.kind)];
+                last = Some((placement.cf, table));
+                table
+            }
+        };
         let (u, v) = match targets.kind {
             TapsKind::Imaging => (placement.u, placement.v),
             TapsKind::Weight => (0.0, 0.0),
@@ -237,21 +347,10 @@ pub(crate) fn prepare(
         let location = geometry.locate(u, v, table.oversampling);
         let w_positive = placement.w > 0.0;
         let prediction_w_positive = placement.prediction_w_positive;
-        let half = table.half_support;
-        let (origin, plane) = match &targets.adjoint {
-            Some((layout, _)) => (
-                tile_origin(layout, location, half),
-                layout.planes().local(placement.plane) as u32,
-            ),
-            None => (
-                tile_origin(
-                    targets.model.expect("a prediction has model grids"),
-                    location,
-                    half,
-                ),
-                0,
-            ),
-        };
+        let origin = tile_origin(origin_layout, location, table.half_support);
+        let plane = targets.adjoint.as_ref().map_or(0, |(layout, _)| {
+            layout.planes().local(placement.plane) as u32
+        });
         let model_plane = targets
             .model
             .map_or(0, |layout| layout.planes().local(placement.plane) as u32);
@@ -268,46 +367,40 @@ pub(crate) fn prepare(
         if let (Some((layout, terms)), Some(sumwt)) = (&targets.adjoint, sumwt.as_deref_mut()) {
             spectral_powers(&mut powers, placement.spectral, terms.len());
             let weights = block.weights_of(index);
-            for (gpol, row) in mueller.table(w_positive, false).iter().enumerate() {
-                for (vpol, plane_index) in row.iter().enumerate() {
-                    let Some(m) = *plane_index else {
-                        continue;
-                    };
-                    let weight = weights[vpol];
-                    if weight == 0.0 {
-                        continue;
-                    }
-                    let norm = match rule {
-                        KernelNormalisation::UnitSum => 1.0,
-                        KernelNormalisation::RealSum => table.norm(location, m, w_positive).re,
-                        KernelNormalisation::KernelSum => {
-                            table.norm(location, m, w_positive).norm()
-                        }
-                    };
-                    for (power, term) in powers.iter().zip(terms.clone()) {
-                        sumwt[layout.block_index(plane as usize, gpol, term)] +=
-                            f64::from(weight) * power * norm;
-                    }
+            for &Route {
+                gpol,
+                vpol,
+                plane: m,
+            } in adjoint_routes[usize::from(w_positive)].iter()
+            {
+                let weight = weights[vpol];
+                if weight == 0.0 {
+                    continue;
+                }
+                let norm = match rule {
+                    KernelNormalisation::UnitSum => 1.0,
+                    KernelNormalisation::RealSum => table.norm(location, m, w_positive).re,
+                    KernelNormalisation::KernelSum => table.norm(location, m, w_positive).norm(),
+                };
+                let first = layout.block_index(plane as usize, gpol, 0);
+                for (power, term) in powers.iter().zip(terms.clone()) {
+                    sumwt[first + term] += f64::from(weight) * power * norm;
                 }
             }
         }
+        if rule != KernelNormalisation::KernelSum {
+            continue;
+        }
         if let Some(inverse) = inverse_norms.as_deref_mut() {
             let inverse = &mut inverse[local * npol..(local + 1) * npol];
-            if rule != KernelNormalisation::KernelSum {
-                inverse.fill(Complex32::new(1.0, 0.0));
-                continue;
-            }
-            inverse.fill(Complex32::default());
             let mut norms = [Complex64::default(); MAX_POLS];
             // The forward norm sums the taps the gather multiplies the grid
             // by, conjugated for w ≤ 0 (`accumulateFromGrid.inc`): the
             // opposite conjugation from the adjoint's `sumwt` norm above.
-            for row in mueller.table(prediction_w_positive, true) {
-                for (vpol, plane_index) in row.iter().enumerate() {
-                    if let Some(m) = *plane_index {
-                        norms[vpol] += table.norm(location, m, !prediction_w_positive);
-                    }
-                }
+            for &Route { vpol, plane: m, .. } in
+                forward_routes[usize::from(prediction_w_positive)].iter()
+            {
+                norms[vpol] += table.norm(location, m, !prediction_w_positive);
             }
             for (target, norm) in inverse.iter_mut().zip(&norms) {
                 if *norm != Complex64::default() {
@@ -343,4 +436,38 @@ fn tile_origin(layout: &AccumulatorLayout, location: CellLocation, half: [u16; 2
         "sample support lies outside the accumulator tile"
     );
     [x0 as u32, y0 as u32]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::permutation_stride;
+
+    #[test]
+    fn the_stride_permutes_every_dispatch_size() {
+        for samples in (0..=1500).chain([4095, 4096, 10_923, 32_767, 32_768]) {
+            let stride = permutation_stride(samples) as usize;
+            if samples < 2 {
+                assert_eq!(stride, 0, "{samples} samples keep their order");
+                continue;
+            }
+            let mut seen = vec![false; samples];
+            for slot in 0..samples {
+                let sample = slot * stride % samples;
+                assert!(!seen[sample], "{samples} samples: {sample} served twice");
+                seen[sample] = true;
+            }
+        }
+    }
+
+    #[test]
+    fn neighbouring_slots_serve_samples_far_apart() {
+        for samples in [64, 100, 512, 4096, 10_923, 32_768] {
+            let stride = permutation_stride(samples) as usize;
+            let gap = stride.min(samples - stride);
+            assert!(
+                4 * gap >= samples,
+                "{samples} samples: neighbouring slots only {gap} apart"
+            );
+        }
+    }
 }

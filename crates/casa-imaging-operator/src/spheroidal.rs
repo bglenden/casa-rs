@@ -56,6 +56,10 @@ impl ConvolutionFunctionSet for Spheroidal {
         CfKey::default()
     }
 
+    fn uniform_key(&self) -> Option<CfKey> {
+        Some(CfKey::default())
+    }
+
     fn taps<'s>(&'s self, _key: CfKey, _hold: &'s mut CellHold) -> TapLayout<'s> {
         TapLayout::SeparableReal {
             rows: &self.rows,

@@ -12,7 +12,8 @@ CASA behaviours casa-rs follows for parity:
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
-[an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel).
+[an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel),
+[the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -321,3 +322,32 @@ projection cannot place, such as one 90° or more from the image centre under
 SIN, is centred on whatever pixel the failed call left. casa-rs adds no beam
 for a pointing 90° or more from an image domain's centre and refuses any
 other projection failure.
+
+## The cube Briggs weightor grids and looks up its density in different uvw frames
+
+- Date noted: 2026-10-15
+- Status: likely CASA bug; casa-rs does not follow it (#712 review by Fable
+  and Astra)
+- Affected code (CASA 6.7.5.18 and 6.7.6.14):
+  - `casatools/src/code/synthesis/TransformMachines2/BriggsCubeWeightor.cc`
+    (`weightUniform`, `getWeightUniform`)
+  - `casatools/src/code/synthesis/TransformMachines2/GridFT.cc` (`put`)
+
+`BriggsCubeWeightor`, which weighs cubes under uniform and Briggs weighting
+(`perchanweightdensity`), fills its density grid through `GridFT::put`, which
+rotates each row's uvw to the image phase centre (`rotateUVW`, `GridFT.cc:778`).
+It then looks each row up, and tapers it, at `vb.uvw()`, the unrotated
+MeasurementSet uvw (`BriggsCubeWeightor.cc:826, 860-861`). The grid and the
+lookup use different frames. When the phase centre is the field centre the
+rotation is the identity and nothing changes; for a cube with a phase centre
+away from the field centre, or a multi-field cube, a row reads the density of
+a different cell from the one its own sample was counted in, so its weight no
+longer follows the local density. The MFS weightor (`VisImagingWeight`)
+accumulates and looks up in one frame, the MeasurementSet uvw.
+
+casa-rs bins and looks up the cube rule at the rotated uvw, one frame for both
+(`the_cube_density_bins_and_looks_up_the_rotated_uvw`), and the standard (MFS)
+rule at the MeasurementSet uvw, as `VisImagingWeight` does
+(`the_standard_density_bins_the_measurement_set_uvw`). Cubes imaged at their
+own field centre agree with CASA either way; off-centre and multi-field cubes
+under a density weighting differ from CASA's weights by this mechanism.

@@ -90,6 +90,15 @@ and replace superseded runs rather than accumulating them.
   `SDKROOT=$(xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk`.
 - After an Xcode update, run `sudo xcodebuild -license accept` and
   `sudo xcodebuild -runFirstLaunch`; until then `git` and `cc` fail.
+- FFTW: `casa-fft` finds FFTW through pkg-config, so a plain build links
+  Homebrew's FFTW, which has no NEON kernels. Releases build the SIMD FFTW
+  with `scripts/build-fftw.sh`. Performance work and timing evidence use the
+  same build: on this workstation it is
+  `PKG_CONFIG_PATH=/Users/brianglendenning/SoftwareProjects/fftw-3.3.11-simd/lib/pkgconfig`
+  (built 2026-10-13). Check which FFTW a binary linked (the
+  `target/release/build/casa-fft-*/output` link path, or
+  `nm BIN | grep -c n1fv_` for NEON codelets) before comparing timings, and
+  link both sides of an A/B against the same FFTW.
 
 ## Release And Installation
 

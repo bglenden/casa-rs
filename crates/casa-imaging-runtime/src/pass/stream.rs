@@ -22,12 +22,21 @@ pub(super) const fn bytes(block: BlockShape) -> u64 {
 ///
 /// The producer stops at the next block boundary after `cancel` is set or
 /// `consume` fails; both threads are joined before this returns.
+///
+/// With `timing` it logs one event under
+/// [`casa_imaging_metal::METAL_STAGE_TIMING`] when the stream ends: the
+/// blocks, the stream's seconds, the producer's time filling and ordering
+/// blocks, the consumer's time in `consume`, and how long the consumer
+/// waited for a filled block, which says whether reading the source is on
+/// the pass's critical path.
 pub(super) fn stream_blocks(
     source: &mut dyn BoundedSource,
     cancel: &Cancel,
+    timing: bool,
     mut consume: impl FnMut(&NativeBlock) -> Result<(), PassError>,
 ) -> Result<u64, PassError> {
     let shape = source.maximum_block();
+    let started = std::time::Instant::now();
     std::thread::scope(|scope| {
         let (full_sender, full) = mpsc::sync_channel::<Result<NativeBlock, SourceError>>(SLOTS);
         let (free_sender, free) = mpsc::sync_channel::<NativeBlock>(SLOTS);
@@ -39,29 +48,41 @@ pub(super) fn stream_blocks(
         let producer = std::thread::Builder::new()
             .name("imaging-source".to_string())
             .spawn_scoped(scope, move || {
+                let mut filling = std::time::Duration::ZERO;
                 while let Ok(mut block) = free.recv() {
                     if cancel.is_cancelled() {
-                        return;
+                        return filling;
                     }
+                    let started = std::time::Instant::now();
                     let filled = match source.fill(&mut block) {
                         // Ordered here, off the consumer's path.
                         Ok(true) => {
                             block.order_rows_by_baseline();
                             Ok(block)
                         }
-                        Ok(false) => return,
+                        Ok(false) => return filling,
                         Err(error) => Err(error),
                     };
+                    filling += started.elapsed();
                     let failed = filled.is_err();
                     if full_sender.send(filled).is_err() || failed {
-                        return;
+                        return filling;
                     }
                 }
+                filling
             })
             .map_err(|_| PassError::ProducerPanicked)?;
         let mut blocks = 0_u64;
         let mut result = Ok(());
-        for message in full {
+        let mut waiting = std::time::Duration::ZERO;
+        let mut consuming = std::time::Duration::ZERO;
+        let mut full = full.into_iter();
+        loop {
+            let asked = std::time::Instant::now();
+            let Some(message) = full.next() else {
+                break;
+            };
+            waiting += asked.elapsed();
             let block = match message {
                 Ok(block) => block,
                 Err(error) => {
@@ -80,17 +101,30 @@ pub(super) fn stream_blocks(
                     && block.capacity_bytes() <= shape.bytes(),
                 "a source fills blocks within its maximum block"
             );
+            let consumed = std::time::Instant::now();
             if let Err(error) = consume(&block) {
                 result = Err(error);
                 break;
             }
+            consuming += consumed.elapsed();
             blocks += 1;
             if free_sender.send(block).is_err() {
                 break;
             }
         }
         drop(free_sender);
-        producer.join().map_err(|_| PassError::ProducerPanicked)?;
+        let filling = producer.join().map_err(|_| PassError::ProducerPanicked)?;
+        if timing {
+            tracing::info!(
+                target: casa_imaging_metal::METAL_STAGE_TIMING,
+                blocks,
+                seconds = started.elapsed().as_secs_f64(),
+                fill_seconds = filling.as_secs_f64(),
+                consume_seconds = consuming.as_secs_f64(),
+                consumer_wait_seconds = waiting.as_secs_f64(),
+                "source stream"
+            );
+        }
         if result.is_ok() && cancel.is_cancelled() {
             result = Err(PassError::Cancelled);
         }

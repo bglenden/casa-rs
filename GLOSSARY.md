@@ -148,6 +148,13 @@ The host's threads, performance cores, free memory and Metal device, detected
 once per process.
 _Avoid_: Resource inventory, topology
 
+**Core Allocation**:
+The workers a Resource Policy gives a run's phases on its host: the compute
+workers of the minor cycles and products, and the streaming workers of the
+passes, which fit beside the source's producer thread within the policy's
+core budget.
+_Avoid_: Affinity, thread pinning
+
 **Admission**:
 The check that one phase's memory, as its owners report it, fits what the
 Resource Policy leaves free beside the live reservations; an admitted phase

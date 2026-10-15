@@ -32,7 +32,7 @@
     "fitspw": "0:0~123;132~255",
     "fitorder": 1,
     "save_continuum_residual": true,
-    "casa_pblimit": -0.2,
+    "pblimit": -0.2,
     "write_pb": false,
     "pbcor": false,
     "wterm": "none"

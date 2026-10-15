@@ -32,7 +32,7 @@
     "minor_cycle_length": 2,
     "usemask": "user",
     "mask_box": "192,192,319,319",
-    "casa_pblimit": -0.2,
+    "pblimit": -0.2,
     "write_pb": true,
     "pbcor": false,
     "wterm": "none"

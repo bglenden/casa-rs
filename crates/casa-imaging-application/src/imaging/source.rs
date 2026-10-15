@@ -3,7 +3,8 @@
 
 use casa_imaging_model::{
     AntennaResponseClass, CompiledProblem, DirectionCoordinateSpec, FiniteValuePolicy,
-    SelectedAntennaResponses, SelectedNumericVisibility, SelectedNumericWeights, SkyDirection,
+    SelectedAntennaResponses, SelectedNumericRow, SelectedNumericVisibility,
+    SelectedNumericWeights, SkyDirection,
 };
 use casa_imaging_operator::{PlaneRange, RowContext};
 use casa_imaging_reconstruction::direction_world_to_pixel;
@@ -117,9 +118,6 @@ pub(crate) struct MeasurementSetSource<'a> {
     bounds: Option<PlaneBounds>,
     traversal: Traversal<'a>,
     projections: Vec<DomainProjection>,
-    values: Vec<Complex32>,
-    weights: Vec<f32>,
-    flags: Vec<bool>,
 }
 
 impl<'a> MeasurementSetSource<'a> {
@@ -150,9 +148,6 @@ impl<'a> MeasurementSetSource<'a> {
             bounds,
             traversal: Traversal::Idle(selected),
             projections: Vec::new(),
-            values: Vec::new(),
-            weights: Vec::new(),
-            flags: Vec::new(),
         }
     }
 
@@ -216,7 +211,7 @@ impl<'a> MeasurementSetSource<'a> {
             let header = NativeRowHeader {
                 row_flag: numeric.row.row_flag || nonfinite_uvw,
                 context: RowContext {
-                    original_w_m: Some(coordinates.raw_uvw_m[2]),
+                    original_uvw_m: Some(coordinates.raw_uvw_m),
                     time_s: coordinates.time.mjd_days() * SECONDS_PER_DAY,
                     antennas: [metadata.antenna1 as u32, metadata.antenna2 as u32],
                     antenna_types: antenna_types(metadata.antenna_responses, &self.dish_classes),
@@ -229,59 +224,108 @@ impl<'a> MeasurementSetSource<'a> {
                     data_description: numeric.row.data_description_id,
                 },
             };
-            self.values.clear();
-            self.weights.clear();
-            self.flags.clear();
-            let stride = numeric.stored_correlations;
-            for channel in numeric.channels {
-                let stored = (channel.channel_index - numeric.first_stored_channel) as usize;
-                for correlation in numeric.correlations {
-                    let index = stored * stride + correlation.correlation_index() as usize;
-                    let value = match numeric.visibility {
-                        SelectedNumericVisibility::Complex32(values) => values[index],
-                        SelectedNumericVisibility::Float32(values) => {
-                            Complex32::new(values[index], 0.0)
-                        }
-                    };
-                    let weight = match numeric.weights {
-                        SelectedNumericWeights::PerRow(values) => {
-                            values[correlation.correlation_index() as usize]
-                        }
-                        SelectedNumericWeights::PerChannel(values) => values[index],
-                    };
-                    let nonfinite =
-                        !(value.re.is_finite() && value.im.is_finite() && weight.is_finite());
-                    if nonfinite && reject_nonfinite {
-                        return Err(NONFINITE_INPUT.into());
-                    }
-                    self.values.push(value);
-                    self.weights.push(weight);
-                    self.flags.push(numeric.flags[index] || nonfinite);
-                }
-            }
-            debug_assert_eq!(self.values.len(), channels * correlations);
-            if let Some(rule) = self.problem.visibility_transform().and_then(|transform| {
+            let rule = self.problem.visibility_transform().and_then(|transform| {
                 transform.rule(metadata.field_id, numeric.row.spectral_window_id)
-            }) {
-                subtract_continuum(
-                    rule,
-                    &numeric,
-                    &mut self.values,
-                    &self.weights,
-                    &mut self.flags,
-                )?;
-            }
-            out.push_row(
+            });
+            debug_assert_eq!(
+                numeric.channels.len() * numeric.correlations.len(),
+                channels * correlations
+            );
+            out.push_row_with(
                 header,
                 &self.projections,
                 &block.frequencies_hz()[row * channels..(row + 1) * channels],
-                &self.values,
-                &self.weights,
-                &self.flags,
-            );
+                |values, weights, flags| {
+                    fill_samples(&numeric, values, weights, flags, reject_nonfinite)?;
+                    match rule {
+                        Some(rule) => subtract_continuum(rule, &numeric, values, weights, flags),
+                        None => Ok(()),
+                    }
+                },
+            )?;
         }
         Ok(())
     }
+}
+
+/// Write `numeric`'s selected values, weights and flags in channel and
+/// correlation order. A non-finite value or weight flags its sample, or
+/// fails the row under `reject_nonfinite`. The stored layouts are matched
+/// once per row, not once per sample.
+fn fill_samples(
+    numeric: &SelectedNumericRow<'_>,
+    values: &mut [Complex32],
+    weights: &mut [f32],
+    flags: &mut [bool],
+    reject_nonfinite: bool,
+) -> Result<(), SourceError> {
+    let out = Samples {
+        values,
+        weights,
+        flags,
+    };
+    match (numeric.visibility, numeric.weights) {
+        (SelectedNumericVisibility::Complex32(v), SelectedNumericWeights::PerChannel(w)) => {
+            fill_with(numeric, out, reject_nonfinite, |i| v[i], |i, _| w[i])
+        }
+        (SelectedNumericVisibility::Complex32(v), SelectedNumericWeights::PerRow(w)) => {
+            fill_with(numeric, out, reject_nonfinite, |i| v[i], |_, c| w[c])
+        }
+        (SelectedNumericVisibility::Float32(v), SelectedNumericWeights::PerChannel(w)) => {
+            fill_with(
+                numeric,
+                out,
+                reject_nonfinite,
+                |i| Complex32::new(v[i], 0.0),
+                |i, _| w[i],
+            )
+        }
+        (SelectedNumericVisibility::Float32(v), SelectedNumericWeights::PerRow(w)) => fill_with(
+            numeric,
+            out,
+            reject_nonfinite,
+            |i| Complex32::new(v[i], 0.0),
+            |_, c| w[c],
+        ),
+    }
+}
+
+/// One row's sample slices in a native block.
+struct Samples<'s> {
+    values: &'s mut [Complex32],
+    weights: &'s mut [f32],
+    flags: &'s mut [bool],
+}
+
+/// [`fill_samples`] for one stored layout: `value` reads the stored sample
+/// at an index, `weight` its weight from the index and correlation.
+fn fill_with(
+    numeric: &SelectedNumericRow<'_>,
+    out: Samples<'_>,
+    reject_nonfinite: bool,
+    value: impl Fn(usize) -> Complex32,
+    weight: impl Fn(usize, usize) -> f32,
+) -> Result<(), SourceError> {
+    let stride = numeric.stored_correlations;
+    let mut cell = 0;
+    for channel in numeric.channels {
+        let stored = (channel.channel_index - numeric.first_stored_channel) as usize;
+        for correlation in numeric.correlations {
+            let stored_correlation = correlation.correlation_index() as usize;
+            let index = stored * stride + stored_correlation;
+            let (sample, sample_weight) = (value(index), weight(index, stored_correlation));
+            let nonfinite =
+                !(sample.re.is_finite() && sample.im.is_finite() && sample_weight.is_finite());
+            if nonfinite && reject_nonfinite {
+                return Err(NONFINITE_INPUT.into());
+            }
+            out.values[cell] = sample;
+            out.weights[cell] = sample_weight;
+            out.flags[cell] = numeric.flags[index] || nonfinite;
+            cell += 1;
+        }
+    }
+    Ok(())
 }
 
 impl BoundedSource for MeasurementSetSource<'_> {

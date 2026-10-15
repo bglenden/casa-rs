@@ -542,6 +542,22 @@ class SchemaTests(unittest.TestCase):
                     with self.assertRaises(ContractError):
                         load_run_result(_write_result(path, invalid))
 
+    def test_native_spatial_evidence_accepts_the_paired_raw_magnitudes(self) -> None:
+        evidence = {
+            "paired_raw_finite_pixels": 4,
+            "paired_raw_left_abs_max": 2.5,
+            "paired_raw_right_abs_max": 2.5,
+            "paired_raw_diff_abs_max": 0.0,
+        }
+        schema_contract._validate_native_spatial_evidence(evidence, source="test")
+        for key in ("paired_raw_left_abs_max", "paired_raw_diff_abs_max"):
+            for bad in (-1.0, float("nan"), "1.0"):
+                with self.subTest(key=key, bad=bad):
+                    with self.assertRaises(ContractError):
+                        schema_contract._validate_native_spatial_evidence(
+                            {**evidence, key: bad}, source="test"
+                        )
+
     def test_legacy_comparison_variants_reject_current_nested_fields(self) -> None:
         mutations = (
             lambda comparison: comparison["products"][".image"].update(

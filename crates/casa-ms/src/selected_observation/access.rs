@@ -10,7 +10,7 @@ use crate::derived::engine::{MsCalEngine, polarization_operator_angle};
 use crate::spectral_selection::PreparedFrequencyFrameConversion;
 use crate::subtables::SubTable;
 use crate::{
-    MainRowSelectionCursor, MeasurementSet, MsError, MsReadPlan, MsSelectionIoBudget,
+    MainRowSelectionCursor, MainRowWalk, MeasurementSet, MsError, MsReadPlan, MsSelectionIoBudget,
     ObservationOwnerError, PointingDirectionBracket,
     PointingDirectionColumn as StoredPointingDirectionColumn, PointingDirectionQuery,
     PointingReadPlan, PreparedSelectedPointingCatalog, SelectedObservationBuffer,
@@ -47,6 +47,8 @@ use super::{
     },
     row_selection::{CompiledRowPredicate, RowSelectionEvaluationError},
 };
+
+mod walk;
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const AW_POINTING_PLAN_BYTES_PER_SELECTED_ROW: usize = 384;
@@ -90,13 +92,17 @@ impl<'a> BoundObservationReferenceData<'a> {
 /// A retained, read-locked MeasurementSet bound to one compiled source selection.
 ///
 /// Construction opens the retained storage capability and metadata needed to plan the bounded
-/// content buffers. Each pass walks MAIN once, in physical order, selecting rows with the
-/// compiled row predicate and reading their values.
+/// content buffers. Each pass walks MAIN once, selecting rows with the compiled row predicate
+/// and reading their values: in physical order with one DATA_DESCRIPTION selected, and with
+/// several one DATA_DESCRIPTION after another, physical order within each, so a pass meets
+/// each spectral window's convolution functions together instead of cycling through every
+/// window's (#659). The first traversal records that walk ([`MainRowWalk`]).
 pub(crate) struct BoundObservationSource {
     measurement_set: MeasurementSet,
     geometry_engine: Arc<MsCalEngine>,
     row_predicate: CompiledRowPredicate,
     coordinates: Arc<[SelectedCoordinates]>,
+    walk: std::sync::OnceLock<Arc<MainRowWalk>>,
     pointing_catalog: Option<PreparedSelectedPointingCatalog>,
     aw_pointing_plan: Option<AwPointingEpochPlan>,
     content_plan: SelectedObservationContentPlan,
@@ -346,6 +352,7 @@ impl BoundObservationSource {
             geometry_engine,
             row_predicate,
             coordinates,
+            walk: std::sync::OnceLock::new(),
             pointing_catalog,
             aw_pointing_plan: None,
             content_plan,
@@ -487,8 +494,20 @@ impl BoundObservationSource {
             },
         )
         .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        let cursor = if self.coordinates.len() > 1 {
+            let walk = match self.walk.get() {
+                Some(walk) => Arc::clone(walk),
+                None => {
+                    let walk = Arc::new(self.row_walk(plan)?);
+                    Arc::clone(self.walk.get_or_init(|| walk))
+                }
+            };
+            self.measurement_set.main_row_walk_cursor(plan, walk)?
+        } else {
+            self.measurement_set.main_row_selection_cursor(plan)?
+        };
         Ok(SelectedRowReplay {
-            cursor: self.measurement_set.main_row_selection_cursor(plan)?,
+            cursor,
             pending: None,
             selected_rows: 0,
         })

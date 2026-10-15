@@ -42,9 +42,62 @@ impl Clark {
     }
 }
 
+/// An active pixel: its `[x, y]`, kept rather than its storage index because
+/// every component's subtraction needs each pixel's offset from it.
 struct Active {
-    index: usize,
+    pixel: [u32; 2],
     value: f64,
+}
+
+/// Active pixels per block of [`ClarkState`]'s block maxima.
+const BLOCK: usize = 64;
+
+/// The largest magnitude of each [`BLOCK`] of `active`, NaN ignored.
+fn block_maxima(active: &[Active], blocks: &mut Vec<f64>) {
+    blocks.clear();
+    blocks.extend(active.chunks(BLOCK).map(largest_magnitude));
+}
+
+/// Recompute the blocks of `blocks` that hold any of `active[range]`.
+fn refresh_blocks(active: &[Active], blocks: &mut [f64], range: std::ops::Range<usize>) {
+    if range.is_empty() {
+        return;
+    }
+    for block in range.start / BLOCK..=(range.end - 1) / BLOCK {
+        let end = ((block + 1) * BLOCK).min(active.len());
+        blocks[block] = largest_magnitude(&active[block * BLOCK..end]);
+    }
+}
+
+fn largest_magnitude(pixels: &[Active]) -> f64 {
+    pixels
+        .iter()
+        .fold(0.0_f64, |largest, pixel| largest.max(pixel.value.abs()))
+}
+
+/// ABSMAXF: the first pixel of largest magnitude in list order, as a scan
+/// that keeps the first pixel unless a later one is strictly larger finds
+/// it (so a NaN first pixel is the peak, and a later NaN never is). It runs
+/// once per component, so it reads the blocks' maxima (`blocks`, kept by
+/// [`block_maxima`] and [`refresh_blocks`]) and then only the first block
+/// that holds the largest.
+fn first_largest<'a>(active: &'a [Active], blocks: &[f64]) -> Option<&'a Active> {
+    let first = active.first()?;
+    if first.value.is_nan() {
+        return Some(first);
+    }
+    let largest = blocks
+        .iter()
+        .fold(0.0_f64, |largest, &block| largest.max(block));
+    let block = blocks
+        .iter()
+        .position(|&block| block == largest)
+        .unwrap_or(0);
+    active[block * BLOCK..]
+        .iter()
+        .take(BLOCK)
+        .find(|pixel| pixel.value.abs() == largest)
+        .or(Some(first))
 }
 
 /// Working state of one Clark step.
@@ -64,6 +117,8 @@ pub struct ClarkState {
     cycles: usize,
     step_components: usize,
     active: Vec<Active>,
+    /// The largest magnitude of each [`BLOCK`] of `active`.
+    blocks: Vec<f64>,
     refresh: LinearRefresh,
 }
 
@@ -113,6 +168,7 @@ impl Solver for Clark {
             cycles: 0,
             step_components: 0,
             active: Vec::new(),
+            blocks: Vec::new(),
             refresh,
         };
         state.begin(&residual[0], view);
@@ -126,14 +182,16 @@ impl Solver for Clark {
         residual: &mut [Vec<f64>],
     ) -> Result<Next, Error> {
         loop {
-            // ABSMAXF: the first largest in list order.
-            let peak = state.active.iter().fold(None::<&Active>, |best, pixel| {
-                if best.is_none_or(|current| pixel.value.abs() > current.value.abs()) {
-                    Some(pixel)
-                } else {
-                    best
-                }
-            });
+            let peak = first_largest(&state.active, &state.blocks);
+            debug_assert_eq!(
+                peak.map(|pixel| pixel.pixel),
+                {
+                    let mut fresh = Vec::new();
+                    block_maxima(&state.active, &mut fresh);
+                    first_largest(&state.active, &fresh).map(|pixel| pixel.pixel)
+                },
+                "the block maxima are current"
+            );
             if state.cycle_iterations < state.maximum_cycle_iterations
                 && let Some(pixel) = peak
                 && pixel.value.abs() > state.iteration_flux_limit
@@ -142,7 +200,9 @@ impl Solver for Clark {
                     return Err(Error::NonFinite);
                 }
                 return Ok(Next::Clean(Candidate::Pixel {
-                    index: pixel.index,
+                    index: state
+                        .shape
+                        .index(pixel.pixel[0] as usize, pixel.pixel[1] as usize),
                     scale: 0,
                     strength: pixel.value,
                 }));
@@ -177,8 +237,25 @@ impl Solver for Clark {
         let [px, py] = shape.pixel(index);
         let patch = state.patch;
         let psf = &view.psf[0];
-        for pixel in &mut state.active {
-            let [tx, ty] = shape.pixel(pixel.index);
+        // The list runs x outer, so the pixels whose x lies in the patch
+        // are one run of it; only they can change.
+        debug_assert!(
+            state
+                .active
+                .windows(2)
+                .all(|pair| pair[0].pixel[0] <= pair[1].pixel[0]),
+            "the active list runs x outer (`begin`'s order)"
+        );
+        let first_x = px as isize - patch.radius[0] as isize;
+        let end_x = px as isize + (patch.size[0] - patch.radius[0]) as isize;
+        let start = state
+            .active
+            .partition_point(|pixel| (pixel.pixel[0] as isize) < first_x);
+        let end = state
+            .active
+            .partition_point(|pixel| (pixel.pixel[0] as isize) < end_x);
+        for pixel in &mut state.active[start..end] {
+            let [tx, ty] = pixel.pixel;
             let relative = [tx as isize - px as isize, ty as isize - py as isize];
             if relative[0] < -(patch.radius[0] as isize)
                 || relative[0] >= (patch.size[0] - patch.radius[0]) as isize
@@ -200,6 +277,7 @@ impl Solver for Clark {
             }
             pixel.value -= flux * psf[shape.index(source[0] as usize, source[1] as usize)];
         }
+        refresh_blocks(&state.active, &mut state.blocks, start..end);
         state.cycle_iterations += 1;
         state.step_components += 1;
         state.fmn += state.fac / state.step_components as f64;
@@ -233,12 +311,15 @@ impl Solver for Clark {
         Ok(end)
     }
 
-    /// The refresh ([`LinearRefresh::bytes`]) and the active list, which
-    /// grows to at most every pixel: an upper bound, since the list holds
-    /// only the supported pixels above the cycle's flux limit.
+    /// The refresh ([`LinearRefresh::bytes`]), the active list, which
+    /// grows to at most every pixel (an upper bound, since the list holds
+    /// only the supported pixels above the cycle's flux limit), and its
+    /// block maxima.
     fn working_bytes(&self, shape: PlaneShape, _terms: usize) -> u64 {
-        let active = shape.len().next_power_of_two() * size_of::<Active>();
-        LinearRefresh::bytes(shape) + active as u64
+        let pixels = shape.len().next_power_of_two();
+        let active = pixels * size_of::<Active>();
+        let blocks = pixels.div_ceil(BLOCK).next_power_of_two() * size_of::<f64>();
+        LinearRefresh::bytes(shape) + (active + blocks) as u64
     }
 
     /// A point component.
@@ -264,13 +345,18 @@ impl ClarkState {
             residual.iter().zip(view.support.as_slice()).enumerate()
         {
             if supported && value.abs() >= cutoff {
-                self.active.push(Active { index, value });
+                let [x, y] = self.shape.pixel(index);
+                self.active.push(Active {
+                    pixel: [x as u32, y as u32],
+                    value,
+                });
             }
         }
+        block_maxima(&self.active, &mut self.blocks);
         let peak = self
-            .active
+            .blocks
             .iter()
-            .fold(0.0_f64, |best, pixel| best.max(pixel.value.abs()));
+            .fold(0.0_f64, |best, &block| best.max(block));
         // `pow(fluxLimit / absRes, speedup)` with CASA's speedup of −1.
         self.fac = if self.flux_limit > 0.0 {
             peak / self.flux_limit
@@ -302,5 +388,84 @@ impl ClarkState {
             self.maximum_cycle_iterations = 10;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Active, BLOCK, block_maxima, first_largest, refresh_blocks};
+
+    /// The scan `first_largest` replaces: keep the first pixel unless a
+    /// later one is strictly larger.
+    fn scan(active: &[Active]) -> Option<&Active> {
+        active.iter().fold(None::<&Active>, |best, pixel| {
+            if best.is_none_or(|current| pixel.value.abs() > current.value.abs()) {
+                Some(pixel)
+            } else {
+                best
+            }
+        })
+    }
+
+    /// `first_largest` over block maxima finds the scan's pixel, on lists
+    /// spanning several blocks with ties, zeros, infinities and NaN, and
+    /// still does after a run of the list changes and only that run's blocks
+    /// are refreshed, as `accept` does.
+    #[test]
+    fn the_first_largest_pixel_is_the_scans() {
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        // Few distinct magnitudes, so ties are common, and the edge values.
+        let specials = [
+            0.0,
+            -0.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            2.0,
+            -2.0,
+            1.5,
+        ];
+        let value = |draw: u64| specials[(draw % specials.len() as u64) as usize];
+        let mut blocks = Vec::new();
+        let mut multi_block_runs = 0;
+        for length in (0..40).chain([BLOCK - 1, BLOCK, BLOCK + 1, 3 * BLOCK + 7]) {
+            for _ in 0..200 {
+                let mut active = (0..length)
+                    .map(|index| Active {
+                        pixel: [index as u32, 0],
+                        value: value(next()),
+                    })
+                    .collect::<Vec<_>>();
+                block_maxima(&active, &mut blocks);
+                let found = first_largest(&active, &blocks).map(|pixel| pixel.pixel);
+                assert_eq!(found, scan(&active).map(|pixel| pixel.pixel));
+                if length == 0 {
+                    continue;
+                }
+                // A run of 1 to 2·BLOCK pixels from anywhere, so runs cross
+                // block edges.
+                let start = (next() % length as u64) as usize;
+                let end = (start + 1 + (next() % (2 * BLOCK) as u64) as usize).min(length);
+                if start / BLOCK != (end - 1) / BLOCK {
+                    multi_block_runs += 1;
+                }
+                for pixel in &mut active[start..end] {
+                    pixel.value = value(next());
+                }
+                refresh_blocks(&active, &mut blocks, start..end);
+                let found = first_largest(&active, &blocks).map(|pixel| pixel.pixel);
+                assert_eq!(found, scan(&active).map(|pixel| pixel.pixel));
+            }
+        }
+        assert!(
+            multi_block_runs > 100,
+            "only {multi_block_runs} refreshed runs crossed a block edge"
+        );
     }
 }

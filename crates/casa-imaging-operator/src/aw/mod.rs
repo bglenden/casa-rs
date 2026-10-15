@@ -509,8 +509,10 @@ impl AwCatalog {
                 } else {
                     frequency
                 };
-                for (iw, &w) in input.w_values.iter().enumerate() {
-                    for (im, &mueller) in input.mueller_elements.iter().enumerate() {
+                // Only the W screen depends on w: the aperture and the weight
+                // cell are formed once per (PA, frequency, Mueller element).
+                for (im, &mueller) in input.mueller_elements.iter().enumerate() {
+                    for (iw, &w) in input.w_values.iter().enumerate() {
                         let suffix = format!("{ipa}_0_CF_{inu}_{iw}_{im}.im");
                         let imaging_path = root.join(format!("{IMAGING_PREFIX}{suffix}"));
                         let weight_path = root.join(format!("{WEIGHT_PREFIX}{suffix}"));
@@ -531,9 +533,10 @@ impl AwCatalog {
                         };
                         let workspace = match &mut workspace {
                             Some(workspace) => workspace,
-                            None => workspace.insert(EvlaAwWorkspace::new(request)?),
+                            None => workspace.insert(EvlaAwWorkspace::new(model.clone(), request)?),
                         };
-                        let pair = workspace.generate(&model, request)?;
+                        workspace.prepare(request)?;
+                        let pair = workspace.realize(request)?;
                         let misc = CellMisc {
                             sampling: grid.oversampling as f64,
                             pa_deg: pa.to_degrees(),
@@ -853,8 +856,9 @@ impl ConvolutionFunctionSet for AwCatalog {
     /// phase-centre rotation, while `DataToGrid` reads the rotated
     /// `uvw_p` (#667).
     fn prediction_w(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> f64 {
-        row.original_w_m
-            .map_or(w_lambda, |w_m| w_m * freq_hz / SPEED_OF_LIGHT_M_PER_S)
+        row.original_uvw_m.map_or(w_lambda, |uvw_m| {
+            uvw_m[2] * freq_hz / SPEED_OF_LIGHT_M_PER_S
+        })
     }
 
     fn image_correction(&self) -> &ImageCorrection {

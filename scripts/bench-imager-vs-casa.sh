@@ -147,6 +147,15 @@ reuse_rust_prefix="${IMAGER_BENCH_REUSE_RUST_PREFIX:-}"
 reuse_casa_prefix="${IMAGER_BENCH_REUSE_CASA_PREFIX:-}"
 rust_output_prefix="${IMAGER_BENCH_RUST_OUTPUT_PREFIX:-}"
 prepared_aw_casa_cache="${IMAGER_BENCH_PREPARED_AW_CASA_CACHE:-}"
+# A native EVLA AW catalog directory instead of an imported CASA cfcache:
+# casars-imager generates the missing cells there from the EVLA surface file,
+# at CASA's CONVSIZE and ATerm OVERSAMPLING unless overridden.
+native_aw_cf_cache="${IMAGER_BENCH_NATIVE_AW_CF_CACHE:-}"
+evla_surface="${IMAGER_BENCH_EVLA_SURFACE:-}"
+native_cf_working_size="${IMAGER_BENCH_NATIVE_CF_WORKING_SIZE:-2048}"
+native_cf_oversampling="${IMAGER_BENCH_NATIVE_CF_OVERSAMPLING:-20}"
+native_cf_cache_bytes="${IMAGER_BENCH_NATIVE_CF_CACHE_BYTES:-8589934592}"
+native_cf_maximum_cells="${IMAGER_BENCH_NATIVE_CF_MAXIMUM_CELLS:-2048}"
 aw_cf_resident_mb="${IMAGER_BENCH_AW_CF_RESIDENT_MB:-384}"
 aterm="${IMAGER_BENCH_ATERM:-1}"
 psterm="${IMAGER_BENCH_PSTERM:-0}"
@@ -226,7 +235,15 @@ esac
 is_true() {
   [[ "$1" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]
 }
-if [[ -n "$prepared_aw_casa_cache" ]] && {
+if [[ -n "$prepared_aw_casa_cache" && -n "$native_aw_cf_cache" ]]; then
+  echo "error: set one AW convolution-function source: IMAGER_BENCH_PREPARED_AW_CASA_CACHE or IMAGER_BENCH_NATIVE_AW_CF_CACHE" >&2
+  exit 2
+fi
+if [[ -n "$native_aw_cf_cache" && ! -f "$evla_surface" ]]; then
+  echo "error: IMAGER_BENCH_NATIVE_AW_CF_CACHE needs IMAGER_BENCH_EVLA_SURFACE to name the EVLA surface file" >&2
+  exit 2
+fi
+if [[ -n "$prepared_aw_casa_cache$native_aw_cf_cache" ]] && {
   ! is_true "$aterm" || is_true "$psterm" || ! is_true "$wbawp" || ! is_true "$conjbeams" ||
     is_true "$mosweight" || [[ ! "$computepastep" =~ ^360(\.0*)?$ || ! "$rotatepastep" =~ ^360(\.0*)?$ ]] ||
     [[ -n "$psfphasecenter" || -n "$vptable" ]]
@@ -559,6 +576,13 @@ fi
 rust_aw_flags=()
 if [[ -n "$prepared_aw_casa_cache" ]]; then
   rust_aw_flags+=(--cfcache "$prepared_aw_casa_cache" --cf-resident-mb "$aw_cf_resident_mb")
+  rust_aw_flags+=(--pointingoffsetsigdev "$pointingoffsetsigdev" --normtype "$normtype")
+elif [[ -n "$native_aw_cf_cache" ]]; then
+  rust_aw_flags+=(--aw-cf-source native-evla --native-cf-cache "$native_aw_cf_cache"
+    --native-cf-policy generate-missing --native-cf-working-size "$native_cf_working_size"
+    --native-cf-oversampling "$native_cf_oversampling" --evla-surface "$evla_surface"
+    --native-cf-cache-bytes "$native_cf_cache_bytes" --native-cf-maximum-cells "$native_cf_maximum_cells"
+    --cf-resident-mb "$aw_cf_resident_mb")
   rust_aw_flags+=(--pointingoffsetsigdev "$pointingoffsetsigdev" --normtype "$normtype")
 fi
 rust_continuum_flags=()

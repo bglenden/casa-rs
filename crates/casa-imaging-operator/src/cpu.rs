@@ -11,6 +11,7 @@ use crate::backend::{GridBackend, PreparedModelGrids, Work};
 use crate::convolution::{CellHold, ConvolutionFunctionSet, KernelNormalisation, TapLayout};
 use crate::error::OperatorError;
 use crate::geometry::CellLocation;
+use crate::native::{NativeModel, NativeTarget, interpolate_terms, residual_values};
 use crate::sample::{Placement, SampleBlock};
 
 /// The CPU implementation of [`GridBackend`].
@@ -31,6 +32,8 @@ pub struct CpuBackend {
     /// the terms, for the visibility polarizations that share them.
     gathered: Vec<(u8, Complex64)>,
     residual: Vec<Complex32>,
+    /// A block's predictions, or its residual values at native channels.
+    batch: Vec<Complex32>,
     hold: CellHold,
 }
 
@@ -41,6 +44,16 @@ impl CpuBackend {
         Self::default()
     }
 
+    /// Bytes the backend keeps after blocks of at most `samples` placements
+    /// of `npol` correlations: its batch, which holds a block's native
+    /// predictions ([`Work::PredictNative`]) or its residual values at
+    /// native channels ([`Work::NativeResidualGrid`]) and is sized to the
+    /// largest block it has served.
+    #[must_use]
+    pub const fn batch_bytes(npol: usize, samples: usize) -> u64 {
+        (samples * npol * size_of::<Complex32>()) as u64
+    }
+
     fn grid<T: GridScalar>(
         &mut self,
         block: &SampleBlock<'_>,
@@ -48,7 +61,7 @@ impl CpuBackend {
         mode: Mode,
         acc: &mut GridAccumulator,
     ) -> Result<(), OperatorError> {
-        let (layout, cells, sumwt) = acc.parts_mut::<T>();
+        let (layout, cells, mut sumwt) = acc.parts_mut::<T>();
         let terms = layout
             .term_range(mode)
             .unwrap_or_else(|| panic!("accumulator holds no {mode:?} terms"));
@@ -77,7 +90,7 @@ impl CpuBackend {
             spread_sample(
                 layout,
                 cells,
-                sumwt,
+                sumwt.as_deref_mut(),
                 cf,
                 rule,
                 placement,
@@ -124,7 +137,7 @@ impl CpuBackend {
             assert_eq!(out.len(), block.len() * npol, "residual output length");
         }
         let rule = cf.normalisation();
-        let (layout, cells, sumwt) = acc.parts_mut::<T>();
+        let (layout, cells, mut sumwt) = acc.parts_mut::<T>();
         let terms = layout
             .term_range(Mode::Data)
             .expect("residual gridding needs the data terms");
@@ -163,7 +176,7 @@ impl CpuBackend {
             spread_sample(
                 layout,
                 cells,
-                sumwt,
+                sumwt.as_deref_mut(),
                 cf,
                 rule,
                 placement,
@@ -317,20 +330,92 @@ impl GridBackend for CpuBackend {
                 }
                 Ok(())
             }
+            Work::PredictNative {
+                grids,
+                terms,
+                model,
+                add,
+            } => {
+                let NativeTarget::Host { cells, first } = model else {
+                    panic!("the CPU backend forms the model in host cells");
+                };
+                let mut predicted = std::mem::take(&mut self.batch);
+                predicted.clear();
+                // Exactly the block: the pass charges the largest block's
+                // batch ([`CpuBackend::batch_bytes`]).
+                predicted.reserve_exact(block.len() * block.npol);
+                predicted.resize(block.len() * block.npol, Complex32::default());
+                match grids.precision() {
+                    GridPrecision::F32 => self.predict::<f32>(block, cf, grids, &mut predicted),
+                    GridPrecision::F64 => self.predict::<f64>(block, cf, grids, &mut predicted),
+                }
+                interpolate_terms(&predicted, block.npol, terms, cells, first, add);
+                self.batch = predicted;
+                Ok(())
+            }
+            Work::NativeResidualGrid { model, acc } => self.native_residual(block, cf, model, acc),
         };
         self.hold.clear();
         result
     }
 }
 
+impl CpuBackend {
+    /// [`Work::NativeResidualGrid`]: the block's values less the model at
+    /// their native endpoints, gridded as data.
+    fn native_residual(
+        &mut self,
+        block: &SampleBlock<'_>,
+        cf: &dyn ConvolutionFunctionSet,
+        model: NativeModel<'_>,
+        acc: &mut GridAccumulator,
+    ) -> Result<(), OperatorError> {
+        let NativeModel::Host { cells, first } = model else {
+            panic!("the CPU backend reads the model from host cells");
+        };
+        assert_eq!(
+            block.sources.len(),
+            block.len(),
+            "a native residual block holds every placement's endpoints"
+        );
+        let npol = block.npol;
+        let mut values = std::mem::take(&mut self.batch);
+        values.clear();
+        values.reserve_exact(block.len() * npol);
+        values.resize(block.len() * npol, Complex32::default());
+        for (index, (source, out)) in block
+            .sources
+            .iter()
+            .zip(values.chunks_exact_mut(npol))
+            .enumerate()
+        {
+            residual_values(block.values_of(index), source, cells, first, out);
+        }
+        let residual = SampleBlock {
+            values: &values,
+            ..*block
+        };
+        let result = match acc.precision() {
+            GridPrecision::F32 => self.grid::<f32>(&residual, cf, Mode::Data, acc),
+            GridPrecision::F64 => self.grid::<f64>(&residual, cf, Mode::Data, acc),
+        };
+        self.batch = values;
+        result
+    }
+}
+
 /// Spread one placement's values through every routed (grid pol,
-/// visibility pol) pair and term, accumulating `sumwt` by the set's rule:
-/// `W · s^t` times 1, `Re N` or `|N|`.
+/// visibility pol) pair and term, accumulating `sumwt`, when given, by the
+/// set's rule: `W · s^t` times 1, `Re N` or `|N|`.
+///
+/// The visibility polarizations a grid polarization takes through the same
+/// Mueller plane share its taps (both correlations of Stokes I), so their
+/// values are summed and spread once; `sumwt` still adds each one's weight.
 #[allow(clippy::too_many_arguments)]
 fn spread_sample<T: GridScalar>(
     layout: &AccumulatorLayout,
     cells: &mut [Complex<T>],
-    sumwt: &mut [f64],
+    mut sumwt: Option<&mut [f64]>,
     cf: &dyn ConvolutionFunctionSet,
     rule: KernelNormalisation,
     placement: &Placement,
@@ -347,6 +432,13 @@ fn spread_sample<T: GridScalar>(
     let plane = layout.planes().local(placement.plane);
     let block_cells = layout.block_cells();
     for (gpol, row) in table.iter().enumerate() {
+        // One value per Mueller plane this grid polarization takes.
+        let mut planes = [(0_u8, Complex64::default()); 4];
+        let mut used = 0;
+        debug_assert!(
+            row.len() <= planes.len(),
+            "a routing row carries at most four visibility polarizations"
+        );
         for (vpol, mueller_plane) in row.iter().enumerate() {
             let Some(mueller) = *mueller_plane else {
                 continue;
@@ -355,9 +447,19 @@ fn spread_sample<T: GridScalar>(
             if weight == 0.0 {
                 continue;
             }
-            let base = match mode {
+            let base = widen(match mode {
                 Mode::Data => values[vpol],
                 Mode::Psf | Mode::Weight => Complex32::new(weight, 0.0),
+            });
+            match planes[..used].iter_mut().find(|(held, _)| *held == mueller) {
+                Some((_, sum)) => *sum += base,
+                None => {
+                    planes[used] = (mueller, base);
+                    used += 1;
+                }
+            }
+            let Some(sumwt) = sumwt.as_deref_mut() else {
+                continue;
             };
             let norm = match rule {
                 KernelNormalisation::UnitSum => 1.0,
@@ -369,10 +471,13 @@ fn spread_sample<T: GridScalar>(
                 }
             };
             for (power, term) in powers.iter().zip(terms.clone()) {
-                let value = Complex::new(
-                    T::from_f64(f64::from(base.re) * power),
-                    T::from_f64(f64::from(base.im) * power),
-                );
+                sumwt[layout.block_index(plane, gpol, term)] += f64::from(weight) * power * norm;
+            }
+        }
+        for &(mueller, base) in &planes[..used] {
+            for (power, term) in powers.iter().zip(terms.clone()) {
+                let value =
+                    Complex::new(T::from_f64(base.re * power), T::from_f64(base.im * power));
                 let offset = layout.block_offset(plane, gpol, term);
                 kernel::spread::<T>(
                     &mut cells[offset..offset + block_cells],
@@ -384,7 +489,6 @@ fn spread_sample<T: GridScalar>(
                     placement.gradient,
                     value,
                 );
-                sumwt[layout.block_index(plane, gpol, term)] += f64::from(weight) * power * norm;
             }
         }
     }

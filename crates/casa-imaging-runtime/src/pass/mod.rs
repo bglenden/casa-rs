@@ -20,18 +20,21 @@ mod partition;
 mod stream;
 mod team;
 mod wave;
+mod weights;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use casa_imaging_operator::{
-    DensityGrid, DensityGridShape, MeasurementOperator, ModeSet, NormalImages, OperatorError,
-    PlaneRange, PreparedModelGrids, SampleBuffer, SpectralResampler, WeightingGeneration,
+    DensityGrid, DensityGridShape, GridAccumulator, MeasurementOperator, ModeSet, NormalImages,
+    OperatorError, PlacedRow, PlaneRange, PredictionScratch, PreparedModelGrids, SampleBuffer,
+    SpectralResampler, WeightingGeneration,
 };
 
 pub use block::{BlockShape, DomainProjection, NativeBlock, NativeRowHeader, RowAddress};
 pub use partition::{Partition, Region, Residency, WaveDemand};
-pub use team::{WORKER_STACK_BYTES, WorkerTeam};
+pub use team::{WORKER_STACK_BYTES, WorkerTeam, WorkerTeams};
+pub use weights::WeightCache;
 
 use stream::stream_blocks;
 use wave::Wave;
@@ -169,9 +172,11 @@ pub struct PassDomain<'a> {
 ///
 /// With [`BackendChoice::Metal`] each owner grids on the shared Metal
 /// device into an `f32` accumulator in device memory (D2), so every
-/// operator of the pass must be `f32`; placement and the native-channel
-/// predictions of a multi-domain or linearly interpolated residual stay on
-/// the CPU workers.
+/// operator of the pass must be `f32`. The model is degridded on the device
+/// too: fused into the residual, or, for the native-channel residual of a
+/// multi-domain or linearly interpolated pass, in each row chunk's
+/// prediction batch, which the device interpolates to native cells and
+/// subtracts from each placed sample without handing it back.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BackendChoice {
@@ -204,6 +209,19 @@ pub struct MajorCyclePass<'a> {
     /// Whether each Metal owner logs its timing when the pass ends
     /// ([`crate::Diagnostics::metal_stage_timing`]).
     pub metal_stage_timing: bool,
+    /// The run's kept imaging weights, which a single-wave pass over one
+    /// image domain fills or reads ([`WeightCache`]).
+    pub weights: Option<&'a WeightCache>,
+}
+
+impl MajorCyclePass<'_> {
+    /// The kept weights this pass fills or reads: one wave over one image
+    /// domain meets every row of every block, so its slots line up pass to
+    /// pass.
+    fn weight_cache(&self) -> Option<&WeightCache> {
+        self.weights
+            .filter(|_| self.residency == Residency::All && self.domains.len() == 1)
+    }
 }
 
 /// Whether a pass over `domains` forms its residual at native channels: with
@@ -221,6 +239,23 @@ fn native_residuals(domains: &[PassDomain<'_>], with_model: bool) -> bool {
 impl MajorCyclePass<'_> {
     fn native_residuals(&self) -> bool {
         native_residuals(self.domains, self.model.is_some())
+    }
+
+    /// Whether the pass sums `sumwt`: only without a model. A residual
+    /// pass's sums are not read, since CASA keeps the PSF gridding's
+    /// `.sumwt` through the data passes (`FTMachine::finalizeToSkyNew`), so
+    /// its images carry zero sums.
+    fn sums_weights(&self) -> bool {
+        self.model.is_none()
+    }
+
+    /// `acc`, summing `sumwt` only when the pass does.
+    fn summing(&self, acc: GridAccumulator) -> GridAccumulator {
+        if self.sums_weights() {
+            acc
+        } else {
+            acc.without_weight_sums()
+        }
     }
 
     /// Whether a wave must read whole rows: a native-channel prediction under
@@ -302,13 +337,17 @@ pub fn run_major_cycle(
             team.workers(),
         )?
         .checking_spacing(!restrict && pass.residency != Residency::All);
-        summary.blocks += stream_blocks(source, cancel, |block| {
+        let timing = pass.metal_stage_timing && pass.backend == BackendChoice::Metal;
+        summary.blocks += stream_blocks(source, cancel, timing, |block| {
             wave.consume(block, team, visibilities.as_deref_mut())
         })?;
         summary.samples += wave.samples();
         for (domain, domain_images) in wave.finish(team)?.into_iter().enumerate() {
             images(domain, domain_images)?;
         }
+    }
+    if let Some(cache) = pass.weight_cache() {
+        cache.mark_filled();
     }
     Ok(summary)
 }
@@ -357,17 +396,31 @@ const fn chunk_rows(row: usize, block_rows: usize, chunks: usize, placements: us
     if rows == 0 { 1 } else { rows }
 }
 
+/// The most samples one native row produces in a major-cycle pass.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RowSamples {
+    /// Samples it places on the grid
+    /// ([`SpectralResampler::samples_per_row`]).
+    pub placed: usize,
+    /// Samples its model prediction degrids
+    /// ([`SpectralResampler::prediction_samples_per_row`]).
+    pub predicted: usize,
+}
+
 /// An upper bound of the bytes a pass's row chunks hold per row of the
-/// source's block, for rows of `layout` that each place at most `row`
-/// samples ([`SpectralResampler::samples_per_row`]) on `workers` workers,
-/// while a chunk's rows are a block's share rather than its placement cap:
-/// each owner's buffer and the weight owner's can take every placement of
-/// a row. The source sizes its blocks with it
+/// source's block, for rows of `layout` that each produce at most `row`
+/// samples on `workers` workers, while a chunk's rows are a block's share
+/// rather than its placement cap: each owner's buffer and the weight
+/// owner's can take every placement of a row with its native endpoints, and
+/// the chunk's prediction batch every degridded sample and the row's native
+/// terms. The source sizes its blocks with it
 /// ([`crate::finalize_source_access`]); [`WaveDemand::bytes`] charges the
 /// chunks exactly.
 #[must_use]
-pub const fn chunk_bytes_per_row(layout: BlockShape, row: usize, workers: usize) -> u64 {
-    (workers as u64 + 1) * SampleBuffer::bytes(layout.correlations, row)
+pub const fn chunk_bytes_per_row(layout: BlockShape, row: RowSamples, workers: usize) -> u64 {
+    (workers as u64 + 1) * SampleBuffer::sourced_bytes(layout.correlations, row.placed)
+        + PredictionScratch::bytes(layout.correlations, row.predicted, 0, layout.channels())
+        + size_of::<PlacedRow>() as u64
 }
 
 /// The slices of a block of `rows` rows split among `chunks` chunks of at
@@ -436,7 +489,7 @@ pub fn run_density_pass(
     let mut chunks = (0..count)
         .map(|_| (0..0, SampleBuffer::with_capacity(1, placements)))
         .collect::<Vec<_>>();
-    stream_blocks(source, cancel, |block| {
+    stream_blocks(source, cancel, false, |block| {
         for slice in slices(block.len(), count, rows_per_chunk) {
             let mut used = 0;
             for ((range, _), rows) in chunks.iter_mut().zip(chunk_ranges(slice, count)) {

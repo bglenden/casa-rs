@@ -41,6 +41,7 @@ mod error;
 mod fft;
 mod geometry;
 mod mosaic;
+mod native;
 mod operator;
 mod polarization;
 mod resample;
@@ -68,12 +69,14 @@ pub use geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent};
 pub use mosaic::{
     AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicScreens, MosaicWindow, pair_plane,
 };
+pub use native::{DeviceNativeCells, NO_CELL, NativeModel, NativeSource, NativeTarget, NativeTerm};
 pub use operator::{
     Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, NormalPlane,
 };
 pub use polarization::{FeedBasis, GridPolarization, PolarizationRouting};
 pub use resample::{
-    NativeRow, PredictionScratch, RowSpectrum, SpectralAxis, SpectralKernel, SpectralResampler,
+    NativeRow, PlacedRow, PredictionScratch, RowSpectrum, SpectralAxis, SpectralKernel,
+    SpectralResampler, WeightSlots,
 };
 pub use sample::{CfKey, Placement, SampleBlock, SampleBuffer};
 pub use spheroidal::{SPHEROIDAL_OVERSAMPLING, SPHEROIDAL_SUPPORT, Spheroidal, grdsf};

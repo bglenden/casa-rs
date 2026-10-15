@@ -533,7 +533,11 @@ requirements before any phase, and runs the cycle loop directly.
 `casa-imaging-runtime` detects the host once per process (`HostResources`:
 threads, performance cores, free memory, a Metal device). The run's
 `ResourcePolicy` (interactive, balanced, exclusive, or explicit ceilings) sets
-its worker team and its memory, and each phase admits the bytes its owners
+its memory and its core allocation (`ResourcePolicy::cores`): a compute team
+for the minor cycles and products, and a streaming team for the passes, one
+worker narrower when the source's producer thread would otherwise take the
+run past the policy's core budget (the performance cores, for balanced). Each
+phase admits the bytes its owners
 report (`admit`: the source envelope, the paged cube cache, one wave of each
 pass, the product writer) and holds them in a `Reservation` until it ends; a
 phase that does not fit is refused, typed, before it starts. Frontends neither
@@ -596,17 +600,23 @@ unavailability in `availability::check` (facets #664, cubic #42).
 
 `backend = metal` (macOS, a unified-memory Metal 3 device) grids every pass on
 the Metal device: `casa-imaging-metal` implements the operator's
-`GridBackend` with support-generic kernels (one SIMD group per sample, `f32`
-atomic adds) into accumulators whose cells live in shared device memory
+`GridBackend` with support-generic kernels (one thread per sample for
+supports of at most 81 taps, one SIMD group per sample for wider ones; each
+grid polarization and Mueller plane gathered and spread once; `f32` atomic
+adds) into accumulators whose cells live in shared device memory
 (`GridStorage::Device`). The host locates every sample with the operator's
 rounding rule and accumulates `sumwt` in `f64`, so tap selection and `sumwt`
 equal the CPU's. Each `apply` is cut into three sub-blocks over a six-slot
 ring. A pass's Metal owners leave grid-only work running when `apply`
 returns, and the accumulator's cells (`DeviceCells`) make the host's next
 access wait for it; other dispatches complete inside `apply`. Operators are
-`f32` for every basis on Metal (D2). Placement and the native-channel
-predictions of multi-domain or linearly interpolated residuals stay on the
-CPU workers.
+`f32` for every basis on Metal (D2). Placement stays on the CPU workers. The
+native-channel residual of a multi-domain or linearly interpolated pass is
+formed on the device: each row chunk's predictor predicts its batch and
+interpolates it to the rows' native cells (`Work::PredictNative`) in cells
+from `MetalBackend::native_cells`, and the owners subtract that model at each
+sample's native endpoints as they grid (`Work::NativeResidualGrid`); nothing
+is read back unless a visibility writer asks for the model.
 Metal grids the standard kernel set only; W projection, mosaics and AW
 projection run on the CPU, and `availability::check` refuses them on Metal.
 Application availability is the capability boundary: component presence alone

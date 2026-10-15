@@ -29,7 +29,7 @@
     "deconvolver": "hogbom",
     "niter": 0,
     "minor_cycle_length": 2,
-    "casa_pblimit": -0.2,
+    "pblimit": -0.2,
     "write_pb": true,
     "pbcor": false,
     "wterm": "none"

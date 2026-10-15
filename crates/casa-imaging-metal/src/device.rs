@@ -17,23 +17,27 @@ use objc2_metal::{
 
 const SOURCE: &str = include_str!("kernels.metal");
 
-/// Threads per threadgroup; each SIMD group of it serves one sample.
+/// Threads per threadgroup; each serves one sample, or each SIMD group of it
+/// does.
 const THREADGROUP_THREADS: usize = 128;
 
-/// One compiled kernel and how many samples a threadgroup serves.
+/// One compiled kernel, its threadgroup size and SIMD width, and how many
+/// samples a threadgroup serves when each SIMD group serves one.
 pub(crate) struct Pipeline {
     pub state: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pub threads: usize,
+    pub width: usize,
     pub samples_per_group: usize,
 }
 
-/// The device, its queue and the three kernels of the contract.
+/// The device, its queue and the kernels of the contract.
 pub(crate) struct Device {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     pub spread: Pipeline,
     pub predict: Pipeline,
     pub residual: Pipeline,
+    pub native: Pipeline,
 }
 
 // SAFETY: Metal documents `MTLDevice`, `MTLCommandQueue` and
@@ -97,6 +101,7 @@ impl Device {
             Pipeline {
                 samples_per_group: threads / width,
                 threads,
+                width,
                 state,
             }
         };
@@ -104,6 +109,7 @@ impl Device {
             spread: pipeline("spread"),
             predict: pipeline("predict"),
             residual: pipeline("residual"),
+            native: pipeline("native_model"),
             device,
             queue,
         })

@@ -17,7 +17,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use casa_imaging_metal::MetalBackend;
 use casa_imaging_operator::{
     Basis, CpuBackend, GridBackend, GridScalar, MeasurementOperator, Mode, ModeSet, ModelPrescale,
-    PlaneRange, SampleBuffer, Tile, Work,
+    NO_CELL, NativeModel, NativeSource, NativeTarget, NativeTerm, PlaneRange, SampleBlock,
+    SampleBuffer, Tile, Work,
 };
 use common::{
     ALL_KERNELS, Kernels, Rng, assert_close, assert_same_grids, block, metal, model, operator,
@@ -110,7 +111,7 @@ fn every_kernel_set_grids_data_psf_and_weight_like_the_cpu() {
             let buffer = block(&placed, &mut rng);
             let modes = match kernels {
                 Kernels::Spheroidal => ModeSet::DATA_PSF,
-                Kernels::Separable | Kernels::Dense => ModeSet::ALL,
+                Kernels::Separable | Kernels::Dense | Kernels::WideDense => ModeSet::ALL,
             };
             grid_both(
                 &operator,
@@ -121,6 +122,68 @@ fn every_kernel_set_grids_data_psf_and_weight_like_the_cpu() {
                 &format!("{kernels:?} {basis:?} tiled {tiled}"),
             );
         }
+    }
+}
+
+/// A block gridded from parts ([`MetalBackend::apply_parts`]), one of them
+/// empty and the others cut across ring sub-blocks, grids as the CPU grids
+/// the whole block, in every mode, with `sumwt` summed in the same order.
+#[test]
+fn parts_grid_as_the_whole_block() {
+    for kernels in ALL_KERNELS {
+        let mut rng = Rng::new(23);
+        let operator = operator(kernels, Basis::ChannelLocal { planes: 3 }, &mut rng);
+        let Some(mut metal) = metal(&operator) else {
+            return;
+        };
+        let placed = placements(&operator, full(&operator), SAMPLES, 3, &mut rng);
+        let whole = block(&placed, &mut rng);
+        let whole = whole.block();
+        let parts = [0, 1_100, 1_100, 3_000, SAMPLES]
+            .windows(2)
+            .map(|cut| SampleBlock {
+                placements: &whole.placements[cut[0]..cut[1]],
+                values: &whole.values[cut[0] * 2..cut[1] * 2],
+                weights: &whole.weights[cut[0] * 2..cut[1] * 2],
+                sources: &[],
+                npol: 2,
+            })
+            .collect::<Vec<_>>();
+        let modes = match kernels {
+            Kernels::Spheroidal => ModeSet::DATA_PSF,
+            Kernels::Separable | Kernels::Dense | Kernels::WideDense => ModeSet::ALL,
+        };
+        let planes = PlaneRange::new(0, operator.basis().planes());
+        let mut cpu = operator.accumulator(planes, None, modes);
+        let mut device =
+            MetalBackend::accumulator(operator.accumulator_layout(planes, None, modes))
+                .expect("device");
+        for mode in [Mode::Data, Mode::Psf, Mode::Weight] {
+            if !modes.contains(mode) {
+                continue;
+            }
+            CpuBackend::new()
+                .apply(
+                    &whole,
+                    operator.cf(),
+                    Work::Grid {
+                        mode,
+                        acc: &mut cpu,
+                    },
+                )
+                .expect("cpu grid");
+            metal
+                .apply_parts(
+                    &parts,
+                    operator.cf(),
+                    Work::Grid {
+                        mode,
+                        acc: &mut device,
+                    },
+                )
+                .expect("metal grid");
+        }
+        assert_same_grids(&device, &cpu, &format!("{kernels:?} parts"));
     }
 }
 
@@ -168,6 +231,181 @@ fn predictions_match_the_cpu_for_both_tap_layouts() {
                 .expect("metal predict");
             assert_close(&device, &cpu, &format!("{kernels:?} {basis:?} prediction"));
         }
+    }
+}
+
+/// Native cells of the law below.
+const NATIVE_CELLS: usize = 3_000;
+
+/// Random native terms for every cell over a batch of `samples`
+/// predictions: endpoints in the batch or missing, every fifth term on one
+/// prediction (a nearest or direct channel), some polarizations flagged.
+fn native_terms(samples: usize, rng: &mut Rng) -> Vec<NativeTerm> {
+    let index = |rng: &mut Rng| {
+        if rng.next_u64().is_multiple_of(8) {
+            NO_CELL
+        } else {
+            (rng.next_u64() % samples as u64) as u32
+        }
+    };
+    (0..NATIVE_CELLS as u32)
+        .map(|cell| {
+            let low = index(rng);
+            let high = if cell % 5 == 0 { low } else { index(rng) };
+            NativeTerm {
+                cell,
+                low,
+                high,
+                fraction: rng.unit() as f32,
+                flags: if rng.next_u64().is_multiple_of(6) {
+                    (rng.next_u64() % 3 + 1) as u32
+                } else {
+                    0
+                },
+            }
+        })
+        .collect()
+}
+
+/// A block of random samples with random native endpoints, one endpoint
+/// for a third of them.
+fn sourced_block(operator: &MeasurementOperator, rng: &mut Rng) -> SampleBuffer {
+    let placed = placements(operator, full(operator), SAMPLES, 1, rng);
+    let plain = block(&placed, rng);
+    let mut sourced = SampleBuffer::new(2);
+    let cell = |rng: &mut Rng| (rng.next_u64() % NATIVE_CELLS as u64) as u32;
+    for (index, placement) in placed.iter().enumerate() {
+        let one = rng.next_u64().is_multiple_of(3);
+        let source = NativeSource {
+            cells: [cell(rng), if one { NO_CELL } else { cell(rng) }],
+            factors: [rng.unit() as f32, if one { 0.0 } else { rng.unit() as f32 }],
+            scale: Complex32::new(rng.signed() as f32, rng.signed() as f32),
+        };
+        let block = plain.block();
+        sourced.push_sourced(
+            *placement,
+            block.values_of(index),
+            block.weights_of(index),
+            source,
+        );
+    }
+    sourced
+}
+
+/// The model at native cells that two backends form, the first writing and
+/// the second adding, as a wave's domains do, and the residual a third
+/// grids against it with no host wait between them, equal the CPU's. The
+/// second batch has more sub-blocks than the ring holds, and a batch with
+/// no samples still writes its terms.
+#[test]
+fn native_models_and_residuals_match_the_cpu() {
+    for kernels in ALL_KERNELS {
+        let mut rng = Rng::new(47);
+        let operator = operator(kernels, TAYLOR, &mut rng);
+        let (Some(mut first), Some(mut second), Some(owner)) =
+            (metal(&operator), metal(&operator), metal(&operator))
+        else {
+            return;
+        };
+        let mut owner = owner.with_deferred_grid_completion();
+        let prepared = operator
+            .prepare_model(&model(&operator, &mut rng), ModelPrescale::Unit)
+            .expect("model");
+        let batches = [SAMPLES / 2 + 7, 7 * 32_768 + 5].map(|count| {
+            let placed = placements(&operator, full(&operator), count, 1, &mut rng);
+            block(&placed, &mut rng)
+        });
+        let terms = batches
+            .each_ref()
+            .map(|batch| native_terms(batch.len(), &mut rng));
+        let none = (0..NATIVE_CELLS as u32)
+            .map(|cell| NativeTerm {
+                cell,
+                low: NO_CELL,
+                high: NO_CELL,
+                ..NativeTerm::default()
+            })
+            .collect::<Vec<_>>();
+        let empty = SampleBuffer::new(2);
+        let rounds = [
+            (&batches[0], terms[0].as_slice()),
+            (&batches[1], terms[1].as_slice()),
+            (&empty, none.as_slice()),
+        ];
+        let mut cpu_model = vec![Complex32::default(); NATIVE_CELLS * 2];
+        let device = MetalBackend::native_cells(NATIVE_CELLS * 2).expect("native cells");
+        for (round, (batch, terms)) in rounds.into_iter().enumerate() {
+            let add = round > 0;
+            CpuBackend::new()
+                .apply(
+                    &batch.block(),
+                    operator.cf(),
+                    Work::PredictNative {
+                        grids: &prepared,
+                        terms,
+                        model: NativeTarget::Host {
+                            cells: &mut cpu_model,
+                            first: 0,
+                        },
+                        add,
+                    },
+                )
+                .expect("cpu native model");
+            let backend = if round == 1 { &mut second } else { &mut first };
+            backend
+                .apply(
+                    &batch.block(),
+                    operator.cf(),
+                    Work::PredictNative {
+                        grids: &prepared,
+                        terms,
+                        model: NativeTarget::Device(&device),
+                        add,
+                    },
+                )
+                .expect("metal native model");
+        }
+        let samples = sourced_block(&operator, &mut rng);
+        let planes = PlaneRange::new(0, operator.basis().planes());
+        let mut cpu = operator.accumulator(planes, None, ModeSet::DATA);
+        CpuBackend::new()
+            .apply(
+                &samples.block(),
+                operator.cf(),
+                Work::NativeResidualGrid {
+                    model: NativeModel::Host {
+                        cells: &cpu_model,
+                        first: 0,
+                    },
+                    acc: &mut cpu,
+                },
+            )
+            .expect("cpu native residual");
+        let mut metal =
+            MetalBackend::accumulator(operator.accumulator_layout(planes, None, ModeSet::DATA))
+                .expect("device accumulator");
+        owner
+            .apply(
+                &samples.block(),
+                operator.cf(),
+                Work::NativeResidualGrid {
+                    model: NativeModel::Device(&device),
+                    acc: &mut metal,
+                },
+            )
+            .expect("metal native residual");
+        for backend in [&mut first, &mut second, &mut owner] {
+            backend.complete().expect("device work");
+        }
+        // SAFETY: every backend that wrote the cells has completed, and none
+        // writes them again.
+        let device_model = unsafe { device.host_cells() };
+        assert_close(
+            device_model,
+            &cpu_model,
+            &format!("{kernels:?} native model"),
+        );
+        assert_same_grids(&metal, &cpu, &format!("{kernels:?} native residual"));
     }
 }
 

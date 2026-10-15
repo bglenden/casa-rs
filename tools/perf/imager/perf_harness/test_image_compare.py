@@ -592,6 +592,15 @@ class ImageComparisonProtocolTests(unittest.TestCase):
             (image / "table.info").write_text("Type = Image\nSubType = \n")
             self.assertEqual([".cf"], comparator.discover_product_inventory(root / "result"))
 
+    def test_run_summary_file_is_not_an_image_product(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            (root / "result.image").mkdir()
+            (root / "result.summary.json").write_text("{}\n")
+            self.assertEqual(
+                [".image"], comparator.discover_product_inventory(root / "result")
+            )
+
     def test_full_reducer_visits_every_element_within_chunk_budget(self) -> None:
         shape = (5, 4, 3)
         right = np.arange(np.prod(shape), dtype=np.float64).reshape(shape)

@@ -427,6 +427,9 @@ def normalized_source_regions(regions, products):
 
 
 def discover_product_inventory(prefix):
+    """Image products beside `prefix`: directories only, since every CASA
+    image is a table directory and files such as casars-imager's
+    `.summary.json` run summary are not products."""
     prefix_path = pathlib.Path(prefix)
     parent = prefix_path.parent
     stem = prefix_path.name
@@ -438,6 +441,7 @@ def discover_product_inventory(prefix):
         if path.name.startswith(stem)
         and path.name != stem
         and path.name[len(stem) :].startswith(".")
+        and path.is_dir()
         and not is_paired_cf_cache(path)
     )
 

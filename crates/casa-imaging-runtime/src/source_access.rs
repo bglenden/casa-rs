@@ -8,7 +8,7 @@ use casa_ms::{
     SelectedObservationContentBudget, SelectedObservationContentPlanError,
 };
 
-use crate::pass::{BlockShape, chunk_bytes_per_row, source_block_bytes};
+use crate::pass::{BlockShape, RowSamples, chunk_bytes_per_row, source_block_bytes};
 use crate::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit, free_memory};
 
 /// Relative allowance for the Doppler factor between the frame of a
@@ -116,18 +116,15 @@ pub enum SourceAccessError {
 /// ([`source_block_bytes`]); the source and that storage together grow by
 /// at most a quarter of what `policy` leaves free on `host` past the
 /// minimum, shared in proportion to their bytes per row, so the paged cube
-/// cache and the passes, admitted after them, keep the rest. A row places at
-/// most `row` samples ([`SpectralResampler::samples_per_row`] of
-/// [`row_layout`]), which the passes' row chunks hold until they reach their
-/// cap. The reservation holds the envelope the source plans and what the
-/// passes hold for its blocks, and the run keeps it while the source is
-/// open.
-///
-/// [`SpectralResampler::samples_per_row`]: casa_imaging_operator::SpectralResampler::samples_per_row
+/// cache and the passes, admitted after them, keep the rest. A row of
+/// [`row_layout`] produces at most `row` samples, which the passes' row
+/// chunks hold until they reach their cap. The reservation holds the
+/// envelope the source plans and what the passes hold for its blocks, and
+/// the run keeps it while the source is open.
 pub fn finalize_source_access(
     problem: &CompiledProblem,
     access: ResolvedSelectedObservationAccess,
-    row: usize,
+    row: RowSamples,
     host: &HostResources,
     policy: &ResourcePolicy,
 ) -> Result<(ResolvedSelectedObservationAccess, Reservation), SourceAccessError> {
@@ -152,9 +149,10 @@ pub fn finalize_source_access(
     let layout = row_layout(problem);
     let passes = |rows: usize| source_block_bytes(BlockShape { rows, ..layout });
     // The passes' row chunks also grow with the block, under the passes'
-    // own charge, until they reach their cap.
-    let passes_per_row =
-        passes(1) - passes(0) + chunk_bytes_per_row(layout, row, policy.workers(host));
+    // own charge, until they reach their cap; the passes stream on the
+    // allocation's streaming workers.
+    let workers = policy.cores(host).streaming_workers;
+    let passes_per_row = passes(1) - passes(0) + chunk_bytes_per_row(layout, row, workers);
     let unshared = requirements.plan(budget(bootstrap.min(quarter))?)?;
     let source_per_row =
         (unshared.maximum_resident_bytes() / unshared.rows_per_block().max(1)) as u64;

@@ -12,9 +12,9 @@ workspace = true
 
 [dependencies]
 casa-imaging-operator = { path = "../casa-imaging-operator" }
+num-complex.workspace = true
 
 [target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
-num-complex.workspace = true
 tracing.workspace = true
 objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString", "NSError"] }

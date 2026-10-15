@@ -12,7 +12,7 @@ use casa_imaging_operator::{
     MosaicWindow, PolarizationRouting, SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount,
     WPlanes,
 };
-use casa_imaging_runtime::pass::BackendChoice;
+use casa_imaging_runtime::pass::{BackendChoice, RowSamples};
 use casa_imaging_runtime::{
     Demand, FRAME_MARGIN, HostResources, Reservation, ResourcePolicy, admit, row_layout,
 };
@@ -61,11 +61,17 @@ pub(crate) fn selected_correlations(
     Ok(first)
 }
 
-/// The most samples a row of `problem`'s source places on any of its image
-/// domains, which share one resampler
-/// ([`SpectralResampler::samples_per_row`]).
-pub(crate) fn row_samples(problem: &CompiledProblem) -> Result<usize, ImagingError> {
-    Ok(resampler(problem, basis(problem)?)?.samples_per_row(row_layout(problem).spectrum))
+/// The most samples a row of `problem`'s source places and predicts on any
+/// of its image domains, which share one resampler
+/// ([`SpectralResampler::samples_per_row`],
+/// [`SpectralResampler::prediction_samples_per_row`]).
+pub(crate) fn row_samples(problem: &CompiledProblem) -> Result<RowSamples, ImagingError> {
+    let resampler = resampler(problem, basis(problem)?)?;
+    let spectrum = row_layout(problem).spectrum;
+    Ok(RowSamples {
+        placed: resampler.samples_per_row(spectrum),
+        predicted: resampler.prediction_samples_per_row(spectrum.channels),
+    })
 }
 
 /// The grid basis of the compiled reconstruction basis. A Taylor basis

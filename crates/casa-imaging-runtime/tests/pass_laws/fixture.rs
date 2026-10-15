@@ -11,7 +11,7 @@ use casa_imaging_operator::{
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockShape, BoundedSource, Cancel, DomainProjection, MajorCyclePass,
     ModelPreparation, NativeBlock, NativeRowHeader, Partition, PassDomain, PassError, PassSummary,
-    Residency, RowAddress, SourceError, WorkerTeam, run_major_cycle,
+    Residency, RowAddress, SourceError, WeightCache, WorkerTeam, run_major_cycle,
 };
 use ndarray::Array2;
 use num_complex::Complex32;
@@ -184,7 +184,7 @@ impl Rows {
 /// block's rows by baseline reorders them.
 pub fn context(index: usize) -> RowContext {
     RowContext {
-        original_w_m: None,
+        original_uvw_m: None,
         time_s: 0.0,
         antennas: [0, 1 + (index % 5) as u32],
         antenna_types: [0, 0],
@@ -354,11 +354,12 @@ pub struct Run<'a> {
     pub modes: ModeSet,
     pub native_spacing_hz: f64,
     pub backend: BackendChoice,
+    pub weights: Option<&'a WeightCache>,
 }
 
 impl Run<'_> {
     /// Data and PSF without a model, every plane resident, one worker, on
-    /// the CPU.
+    /// the CPU, weighing every sample.
     pub fn initial() -> Self {
         Self {
             residency: Residency::All,
@@ -367,6 +368,7 @@ impl Run<'_> {
             modes: ModeSet::DATA_PSF,
             native_spacing_hz: WIDTH_HZ,
             backend: BackendChoice::Cpu,
+            weights: None,
         }
     }
 }
@@ -388,6 +390,7 @@ pub fn try_run(
         native_spacing_hz: run.native_spacing_hz,
         backend: run.backend,
         metal_stage_timing: false,
+        weights: run.weights,
     };
     let team = WorkerTeam::new(run.workers).expect("team");
     let mut joined: Vec<Option<NormalImages>> = (0..domains.len()).map(|_| None).collect();
@@ -428,15 +431,17 @@ pub fn run(domains: &[PassDomain<'_>], source: &mut Rows, run: &Run<'_>) -> Vec<
     images
 }
 
-/// The largest absolute value of `images`' data planes, each divided by its
-/// `sumwt`.
-pub fn normalised_peak(images: &NormalImages) -> f64 {
+/// The largest absolute value of `images`' data planes, each divided by the
+/// `sumwt` of the same plane of `sums`: a pass without a model over the same
+/// rows, since a residual pass sums no weights. Every plane of `sums` must
+/// carry weight, so a pass that lost its weights cannot make the peak
+/// vanish.
+pub fn normalised_peak(images: &NormalImages, sums: &NormalImages) -> f64 {
+    assert_eq!(images.planes.len(), sums.planes.len());
     let mut peak = 0.0_f64;
     for plane in 0..images.planes.len() {
-        let sumwt = images.data_sumwt(plane, 0, 0);
-        if sumwt <= 0.0 {
-            continue;
-        }
+        let sumwt = sums.data_sumwt(plane, 0, 0);
+        assert!(sumwt > 0.0, "plane {plane} of the weighing pass has weight");
         let image = images.data(plane, 0, 0);
         peak = image
             .iter()

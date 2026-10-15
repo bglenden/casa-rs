@@ -54,6 +54,7 @@ use std::sync::{Arc, Mutex};
 #[cfg(unix)]
 mod content_requirements;
 mod t41_ephemeris_oracle;
+mod walk;
 
 /// Canonical model-lifecycle requirements for the fixture problems.
 fn model_lifecycle() -> ModelLifecycleRequirements {

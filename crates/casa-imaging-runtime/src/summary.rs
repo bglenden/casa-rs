@@ -29,10 +29,14 @@ pub struct Diagnostics {
     /// One event per phase ([`STAGE_TIMING`]): the [`Phase`] the summary
     /// records.
     pub stage_timing: bool,
-    /// One event per Metal gridding owner and wave
-    /// (`casa_imaging::metal_stage_timing`): whether its work completed, its
-    /// dispatches, samples and sub-blocks, the host's preparation time and
-    /// its waits for the device. A CPU run emits none.
+    /// One event per Metal backend and wave
+    /// (`casa_imaging::metal_stage_timing`), for each gridding owner and
+    /// each row chunk's prediction backend that dispatched: whether its work
+    /// completed, its dispatches, samples (and how many it predicted) and
+    /// sub-blocks, the host's preparation time and its waits for the device,
+    /// and the device's time on its commands; and one event per wave for the
+    /// pass's source stream: the producer's fill time and the pass's waits
+    /// for filled blocks. A CPU run emits none.
     pub metal_stage_timing: bool,
     /// The controller's science quantities ([`SCIENCE_TRACE`]): the
     /// residual statistics each cleaning decision reads, each minor cycle's

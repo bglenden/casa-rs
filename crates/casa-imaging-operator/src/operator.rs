@@ -132,7 +132,8 @@ pub struct NormalPlane {
     pub weight: Vec<Array2<f32>>,
     /// One `sumwt` per image, in the order `data`, `psf`, `weight`. A
     /// requested Stokes plane carries grid plane 0's `sumwt` (CASA
-    /// `ToStokesSumWt`).
+    /// `ToStokesSumWt`). Zero from an accumulator made
+    /// [`GridAccumulator::without_weight_sums`].
     pub sumwt: Vec<f64>,
 }
 

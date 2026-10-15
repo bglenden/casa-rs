@@ -28,7 +28,7 @@
     "minor_cycle_length": 25,
     "write_pb": true,
     "savemodel": "none",
-    "casa_pblimit": -0.2,
+    "pblimit": -0.2,
     "standard_mfs_acceleration": "cpu",
     "parallel": true
   },

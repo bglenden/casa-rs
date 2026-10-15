@@ -151,6 +151,7 @@ fn a_writing_pass_in_waves_is_a_typed_error() {
         native_spacing_hz: WIDTH_HZ,
         backend: BackendChoice::Cpu,
         metal_stage_timing: false,
+        weights: None,
     };
     let mut write = |_: &_, _: &[_]| -> Result<(), _> { panic!("nothing is written") };
     let mut sink = VisibilitySink {
@@ -214,6 +215,7 @@ fn a_writing_pass_hands_each_row_its_own_prediction() {
             native_spacing_hz: WIDTH_HZ,
             backend: BackendChoice::Cpu,
             metal_stage_timing: false,
+            weights: None,
         };
         let mut written = vec![None; expected.len()];
         let mut write = |block: &NativeBlock, predictions: &[Complex32]| {

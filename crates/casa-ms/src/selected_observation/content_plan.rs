@@ -634,6 +634,12 @@ fn retained_source_bytes(
                 .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
         );
     }
+    let walk_bytes = usize::try_from(source.selection().rows().selected_row_count())
+        .ok()
+        .and_then(|rows| {
+            BoundObservationSource::walk_bytes(source.selection().data_descriptions().len(), rows)
+        })
+        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let retained_bytes = shared_bytes
         .shared_measures_retained_bytes
         .checked_add(shared_bytes.shared_reference_data_retained_bytes)
@@ -643,6 +649,7 @@ fn retained_source_bytes(
         .and_then(|bytes| bytes.checked_add(manifest_bytes))
         .and_then(|bytes| bytes.checked_add(predicate_bytes))
         .and_then(|bytes| bytes.checked_add(coordinate_bytes))
+        .and_then(|bytes| bytes.checked_add(walk_bytes))
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     Ok((retained_bytes, spectral_scratch_bytes))
 }
