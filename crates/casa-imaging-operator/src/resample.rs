@@ -11,6 +11,8 @@
 
 mod prediction;
 
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use num_complex::{Complex32, Complex64};
 
 pub use self::prediction::{PlacedRow, PredictionScratch};
@@ -520,6 +522,36 @@ fn locate_sample(
     ))
 }
 
+/// Imaging weights kept for a directly sampled row across passes, one slot
+/// per native channel holding the weight's bits, zero for a sample the pass
+/// skips (flagged, off the grid or weighing nothing).
+///
+/// A pass over empty slots weighs every sample and keeps its weight; a pass
+/// over `filled` ones reads the weight in place of the flag test and the
+/// density lookup. The weights depend only on the row, the channel and the
+/// run's frozen weighting, so a later pass reads what the first computed.
+/// Slots are atomics so the rows of a block fill theirs from several
+/// threads.
+#[derive(Clone, Copy, Debug)]
+pub struct WeightSlots<'a> {
+    /// The row's slots, one per native channel.
+    pub slots: &'a [AtomicU32],
+    /// Whether an earlier pass filled them.
+    pub filled: bool,
+}
+
+impl WeightSlots<'_> {
+    fn weight(self, channel: usize) -> f32 {
+        f32::from_bits(self.slots[channel].load(Ordering::Relaxed))
+    }
+
+    fn keep(self, channel: usize, weight: f32) {
+        if weight > 0.0 {
+            self.slots[channel].store(weight.to_bits(), Ordering::Relaxed);
+        }
+    }
+}
+
 /// Turns native rows into placed, weighted samples for one operator.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpectralResampler {
@@ -555,6 +587,14 @@ impl SpectralResampler {
                 planes: output.channels,
             },
         }
+    }
+
+    /// Whether every native channel is one sample on its own
+    /// ([`Self::direct`]), so a row's samples are its channels and
+    /// [`WeightSlots`] can keep their weights.
+    #[must_use]
+    pub fn is_direct(&self) -> bool {
+        self.sampling == Sampling::Direct
     }
 
     /// The basis the resampler produces placements for.
@@ -661,26 +701,35 @@ impl SpectralResampler {
                 reason: "buffer polarizations must match the operator",
             });
         }
-        self.place_each(operator, weighting, row, |placement, values, weights| {
-            out.push(placement, values, weights);
-        })
+        self.place_each(
+            operator,
+            weighting,
+            row,
+            None,
+            |placement, values, weights| {
+                out.push(placement, values, weights);
+            },
+        )
     }
 
     /// [`Self::place`], handing each placed sample with its values and
     /// weights to `sample` instead of a buffer, so a caller that routes
-    /// samples among buffers copies each once.
+    /// samples among buffers copies each once. With `slots`, a directly
+    /// sampled row keeps or reads its samples' imaging weights there
+    /// ([`WeightSlots`]).
     pub fn place_each(
         &self,
         operator: &MeasurementOperator,
         weighting: &WeightingGeneration,
         row: &NativeRow<'_>,
+        slots: Option<WeightSlots<'_>>,
         mut sample: impl FnMut(Placement, &[Complex32], &[f32]),
     ) -> Result<(), OperatorError> {
         self.place_with(
             operator,
             weighting,
             row,
-            false,
+            (false, slots),
             |placement, values, weights, _, _| {
                 sample(placement, values, weights);
             },
@@ -701,13 +750,14 @@ impl SpectralResampler {
         weighting: &WeightingGeneration,
         row: &NativeRow<'_>,
         first_cell: u32,
+        slots: Option<WeightSlots<'_>>,
         mut sample: impl FnMut(Placement, &[Complex32], &[f32], NativeSource),
     ) -> Result<(), OperatorError> {
         self.place_with(
             operator,
             weighting,
             row,
-            true,
+            (true, slots),
             |placement, values, weights, source, scale| {
                 sample(
                     placement,
@@ -727,7 +777,7 @@ impl SpectralResampler {
         operator: &MeasurementOperator,
         weighting: &WeightingGeneration,
         row: &NativeRow<'_>,
-        narrow_scale: bool,
+        (narrow_scale, slots): (bool, Option<WeightSlots<'_>>),
         mut sample: impl FnMut(Placement, &[Complex32], &[f32], Source, Complex32),
     ) -> Result<(), OperatorError> {
         let npol = operator.polarization().correlations().len();
@@ -747,9 +797,24 @@ impl SpectralResampler {
         let mut weights = [0.0_f32; 4];
         let (values, weights) = (&mut values[..npol], &mut weights[..npol]);
         let mut placing = RowPlacing::new(cf, geometry, row);
+        // A directly sampled row's slot per native channel; other samplings
+        // weigh every pass.
+        let slots = slots.filter(|_| self.sampling == Sampling::Direct);
         self.for_each_sample(row, |plane, frequency_hz, source| {
-            if sample_flagged(row, npol, source) {
-                return;
+            let slot = match (slots, source) {
+                (Some(slots), Source::Channel(channel)) => Some((slots, channel)),
+                _ => None,
+            };
+            // A filled slot holds the weight this sample took, zero for a
+            // flagged sample, one off the grid or one weighing nothing.
+            let kept = slot
+                .filter(|(slots, _)| slots.filled)
+                .map(|(slots, channel)| slots.weight(channel));
+            match kept {
+                Some(weight) if weight <= 0.0 => return,
+                Some(_) => {}
+                None if sample_flagged(row, npol, source) => return,
+                None => {}
             }
             let Some((placement, _)) = locate_sample(
                 cf,
@@ -762,7 +827,13 @@ impl SpectralResampler {
             ) else {
                 return;
             };
-            let weight = sample_weight(weighting, row, npol, source, &placement, density_axis);
+            let weight = kept.unwrap_or_else(|| {
+                let weight = sample_weight(weighting, row, npol, source, &placement, density_axis);
+                if let Some((slots, channel)) = slot {
+                    slots.keep(channel, weight);
+                }
+                weight
+            });
             if weight <= 0.0 {
                 return;
             }

@@ -20,6 +20,7 @@ mod partition;
 mod stream;
 mod team;
 mod wave;
+mod weights;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,6 +34,7 @@ use casa_imaging_operator::{
 pub use block::{BlockShape, DomainProjection, NativeBlock, NativeRowHeader, RowAddress};
 pub use partition::{Partition, Region, Residency, WaveDemand};
 pub use team::{WORKER_STACK_BYTES, WorkerTeam};
+pub use weights::WeightCache;
 
 use stream::stream_blocks;
 use wave::Wave;
@@ -207,6 +209,19 @@ pub struct MajorCyclePass<'a> {
     /// Whether each Metal owner logs its timing when the pass ends
     /// ([`crate::Diagnostics::metal_stage_timing`]).
     pub metal_stage_timing: bool,
+    /// The run's kept imaging weights, which a single-wave pass over one
+    /// image domain fills or reads ([`WeightCache`]).
+    pub weights: Option<&'a WeightCache>,
+}
+
+impl MajorCyclePass<'_> {
+    /// The kept weights this pass fills or reads: one wave over one image
+    /// domain meets every row of every block, so its slots line up pass to
+    /// pass.
+    fn weight_cache(&self) -> Option<&WeightCache> {
+        self.weights
+            .filter(|_| self.residency == Residency::All && self.domains.len() == 1)
+    }
 }
 
 /// Whether a pass over `domains` forms its residual at native channels: with
@@ -330,6 +345,9 @@ pub fn run_major_cycle(
         for (domain, domain_images) in wave.finish(team)?.into_iter().enumerate() {
             images(domain, domain_images)?;
         }
+    }
+    if let Some(cache) = pass.weight_cache() {
+        cache.mark_filled();
     }
     Ok(summary)
 }

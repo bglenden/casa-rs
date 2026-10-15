@@ -76,7 +76,7 @@ pub use operator::{
 pub use polarization::{FeedBasis, GridPolarization, PolarizationRouting};
 pub use resample::{
     NativeRow, PlacedRow, PredictionScratch, RowSpectrum, SpectralAxis, SpectralKernel,
-    SpectralResampler,
+    SpectralResampler, WeightSlots,
 };
 pub use sample::{CfKey, Placement, SampleBlock, SampleBuffer};
 pub use spheroidal::{SPHEROIDAL_OVERSAMPLING, SPHEROIDAL_SUPPORT, Spheroidal, grdsf};

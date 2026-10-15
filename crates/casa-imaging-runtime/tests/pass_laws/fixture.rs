@@ -11,7 +11,7 @@ use casa_imaging_operator::{
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockShape, BoundedSource, Cancel, DomainProjection, MajorCyclePass,
     ModelPreparation, NativeBlock, NativeRowHeader, Partition, PassDomain, PassError, PassSummary,
-    Residency, RowAddress, SourceError, WorkerTeam, run_major_cycle,
+    Residency, RowAddress, SourceError, WeightCache, WorkerTeam, run_major_cycle,
 };
 use ndarray::Array2;
 use num_complex::Complex32;
@@ -354,11 +354,12 @@ pub struct Run<'a> {
     pub modes: ModeSet,
     pub native_spacing_hz: f64,
     pub backend: BackendChoice,
+    pub weights: Option<&'a WeightCache>,
 }
 
 impl Run<'_> {
     /// Data and PSF without a model, every plane resident, one worker, on
-    /// the CPU.
+    /// the CPU, weighing every sample.
     pub fn initial() -> Self {
         Self {
             residency: Residency::All,
@@ -367,6 +368,7 @@ impl Run<'_> {
             modes: ModeSet::DATA_PSF,
             native_spacing_hz: WIDTH_HZ,
             backend: BackendChoice::Cpu,
+            weights: None,
         }
     }
 }
@@ -388,6 +390,7 @@ pub fn try_run(
         native_spacing_hz: run.native_spacing_hz,
         backend: run.backend,
         metal_stage_timing: false,
+        weights: run.weights,
     };
     let team = WorkerTeam::new(run.workers).expect("team");
     let mut joined: Vec<Option<NormalImages>> = (0..domains.len()).map(|_| None).collect();

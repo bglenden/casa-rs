@@ -8,7 +8,8 @@ use casa_imaging_operator::{
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockShape, BoundedSource, Cancel, MajorCyclePass, NativeBlock, Partition,
-    PassDomain, PassError, Residency, SourceError, WorkerTeam, run_density_pass, run_major_cycle,
+    PassDomain, PassError, Residency, SourceError, WeightCache, WorkerTeam, run_density_pass,
+    run_major_cycle,
 };
 use num_complex::Complex32;
 
@@ -118,6 +119,35 @@ fn streamed_density_grid_equals_the_one_shot_build() {
     }
 }
 
+/// Kept weights place exactly what weighing places: the pass that fills the
+/// cache and the passes that read it grid the same images, bit for bit, as
+/// one that weighs every sample, flagged samples included.
+#[test]
+fn kept_weights_grid_exactly_what_weighing_grids() {
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let mut rows = Rows::random(300, 43, operator.geometry());
+    let reference = run(
+        &[planes(&operator, &resampler, 1)],
+        &mut rows,
+        &Run::initial(),
+    );
+    let cache = WeightCache::new(rows.rows.len() * CHANNELS);
+    for (pass, workers) in [(0, 1), (1, 3), (2, 1)] {
+        let images = run(
+            &[planes(&operator, &resampler, 1)],
+            &mut rows,
+            &Run {
+                workers,
+                weights: Some(&cache),
+                ..Run::initial()
+            },
+        );
+        assert_eq!(images, reference, "pass {pass}, {workers} workers");
+        assert!(cache.filled(), "a complete pass fills the cache");
+    }
+}
+
 #[test]
 fn a_cancelled_pass_stops_with_a_typed_error() {
     let operator = operator(GridPrecision::F64, Basis::Constant);
@@ -134,6 +164,7 @@ fn a_cancelled_pass_stops_with_a_typed_error() {
         native_spacing_hz: WIDTH_HZ,
         backend: BackendChoice::Cpu,
         metal_stage_timing: false,
+        weights: None,
     };
     let cancel = Cancel::new();
     cancel.cancel();
@@ -194,6 +225,7 @@ fn a_pass_cancelled_midway_reads_no_further_block() {
         native_spacing_hz: WIDTH_HZ,
         backend: BackendChoice::Cpu,
         metal_stage_timing: false,
+        weights: None,
     };
     for workers in [1, 3] {
         let cancel = Cancel::new();

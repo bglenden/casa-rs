@@ -16,7 +16,7 @@ use num_complex::Complex32;
 use super::partition::Router;
 use super::{
     BackendChoice, BlockShape, MajorCyclePass, NativeBlock, Partition, PassDomain, PassError,
-    VisibilitySink, WorkerTeam, chunk_placements, chunk_ranges, chunk_rows, slices,
+    VisibilitySink, WeightCache, WorkerTeam, chunk_placements, chunk_ranges, chunk_rows, slices,
 };
 
 /// Row chunks per worker in the placement stage; enough to balance rows
@@ -313,6 +313,10 @@ pub(super) struct Wave<'w, 'p> {
     predictors: Vec<Vec<Predictor<'w>>>,
     predictions: NativeStore,
     samples: u64,
+    /// The pass's kept weights and whether an earlier pass filled them.
+    weights: Option<(&'w WeightCache, bool)>,
+    /// The slot of the next block's first sample.
+    weight_base: usize,
 }
 
 impl<'w, 'p> Wave<'w, 'p> {
@@ -411,6 +415,8 @@ impl<'w, 'p> Wave<'w, 'p> {
                 .collect::<Result<_, _>>()?,
             predictions,
             samples: 0,
+            weights: pass.weight_cache().map(|cache| (cache, cache.filled())),
+            weight_base: 0,
         })
     }
 
@@ -518,6 +524,7 @@ impl<'w, 'p> Wave<'w, 'p> {
                 }
             }
         }
+        self.weight_base += rows * block.channels();
         Ok(())
     }
 
@@ -544,6 +551,9 @@ impl<'w, 'p> Wave<'w, 'p> {
         // With region owners the weight image has one owner, which must see
         // every placement; plane owners grid their own samples' weights.
         let route_weight = pass.modes.weight && router.weight_owner().is_some();
+        // A row's kept weights, at its slots from the block's (one domain).
+        let weights = self.weights.filter(|_| index == 0);
+        let weight_base = self.weight_base;
         team.for_each_mut(&mut self.chunks[..count], |_, chunk| {
             chunk.placed = 0;
             chunk.owned[..owners]
@@ -551,7 +561,11 @@ impl<'w, 'p> Wave<'w, 'p> {
                 .for_each(SampleBuffer::clear);
             chunk.weight_owned.clear();
             for position in chunk.rows.clone() {
-                let native = block.row(index, row_at(block, ordered, position));
+                let row_index = row_at(block, ordered, position);
+                let native = block.row(index, row_index);
+                let slots = weights.and_then(|(cache, filled)| {
+                    cache.row(weight_base + row_index * channels, channels, filled)
+                });
                 let mut row_samples = 0;
                 let (owned, weight_owned, placed) =
                     (&mut chunk.owned, &mut chunk.weight_owned, &mut chunk.placed);
@@ -572,6 +586,7 @@ impl<'w, 'p> Wave<'w, 'p> {
                         pass.weighting,
                         &native,
                         cell_of(position, channels),
+                        slots,
                         |placement, values, weights, source| {
                             if let Some(owner) = keep(&placement, values, weights) {
                                 owned[owner].push_sourced(placement, values, weights, source);
@@ -583,6 +598,7 @@ impl<'w, 'p> Wave<'w, 'p> {
                         target.operator,
                         pass.weighting,
                         &native,
+                        slots,
                         |placement, values, weights| {
                             if let Some(owner) = keep(&placement, values, weights) {
                                 owned[owner].push(placement, values, weights);

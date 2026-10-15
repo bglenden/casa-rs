@@ -23,8 +23,8 @@ use casa_imaging_reconstruction::{
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, BoundedSource, Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain,
-    PassError, PassSummary, Residency, VisibilitySink, WaveDemand, WorkerTeam, density_pass_bytes,
-    run_density_pass, run_major_cycle,
+    PassError, PassSummary, Residency, VisibilitySink, WaveDemand, WeightCache, WorkerTeam,
+    density_pass_bytes, run_density_pass, run_major_cycle,
 };
 use casa_imaging_runtime::{
     CubeState, Demand, Diagnostics, HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache,
@@ -110,6 +110,9 @@ struct Run<'a> {
     /// The charge of the memory the latest completion holds resident (its
     /// normal state and model), held while it lives.
     retained: Reservation,
+    /// The imaging weights the run keeps for its samples across passes,
+    /// with their charge, once a pass has admitted them ([`Run::keep_weights`]).
+    kept_weights: Option<(WeightCache, Reservation)>,
 }
 
 /// One reconciled major cycle.
@@ -491,6 +494,7 @@ impl<'a> Run<'a> {
             planes_per_wave: None,
             weight_image,
             retained: Reservation::none(),
+            kept_weights: None,
         };
         if run.visibility_write.is_some() {
             // The pass that writes is the initial one without cleaning and a
@@ -703,6 +707,36 @@ impl<'a> Run<'a> {
         Ok((residency, reservation))
     }
 
+    /// Keep the imaging weights of every sample across passes (#659) when a
+    /// single-wave pass places one image domain's rows a channel at a time
+    /// and the slots, four bytes per selected (row, channel), take at most a
+    /// sixteenth of the free memory; charged before they are allocated.
+    /// Wider runs weigh every pass.
+    fn keep_weights(&self, residency: Residency) -> Option<(WeightCache, Reservation)> {
+        if residency != Residency::All
+            || self.domains.len() != 1
+            || !self.domains[0].resampler.is_direct()
+        {
+            return None;
+        }
+        let rows = self
+            .problem
+            .observation()
+            .sources()
+            .iter()
+            .map(|source| source.selection().rows().selected_row_count())
+            .sum::<u64>();
+        let samples = usize::try_from(rows)
+            .ok()?
+            .checked_mul(self.source.maximum_block().channels())?;
+        let bytes = WeightCache::bytes(samples);
+        if bytes > free_memory(&self.host, &self.policy) / 16 {
+            return None;
+        }
+        let charge = self.admit("kept imaging weights", bytes).ok()?;
+        Some((WeightCache::new(samples), charge))
+    }
+
     /// One pass over every image domain, appending its images to `state`.
     fn pass(
         &mut self,
@@ -713,6 +747,9 @@ impl<'a> Run<'a> {
         initial: bool,
         mut writer: Option<&mut VisibilityWriter<'_>>,
     ) -> Result<PassSummary, ImagingError> {
+        if self.kept_weights.is_none() {
+            self.kept_weights = self.keep_weights(residency);
+        }
         let domains = pass_domains(&self.domains, self.team.workers());
         let prepare = |domain: usize, planes: PlaneRange| {
             let generation = model.expect("the closure is installed only with a model");
@@ -728,6 +765,7 @@ impl<'a> Run<'a> {
             native_spacing_hz: self.native_spacing_hz,
             backend: self.backend,
             metal_stage_timing: self.metal_stage_timing,
+            weights: self.kept_weights.as_ref().map(|(cache, _)| cache),
         };
         let predictions = writer.as_deref().map(VisibilityWriter::needs_predictions);
         let mut write = |block: &_, predictions: &[_]| match writer.as_deref_mut() {
