@@ -1071,8 +1071,10 @@ impl MetalBackend<'_> {
             .expect("the Metal backend forms the model in cells from MetalBackend::native_cells");
         let bytes = block.len() * block.npol * size_of::<Complex32>();
         if self.batch.bytes < bytes {
-            // Commands still running keep the old buffer.
-            self.batch = self.device.buffer(bytes.max(2 * self.batch.bytes))?;
+            // Exactly the block, so the batch stays within its charge
+            // (`batch_bytes` of the largest block); commands still running
+            // keep the old buffer.
+            self.batch = self.device.buffer(bytes)?;
         }
         let targets = Targets {
             kind: TapsKind::Imaging,

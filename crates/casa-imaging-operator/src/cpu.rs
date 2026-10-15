@@ -44,6 +44,16 @@ impl CpuBackend {
         Self::default()
     }
 
+    /// Bytes the backend keeps after blocks of at most `samples` placements
+    /// of `npol` correlations: its batch, which holds a block's native
+    /// predictions ([`Work::PredictNative`]) or its residual values at
+    /// native channels ([`Work::NativeResidualGrid`]) and is sized to the
+    /// largest block it has served.
+    #[must_use]
+    pub const fn batch_bytes(npol: usize, samples: usize) -> u64 {
+        (samples * npol * size_of::<Complex32>()) as u64
+    }
+
     fn grid<T: GridScalar>(
         &mut self,
         block: &SampleBlock<'_>,
@@ -331,6 +341,9 @@ impl GridBackend for CpuBackend {
                 };
                 let mut predicted = std::mem::take(&mut self.batch);
                 predicted.clear();
+                // Exactly the block: the pass charges the largest block's
+                // batch ([`CpuBackend::batch_bytes`]).
+                predicted.reserve_exact(block.len() * block.npol);
                 predicted.resize(block.len() * block.npol, Complex32::default());
                 match grids.precision() {
                     GridPrecision::F32 => self.predict::<f32>(block, cf, grids, &mut predicted),
@@ -368,6 +381,7 @@ impl CpuBackend {
         let npol = block.npol;
         let mut values = std::mem::take(&mut self.batch);
         values.clear();
+        values.reserve_exact(block.len() * npol);
         values.resize(block.len() * npol, Complex32::default());
         for (index, (source, out)) in block
             .sources
@@ -421,6 +435,10 @@ fn spread_sample<T: GridScalar>(
         // One value per Mueller plane this grid polarization takes.
         let mut planes = [(0_u8, Complex64::default()); 4];
         let mut used = 0;
+        debug_assert!(
+            row.len() <= planes.len(),
+            "a routing row carries at most four visibility polarizations"
+        );
         for (vpol, mueller_plane) in row.iter().enumerate() {
             let Some(mueller) = *mueller_plane else {
                 continue;

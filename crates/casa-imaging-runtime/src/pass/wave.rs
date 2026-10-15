@@ -257,11 +257,14 @@ const fn chunks(workers: usize) -> usize {
 }
 
 /// Bytes a wave places with on `workers` workers over blocks of `block`,
-/// gridding the weight image when `weight`: its row chunks and, on Metal
-/// with a model, each chunk's predictors' rings and prediction batches
-/// ([`casa_imaging_metal::ring_bytes`],
-/// [`casa_imaging_metal::batch_bytes`]). They grow with the source's block
-/// only up to [`CHUNK_PLACEMENTS`](super::CHUNK_PLACEMENTS) a chunk.
+/// gridding the weight image when `weight`: its row chunks and, with a
+/// model, its backends' batches. On Metal each chunk's predictors keep a
+/// ring and a prediction batch ([`casa_imaging_metal::ring_bytes`],
+/// [`casa_imaging_metal::batch_bytes`]); on the CPU each chunk's predictors
+/// keep their batch's predictions, and each owner of a pass forming
+/// residuals at native channels the residual values of a chunk's
+/// placements ([`CpuBackend::batch_bytes`]). They grow with the source's
+/// block only up to [`CHUNK_PLACEMENTS`](super::CHUNK_PLACEMENTS) a chunk.
 pub(super) fn chunk_bytes(
     domains: &[PassDomain<'_>],
     backend: BackendChoice,
@@ -274,6 +277,18 @@ pub(super) fn chunk_bytes(
     let sourced = super::native_residuals(domains, with_model);
     let shape = ChunkShape::new(domains, block, weight, sourced, count);
     let device = match backend {
+        BackendChoice::Cpu if with_model => {
+            let owners = if sourced {
+                domains
+                    .iter()
+                    .map(|domain| domain.partition.owners())
+                    .sum::<usize>()
+            } else {
+                0
+            };
+            (count * domains.len()) as u64 * CpuBackend::batch_bytes(shape.npol, shape.predicted)
+                + owners as u64 * CpuBackend::batch_bytes(shape.npol, shape.placements)
+        }
         BackendChoice::Cpu => 0,
         BackendChoice::Metal if with_model => {
             (count * domains.len()) as u64
