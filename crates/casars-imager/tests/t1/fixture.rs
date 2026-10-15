@@ -326,11 +326,14 @@ impl Observation {
         controls: Value,
     ) -> Result<(ImagerRunReport, Products), String> {
         let image_name = self.root.path().join(name);
+        // The CPU unless `controls` name a backend: the catalog's `auto`
+        // would move a law onto the GPU wherever the host has one.
         let mut parameters = json!({
             "vis": self.measurement_set,
             "imagename": image_name,
             "imsize": self.geometry.image_size,
             "cell": format!("{}arcsec", self.geometry.cell_arcsec),
+            "backend": "cpu",
         });
         let fields = parameters.as_object_mut().expect("parameters object");
         for (key, value) in controls.as_object().expect("controls object") {

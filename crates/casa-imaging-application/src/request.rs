@@ -16,7 +16,6 @@ use casa_imaging_model::{
     HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, RestoringBeamPolicy,
 };
 use casa_imaging_operator::GridPrecision;
-use casa_imaging_runtime::pass::BackendChoice;
 use casa_imaging_runtime::{Diagnostics, ResourcePolicy};
 use casa_ms::CubeInterpolation;
 use casa_types::measures::{doppler::DopplerRef, frequency::FrequencyRef};
@@ -191,8 +190,9 @@ pub struct ImagingRequest {
     pub save_continuum_residual: bool,
     /// Use the host's workers (the balanced policy) instead of one.
     pub parallel: bool,
-    /// Where the major-cycle passes grid.
-    pub backend: BackendChoice,
+    /// Where the major-cycle passes grid, resolved against the compiled
+    /// problem and the host by [`crate::availability::resolve_backend`].
+    pub backend: BackendRequest,
     /// Grid arithmetic; `None` (`auto`) is plan decision D2's rule.
     #[serde(deserialize_with = "grid_precision")]
     pub gridprecision: Option<GridPrecision>,
@@ -200,6 +200,25 @@ pub struct ImagingRequest {
     /// `metal_stage_timing` and `science_trace`.
     #[serde(flatten)]
     pub diagnostics: Diagnostics,
+}
+
+/// The device a request asks to grid on (`backend`).
+///
+/// `auto` takes the host's GPU for what it implements and has been checked
+/// on, end to end, against the CPU; everything else grids on the CPU. The
+/// GPU accumulates in `f32` (plan decision D2), so choosing it accepts
+/// single-precision grids, and an explicit `gridprecision = f64` keeps
+/// `auto` on the CPU.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BackendRequest {
+    /// The GPU where it runs the problem, else the CPU.
+    #[default]
+    Auto,
+    /// The CPU.
+    Cpu,
+    /// The host's GPU (Metal on macOS); a problem it cannot run is refused.
+    Gpu,
 }
 
 /// Visibility column imaged.
@@ -893,6 +912,8 @@ pub(crate) mod tests {
                 facets: NonZeroUsize::MIN
             }
         );
+        assert_eq!(request.backend, BackendRequest::Auto);
+        assert_eq!(request.gridprecision, None);
         assert_eq!(
             request.diagnostics,
             Diagnostics {

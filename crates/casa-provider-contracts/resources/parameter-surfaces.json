@@ -7936,7 +7936,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 23,
+      "contract_version": 24,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -11020,14 +11020,14 @@
           "name": "backend",
           "concept": {
             "id": "parameter.backend",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 102,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "cpu"
+              "value": "auto"
             }
           },
           "required_when": {

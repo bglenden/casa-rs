@@ -3962,7 +3962,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Grid arithmetic: auto, f32 or f64",
-        "details": "auto grids in f64 on the CPU, as CASA does, and in f32 on Metal; f32 halves the memory of every grid, at the cost of a running sum that drifts with the number of samples each grid cell takes. Metal accumulates in f32 only, so f64 is refused with backend = metal.",
+        "details": "auto grids in f64 on the CPU, as CASA does, and in f32 on Metal; f32 halves the memory of every grid, at the cost of a running sum that drifts with the number of samples each grid cell takes. Metal accumulates in f32 only, so f64 keeps backend = auto on the CPU and is refused with backend = gpu.",
         "examples": [
           "auto",
           "f32"
@@ -4007,7 +4007,7 @@
       "semantic_role": "presentation",
       "documentation": {
         "summary": "Log the Metal backend's timing for each gridding owner, prediction batch and wave",
-        "details": "With backend = metal, each Metal backend that dispatched logs at INFO, under target casa_imaging::metal_stage_timing, when its wave of a pass ends: each gridding owner, and each row chunk's backend that predicts the model of a native-channel residual. It logs whether its work completed, its dispatches, samples (of which predicted) and sub-blocks (counted as requested, so a failed backend's include work never done), the kernel cells it uploaded, the host's preparation time and its waits for the device, and the device's time on its commands (summed per command, so concurrent backends' sums can exceed the wall time, and the span from the first command's start to the last one's end). Each wave also logs its source stream: the blocks, the producer's time filling them and how long the pass waited for a filled block. A CPU run logs nothing.",
+        "details": "When the run grids on Metal (backend = gpu, or auto on the GPU), each Metal backend that dispatched logs at INFO, under target casa_imaging::metal_stage_timing, when its wave of a pass ends: each gridding owner, and each row chunk's backend that predicts the model of a native-channel residual. It logs whether its work completed, its dispatches, samples (of which predicted) and sub-blocks (counted as requested, so a failed backend's include work never done), the kernel cells it uploaded, the host's preparation time and its waits for the device, and the device's time on its commands (summed per command, so concurrent backends' sums can exceed the wall time, and the span from the first command's start to the last one's end). Each wave also logs its source stream: the blocks, the producer's time filling them and how long the pass waited for a filled block. A CPU run logs nothing.",
         "examples": [
           "true"
         ]
@@ -7557,13 +7557,14 @@
     },
     {
       "id": "parameter.backend",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "backend",
       "value_domain": {
         "kind": "choice",
         "values": [
+          "auto",
           "cpu",
-          "metal"
+          "gpu"
         ]
       },
       "normalization": {
@@ -7573,11 +7574,12 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Gridding backend of the major-cycle passes: cpu, or metal on macOS",
-        "details": "metal grids every image in f32 on the Metal device and needs a unified-memory Metal 3 GPU; placement and native-channel predictions stay on the CPU workers.",
+        "summary": "Device the major-cycle passes grid on: auto, cpu or gpu",
+        "details": "auto grids on the GPU where it runs the request and on the CPU otherwise; the run summary records which. gpu is Metal on macOS, needs a unified-memory Metal 3 device, grids in f32 and runs the standard gridder (W projection, mosaic and AW projection run on the CPU); a request it cannot run is refused. Choosing the GPU accepts f32 grids, so an explicit gridprecision = f64 keeps auto on the CPU. auto keeps outlier fields on the CPU. Placement and native-channel predictions stay on the CPU workers.",
         "examples": [
+          "auto",
           "cpu",
-          "metal"
+          "gpu"
         ]
       },
       "persistence_class": "profile"

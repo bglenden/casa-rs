@@ -112,13 +112,16 @@ mod tests {
             .iter()
             .find(|argument| argument.id == "backend")
             .expect("backend argument");
-        assert_eq!(backend.default.as_deref(), Some("cpu"));
+        assert_eq!(backend.default.as_deref(), Some("auto"));
         assert!(!backend.advanced);
         let UiArgumentParser::Option { flags, choices, .. } = &backend.parser else {
             panic!("backend should use an option parser");
         };
         assert_eq!(flags, &vec!["--backend".to_string()]);
-        assert_eq!(choices, &vec!["cpu".to_string(), "metal".to_string()]);
+        assert_eq!(
+            choices,
+            &vec!["auto".to_string(), "cpu".to_string(), "gpu".to_string()]
+        );
 
         let stokes = schema
             .arguments

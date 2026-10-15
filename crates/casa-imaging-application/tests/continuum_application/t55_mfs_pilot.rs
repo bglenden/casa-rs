@@ -30,10 +30,13 @@ fn full_field_application() {
     assert!(cell_arcsec.is_finite() && cell_arcsec > 0.0);
     let spectral_window = std::env::var("CASA_RS_MFS_SPW").unwrap_or_else(|_| "0~31".into());
     let backend = std::env::var("CASA_RS_MFS_BACKEND").unwrap_or_else(|_| "cpu".into());
-    assert!(
-        ["cpu", "metal"].contains(&backend.as_str()),
-        "CASA_RS_MFS_BACKEND must be cpu or metal, not {backend}"
-    );
+    // `metal` is what the pilot's recorded checkpoint runs passed for
+    // `backend = gpu` (imager contract 23 and earlier); it still selects it.
+    let requested = match backend.as_str() {
+        "cpu" => "cpu",
+        "gpu" | "metal" => "gpu",
+        other => panic!("CASA_RS_MFS_BACKEND must be cpu, gpu or metal, not {other}"),
+    };
     assert!([1, 4].contains(&workers));
     assert!((1..=4).contains(&terms));
     fs::create_dir(&root).expect("fresh durable output");
@@ -59,7 +62,7 @@ fn full_field_application() {
             "psfcutoff": 0.35,
             "pblimit": -0.2,
             "write_pb": true,
-            "backend": backend,
+            "backend": requested,
         }),
     );
     fs::write(root.join("request.txt"), format!("{imaging:#?}\n")).unwrap();

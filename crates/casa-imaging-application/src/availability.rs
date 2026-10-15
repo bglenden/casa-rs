@@ -12,6 +12,8 @@ use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::HostResources;
 use casa_imaging_runtime::pass::BackendChoice;
 
+use crate::BackendRequest;
+
 /// One reason the installed implementation cannot run a problem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Unsupported {
@@ -99,6 +101,41 @@ impl fmt::Display for ImplementationUnavailable {
 }
 
 impl Error for ImplementationUnavailable {}
+
+/// The device `requested` resolves to for `problem` at `precision` on
+/// `host`. `cpu` and `gpu` are taken as asked ([`check`] refuses a `gpu`
+/// request the device cannot run). `auto` takes the GPU where [`check`]
+/// admits the problem there and the GPU route has been compared with the
+/// CPU's end to end ([`gpu_checked`]), and the CPU otherwise: off macOS,
+/// without a device, for the W, mosaic and AW kernel sets, and for an
+/// explicit `gridprecision = f64`.
+#[must_use]
+pub fn resolve_backend(
+    problem: &CompiledProblem,
+    requested: BackendRequest,
+    precision: Option<GridPrecision>,
+    host: &HostResources,
+) -> BackendChoice {
+    match requested {
+        BackendRequest::Cpu => BackendChoice::Cpu,
+        BackendRequest::Gpu => BackendChoice::Metal,
+        BackendRequest::Auto
+            if gpu_checked(problem)
+                && check(problem, BackendChoice::Metal, precision, host).is_ok() =>
+        {
+            BackendChoice::Metal
+        }
+        BackendRequest::Auto => BackendChoice::Cpu,
+    }
+}
+
+/// Whether the T1 Metal laws compare `problem`'s GPU route with the CPU's:
+/// one image domain, with or without facets, in any basis. Outlier fields
+/// grid on the GPU when asked for, but `auto` keeps them on the CPU until a
+/// Metal law covers them.
+fn gpu_checked(problem: &CompiledProblem) -> bool {
+    problem.geometry().domains().len() == 1
+}
 
 /// Require the installed implementation to run `problem` on `backend` at
 /// `precision` (`None` for plan decision D2's rule) on `host`.

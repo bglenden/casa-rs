@@ -3192,7 +3192,7 @@ final class WorkbenchStoreTests: XCTestCase {
             "--weighting", "briggsbwtaper",
             "--perchanweightdensity",
             "--gridder", "wproject",
-            "--backend", "metal",
+            "--backend", "gpu",
             "--write-pb",
             "--pbcor"
         ]

@@ -43,7 +43,8 @@ use casa_types::measures::{MeasuresProvider, frame::MeasFrame};
 
 use crate::{
     ApplicationNative, ApplicationPublication, ApplicationRuntime, AwCatalogDeployment, AwCfSource,
-    AwProjection, Deconvolver, Gridder, ImagingRequest, NativeAwCachePolicy, RunContext, SpecMode,
+    AwProjection, BackendChoice, Deconvolver, Gridder, ImagingRequest, NativeAwCachePolicy,
+    RunContext, SpecMode,
 };
 use direction::{Centre, ImageSpectralCoordinate};
 use domains::PreparedImageDomain;
@@ -426,9 +427,10 @@ struct AwPlan {
 
 impl Deployment {
     /// Create every domain's output directory, settle the spill directory
-    /// beside the main image and bring a native AW cache to the request's
-    /// policy.
-    pub(crate) fn deploy(self) -> Result<ApplicationNative, PrepareError> {
+    /// beside the main image, bring a native AW cache to the request's
+    /// policy and grid on `backend`, the device the request resolved to on
+    /// the compiled problem ([`crate::availability::resolve_backend`]).
+    pub(crate) fn deploy(self, backend: BackendChoice) -> Result<ApplicationNative, PrepareError> {
         for directory in &self.output_directories {
             std::fs::create_dir_all(directory).map_err(|source| PrepareError::OutputDirectory {
                 path: directory.clone(),
@@ -436,6 +438,7 @@ impl Deployment {
             })?;
         }
         let mut runtime = self.runtime;
+        runtime.backend = backend;
         runtime.spill_directory = runtime.spill_directory.canonicalize().map_err(|source| {
             PrepareError::OutputDirectory {
                 path: runtime.spill_directory.clone(),
@@ -510,7 +513,8 @@ fn deployment(
         runtime: ApplicationRuntime {
             host: context.host,
             resource_policy: context.policy,
-            backend: request.backend,
+            // Resolved on the compiled problem; set by `Deployment::deploy`.
+            backend: BackendChoice::Cpu,
             grid_precision: request.gridprecision,
             cancel: context.cancel.clone(),
             spill_directory: parent(&request.imagename),

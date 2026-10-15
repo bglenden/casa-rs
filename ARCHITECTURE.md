@@ -75,9 +75,8 @@ resources and the admission of each phase's memory, the major-cycle pass on its
 worker team and bounded source stream, cooperative cancellation, the paged cube
 state, the minor-cycle adapter and the run summary. It depends inward on the
 model, reconstruction, deconvolution, products, the operator and the Metal
-backend. Metal runs inside the pass: with
-`backend = metal` every owner grids through its own
-`casa_imaging_metal::MetalBackend`.
+backend. Metal runs inside the pass: when the run grids on the GPU every
+owner grids through its own `casa_imaging_metal::MetalBackend`.
 
 AW projection reads its convolution functions from one catalog of CASA
 `CFS_*`/`WTCFS_*` images (`casa_imaging_operator::aw`), opened header-first and
@@ -606,7 +605,13 @@ cube bases, and other gridders, with facets are typed unavailability in
 `availability::check`. `mtmfs` via cube and cubic spectral interpolation are
 not in the catalog, so no request names them (cubic #42).
 
-`backend = metal` (macOS, a unified-memory Metal 3 device) grids every pass on
+The request's `backend` (`auto`, the default; `cpu`; or `gpu`) resolves to a
+device once the problem is compiled (`availability::resolve_backend`): `auto`
+takes the GPU where `availability::check` admits the problem there and a T1
+Metal law compares it with the CPU (one image domain, any basis, facets or
+not), and the CPU otherwise; the run summary records the device.
+
+The GPU (macOS, a unified-memory Metal 3 device) grids every pass on
 the Metal device: `casa-imaging-metal` implements the operator's
 `GridBackend` with support-generic kernels (one thread per sample for
 supports of at most 81 taps, one SIMD group per sample for wider ones; each

@@ -52,7 +52,7 @@ fn assert_products_close(metal: &Path, cpu: &Path, suffixes: &[&str], label: &st
     }
 }
 
-/// Run `imaging` with `backend = metal`, then `cpu`, each under the
+/// Run `imaging` with `backend = gpu`, then `cpu`, each under the
 /// policy `policy` gives it; returns the Metal and CPU image names and the
 /// Metal run's planes per wave, or `None` (saying so) when the host has no
 /// Metal device.
@@ -64,7 +64,7 @@ fn both(
 ) -> Option<(PathBuf, PathBuf, Option<u32>)> {
     let metal = root.join(format!("{label}-metal"));
     let outcome = match casa_imaging_application::execute(
-        &imaging(&metal, "metal"),
+        &imaging(&metal, "gpu"),
         context_with(policy(BackendChoice::Metal)),
     ) {
         Ok(outcome) => outcome,
