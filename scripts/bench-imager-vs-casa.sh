@@ -387,6 +387,19 @@ case "$standard_mfs_acceleration" in
     exit 2
     ;;
 esac
+# The workload's grid precision (`imaging_fft_precision`) is casars-imager's
+# `gridprecision`; `auto` leaves plan decision D2's rule.
+case "${IMAGER_BENCH_IMAGING_FFT_PRECISION:-auto}" in
+  auto)
+    ;;
+  f32 | f64)
+    rust_backend_flags+=(--gridprecision "$IMAGER_BENCH_IMAGING_FFT_PRECISION")
+    ;;
+  *)
+    echo "error: IMAGER_BENCH_IMAGING_FFT_PRECISION=$IMAGER_BENCH_IMAGING_FFT_PRECISION: auto, f32 or f64" >&2
+    exit 2
+    ;;
+esac
 rust_parallel_flags=()
 case "$parallel" in
   1|true|TRUE|yes|YES|on|ON)
