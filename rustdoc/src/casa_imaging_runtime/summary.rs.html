@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging-runtime/src/summary.rs`."><title>summary.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging_runtime" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.0 (b940084d7 2026-09-28)" data-channel="1.99.0" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging_runtime/</div>summary.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging-runtime/src/summary.rs`."><title>summary.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging_runtime" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging_runtime/</div>summary.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! The run summary (plan section 8.3), the one record a run leaves: a small
 <a href=#3 id=3 data-nosnippet>3</a>//! JSON document beside its products, written for every outcome (ADR-0014's
 <a href=#4 id=4 data-nosnippet>4</a>//! final success/failure summary), and the run's diagnostic switches
@@ -29,363 +29,367 @@
 <a href=#29 id=29 data-nosnippet>29</a>    <span class="doccomment">/// One event per phase ([`STAGE_TIMING`]): the [`Phase`] the summary
 <a href=#30 id=30 data-nosnippet>30</a>    /// records.
 <a href=#31 id=31 data-nosnippet>31</a>    </span><span class="kw">pub </span>stage_timing: bool,
-<a href=#32 id=32 data-nosnippet>32</a>    <span class="doccomment">/// One event per Metal gridding owner and wave
-<a href=#33 id=33 data-nosnippet>33</a>    /// (`casa_imaging::metal_stage_timing`): whether its work completed, its
-<a href=#34 id=34 data-nosnippet>34</a>    /// dispatches, samples and sub-blocks, the host's preparation time and
-<a href=#35 id=35 data-nosnippet>35</a>    /// its waits for the device. A CPU run emits none.
-<a href=#36 id=36 data-nosnippet>36</a>    </span><span class="kw">pub </span>metal_stage_timing: bool,
-<a href=#37 id=37 data-nosnippet>37</a>    <span class="doccomment">/// The controller's science quantities ([`SCIENCE_TRACE`]): the
-<a href=#38 id=38 data-nosnippet>38</a>    /// residual statistics each cleaning decision reads, each minor cycle's
-<a href=#39 id=39 data-nosnippet>39</a>    /// controls and what it cleaned.
-<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">pub </span>science_trace: bool,
-<a href=#41 id=41 data-nosnippet>41</a>}
-<a href=#42 id=42 data-nosnippet>42</a>
-<a href=#43 id=43 data-nosnippet>43</a><span class="doccomment">/// What one run did, O(1) per phase, written with how it ended
-<a href=#44 id=44 data-nosnippet>44</a>/// ([`RunSummary::write`]).
-<a href=#45 id=45 data-nosnippet>45</a>///
-<a href=#46 id=46 data-nosnippet>46</a>/// Every step that can fail runs inside a phase, so for each outcome
-<a href=#47 id=47 data-nosnippet>47</a>/// ([`RunStatus`]) the summary holds:
-<a href=#48 id=48 data-nosnippet>48</a>/// - **completed:** every phase, the totals, the stop reason and the
-<a href=#49 id=49 data-nosnippet>49</a>///   products;
-<a href=#50 id=50 data-nosnippet>50</a>/// - **failed:** the phases that ran, the last not completed, with the
-<a href=#51 id=51 data-nosnippet>51</a>///   minor-cycle totals and stop reason as far as the run got, any products
-<a href=#52 id=52 data-nosnippet>52</a>///   published before the failure, and the error; a run that fails in
-<a href=#53 id=53 data-nosnippet>53</a>///   preparation (request validation, compile, availability, admitting its
-<a href=#54 id=54 data-nosnippet>54</a>///   source, forming its team) records only its preparation phase;
-<a href=#55 id=55 data-nosnippet>55</a>/// - **cancelled:** the phases that ran before the cancellation took
-<a href=#56 id=56 data-nosnippet>56</a>///   effect, the totals so far, and no products, since nothing is
-<a href=#57 id=57 data-nosnippet>57</a>///   published; a run cancelled before it starts records no phase.
-<a href=#58 id=58 data-nosnippet>58</a>///
-<a href=#59 id=59 data-nosnippet>59</a>/// Memory is reported as the process sees it: the resident high-water mark
-<a href=#60 id=60 data-nosnippet>60</a>/// and the reservations of every run in the process.
-<a href=#61 id=61 data-nosnippet>61</a></span><span class="attr">#[derive(Debug, Serialize)]
-<a href=#62 id=62 data-nosnippet>62</a></span><span class="kw">pub struct </span>RunSummary {
-<a href=#63 id=63 data-nosnippet>63</a>    <span class="doccomment">/// The request as its caller states it.
-<a href=#64 id=64 data-nosnippet>64</a>    </span><span class="kw">pub </span>request: serde_json::Value,
-<a href=#65 id=65 data-nosnippet>65</a>    <span class="doccomment">/// Why cleaning stopped, with CASA's `stopcode`; `None` for a dirty run,
-<a href=#66 id=66 data-nosnippet>66</a>    /// a run that stopped before deciding, or one whose last minor cycle
-<a href=#67 id=67 data-nosnippet>67</a>    /// cleaned nothing without a stop.
-<a href=#68 id=68 data-nosnippet>68</a>    </span><span class="attr">#[serde(serialize_with = <span class="string">"clean_stop"</span>)]
-<a href=#69 id=69 data-nosnippet>69</a>    </span><span class="kw">pub </span>stop: <span class="prelude-ty">Option</span>&lt;CleanStop&gt;,
-<a href=#70 id=70 data-nosnippet>70</a>    <span class="doccomment">/// Bytes the resource policy lets the process's reservations hold.
-<a href=#71 id=71 data-nosnippet>71</a>    </span><span class="kw">pub </span>capacity_bytes: u64,
-<a href=#72 id=72 data-nosnippet>72</a>    <span class="doccomment">/// Workers in the run's team; zero before the team forms.
-<a href=#73 id=73 data-nosnippet>73</a>    </span><span class="kw">pub </span>workers: usize,
-<a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// Where the passes grid.
-<a href=#75 id=75 data-nosnippet>75</a>    </span><span class="kw">pub </span>backend: BackendChoice,
-<a href=#76 id=76 data-nosnippet>76</a>    <span class="doccomment">/// The grid arithmetic the run resolved (`gridprecision`); `None`
-<a href=#77 id=77 data-nosnippet>77</a>    /// before the operators form.
-<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="attr">#[serde(serialize_with = <span class="string">"grid_precision"</span>)]
-<a href=#79 id=79 data-nosnippet>79</a>    </span><span class="kw">pub </span>precision: <span class="prelude-ty">Option</span>&lt;GridPrecision&gt;,
-<a href=#80 id=80 data-nosnippet>80</a>    <span class="doccomment">/// Every phase in the order it ran.
-<a href=#81 id=81 data-nosnippet>81</a>    </span><span class="kw">pub </span>phases: Vec&lt;Phase&gt;,
-<a href=#82 id=82 data-nosnippet>82</a>    <span class="doccomment">/// Minor cycles completed.
-<a href=#83 id=83 data-nosnippet>83</a>    </span><span class="kw">pub </span>minor_cycles: usize,
-<a href=#84 id=84 data-nosnippet>84</a>    <span class="doccomment">/// Minor-cycle iterations charged to the iteration budget.
-<a href=#85 id=85 data-nosnippet>85</a>    </span><span class="kw">pub </span>minor_iterations: usize,
-<a href=#86 id=86 data-nosnippet>86</a>    <span class="doccomment">/// The product images published, by path, in the order they were.
-<a href=#87 id=87 data-nosnippet>87</a>    </span><span class="kw">pub </span>products: Vec&lt;String&gt;,
-<a href=#88 id=88 data-nosnippet>88</a>    <span class="doccomment">/// This run's view of the process's reservations, closed at each phase
-<a href=#89 id=89 data-nosnippet>89</a>    /// end.
-<a href=#90 id=90 data-nosnippet>90</a>    </span><span class="attr">#[serde(skip)]
-<a href=#91 id=91 data-nosnippet>91</a>    </span>reservations: ReservationWindow,
-<a href=#92 id=92 data-nosnippet>92</a>}
-<a href=#93 id=93 data-nosnippet>93</a>
-<a href=#94 id=94 data-nosnippet>94</a><span class="doccomment">/// How a run ended, written beside its [`RunSummary`].
-<a href=#95 id=95 data-nosnippet>95</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-<a href=#96 id=96 data-nosnippet>96</a>#[serde(tag = <span class="string">"status"</span>, rename_all = <span class="string">"lowercase"</span>)]
-<a href=#97 id=97 data-nosnippet>97</a></span><span class="kw">pub enum </span>RunStatus {
-<a href=#98 id=98 data-nosnippet>98</a>    <span class="doccomment">/// Every phase completed and the products are published.
-<a href=#99 id=99 data-nosnippet>99</a>    </span>Completed,
-<a href=#100 id=100 data-nosnippet>100</a>    <span class="doccomment">/// A phase failed. Publication replaces the product images one by one,
-<a href=#101 id=101 data-nosnippet>101</a>    /// so a failure while publishing leaves the images published before it
-<a href=#102 id=102 data-nosnippet>102</a>    /// in place, and the summary lists them; a failure before publishing
-<a href=#103 id=103 data-nosnippet>103</a>    /// publishes nothing.
-<a href=#104 id=104 data-nosnippet>104</a>    </span>Failed {
-<a href=#105 id=105 data-nosnippet>105</a>        <span class="doccomment">/// Why.
-<a href=#106 id=106 data-nosnippet>106</a>        </span>error: String,
-<a href=#107 id=107 data-nosnippet>107</a>    },
-<a href=#108 id=108 data-nosnippet>108</a>    <span class="doccomment">/// Cancellation took effect before publishing; nothing was published.
-<a href=#109 id=109 data-nosnippet>109</a>    </span>Cancelled,
-<a href=#110 id=110 data-nosnippet>110</a>}
-<a href=#111 id=111 data-nosnippet>111</a>
-<a href=#112 id=112 data-nosnippet>112</a><span class="doccomment">/// One phase of a run.
-<a href=#113 id=113 data-nosnippet>113</a></span><span class="attr">#[derive(Clone, Debug, Serialize)]
-<a href=#114 id=114 data-nosnippet>114</a></span><span class="kw">pub struct </span>Phase {
-<a href=#115 id=115 data-nosnippet>115</a>    <span class="doccomment">/// What the phase did.
-<a href=#116 id=116 data-nosnippet>116</a>    </span><span class="kw">pub </span>name: String,
-<a href=#117 id=117 data-nosnippet>117</a>    <span class="doccomment">/// Whether it completed; a phase that failed is recorded too.
-<a href=#118 id=118 data-nosnippet>118</a>    </span><span class="kw">pub </span>completed: bool,
-<a href=#119 id=119 data-nosnippet>119</a>    <span class="doccomment">/// Wall-clock seconds.
-<a href=#120 id=120 data-nosnippet>120</a>    </span><span class="kw">pub </span>seconds: f64,
-<a href=#121 id=121 data-nosnippet>121</a>    <span class="doccomment">/// The process's resident high-water mark sampled when the phase
-<a href=#122 id=122 data-nosnippet>122</a>    /// ended, in bytes: it covers every earlier phase, and anything else
-<a href=#123 id=123 data-nosnippet>123</a>    /// the process ran, not this phase alone.
-<a href=#124 id=124 data-nosnippet>124</a>    </span><span class="kw">pub </span>process_peak_rss_bytes: u64,
-<a href=#125 id=125 data-nosnippet>125</a>    <span class="doccomment">/// The most the process's memory reservations held at once from the end
-<a href=#126 id=126 data-nosnippet>126</a>    /// of the run's previous phase to the end of this one, in bytes: what
-<a href=#127 id=127 data-nosnippet>127</a>    /// admission had granted at its peak, this run's and any other's in the
-<a href=#128 id=128 data-nosnippet>128</a>    /// process.
-<a href=#129 id=129 data-nosnippet>129</a>    </span><span class="kw">pub </span>peak_reserved_bytes: u64,
-<a href=#130 id=130 data-nosnippet>130</a>    <span class="doccomment">/// The process's reservations still held when the phase ended, in
-<a href=#131 id=131 data-nosnippet>131</a>    /// bytes.
-<a href=#132 id=132 data-nosnippet>132</a>    </span><span class="kw">pub </span>reserved_bytes: u64,
-<a href=#133 id=133 data-nosnippet>133</a>}
-<a href=#134 id=134 data-nosnippet>134</a>
-<a href=#135 id=135 data-nosnippet>135</a><span class="doccomment">/// Where a run writes its summary, and the request it echoes there.
-<a href=#136 id=136 data-nosnippet>136</a></span><span class="attr">#[derive(Clone, Debug)]
-<a href=#137 id=137 data-nosnippet>137</a></span><span class="kw">pub struct </span>SummaryTarget {
-<a href=#138 id=138 data-nosnippet>138</a>    <span class="doccomment">/// The summary file.
-<a href=#139 id=139 data-nosnippet>139</a>    </span><span class="kw">pub </span>path: PathBuf,
-<a href=#140 id=140 data-nosnippet>140</a>    <span class="doccomment">/// The request as its caller states it.
-<a href=#141 id=141 data-nosnippet>141</a>    </span><span class="kw">pub </span>request: serde_json::Value,
-<a href=#142 id=142 data-nosnippet>142</a>}
-<a href=#143 id=143 data-nosnippet>143</a>
-<a href=#144 id=144 data-nosnippet>144</a><span class="doccomment">/// A phase did not start because the run was cancelled.
-<a href=#145 id=145 data-nosnippet>145</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-<a href=#146 id=146 data-nosnippet>146</a>#[error(<span class="string">"the run was cancelled"</span>)]
-<a href=#147 id=147 data-nosnippet>147</a></span><span class="kw">pub struct </span>Cancelled;
-<a href=#148 id=148 data-nosnippet>148</a>
-<a href=#149 id=149 data-nosnippet>149</a><span class="kw">impl </span>RunSummary {
-<a href=#150 id=150 data-nosnippet>150</a>    <span class="doccomment">/// The summary of a run about to start: `request` echoed, nothing run
-<a href=#151 id=151 data-nosnippet>151</a>    /// yet. Its first phase's reservation peak starts here.
-<a href=#152 id=152 data-nosnippet>152</a>    </span><span class="attr">#[must_use]
-<a href=#153 id=153 data-nosnippet>153</a>    </span><span class="kw">pub fn </span>begin(request: serde_json::Value, capacity_bytes: u64, backend: BackendChoice) -&gt; <span class="self">Self </span>{
-<a href=#154 id=154 data-nosnippet>154</a>        <span class="self">Self </span>{
-<a href=#155 id=155 data-nosnippet>155</a>            request,
-<a href=#156 id=156 data-nosnippet>156</a>            stop: <span class="prelude-val">None</span>,
-<a href=#157 id=157 data-nosnippet>157</a>            capacity_bytes,
-<a href=#158 id=158 data-nosnippet>158</a>            workers: <span class="number">0</span>,
-<a href=#159 id=159 data-nosnippet>159</a>            backend,
-<a href=#160 id=160 data-nosnippet>160</a>            precision: <span class="prelude-val">None</span>,
-<a href=#161 id=161 data-nosnippet>161</a>            phases: Vec::new(),
-<a href=#162 id=162 data-nosnippet>162</a>            minor_cycles: <span class="number">0</span>,
-<a href=#163 id=163 data-nosnippet>163</a>            minor_iterations: <span class="number">0</span>,
-<a href=#164 id=164 data-nosnippet>164</a>            products: Vec::new(),
-<a href=#165 id=165 data-nosnippet>165</a>            reservations: ReservationWindow::open(),
-<a href=#166 id=166 data-nosnippet>166</a>        }
-<a href=#167 id=167 data-nosnippet>167</a>    }
-<a href=#168 id=168 data-nosnippet>168</a>
-<a href=#169 id=169 data-nosnippet>169</a>    <span class="doccomment">/// Write the summary of a run that ended as `status` to `path`, as
-<a href=#170 id=170 data-nosnippet>170</a>    /// pretty-printed JSON with the status's fields first.
-<a href=#171 id=171 data-nosnippet>171</a>    ///
-<a href=#172 id=172 data-nosnippet>172</a>    /// # Errors
-<a href=#173 id=173 data-nosnippet>173</a>    ///
-<a href=#174 id=174 data-nosnippet>174</a>    /// The file could not be written.
-<a href=#175 id=175 data-nosnippet>175</a>    </span><span class="kw">pub fn </span>write(<span class="kw-2">&amp;</span><span class="self">self</span>, status: <span class="kw-2">&amp;</span>RunStatus, path: <span class="kw-2">&amp;</span>Path) -&gt; std::io::Result&lt;()&gt; {
-<a href=#176 id=176 data-nosnippet>176</a>        <span class="kw">let </span>text = serde_json::to_string_pretty(<span class="kw-2">&amp;</span>Written {
-<a href=#177 id=177 data-nosnippet>177</a>            status,
-<a href=#178 id=178 data-nosnippet>178</a>            summary: <span class="self">self</span>,
-<a href=#179 id=179 data-nosnippet>179</a>        })
-<a href=#180 id=180 data-nosnippet>180</a>        .map_err(std::io::Error::other)<span class="question-mark">?</span>;
-<a href=#181 id=181 data-nosnippet>181</a>        std::fs::write(path, text + <span class="string">"\n"</span>)
-<a href=#182 id=182 data-nosnippet>182</a>    }
-<a href=#183 id=183 data-nosnippet>183</a>}
-<a href=#184 id=184 data-nosnippet>184</a>
-<a href=#185 id=185 data-nosnippet>185</a><span class="doccomment">/// A summary as written: how the run ended, then what it did.
-<a href=#186 id=186 data-nosnippet>186</a></span><span class="attr">#[derive(Serialize)]
-<a href=#187 id=187 data-nosnippet>187</a></span><span class="kw">struct </span>Written&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#188 id=188 data-nosnippet>188</a>    <span class="attr">#[serde(flatten)]
-<a href=#189 id=189 data-nosnippet>189</a>    </span>status: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>RunStatus,
-<a href=#190 id=190 data-nosnippet>190</a>    <span class="attr">#[serde(flatten)]
-<a href=#191 id=191 data-nosnippet>191</a>    </span>summary: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>RunSummary,
-<a href=#192 id=192 data-nosnippet>192</a>}
-<a href=#193 id=193 data-nosnippet>193</a>
-<a href=#194 id=194 data-nosnippet>194</a><span class="doccomment">/// Run one phase named `name`, unless `cancel` is set, and record in
-<a href=#195 id=195 data-nosnippet>195</a>/// `summary` whether it completed, its wall time and the memory after it;
-<a href=#196 id=196 data-nosnippet>196</a>/// with [`Diagnostics::stage_timing`], log that record too.
-<a href=#197 id=197 data-nosnippet>197</a>///
-<a href=#198 id=198 data-nosnippet>198</a>/// # Errors
-<a href=#199 id=199 data-nosnippet>199</a>///
-<a href=#200 id=200 data-nosnippet>200</a>/// [`Cancelled`] (through `E`) when cancellation was requested before the
-<a href=#201 id=201 data-nosnippet>201</a>/// phase started, and nothing is recorded; otherwise the step's error.
-<a href=#202 id=202 data-nosnippet>202</a></span><span class="kw">pub fn </span>run_phase&lt;T, E: From&lt;Cancelled&gt;&gt;(
-<a href=#203 id=203 data-nosnippet>203</a>    name: <span class="kw">impl </span>Into&lt;String&gt;,
-<a href=#204 id=204 data-nosnippet>204</a>    cancel: <span class="kw-2">&amp;</span>Cancel,
-<a href=#205 id=205 data-nosnippet>205</a>    diagnostics: Diagnostics,
-<a href=#206 id=206 data-nosnippet>206</a>    summary: <span class="kw-2">&amp;mut </span>RunSummary,
-<a href=#207 id=207 data-nosnippet>207</a>    step: <span class="kw">impl </span>FnOnce() -&gt; <span class="prelude-ty">Result</span>&lt;T, E&gt;,
-<a href=#208 id=208 data-nosnippet>208</a>) -&gt; <span class="prelude-ty">Result</span>&lt;T, E&gt; {
-<a href=#209 id=209 data-nosnippet>209</a>    <span class="kw">if </span>cancel.is_cancelled() {
-<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Cancelled.into());
-<a href=#211 id=211 data-nosnippet>211</a>    }
-<a href=#212 id=212 data-nosnippet>212</a>    <span class="kw">let </span>started = Instant::now();
-<a href=#213 id=213 data-nosnippet>213</a>    <span class="kw">let </span>result = step();
-<a href=#214 id=214 data-nosnippet>214</a>    <span class="kw">let </span>phase = Phase {
-<a href=#215 id=215 data-nosnippet>215</a>        name: name.into(),
-<a href=#216 id=216 data-nosnippet>216</a>        completed: result.is_ok(),
-<a href=#217 id=217 data-nosnippet>217</a>        seconds: started.elapsed().as_secs_f64(),
-<a href=#218 id=218 data-nosnippet>218</a>        process_peak_rss_bytes: peak_rss(),
-<a href=#219 id=219 data-nosnippet>219</a>        peak_reserved_bytes: summary.reservations.close(),
-<a href=#220 id=220 data-nosnippet>220</a>        reserved_bytes: reserved_memory(),
-<a href=#221 id=221 data-nosnippet>221</a>    };
-<a href=#222 id=222 data-nosnippet>222</a>    <span class="kw">if </span>diagnostics.stage_timing {
-<a href=#223 id=223 data-nosnippet>223</a>        <span class="macro">tracing::info!</span>(
-<a href=#224 id=224 data-nosnippet>224</a>            target: STAGE_TIMING,
-<a href=#225 id=225 data-nosnippet>225</a>            phase = <span class="question-mark">?</span>phase.name,
-<a href=#226 id=226 data-nosnippet>226</a>            completed = phase.completed,
-<a href=#227 id=227 data-nosnippet>227</a>            seconds = phase.seconds,
-<a href=#228 id=228 data-nosnippet>228</a>            process_peak_rss_bytes = phase.process_peak_rss_bytes,
-<a href=#229 id=229 data-nosnippet>229</a>            peak_reserved_bytes = phase.peak_reserved_bytes,
-<a href=#230 id=230 data-nosnippet>230</a>            reserved_bytes = phase.reserved_bytes,
-<a href=#231 id=231 data-nosnippet>231</a>            <span class="string">"imaging phase"
-<a href=#232 id=232 data-nosnippet>232</a>        </span>);
-<a href=#233 id=233 data-nosnippet>233</a>    }
-<a href=#234 id=234 data-nosnippet>234</a>    summary.phases.push(phase);
-<a href=#235 id=235 data-nosnippet>235</a>    result
-<a href=#236 id=236 data-nosnippet>236</a>}
-<a href=#237 id=237 data-nosnippet>237</a>
-<a href=#238 id=238 data-nosnippet>238</a><span class="doccomment">/// CASA's stop reason: its `stopcode` and the reason's name.
-<a href=#239 id=239 data-nosnippet>239</a></span><span class="kw">fn </span>clean_stop&lt;S: Serializer&gt;(stop: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;CleanStop&gt;, serializer: S) -&gt; <span class="prelude-ty">Result</span>&lt;S::Ok, S::Error&gt; {
-<a href=#240 id=240 data-nosnippet>240</a>    <span class="attr">#[derive(Serialize)]
-<a href=#241 id=241 data-nosnippet>241</a>    </span><span class="kw">struct </span>Stop {
-<a href=#242 id=242 data-nosnippet>242</a>        reason: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-<a href=#243 id=243 data-nosnippet>243</a>        stopcode: i32,
-<a href=#244 id=244 data-nosnippet>244</a>    }
-<a href=#245 id=245 data-nosnippet>245</a>    stop.map(|stop| Stop {
-<a href=#246 id=246 data-nosnippet>246</a>        reason: stop.name(),
-<a href=#247 id=247 data-nosnippet>247</a>        stopcode: stop.code(),
-<a href=#248 id=248 data-nosnippet>248</a>    })
-<a href=#249 id=249 data-nosnippet>249</a>    .serialize(serializer)
-<a href=#250 id=250 data-nosnippet>250</a>}
-<a href=#251 id=251 data-nosnippet>251</a>
-<a href=#252 id=252 data-nosnippet>252</a><span class="doccomment">/// The catalog's spelling of a grid precision.
-<a href=#253 id=253 data-nosnippet>253</a></span><span class="kw">fn </span>grid_precision&lt;S: Serializer&gt;(
-<a href=#254 id=254 data-nosnippet>254</a>    precision: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;GridPrecision&gt;,
-<a href=#255 id=255 data-nosnippet>255</a>    serializer: S,
-<a href=#256 id=256 data-nosnippet>256</a>) -&gt; <span class="prelude-ty">Result</span>&lt;S::Ok, S::Error&gt; {
-<a href=#257 id=257 data-nosnippet>257</a>    precision
-<a href=#258 id=258 data-nosnippet>258</a>        .map(|precision| <span class="kw">match </span>precision {
-<a href=#259 id=259 data-nosnippet>259</a>            GridPrecision::F32 =&gt; <span class="string">"f32"</span>,
-<a href=#260 id=260 data-nosnippet>260</a>            GridPrecision::F64 =&gt; <span class="string">"f64"</span>,
-<a href=#261 id=261 data-nosnippet>261</a>        })
-<a href=#262 id=262 data-nosnippet>262</a>        .serialize(serializer)
-<a href=#263 id=263 data-nosnippet>263</a>}
-<a href=#264 id=264 data-nosnippet>264</a>
-<a href=#265 id=265 data-nosnippet>265</a><span class="doccomment">/// The process's peak resident set, in bytes.
-<a href=#266 id=266 data-nosnippet>266</a></span><span class="kw">fn </span>peak_rss() -&gt; u64 {
-<a href=#267 id=267 data-nosnippet>267</a>    <span class="kw">let </span><span class="kw-2">mut </span>usage = std::mem::MaybeUninit::&lt;libc::rusage&gt;::uninit();
-<a href=#268 id=268 data-nosnippet>268</a>    <span class="comment">// SAFETY: `getrusage` fills the whole struct when it returns 0.
-<a href=#269 id=269 data-nosnippet>269</a>    </span><span class="kw">let </span>status = <span class="kw">unsafe </span>{ libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
-<a href=#270 id=270 data-nosnippet>270</a>    <span class="macro">assert_eq!</span>(
-<a href=#271 id=271 data-nosnippet>271</a>        status, <span class="number">0</span>,
-<a href=#272 id=272 data-nosnippet>272</a>        <span class="string">"getrusage(RUSAGE_SELF) fails only on a bad pointer"
-<a href=#273 id=273 data-nosnippet>273</a>    </span>);
-<a href=#274 id=274 data-nosnippet>274</a>    <span class="comment">// SAFETY: initialised by the successful call above.
-<a href=#275 id=275 data-nosnippet>275</a>    </span><span class="kw">let </span>maximum = u64::try_from(<span class="kw">unsafe </span>{ usage.assume_init() }.ru_maxrss).expect(<span class="string">"a resident size"</span>);
-<a href=#276 id=276 data-nosnippet>276</a>    <span class="comment">// macOS reports bytes, Linux kibibytes.
-<a href=#277 id=277 data-nosnippet>277</a>    </span><span class="kw">if </span><span class="macro">cfg!</span>(target_os = <span class="string">"macos"</span>) {
-<a href=#278 id=278 data-nosnippet>278</a>        maximum
-<a href=#279 id=279 data-nosnippet>279</a>    } <span class="kw">else </span>{
-<a href=#280 id=280 data-nosnippet>280</a>        maximum.saturating_mul(<span class="number">1024</span>)
-<a href=#281 id=281 data-nosnippet>281</a>    }
-<a href=#282 id=282 data-nosnippet>282</a>}
-<a href=#283 id=283 data-nosnippet>283</a>
-<a href=#284 id=284 data-nosnippet>284</a><span class="attr">#[cfg(test)]
-<a href=#285 id=285 data-nosnippet>285</a></span><span class="kw">mod </span>tests {
-<a href=#286 id=286 data-nosnippet>286</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#32 id=32 data-nosnippet>32</a>    <span class="doccomment">/// One event per Metal backend and wave
+<a href=#33 id=33 data-nosnippet>33</a>    /// (`casa_imaging::metal_stage_timing`), for each gridding owner and
+<a href=#34 id=34 data-nosnippet>34</a>    /// each row chunk's prediction backend that dispatched: whether its work
+<a href=#35 id=35 data-nosnippet>35</a>    /// completed, its dispatches, samples (and how many it predicted) and
+<a href=#36 id=36 data-nosnippet>36</a>    /// sub-blocks, the host's preparation time and its waits for the device,
+<a href=#37 id=37 data-nosnippet>37</a>    /// and the device's time on its commands; and one event per wave for the
+<a href=#38 id=38 data-nosnippet>38</a>    /// pass's source stream: the producer's fill time and the pass's waits
+<a href=#39 id=39 data-nosnippet>39</a>    /// for filled blocks. A CPU run emits none.
+<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">pub </span>metal_stage_timing: bool,
+<a href=#41 id=41 data-nosnippet>41</a>    <span class="doccomment">/// The controller's science quantities ([`SCIENCE_TRACE`]): the
+<a href=#42 id=42 data-nosnippet>42</a>    /// residual statistics each cleaning decision reads, each minor cycle's
+<a href=#43 id=43 data-nosnippet>43</a>    /// controls and what it cleaned.
+<a href=#44 id=44 data-nosnippet>44</a>    </span><span class="kw">pub </span>science_trace: bool,
+<a href=#45 id=45 data-nosnippet>45</a>}
+<a href=#46 id=46 data-nosnippet>46</a>
+<a href=#47 id=47 data-nosnippet>47</a><span class="doccomment">/// What one run did, O(1) per phase, written with how it ended
+<a href=#48 id=48 data-nosnippet>48</a>/// ([`RunSummary::write`]).
+<a href=#49 id=49 data-nosnippet>49</a>///
+<a href=#50 id=50 data-nosnippet>50</a>/// Every step that can fail runs inside a phase, so for each outcome
+<a href=#51 id=51 data-nosnippet>51</a>/// ([`RunStatus`]) the summary holds:
+<a href=#52 id=52 data-nosnippet>52</a>/// - **completed:** every phase, the totals, the stop reason and the
+<a href=#53 id=53 data-nosnippet>53</a>///   products;
+<a href=#54 id=54 data-nosnippet>54</a>/// - **failed:** the phases that ran, the last not completed, with the
+<a href=#55 id=55 data-nosnippet>55</a>///   minor-cycle totals and stop reason as far as the run got, any products
+<a href=#56 id=56 data-nosnippet>56</a>///   published before the failure, and the error; a run that fails in
+<a href=#57 id=57 data-nosnippet>57</a>///   preparation (request validation, compile, availability, admitting its
+<a href=#58 id=58 data-nosnippet>58</a>///   source, forming its team) records only its preparation phase;
+<a href=#59 id=59 data-nosnippet>59</a>/// - **cancelled:** the phases that ran before the cancellation took
+<a href=#60 id=60 data-nosnippet>60</a>///   effect, the totals so far, and no products, since nothing is
+<a href=#61 id=61 data-nosnippet>61</a>///   published; a run cancelled before it starts records no phase.
+<a href=#62 id=62 data-nosnippet>62</a>///
+<a href=#63 id=63 data-nosnippet>63</a>/// Memory is reported as the process sees it: the resident high-water mark
+<a href=#64 id=64 data-nosnippet>64</a>/// and the reservations of every run in the process.
+<a href=#65 id=65 data-nosnippet>65</a></span><span class="attr">#[derive(Debug, Serialize)]
+<a href=#66 id=66 data-nosnippet>66</a></span><span class="kw">pub struct </span>RunSummary {
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="doccomment">/// The request as its caller states it.
+<a href=#68 id=68 data-nosnippet>68</a>    </span><span class="kw">pub </span>request: serde_json::Value,
+<a href=#69 id=69 data-nosnippet>69</a>    <span class="doccomment">/// Why cleaning stopped, with CASA's `stopcode`; `None` for a dirty run,
+<a href=#70 id=70 data-nosnippet>70</a>    /// a run that stopped before deciding, or one whose last minor cycle
+<a href=#71 id=71 data-nosnippet>71</a>    /// cleaned nothing without a stop.
+<a href=#72 id=72 data-nosnippet>72</a>    </span><span class="attr">#[serde(serialize_with = <span class="string">"clean_stop"</span>)]
+<a href=#73 id=73 data-nosnippet>73</a>    </span><span class="kw">pub </span>stop: <span class="prelude-ty">Option</span>&lt;CleanStop&gt;,
+<a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// Bytes the resource policy lets the process's reservations hold.
+<a href=#75 id=75 data-nosnippet>75</a>    </span><span class="kw">pub </span>capacity_bytes: u64,
+<a href=#76 id=76 data-nosnippet>76</a>    <span class="doccomment">/// Workers in the run's team; zero before the team forms.
+<a href=#77 id=77 data-nosnippet>77</a>    </span><span class="kw">pub </span>workers: usize,
+<a href=#78 id=78 data-nosnippet>78</a>    <span class="doccomment">/// Where the passes grid.
+<a href=#79 id=79 data-nosnippet>79</a>    </span><span class="kw">pub </span>backend: BackendChoice,
+<a href=#80 id=80 data-nosnippet>80</a>    <span class="doccomment">/// The grid arithmetic the run resolved (`gridprecision`); `None`
+<a href=#81 id=81 data-nosnippet>81</a>    /// before the operators form.
+<a href=#82 id=82 data-nosnippet>82</a>    </span><span class="attr">#[serde(serialize_with = <span class="string">"grid_precision"</span>)]
+<a href=#83 id=83 data-nosnippet>83</a>    </span><span class="kw">pub </span>precision: <span class="prelude-ty">Option</span>&lt;GridPrecision&gt;,
+<a href=#84 id=84 data-nosnippet>84</a>    <span class="doccomment">/// Every phase in the order it ran.
+<a href=#85 id=85 data-nosnippet>85</a>    </span><span class="kw">pub </span>phases: Vec&lt;Phase&gt;,
+<a href=#86 id=86 data-nosnippet>86</a>    <span class="doccomment">/// Minor cycles completed.
+<a href=#87 id=87 data-nosnippet>87</a>    </span><span class="kw">pub </span>minor_cycles: usize,
+<a href=#88 id=88 data-nosnippet>88</a>    <span class="doccomment">/// Minor-cycle iterations charged to the iteration budget.
+<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="kw">pub </span>minor_iterations: usize,
+<a href=#90 id=90 data-nosnippet>90</a>    <span class="doccomment">/// The product images published, by path, in the order they were.
+<a href=#91 id=91 data-nosnippet>91</a>    </span><span class="kw">pub </span>products: Vec&lt;String&gt;,
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="doccomment">/// This run's view of the process's reservations, closed at each phase
+<a href=#93 id=93 data-nosnippet>93</a>    /// end.
+<a href=#94 id=94 data-nosnippet>94</a>    </span><span class="attr">#[serde(skip)]
+<a href=#95 id=95 data-nosnippet>95</a>    </span>reservations: ReservationWindow,
+<a href=#96 id=96 data-nosnippet>96</a>}
+<a href=#97 id=97 data-nosnippet>97</a>
+<a href=#98 id=98 data-nosnippet>98</a><span class="doccomment">/// How a run ended, written beside its [`RunSummary`].
+<a href=#99 id=99 data-nosnippet>99</a></span><span class="attr">#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+<a href=#100 id=100 data-nosnippet>100</a>#[serde(tag = <span class="string">"status"</span>, rename_all = <span class="string">"lowercase"</span>)]
+<a href=#101 id=101 data-nosnippet>101</a></span><span class="kw">pub enum </span>RunStatus {
+<a href=#102 id=102 data-nosnippet>102</a>    <span class="doccomment">/// Every phase completed and the products are published.
+<a href=#103 id=103 data-nosnippet>103</a>    </span>Completed,
+<a href=#104 id=104 data-nosnippet>104</a>    <span class="doccomment">/// A phase failed. Publication replaces the product images one by one,
+<a href=#105 id=105 data-nosnippet>105</a>    /// so a failure while publishing leaves the images published before it
+<a href=#106 id=106 data-nosnippet>106</a>    /// in place, and the summary lists them; a failure before publishing
+<a href=#107 id=107 data-nosnippet>107</a>    /// publishes nothing.
+<a href=#108 id=108 data-nosnippet>108</a>    </span>Failed {
+<a href=#109 id=109 data-nosnippet>109</a>        <span class="doccomment">/// Why.
+<a href=#110 id=110 data-nosnippet>110</a>        </span>error: String,
+<a href=#111 id=111 data-nosnippet>111</a>    },
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="doccomment">/// Cancellation took effect before publishing; nothing was published.
+<a href=#113 id=113 data-nosnippet>113</a>    </span>Cancelled,
+<a href=#114 id=114 data-nosnippet>114</a>}
+<a href=#115 id=115 data-nosnippet>115</a>
+<a href=#116 id=116 data-nosnippet>116</a><span class="doccomment">/// One phase of a run.
+<a href=#117 id=117 data-nosnippet>117</a></span><span class="attr">#[derive(Clone, Debug, Serialize)]
+<a href=#118 id=118 data-nosnippet>118</a></span><span class="kw">pub struct </span>Phase {
+<a href=#119 id=119 data-nosnippet>119</a>    <span class="doccomment">/// What the phase did.
+<a href=#120 id=120 data-nosnippet>120</a>    </span><span class="kw">pub </span>name: String,
+<a href=#121 id=121 data-nosnippet>121</a>    <span class="doccomment">/// Whether it completed; a phase that failed is recorded too.
+<a href=#122 id=122 data-nosnippet>122</a>    </span><span class="kw">pub </span>completed: bool,
+<a href=#123 id=123 data-nosnippet>123</a>    <span class="doccomment">/// Wall-clock seconds.
+<a href=#124 id=124 data-nosnippet>124</a>    </span><span class="kw">pub </span>seconds: f64,
+<a href=#125 id=125 data-nosnippet>125</a>    <span class="doccomment">/// The process's resident high-water mark sampled when the phase
+<a href=#126 id=126 data-nosnippet>126</a>    /// ended, in bytes: it covers every earlier phase, and anything else
+<a href=#127 id=127 data-nosnippet>127</a>    /// the process ran, not this phase alone.
+<a href=#128 id=128 data-nosnippet>128</a>    </span><span class="kw">pub </span>process_peak_rss_bytes: u64,
+<a href=#129 id=129 data-nosnippet>129</a>    <span class="doccomment">/// The most the process's memory reservations held at once from the end
+<a href=#130 id=130 data-nosnippet>130</a>    /// of the run's previous phase to the end of this one, in bytes: what
+<a href=#131 id=131 data-nosnippet>131</a>    /// admission had granted at its peak, this run's and any other's in the
+<a href=#132 id=132 data-nosnippet>132</a>    /// process.
+<a href=#133 id=133 data-nosnippet>133</a>    </span><span class="kw">pub </span>peak_reserved_bytes: u64,
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// The process's reservations still held when the phase ended, in
+<a href=#135 id=135 data-nosnippet>135</a>    /// bytes.
+<a href=#136 id=136 data-nosnippet>136</a>    </span><span class="kw">pub </span>reserved_bytes: u64,
+<a href=#137 id=137 data-nosnippet>137</a>}
+<a href=#138 id=138 data-nosnippet>138</a>
+<a href=#139 id=139 data-nosnippet>139</a><span class="doccomment">/// Where a run writes its summary, and the request it echoes there.
+<a href=#140 id=140 data-nosnippet>140</a></span><span class="attr">#[derive(Clone, Debug)]
+<a href=#141 id=141 data-nosnippet>141</a></span><span class="kw">pub struct </span>SummaryTarget {
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="doccomment">/// The summary file.
+<a href=#143 id=143 data-nosnippet>143</a>    </span><span class="kw">pub </span>path: PathBuf,
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="doccomment">/// The request as its caller states it.
+<a href=#145 id=145 data-nosnippet>145</a>    </span><span class="kw">pub </span>request: serde_json::Value,
+<a href=#146 id=146 data-nosnippet>146</a>}
+<a href=#147 id=147 data-nosnippet>147</a>
+<a href=#148 id=148 data-nosnippet>148</a><span class="doccomment">/// A phase did not start because the run was cancelled.
+<a href=#149 id=149 data-nosnippet>149</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+<a href=#150 id=150 data-nosnippet>150</a>#[error(<span class="string">"the run was cancelled"</span>)]
+<a href=#151 id=151 data-nosnippet>151</a></span><span class="kw">pub struct </span>Cancelled;
+<a href=#152 id=152 data-nosnippet>152</a>
+<a href=#153 id=153 data-nosnippet>153</a><span class="kw">impl </span>RunSummary {
+<a href=#154 id=154 data-nosnippet>154</a>    <span class="doccomment">/// The summary of a run about to start: `request` echoed, nothing run
+<a href=#155 id=155 data-nosnippet>155</a>    /// yet. Its first phase's reservation peak starts here.
+<a href=#156 id=156 data-nosnippet>156</a>    </span><span class="attr">#[must_use]
+<a href=#157 id=157 data-nosnippet>157</a>    </span><span class="kw">pub fn </span>begin(request: serde_json::Value, capacity_bytes: u64, backend: BackendChoice) -&gt; <span class="self">Self </span>{
+<a href=#158 id=158 data-nosnippet>158</a>        <span class="self">Self </span>{
+<a href=#159 id=159 data-nosnippet>159</a>            request,
+<a href=#160 id=160 data-nosnippet>160</a>            stop: <span class="prelude-val">None</span>,
+<a href=#161 id=161 data-nosnippet>161</a>            capacity_bytes,
+<a href=#162 id=162 data-nosnippet>162</a>            workers: <span class="number">0</span>,
+<a href=#163 id=163 data-nosnippet>163</a>            backend,
+<a href=#164 id=164 data-nosnippet>164</a>            precision: <span class="prelude-val">None</span>,
+<a href=#165 id=165 data-nosnippet>165</a>            phases: Vec::new(),
+<a href=#166 id=166 data-nosnippet>166</a>            minor_cycles: <span class="number">0</span>,
+<a href=#167 id=167 data-nosnippet>167</a>            minor_iterations: <span class="number">0</span>,
+<a href=#168 id=168 data-nosnippet>168</a>            products: Vec::new(),
+<a href=#169 id=169 data-nosnippet>169</a>            reservations: ReservationWindow::open(),
+<a href=#170 id=170 data-nosnippet>170</a>        }
+<a href=#171 id=171 data-nosnippet>171</a>    }
+<a href=#172 id=172 data-nosnippet>172</a>
+<a href=#173 id=173 data-nosnippet>173</a>    <span class="doccomment">/// Write the summary of a run that ended as `status` to `path`, as
+<a href=#174 id=174 data-nosnippet>174</a>    /// pretty-printed JSON with the status's fields first.
+<a href=#175 id=175 data-nosnippet>175</a>    ///
+<a href=#176 id=176 data-nosnippet>176</a>    /// # Errors
+<a href=#177 id=177 data-nosnippet>177</a>    ///
+<a href=#178 id=178 data-nosnippet>178</a>    /// The file could not be written.
+<a href=#179 id=179 data-nosnippet>179</a>    </span><span class="kw">pub fn </span>write(<span class="kw-2">&amp;</span><span class="self">self</span>, status: <span class="kw-2">&amp;</span>RunStatus, path: <span class="kw-2">&amp;</span>Path) -&gt; std::io::Result&lt;()&gt; {
+<a href=#180 id=180 data-nosnippet>180</a>        <span class="kw">let </span>text = serde_json::to_string_pretty(<span class="kw-2">&amp;</span>Written {
+<a href=#181 id=181 data-nosnippet>181</a>            status,
+<a href=#182 id=182 data-nosnippet>182</a>            summary: <span class="self">self</span>,
+<a href=#183 id=183 data-nosnippet>183</a>        })
+<a href=#184 id=184 data-nosnippet>184</a>        .map_err(std::io::Error::other)<span class="question-mark">?</span>;
+<a href=#185 id=185 data-nosnippet>185</a>        std::fs::write(path, text + <span class="string">"\n"</span>)
+<a href=#186 id=186 data-nosnippet>186</a>    }
+<a href=#187 id=187 data-nosnippet>187</a>}
+<a href=#188 id=188 data-nosnippet>188</a>
+<a href=#189 id=189 data-nosnippet>189</a><span class="doccomment">/// A summary as written: how the run ended, then what it did.
+<a href=#190 id=190 data-nosnippet>190</a></span><span class="attr">#[derive(Serialize)]
+<a href=#191 id=191 data-nosnippet>191</a></span><span class="kw">struct </span>Written&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#192 id=192 data-nosnippet>192</a>    <span class="attr">#[serde(flatten)]
+<a href=#193 id=193 data-nosnippet>193</a>    </span>status: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>RunStatus,
+<a href=#194 id=194 data-nosnippet>194</a>    <span class="attr">#[serde(flatten)]
+<a href=#195 id=195 data-nosnippet>195</a>    </span>summary: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>RunSummary,
+<a href=#196 id=196 data-nosnippet>196</a>}
+<a href=#197 id=197 data-nosnippet>197</a>
+<a href=#198 id=198 data-nosnippet>198</a><span class="doccomment">/// Run one phase named `name`, unless `cancel` is set, and record in
+<a href=#199 id=199 data-nosnippet>199</a>/// `summary` whether it completed, its wall time and the memory after it;
+<a href=#200 id=200 data-nosnippet>200</a>/// with [`Diagnostics::stage_timing`], log that record too.
+<a href=#201 id=201 data-nosnippet>201</a>///
+<a href=#202 id=202 data-nosnippet>202</a>/// # Errors
+<a href=#203 id=203 data-nosnippet>203</a>///
+<a href=#204 id=204 data-nosnippet>204</a>/// [`Cancelled`] (through `E`) when cancellation was requested before the
+<a href=#205 id=205 data-nosnippet>205</a>/// phase started, and nothing is recorded; otherwise the step's error.
+<a href=#206 id=206 data-nosnippet>206</a></span><span class="kw">pub fn </span>run_phase&lt;T, E: From&lt;Cancelled&gt;&gt;(
+<a href=#207 id=207 data-nosnippet>207</a>    name: <span class="kw">impl </span>Into&lt;String&gt;,
+<a href=#208 id=208 data-nosnippet>208</a>    cancel: <span class="kw-2">&amp;</span>Cancel,
+<a href=#209 id=209 data-nosnippet>209</a>    diagnostics: Diagnostics,
+<a href=#210 id=210 data-nosnippet>210</a>    summary: <span class="kw-2">&amp;mut </span>RunSummary,
+<a href=#211 id=211 data-nosnippet>211</a>    step: <span class="kw">impl </span>FnOnce() -&gt; <span class="prelude-ty">Result</span>&lt;T, E&gt;,
+<a href=#212 id=212 data-nosnippet>212</a>) -&gt; <span class="prelude-ty">Result</span>&lt;T, E&gt; {
+<a href=#213 id=213 data-nosnippet>213</a>    <span class="kw">if </span>cancel.is_cancelled() {
+<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Cancelled.into());
+<a href=#215 id=215 data-nosnippet>215</a>    }
+<a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">let </span>started = Instant::now();
+<a href=#217 id=217 data-nosnippet>217</a>    <span class="kw">let </span>result = step();
+<a href=#218 id=218 data-nosnippet>218</a>    <span class="kw">let </span>phase = Phase {
+<a href=#219 id=219 data-nosnippet>219</a>        name: name.into(),
+<a href=#220 id=220 data-nosnippet>220</a>        completed: result.is_ok(),
+<a href=#221 id=221 data-nosnippet>221</a>        seconds: started.elapsed().as_secs_f64(),
+<a href=#222 id=222 data-nosnippet>222</a>        process_peak_rss_bytes: peak_rss(),
+<a href=#223 id=223 data-nosnippet>223</a>        peak_reserved_bytes: summary.reservations.close(),
+<a href=#224 id=224 data-nosnippet>224</a>        reserved_bytes: reserved_memory(),
+<a href=#225 id=225 data-nosnippet>225</a>    };
+<a href=#226 id=226 data-nosnippet>226</a>    <span class="kw">if </span>diagnostics.stage_timing {
+<a href=#227 id=227 data-nosnippet>227</a>        <span class="macro">tracing::info!</span>(
+<a href=#228 id=228 data-nosnippet>228</a>            target: STAGE_TIMING,
+<a href=#229 id=229 data-nosnippet>229</a>            phase = <span class="question-mark">?</span>phase.name,
+<a href=#230 id=230 data-nosnippet>230</a>            completed = phase.completed,
+<a href=#231 id=231 data-nosnippet>231</a>            seconds = phase.seconds,
+<a href=#232 id=232 data-nosnippet>232</a>            process_peak_rss_bytes = phase.process_peak_rss_bytes,
+<a href=#233 id=233 data-nosnippet>233</a>            peak_reserved_bytes = phase.peak_reserved_bytes,
+<a href=#234 id=234 data-nosnippet>234</a>            reserved_bytes = phase.reserved_bytes,
+<a href=#235 id=235 data-nosnippet>235</a>            <span class="string">"imaging phase"
+<a href=#236 id=236 data-nosnippet>236</a>        </span>);
+<a href=#237 id=237 data-nosnippet>237</a>    }
+<a href=#238 id=238 data-nosnippet>238</a>    summary.phases.push(phase);
+<a href=#239 id=239 data-nosnippet>239</a>    result
+<a href=#240 id=240 data-nosnippet>240</a>}
+<a href=#241 id=241 data-nosnippet>241</a>
+<a href=#242 id=242 data-nosnippet>242</a><span class="doccomment">/// CASA's stop reason: its `stopcode` and the reason's name.
+<a href=#243 id=243 data-nosnippet>243</a></span><span class="kw">fn </span>clean_stop&lt;S: Serializer&gt;(stop: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;CleanStop&gt;, serializer: S) -&gt; <span class="prelude-ty">Result</span>&lt;S::Ok, S::Error&gt; {
+<a href=#244 id=244 data-nosnippet>244</a>    <span class="attr">#[derive(Serialize)]
+<a href=#245 id=245 data-nosnippet>245</a>    </span><span class="kw">struct </span>Stop {
+<a href=#246 id=246 data-nosnippet>246</a>        reason: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#247 id=247 data-nosnippet>247</a>        stopcode: i32,
+<a href=#248 id=248 data-nosnippet>248</a>    }
+<a href=#249 id=249 data-nosnippet>249</a>    stop.map(|stop| Stop {
+<a href=#250 id=250 data-nosnippet>250</a>        reason: stop.name(),
+<a href=#251 id=251 data-nosnippet>251</a>        stopcode: stop.code(),
+<a href=#252 id=252 data-nosnippet>252</a>    })
+<a href=#253 id=253 data-nosnippet>253</a>    .serialize(serializer)
+<a href=#254 id=254 data-nosnippet>254</a>}
+<a href=#255 id=255 data-nosnippet>255</a>
+<a href=#256 id=256 data-nosnippet>256</a><span class="doccomment">/// The catalog's spelling of a grid precision.
+<a href=#257 id=257 data-nosnippet>257</a></span><span class="kw">fn </span>grid_precision&lt;S: Serializer&gt;(
+<a href=#258 id=258 data-nosnippet>258</a>    precision: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;GridPrecision&gt;,
+<a href=#259 id=259 data-nosnippet>259</a>    serializer: S,
+<a href=#260 id=260 data-nosnippet>260</a>) -&gt; <span class="prelude-ty">Result</span>&lt;S::Ok, S::Error&gt; {
+<a href=#261 id=261 data-nosnippet>261</a>    precision
+<a href=#262 id=262 data-nosnippet>262</a>        .map(|precision| <span class="kw">match </span>precision {
+<a href=#263 id=263 data-nosnippet>263</a>            GridPrecision::F32 =&gt; <span class="string">"f32"</span>,
+<a href=#264 id=264 data-nosnippet>264</a>            GridPrecision::F64 =&gt; <span class="string">"f64"</span>,
+<a href=#265 id=265 data-nosnippet>265</a>        })
+<a href=#266 id=266 data-nosnippet>266</a>        .serialize(serializer)
+<a href=#267 id=267 data-nosnippet>267</a>}
+<a href=#268 id=268 data-nosnippet>268</a>
+<a href=#269 id=269 data-nosnippet>269</a><span class="doccomment">/// The process's peak resident set, in bytes.
+<a href=#270 id=270 data-nosnippet>270</a></span><span class="kw">fn </span>peak_rss() -&gt; u64 {
+<a href=#271 id=271 data-nosnippet>271</a>    <span class="kw">let </span><span class="kw-2">mut </span>usage = std::mem::MaybeUninit::&lt;libc::rusage&gt;::uninit();
+<a href=#272 id=272 data-nosnippet>272</a>    <span class="comment">// SAFETY: `getrusage` fills the whole struct when it returns 0.
+<a href=#273 id=273 data-nosnippet>273</a>    </span><span class="kw">let </span>status = <span class="kw">unsafe </span>{ libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+<a href=#274 id=274 data-nosnippet>274</a>    <span class="macro">assert_eq!</span>(
+<a href=#275 id=275 data-nosnippet>275</a>        status, <span class="number">0</span>,
+<a href=#276 id=276 data-nosnippet>276</a>        <span class="string">"getrusage(RUSAGE_SELF) fails only on a bad pointer"
+<a href=#277 id=277 data-nosnippet>277</a>    </span>);
+<a href=#278 id=278 data-nosnippet>278</a>    <span class="comment">// SAFETY: initialised by the successful call above.
+<a href=#279 id=279 data-nosnippet>279</a>    </span><span class="kw">let </span>maximum = u64::try_from(<span class="kw">unsafe </span>{ usage.assume_init() }.ru_maxrss).expect(<span class="string">"a resident size"</span>);
+<a href=#280 id=280 data-nosnippet>280</a>    <span class="comment">// macOS reports bytes, Linux kibibytes.
+<a href=#281 id=281 data-nosnippet>281</a>    </span><span class="kw">if </span><span class="macro">cfg!</span>(target_os = <span class="string">"macos"</span>) {
+<a href=#282 id=282 data-nosnippet>282</a>        maximum
+<a href=#283 id=283 data-nosnippet>283</a>    } <span class="kw">else </span>{
+<a href=#284 id=284 data-nosnippet>284</a>        maximum.saturating_mul(<span class="number">1024</span>)
+<a href=#285 id=285 data-nosnippet>285</a>    }
+<a href=#286 id=286 data-nosnippet>286</a>}
 <a href=#287 id=287 data-nosnippet>287</a>
-<a href=#288 id=288 data-nosnippet>288</a>    <span class="kw">const </span>QUIET: Diagnostics = Diagnostics {
-<a href=#289 id=289 data-nosnippet>289</a>        stage_timing: <span class="bool-val">false</span>,
-<a href=#290 id=290 data-nosnippet>290</a>        metal_stage_timing: <span class="bool-val">false</span>,
-<a href=#291 id=291 data-nosnippet>291</a>        science_trace: <span class="bool-val">false</span>,
-<a href=#292 id=292 data-nosnippet>292</a>    };
-<a href=#293 id=293 data-nosnippet>293</a>
-<a href=#294 id=294 data-nosnippet>294</a>    <span class="attr">#[test]
-<a href=#295 id=295 data-nosnippet>295</a>    </span><span class="kw">fn </span>a_phase_is_recorded_whether_it_completes_or_fails_but_not_once_cancelled() {
-<a href=#296 id=296 data-nosnippet>296</a>        <span class="kw">let </span>cancel = Cancel::new();
-<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">let </span><span class="kw-2">mut </span>summary = RunSummary::begin(serde_json::Value::Null, <span class="number">1</span>, BackendChoice::Cpu);
-<a href=#298 id=298 data-nosnippet>298</a>        <span class="kw">let </span>value = run_phase(<span class="string">"first"</span>, <span class="kw-2">&amp;</span>cancel, QUIET, <span class="kw-2">&amp;mut </span>summary, || {
-<a href=#299 id=299 data-nosnippet>299</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Cancelled&gt;(<span class="number">7</span>)
-<a href=#300 id=300 data-nosnippet>300</a>        })
-<a href=#301 id=301 data-nosnippet>301</a>        .expect(<span class="string">"runs"</span>);
-<a href=#302 id=302 data-nosnippet>302</a>        <span class="macro">assert_eq!</span>(value, <span class="number">7</span>);
-<a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">let </span>failed = run_phase(<span class="string">"second"</span>, <span class="kw-2">&amp;</span>cancel, QUIET, <span class="kw-2">&amp;mut </span>summary, || {
-<a href=#304 id=304 data-nosnippet>304</a>            <span class="prelude-val">Err</span>::&lt;(), <span class="kw">_</span>&gt;(Cancelled)
-<a href=#305 id=305 data-nosnippet>305</a>        });
-<a href=#306 id=306 data-nosnippet>306</a>        <span class="macro">assert_eq!</span>(failed, <span class="prelude-val">Err</span>(Cancelled));
-<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">let </span>recorded = summary
-<a href=#308 id=308 data-nosnippet>308</a>            .phases
-<a href=#309 id=309 data-nosnippet>309</a>            .iter()
-<a href=#310 id=310 data-nosnippet>310</a>            .map(|phase| (phase.name.as_str(), phase.completed))
-<a href=#311 id=311 data-nosnippet>311</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#312 id=312 data-nosnippet>312</a>        <span class="macro">assert_eq!</span>(recorded, [(<span class="string">"first"</span>, <span class="bool-val">true</span>), (<span class="string">"second"</span>, <span class="bool-val">false</span>)]);
-<a href=#313 id=313 data-nosnippet>313</a>        <span class="macro">assert!</span>(
-<a href=#314 id=314 data-nosnippet>314</a>            summary
-<a href=#315 id=315 data-nosnippet>315</a>                .phases
-<a href=#316 id=316 data-nosnippet>316</a>                .iter()
-<a href=#317 id=317 data-nosnippet>317</a>                .all(|phase| phase.process_peak_rss_bytes &gt; <span class="number">0</span>)
-<a href=#318 id=318 data-nosnippet>318</a>        );
-<a href=#319 id=319 data-nosnippet>319</a>        cancel.cancel();
-<a href=#320 id=320 data-nosnippet>320</a>        <span class="kw">let </span><span class="kw-2">mut </span>ran = <span class="bool-val">false</span>;
-<a href=#321 id=321 data-nosnippet>321</a>        <span class="kw">let </span>cancelled = run_phase(<span class="string">"third"</span>, <span class="kw-2">&amp;</span>cancel, QUIET, <span class="kw-2">&amp;mut </span>summary, || {
-<a href=#322 id=322 data-nosnippet>322</a>            ran = <span class="bool-val">true</span>;
-<a href=#323 id=323 data-nosnippet>323</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Cancelled&gt;(())
-<a href=#324 id=324 data-nosnippet>324</a>        });
-<a href=#325 id=325 data-nosnippet>325</a>        <span class="macro">assert_eq!</span>(cancelled, <span class="prelude-val">Err</span>(Cancelled));
-<a href=#326 id=326 data-nosnippet>326</a>        <span class="macro">assert!</span>(!ran);
-<a href=#327 id=327 data-nosnippet>327</a>        <span class="macro">assert_eq!</span>(summary.phases.len(), <span class="number">2</span>);
-<a href=#328 id=328 data-nosnippet>328</a>    }
-<a href=#329 id=329 data-nosnippet>329</a>
-<a href=#330 id=330 data-nosnippet>330</a>    <span class="attr">#[test]
-<a href=#331 id=331 data-nosnippet>331</a>    </span><span class="kw">fn </span>another_runs_phases_take_nothing_from_this_runs_phase() {
-<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">let </span>host = <span class="kw">crate</span>::HostResources {
-<a href=#333 id=333 data-nosnippet>333</a>            threads: <span class="number">1</span>,
-<a href=#334 id=334 data-nosnippet>334</a>            performance_cores: <span class="number">1</span>,
-<a href=#335 id=335 data-nosnippet>335</a>            available_memory: <span class="number">1 </span>&lt;&lt; <span class="number">30</span>,
-<a href=#336 id=336 data-nosnippet>336</a>            metal: <span class="bool-val">false</span>,
-<a href=#337 id=337 data-nosnippet>337</a>        };
-<a href=#338 id=338 data-nosnippet>338</a>        <span class="kw">let </span>policy = <span class="kw">crate</span>::ResourcePolicy::Explicit {
-<a href=#339 id=339 data-nosnippet>339</a>            workers: <span class="number">1</span>,
-<a href=#340 id=340 data-nosnippet>340</a>            memory: <span class="number">1 </span>&lt;&lt; <span class="number">30</span>,
+<a href=#288 id=288 data-nosnippet>288</a><span class="attr">#[cfg(test)]
+<a href=#289 id=289 data-nosnippet>289</a></span><span class="kw">mod </span>tests {
+<a href=#290 id=290 data-nosnippet>290</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#291 id=291 data-nosnippet>291</a>
+<a href=#292 id=292 data-nosnippet>292</a>    <span class="kw">const </span>QUIET: Diagnostics = Diagnostics {
+<a href=#293 id=293 data-nosnippet>293</a>        stage_timing: <span class="bool-val">false</span>,
+<a href=#294 id=294 data-nosnippet>294</a>        metal_stage_timing: <span class="bool-val">false</span>,
+<a href=#295 id=295 data-nosnippet>295</a>        science_trace: <span class="bool-val">false</span>,
+<a href=#296 id=296 data-nosnippet>296</a>    };
+<a href=#297 id=297 data-nosnippet>297</a>
+<a href=#298 id=298 data-nosnippet>298</a>    <span class="attr">#[test]
+<a href=#299 id=299 data-nosnippet>299</a>    </span><span class="kw">fn </span>a_phase_is_recorded_whether_it_completes_or_fails_but_not_once_cancelled() {
+<a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">let </span>cancel = Cancel::new();
+<a href=#301 id=301 data-nosnippet>301</a>        <span class="kw">let </span><span class="kw-2">mut </span>summary = RunSummary::begin(serde_json::Value::Null, <span class="number">1</span>, BackendChoice::Cpu);
+<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">let </span>value = run_phase(<span class="string">"first"</span>, <span class="kw-2">&amp;</span>cancel, QUIET, <span class="kw-2">&amp;mut </span>summary, || {
+<a href=#303 id=303 data-nosnippet>303</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Cancelled&gt;(<span class="number">7</span>)
+<a href=#304 id=304 data-nosnippet>304</a>        })
+<a href=#305 id=305 data-nosnippet>305</a>        .expect(<span class="string">"runs"</span>);
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="macro">assert_eq!</span>(value, <span class="number">7</span>);
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">let </span>failed = run_phase(<span class="string">"second"</span>, <span class="kw-2">&amp;</span>cancel, QUIET, <span class="kw-2">&amp;mut </span>summary, || {
+<a href=#308 id=308 data-nosnippet>308</a>            <span class="prelude-val">Err</span>::&lt;(), <span class="kw">_</span>&gt;(Cancelled)
+<a href=#309 id=309 data-nosnippet>309</a>        });
+<a href=#310 id=310 data-nosnippet>310</a>        <span class="macro">assert_eq!</span>(failed, <span class="prelude-val">Err</span>(Cancelled));
+<a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">let </span>recorded = summary
+<a href=#312 id=312 data-nosnippet>312</a>            .phases
+<a href=#313 id=313 data-nosnippet>313</a>            .iter()
+<a href=#314 id=314 data-nosnippet>314</a>            .map(|phase| (phase.name.as_str(), phase.completed))
+<a href=#315 id=315 data-nosnippet>315</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="macro">assert_eq!</span>(recorded, [(<span class="string">"first"</span>, <span class="bool-val">true</span>), (<span class="string">"second"</span>, <span class="bool-val">false</span>)]);
+<a href=#317 id=317 data-nosnippet>317</a>        <span class="macro">assert!</span>(
+<a href=#318 id=318 data-nosnippet>318</a>            summary
+<a href=#319 id=319 data-nosnippet>319</a>                .phases
+<a href=#320 id=320 data-nosnippet>320</a>                .iter()
+<a href=#321 id=321 data-nosnippet>321</a>                .all(|phase| phase.process_peak_rss_bytes &gt; <span class="number">0</span>)
+<a href=#322 id=322 data-nosnippet>322</a>        );
+<a href=#323 id=323 data-nosnippet>323</a>        cancel.cancel();
+<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">let </span><span class="kw-2">mut </span>ran = <span class="bool-val">false</span>;
+<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">let </span>cancelled = run_phase(<span class="string">"third"</span>, <span class="kw-2">&amp;</span>cancel, QUIET, <span class="kw-2">&amp;mut </span>summary, || {
+<a href=#326 id=326 data-nosnippet>326</a>            ran = <span class="bool-val">true</span>;
+<a href=#327 id=327 data-nosnippet>327</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Cancelled&gt;(())
+<a href=#328 id=328 data-nosnippet>328</a>        });
+<a href=#329 id=329 data-nosnippet>329</a>        <span class="macro">assert_eq!</span>(cancelled, <span class="prelude-val">Err</span>(Cancelled));
+<a href=#330 id=330 data-nosnippet>330</a>        <span class="macro">assert!</span>(!ran);
+<a href=#331 id=331 data-nosnippet>331</a>        <span class="macro">assert_eq!</span>(summary.phases.len(), <span class="number">2</span>);
+<a href=#332 id=332 data-nosnippet>332</a>    }
+<a href=#333 id=333 data-nosnippet>333</a>
+<a href=#334 id=334 data-nosnippet>334</a>    <span class="attr">#[test]
+<a href=#335 id=335 data-nosnippet>335</a>    </span><span class="kw">fn </span>another_runs_phases_take_nothing_from_this_runs_phase() {
+<a href=#336 id=336 data-nosnippet>336</a>        <span class="kw">let </span>host = <span class="kw">crate</span>::HostResources {
+<a href=#337 id=337 data-nosnippet>337</a>            threads: <span class="number">1</span>,
+<a href=#338 id=338 data-nosnippet>338</a>            performance_cores: <span class="number">1</span>,
+<a href=#339 id=339 data-nosnippet>339</a>            available_memory: <span class="number">1 </span>&lt;&lt; <span class="number">30</span>,
+<a href=#340 id=340 data-nosnippet>340</a>            metal: <span class="bool-val">false</span>,
 <a href=#341 id=341 data-nosnippet>341</a>        };
-<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">let </span>demand = <span class="kw">crate</span>::Demand {
-<a href=#343 id=343 data-nosnippet>343</a>            phase: <span class="string">"transient"</span>,
-<a href=#344 id=344 data-nosnippet>344</a>            memory: <span class="number">5 </span>&lt;&lt; <span class="number">20</span>,
+<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">let </span>policy = <span class="kw">crate</span>::ResourcePolicy::Explicit {
+<a href=#343 id=343 data-nosnippet>343</a>            workers: <span class="number">1</span>,
+<a href=#344 id=344 data-nosnippet>344</a>            memory: <span class="number">1 </span>&lt;&lt; <span class="number">30</span>,
 <a href=#345 id=345 data-nosnippet>345</a>        };
-<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">let </span>cancel = Cancel::new();
-<a href=#347 id=347 data-nosnippet>347</a>        <span class="kw">let </span><span class="kw-2">mut </span>first = RunSummary::begin(serde_json::Value::Null, <span class="number">1</span>, BackendChoice::Cpu);
-<a href=#348 id=348 data-nosnippet>348</a>        run_phase(<span class="string">"first"</span>, <span class="kw-2">&amp;</span>cancel, QUIET, <span class="kw-2">&amp;mut </span>first, || {
-<a href=#349 id=349 data-nosnippet>349</a>            drop(<span class="kw">crate</span>::admit(<span class="kw-2">&amp;</span>host, <span class="kw-2">&amp;</span>policy, <span class="kw-2">&amp;</span>demand).expect(<span class="string">"fits"</span>));
-<a href=#350 id=350 data-nosnippet>350</a>            <span class="kw">let </span><span class="kw-2">mut </span>second = RunSummary::begin(serde_json::Value::Null, <span class="number">1</span>, BackendChoice::Cpu);
-<a href=#351 id=351 data-nosnippet>351</a>            run_phase(<span class="string">"second"</span>, <span class="kw-2">&amp;</span>cancel, QUIET, <span class="kw-2">&amp;mut </span>second, || {
-<a href=#352 id=352 data-nosnippet>352</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Cancelled&gt;(())
-<a href=#353 id=353 data-nosnippet>353</a>            })
-<a href=#354 id=354 data-nosnippet>354</a>        })
-<a href=#355 id=355 data-nosnippet>355</a>        .expect(<span class="string">"runs"</span>);
-<a href=#356 id=356 data-nosnippet>356</a>        <span class="comment">// Other tests of this process may hold reservations too.
-<a href=#357 id=357 data-nosnippet>357</a>        </span><span class="macro">assert!</span>(first.phases[<span class="number">0</span>].peak_reserved_bytes &gt;= <span class="number">5 </span>&lt;&lt; <span class="number">20</span>);
-<a href=#358 id=358 data-nosnippet>358</a>    }
-<a href=#359 id=359 data-nosnippet>359</a>
-<a href=#360 id=360 data-nosnippet>360</a>    <span class="attr">#[test]
-<a href=#361 id=361 data-nosnippet>361</a>    </span><span class="kw">fn </span>the_summary_spells_its_status_stop_and_precision_as_the_catalog_and_casa_do() {
-<a href=#362 id=362 data-nosnippet>362</a>        <span class="kw">let </span><span class="kw-2">mut </span>summary = RunSummary::begin(serde_json::Value::Null, <span class="number">1 </span>&lt;&lt; <span class="number">30</span>, BackendChoice::Cpu);
-<a href=#363 id=363 data-nosnippet>363</a>        summary.stop = <span class="prelude-val">Some</span>(CleanStop::Threshold);
-<a href=#364 id=364 data-nosnippet>364</a>        summary.precision = <span class="prelude-val">Some</span>(GridPrecision::F64);
-<a href=#365 id=365 data-nosnippet>365</a>        <span class="kw">let </span>written = |status: <span class="kw-2">&amp;</span>RunStatus| -&gt; serde_json::Value {
-<a href=#366 id=366 data-nosnippet>366</a>            serde_json::to_value(Written {
-<a href=#367 id=367 data-nosnippet>367</a>                status,
-<a href=#368 id=368 data-nosnippet>368</a>                summary: <span class="kw-2">&amp;</span>summary,
-<a href=#369 id=369 data-nosnippet>369</a>            })
-<a href=#370 id=370 data-nosnippet>370</a>            .expect(<span class="string">"serializes"</span>)
-<a href=#371 id=371 data-nosnippet>371</a>        };
-<a href=#372 id=372 data-nosnippet>372</a>        <span class="kw">let </span>json = written(<span class="kw-2">&amp;</span>RunStatus::Failed {
-<a href=#373 id=373 data-nosnippet>373</a>            error: <span class="string">"a pass failed"</span>.to_string(),
-<a href=#374 id=374 data-nosnippet>374</a>        });
-<a href=#375 id=375 data-nosnippet>375</a>        <span class="macro">assert_eq!</span>(json[<span class="string">"status"</span>], <span class="string">"failed"</span>);
-<a href=#376 id=376 data-nosnippet>376</a>        <span class="macro">assert_eq!</span>(json[<span class="string">"error"</span>], <span class="string">"a pass failed"</span>);
-<a href=#377 id=377 data-nosnippet>377</a>        <span class="macro">assert_eq!</span>(
-<a href=#378 id=378 data-nosnippet>378</a>            json[<span class="string">"stop"</span>],
-<a href=#379 id=379 data-nosnippet>379</a>            <span class="macro">serde_json::json!</span>({<span class="string">"reason"</span>: <span class="string">"threshold"</span>, <span class="string">"stopcode"</span>: <span class="number">2</span>})
-<a href=#380 id=380 data-nosnippet>380</a>        );
-<a href=#381 id=381 data-nosnippet>381</a>        <span class="macro">assert_eq!</span>(json[<span class="string">"precision"</span>], <span class="string">"f64"</span>);
-<a href=#382 id=382 data-nosnippet>382</a>        <span class="macro">assert_eq!</span>(json[<span class="string">"backend"</span>], <span class="string">"cpu"</span>);
-<a href=#383 id=383 data-nosnippet>383</a>        <span class="macro">assert_eq!</span>(json[<span class="string">"capacity_bytes"</span>], <span class="number">1_u64 </span>&lt;&lt; <span class="number">30</span>);
-<a href=#384 id=384 data-nosnippet>384</a>        <span class="macro">assert!</span>(json.get(<span class="string">"reservations"</span>).is_none());
-<a href=#385 id=385 data-nosnippet>385</a>        <span class="kw">let </span>json = written(<span class="kw-2">&amp;</span>RunStatus::Cancelled);
-<a href=#386 id=386 data-nosnippet>386</a>        <span class="macro">assert_eq!</span>(json[<span class="string">"status"</span>], <span class="string">"cancelled"</span>);
-<a href=#387 id=387 data-nosnippet>387</a>        <span class="macro">assert!</span>(json.get(<span class="string">"error"</span>).is_none());
-<a href=#388 id=388 data-nosnippet>388</a>        <span class="macro">assert_eq!</span>(written(<span class="kw-2">&amp;</span>RunStatus::Completed)[<span class="string">"status"</span>], <span class="string">"completed"</span>);
-<a href=#389 id=389 data-nosnippet>389</a>    }
-<a href=#390 id=390 data-nosnippet>390</a>}
+<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">let </span>demand = <span class="kw">crate</span>::Demand {
+<a href=#347 id=347 data-nosnippet>347</a>            phase: <span class="string">"transient"</span>,
+<a href=#348 id=348 data-nosnippet>348</a>            memory: <span class="number">5 </span>&lt;&lt; <span class="number">20</span>,
+<a href=#349 id=349 data-nosnippet>349</a>        };
+<a href=#350 id=350 data-nosnippet>350</a>        <span class="kw">let </span>cancel = Cancel::new();
+<a href=#351 id=351 data-nosnippet>351</a>        <span class="kw">let </span><span class="kw-2">mut </span>first = RunSummary::begin(serde_json::Value::Null, <span class="number">1</span>, BackendChoice::Cpu);
+<a href=#352 id=352 data-nosnippet>352</a>        run_phase(<span class="string">"first"</span>, <span class="kw-2">&amp;</span>cancel, QUIET, <span class="kw-2">&amp;mut </span>first, || {
+<a href=#353 id=353 data-nosnippet>353</a>            drop(<span class="kw">crate</span>::admit(<span class="kw-2">&amp;</span>host, <span class="kw-2">&amp;</span>policy, <span class="kw-2">&amp;</span>demand).expect(<span class="string">"fits"</span>));
+<a href=#354 id=354 data-nosnippet>354</a>            <span class="kw">let </span><span class="kw-2">mut </span>second = RunSummary::begin(serde_json::Value::Null, <span class="number">1</span>, BackendChoice::Cpu);
+<a href=#355 id=355 data-nosnippet>355</a>            run_phase(<span class="string">"second"</span>, <span class="kw-2">&amp;</span>cancel, QUIET, <span class="kw-2">&amp;mut </span>second, || {
+<a href=#356 id=356 data-nosnippet>356</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Cancelled&gt;(())
+<a href=#357 id=357 data-nosnippet>357</a>            })
+<a href=#358 id=358 data-nosnippet>358</a>        })
+<a href=#359 id=359 data-nosnippet>359</a>        .expect(<span class="string">"runs"</span>);
+<a href=#360 id=360 data-nosnippet>360</a>        <span class="comment">// Other tests of this process may hold reservations too.
+<a href=#361 id=361 data-nosnippet>361</a>        </span><span class="macro">assert!</span>(first.phases[<span class="number">0</span>].peak_reserved_bytes &gt;= <span class="number">5 </span>&lt;&lt; <span class="number">20</span>);
+<a href=#362 id=362 data-nosnippet>362</a>    }
+<a href=#363 id=363 data-nosnippet>363</a>
+<a href=#364 id=364 data-nosnippet>364</a>    <span class="attr">#[test]
+<a href=#365 id=365 data-nosnippet>365</a>    </span><span class="kw">fn </span>the_summary_spells_its_status_stop_and_precision_as_the_catalog_and_casa_do() {
+<a href=#366 id=366 data-nosnippet>366</a>        <span class="kw">let </span><span class="kw-2">mut </span>summary = RunSummary::begin(serde_json::Value::Null, <span class="number">1 </span>&lt;&lt; <span class="number">30</span>, BackendChoice::Cpu);
+<a href=#367 id=367 data-nosnippet>367</a>        summary.stop = <span class="prelude-val">Some</span>(CleanStop::Threshold);
+<a href=#368 id=368 data-nosnippet>368</a>        summary.precision = <span class="prelude-val">Some</span>(GridPrecision::F64);
+<a href=#369 id=369 data-nosnippet>369</a>        <span class="kw">let </span>written = |status: <span class="kw-2">&amp;</span>RunStatus| -&gt; serde_json::Value {
+<a href=#370 id=370 data-nosnippet>370</a>            serde_json::to_value(Written {
+<a href=#371 id=371 data-nosnippet>371</a>                status,
+<a href=#372 id=372 data-nosnippet>372</a>                summary: <span class="kw-2">&amp;</span>summary,
+<a href=#373 id=373 data-nosnippet>373</a>            })
+<a href=#374 id=374 data-nosnippet>374</a>            .expect(<span class="string">"serializes"</span>)
+<a href=#375 id=375 data-nosnippet>375</a>        };
+<a href=#376 id=376 data-nosnippet>376</a>        <span class="kw">let </span>json = written(<span class="kw-2">&amp;</span>RunStatus::Failed {
+<a href=#377 id=377 data-nosnippet>377</a>            error: <span class="string">"a pass failed"</span>.to_string(),
+<a href=#378 id=378 data-nosnippet>378</a>        });
+<a href=#379 id=379 data-nosnippet>379</a>        <span class="macro">assert_eq!</span>(json[<span class="string">"status"</span>], <span class="string">"failed"</span>);
+<a href=#380 id=380 data-nosnippet>380</a>        <span class="macro">assert_eq!</span>(json[<span class="string">"error"</span>], <span class="string">"a pass failed"</span>);
+<a href=#381 id=381 data-nosnippet>381</a>        <span class="macro">assert_eq!</span>(
+<a href=#382 id=382 data-nosnippet>382</a>            json[<span class="string">"stop"</span>],
+<a href=#383 id=383 data-nosnippet>383</a>            <span class="macro">serde_json::json!</span>({<span class="string">"reason"</span>: <span class="string">"threshold"</span>, <span class="string">"stopcode"</span>: <span class="number">2</span>})
+<a href=#384 id=384 data-nosnippet>384</a>        );
+<a href=#385 id=385 data-nosnippet>385</a>        <span class="macro">assert_eq!</span>(json[<span class="string">"precision"</span>], <span class="string">"f64"</span>);
+<a href=#386 id=386 data-nosnippet>386</a>        <span class="macro">assert_eq!</span>(json[<span class="string">"backend"</span>], <span class="string">"cpu"</span>);
+<a href=#387 id=387 data-nosnippet>387</a>        <span class="macro">assert_eq!</span>(json[<span class="string">"capacity_bytes"</span>], <span class="number">1_u64 </span>&lt;&lt; <span class="number">30</span>);
+<a href=#388 id=388 data-nosnippet>388</a>        <span class="macro">assert!</span>(json.get(<span class="string">"reservations"</span>).is_none());
+<a href=#389 id=389 data-nosnippet>389</a>        <span class="kw">let </span>json = written(<span class="kw-2">&amp;</span>RunStatus::Cancelled);
+<a href=#390 id=390 data-nosnippet>390</a>        <span class="macro">assert_eq!</span>(json[<span class="string">"status"</span>], <span class="string">"cancelled"</span>);
+<a href=#391 id=391 data-nosnippet>391</a>        <span class="macro">assert!</span>(json.get(<span class="string">"error"</span>).is_none());
+<a href=#392 id=392 data-nosnippet>392</a>        <span class="macro">assert_eq!</span>(written(<span class="kw-2">&amp;</span>RunStatus::Completed)[<span class="string">"status"</span>], <span class="string">"completed"</span>);
+<a href=#393 id=393 data-nosnippet>393</a>    }
+<a href=#394 id=394 data-nosnippet>394</a>}
 </code></pre></div></section></main></body></html>

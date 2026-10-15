@@ -1026,6 +1026,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The cube Briggs weightor grids and looks up its density in different uvw frames
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1055,7 +1066,8 @@ CASA behaviours casa-rs follows for parity:
 CASA behaviours casa-rs does not follow:
 <a href="#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes">odd-size scale convolutions</a>,
 <a href="#matrixcleaners-step-residual-forgets-earlier-steps">MatrixCleaner's step residual</a>,
-<a href="#the-analytic-pb-ignores-a-failed-topixel">an unplaceable PB pointing</a>.</p>
+<a href="#the-analytic-pb-ignores-a-failed-topixel">an unplaceable PB pointing</a>,
+<a href="#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames">the cube density's two uvw frames</a>.</p>
 <h2 id="aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection pairs the partner hand's visibility with the conjugate-baseline cell<a class="headerlink" href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-09</li>
@@ -1328,6 +1340,33 @@ projection cannot place, such as one 90° or more from the image centre under
 SIN, is centred on whatever pixel the failed call left. casa-rs adds no beam
 for a pointing 90° or more from an image domain's centre and refuses any
 other projection failure.</p>
+<h2 id="the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames">The cube Briggs weightor grids and looks up its density in different uvw frames<a class="headerlink" href="#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-15</li>
+<li>Status: likely CASA bug; casa-rs does not follow it (#712 review by Fable
+  and Astra)</li>
+<li>Affected code (CASA 6.7.5.18 and 6.7.6.14):</li>
+<li><code>casatools/src/code/synthesis/TransformMachines2/BriggsCubeWeightor.cc</code>
+    (<code>weightUniform</code>, <code>getWeightUniform</code>)</li>
+<li><code>casatools/src/code/synthesis/TransformMachines2/GridFT.cc</code> (<code>put</code>)</li>
+</ul>
+<p><code>BriggsCubeWeightor</code>, which weighs cubes under uniform and Briggs weighting
+(<code>perchanweightdensity</code>), fills its density grid through <code>GridFT::put</code>, which
+rotates each row's uvw to the image phase centre (<code>rotateUVW</code>, <code>GridFT.cc:778</code>).
+It then looks each row up, and tapers it, at <code>vb.uvw()</code>, the unrotated
+MeasurementSet uvw (<code>BriggsCubeWeightor.cc:826, 860-861</code>). The grid and the
+lookup use different frames. When the phase centre is the field centre the
+rotation is the identity and nothing changes; for a cube with a phase centre
+away from the field centre, or a multi-field cube, a row reads the density of
+a different cell from the one its own sample was counted in, so its weight no
+longer follows the local density. The MFS weightor (<code>VisImagingWeight</code>)
+accumulates and looks up in one frame, the MeasurementSet uvw.</p>
+<p>casa-rs bins and looks up the cube rule at the rotated uvw, one frame for both
+(<code>the_cube_density_bins_and_looks_up_the_rotated_uvw</code>), and the standard (MFS)
+rule at the MeasurementSet uvw, as <code>VisImagingWeight</code> does
+(<code>the_standard_density_bins_the_measurement_set_uvw</code>). Cubes imaged at their
+own field centre agree with CASA either way; off-centre and multi-field cubes
+under a density weighting differ from CASA's weights by this mechanism.</p>
 
 
 
