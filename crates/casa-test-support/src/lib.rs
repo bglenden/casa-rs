@@ -31,8 +31,8 @@ pub use image_oracle_impl::{
     CppRegionStatistics, CppUnsupportedRegionKind,
 };
 pub use lattice_oracle::LatticeOracle;
-pub use measures_sequence::FrequencySequence;
 pub use lattice_oracle_impl::CppLatticeStatisticsBenchResult;
+pub use measures_sequence::FrequencySequence;
 pub use oracle_runtime::OracleError;
 pub use table_oracle::{HeldCppTableReader, TableOracle};
 pub use table_oracle_impl::{

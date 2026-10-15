@@ -369,10 +369,12 @@ fn primary_beam_plane(
         ),
         Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
             let shape = plane.shape();
-            Ok(MosaicSensitivity::try_new(&plane.read_sensitivity()?)?
-                .map_or_else(|| vec![0.0; shape[0] * shape[1]], |sensitivity| {
-                    sensitivity.primary_beam()
-                }))
+            Ok(
+                MosaicSensitivity::try_new(&plane.read_sensitivity()?)?.map_or_else(
+                    || vec![0.0; shape[0] * shape[1]],
+                    |sensitivity| sensitivity.primary_beam(),
+                ),
+            )
         }
         None => unreachable!("planning refuses a PB product or mask without a primary-beam model"),
     }

@@ -109,10 +109,10 @@ pub(crate) fn model_images(
 ) -> Result<ModelImages, ImagingError> {
     let shape = generation.shape();
     let full_width = shape.domains()[domain].pixels()[0];
-    let (origin, [width, height]) = window.map_or(
-        ([0, 0], shape.domains()[domain].pixels()),
-        |window| (window.origin, window.shape()),
-    );
+    let (origin, [width, height]) = window
+        .map_or(([0, 0], shape.domains()[domain].pixels()), |window| {
+            (window.origin, window.shape())
+        });
     let pols = shape.polarizations();
     let terms = if channel_local {
         1

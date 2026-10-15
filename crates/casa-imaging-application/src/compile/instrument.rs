@@ -156,7 +156,9 @@ pub(super) fn pointing_centre_law(gridder: &Gridder) -> PointingCentreLaw {
             MissingPointingPolicy::Reject,
         )),
         Gridder::Awproject(_) | Gridder::Mosaic { .. } => PointingCentreLaw::FieldCentre,
-        Gridder::Standard { .. } | Gridder::Wproject { .. } => PointingCentreLaw::PhaseTrackingCentre,
+        Gridder::Standard { .. } | Gridder::Wproject { .. } => {
+            PointingCentreLaw::PhaseTrackingCentre
+        }
     }
 }
 

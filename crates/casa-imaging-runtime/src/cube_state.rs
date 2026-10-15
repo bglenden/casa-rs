@@ -195,3 +195,24 @@ impl std::fmt::Debug for CubeState {
             .finish_non_exhaustive()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A mosaic cube keeps each plane's weight image beside its PSF: the
+    /// invariant array holds twice the planes, so the cache payload grows by
+    /// one block per plane and the files by as much again.
+    #[test]
+    fn a_dense_sensitivity_charges_a_second_invariant_plane_per_plane() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let (domains, planes) = ([[64, 32]], 6);
+        let scalar = footprint(directory.path(), &domains, planes, false, 2).unwrap();
+        let dense = footprint(directory.path(), &domains, planes, true, 2).unwrap();
+        let plane = ManagedPlaneArray::<f32>::footprint(directory.path(), 32, 64, planes).unwrap();
+        assert_eq!(dense.payload - scalar.payload, planes * plane.block_bytes);
+        assert!(dense.disk > scalar.disk);
+        assert!(dense.overhead >= scalar.overhead);
+        assert!(dense.minimum >= scalar.minimum);
+    }
+}

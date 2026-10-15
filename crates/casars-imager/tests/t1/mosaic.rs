@@ -336,7 +336,11 @@ fn a_mosaic_cube_keeps_each_channels_weight_image() {
                 pb_plane[pixel]
             );
         }
-        assert_eq!((centre_at, east_at), (centre_pixel, east_pixel), "channel {channel}");
+        assert_eq!(
+            (centre_at, east_at),
+            (centre_pixel, east_pixel),
+            "channel {channel}"
+        );
         assert!(
             (f64::from(centre_peak) - CENTRE.flux_jy).abs() < 0.02 * CENTRE.flux_jy,
             "channel {channel}: centre PB-corrected peak {centre_peak} Jy"

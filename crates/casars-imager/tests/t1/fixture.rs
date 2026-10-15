@@ -743,17 +743,23 @@ fn assert_primary_beam(pb: &Product, pblimit: f32) -> ndarray::ArrayD<bool> {
     support
 }
 
-/// `.pb` is `sqrt(weight / max(weight))` inside its support.
+/// `.pb` is `sqrt(weight / max(weight))` inside its support, each channel
+/// over its own plane's peak (`SIImageStore::getPbMax(pol, chan)`).
 fn assert_root_of_weight(pb: &Product, weight: &Product, support: &ndarray::ArrayD<bool>) {
-    let weight = weight.values();
-    let peak = weight.iter().fold(0.0_f32, |peak, value| peak.max(*value));
-    for ((pb, weight), inside) in pb.values().iter().zip(&weight).zip(support) {
-        if *inside {
-            let expected = (weight.abs() / peak).sqrt();
-            assert!(
-                (pb - expected).abs() < 1.0e-5,
-                "PB {pb}, root of the weight over its peak {expected}"
-            );
+    let (pb, weight) = (pb.values(), weight.values());
+    for channel in 0..weight.shape()[3] {
+        let plane = |values: &ndarray::ArrayD<f32>| values.index_axis(Axis(3), channel).to_owned();
+        let weight = plane(&weight);
+        let peak = weight.iter().fold(0.0_f32, |peak, value| peak.max(*value));
+        let inside = support.index_axis(Axis(3), channel);
+        for ((pb, weight), inside) in plane(&pb).iter().zip(&weight).zip(inside) {
+            if *inside {
+                let expected = (weight.abs() / peak).sqrt();
+                assert!(
+                    (pb - expected).abs() < 1.0e-5,
+                    "channel {channel}: PB {pb}, root of the weight over its peak {expected}"
+                );
+            }
         }
     }
 }

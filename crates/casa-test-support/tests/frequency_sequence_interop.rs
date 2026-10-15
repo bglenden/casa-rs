@@ -47,7 +47,8 @@ fn an_ordered_converter_reproduces_casacores_over_a_two_hour_track() {
     })
     .expect("C++ ordered conversion");
 
-    let direction = MDirection::from_angles(DIRECTION_RAD[0], DIRECTION_RAD[1], DirectionRef::J2000);
+    let direction =
+        MDirection::from_angles(DIRECTION_RAD[0], DIRECTION_RAD[1], DirectionRef::J2000);
     let observatory = MPosition::new_wgs84(VLA[0], VLA[1], VLA[2]);
     let mut ordered = MFrequencyConverter::new(FrequencyRef::TOPO, FrequencyRef::LSRK);
     let (mut ordered_error_hz, mut fresh_error_hz) = (0.0_f64, 0.0_f64);
@@ -72,6 +73,9 @@ fn an_ordered_converter_reproduces_casacores_over_a_two_hour_track() {
         }
     }
 
+    eprintln!(
+        "ordered: largest miss {ordered_error_hz:.3e} Hz; fresh per epoch: {fresh_error_hz:.3e} Hz"
+    );
     assert!(
         ordered_error_hz < 1.0e-3,
         "ordered conversion is {ordered_error_hz} Hz from casacore's"

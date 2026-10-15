@@ -37,10 +37,7 @@ pub(crate) struct FacetBox {
 impl FacetBox {
     /// The facet's `[width, height]`.
     pub(crate) const fn shape(self) -> [usize; 2] {
-        [
-            self.end[0] - self.origin[0],
-            self.end[1] - self.origin[1],
-        ]
+        [self.end[0] - self.origin[0], self.end[1] - self.origin[1]]
     }
 }
 
@@ -195,7 +192,10 @@ impl ChartStitch {
         if assembly.arrived < facets {
             return Ok(None);
         }
-        Ok(self.assemblies.remove(&domain).map(|assembly| assembly.images))
+        Ok(self
+            .assemblies
+            .remove(&domain)
+            .map(|assembly| assembly.images))
     }
 }
 

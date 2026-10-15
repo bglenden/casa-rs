@@ -80,6 +80,13 @@ independent channel-local line reconstruction. Its fit coefficients describe
 the transform and are not a continuum image model.
 _Avoid_: Image-domain subtraction
 
+**Chart**:
+One pass domain: an image domain, or one facet of a faceted image domain,
+with its own operator about its own centre. The pass grids and predicts
+charts; the normal state, the minor cycle and the products see image domains,
+stitched from their charts.
+_Avoid_: Mapper, facet store
+
 **Measurement Operator**:
 The complete logical forward map A from model coefficients to unweighted
 selected samples and its declared-inner-product adjoint A*, including paired

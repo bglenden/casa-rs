@@ -56,11 +56,9 @@ impl MeasuresOracle {
         sequence: FrequencySequence<'_>,
     ) -> Result<Vec<f64>, OracleError> {
         oracle_operation!("measures.frequency_convert_sequence", {
-            cpp_frequency_convert_sequence(sequence).map_err(|message| {
-                OracleError::CppFailure {
-                    operation: "measures.frequency_convert_sequence",
-                    message,
-                }
+            cpp_frequency_convert_sequence(sequence).map_err(|message| OracleError::CppFailure {
+                operation: "measures.frequency_convert_sequence",
+                message,
             })
         })
     }

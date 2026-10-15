@@ -359,7 +359,9 @@ fn primary_beam_model(
         Gridder::Mosaic { .. } | Gridder::Awproject(_) => {
             Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
         }
-        Gridder::Standard { .. } | Gridder::Wproject { .. } if request.write_pb || request.pbcor => {
+        Gridder::Standard { .. } | Gridder::Wproject { .. }
+            if request.write_pb || request.pbcor =>
+        {
             Some(instrument::standard_primary_beam_model(ms)?)
         }
         Gridder::Standard { .. } | Gridder::Wproject { .. } => None,

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use super::super::CubeRealFields;
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -260,13 +261,15 @@ fn selective_normal_plane_reads_only_requested_domain_channel_polarization_and_f
     );
     assert_eq!(residual[0].re, offset as f64 + 0.25);
     reads[1].lock().unwrap().clear();
+    // The weight image is a real field on complex-scalar offsets, so the
+    // plane reader widens its own copy.
     let sensitivity = selected.read_sensitivity().unwrap();
-    assert!(matches!(sensitivity, Cow::Borrowed(_)));
+    assert!(matches!(sensitivity, Cow::Owned(_)));
     assert_eq!(
         *reads[1].lock().unwrap(),
         vec![(
-            fields.sensitivity.start - fields.epoch_scalars + offset,
-            CELLS
+            fields.sensitivity.start - fields.epoch_scalars + 2 * offset,
+            2 * CELLS
         )]
     );
     assert!(reads[0].lock().unwrap().is_empty());
@@ -460,8 +463,9 @@ fn normal_owner_rejects_incorrect_owned_window_length() {
     let plan = NormalStoragePlan::new(Arc::new(ResidentNormalStorage), CHANNELS).unwrap();
     let mut stored = StoredChannelNormalDomain::begin(domain(0..CHANNELS, false), &plan).unwrap();
     stored.storage = Box::new(ShortRead);
+    let dirty = stored.fields.dirty.clone();
     assert!(matches!(
-        stored.read_scalars(0..3),
+        stored.read_complex(&dirty, 0, 3),
         Err(SpectralOperatorError::NormalStorage(_))
     ));
 }
@@ -494,7 +498,8 @@ fn residual_epochs_share_only_invariants_without_old_array_access_or_owner_chain
     let plan = NormalStoragePlan::resident(CHANNELS).unwrap();
     let mut old = StoredChannelNormalDomain::begin(domain(0..CHANNELS, true), &plan).unwrap();
     assert_eq!(old.storage.len(), CHANNELS * POLARIZATIONS * CELLS * 2);
-    assert_eq!(old.invariants.len(), CHANNELS * POLARIZATIONS * CELLS * 3);
+    // The PSF and the weight image, each a complex-scalar span.
+    assert_eq!(old.invariants.len(), CHANNELS * POLARIZATIONS * CELLS * 4);
     let expected = old.read_window(0..CHANNELS).unwrap();
     let accesses = Arc::new(AtomicUsize::new(0));
     let epoch_alive = Arc::new(());
@@ -809,7 +814,8 @@ fn a_gridded_weight_image_is_each_planes_own_sensitivity_resident_and_paged() {
             NormalStoragePlan::new(Arc::new(FloatStorage(Box::new([]))), 1).unwrap(),
         ),
     ] {
-        let mut stored = StoredChannelNormalDomain::begin(compact_domain(0..1, true), &plan).unwrap();
+        let mut stored =
+            StoredChannelNormalDomain::begin(compact_domain(0..1, true), &plan).unwrap();
         assert!(stored.fields.dense_sensitivity(), "{name}");
         assert_eq!(
             stored.append(compact_domain(1..2, false)),
@@ -817,7 +823,9 @@ fn a_gridded_weight_image_is_each_planes_own_sensitivity_resident_and_paged() {
             "{name}: a window without a weight image cannot join dense storage"
         );
         for channel in 1..CHANNELS {
-            stored.append(compact_domain(channel..channel + 1, true)).unwrap();
+            stored
+                .append(compact_domain(channel..channel + 1, true))
+                .unwrap();
         }
         for channel in 0..CHANNELS {
             let window = stored.read_window(channel..channel + 1).unwrap().primitives;
@@ -831,8 +839,12 @@ fn a_gridded_weight_image_is_each_planes_own_sensitivity_resident_and_paged() {
         // A residual refresh shares the invariants, the weight image with
         // the PSF, and replaces only the residual.
         let mut next = stored.refresh(&plan).unwrap();
-        next.append_residual_planes(0..CHANNELS, [3, 2], &[0.75; CHANNELS * POLARIZATIONS * CELLS])
-            .unwrap();
+        next.append_residual_planes(
+            0..CHANNELS,
+            [3, 2],
+            &[0.75; CHANNELS * POLARIZATIONS * CELLS],
+        )
+        .unwrap();
         let state = NormalStatePrimitives::ChannelLocal(vec![next].into());
         for channel in 0..CHANNELS {
             for polarization in 0..POLARIZATIONS {

@@ -143,7 +143,9 @@ impl<'a> MeasurementSetSource<'a> {
             pointing: if pointing_ramp {
                 domains
                     .iter()
-                    .flat_map(|domain| std::iter::repeat_n(domain.direction(), domain.facets().len()))
+                    .flat_map(|domain| {
+                        std::iter::repeat_n(domain.direction(), domain.facets().len())
+                    })
                     .collect()
             } else {
                 Vec::new()
@@ -185,14 +187,15 @@ impl<'a> MeasurementSetSource<'a> {
             let metadata = &numeric.row.metadata;
             let coordinates = &numeric.row.coordinates;
             self.projections.clear();
-            for domain in 0..self.domains {
-                let projection = numeric
-                    .row
-                    .domain_projections()
-                    .get(domain as u32)
-                    .ok_or("a selected row lacks an image-domain projection")?;
+            // One projection per pass domain, in casa-ms's canonical order:
+            // domain-major, each faceted domain's facets in turn.
+            let projections = numeric.row.domain_projections();
+            if projections.len() != self.domains {
+                return Err("a selected row lacks an image-domain projection".into());
+            }
+            for (chart, projection) in projections.iter().enumerate() {
                 let model = projection.model();
-                let pointing_offset_rad = match self.pointing.get(domain) {
+                let pointing_offset_rad = match self.pointing.get(chart) {
                     Some(direction) => pointing_offset(
                         *direction,
                         projection.aw_pointing_pixel(),

@@ -285,7 +285,8 @@ impl<'a> SelectedObservationSpectralEnvelopeReducer<'a> {
         // (`GenSortIndirect`, `NoDuplicates`); a stable sort keeps the first.
         self.epochs
             .sort_by(|left, right| left.key().total_cmp(&right.key()));
-        self.epochs.dedup_by(|later, earlier| later.key() == earlier.key());
+        self.epochs
+            .dedup_by(|later, earlier| later.key() == earlier.key());
         let window_of = self
             .row_selection
             .data_descriptions()
