@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-08-23
+Last reality check: 2026-10-16
 Verification: just docs-check
 
 ## System purpose
@@ -18,7 +18,7 @@ coordinates, measures, and related workflows.
 | foundation crates (`casa-types`, `casa-measures-data`, `casa-measures-tools`) | Public scalar/quanta/measures algorithms and contracts plus explicit runtime-data validation, loading, installation, and maintenance | core codecs; `casa-measures-data` also uses canonical `casa-tables` accessors |
 | shared numerics (`casa-numerics`) | Domain-neutral numerical algorithms reused by observation, calibration, and imaging owners | Rust numerical ecosystem crates only |
 | persistent storage (`casa-tables`) | CASA table persistence, codecs, data managers/storage backends, schema/mutation APIs, and TaQL engine | core codecs, foundation crates |
-| native imaging contracts (`casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-reconstruction`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`) | Dependency-free logical schemas and commitments; the measurement operator (weighting, spectral resampling, gridding, degridding, FFT and normalization); minor-cycle solvers; authoritative model generations, deltas and final-model completion; normalization, restoration, Taylor, PB and pbcor products, written in bounded windows by the products' CASA image writer to staging with atomic individual-image replacement; process-level resource topology, policies, demand envelopes, arbitration and leases; the major-cycle pass, worker team and paged cube state; the Metal backend | ADR-0016 layering, enforced by `scripts/check-imaging-dependencies.py`: `casa-imaging-model` has no workspace dependencies; the operator and deconvolution depend on the model, `casa-fft` and `casa-numerics`; reconstruction and products depend inward on the model and domain-neutral numerics, with products also depending on reconstruction completions and, for its writer, on `casa-images`, `casa-coordinates` and `casa-types`; runtime composes the operator, reconstruction and products; the Metal crate depends only on the operator |
+| native imaging (`casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`) | The dependency-free request science and compiled problem; the measurement operator (kernel sets, gridding and degridding, FFT and correction, imaging weights, spectral resampling, continuum fitting); image-domain reconstruction (the model lifecycle, the normal state a pass forms, masks and the minor-cycle solvers); normalization, restoration, Taylor, PB and pbcor products, written in bounded windows by the products' CASA image writer with atomic individual-image replacement; host resources, admission, the major-cycle pass, its worker teams and the paged cube state; the Metal backend | ADR-0016 layering, enforced by `scripts/check-imaging-dependencies.py` and `resources/imaging-architecture/dependency-policy.json`: `casa-imaging-model` has no workspace dependencies; the operator depends on the model, `casa-fft`, `casa-numerics` and, for AW convolution-function images, `casa-images`, `casa-coordinates` and `casa-types`; deconvolution depends on the model, `casa-fft` and `casa-numerics`; products depend on the model, deconvolution, `casa-fft` and `casa-numerics` and, for their writer, on `casa-images`, `casa-coordinates` and `casa-types`; runtime composes the operator, deconvolution, products and the Metal crate over `casa-ms`, `casa-tables` and `casa-lattices`; the Metal crate depends only on the operator |
 | imaging application composition (`casa-imaging-application`) | Sole production composition seam across MeasurementSet authority, reconstruction, products, resources, execution, typed installed-implementation availability, and CASA product publication | Native imaging owners only; unavailable requests invoke no execution implementation |
 | domain libraries (`casa-ms`, `casa-simulation-synthesis`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence; simulation synthesis owns only the serial model predictor and Airy voltage pattern used by MeasurementSet simulation | foundation crates, `casa-tables`, selected peer domain crates where documented |
 | boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
@@ -39,9 +39,18 @@ Native imaging follows its stricter accepted direction:
 
 `casa-imaging-model` owns the dependency-free science, reconstruction, and
 product schemas and commitments introduced by ADR-0009.
-`casa-imaging-reconstruction` owns model-state algorithms and opaque
-reconstruction completions and depends only inward on the model and the
-domain-neutral `casa-numerics` algorithms.
+`casa-imaging-operator` owns the measurement operator A and its adjoint
+(plan section 5.3): the kernel sets (`Spheroidal`, `WPlanes`, `AwCatalog`,
+`MosaicPb`), the `GridBackend` contract and its CPU implementation, the
+accumulator, the FFT and gridding correction, imaging weights, the one
+spectral resampler and CASA's visibility-domain continuum fit.
+`casa-imaging-deconvolution` owns image-domain reconstruction: the model
+lifecycle and its storage seam, the normal state a pass forms (the
+unnormalised residual, PSF moments, sensitivity and `sumwt` per plane,
+resident or paged) and the `MajorCycle` that pairs it with its model, the
+masks (boxes, reprojection, CASA `auto-multithresh`), and the minor-cycle
+driver and solvers. Both depend inward on the model and the domain-neutral
+`casa-fft` and `casa-numerics` crates.
 `casa-imaging-products` owns normalization (plan section 5.7), restoration,
 Taylor products, PB and pbcor. Its normalization rules map the raw normal state
 to CASA's image units and the solved model back to the physical model; the
@@ -74,9 +83,9 @@ at each work/fence event or scans of historical receipts during admission.
 resources and the admission of each phase's memory, the major-cycle pass on its
 worker team and bounded source stream, cooperative cancellation, the paged cube
 state, the minor-cycle adapter and the run summary. It depends inward on the
-model, reconstruction, deconvolution, products, the operator and the Metal
-backend. Metal runs inside the pass: when the run grids on the GPU every
-owner grids through its own `casa_imaging_metal::MetalBackend`.
+model, deconvolution, products, the operator and the Metal backend. Metal
+runs inside the pass: when the run grids on the GPU every owner grids through
+its own `casa_imaging_metal::MetalBackend`.
 
 AW projection reads its convolution functions from one catalog of CASA
 `CFS_*`/`WTCFS_*` images (`casa_imaging_operator::aw`), opened header-first and
@@ -109,15 +118,7 @@ this interface: it resolves its parameters through the catalog and presents
 the result. Unsupported capabilities remain typed unavailable until their
 ticket adds one final-owner implementation.
 
-The remaining programme introduces the product owner only in the ticket that
-can migrate all callers and enforce its exact dependencies.
-The target tranche split and corrected T13-T23 order are recorded in
-[`docs/imaging-architecture/lessons-and-next-tranche.md`](docs/imaging-architecture/lessons-and-next-tranche.md).
-Until those crates land, this package table remains descriptive: no branch may
-import an anticipated interface from another ticket or treat composition WIP
-as a dependency.
-
-with `casa-test-support` outside the product dependency chain.
+`casa-test-support` stays outside the product dependency chain.
 
 Additional constraints:
 
@@ -270,7 +271,7 @@ borrowed visibility, flag and weight columns of a row (`SelectedNumericRow`).
 
 `casa-imaging-model` carries the dependency-free model-state schemas and the
 compiler-owned lifecycle commitment: the target shape, the bounds and the
-arithmetic precision. `casa-imaging-reconstruction::ModelLifecycle` owns a
+arithmetic precision. `casa_imaging_deconvolution::ModelLifecycle` owns a
 run's model: every run starts from the empty generation, and each major cycle's
 final model is the previous generation updated by the minor cycle's sparse
 terms, which must be canonical, non-zero, within valid support and within the
@@ -538,11 +539,26 @@ worker narrower when the source's producer thread would otherwise take the
 run past the policy's core budget (the performance cores, for balanced). Each
 phase admits the bytes its owners
 report (`admit`: the source envelope, the paged cube cache, one wave of each
-pass, the product writer) and holds them in a `Reservation` until it ends; a
-phase that does not fit is refused, typed, before it starts. Frontends neither
-calculate science nor inspect execution devices.
+pass, the kept imaging weights, the visibility writer, the product writer) and
+holds them in a `Reservation` until it ends; a phase that does not fit is
+refused, typed, before it starts. Frontends neither calculate science nor
+inspect execution devices.
 Reusable buffers may reduce allocation churn but do not form a second memory
 budget or admission authority.
+
+| Policy | Compute workers | Streaming workers | Memory |
+|---|---|---|---|
+| interactive | ⌈threads/2⌉ | budget − 1 | half the free memory |
+| balanced (`parallel=true`) | ⌈3·threads/4⌉, at most the performance cores | performance cores − 1 | 3/4 of the free memory |
+| exclusive | all threads | budget − 1 | all the free memory |
+| explicit (`parallel=false` is one worker) | the ceiling, at most the threads | budget − 1 | the ceiling, at most the free memory |
+
+The streaming budget is the performance cores for balanced and the compute
+workers otherwise; the streaming width is at least one and at most the
+compute width (`STREAM_PRODUCERS`, `ResourcePolicy::cores`). `WorkerTeams`
+holds one pool when the widths agree. Free memory is `vm_stat`'s free,
+inactive and speculative pages on macOS and `MemAvailable` on Linux, read
+once per process.
 
 Every installed request runs through one major-cycle pass
 (`casa_imaging_runtime::pass`, plan section 5.4), driven by
@@ -582,6 +598,34 @@ whole row. The residency is planned once per major cycle for the pass and its
 paged normal state; a run that writes visibilities must hold every plane in
 its final pass and is refused at the start otherwise.
 
+Each traversal names what it reads of each sample (`SampleContent`): the
+gridding, prediction and writing passes read values, flags and weights; the
+density pass of uniform and Briggs weighting reads flags and weights only, as
+CASA's does, so it opens no visibility column. The source fails a run on an
+unflagged non-finite input (`FiniteValuePolicy::RejectUnflaggedInput`): a
+non-finite value or weight in an unflagged sample, or non-finite UVW in a row
+that is imaged, stops the first pass that reads it with an error naming the
+MAIN row, channel and correlation, where CASA would image NaN everywhere; a
+flagged one is ignored. A run with one image domain, every plane resident and
+a constant or Taylor basis keeps its samples' imaging weights across passes
+(`WeightCache`, 4 bytes a sample, admitted as "kept imaging weights" when it
+fits a sixteenth of the free memory): the first complete pass fills it and
+later passes read it in place of the flag test and the density lookup.
+Channel-local cubes, outlier domains and runs in waves recompute the weights
+each pass.
+
+A backend receives one `Work` per sample block (`GridBackend::apply`):
+`Grid` (data, PSF or weight terms), `Predict`, `ResidualGrid` (predict,
+subtract and grid the residual, optionally handing the residual samples to a
+visibility writer), `PredictNative` (predict a row chunk and interpolate it to
+native cells, adding when several domains sum) and `NativeResidualGrid` (grid
+values less the model at each sample's native endpoints). Work is complete
+when `apply` returns, except that a device backend may leave grid-only work
+and `PredictNative` running on device cells: the cells (`DeviceCells`) make
+the host's next access wait, and a wave calls `MetalBackend::complete`, which
+waits for every dispatch and reports the first failure, on each Metal owner
+and predictor before it reads an accumulator.
+
 Imager task protocol v12 carries the resolved imager parameters by catalog
 name, on stdin for `--json-run`; the result echoes them. The imager emits no
 progress events; the cycle loop logs worker counts and cycle records through
@@ -609,10 +653,16 @@ cube bases, and other gridders, with facets are typed unavailability in
 not in the catalog, so no request names them (cubic #42).
 
 The request's `backend` (`auto`, the default; `cpu`; or `gpu`) resolves to a
-device once the problem is compiled (`availability::resolve_backend`): `auto`
-takes the GPU where `availability::check` admits the problem there and a T1
-Metal law compares it with the CPU (one image domain, any basis, facets or
-not), and the CPU otherwise; the run summary records the device.
+device once the problem is compiled (`availability::resolve_backend`). `cpu`
+and `gpu` are taken as asked, and `availability::check` refuses a `gpu` run
+the device cannot do. `auto` takes the GPU only where a T1 Metal law compares
+it with the CPU and `check` admits it there: one image domain (facets
+allowed, any basis), Stokes I, no `MODEL_DATA` or `CORRECTED_DATA` write, the
+standard kernel set, a Metal device, and `gridprecision` not `f64`; the CPU
+otherwise. `gridprecision = auto` resolves once, beside the backend
+(`imaging::measurement::precision`): `f64` on the CPU for every basis,
+cubes included, as CASA grids, and `f32` on Metal; an explicit `f32` or `f64`
+wins. The run summary records the device and the precision.
 
 The GPU (macOS, a unified-memory Metal 3 device) grids every pass on
 the Metal device: `casa-imaging-metal` implements the operator's
@@ -623,10 +673,10 @@ adds) into accumulators whose cells live in shared device memory
 (`GridStorage::Device`). The host locates every sample with the operator's
 rounding rule and accumulates `sumwt` in `f64`, so tap selection and `sumwt`
 equal the CPU's. Each `apply` is cut into three sub-blocks over a six-slot
-ring. A pass's Metal owners leave grid-only work running when `apply`
-returns, and the accumulator's cells (`DeviceCells`) make the host's next
-access wait for it; other dispatches complete inside `apply`. Operators are
-`f32` for every basis on Metal (D2). Placement stays on the CPU workers. The
+ring and spreads its samples in a coprime-stride order, so neighbouring
+threads rarely add to the same cell (#716). Completion follows the
+`GridBackend` contract above. Operators are `f32` for every basis on Metal
+(D2). Placement stays on the CPU workers. The
 native-channel residual of a multi-domain or linearly interpolated pass is
 formed on the device: each row chunk's predictor predicts its batch and
 interpolates it to the rows' native cells (`Work::PredictNative`) in cells
@@ -695,11 +745,14 @@ never makes a route available.
   arch-check`) rejects crate edges outside the ADR-0016 layering, non-exact
   native dependency sets, device APIs outside `casa-imaging-metal`, and
   environment reads, `eprintln!` and content hashing in imaging crates. Its
-  grandfathered-file lists only shrink as tickets IF-1 to IF-9 delete the
-  listed files.
-- The imaging foundation refactor (#648, ADR-0016) is in progress; the plan in
-  `docs/imaging-architecture/imaging-foundation-plan-20261007.md` is the
-  target.
+  only grandfathered files are three environment readers outside the imaging
+  crates (`casa-measures-data`, `casa-ms`'s simulation task and
+  `casa-task-runtime`'s state storage); the lists only shrink.
+- The imaging foundation refactor (#648, ADR-0016) is complete. The plan in
+  `docs/imaging-architecture/imaging-foundation-plan-20261007.md` records
+  its decisions, the deviations its tickets took and the review gates; the
+  open capability and performance work it left is in #445, #447–#450, #653, #690,
+  #714 and #719–#721.
 
 ## ADR index
 

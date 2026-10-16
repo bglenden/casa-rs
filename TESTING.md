@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-09-23
+Last reality check: 2026-10-16
 Verification: just verify
 
 ## Test categories
@@ -99,16 +99,16 @@ The native Rust generator and application must still neither link nor invoke
 CASA; CASA is used only to prepare/compare the frozen independent reference.
 These amendments are recorded in the [T52 work record](https://github.com/bglenden/casa-rs/issues/538#issuecomment-5577836559).
 
-AW projection is unavailable from IF-2 until IF-3 (#652) installs its
-convolution-function set in the major-cycle pass, and the T52 application
-gates return with it. The kept AW preparation (runtime `catalog` and
-`prepared_artifact` tests, application `prepared_aw_phase` and `aw_cache`
-regressions) still runs in the ordinary suites. The ignored frozen-cell tests
-require explicit surface/catalog paths; no CASA installation or model-data
-path is discovered implicitly. The historical T51/T52 pair-driver acceptance
-harnesses were removed with their test-only Rust entry points (IF-0, #649);
-the native AW representative row is re-established by the IF-10 performance
-pass.
+AW projection runs on the major-cycle pass with the `AwCatalog` kernel set
+(IF-3, #652). Its laws are `casa-imaging-operator`'s `aw_laws` (cell keys,
+cold and warm catalogs, native generation against the CASA cell rules) and
+T1's `aw_projection` cases; its CASA evidence is the T1.5 AW rows (CASA cell
+catalogs and native generation), the T2 matrix's native-AW row and #625's
+full VLASS fragment (4096², 63 fields, 16 SPWs, serial). The frozen-cell
+tests require explicit surface and catalog paths; no CASA installation or
+model-data path is discovered implicitly. The historical T51/T52 pair-driver
+acceptance harnesses were removed with their test-only Rust entry points
+(IF-0, #649).
 
 T53 spectral joins use the public compiled operator and normal application
 boundaries. Run the `t53_` tests in the `continuum_application` integration
@@ -140,8 +140,8 @@ Their pinned source is `crates/casars-imager/tests/imager_casa_parity.rs` at
 `376c7d87bb995f295a696995ad8292bc39582529`. A selected FIELD metadata row with no
 MAIN rows is not evidence of a multifield join. The original #445/#448
 single-field DIRTY, single-field deterministic CLEAN, 63-field DIRTY and
-63-field deterministic CLEAN gates remain named obligations under the
-[VLASS acceptance recipe](docs/imaging-architecture/t51-aw-vlass-acceptance.md).
+63-field deterministic CLEAN gates remain named obligations of those issues,
+whose bodies record what the imaging foundation fulfilled and what remains.
 The owner-approved representative T53 boundary does not claim their full-size
 or performance acceptance. Current results and restart authority live in the
 [T53 work record](https://github.com/bglenden/casa-rs/issues/539#issuecomment-5579521124).
@@ -320,23 +320,6 @@ only documentation, planning, or workflow-policy changes. Do not rerun a gate
 solely because review started; if executable changes intervened, rerun only the
 affected gate.
 
-For programme #486, this section and the direct ticket closure policy in
-`docs/imaging-architecture/lessons-and-next-tranche.md` are the exclusive
-ticket verification requirements. They supersede conflicting generic defaults,
-pull-request-template fields, branch-protection expectations, and generic
-workflow results.
-
-For the #486 imaging programme, a downstream ticket starts only from the merged
-commit containing each blocker interface. Its focused gate exercises the deep
-owner interface plus the immediately affected compile/plan/run composition;
-tests on a mixed multi-ticket branch are exploratory evidence, not acceptance.
-At an intermediate merge checkpoint, run the affected identity/schema cascade,
-`just arch-check` when ownership or dependency policy changed, and the narrow
-composition gates that cross the newly landed seam. Reserve the programme-wide
-scientific/resource/full-repository sweep for the explicit ticket and final
-milestones defined by #486; this does not waive any ticket-specific CASA,
-interoperability, performance, or persistent-data gate.
-
 - Native macOS GUI prototype and frontend services:
   `scripts/generate-frontend-bindings.sh --check`,
   `cargo test -p casa-notebook --test wave1_contract`,
@@ -458,6 +441,66 @@ tied to a one-build ad-hoc `cdhash`. This lets macOS retain a one-time
 removable-volume decision while the large Cargo target, task executables, and
 test artifacts stay on external storage. Override the config location with
 `CASA_RS_GUI_TEST_REMOTE_SIGNING_CONFIG`.
+
+## Imaging tiers and evidence
+
+The imaging foundation (#648, plan section 7) tests in four tiers:
+
+- **T0, laws** (each under a minute; CI): adjoint, PSF, sumwt, worker
+  invariance, precision and kernel-set laws on in-process synthetic
+  MeasurementSets, in each imaging crate's tests (`t0_laws`, `aw_laws`,
+  `wplanes_laws`, `mosaic_laws`, `resample`, `predict`, `weighting`,
+  `pass_laws`, the deconvolution solver laws), and the Metal-against-CPU
+  laws (`cargo nextest run -p casa-imaging-metal`).
+- **T1, end to end** (under ten minutes each; CI):
+  `cargo test -p casars-imager --test t1` through the production route, one
+  module per capability (standard MFS and masks, cube, mosaic, W and AW
+  projection, MT-MFS, model column, Metal, routes, interrupt).
+- **T1.5, CASA-paired small fixtures** (local, before an imaging review):
+  the casatestdata `refim_*` and kernel fixtures against CASA 6.7.6
+  references, NRMS ≤ 1e-3 on every product and `.sumwt` within 5e-5
+  (owner, 2026-10-16). The harness lives outside the repository with its
+  references (`docs/agent-reference.md`). T1 checks casa-rs against itself;
+  a convention shared by casa-rs's simulator and its operator cancels there,
+  so a gridding, kernel or normalisation change is not done until its T1.5
+  rows agree with CASA.
+- **T2, representative** (hours; once per programme or when a row's code
+  changes): the matrix in
+  `resources/imaging-architecture/representative-science-matrix.json` run by
+  `tools/perf/imager/run_workload.py`, the timed checkpoints and the
+  rows judged against CASA's own time. The #648 results table records the
+  accepted figures and their exceptions.
+
+**Memory is a tested contract.** Every live phase is admitted
+(`casa_imaging_runtime::admit`), and an owner that changes what it keeps
+adds a counting law: a test that runs the owner and asserts its measured
+allocation stays within the bytes it charges (for example
+`a_model_data_write_holds_at_most_its_bytes` in `casa-ms`). At T2, a run's
+peak footprint must stay within its largest reservation plus the process's
+fixed overhead; the run summary's per-phase `peak_reserved_bytes` and
+`/usr/bin/time -l` give both. A measured allocation above its reservation
+is fixed with a regression law, never documented as harmless.
+
+**Every evidence run names its conditions.** Defaults and binary labels are
+not enough: in IF-10 a build linked Homebrew's scalar FFTW instead of the
+NEON one and every timing moved, and a T1.5 harness lost its CPU pin when
+`backend = auto` arrived and silently compared Metal runs. A recorded run
+states:
+
+- the build (commit, plus any evidence-only patch and its purpose) and the
+  FFTW it linked (`nm BIN | grep -c n1fv_` counts NEON codelets);
+- the input (MeasurementSet, selection) and the host;
+- the backend and grid precision, as the run summary records them, not as
+  requested;
+- the worker policy and memory policy (`parallel`, or an explicit budget);
+- the comparator (CASA reference and version, tolerance and metric), or
+  "none" for a resource-only run;
+- the cache state where one matters (AW cells, warm or cold).
+
+Timed comparisons follow the A B B A protocol on one quiet host, with user
+CPU and cycles beside wall time, and the same work on both sides (cap
+`--nmajor` when builds stop after different pass counts). Parallel speed
+does not excuse a serial cost: a row whose bar is at W4 also reports W1.
 
 ## Long performance campaigns
 

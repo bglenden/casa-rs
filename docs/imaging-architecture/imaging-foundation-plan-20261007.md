@@ -5,7 +5,9 @@ Date: 2026-10-07
 Branch: `claude/imaging-foundation` (cut from `codex/t55-full-size-validation`
 at `e714fd2339`)
 Status: APPROVED by the owner on 2026-10-07 (decisions D1–D10 and closure of
-the #486 family included)
+the #486 family included). COMPLETE: IF-0 to IF-11 landed by 2026-10-16.
+Section 5 states the landed signatures (IF-11, #660), and the deviations the
+tickets took are reconciled into sections 3 and 5 (section 12).
 Reviewed sources: six read-only deep dives over the imaging crates, the
 RadioAstronomyOracle corpus (NRAO 2024/2026 synthesis workshop slides,
 Synthesis Imaging II), CASA `synthesis/` C++, LibRA/HPG, and issues #486,
@@ -76,7 +78,13 @@ unless the owner strikes one.
   frozen; and it forms the residual as a difference of two large f64 images
   rather than gridding the residual visibilities. The performance pass (IF-10)
   may add a bounded tap-plan cache as an execution strategy over the same
-  operator if measurement shows it pays.
+  operator if measurement shows it pays. **Qualified (#659 deviation 7, owner
+  2026-10-14):** a run keeps its samples' imaging weights, not the samples,
+  across passes (`WeightCache`, 4 bytes a selected row and channel) when it
+  has one image domain, a constant or Taylor basis and every plane resident,
+  and the slots fit a sixteenth of the free memory; they are admitted before
+  they are allocated. A record or placement cache across majors (2.6–8.9 GB a
+  major on the 32-channel cube) stays rejected.
 - **D2 Grid precision (owner agreed 2026-10-07).** Metal is one
   implementation of the backend trait and accumulates in f32 with atomic adds
   (nondeterministic order). The CPU accumulates in f64 by default. This is
@@ -93,6 +101,10 @@ unless the owner strikes one.
   cube's weight image, which takes every sample of a channel at the uv
   origin, missed CASA (which accumulates in double) by 2.6e-3. `f32` stays a
   user choice for large problems, and choosing the GPU accepts it.
+  **Device choice (#659 deviation 14, owner 2026-10-15):** `backend = auto |
+  cpu | gpu`, defaulting to `auto`, which takes Metal only for problems a T1
+  Metal law compares with the CPU (section 5.8); an explicit
+  `gridprecision = f64` keeps `auto` on the CPU.
 - **D3 AW convolution-function cache.** Replace the private content-addressed
   prepared-artifact store (manifest schema 7, 18 hash domains, eviction
   ledger; about 15k lines across `aw_cache.rs`, `prepared_aw_phase.rs`,
@@ -106,12 +118,24 @@ unless the owner strikes one.
   driver, solvers, PSF summary, masks). Add `casa-imaging-metal` (macOS only)
   implementing the backend trait. Move the CASA image writer into
   `casa-imaging-products`. Delete `casa-imaging-reconstruction` when empty.
+  **As landed (IF-11, #660 deviation 1):** the operator owns the
+  `NormalImages` a pass finishes into and CASA's continuum fit; the normal
+  state the minor cycle and products read (resident or paged), the model
+  lifecycle and its storage seam, the masks and the `MajorCycle` that pairs
+  model and normal state went to deconvolution, because the masks read the
+  normal state and the lifecycle uses the masks' reprojection. The
+  reconstruction crate was deleted in IF-11.
 - **D5 Runtime core.** Replace receipts (schema 25), the execution DAG,
   execution bindings, the resource-authority topology, observation
   transactions and the cost model with: `HostResources`, one `admit()` per
   phase returning an RAII reservation, a sequential phase list with a cancel
   token, the trimmed Metal execution state, the bounded worker team, and an
   O(1)-per-phase `RunSummary`. ADR-0010 is superseded by a new ADR-0016.
+  **Extended (#659 deviation 8, owner 2026-10-15):** the policy returns a
+  core allocation (`ResourcePolicy::cores`): compute workers for minor cycles
+  and products, and streaming workers for passes, as many as fit beside the
+  source's producer thread within the policy's core budget. A run holds two
+  worker teams (`WorkerTeams`), one pool when the widths agree.
 - **D6 Architecture checker.** Retire `scripts/check-imaging-architecture.py`
   (3,578 lines; hashes Rust function bodies and pins four SHA-256 ratchets),
   `test-imaging-architecture-structural.py`, `migration-matrix.json`,
@@ -339,19 +363,24 @@ conventions are tabulated in section 5.7 and are the acceptance reference.
 | Crate | Owns | Depends on |
 |---|---|---|
 | `casa-imaging-model` | `ImagingRequest`, `CompiledProblem` (geometry, spectral law/sampling/basis, weighting spec, operator spec, polarisation, product contract, selection, write set, visibility transform, model target), typed errors | ecosystem only |
-| `casa-imaging-operator` | `Placement`, `SampleBlock`, `ConvolutionFunctionSet` + four implementations, `GridBackend` trait + `CpuBackend`, `GridAccumulator`, `MeasurementOperator`, `WeightingGeneration`, `NormalImages`, FFT and correction operators, polarisation routing, spectral resampling (one implementation) | model, casa-fft, casa-numerics |
-| `casa-imaging-deconvolution` | `MinorCycleView`, `Driver`, `Solver` trait + Hogbom/Clark/Multiscale/Taylor solvers, `PsfSummary`, masks and automask, `ModelDelta` | model, casa-numerics, casa-fft |
-| `casa-imaging-products` | normalisation (section 5.7), restoration, Taylor products (alpha, error), PB/pbcor, product list and metadata, CASA image writer with atomic replacement | model, operator, deconvolution, casa-images |
+| `casa-imaging-operator` | `Placement`, `SampleBlock`, `ConvolutionFunctionSet` + four implementations, `GridBackend` trait + `CpuBackend`, `GridAccumulator`, `MeasurementOperator`, `WeightingGeneration`, `NormalImages`, FFT and correction operators, polarisation routing, spectral resampling (one implementation), CASA's visibility-domain continuum fit | model, casa-fft, casa-numerics; casa-images, casa-coordinates, casa-types for AW cell images |
+| `casa-imaging-deconvolution` | `MinorCycleView`, `Driver`, `Solver` trait + Hogbom/Clark/Multiscale/Taylor solvers, `PsfSummary`, masks and automask, `ModelDelta`; the model lifecycle and its storage seam (`ModelLifecycle`, `ModelStorageFactory`), the normal state (`FinalNormalState`, `NormalBasis`, `NormalStorageFactory`), `MajorCycle` (IF-11, #660 deviation 1) | model, casa-numerics, casa-fft |
+| `casa-imaging-products` | normalisation (section 5.7), restoration, Taylor products (alpha, error), PB/pbcor, product list and metadata, CASA image writer with atomic replacement | model, deconvolution, casa-fft, casa-numerics, casa-images, casa-coordinates, casa-types |
 | `casa-imaging-metal` (macOS) | `MetalBackend: GridBackend`, MSL kernels, device/queue/buffer/fence state | operator, objc/metal crates |
-| `casa-imaging-runtime` | `HostResources`, `admit()`, `Phase`/`run_phase`, cancel token, `WorkerTeam` + bounded stream, `Partition`, `Residency`, `MajorCyclePass`, cube state paging, managed spill (same-run), `RunSummary` | model, operator, deconvolution, products, metal (cfg macos), casa-ms |
+| `casa-imaging-runtime` | `HostResources`, `ResourcePolicy` + `CoreAllocation`, `admit()`, `Phase`/`run_phase`, cancel token, `WorkerTeam`/`WorkerTeams` + bounded stream, `Partition`, `Residency`, `MajorCyclePass`, `WeightCache`, cube state paging, the source's content budget, `RunSummary` | model, operator, deconvolution, products, metal (cfg macos), casa-ms, casa-tables, casa-lattices |
 | `casa-imaging-application` | compile → plan → run composition, MeasurementSet access and selection, availability of installed capabilities, publication orchestration | all of the above |
 | `casars-imager` | CLI parsing via the catalog, request projection, progress and result presentation | application, provider contracts |
 
-Dependency direction is enforced by the replacement checker (D6). No crate
-below `application` reads a MeasurementSet; no crate but `metal` imports a
-device API; no crate but `casars-imager` and `application` reads `std::env`.
+Dependency direction is enforced by the replacement checker (D6). Only
+`casa-ms` reads a MeasurementSet: the runtime finalises the bounded access's
+content budget and the application turns its blocks into native rows. No
+crate but `metal` imports a device API; no crate but `casars-imager` and
+`application` reads `std::env`.
 
 ### 5.3 The operator core (`casa-imaging-operator`)
+
+The signatures below are the landed ones (IF-11); bodies, derives and minor
+accessors are omitted.
 
 ```rust
 /// One selected row×channel sample after flagging, phase-centre shift and
@@ -361,6 +390,7 @@ device API; no crate but `casars-imager` and `application` reads `std::env`.
 #[derive(Clone, Copy)]
 pub struct Placement {
     pub u: f64, pub v: f64, pub w: f64,  // wavelengths at this sample's frequency
+    pub prediction_w_positive: bool,     // sign of the w the prediction keys on (AW: the MS w)
     pub phase: f64,                      // phase-centre shift argument (rad); 0 when none
     pub plane: u32,                      // target grid plane (channel-local); 0 for constant basis
     pub spectral: f32,                   // (ν−ν0)/ν0; read only by a Taylor basis
@@ -380,11 +410,14 @@ pub struct CfKey { pub group: u16, pub cube: u16 }
 /// Structure-of-arrays view of one bounded block. `values` and `weights` are
 /// `npol × n`, sample-major. Weight 0 never appears (flagged samples are dropped).
 /// Values are pre-multiplied by the phase-centre phasor and the weight once,
-/// here, not per tap.
+/// here, not per tap. A `Work::Predict` block may hold no values or weights;
+/// a `Work::NativeResidualGrid` block also holds each sample's native
+/// endpoints in `sources`. `SampleBuffer` owns the storage.
 pub struct SampleBlock<'a> {
     pub placements: &'a [Placement],
     pub values: &'a [Complex32],
     pub weights: &'a [f32],
+    pub sources: &'a [NativeSource],
     pub npol: usize,
 }
 
@@ -403,21 +436,34 @@ pub enum TapLayout<'a> {
             mueller_planes: u8 },
 }
 
-/// Which CF Mueller plane serves each (grid pol, visibility pol) pair, for
-/// the adjoint with w > 0 (`direct`) and its conjugate partner. The kernel
-/// swaps tables on `sign(w)` and on direction and flips the imaginary part
-/// (HPG `mueller_indexes` / `conjugate_mueller_indexes`). `None` skips a pair.
-pub struct MuellerRouting { pub direct: Vec<Vec<Option<u8>>>, pub conjugate: Vec<Vec<Option<u8>>> }
+/// Which CF Mueller plane serves each (grid pol, visibility pol) pair, per
+/// direction of the transform and sign of `w`, each indexed by
+/// `usize::from(w > 0)` and read through `table(w_positive, forward)`. The
+/// kernel flips the imaginary part with the conjugate partner (HPG
+/// `mueller_indexes` / `conjugate_mueller_indexes`). `None` skips a pair.
+pub struct MuellerRouting { pub adjoint: [Vec<Vec<Option<u8>>>; 2], pub forward: [Vec<Vec<Option<u8>>>; 2] }
 
 pub trait ConvolutionFunctionSet: Send + Sync {
-    /// Pure. Row context carries PA, antenna pair, field pointing offset, time.
+    /// Pure. Row context carries PA, antenna pair and types, field, SPW, time.
     fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey;
-    fn taps(&self, key: CfKey) -> TapLayout<'_>;
+    /// The one cell every sample keys, when the cells do not vary.
+    fn uniform_key(&self) -> Option<CfKey> { None }
+    /// Imaging taps of a cell; `hold` keeps a cached cell alive while read.
+    fn taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s>;
+    fn max_half_support(&self) -> [u16; 2];
     /// FT[PB²] taps for the weight/sensitivity image (mosaic, AW); None otherwise.
-    fn weight_taps(&self, key: CfKey) -> Option<TapLayout<'_>>;
+    fn weight_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> Option<TapLayout<'s>>;
     fn mueller(&self) -> &MuellerRouting;
+    /// The w the prediction keys on; AW overrides with the MeasurementSet's.
+    fn prediction_w(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> f64 { w_lambda }
     /// Paired image-domain gridding correction (separable 1-D vectors per axis).
     fn image_correction(&self) -> &ImageCorrection;
+    fn normalisation(&self) -> KernelNormalisation;   // UnitSum, RealSum or KernelSum
+    fn pointing_ramp(&self) -> bool;
+    // Defaulted, overridden where CASA differs: `psf_taps` and
+    // `prediction_taps` (AW: weight cells, native-frequency cell),
+    // `placement_half_support`, `admits(w)` (WProjectFT drops w beyond the
+    // last plane), `corrects_weight_image`, `weight_image_magnitude`.
 }
 ```
 
@@ -432,15 +478,17 @@ fine-offset coordinates are rounded in the kernel once per sample from
 (u, v, ν) with one rule shared by CPU and Metal):
 
 ```
-adjoint:  table = w > 0 ? mueller.direct : mueller.conjugate
+adjoint:  table = mueller.table(w > 0, forward = false)
           for each (gpol, vpol) with table[gpol][vpol] = Some(m):
             tap' = (w > 0 ? t : conj(t))[m] · e^{i(ix·gx + iy·gy)}
             grid[plane, gpol][v0+iy, u0+ix] += V'_vpol · tap'                 (Data; V' = W·V·e^{iφ})
                                              += W_vpol · tap'                 (Psf: V = 1)
                                              += W_vpol · weight_tap' at uvw=0 (Weight)
-            sumwt[plane, gpol] += W_vpol · |Σ (w > 0 ? t : conj(t))[m]|   (the norm, before the gradient)
+            sumwt[plane, gpol] += W_vpol · |Σ (w > 0 ? t : conj(t))[m]|   (the norm, before the gradient;
+                                  not in a residual pass, whose accumulator is `without_weight_sums`
+                                  because nothing reads its sums: #659 deviation 9)
           Taylor: term t grid receives the same with W · s^t (data: t < N_t; psf: t < 2N_t−1)
-forward:  table swapped (w > 0 ? conjugate : direct); tap' conjugated
+forward:  table = mueller.table(prediction_w_positive, forward = true); tap' conjugated
           V_pred_vpol = e^{−iφ} · Σ_t s^t · Σ_{gpol,ix,iy} conj(tap'_t) · model[t][gpol][v0+iy, u0+ix]
                         ÷ N_vpol,   N_vpol = Σ_{gpol: table[gpol][vpol] = Some(m)} Σ_{ix,iy} (w > 0 ? t : conj(t))[m]
                         (R1: one division per visibility over every routed Mueller plane; the
@@ -467,21 +515,48 @@ pub struct ModeSet { pub data: bool, pub psf: bool, pub weight: bool }
 pub enum GridPrecision { F32, F64 }
 
 /// Per-worker grid storage: `[plane][pol][term][y][x]`, x fastest, interleaved
-/// complex, over a whole plane or a tile with halo. Owns `sumwt` as f64.
+/// complex, over a whole plane or a tile with halo. Owns `sumwt` as f64,
+/// unless made `without_weight_sums` for a residual pass (#659 deviation 9).
 /// The same layout is the Metal buffer, so a device copy is one memcpy.
 pub struct GridAccumulator { /* private */ }
+impl GridAccumulator {
+    pub fn new(layout: AccumulatorLayout, precision: GridPrecision) -> Self;
+    pub fn with_storage(layout: AccumulatorLayout, storage: GridStorage) -> Self;
+    pub fn without_weight_sums(self) -> Self;
+    pub fn merge_from(&mut self, other: &GridAccumulator) -> Result<(), OperatorError>;
+    // and `sumwt`, `block`, `reset`, `layout`, `precision`, `storage`, `backend_parts`
+}
+/// `Device` cells live in shared device memory; device work left running on
+/// them is recorded with the `unsafe` `DeviceCells::defer`, and the host's
+/// next access waits for it (#659 deviations 1–2).
+pub enum GridStorage { F32(Vec<Complex32>), F64(Vec<Complex64>), Device(DeviceCells) }
 
 pub enum Work<'a> {
     Grid { mode: Mode, acc: &'a mut GridAccumulator },
+    /// Reads only the block's placements; values and weights may be empty.
     Predict { model: &'a PreparedModelGrids, out: &'a mut [Complex32] },
     /// Predict, subtract, grid the residual in one dispatch; optionally hand
     /// the residual samples back (final pass writing MODEL_DATA/CORRECTED).
     ResidualGrid { model: &'a PreparedModelGrids, acc: &'a mut GridAccumulator,
                    residual_out: Option<&'a mut [Complex32]> },
+    /// Predict the block and interpolate it to native cells
+    /// (`P_low + (P_high − P_low)·fraction` per `NativeTerm`), writing or with
+    /// `add` adding, so several image domains' predictions sum before the
+    /// residual is formed (CASA `SIMapperCollection::degrid`; #659 deviation 6).
+    PredictNative { grids: &'a PreparedModelGrids, terms: &'a [NativeTerm],
+                    model: NativeTarget<'a>, add: bool },
+    /// Grid each placement's values less `scale · Σ factors · M[cells]` of its
+    /// native endpoints (`SampleBlock::sources`) into the data terms.
+    NativeResidualGrid { model: NativeModel<'a>, acc: &'a mut GridAccumulator },
 }
 
 pub trait GridBackend: Send {
-    fn apply(&mut self, block: &SampleBlock, cf: &dyn ConvolutionFunctionSet,
+    /// The work is complete when this returns, except that a device backend
+    /// may leave grid-only work, and `PredictNative` into device cells,
+    /// running; the host's next access to those cells waits for it. A Metal
+    /// caller calls `MetalBackend::complete` (inherent: wait for every
+    /// dispatch, report the first failure) before it trusts a grid.
+    fn apply(&mut self, block: &SampleBlock<'_>, cf: &dyn ConvolutionFunctionSet,
              work: Work<'_>) -> Result<(), OperatorError>;
 }
 ```
@@ -503,6 +578,8 @@ pub struct MeasurementOperator {
     precision: GridPrecision,
 }
 impl MeasurementOperator {
+    pub fn new(geometry: GridGeometry, basis: Basis, polarization: PolarizationRouting,
+               cf: Box<dyn ConvolutionFunctionSet>, precision: GridPrecision) -> Self;
     /// Planner input (R1): the layout of the pass a caller intends; admission
     /// charges `layout.bytes(precision)` before anything is allocated.
     pub fn accumulator_layout(&self, planes: PlaneRange, tile: Option<Tile>, modes: ModeSet) -> AccumulatorLayout;
@@ -511,23 +588,34 @@ impl MeasurementOperator {
     /// The kernel norm `N` of one placement for one visibility polarization (R1 law).
     pub fn prediction_norm(&self, placement: &Placement, vpol: usize) -> Complex64;
     /// model (× PB prescale when the product contract says flatnoise) ÷ correction → FFT
-    pub fn prepare_model(&self, model: &ModelImages, prescale: ModelPrescale) -> PreparedModelGrids;
-    /// FFT⁻¹, × correction, crop: unnormalised dirty/psf/weight planes + sumwt
-    pub fn finish(&self, acc: GridAccumulator) -> NormalImages;
+    pub fn prepare_model(&self, model: &ModelImages, prescale: ModelPrescale<'_>)
+        -> Result<PreparedModelGrids, OperatorError>;
+    /// FFT⁻¹, × correction, crop: unnormalised dirty/psf/weight planes + sumwt.
+    /// The accumulator must cover the whole grid.
+    pub fn finish(&self, acc: GridAccumulator) -> Result<NormalImages, OperatorError>;
 }
 
 pub struct NormalImages {
-    pub planes: Vec<NormalPlane>,  // one per output plane; Taylor terms inside
-    // plus `first_plane`, `pols`, `data_terms`, `psf_terms`; indexing goes through
-    // `data(plane, term, pol)`, `psf`, `weight` and the `*_sumwt` accessors (R1)
+    pub first_plane: u32, pub pols: usize, pub data_terms: usize, pub psf_terms: usize,
+    pub planes: Vec<NormalPlane>,  // one per output plane; Taylor terms inside;
+    // indexing goes through `data(plane, term, pol)`, `psf`, `weight` and the
+    // `*_sumwt` accessors (R1)
 }
 pub struct NormalPlane {
     pub data: Vec<Array2<f32>>,    // residual/dirty, `[term][pol]` (N_t terms)
     pub psf: Vec<Array2<f32>>,     // `[term][pol]`, 2N_t−1 terms
     pub weight: Vec<Array2<f32>>,  // mosaic/AW sensitivity, one per pol; empty otherwise
-    pub sumwt: Vec<f64>,           // one per image, in the order data, psf, weight (R1)
+    pub sumwt: Vec<f64>,           // one per image, in the order data, psf, weight (R1);
+                                   // zero from a residual pass's accumulator
 }
 ```
+
+`NormalImages` is what a pass finishes into. The normal state the minor
+cycle and products read across a run (`FinalNormalState`: the unnormalised
+residual, PSF moments, sensitivity and `sumwt` per plane, resident or paged,
+with its `NormalBasis` of constant, channel-local or Taylor) is
+deconvolution's, with the model lifecycle and `MajorCycle` (IF-11, #660
+deviation 1).
 
 Weighting:
 
@@ -541,56 +629,128 @@ pub enum WeightingGeneration {
 }
 impl WeightingGeneration {
     /// Pure per-sample function; CASA cell rules live in `DensityGrid::lookup`.
-    pub fn imaging_weight(&self, p: &Placement, input_weight: f32) -> f32;
+    pub fn imaging_weight(&self, p: &Placement, density_uv: DensityUv, input_weight: f32) -> f32;
 }
-pub fn build_density_grid(source: impl Iterator<Item = SampleBlock>, shape: DensityGridShape) -> DensityGrid;
+// The density grid is built by one traversal that reads flags and weights
+// only: `casa_imaging_runtime::pass::run_density_pass` (section 5.4).
 ```
 
+The cube density rule bins and looks up each row at its rotated uvw, where
+CASA's `BriggsCubeWeightor` bins at the rotated uvw and looks up at the
+unrotated one; this is a recorded CASA bug (`docs/CASA (C++) bugs.md`, #659
+deviation 12), pinned by `the_cube_density_bins_and_looks_up_the_rotated_uvw`.
+
 Spectral resampling (CASA linear pairing with nearest weight and linear
-flags) is one function producing `Placement`s and values from a native block;
-cube density weighting consumes the same function.
+flags) is one type, `SpectralResampler` (`direct(basis)` or
+`channel_local(axis, kernel)`), producing `Placement`s and values from a
+native row (`place`, `place_each`, `place_each_sourced` with native
+endpoints, `place_density`) and predictions back at native channels
+(`predict_row`, `native_terms`); cube density weighting consumes the same
+function. CASA's visibility-domain continuum fit (`fitspw`,
+`fit_and_subtract_continuum`) sits beside it (IF-11).
 
 ### 5.4 Execution (`casa-imaging-runtime`)
 
+The landed signatures (IF-11). The pass items live under
+`casa_imaging_runtime::pass`.
+
 ```rust
 pub struct HostResources { pub threads: usize, pub performance_cores: usize,
-                           pub available_memory: u64, pub fd_limit: u64, pub metal: bool }
+                           pub available_memory: u64, pub metal: bool }   // detected once per process
 pub enum ResourcePolicy { Interactive, Balanced, Exclusive, Explicit { workers: usize, memory: u64 } }
-pub struct Reservation { /* RAII; releases on drop */ }
+impl ResourcePolicy {
+    pub fn workers(&self, host: &HostResources) -> usize;
+    /// Compute width for minor cycles and products; streaming width for
+    /// passes: the workers that fit beside the source's producer thread
+    /// (`STREAM_PRODUCERS = 1`) within the core budget, the performance cores
+    /// under `Balanced` and the workers otherwise (#659 deviation 8).
+    pub fn cores(&self, host: &HostResources) -> CoreAllocation;
+    pub fn memory(&self, host: &HostResources) -> u64;   // Explicit: min(memory, available)
+}
+pub struct CoreAllocation { pub workers: usize, pub streaming_workers: usize }
+pub struct Demand { pub phase: &'static str, pub memory: u64 }
+pub struct Reservation { /* RAII; releases on drop; `retain`, `split`, `join` */ }
 pub fn admit(host: &HostResources, policy: &ResourcePolicy, demand: &Demand) -> Result<Reservation, Admission>;
 
 pub struct Cancel(Arc<AtomicBool>);        // set by SIGINT handler in casars-imager
-pub struct Phase { pub name: &'static str, pub steps: Vec<Step> }
-pub fn run_phase(phase: Phase, team: &WorkerTeam, cancel: &Cancel, summary: &mut RunSummary) -> Result<(), RuntimeError>;
+pub fn run_phase<T, E: From<Cancelled>>(name: impl Into<String>, cancel: &Cancel,
+    diagnostics: Diagnostics, summary: &mut RunSummary,
+    step: impl FnOnce() -> Result<T, E>) -> Result<T, E>;
+pub struct Phase { pub name: String, pub completed: bool, pub seconds: f64,
+                   pub process_peak_rss_bytes: u64, pub peak_reserved_bytes: u64,
+                   pub reserved_bytes: u64 }
 
 pub enum Partition {
-    /// Each worker owns a disjoint set of planes; no merge.
-    Planes(Vec<PlaneRange>),
-    /// Each worker owns disjoint output regions (tiles with halo or row strips);
-    /// a sample is routed to every region its support touches; merge in region order.
-    Regions(Vec<Region>),
+    /// Each owner takes a disjoint range of planes; no merge.
+    Planes { owners: usize },
+    /// Each owner takes a strip of anchor rows plus the kernel's y halo; the
+    /// tiles are added in region order.
+    Regions { regions: Vec<Region>, halo: usize },
 }
 pub enum Residency { All, Waves { planes_per_wave: u32 } }
-
-pub struct MajorCyclePass<'a> {
-    pub operator: &'a MeasurementOperator,
-    pub weighting: &'a WeightingGeneration,
-    pub model: Option<&'a PreparedModelGrids>,   // None: initial (dirty/psf/weight)
-    pub write_model_column: bool,                 // final pass only
-    pub partition: Partition,
-    pub backend: BackendChoice,                   // Cpu | Metal
+impl Residency {
+    /// `All` when every plane's wave demand fits `budget`, else the largest
+    /// wave that fits (at least one plane).
+    pub fn plan(demand: &WaveDemand<'_>, budget: u64) -> Self;
 }
-pub fn run_major_cycle(pass: &MajorCyclePass, source: &mut dyn BoundedSource,
-                       team: &WorkerTeam, cancel: &Cancel) -> Result<NormalImages, RuntimeError>;
+
+/// What a traversal reads of each sample: values, flags and weights, or flags
+/// and weights only (the density pass, as CASA's).
+pub enum SampleContent { Visibilities, FlagsAndWeights }
+/// A re-traversable source of native rows; a dependency boundary (rule 7).
+pub trait BoundedSource: Send {
+    fn begin(&mut self, planes: PlaneRange, restrict: bool, content: SampleContent) -> Result<(), SourceError>;
+    fn fill(&mut self, block: &mut NativeBlock) -> Result<bool, SourceError>;
+    fn maximum_block(&self) -> BlockShape;
+}
+
+pub struct PassDomain<'a> { pub operator: &'a MeasurementOperator,
+                            pub resampler: &'a SpectralResampler, pub partition: Partition }
+pub struct MajorCyclePass<'a> {
+    pub domains: &'a [PassDomain<'a>],
+    pub weighting: &'a WeightingGeneration,
+    pub modes: ModeSet,
+    pub model: Option<&'a ModelPreparation<'a>>,  // None: initial (dirty/psf/weight)
+    pub residency: Residency,
+    pub native_spacing_hz: f64,
+    pub backend: BackendChoice,                   // Cpu | Metal
+    pub metal_stage_timing: bool,
+    pub weights: Option<&'a WeightCache>,         // kept imaging weights (#659 deviation 7)
+}
+/// Hands each domain's `NormalImages` to `images` per wave; a final pass
+/// writes MODEL_DATA or CORRECTED_DATA through `visibilities`.
+pub fn run_major_cycle(pass: &MajorCyclePass<'_>, source: &mut dyn BoundedSource,
+    team: &WorkerTeam, cancel: &Cancel,
+    images: &mut dyn FnMut(usize, NormalImages) -> Result<(), PassError>,
+    visibilities: Option<&mut VisibilitySink<'_>>) -> Result<PassSummary, PassError>;
+pub fn run_density_pass(operator: &MeasurementOperator, resampler: &SpectralResampler,
+    shape: DensityGridShape, source: &mut dyn BoundedSource, team: &WorkerTeam,
+    cancel: &Cancel) -> Result<DensityGrid, PassError>;
 ```
 
 One pass serves initial, residual and final major cycles for every
 capability: read block → select, flag, phase-shift, route correlations →
-build `SampleBlock` → (predict with `backend.degrid` and form V − A·m when a
-model is present) → `backend.grid` into the worker's accumulator → merge →
-`operator.finish`. Cube waves are `Residency::Waves` with the source restricted
-to the wave's native channel window; the fast cube path becomes
-`Partition::Planes` + `Residency::Waves` + `GridPrecision::F32`.
+build `SampleBlock` → (predict and form V − A·m when a model is present, or,
+for several domains or a linear cube, predict at native channels and grid the
+native-channel residual) → `backend.apply` into the worker's accumulator →
+merge → `operator.finish`. Cube waves are `Residency::Waves` with the source
+restricted to the wave's native channel window. A channel-local run keeps
+its two model generations, its PSF (and a mosaic's weight image) and two
+residual epochs in the paged `CubeState`, a bounded cache over disk. A cube
+runs
+`Partition::Planes`; its precision is the run's (`gridprecision`, section
+5.8), f64 on the CPU by default since D2's amendment, so the earlier "f32
+cube fast path" is the user's `gridprecision = f32` or the GPU.
+
+A run holds two worker teams (`WorkerTeams`: compute and streaming, one pool
+when the widths agree). A multi-window selection is walked one
+DATA_DESCRIPTION at a time, recorded by two scans of MAIN before the first
+traversal and charged in the content plan, so the pass order is the walk,
+not storage order (#659 deviation 10). The source fails a run on an unflagged
+non-finite input (section 5.8). The kept-weight cache holds one f32 imaging
+weight per selected row and native channel for a run with one image domain,
+a direct (constant or Taylor) resampler and `Residency::All`, admitted when
+it fits a sixteenth of the free memory; the first complete pass fills it.
 
 ### 5.5 Deconvolution (`casa-imaging-deconvolution`)
 
@@ -645,7 +805,9 @@ index rules are pinned to LibRA/CASA: `w_index = clamp(round(√(wIncr·|w|)),
 precomputed per (spw, channel) with the conjugate map at √(2f0²−f²); PA cell
 by `|PA − PA_cf| ≤ dPA`; each cell normalised by its un-oversampled area
 before use. For AW the bounded source iterates spectral-window-major so one
-CF group is resident at a time. `MosaicPb` builds projectors per (frequency,
+CF group is resident at a time; as landed, every multi-window selection is
+walked one DATA_DESCRIPTION at a time (#659 deviation 10), which is what
+stops #625's CF cache from thrashing. `MosaicPb` builds projectors per (frequency,
 antenna-class pair) from the PB model and caches re-phased kernels per
 pointing pair.
 
@@ -670,20 +832,52 @@ writer stages each image beside its target and promotes it with the existing
 atomic rename/swap and parent fsync. Standard-gridder PB product and pixel
 masks (#217) are rows in this table.
 
+Facets (#664) stitch each facet's residual divided by its own `sumwt` and
+place a reference facet's PSF at the image centre, as CASA's
+`setPsfFromOneFacet` does. The reference is facet 0 unless it took no
+samples; then it is the lowest populated facet, where CASA would copy and
+normalise a zero PSF (#659 deviation 17).
+
 ### 5.8 Request and compile (`casa-imaging-model`, `casa-imaging-application`)
 
 `ImagingRequest` is one serde struct whose field names, choices and defaults
 are the provider-contracts catalog entries; `casars-imager` fills it from the
 resolved catalog values and nothing else. New catalog entries introduced by
-this plan: `gridprecision` (D2), `backend = cpu | metal` (IF-4), and the
-`diagnostics` group (section 8.1). Each is added to the catalog in the ticket
-that lands the behaviour, with the Python wrappers and parameter reference
-regenerated in the same PR. `validate()` runs once. `compile()`
-returns `CompiledProblem` with no identity hashes except the AW cache key.
-`availability::check(&CompiledProblem, &HostResources)` is the one gate for
-capabilities that are not installed (Taylor-basis mosaic, Metal on
-non-macOS, joint continuum-line). Capabilities that are rejected are not in
-the catalog.
+this plan: `gridprecision = auto | f32 | f64` (D2, semantic revision 2),
+`backend = auto | cpu | gpu` (IF-4 as `cpu | metal`; `auto`, the default,
+and the spelling `gpu` since #723, #659 deviation 14), and the `diagnostics`
+group (section 8.1). Each is added to the catalog in the ticket that lands
+the behaviour, with the Python wrappers and parameter reference regenerated
+in the same PR. `validate()` runs once. `compile()` returns `CompiledProblem`
+with no identity hashes; the AW cache reuses a cell because its file exists.
+
+```rust
+pub enum BackendRequest { Auto, Cpu, Gpu }   // request field `backend`, default Auto
+/// `Cpu` and `Gpu` as asked; `Auto` is Metal iff a T1 Metal law covers the
+/// problem (one image domain, facets allowed, any basis; Stokes I; no
+/// visibility write) and `check(problem, Metal, precision, host)` admits it
+/// (a Metal device, `gridprecision` not f64, the standard kernel set).
+pub fn resolve_backend(problem: &CompiledProblem, requested: BackendRequest,
+    precision: Option<GridPrecision>, host: &HostResources) -> BackendChoice;
+pub fn check(problem: &CompiledProblem, backend: BackendChoice,
+    precision: Option<GridPrecision>, host: &HostResources) -> Result<(), ImplementationUnavailable>;
+```
+
+`availability::check` is the one gate for capabilities that are not
+installed: polarized or multi-domain Taylor bases, a non-constant basis or a
+wide-field kernel set with facets, AW cubes (#719), and on Metal a host
+without a device, f64 grids and the W, mosaic and AW kernel sets (#653).
+Capabilities that are rejected are not in the catalog. `gridprecision =
+auto` resolves beside the backend: f64 on the CPU and f32 on Metal (D2 as
+amended). An image size the facet count does not divide fails validation,
+where CASA drops the remainder strips (#659 deviation 15).
+
+Inputs must be finite where they are used (#659 deviation 18, owner
+2026-10-16): under `FiniteValuePolicy::RejectUnflaggedInput`, a non-finite
+visibility or weight in an unflagged sample, or non-finite UVW in an imaged
+row, fails the first pass that reads it, naming the MAIN row, channel and
+correlation and asking the user to flag it; one in a flagged sample is
+ignored. CASA images an unflagged NaN as NaN everywhere, without a message.
 
 ### 5.9 Techniques adopted from Obit and LibRA/HPG
 
@@ -706,14 +900,21 @@ section 5.3 signatures already reflect the "adopt now" rows.
 | Memory admission as one arithmetic formula over visibility buffer, grids and images | Obit `ObitUVImagerGetNumPar 863-921` | `admit()` (D5, IF-6) |
 | Metadata-first CF cache: read headers at open, cell pixels on demand; pinned index rules for w, frequency (with conjugate map), PA and area normalisation | LibRA `CFCache.cc:231-560`, `CFBuffer.h:253-262`, `CFBuffer.cc:520-580`, `AWConvFunc.cc:463,546-553` | `AwCatalog` (IF-3), section 5.6 |
 | Spectral-window-major source order for AW so one CF group is resident at a time | LibRA `DataBase.h:165-192` | `BoundedSource` ordering (IF-3) |
-| Device stream rotation: upload of block k+1 overlaps gridding of block k; per-stream visibility buffers | HPG `runtime.hpp:333-575, 2249-2262` | `MetalBackend` buffer ring (IF-4) |
+| Device stream rotation: upload of block k+1 overlaps gridding of block k; per-stream visibility buffers | HPG `runtime.hpp:333-575, 2249-2262` | `MetalBackend` buffer ring (IF-4): six slots, each `apply` cut into three sub-blocks, grid-only work left running on `DeviceCells` (IF-10, #659 deviations 1–3) |
 | Weight image = visibility 1 at uvw 0 with the FT[PB²] set; PSF = visibility 1 at true uvw; same kernel, three accumulators in one pass | LibRA roadrunner modes, `HPGVisBuffer.inc:160-220` | `Mode::{Data,Psf,Weight}` (already planned) |
 | `Candidate` as an enum with a Gaussian variant and `accept` allowed to revise earlier components, so an ASP solver can land without changing the trait | LibRA `AspMatrixCleaner.cc` | `Solver` (IF-5) |
 | sumwt image carries `useweightimage`/`imagingmode` miscinfo for CASA-tool compatibility | LibRA `roadrunner.cc:878-918` | products (IF-8) |
 | Component merging at equal positions before prediction (already the behaviour of `ModelDelta`) | Obit `ObitTableCCUtilMergeSel` | kept |
 
 Performance-pass candidates (IF-10), each gated by a T0 law or a measurement
-before adoption:
+before adoption. Outcome (#648 results): FFTW threads for a single plane's
+Clark refresh measured +7.6% cycles and were rejected; a tap-plan, record or
+placement cache across majors was rejected by design (D1, R3); the others
+were not taken up and stay open. IF-10 adopted instead the 27 measured
+changes the #648 results table lists, among them baseline-grouped blocks,
+deferred Metal completion, the device's native-channel residual, kept
+imaging weights, the core allocation, the DATA_DESCRIPTION walk and the
+flags-and-weights density pass.
 
 - Hermitian half-plane gridding with guard columns and conjugate folding
   (Obit `ObitUVGridSetup`, `ThreadFlip`, `ThreadMerge`): halves grid memory
@@ -830,7 +1031,12 @@ inventory and WCS.
 **T2, representative (hours; IF-10 only).** The nineteen matrix scenarios
 (oracles regenerated), the intermediate-90 16-SPW and deeper variants, the
 C-array 512-channel cube (CASA 6.0 h), Wave3 4096² MFS (CASA 7,268 s), the
-VLASS fragment (#625 serial bar 9,073 s), full-360 once finalised.
+VLASS fragment (#625 serial bar 9,073 s), full-360 once finalised. As run,
+the T2 harness (`scripts/bench-imager-vs-casa.sh`) gives CASA
+`conjbeams=False` for mosaic rows, since casa-rs mosaic has no conjugate
+beams (#720), and tclean's default `True` for AW (#721; #659 deviation 16).
+Wave3's CASA time of record became 7,944.7 s on the regenerated MS (#648
+results, owner decision 3).
 
 Tests that assert implementation details (batch sizes, receipt counts,
 internal ordering, measurement projections) are deleted with the code they
@@ -1000,7 +1206,9 @@ W1/W4, and the #625 serial AW/MT-MFS bar; peak RSS at or below the recorded
 values. Candidate optimisations only from measurement, taken from the
 section 5.9 candidate list in the order the profile suggests. Acceptance: a
 results table in the umbrella issue; no new abstraction without a measured
-win.
+win. As run, IF-10 was two PRs, #711 for the timed bars and #712 onward for
+the rest of T2 (owner, 2026-10-12; #659 deviation 5), and closed with the
+Gate R4 outcome below.
 
 **IF-11 Docs and closure (Fable).** `ARCHITECTURE.md`, `TESTING.md`,
 `docs/agent-reference.md`, `.agents/skills`, ADR index; delete
@@ -1480,3 +1688,32 @@ These summarise Astra's gate review on #659, which is the record.
 - **#445–#450:** #446 stays closed. #445 and #447–#450 stay open until IF-11 maps them.
 
 Gate closed: #724, which carries this section, merged on 2026-10-16.
+
+## 12. Deviations reconciled (IF-11, 2026-10-16)
+
+Every deviation the tickets recorded under `## Deviations` has an owner
+disposition on its ticket. IF-11 folded the IF-10 deviations (#659 1–18) and
+its own (#660) into the sections above; this table says where each now
+stands. Earlier tickets' deviations were decided at Gates R1–R3 and are
+recorded in those outcome sections.
+
+| Deviation | What landed | Where the plan states it |
+|---|---|---|
+| #659 1–2 | `GridBackend::apply` may leave grid-only work on device cells; `DeviceCells::defer` (`unsafe`), `DeferredWork`, `MetalBackend::{with_deferred_grid_completion, complete}`, `NativeBlock::{order_rows_by_baseline, ordered_row}` | §5.3 `GridStorage`, `GridBackend`; §5.9 stream-rotation row |
+| #659 3 | Six-slot Metal ring (18 MiB per owner with two correlations) | §5.9 stream-rotation row |
+| #659 4 | Baseline-grouped blocks cost the Metal pilot about 3% before deferral; kept for the cube's −7% | this table (an accepted cost) |
+| #659 5 | IF-10 in two PRs | §9.2 IF-10 |
+| #659 6 | The backend forms the native-channel residual (`Work::PredictNative`, `Work::NativeResidualGrid`) | §5.3 `Work`, `GridBackend`; §5.4 pass description |
+| #659 7 | Kept imaging weights across passes (`WeightCache`) | D1; §5.4 |
+| #659 8 | Core allocation and two worker teams | D5; §5.4 `ResourcePolicy::cores` |
+| #659 9 | Residual passes sum no weights (`without_weight_sums`) | §5.3 kernel contract, `GridAccumulator`, `NormalPlane` |
+| #659 10 | Multi-window selections walked one DATA_DESCRIPTION at a time | §5.4; §5.6 |
+| #659 11 | `aw/mod.rs` and `access.rs` over 1,500 lines | Resolved in IF-11: both split below the limit and removed from the allowlist |
+| #659 12 | Cube density looked up at the rotated uvw (CASA bug) | §5.3 weighting |
+| #659 13 | `gridprecision = auto` is f64 on the CPU, cubes included | D2 amendment; §5.4; §5.8 |
+| #659 14 | `backend = auto \| cpu \| gpu`, default `auto` | D2; §5.8 `resolve_backend` |
+| #659 15 | A facet count that does not divide the image size fails validation | §5.8 |
+| #659 16 | T2 harness: CASA `conjbeams=False` for mosaic, `True` for AW | §7 T2 |
+| #659 17 | An empty facet 0 hands the reference to the lowest populated facet | §5.7 |
+| #659 18 | An unflagged non-finite input fails the run | §5.8 |
+| #660 1 | Normal state, model lifecycle, masks and `MajorCycle` in deconvolution; continuum fit in the operator; reconstruction crate deleted | D4; §5.2; §5.3 |
