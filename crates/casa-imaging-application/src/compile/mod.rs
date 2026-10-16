@@ -424,12 +424,23 @@ fn cube_density_padding(
 /// be deployed: no directory exists and no AW cell is generated until
 /// [`Deployment::deploy`].
 pub(crate) struct Deployment {
-    /// The runtime; its spill directory is made canonical on deployment.
-    runtime: ApplicationRuntime,
+    runtime: PendingRuntime,
     publication: ApplicationPublication,
     /// Every domain's output directory.
     output_directories: Vec<PathBuf>,
     aw: Option<AwPlan>,
+}
+
+/// The run's runtime but for its device, which the compiled problem resolves
+/// ([`Deployment::deploy`]); its spill directory is made canonical on
+/// deployment.
+struct PendingRuntime {
+    host: crate::HostResources,
+    resource_policy: crate::ResourcePolicy,
+    grid_precision: Option<crate::GridPrecision>,
+    cancel: crate::Cancel,
+    spill_directory: PathBuf,
+    diagnostics: crate::Diagnostics,
 }
 
 /// The AW catalog a run opens and, for a native cache, the cells to bring
@@ -453,16 +464,31 @@ impl Deployment {
                 source,
             })?;
         }
-        let mut runtime = self.runtime;
-        runtime.backend = backend;
-        runtime.spill_directory = runtime.spill_directory.canonicalize().map_err(|source| {
-            PrepareError::OutputDirectory {
-                path: runtime.spill_directory.clone(),
-                source,
-            }
-        })?;
+        let PendingRuntime {
+            host,
+            resource_policy,
+            grid_precision,
+            cancel,
+            spill_directory,
+            diagnostics,
+        } = self.runtime;
+        let spill_directory =
+            spill_directory
+                .canonicalize()
+                .map_err(|source| PrepareError::OutputDirectory {
+                    path: spill_directory.clone(),
+                    source,
+                })?;
         Ok(ApplicationNative {
-            runtime,
+            runtime: ApplicationRuntime {
+                host,
+                resource_policy,
+                backend,
+                grid_precision,
+                cancel,
+                spill_directory,
+                diagnostics,
+            },
             publication: self.publication,
             aw_catalog: self.aw.map(AwPlan::deploy).transpose()?,
         })
@@ -526,11 +552,9 @@ fn deployment(
         controls = controls.with_primary_beam_model(model);
     }
     Ok(Deployment {
-        runtime: ApplicationRuntime {
+        runtime: PendingRuntime {
             host: context.host,
             resource_policy: context.policy,
-            // Resolved on the compiled problem; set by `Deployment::deploy`.
-            backend: BackendChoice::Cpu,
             grid_precision: request.gridprecision,
             cancel: context.cancel.clone(),
             spill_directory: parent(&request.imagename),

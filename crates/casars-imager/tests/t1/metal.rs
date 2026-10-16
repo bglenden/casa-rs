@@ -14,6 +14,9 @@ use super::standard_mfs::assert_recovers_the_point;
 /// The application's refusal on a host whose inventory has no Metal device.
 const NO_METAL_DEVICE: &str = "the Metal backend needs a unified-memory Metal 3 device";
 const TOLERANCE: f64 = 1.0e-4;
+/// Spectral index and its error, absolute, where the restored image is
+/// above a tenth of its peak: `tt1/tt0` from terms that agree to 1e-4.
+const ALPHA_TOLERANCE: f64 = 1.0e-3;
 
 const POINT: Component = Component {
     offset_px: [24, 16],
@@ -56,19 +59,31 @@ fn assert_products_agree(metal: &Products, cpu: &Products, label: &str) {
     } else {
         ".image.tt0"
     };
-    let image_peak = peak(&cpu.get(restored).image.get().expect("read image"));
+    let restored_image = cpu.get(restored).image.get().expect("read image");
+    let image_peak = peak(&restored_image);
     assert!(image_peak > 0.0, "{label}: the restored image is empty");
-    // The spectral index is cut where the image falls below a threshold, so
-    // a pixel at the cut may land on either side; the Taylor terms carry
-    // the comparison.
-    for suffix in cpu
-        .suffixes()
-        .into_iter()
-        .filter(|suffix| !suffix.starts_with(".alpha"))
-    {
+    for suffix in cpu.suffixes() {
         let metal = metal.get(&suffix).image.get().expect("read Metal product");
         let cpu = cpu.get(&suffix).image.get().expect("read CPU product");
         assert_eq!(metal.shape(), cpu.shape(), "{label} {suffix}");
+        if suffix.starts_with(".alpha") {
+            // The spectral index and its error are cut where the image falls
+            // below a threshold, so a pixel at the cut may land on either
+            // side; they are compared where the image is bright, absolutely.
+            let worst = metal
+                .iter()
+                .zip(&cpu)
+                .zip(&restored_image)
+                .filter(|(_, image)| f64::from(**image) > 0.1 * image_peak)
+                .fold(0.0_f64, |worst, ((m, c), _)| {
+                    worst.max((f64::from(*m) - f64::from(*c)).abs())
+                });
+            assert!(
+                worst <= ALPHA_TOLERANCE,
+                "{label} {suffix}: largest difference {worst:e} where the image is bright"
+            );
+            continue;
+        }
         let scale = peak(&cpu).max(image_peak);
         let worst = metal.iter().zip(&cpu).fold(0.0_f64, |worst, (m, c)| {
             worst.max((f64::from(*m) - f64::from(*c)).abs())

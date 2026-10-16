@@ -7575,7 +7575,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Device the major-cycle passes grid on: auto, cpu or gpu",
-        "details": "auto grids on the GPU where it runs the request and on the CPU otherwise; the run summary records which. gpu is Metal on macOS, needs a unified-memory Metal 3 device, grids in f32 and runs the standard gridder (W projection, mosaic and AW projection run on the CPU); a request it cannot run is refused. Choosing the GPU accepts f32 grids, so an explicit gridprecision = f64 keeps auto on the CPU. auto keeps outlier fields on the CPU. Placement and native-channel predictions stay on the CPU workers.",
+        "details": "auto grids on the GPU where it runs the request and on the CPU otherwise; the run summary records which. gpu is Metal on macOS, needs a unified-memory Metal 3 device, grids in f32 and runs the standard gridder (W projection, mosaic and AW projection run on the CPU); a request it cannot run is refused. Choosing the GPU accepts f32 grids, so an explicit gridprecision = f64 keeps auto on the CPU. auto also keeps on the CPU what no GPU-against-CPU law covers yet: outlier fields, polarizations other than Stokes I, and runs that write MODEL_DATA or CORRECTED_DATA. Placement and native-channel predictions stay on the CPU workers.",
         "examples": [
           "auto",
           "cpu",

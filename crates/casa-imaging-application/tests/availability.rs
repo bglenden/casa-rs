@@ -259,6 +259,33 @@ fn auto_takes_the_gpu_where_it_runs_the_problem_and_the_cpu_otherwise() {
     }
     .compile();
     assert_eq!(resolve(&outliers, BackendRequest::Auto, None, true), Cpu);
+    // No Metal law covers another polarization or a visibility write yet:
+    // `auto` keeps them on the CPU, `gpu` still takes the GPU.
+    for coordinate in [
+        PolarizationCoordinate::StokesQ,
+        PolarizationCoordinate::CircularRl,
+    ] {
+        let polarized = ProblemFixture {
+            polarizations: vec![coordinate],
+            ..ProblemFixture::standard()
+        }
+        .compile();
+        assert_eq!(resolve(&polarized, BackendRequest::Auto, None, true), Cpu);
+        assert_eq!(resolve(&polarized, BackendRequest::Gpu, None, true), Metal);
+    }
+    let model_write = ProblemFixture {
+        model_column_write: ModelColumnWrite::SelectedRows,
+        ..ProblemFixture::standard()
+    }
+    .compile();
+    assert!(
+        !model_write
+            .observation_transaction()
+            .write_set()
+            .visibility_columns()
+            .is_empty()
+    );
+    assert_eq!(resolve(&model_write, BackendRequest::Auto, None, true), Cpu);
     let mut w = ProblemFixture::standard();
     w.measurement_equation = w
         .measurement_equation
@@ -328,6 +355,7 @@ struct ProblemFixture {
     instrument_model: Option<InstrumentModel>,
     products: Vec<ProductKind>,
     outlier: bool,
+    model_column_write: ModelColumnWrite,
 }
 
 impl ProblemFixture {
@@ -350,6 +378,7 @@ impl ProblemFixture {
             instrument_model: None,
             products: vec![ProductKind::Psf],
             outlier: false,
+            model_column_write: ModelColumnWrite::Disabled,
         }
     }
 
@@ -468,7 +497,7 @@ impl ProblemFixture {
                     RestoringBeamPolicy::None,
                     product_validity(),
                 ),
-                ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+                ObservationTransactionRequirements::new(self.model_column_write),
                 numerics,
             ),
             geometry,

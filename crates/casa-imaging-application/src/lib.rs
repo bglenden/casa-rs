@@ -309,20 +309,25 @@ fn prepare_and_run(
     context: &RunContext,
     summary: &mut RunSummary,
 ) -> Result<impl FnOnce(RunSummary) -> ImagingOutcome + use<>, ApplicationDispatchError> {
+    // The device the request resolves to, recorded in the summary even when
+    // the rest of preparation then fails.
+    let resolved = std::cell::Cell::new(None);
     // The Measures charge stays with the run.
-    let (problem, run, _resident, backend) = run_phase(
+    let prepared = run_phase(
         "preparation",
         &context.cancel,
         request.diagnostics,
         summary,
         || {
-            let (problem, input, deployed, resident) = compile_run(request, context)?;
-            let backend = deployed.runtime.backend;
+            let (problem, input, deployed, resident) = compile_run(request, context, &resolved)?;
             let run = native::prepare(&problem, input, deployed)?;
-            Ok::<_, ApplicationDispatchError>((problem, run, resident, backend))
+            Ok::<_, ApplicationDispatchError>((problem, run, resident))
         },
-    )?;
-    summary.backend = backend;
+    );
+    if let Some(backend) = resolved.get() {
+        summary.backend = backend;
+    }
+    let (problem, run, _resident) = prepared?;
     Ok(native::run(&problem, run, summary)?)
 }
 
@@ -363,10 +368,12 @@ fn admit_process_caches(context: &RunContext) -> Result<(), ApplicationDispatchE
 /// opens anything, after the process's caches ([`admit_process_caches`]);
 /// the MeasurementSet walks are admitted once its rows are known
 /// ([`compile::prepare`]) and released once the selected observation is
-/// resolved.
+/// resolved. The device the request resolves to is set in
+/// `resolved_backend` as soon as it is known.
 fn compile_run(
     request: &ImagingRequest,
     context: &RunContext,
+    resolved_backend: &std::cell::Cell<Option<BackendChoice>>,
 ) -> Result<
     (
         CompiledProblem,
@@ -412,6 +419,7 @@ fn compile_run(
         request.gridprecision,
         &context.host,
     );
+    resolved_backend.set(Some(backend));
     availability::check(&problem, backend, request.gridprecision, &context.host)
         .map_err(ApplicationDispatchError::Unavailable)?;
     let native = prepared
