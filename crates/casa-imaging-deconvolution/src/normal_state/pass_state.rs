@@ -13,16 +13,12 @@ use std::ops::Range;
 use casa_imaging_model::{CompiledProblem, ReconstructionBasis, SpectralWcs};
 use num_complex::Complex64;
 
-use super::normal_storage::{
-    CompleteDataNormalState, NormalStatePrimitives, NormalStoragePlan, StoredChannelNormalDomain,
-};
+use super::storage::{NormalStatePrimitives, NormalStoragePlan, StoredChannelNormalDomain};
 use super::{
-    CompleteDataOwnerCompletion, CubeRealFields, SpectralBasisPlan, SpectralChannelValidity,
-    SpectralDomainPrimitives, SpectralOperatorError, SpectralOperatorPrimitives,
-    SpectralPrimitiveCatalog, SpectralPrimitiveDomains, SpectralSlabPlan, checked_cells,
+    CubeRealFields, NormalPrimitives, NormalStateError, SpectralBasisPlan, SpectralChannelValidity,
+    SpectralDomainPrimitives, SpectralPrimitiveDomains, SpectralSlabPlan, checked_cells,
 };
 use crate::FinalNormalState;
-use crate::block_normal::BlockNormalPlan;
 
 /// Unnormalised images of one image domain from one pass over a contiguous
 /// range of output channels.
@@ -105,7 +101,7 @@ impl PassNormalState {
     pub(crate) fn initial(
         problem: &CompiledProblem,
         storage: NormalStoragePlan,
-    ) -> Result<Self, SpectralOperatorError> {
+    ) -> Result<Self, NormalStateError> {
         let domains = problem.geometry().domains();
         Ok(Self {
             basis: basis_plan(problem)?,
@@ -131,7 +127,7 @@ impl PassNormalState {
         problem: &CompiledProblem,
         previous: FinalNormalState,
         storage: NormalStoragePlan,
-    ) -> Result<Self, SpectralOperatorError> {
+    ) -> Result<Self, NormalStateError> {
         let mut state = Self::initial(problem, storage)?;
         state.refreshed_samples = Some(previous.sample_count());
         match previous.primitives() {
@@ -167,15 +163,15 @@ impl PassNormalState {
     /// policies differ only on non-finite inputs, which the source flags or
     /// rejects before gridding. Nothing is changed when an append fails
     /// validation.
-    pub(crate) fn append(&mut self, images: PassImages) -> Result<(), SpectralOperatorError> {
+    pub(crate) fn append(&mut self, images: PassImages) -> Result<(), NormalStateError> {
         let index = images.domain;
         if self.shapes.get(index) != Some(&images.shape)
             || images.polarizations != self.polarizations
         {
-            return Err(SpectralOperatorError::ProblemMismatch);
+            return Err(NormalStateError::ProblemMismatch);
         }
         if !all_finite(&images) {
-            return Err(SpectralOperatorError::GeneratedNonfinite);
+            return Err(NormalStateError::GeneratedNonfinite);
         }
         if let DomainState::Channels {
             domain,
@@ -183,7 +179,7 @@ impl PassNormalState {
         } = &mut self.domains[index]
         {
             if images.psf.is_some() {
-                return Err(SpectralOperatorError::ProblemMismatch);
+                return Err(NormalStateError::ProblemMismatch);
             }
             return domain.append_residual_planes(
                 images.channels.clone(),
@@ -194,7 +190,7 @@ impl PassNormalState {
         if let DomainState::Coupled { domain, refreshed } = &mut self.domains[index] {
             let primitives = &mut domain.primitives;
             if images.psf.is_some() || images.residual.len() != primitives.dirty.len() {
-                return Err(SpectralOperatorError::ProblemMismatch);
+                return Err(NormalStateError::ProblemMismatch);
             }
             primitives.dirty = widen(&images.residual);
             *refreshed = true;
@@ -220,34 +216,23 @@ impl PassNormalState {
         }
     }
 
-    /// The completed state with the traversal counts it came from. Every
-    /// domain's images must be complete, and a refresh must have formed every
+    /// The completed state of a pass that placed `samples`. Every domain's
+    /// images must be complete, and a refresh must have formed every
     /// residual again and placed the samples the refreshed state placed.
-    pub(crate) fn finish(
-        self,
-        samples: u64,
-        blocks: u64,
-    ) -> Result<CompleteDataNormalState, SpectralOperatorError> {
+    pub(crate) fn finish(self, samples: u64) -> Result<NormalStatePrimitives, NormalStateError> {
         if self
             .refreshed_samples
             .is_some_and(|previous| previous != samples)
         {
-            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+            return Err(NormalStateError::ReusableNormalStateMismatch);
         }
-        let catalog = match self.basis {
-            SpectralBasisPlan::ChannelLocal => SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1,
-            SpectralBasisPlan::Polynomial(plan) if plan.coefficient_term_count() > 1 => {
-                SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1
-            }
-            SpectralBasisPlan::Polynomial(_) => SpectralPrimitiveCatalog::UnnormalizedPlaneV1,
-        };
         let primitives = if self.basis == SpectralBasisPlan::ChannelLocal {
             NormalStatePrimitives::ChannelLocal(
                 self.domains
                     .into_iter()
                     .map(|state| match state {
                         DomainState::Channels { domain, .. } if domain.is_complete() => Ok(domain),
-                        _ => Err(SpectralOperatorError::IncompleteCoverage),
+                        _ => Err(NormalStateError::IncompleteCoverage),
                     })
                     .collect::<Result<Box<[_]>, _>>()?,
             )
@@ -261,7 +246,7 @@ impl PassNormalState {
                             domain,
                             refreshed: true,
                         } => Ok(domain),
-                        _ => Err(SpectralOperatorError::IncompleteCoverage),
+                        _ => Err(NormalStateError::IncompleteCoverage),
                     })
                     .collect::<Result<Box<[_]>, _>>()?,
             })
@@ -269,20 +254,13 @@ impl PassNormalState {
         if let Some(previous) = self.previous {
             previous.retire_obsolete()?;
         }
-        Ok(CompleteDataNormalState {
-            primitives,
-            completion: CompleteDataOwnerCompletion {
-                primitives: catalog,
-                sample_count: samples,
-                block_count: blocks,
-            },
-        })
+        Ok(primitives)
     }
 
     fn channel_primitives(
         &self,
         images: PassImages,
-    ) -> Result<SpectralDomainPrimitives, SpectralOperatorError> {
+    ) -> Result<SpectralDomainPrimitives, NormalStateError> {
         let PassImages {
             domain,
             shape,
@@ -296,7 +274,7 @@ impl PassNormalState {
         } = images;
         let planes = channels.len() * polarizations;
         let values = planes * checked_cells(shape)?;
-        let psf = psf.ok_or(SpectralOperatorError::ProblemMismatch)?;
+        let psf = psf.ok_or(NormalStateError::ProblemMismatch)?;
         if channels.is_empty()
             || channels.end > self.total_channels
             || residual.len() != values
@@ -305,13 +283,13 @@ impl PassNormalState {
             || published_sum_weights.len() != planes
             || weight.as_ref().is_some_and(|weight| weight.len() != values)
         {
-            return Err(SpectralOperatorError::InvalidSlab);
+            return Err(NormalStateError::InvalidSlab);
         }
         let validity = sum_weights.iter().map(|weight| validity(*weight)).collect();
         Ok(SpectralDomainPrimitives::new(
             domain,
             self.roles[domain].clone(),
-            SpectralOperatorPrimitives {
+            NormalPrimitives {
                 shape,
                 slab: SpectralSlabPlan {
                     total_channels: self.total_channels,
@@ -341,7 +319,7 @@ impl PassNormalState {
     fn coupled_primitives(
         &self,
         images: PassImages,
-    ) -> Result<SpectralDomainPrimitives, SpectralOperatorError> {
+    ) -> Result<SpectralDomainPrimitives, NormalStateError> {
         let PassImages {
             domain,
             shape,
@@ -361,7 +339,7 @@ impl PassNormalState {
         let cells = checked_cells(shape)?;
         let terms = self.basis.coefficient_terms(slab);
         let moments = self.basis.normal_moments(slab);
-        let psf = psf.ok_or(SpectralOperatorError::ProblemMismatch)?;
+        let psf = psf.ok_or(NormalStateError::ProblemMismatch)?;
         if channels != (0..self.total_channels)
             || residual.len() != terms * polarizations * cells
             || psf.len() != moments * polarizations * cells
@@ -371,7 +349,7 @@ impl PassNormalState {
                 .as_ref()
                 .is_some_and(|weight| weight.len() != moments * polarizations * cells)
         {
-            return Err(SpectralOperatorError::InvalidSlab);
+            return Err(NormalStateError::InvalidSlab);
         }
         // The sensitivity per (moment, pol) plane: the gridded weight image
         // of the moment and pol for a set with weight taps (`MosaicFT`'s sky
@@ -391,7 +369,7 @@ impl PassNormalState {
         Ok(SpectralDomainPrimitives::new(
             domain,
             self.roles[domain].clone(),
-            SpectralOperatorPrimitives {
+            NormalPrimitives {
                 shape,
                 slab,
                 basis: self.basis,
@@ -443,24 +421,24 @@ fn widen(values: &[f32]) -> Box<[Complex64]> {
         .collect()
 }
 
-/// The coefficient basis of `problem`; a Taylor basis expands about the
-/// image's reference frequency.
-fn basis_plan(problem: &CompiledProblem) -> Result<SpectralBasisPlan, SpectralOperatorError> {
-    let reference_hz = || match problem.geometry().spectral().wcs() {
-        SpectralWcs::Linear {
-            reference_frequency_hz,
-            ..
-        } => Ok(*reference_frequency_hz),
-        SpectralWcs::Tabular { .. } => Err(SpectralOperatorError::UnsupportedProblem),
-    };
-    Ok(match problem.reconstruction().basis() {
-        ReconstructionBasis::ChannelLocal { .. } => SpectralBasisPlan::ChannelLocal,
-        ReconstructionBasis::Constant => {
-            SpectralBasisPlan::Polynomial(BlockNormalPlan::constant(reference_hz()?))
+/// The coefficient basis of `problem`. A constant or Taylor basis needs a
+/// linear spectral axis, whose reference frequency it expands about.
+fn basis_plan(problem: &CompiledProblem) -> Result<SpectralBasisPlan, NormalStateError> {
+    let polynomial = |terms: usize| {
+        if matches!(
+            problem.geometry().spectral().wcs(),
+            SpectralWcs::Tabular { .. }
+        ) {
+            return Err(NormalStateError::UnsupportedProblem);
         }
-        ReconstructionBasis::Taylor { terms } => SpectralBasisPlan::Polynomial(
-            BlockNormalPlan::taylor(reference_hz()?, terms)
-                .ok_or(SpectralOperatorError::ResidencyOverflow)?,
-        ),
-    })
+        terms
+            .checked_mul(2)
+            .map(|_| SpectralBasisPlan::Polynomial { terms })
+            .ok_or(NormalStateError::ResidencyOverflow)
+    };
+    match problem.reconstruction().basis() {
+        ReconstructionBasis::ChannelLocal { .. } => Ok(SpectralBasisPlan::ChannelLocal),
+        ReconstructionBasis::Constant => polynomial(1),
+        ReconstructionBasis::Taylor { terms } => polynomial(terms),
+    }
 }

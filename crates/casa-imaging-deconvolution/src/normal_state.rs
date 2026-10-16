@@ -4,8 +4,8 @@
 //! sum-weight families a major-cycle pass produces for the minor cycle and
 //! products, with their spectral basis, channel slab and validity.
 
-pub(crate) mod normal_storage;
 mod pass_state;
+pub(crate) mod storage;
 pub use pass_state::PassImages;
 pub(crate) use pass_state::PassNormalState;
 
@@ -15,33 +15,50 @@ use casa_imaging_model::ImageDomainRole;
 use num_complex::Complex64;
 use thiserror::Error;
 
-use crate::block_normal::BlockNormalPlan;
+/// The spectral basis of a normal state, which decides how its planes are
+/// read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NormalBasis {
+    /// One constant-basis plane per polarization.
+    Constant,
+    /// One plane per output channel and polarization.
+    ChannelLocal,
+    /// Taylor-coefficient residuals and the `2T−1` moments of the Hankel
+    /// block normal.
+    Taylor,
+}
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SpectralBasisPlan {
     ChannelLocal,
-    Polynomial(BlockNormalPlan),
+    /// A constant (one term) or Taylor basis: `terms` residual terms and
+    /// the `2·terms − 1` moments of its Hankel block normal. `2·terms`
+    /// fits in `usize` (checked where the plan is made).
+    Polynomial {
+        terms: usize,
+    },
 }
 
 impl SpectralBasisPlan {
+    const fn basis(self) -> NormalBasis {
+        match self {
+            Self::ChannelLocal => NormalBasis::ChannelLocal,
+            Self::Polynomial { terms } if terms > 1 => NormalBasis::Taylor,
+            Self::Polynomial { .. } => NormalBasis::Constant,
+        }
+    }
+
     const fn coefficient_terms(self, slab: SpectralSlabPlan) -> usize {
         match self {
             Self::ChannelLocal => slab.core_depth(),
-            Self::Polynomial(plan) => plan.coefficient_term_count(),
+            Self::Polynomial { terms } => terms,
         }
     }
 
     const fn normal_moments(self, slab: SpectralSlabPlan) -> usize {
         match self {
             Self::ChannelLocal => slab.core_depth(),
-            Self::Polynomial(plan) => plan.normal_moment_count(),
-        }
-    }
-
-    fn normal_moment_index(self, row: usize, column: usize) -> Option<usize> {
-        match self {
-            Self::Polynomial(plan) => plan.normal_moment_index(row, column),
-            Self::ChannelLocal => None,
+            Self::Polynomial { terms } => 2 * terms - 1,
         }
     }
 }
@@ -77,10 +94,9 @@ impl SpectralSlabPlan {
     }
 }
 
-/// Compact real outputs from the supported channel-local cube imager.
-#[doc(hidden)]
+/// A channel-local pass's planes as it gridded them, in `f32`.
 #[derive(Debug)]
-pub struct CubeRealFields {
+pub(crate) struct CubeRealFields {
     pub(crate) dirty: Box<[f32]>,
     pub(crate) psf: Box<[f32]>,
     /// Each plane's gridded weight image (CASA's per-channel `.weight` before
@@ -90,27 +106,10 @@ pub struct CubeRealFields {
     pub(crate) sensitivity: Option<Box<[f32]>>,
 }
 
-impl CubeRealFields {
-    /// Model-dependent residual or initial dirty plane values.
-    pub fn dirty(&self) -> &[f32] {
-        &self.dirty
-    }
-
-    /// Unnormalized point-spread-function values.
-    pub fn psf(&self) -> &[f32] {
-        &self.psf
-    }
-
-    /// Unnormalized weight-image values, when the response varies across the
-    /// plane.
-    pub fn sensitivity(&self) -> Option<&[f32]> {
-        self.sensitivity.as_deref()
-    }
-}
-
-/// Unnormalized spectral primitives; products are formed from them.
+/// One image domain's unnormalised residual, PSF moments, sensitivity and
+/// sum weights over a channel slab; products are formed from them.
 #[derive(Debug)]
-pub struct SpectralOperatorPrimitives {
+pub(crate) struct NormalPrimitives {
     shape: [usize; 2],
     slab: SpectralSlabPlan,
     basis: SpectralBasisPlan,
@@ -139,7 +138,7 @@ pub const fn resident_bytes_per_cell(terms: usize, moments: usize, psf: bool) ->
     bytes
 }
 
-impl SpectralOperatorPrimitives {
+impl NormalPrimitives {
     /// Heap bytes these primitives hold.
     #[must_use]
     pub fn resident_bytes(&self) -> u64 {
@@ -187,21 +186,6 @@ impl SpectralOperatorPrimitives {
         self.basis.normal_moments(self.slab)
     }
 
-    /// Return the Taylor reference frequency, or `None` for channel-local state.
-    #[must_use]
-    pub const fn reference_frequency_hz(&self) -> Option<f64> {
-        match self.basis {
-            SpectralBasisPlan::Polynomial(plan) => Some(plan.reference_frequency_hz()),
-            SpectralBasisPlan::ChannelLocal => None,
-        }
-    }
-
-    /// Map one coefficient-block pair to its retained normal moment.
-    #[must_use]
-    pub fn normal_moment_index(&self, row: usize, column: usize) -> Option<usize> {
-        self.basis.normal_moment_index(row, column)
-    }
-
     /// Return the unnormalized dirty normal-state plane.
     #[must_use]
     pub fn dirty(&self) -> crate::NormalValues<'_> {
@@ -220,12 +204,6 @@ impl SpectralOperatorPrimitives {
             .map_or(crate::NormalValues::Complex(&self.psf), |real| {
                 crate::NormalValues::Real(&real.psf)
             })
-    }
-
-    /// Borrow compact real fields before the channel-local normal fold consumes them.
-    #[doc(hidden)]
-    pub fn cube_real_fields(&self) -> Option<&CubeRealFields> {
-        self.cube_real.as_ref()
     }
 
     /// Return the response sensitivity in normal-state units.
@@ -272,19 +250,6 @@ impl SpectralOperatorPrimitives {
     pub const fn channel_validity(&self) -> &[SpectralChannelValidity] {
         &self.validity
     }
-
-    /// Return the exact scalar sum weight for the one-plane continuum case.
-    ///
-    /// Cube consumers use [`Self::sum_weights`] instead.
-    #[must_use]
-    pub fn sum_weight(&self) -> f64 {
-        assert_eq!(
-            self.sum_weights.len(),
-            1,
-            "cube normal state has per-channel weights"
-        );
-        self.sum_weights[0]
-    }
 }
 
 /// Normal-state validity for one output channel.
@@ -297,59 +262,19 @@ pub enum SpectralChannelValidity {
     Unmapped,
 }
 
-/// Versioned unnormalized primitive set produced by the nterms=1 continuum operator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpectralPrimitiveCatalog {
-    /// Dirty, PSF, sensitivity, and sum-weight primitives under the v1 contract.
-    UnnormalizedPlaneV1,
-    /// Channel-major dirty, PSF, sensitivity, sum-weight, and validity planes.
-    UnnormalizedChannelSlabV1,
-    /// Taylor-coefficient residuals and the `2T-1` signed block-normal moments.
-    UnnormalizedTaylorBlockV1,
-}
-
-/// Opaque reconstruction-owned proof that one complete weighted pass reached A/A*.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct CompleteDataOwnerCompletion {
-    pub(crate) primitives: SpectralPrimitiveCatalog,
-    pub(crate) sample_count: u64,
-    pub(crate) block_count: u64,
-}
-
-impl CompleteDataOwnerCompletion {
-    /// Return the versioned primitive set produced by the operator.
-    #[must_use]
-    pub const fn primitive_catalog(&self) -> SpectralPrimitiveCatalog {
-        self.primitives
-    }
-
-    /// Return the placed-sample count.
-    #[must_use]
-    pub const fn sample_count(&self) -> u64 {
-        self.sample_count
-    }
-
-    /// Return the source block count.
-    #[must_use]
-    pub const fn block_count(&self) -> u64 {
-        self.block_count
-    }
-}
-
 /// Complete unnormalized primitives of one image domain.
 #[derive(Debug)]
 pub(crate) struct SpectralDomainPrimitives {
     domain_ordinal: usize,
     domain_role: ImageDomainRole,
-    primitives: SpectralOperatorPrimitives,
+    primitives: NormalPrimitives,
 }
 
 impl SpectralDomainPrimitives {
     pub(crate) fn new(
         domain_ordinal: usize,
         domain_role: ImageDomainRole,
-        primitives: SpectralOperatorPrimitives,
+        primitives: NormalPrimitives,
     ) -> Self {
         Self {
             domain_ordinal,
@@ -366,7 +291,7 @@ impl SpectralDomainPrimitives {
         &self.domain_role
     }
 
-    pub(crate) const fn primitives(&self) -> &SpectralOperatorPrimitives {
+    pub(crate) const fn primitives(&self) -> &NormalPrimitives {
         &self.primitives
     }
 }
@@ -390,16 +315,14 @@ impl SpectralPrimitiveDomains {
             .sum()
     }
 
-    pub(crate) fn new(
-        domains: Box<[SpectralDomainPrimitives]>,
-    ) -> Result<Self, SpectralOperatorError> {
+    pub(crate) fn new(domains: Box<[SpectralDomainPrimitives]>) -> Result<Self, NormalStateError> {
         if domains.is_empty()
             || domains
                 .iter()
                 .enumerate()
                 .any(|(ordinal, domain)| domain.domain_ordinal != ordinal)
         {
-            return Err(SpectralOperatorError::DomainProjectionMismatch);
+            return Err(NormalStateError::DomainProjectionMismatch);
         }
         Ok(Self { domains })
     }
@@ -412,7 +335,7 @@ impl SpectralPrimitiveDomains {
         self.domains.iter()
     }
 
-    pub(crate) fn primary(&self) -> &SpectralOperatorPrimitives {
+    pub(crate) fn primary(&self) -> &NormalPrimitives {
         &self.domains[0].primitives
     }
 
@@ -422,59 +345,51 @@ impl SpectralPrimitiveDomains {
 }
 
 impl std::ops::Deref for SpectralPrimitiveDomains {
-    type Target = SpectralOperatorPrimitives;
+    type Target = NormalPrimitives;
 
     fn deref(&self) -> &Self::Target {
         &self.domains[0].primitives
     }
 }
 
-fn checked_cells(shape: [usize; 2]) -> Result<usize, SpectralOperatorError> {
+fn checked_cells(shape: [usize; 2]) -> Result<usize, NormalStateError> {
     shape[0]
         .checked_mul(shape[1])
-        .ok_or(SpectralOperatorError::ResidencyOverflow)
+        .ok_or(NormalStateError::ResidencyOverflow)
 }
 
-/// Exact reason a normal state or its operators rejected their input.
+/// Why a normal state rejected a pass's images or a read.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum SpectralOperatorError {
-    /// A spatial transform (FFT) failed; the run cannot continue.
-    #[error("spatial execution: {0}")]
-    SpatialExecution(String),
-    /// A bounded Normal State backing operation failed.
+pub enum NormalStateError {
+    /// A bounded normal-state backing operation failed.
     #[error("normal-state storage: {0}")]
     NormalStorage(String),
-    /// An authoritative model window could not be loaded.
-    #[error(transparent)]
-    ModelAccess(#[from] crate::ModelLifecycleError),
-    /// Runtime supplied science or weighting state for another compiled problem.
-    #[error("spectral operator science and weighting state do not match the compiled problem")]
+    /// A pass's images, or a read, do not match the state's domains, shape,
+    /// polarizations or basis, or the pass (PSF moments on a residual
+    /// refresh).
+    #[error("the images or the read do not match the normal state")]
     ProblemMismatch,
-    /// The problem is outside the supported scalar-response Stokes-I bases.
-    #[error("spectral operator requires a supported scalar-response Stokes-I reconstruction basis")]
+    /// The problem's spectral axis has no linear reference frequency for a
+    /// constant or Taylor basis.
+    #[error("a constant or Taylor basis needs a linear spectral axis")]
     UnsupportedProblem,
-    /// A requested output slab is empty or outside the compiled spectral axis.
-    #[error("spectral operator slab is empty or outside the output spectral axis")]
+    /// A requested channel range is empty or outside the output spectral axis.
+    #[error("the channel range is empty or outside the output spectral axis")]
     InvalidSlab,
-    /// The current serial operator supports only centered identity-PC SIN geometry.
-    #[error("spectral operator does not support this direction-coordinate geometry")]
-    UnsupportedGeometry,
     /// A resident-byte calculation overflowed.
-    #[error("spectral operator residency cannot be represented")]
+    #[error("the normal state's size cannot be represented")]
     ResidencyOverflow,
-    /// A weighted contribution contains an invalid numerical value.
-    #[error("spectral operator sample is non-finite or outside its numerical domain")]
-    InvalidSample,
-    /// Selected row geometry did not provide one canonical projection per image domain.
-    #[error("selected row image-domain projections do not match the compiled geometry")]
+    /// The image domains are not in canonical ordinal order.
+    #[error("the image domains do not match the compiled geometry")]
     DomainProjectionMismatch,
-    /// The operator generated a non-finite value under a rejecting numerics contract.
-    #[error("spectral operator generated a non-finite value")]
+    /// A pass generated a non-finite image value or `sumwt`.
+    #[error("a major-cycle pass generated a non-finite value")]
     GeneratedNonfinite,
     /// A pass's images do not cover the state's channels exactly once.
-    #[error("spectral operator pass coverage does not match the normal state")]
+    #[error("the pass's images do not cover the normal state's channels")]
     IncompleteCoverage,
-    /// A later major pass did not carry the exact prior invariant normal state.
-    #[error("spectral operator reusable normal state does not match the residual refresh")]
+    /// A residual refresh placed a different number of samples than the
+    /// state it refreshed.
+    #[error("the residual refresh placed a different number of samples than its normal state")]
     ReusableNormalStateMismatch,
 }

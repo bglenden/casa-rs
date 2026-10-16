@@ -26,7 +26,7 @@
 
 use casa_imaging_deconvolution::{
     FinalNormalState, MajorCycle, MajorCycleCompletion, ModelGeneration, ModelLifecycle,
-    ModelStoragePlan, PassImages, PreparedFinalModel, runtime_adapter::NormalStoragePlan,
+    ModelStoragePlan, NormalStoragePlan, PassImages, PreparedFinalModel,
 };
 use casa_imaging_model::{
     CompiledProblem, ModelDeltaTerm, ModelSupport, ReconstructionBasis, SpectralWcs,

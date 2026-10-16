@@ -1449,8 +1449,8 @@ fn t607_application_preserves_channel_topology_and_wcs_through_cube_planning() {
     let result = execute(&imaging).expect("native 32-channel cube execution");
     assert_dirty_products(&image_name, &result.product_names());
     assert_eq!(
-        result.scientific().normal_state().catalog(),
-        casa_imaging_deconvolution::NormalStateCatalog::UnnormalizedChannelSlabV1
+        result.scientific().normal_state().basis(),
+        casa_imaging_deconvolution::NormalBasis::ChannelLocal
     );
     let residual =
         PagedImage::<f32>::open(PathBuf::from(format!("{}.residual", image_name.display())))

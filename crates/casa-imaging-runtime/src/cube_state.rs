@@ -5,8 +5,9 @@
 
 use std::{io, path::Path, sync::Arc};
 
-use casa_imaging_deconvolution::runtime_adapter::NormalStoragePlan;
-use casa_imaging_deconvolution::{ModelLifecycleError, ModelStoragePlan, SpectralOperatorError};
+use casa_imaging_deconvolution::{
+    ModelLifecycleError, ModelStoragePlan, NormalStateError, NormalStoragePlan,
+};
 
 use crate::Reservation;
 use crate::managed_cube_blocks::{CubeResidency, ManagedPlaneArray};
@@ -177,7 +178,7 @@ impl CubeState {
     pub fn normal_storage(
         &self,
         window_channels: usize,
-    ) -> Result<NormalStoragePlan, SpectralOperatorError> {
+    ) -> Result<NormalStoragePlan, NormalStateError> {
         NormalStoragePlan::new(self.normal.clone(), window_channels)
     }
 

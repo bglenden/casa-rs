@@ -43,7 +43,7 @@ pub enum ProductsError {
     },
     /// An authoritative Normal State window could not be read.
     #[error(transparent)]
-    NormalAccess(#[from] casa_imaging_deconvolution::SpectralOperatorError),
+    NormalAccess(#[from] casa_imaging_deconvolution::NormalStateError),
     /// An authoritative model plane could not be read for product generation.
     #[error(transparent)]
     ModelAccess(#[from] casa_imaging_deconvolution::ModelLifecycleError),

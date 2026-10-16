@@ -5,7 +5,7 @@
 
 use std::ops::Range;
 
-use casa_imaging_deconvolution::{NormalStateCatalog, SpectralChannelValidity};
+use casa_imaging_deconvolution::{NormalBasis, SpectralChannelValidity};
 use casa_imaging_model::{
     ProductPixelMask, ProductRole, ProductTerm, ProductValidityRule, RestoringBeamPolicy,
 };
@@ -46,12 +46,11 @@ pub fn produce_continuum_members(
     output: &CasaImageWriter,
 ) -> Result<PublishedContinuumGeneration, ProductsError> {
     let kept = output.staged_count();
-    let produced =
-        if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
-            produce_taylor_members(planned, inputs, storage_plan, output)
-        } else {
-            produce_plane_members(planned, inputs, storage_plan, execution, output)
-        };
+    let produced = if inputs.normal_state().basis() == NormalBasis::Taylor {
+        produce_taylor_members(planned, inputs, storage_plan, output)
+    } else {
+        produce_plane_members(planned, inputs, storage_plan, execution, output)
+    };
     if produced.is_err() {
         output.discard_staged_after(kept);
     }

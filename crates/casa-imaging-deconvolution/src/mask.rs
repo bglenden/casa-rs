@@ -880,7 +880,7 @@ pub fn auto_multithresh(
 pub enum MaskError {
     /// A required authoritative Normal State window could not be loaded.
     #[error(transparent)]
-    NormalAccess(#[from] crate::SpectralOperatorError),
+    NormalAccess(#[from] crate::NormalStateError),
     /// Authoritative model support could not be loaded.
     #[error(transparent)]
     ModelAccess(#[from] crate::ModelLifecycleError),

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Fallible model-value access at the reconstruction/runtime ownership seam.
+//! Fallible model-value access. [`ModelSampleStorage`] and
+//! [`ModelStorageFactory`] are the seam behind which `casa-imaging-runtime`
+//! pages a cube's model; the resident storage here is their other
+//! implementation.
 
 use std::{
     fmt,
@@ -15,14 +18,15 @@ use casa_imaging_model::{ModelSample, ModelSupport, ModelValue, NumericPrecision
 
 use crate::ModelLifecycleError;
 
-/// Runtime-owned storage for canonical model samples.
+/// Storage for one model generation's canonical samples.
 ///
-/// The reconstruction owner retains this handle exclusively. Implementations
+/// The model generation retains this handle exclusively. Implementations
 /// must preserve exact values and support bits, check every requested range,
 /// and report I/O failures. Reads do not resize a cache beyond the physical
 /// plan's admitted capacity. Only owner-queued increments may mutate a logically
 /// immutable generation on first access. External handles must not mutate it.
-#[doc(hidden)]
+/// The trait is the dependency boundary for `casa-imaging-runtime`'s paged
+/// model, the second implementation beside the resident storage here.
 pub trait ModelSampleStorage: fmt::Debug + Send + Sync {
     /// Return the immutable logical number of samples.
     fn sample_count(&self) -> usize;
@@ -56,7 +60,6 @@ pub trait ModelSampleStorage: fmt::Debug + Send + Sync {
 }
 
 /// A canonical sparse increment evaluated at its owning model window.
-#[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct ModelSampleUpdate {
     pub(crate) index: usize,
@@ -111,8 +114,8 @@ struct PendingWindow {
     applied: OnceLock<Result<(), ModelLifecycleError>>,
 }
 
-/// Physical allocation capability supplied by execution composition.
-#[doc(hidden)]
+/// Allocates a model generation's storage: resident here, paged in
+/// `casa-imaging-runtime` (the dependency boundary).
 pub trait ModelStorageFactory: fmt::Debug + Send + Sync {
     /// Allocate an uninitialized logical model. The owner writes every sample
     /// before it can mint a generation from the returned storage.
@@ -131,7 +134,6 @@ pub trait ModelStorageFactory: fmt::Debug + Send + Sync {
 }
 
 /// Admitted storage and maximum resident window for model lifecycle work.
-#[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct ModelStoragePlan {
     factory: Arc<dyn ModelStorageFactory>,

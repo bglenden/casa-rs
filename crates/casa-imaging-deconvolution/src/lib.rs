@@ -27,7 +27,6 @@
 //! `docs/imaging-architecture/imaging-foundation-plan-20261007.md`.
 
 mod beam;
-mod block_normal;
 mod clark;
 mod controller;
 mod driver;
@@ -37,6 +36,7 @@ mod mask;
 mod model_lifecycle;
 mod model_storage;
 mod multiscale;
+mod normal_state;
 mod normal_values;
 mod patch;
 mod plane;
@@ -44,14 +44,12 @@ mod psf;
 mod refresh;
 mod scales;
 mod solver;
-mod spectral_operator;
 mod taylor;
 
 pub use major_cycle::{
     FinalNormalDomainState, FinalNormalState, FinalNormalStateCoefficientTerm,
     FinalNormalStateNormalMoment, FinalNormalStatePlane, FinalNormalStateWindow, MajorCycle,
-    MajorCycleCompletion, MajorCycleError, NormalStateCatalog, PassAppender,
-    normal_state_window_residency_bytes,
+    MajorCycleCompletion, MajorCycleError, PassAppender, normal_state_window_residency_bytes,
 };
 pub use mask::{
     AutoMaskBeam, AutoMultithreshControls, AutoMultithreshEvidence, ImageDomainMaskMaterialization,
@@ -63,32 +61,18 @@ pub(crate) use model_lifecycle::validate_model_value;
 pub use model_lifecycle::{
     ModelGeneration, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
 };
-#[doc(hidden)]
 pub use model_storage::{
     ModelSampleStorage, ModelSampleUpdate, ModelStorageFactory, ModelStoragePlan,
 };
-pub use normal_values::{NormalValues, SensitivityValues};
-pub(crate) use spectral_operator::PassNormalState;
-pub use spectral_operator::normal_storage::FinalNormalPlaneReader;
-pub use spectral_operator::{
-    PassImages, SpectralChannelValidity, SpectralOperatorError, SpectralOperatorPrimitives,
-    SpectralPrimitiveCatalog, SpectralSlabPlan, resident_bytes_per_cell,
+pub(crate) use normal_state::PassNormalState;
+pub use normal_state::storage::{
+    FinalNormalPlaneReader, NormalArrayStorage, NormalStorageFactory, NormalStoragePlan,
 };
-
-/// The normal-state storage seam: `casa-imaging-runtime` implements paged
-/// storage behind it, and a run chooses the storage plan its major cycles
-/// write.
-///
-/// These opaque operations are public only because Rust crates have no friend
-/// visibility.
-#[doc(hidden)]
-pub mod runtime_adapter {
-    pub use crate::spectral_operator::CompleteDataOwnerCompletion;
-    pub use crate::spectral_operator::normal_storage::{
-        CompleteDataNormalState, CompleteDataNormalWindow, NormalArrayStorage,
-        NormalStorageFactory, NormalStoragePlan,
-    };
-}
+pub use normal_state::{
+    NormalBasis, NormalStateError, PassImages, SpectralChannelValidity, SpectralSlabPlan,
+    resident_bytes_per_cell,
+};
+pub use normal_values::{NormalValues, SensitivityValues};
 
 pub use beam::{
     DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_restoring_beam,

@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn normal_reconciliation_transfers_owned_storage_without_reading_arrays() {
-    use casa_imaging_deconvolution::runtime_adapter::{NormalArrayStorage, NormalStorageFactory};
+    use casa_imaging_deconvolution::{NormalArrayStorage, NormalStorageFactory};
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -25,7 +25,7 @@ fn normal_reconciliation_transfers_owned_storage_without_reading_arrays() {
             &self,
             _domain: usize,
             scalars: usize,
-        ) -> Result<Box<dyn NormalArrayStorage>, SpectralOperatorError> {
+        ) -> Result<Box<dyn NormalArrayStorage>, NormalStateError> {
             Ok(Box::new(Storage {
                 values: vec![0.0; scalars],
                 reads: self.0.clone(),
@@ -40,11 +40,11 @@ fn normal_reconciliation_transfers_owned_storage_without_reading_arrays() {
             &self,
             start: usize,
             len: usize,
-        ) -> Result<std::borrow::Cow<'_, [f64]>, SpectralOperatorError> {
+        ) -> Result<std::borrow::Cow<'_, [f64]>, NormalStateError> {
             self.reads.fetch_add(len, Ordering::Relaxed);
             Ok(std::borrow::Cow::Borrowed(&self.values[start..start + len]))
         }
-        fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
+        fn write(&mut self, start: usize, values: &[f64]) -> Result<(), NormalStateError> {
             self.values[start..start + values.len()].copy_from_slice(values);
             Ok(())
         }
@@ -76,13 +76,12 @@ fn reconciliation_applies_one_pending_delta_through_the_model_owner() {
         .expect("final model with a pending Högbom-style update");
     let joined = scene.initial(&problem, model);
 
-    // The normal state records the pass's traversal and catalog.
+    // The normal state records the samples the pass placed, and its basis.
     let normal_state = joined.normal_state();
     assert_eq!(normal_state.sample_count(), SAMPLES);
-    assert_eq!(normal_state.block_count(), BLOCKS);
     assert_eq!(
-        normal_state.catalog(),
-        casa_imaging_deconvolution::NormalStateCatalog::UnnormalizedPlaneV1
+        normal_state.basis(),
+        casa_imaging_deconvolution::NormalBasis::Constant
     );
     // The residual content is model-dependent: a nonzero final model never
     // relabels the data side of the same sky.
@@ -294,7 +293,7 @@ fn incomplete_or_inconsistent_passes_cannot_finish_a_major_cycle() {
     assert!(matches!(
         cycle().finish(4, 1),
         Err(MajorCycleError::Residual(
-            SpectralOperatorError::IncompleteCoverage
+            NormalStateError::IncompleteCoverage
         ))
     ));
 
@@ -305,13 +304,13 @@ fn incomplete_or_inconsistent_passes_cannot_finish_a_major_cycle() {
     nan_residual.residual[0] = f32::NAN;
     assert!(matches!(
         nonfinite.parts().1.append(nan_residual),
-        Err(SpectralOperatorError::GeneratedNonfinite)
+        Err(NormalStateError::GeneratedNonfinite)
     ));
     let mut infinite_sumwt = images();
     infinite_sumwt.sum_weights[0] = f64::INFINITY;
     assert!(matches!(
         nonfinite.parts().1.append(infinite_sumwt),
-        Err(SpectralOperatorError::GeneratedNonfinite)
+        Err(NormalStateError::GeneratedNonfinite)
     ));
     nonfinite.parts().1.append(images()).expect("finite images");
     nonfinite
@@ -324,25 +323,25 @@ fn incomplete_or_inconsistent_passes_cannot_finish_a_major_cycle() {
     without_psf.psf = None;
     assert!(matches!(
         cycle().parts().1.append(without_psf),
-        Err(SpectralOperatorError::ProblemMismatch)
+        Err(NormalStateError::ProblemMismatch)
     ));
     let mut foreign_domain = images();
     foreign_domain.domain = 1;
     assert!(matches!(
         cycle().parts().1.append(foreign_domain),
-        Err(SpectralOperatorError::ProblemMismatch)
+        Err(NormalStateError::ProblemMismatch)
     ));
     let mut short = images();
     short.residual.pop();
     assert!(matches!(
         cycle().parts().1.append(short),
-        Err(SpectralOperatorError::InvalidSlab)
+        Err(NormalStateError::InvalidSlab)
     ));
     let mut beyond_axis = images();
     beyond_axis.channels = 0..2;
     assert!(matches!(
         cycle().parts().1.append(beyond_axis),
-        Err(SpectralOperatorError::InvalidSlab)
+        Err(NormalStateError::InvalidSlab)
     ));
     // Planes must have the compiled domain's shape and polarization count,
     // even when their lengths agree with each other.
@@ -351,13 +350,13 @@ fn incomplete_or_inconsistent_passes_cannot_finish_a_major_cycle() {
     transposed.shape = [width * height, 1];
     assert!(matches!(
         cycle().parts().1.append(transposed),
-        Err(SpectralOperatorError::ProblemMismatch)
+        Err(NormalStateError::ProblemMismatch)
     ));
     let mut extra_polarization = images();
     extra_polarization.polarizations += 1;
     assert!(matches!(
         cycle().parts().1.append(extra_polarization),
-        Err(SpectralOperatorError::ProblemMismatch)
+        Err(NormalStateError::ProblemMismatch)
     ));
 
     // A pass that proves no traversal cannot finish.
@@ -386,7 +385,7 @@ fn incomplete_or_inconsistent_passes_cannot_finish_a_major_cycle() {
     let mut refresh = refresh_cycle(previous());
     assert!(matches!(
         refresh.parts().1.append(images()),
-        Err(SpectralOperatorError::ProblemMismatch)
+        Err(NormalStateError::ProblemMismatch)
     ));
 
     // A refresh keeps the previous PSF and sumwt, so it carries the
@@ -410,7 +409,7 @@ fn incomplete_or_inconsistent_passes_cannot_finish_a_major_cycle() {
     assert!(matches!(
         refresh.finish(samples + 1, 1),
         Err(MajorCycleError::Residual(
-            SpectralOperatorError::ReusableNormalStateMismatch
+            NormalStateError::ReusableNormalStateMismatch
         ))
     ));
     let (refresh, samples) = refreshed();
@@ -463,7 +462,7 @@ fn a_coupled_refresh_must_form_the_residual_of_every_domain_again() {
             matches!(
                 refresh(formed.clone()),
                 Err(MajorCycleError::Residual(
-                    SpectralOperatorError::IncompleteCoverage
+                    NormalStateError::IncompleteCoverage
                 ))
             ),
             "a refresh forming the residuals of domains {formed:?} only"

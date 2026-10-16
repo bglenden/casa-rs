@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use casa_imaging_deconvolution::{
     FinalNormalState, ImageDomainReconstructionMasks, MajorCycleCompletion, ModelGeneration,
-    NormalStateCatalog, ReconstructionMask,
+    NormalBasis, ReconstructionMask,
 };
 use casa_imaging_model::{CompiledProblem, ImageDomainRole, ReconstructionBasis};
 
@@ -72,8 +72,8 @@ impl<'a> ContinuumProductInputs<'a> {
                 }),
             "a run's completion has its problem's image domains and their shapes"
         );
-        match normal.catalog() {
-            NormalStateCatalog::UnnormalizedTaylorBlockV1 => {
+        match normal.basis() {
+            NormalBasis::Taylor => {
                 let ReconstructionBasis::Taylor { terms } = problem.reconstruction().basis() else {
                     panic!("a Taylor normal state comes from a Taylor-basis problem");
                 };
@@ -86,8 +86,7 @@ impl<'a> ContinuumProductInputs<'a> {
                     "a Taylor completion has its problem's terms, 2·terms − 1 moments and one domain"
                 );
             }
-            NormalStateCatalog::UnnormalizedPlaneV1
-            | NormalStateCatalog::UnnormalizedChannelSlabV1 => {
+            NormalBasis::Constant | NormalBasis::ChannelLocal => {
                 let slab = normal.slab();
                 assert!(
                     slab.core_range() == (0..slab.total_channels())

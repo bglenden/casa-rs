@@ -53,10 +53,7 @@ fn complex_scalar_windows_preserve_bits_and_allocation_identity() {
 
 /// Assert that two primitives have the same plan and values: residual and
 /// PSF bit for bit, the rest by value.
-fn assert_same_primitives(
-    actual: &SpectralOperatorPrimitives,
-    expected: &SpectralOperatorPrimitives,
-) {
+fn assert_same_primitives(actual: &NormalPrimitives, expected: &NormalPrimitives) {
     let bits = |values: &[Complex64]| {
         values
             .iter()
@@ -95,7 +92,7 @@ fn domain(range: Range<usize>, published_differ: bool) -> SpectralDomainPrimitiv
     SpectralDomainPrimitives::new(
         0,
         ImageDomainRole::Main,
-        SpectralOperatorPrimitives {
+        NormalPrimitives {
             shape: [3, 2],
             slab: SpectralSlabPlan {
                 total_channels: CHANNELS,
@@ -144,7 +141,7 @@ impl NormalStorageFactory for ObservedFactory {
         &self,
         _domain: usize,
         scalars: usize,
-    ) -> Result<Box<dyn NormalArrayStorage>, SpectralOperatorError> {
+    ) -> Result<Box<dyn NormalArrayStorage>, NormalStateError> {
         Ok(Box::new(ObservedStorage {
             values: vec![0.0; scalars].into(),
             maximum_access: self.maximum_access.clone(),
@@ -157,12 +154,12 @@ impl NormalArrayStorage for ObservedStorage {
     fn len(&self) -> usize {
         self.values.len()
     }
-    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
+    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, NormalStateError> {
         assert!(len <= self.allowed);
         self.maximum_access.fetch_max(len, Ordering::Relaxed);
         self.values.read(start, len)
     }
-    fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
+    fn write(&mut self, start: usize, values: &[f64]) -> Result<(), NormalStateError> {
         assert!(values.len() <= self.allowed);
         self.maximum_access
             .fetch_max(values.len(), Ordering::Relaxed);
@@ -180,11 +177,11 @@ impl NormalArrayStorage for ReadObservedStorage {
     fn len(&self) -> usize {
         self.storage.len()
     }
-    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
+    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, NormalStateError> {
         self.reads.lock().unwrap().push((start, len));
         self.storage.read(start, len)
     }
-    fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
+    fn write(&mut self, start: usize, values: &[f64]) -> Result<(), NormalStateError> {
         self.storage.write(start, values)
     }
 }
@@ -234,7 +231,7 @@ fn selective_normal_plane_reads_only_requested_domain_channel_polarization_and_f
     ] {
         assert!(matches!(
             primitives.read_plane(invalid.0, invalid.1, invalid.2),
-            Err(SpectralOperatorError::InvalidSlab)
+            Err(NormalStateError::InvalidSlab)
         ));
     }
     assert!(reads.iter().all(|log| log.lock().unwrap().is_empty()));
@@ -299,7 +296,7 @@ fn selective_normal_plane_requires_complete_admitted_backing() {
     );
     assert!(matches!(
         incomplete.read_plane(0, 0, 0),
-        Err(SpectralOperatorError::IncompleteCoverage)
+        Err(NormalStateError::IncompleteCoverage)
     ));
 
     let plan = NormalStoragePlan::resident(CHANNELS).unwrap();
@@ -326,8 +323,7 @@ fn selective_normal_plane_borrows_constant_polynomial_planes_exactly() {
             let mut input = domain(0..1, true);
             input.domain_ordinal = ordinal;
             input.primitives.slab.total_channels = 1;
-            input.primitives.basis =
-                SpectralBasisPlan::Polynomial(super::super::BlockNormalPlan::constant(1.0e9));
+            input.primitives.basis = SpectralBasisPlan::Polynomial { terms: 1 };
             if ordinal == 1 {
                 input.domain_role = ImageDomainRole::Outlier("constant".into());
                 input.primitives.shape = [2, 3];
@@ -376,7 +372,7 @@ fn selective_normal_plane_borrows_constant_polynomial_planes_exactly() {
     ] {
         assert!(matches!(
             primitives.read_plane(invalid.0, invalid.1, invalid.2),
-            Err(SpectralOperatorError::InvalidSlab)
+            Err(NormalStateError::InvalidSlab)
         ));
     }
 }
@@ -384,13 +380,12 @@ fn selective_normal_plane_borrows_constant_polynomial_planes_exactly() {
 #[test]
 fn selective_normal_plane_rejects_nonconstant_families_and_propagates_storage_errors() {
     let mut input = domain(0..1, false);
-    input.primitives.basis =
-        SpectralBasisPlan::Polynomial(super::super::BlockNormalPlan::taylor(1.0e9, 2).unwrap());
+    input.primitives.basis = SpectralBasisPlan::Polynomial { terms: 2 };
     let coupled =
         NormalStatePrimitives::Coupled(SpectralPrimitiveDomains::new(vec![input].into()).unwrap());
     assert!(matches!(
         coupled.read_plane(0, 0, 0),
-        Err(SpectralOperatorError::NormalStorage(_))
+        Err(NormalStateError::NormalStorage(_))
     ));
 
     #[derive(Debug)]
@@ -399,12 +394,12 @@ fn selective_normal_plane_rejects_nonconstant_families_and_propagates_storage_er
         fn len(&self) -> usize {
             0
         }
-        fn read(&self, _: usize, _: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
-            Err(SpectralOperatorError::NormalStorage(
+        fn read(&self, _: usize, _: usize) -> Result<Cow<'_, [f64]>, NormalStateError> {
+            Err(NormalStateError::NormalStorage(
                 "selected read failed".into(),
             ))
         }
-        fn write(&mut self, _: usize, _: &[f64]) -> Result<(), SpectralOperatorError> {
+        fn write(&mut self, _: usize, _: &[f64]) -> Result<(), NormalStateError> {
             unreachable!()
         }
     }
@@ -414,7 +409,7 @@ fn selective_normal_plane_rejects_nonconstant_families_and_propagates_storage_er
     domain.invariants = Arc::new(Box::new(FailedRead));
     let primitives = NormalStatePrimitives::ChannelLocal(vec![domain].into());
     let plane = primitives.read_plane(0, 2, 1).unwrap();
-    let error = SpectralOperatorError::NormalStorage("selected read failed".into());
+    let error = NormalStateError::NormalStorage("selected read failed".into());
     assert_eq!(plane.read_psf(), Err(error.clone()));
     assert_eq!(plane.read_residual(), Err(error.clone()));
     assert_eq!(plane.read_sensitivity(), Err(error));
@@ -437,11 +432,11 @@ fn resident_normal_reads_borrow_exact_bit_windows() {
     drop(window);
     storage.write(1, &[2.0, 3.0, 4.0]).unwrap();
     assert!(storage.read(4, 0).unwrap().is_empty());
-    assert_eq!(storage.read(5, 0), Err(SpectralOperatorError::InvalidSlab));
-    assert_eq!(storage.read(3, 2), Err(SpectralOperatorError::InvalidSlab));
+    assert_eq!(storage.read(5, 0), Err(NormalStateError::InvalidSlab));
+    assert_eq!(storage.read(3, 2), Err(NormalStateError::InvalidSlab));
     assert_eq!(
         storage.read(usize::MAX, 1),
-        Err(SpectralOperatorError::ResidencyOverflow)
+        Err(NormalStateError::ResidencyOverflow)
     );
 }
 
@@ -453,10 +448,10 @@ fn normal_owner_rejects_incorrect_owned_window_length() {
         fn len(&self) -> usize {
             3
         }
-        fn read(&self, _: usize, _: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
+        fn read(&self, _: usize, _: usize) -> Result<Cow<'_, [f64]>, NormalStateError> {
             Ok(Cow::Owned(vec![1.0, 2.0]))
         }
-        fn write(&mut self, _: usize, _: &[f64]) -> Result<(), SpectralOperatorError> {
+        fn write(&mut self, _: usize, _: &[f64]) -> Result<(), NormalStateError> {
             unreachable!("fixture is installed after generation")
         }
     }
@@ -466,7 +461,7 @@ fn normal_owner_rejects_incorrect_owned_window_length() {
     let dirty = stored.fields.dirty.clone();
     assert!(matches!(
         stored.read_complex(&dirty, 0, 3),
-        Err(SpectralOperatorError::NormalStorage(_))
+        Err(NormalStateError::NormalStorage(_))
     ));
 }
 
@@ -482,12 +477,12 @@ impl NormalArrayStorage for EpochObservedStorage {
         self.storage.len()
     }
 
-    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
+    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, NormalStateError> {
         self.accesses.fetch_add(1, Ordering::Relaxed);
         self.storage.read(start, len)
     }
 
-    fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
+    fn write(&mut self, start: usize, values: &[f64]) -> Result<(), NormalStateError> {
         self.accesses.fetch_add(1, Ordering::Relaxed);
         self.storage.write(start, values)
     }
@@ -591,11 +586,11 @@ fn failed_residual_refresh_leaves_previous_epoch_readable() {
         fn len(&self) -> usize {
             CHANNELS * POLARIZATIONS * CELLS * 2
         }
-        fn read(&self, _: usize, _: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
+        fn read(&self, _: usize, _: usize) -> Result<Cow<'_, [f64]>, NormalStateError> {
             unreachable!("failed candidate must not be published")
         }
-        fn write(&mut self, _: usize, _: &[f64]) -> Result<(), SpectralOperatorError> {
-            Err(SpectralOperatorError::NormalStorage(
+        fn write(&mut self, _: usize, _: &[f64]) -> Result<(), NormalStateError> {
+            Err(NormalStateError::NormalStorage(
                 "injected write failure".into(),
             ))
         }
@@ -607,7 +602,7 @@ fn failed_residual_refresh_leaves_previous_epoch_readable() {
     let leading = vec![3.0; (CHANNELS - 1) * POLARIZATIONS * CELLS];
     assert_eq!(
         next.append_residual_planes(1..CHANNELS, [3, 2], &leading),
-        Err(SpectralOperatorError::IncompleteCoverage)
+        Err(NormalStateError::IncompleteCoverage)
     );
     next.append_residual_planes(0..CHANNELS - 1, [3, 2], &leading)
         .unwrap();
@@ -619,7 +614,7 @@ fn failed_residual_refresh_leaves_previous_epoch_readable() {
             [3, 2],
             &[3.0; POLARIZATIONS * CELLS]
         ),
-        Err(SpectralOperatorError::NormalStorage(_))
+        Err(NormalStateError::NormalStorage(_))
     ));
     assert!(!next.is_complete());
     drop(next);
@@ -650,7 +645,7 @@ fn normal_storage_preserves_field_order_and_bits_across_windows() {
                 assert!(!stored.is_complete());
                 assert_eq!(
                     stored.read_window(0..1).unwrap_err(),
-                    SpectralOperatorError::IncompleteCoverage
+                    NormalStateError::IncompleteCoverage
                 );
                 stored
                     .append(domain(
@@ -676,7 +671,7 @@ fn normal_storage_preserves_field_order_and_bits_across_windows() {
             }
             assert_eq!(
                 stored.append(domain(0..1, published_differ)),
-                Err(SpectralOperatorError::IncompleteCoverage)
+                Err(NormalStateError::IncompleteCoverage)
             );
         }
     }
@@ -713,7 +708,7 @@ fn natural_cube_scalar_sensitivity_reconstructs_each_plane_without_a_dense_backi
     assert!(stored.fields.sensitivity.is_empty());
     assert_eq!(
         stored.append(domain(1..2, false)),
-        Err(SpectralOperatorError::ProblemMismatch),
+        Err(NormalStateError::ProblemMismatch),
         "a window with a weight image cannot join scalar storage"
     );
     for channel in 1..CHANNELS {
@@ -740,7 +735,7 @@ impl NormalStorageFactory for FloatStorage {
         &self,
         _domain: usize,
         scalars: usize,
-    ) -> Result<Box<dyn NormalArrayStorage>, SpectralOperatorError> {
+    ) -> Result<Box<dyn NormalArrayStorage>, NormalStateError> {
         assert!(scalars.is_multiple_of(2 * CELLS), "whole complex planes");
         Ok(Box::new(Self(vec![f32::NAN; scalars / 2].into())))
     }
@@ -750,7 +745,7 @@ impl NormalArrayStorage for FloatStorage {
     fn len(&self) -> usize {
         self.0.len() * 2
     }
-    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
+    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, NormalStateError> {
         Ok(Cow::Owned(
             (start..start + len)
                 .map(|scalar| {
@@ -767,16 +762,16 @@ impl NormalArrayStorage for FloatStorage {
         &self,
         start: usize,
         values: usize,
-    ) -> Result<Option<Cow<'_, [f32]>>, SpectralOperatorError> {
+    ) -> Result<Option<Cow<'_, [f32]>>, NormalStateError> {
         Ok(Some(Cow::Borrowed(&self.0[start / 2..start / 2 + values])))
     }
-    fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
+    fn write(&mut self, start: usize, values: &[f64]) -> Result<(), NormalStateError> {
         for (index, value) in values.iter().enumerate().step_by(2) {
             self.0[(start + index) / 2] = *value as f32;
         }
         Ok(())
     }
-    fn write_real(&mut self, start: usize, values: &[f32]) -> Result<(), SpectralOperatorError> {
+    fn write_real(&mut self, start: usize, values: &[f32]) -> Result<(), NormalStateError> {
         self.0[start / 2..start / 2 + values.len()].copy_from_slice(values);
         Ok(())
     }
@@ -819,7 +814,7 @@ fn a_gridded_weight_image_is_each_planes_own_sensitivity_resident_and_paged() {
         assert!(stored.fields.dense_sensitivity(), "{name}");
         assert_eq!(
             stored.append(compact_domain(1..2, false)),
-            Err(SpectralOperatorError::ProblemMismatch),
+            Err(NormalStateError::ProblemMismatch),
             "{name}: a window without a weight image cannot join dense storage"
         );
         for channel in 1..CHANNELS {

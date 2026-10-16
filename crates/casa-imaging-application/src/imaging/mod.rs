@@ -17,7 +17,7 @@ pub(crate) use measurement::{row_samples, standard_kernel_set};
 pub(crate) use visibility_write::VisibilityWriteTarget;
 
 use casa_imaging_deconvolution::{
-    MajorCycleError, MaskError, ModelLifecycleError, SpectralOperatorError,
+    MajorCycleError, MaskError, ModelLifecycleError, NormalStateError,
 };
 use casa_imaging_operator::OperatorError;
 use casa_imaging_runtime::pass::PassError;
@@ -46,7 +46,7 @@ pub(crate) enum ImagingError {
     Minor(#[from] MinorCycleRunError),
     /// A normal state could not be assembled.
     #[error(transparent)]
-    Normal(#[from] SpectralOperatorError),
+    Normal(#[from] NormalStateError),
     /// The model lifecycle rejected a generation or update.
     #[error(transparent)]
     Model(#[from] ModelLifecycleError),

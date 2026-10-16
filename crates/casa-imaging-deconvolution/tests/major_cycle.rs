@@ -11,8 +11,8 @@
 //! `major_cycle/reconciliation.rs` (completions, refreshes and coverage).
 
 use casa_imaging_deconvolution::{
-    FinalNormalState, MajorCycle, MajorCycleError, SpectralChannelValidity, SpectralOperatorError,
-    runtime_adapter::NormalStoragePlan,
+    FinalNormalState, MajorCycle, MajorCycleError, NormalStateError, NormalStoragePlan,
+    SpectralChannelValidity,
 };
 use casa_imaging_model::{
     ModelCell, ModelDeltaTerm, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionControls,

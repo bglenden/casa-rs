@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_deconvolution::{
-    MajorCycle, ModelGeneration, ModelLifecycle, ModelLifecycleError, ModelStoragePlan, PassImages,
-    PreparedFinalModel, runtime_adapter::NormalStoragePlan,
+    MajorCycle, ModelGeneration, ModelLifecycle, ModelLifecycleError, ModelStoragePlan,
+    NormalStoragePlan, PassImages, PreparedFinalModel,
 };
 use casa_imaging_model::{
     AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts, DirectionCoordinateSpec,

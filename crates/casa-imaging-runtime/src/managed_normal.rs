@@ -4,8 +4,7 @@
 
 use std::{borrow::Cow, fmt, io, path::Path, sync::Arc};
 
-use casa_imaging_deconvolution::SpectralOperatorError;
-use casa_imaging_deconvolution::runtime_adapter::{NormalArrayStorage, NormalStorageFactory};
+use casa_imaging_deconvolution::{NormalArrayStorage, NormalStateError, NormalStorageFactory};
 use num_complex::Complex64;
 
 use crate::managed_cube_blocks::{CubeResidency, ManagedPlaneArray};
@@ -58,7 +57,7 @@ impl NormalStorageFactory for ManagedNormalFactory {
         &self,
         slot: usize,
         scalars: usize,
-    ) -> Result<Box<dyn NormalArrayStorage>, SpectralOperatorError> {
+    ) -> Result<Box<dyn NormalArrayStorage>, NormalStateError> {
         let axes = *self
             .domains
             .get(slot / 2)
@@ -115,14 +114,14 @@ impl ManagedNormal {
             usize,
             std::ops::Range<usize>,
             std::ops::Range<usize>,
-        ) -> Result<(), SpectralOperatorError>,
-    ) -> Result<(), SpectralOperatorError> {
+        ) -> Result<(), NormalStateError>,
+    ) -> Result<(), NormalStateError> {
         if !start.is_multiple_of(2)
             || start
                 .checked_add(values.saturating_mul(2))
                 .is_none_or(|end| end > self.scalars)
         {
-            return Err(SpectralOperatorError::InvalidSlab);
+            return Err(NormalStateError::InvalidSlab);
         }
         let mut processed = 0;
         while processed < values {
@@ -142,9 +141,9 @@ impl NormalArrayStorage for ManagedNormal {
         self.scalars
     }
 
-    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
+    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, NormalStateError> {
         if !len.is_multiple_of(2) {
-            return Err(SpectralOperatorError::InvalidSlab);
+            return Err(NormalStateError::InvalidSlab);
         }
         let mut result = vec![0.0; len];
         self.for_each_window(start, len / 2, |plane, in_plane, output| {
@@ -175,7 +174,7 @@ impl NormalArrayStorage for ManagedNormal {
         &self,
         start: usize,
         values: usize,
-    ) -> Result<Cow<'_, [Complex64]>, SpectralOperatorError> {
+    ) -> Result<Cow<'_, [Complex64]>, NormalStateError> {
         let mut result = vec![Complex64::default(); values];
         self.for_each_window(start, values, |plane, in_plane, output| {
             let pins = self
@@ -201,7 +200,7 @@ impl NormalArrayStorage for ManagedNormal {
         &self,
         start: usize,
         values: usize,
-    ) -> Result<Option<Cow<'_, [f32]>>, SpectralOperatorError> {
+    ) -> Result<Option<Cow<'_, [f32]>>, NormalStateError> {
         let mut result = vec![0.0_f32; values];
         self.for_each_window(start, values, |plane, in_plane, output| {
             let pins = self
@@ -221,9 +220,9 @@ impl NormalArrayStorage for ManagedNormal {
         Ok(Some(Cow::Owned(result)))
     }
 
-    fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
+    fn write(&mut self, start: usize, values: &[f64]) -> Result<(), NormalStateError> {
         if !values.len().is_multiple_of(2) {
-            return Err(SpectralOperatorError::InvalidSlab);
+            return Err(NormalStateError::InvalidSlab);
         }
         self.for_each_window(start, values.len() / 2, |plane, in_plane, input| {
             let pins = self
@@ -252,7 +251,7 @@ impl NormalArrayStorage for ManagedNormal {
         })
     }
 
-    fn write_real(&mut self, start: usize, values: &[f32]) -> Result<(), SpectralOperatorError> {
+    fn write_real(&mut self, start: usize, values: &[f32]) -> Result<(), NormalStateError> {
         self.for_each_window(start, values.len(), |plane, in_plane, input| {
             let source = &values[input];
             if source.iter().any(|value| !value.is_finite()) {
@@ -275,13 +274,13 @@ impl NormalArrayStorage for ManagedNormal {
         })
     }
 
-    fn retire(self: Box<Self>) -> Result<(), SpectralOperatorError> {
+    fn retire(self: Box<Self>) -> Result<(), NormalStateError> {
         self.array.retire_dead().map_err(storage_error)
     }
 }
 
-fn storage_error(error: impl std::fmt::Display) -> SpectralOperatorError {
-    SpectralOperatorError::NormalStorage(error.to_string())
+fn storage_error(error: impl std::fmt::Display) -> NormalStateError {
+    NormalStateError::NormalStorage(error.to_string())
 }
 
 #[cfg(test)]
@@ -342,7 +341,7 @@ mod tests {
             drop(factory);
             drop(retention);
             if error_unwind {
-                let fail = || -> Result<(), SpectralOperatorError> {
+                let fail = || -> Result<(), NormalStateError> {
                     let _owned = normal;
                     Err(storage_error("injected caller failure"))
                 };

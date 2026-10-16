@@ -4,7 +4,7 @@
 
 use std::mem::size_of;
 
-use casa_imaging_deconvolution::NormalStateCatalog;
+use casa_imaging_deconvolution::NormalBasis;
 use casa_imaging_model::{ProductBeamRule, ProductRole, ProductValidityRule, RestoringBeamPolicy};
 use num_complex::Complex64;
 
@@ -136,8 +136,8 @@ impl PlannedContinuumGeneration {
         } else {
             0
         };
-        let workers = match inputs.normal_state().catalog() {
-            NormalStateCatalog::UnnormalizedTaylorBlockV1 => 1,
+        let workers = match inputs.normal_state().basis() {
+            NormalBasis::Taylor => 1,
             _ if cfg!(unix)
                 && maximum_windows == 1
                 && self.members().iter().any(|member| {
@@ -158,10 +158,7 @@ impl PlannedContinuumGeneration {
             self.algorithm_scratch_bytes(inputs, &bounds, workers.min(maximum_windows))?;
         let (retained_metadata_bytes, member_beam_bytes, beam_scratch_bytes) =
             self.metadata_demand(inputs, workers.min(beam_jobs))?;
-        let transient_bytes = if matches!(
-            inputs.normal_state().catalog(),
-            NormalStateCatalog::UnnormalizedTaylorBlockV1
-        ) {
+        let transient_bytes = if matches!(inputs.normal_state().basis(), NormalBasis::Taylor) {
             checked_add(
                 algorithm_scratch_bytes,
                 beam_scratch_bytes,
@@ -241,10 +238,7 @@ impl PlannedContinuumGeneration {
         bounds: &MemberBounds,
         window_workers: usize,
     ) -> Result<u64, ProductsError> {
-        let taylor = matches!(
-            inputs.normal_state().catalog(),
-            NormalStateCatalog::UnnormalizedTaylorBlockV1
-        );
+        let taylor = matches!(inputs.normal_state().basis(), NormalBasis::Taylor);
         let mut bytes = if taylor {
             checked_add(
                 taylor_scratch_bytes(inputs)?,
@@ -290,8 +284,8 @@ impl PlannedContinuumGeneration {
         let fitted = if !self.requires_beam() {
             0
         } else {
-            match state.catalog() {
-                NormalStateCatalog::UnnormalizedTaylorBlockV1 => 1,
+            match state.basis() {
+                NormalBasis::Taylor => 1,
                 _ => domains
                     .checked_mul(state.channel_count())
                     .and_then(|count| count.checked_mul(state.polarization_count()))
@@ -301,9 +295,9 @@ impl PlannedContinuumGeneration {
             }
         };
         let restoring_policy = inputs.problem().products().restoring_beam();
-        let restoring = match (restoring_policy, state.catalog()) {
+        let restoring = match (restoring_policy, state.basis()) {
             (RestoringBeamPolicy::None, _) => 0,
-            (_, NormalStateCatalog::UnnormalizedTaylorBlockV1) => 1,
+            (_, NormalBasis::Taylor) => 1,
             _ => fitted,
         };
         let mut retained = checked_add(
@@ -340,9 +334,8 @@ impl PlannedContinuumGeneration {
         }
         let common_scratch = if restoring_policy == RestoringBeamPolicy::Common
             && matches!(
-                state.catalog(),
-                NormalStateCatalog::UnnormalizedPlaneV1
-                    | NormalStateCatalog::UnnormalizedChannelSlabV1
+                state.basis(),
+                NormalBasis::Constant | NormalBasis::ChannelLocal
             ) {
             checked_add(
                 bytes_for::<RestoringBeam>(fitted / domains, "common valid beams")?,

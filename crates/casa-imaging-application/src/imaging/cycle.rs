@@ -10,8 +10,7 @@
 use std::path::Path;
 use std::time::Instant;
 
-use casa_imaging_deconvolution::runtime_adapter::NormalStoragePlan;
-use casa_imaging_deconvolution::{CleanStop, Controller, CycleControls};
+use casa_imaging_deconvolution::{CleanStop, Controller, CycleControls, NormalStoragePlan};
 use casa_imaging_deconvolution::{
     ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, ModelGeneration,
     ModelLifecycle, ModelStoragePlan, PassAppender, ReconstructionMaskPlan, ReconstructionMaskSet,

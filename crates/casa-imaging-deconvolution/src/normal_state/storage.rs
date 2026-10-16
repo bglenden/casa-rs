@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Exact channel-local Normal State backing, independent of physical storage.
+//! Exact channel-local normal-state backing, independent of physical storage.
+//!
+//! [`NormalArrayStorage`] and [`NormalStorageFactory`] are the seam behind
+//! which `casa-imaging-runtime` pages a cube's normal state; the resident
+//! backing here is their other implementation.
 
 use std::{borrow::Cow, fmt, ops::Range, sync::Arc};
 
@@ -8,36 +12,37 @@ use casa_imaging_model::ImageDomainRole;
 use num_complex::Complex64;
 
 use super::{
-    CompleteDataOwnerCompletion, SpectralBasisPlan, SpectralChannelValidity,
-    SpectralDomainPrimitives, SpectralOperatorError, SpectralOperatorPrimitives,
-    SpectralPrimitiveDomains, SpectralSlabPlan, checked_cells,
+    NormalPrimitives, NormalStateError, SpectralBasisPlan, SpectralChannelValidity,
+    SpectralDomainPrimitives, SpectralPrimitiveDomains, SpectralSlabPlan, checked_cells,
 };
 
 // num-complex 0.4.6 supplies Pod for its repr(C) real/imaginary pair.
 // Checked casts preserve all floating-point bits without copying payloads.
-fn complex_scalars(values: &[Complex64]) -> Result<&[f64], SpectralOperatorError> {
+fn complex_scalars(values: &[Complex64]) -> Result<&[f64], NormalStateError> {
     bytemuck::try_cast_slice(values)
-        .map_err(|error| SpectralOperatorError::NormalStorage(error.to_string()))
+        .map_err(|error| NormalStateError::NormalStorage(error.to_string()))
 }
 
-fn scalar_complex(values: Cow<'_, [f64]>) -> Result<Cow<'_, [Complex64]>, SpectralOperatorError> {
+fn scalar_complex(values: Cow<'_, [f64]>) -> Result<Cow<'_, [Complex64]>, NormalStateError> {
     match values {
         Cow::Borrowed(values) => bytemuck::try_cast_slice(values)
             .map(Cow::Borrowed)
-            .map_err(|error| SpectralOperatorError::NormalStorage(error.to_string())),
+            .map_err(|error| NormalStateError::NormalStorage(error.to_string())),
         Cow::Owned(values) => bytemuck::allocation::try_cast_vec(values)
             .map(Cow::Owned)
-            .map_err(|(error, _)| SpectralOperatorError::NormalStorage(error.to_string())),
+            .map_err(|(error, _)| NormalStateError::NormalStorage(error.to_string())),
     }
 }
 
-/// Physical scalar-array capability used only by the Normal State owner.
+/// One array of a normal state's scalars, written and read only by the
+/// normal state that allocated it.
 ///
 /// Complex values are stored as consecutive real/imaginary f64 values. Access
 /// must not enlarge an admitted cache. The owner writes every logical value
 /// before transferring the generation; storage handles must not permit
-/// mutation through aliases retained outside this capability.
-#[doc(hidden)]
+/// mutation through aliases retained outside this capability. The trait is
+/// the dependency boundary for `casa-imaging-runtime`'s paged storage, the
+/// second implementation beside the resident `Box<[f64]>`.
 pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
     /// Logical scalar capacity, excluding physical tile padding.
     fn len(&self) -> usize;
@@ -55,14 +60,14 @@ pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
     /// retained memory permit; paged windows own the bounded decoded allocation.
     /// Owned windows used as complex pairs must also have an even capacity so
     /// their allocation can transfer without repacking; invalid layouts fail.
-    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError>;
+    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, NormalStateError>;
     /// Read one image-plane complex window directly into the consuming shape.
     /// Compact real backings can widen here without a second scalar buffer.
     fn read_complex(
         &self,
         start: usize,
         values: usize,
-    ) -> Result<Cow<'_, [Complex64]>, SpectralOperatorError> {
+    ) -> Result<Cow<'_, [Complex64]>, NormalStateError> {
         scalar_complex(self.read(start, values * 2)?)
     }
     /// Borrow or load a real Float image directly when the backing stores one.
@@ -71,24 +76,24 @@ pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
         &self,
         _start: usize,
         _values: usize,
-    ) -> Result<Option<Cow<'_, [f32]>>, SpectralOperatorError> {
+    ) -> Result<Option<Cow<'_, [f32]>>, NormalStateError> {
         Ok(None)
     }
     /// Replace a bounded scalar window without resizing the array.
-    fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError>;
+    fn write(&mut self, start: usize, values: &[f64]) -> Result<(), NormalStateError>;
     /// Write a real Float image window at complex-scalar offsets. Other normal
     /// implementations may widen through their scalar interface; the managed
     /// cube backing writes Float planes directly.
-    fn write_real(&mut self, start: usize, values: &[f32]) -> Result<(), SpectralOperatorError> {
+    fn write_real(&mut self, start: usize, values: &[f32]) -> Result<(), NormalStateError> {
         if !start.is_multiple_of(2) {
-            return Err(SpectralOperatorError::InvalidSlab);
+            return Err(NormalStateError::InvalidSlab);
         }
         let mut widened = [0.0_f64; 512];
         for (chunk_index, chunk) in values.chunks(256).enumerate() {
             let offset = chunk_index
                 .checked_mul(widened.len())
                 .and_then(|offset| start.checked_add(offset))
-                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                .ok_or(NormalStateError::ResidencyOverflow)?;
             for (pair, &value) in widened.as_chunks_mut::<2>().0.iter_mut().zip(chunk) {
                 pair[0] = f64::from(value);
             }
@@ -98,7 +103,7 @@ pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
     }
 
     /// Release a superseded epoch after its replacement is complete.
-    fn retire(self: Box<Self>) -> Result<(), SpectralOperatorError> {
+    fn retire(self: Box<Self>) -> Result<(), NormalStateError> {
         Ok(())
     }
 }
@@ -106,8 +111,8 @@ pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
 #[cfg(test)]
 mod tests;
 
-/// Runtime allocation capability for an exact logical Normal State array.
-#[doc(hidden)]
+/// Allocates a normal state's arrays at their exact logical sizes: resident
+/// here, paged in `casa-imaging-runtime` (the dependency boundary).
 pub trait NormalStorageFactory: fmt::Debug + Send + Sync {
     /// Allocate storage whose complete logical contents will be owner-written.
     /// Slots are `2 * domain` for epoch arrays and `2 * domain + 1` for invariants.
@@ -115,11 +120,11 @@ pub trait NormalStorageFactory: fmt::Debug + Send + Sync {
         &self,
         domain: usize,
         scalars: usize,
-    ) -> Result<Box<dyn NormalArrayStorage>, SpectralOperatorError>;
+    ) -> Result<Box<dyn NormalArrayStorage>, NormalStateError>;
 }
 
-/// Physical backing and the admitted maximum channel window.
-#[doc(hidden)]
+/// Where a normal state's arrays live, and the most channels a read or
+/// write may hold at once.
 #[derive(Debug, Clone)]
 pub struct NormalStoragePlan {
     factory: Arc<dyn NormalStorageFactory>,
@@ -131,9 +136,9 @@ impl NormalStoragePlan {
     pub fn new(
         factory: Arc<dyn NormalStorageFactory>,
         window_channels: usize,
-    ) -> Result<Self, SpectralOperatorError> {
+    ) -> Result<Self, NormalStateError> {
         if window_channels == 0 {
-            return Err(SpectralOperatorError::InvalidSlab);
+            return Err(NormalStateError::InvalidSlab);
         }
         Ok(Self {
             factory,
@@ -142,55 +147,13 @@ impl NormalStoragePlan {
     }
 
     /// Select fully admitted resident storage, using the same window lifecycle.
-    pub fn resident(window_channels: usize) -> Result<Self, SpectralOperatorError> {
+    pub fn resident(window_channels: usize) -> Result<Self, NormalStateError> {
         Self::new(Arc::new(ResidentNormalStorage), window_channels)
     }
 }
 
-/// Fully covered normal primitives and their inseparable complete-data proof.
-/// Channel-local payloads have been written to the admitted backing; coupled
-/// coefficient families retain their distinct scientific representation.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct CompleteDataNormalState {
-    pub(crate) primitives: NormalStatePrimitives,
-    pub(crate) completion: CompleteDataOwnerCompletion,
-}
-
-impl CompleteDataNormalState {
-    /// The completed pass's primitive catalog and sample and block counts.
-    #[must_use]
-    pub const fn completion(&self) -> &CompleteDataOwnerCompletion {
-        &self.completion
-    }
-
-    /// Load explicit diagnostic data without changing completion authority.
-    pub fn read_window(
-        &self,
-        channels: Range<usize>,
-    ) -> Result<CompleteDataNormalWindow<'_>, SpectralOperatorError> {
-        Ok(CompleteDataNormalWindow {
-            primitives: self.primitives.read_window(channels)?,
-        })
-    }
-}
-
-/// Loaded complete-data normal primitives. This is not a Final Normal State
-/// completion and cannot authorize model updates or product publication.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct CompleteDataNormalWindow<'a> {
-    primitives: NormalStateWindowPayload<'a>,
-}
-
-impl CompleteDataNormalWindow<'_> {
-    /// Borrow the primary domain's explicitly loaded primitive window.
-    #[must_use]
-    pub fn primitives(&self) -> &SpectralOperatorPrimitives {
-        self.primitives.primary()
-    }
-}
-
+/// A completed normal state's domains: channel-local planes written to
+/// their backing, or a constant or Taylor family held resident.
 #[derive(Debug)]
 pub(crate) enum NormalStatePrimitives {
     ChannelLocal(Box<[StoredChannelNormalDomain]>),
@@ -204,24 +167,28 @@ pub(crate) struct NormalDomainMetadata<'a> {
     pub(crate) polarizations: usize,
     pub(crate) coefficient_terms: usize,
     pub(crate) normal_moments: usize,
-    pub(crate) reference_frequency_hz: Option<f64>,
     pub(crate) sum_weights: &'a [f64],
     pub(crate) published_sum_weights: &'a [f64],
     pub(crate) validity: &'a [SpectralChannelValidity],
 }
 
 impl NormalStatePrimitives {
-    /// The resident domains of a coupled coefficient family.
-    pub(crate) fn into_coupled(
-        self,
-    ) -> Result<Box<[SpectralDomainPrimitives]>, SpectralOperatorError> {
+    pub(crate) fn basis(&self) -> super::NormalBasis {
         match self {
-            Self::Coupled(domains) => Ok(domains.domains),
-            Self::ChannelLocal(_) => Err(SpectralOperatorError::ProblemMismatch),
+            Self::ChannelLocal(_) => super::NormalBasis::ChannelLocal,
+            Self::Coupled(domains) => domains.primary().basis.basis(),
         }
     }
 
-    pub(crate) fn retire_obsolete(self) -> Result<(), SpectralOperatorError> {
+    /// The resident domains of a coupled coefficient family.
+    pub(crate) fn into_coupled(self) -> Result<Box<[SpectralDomainPrimitives]>, NormalStateError> {
+        match self {
+            Self::Coupled(domains) => Ok(domains.domains),
+            Self::ChannelLocal(_) => Err(NormalStateError::ProblemMismatch),
+        }
+    }
+
+    pub(crate) fn retire_obsolete(self) -> Result<(), NormalStateError> {
         if let Self::ChannelLocal(domains) = self {
             for domain in domains {
                 domain.storage.retire()?;
@@ -229,7 +196,7 @@ impl NormalStatePrimitives {
         }
         Ok(())
     }
-    pub(crate) fn resident_bytes(&self) -> Result<u64, SpectralOperatorError> {
+    pub(crate) fn resident_bytes(&self) -> Result<u64, NormalStateError> {
         match self {
             Self::ChannelLocal(domains) => domains.iter().try_fold(0u64, |bytes, domain| {
                 bytes
@@ -237,7 +204,7 @@ impl NormalStatePrimitives {
                     .and_then(|bytes| {
                         bytes.checked_add(domain.invariants.retained_resident_bytes() as u64)
                     })
-                    .ok_or(SpectralOperatorError::ResidencyOverflow)
+                    .ok_or(NormalStateError::ResidencyOverflow)
             }),
             Self::Coupled(domains) => Ok(domains.owned_bytes() as u64),
         }
@@ -248,34 +215,34 @@ impl NormalStatePrimitives {
         ordinal: usize,
         channel: usize,
         polarization: usize,
-    ) -> Result<FinalNormalPlaneReader<'_>, SpectralOperatorError> {
+    ) -> Result<FinalNormalPlaneReader<'_>, NormalStateError> {
         let (backing, plane, cells) = match self {
             Self::ChannelLocal(domains) => {
-                let domain = domains
-                    .get(ordinal)
-                    .ok_or(SpectralOperatorError::InvalidSlab)?;
+                let domain = domains.get(ordinal).ok_or(NormalStateError::InvalidSlab)?;
                 let (plane, cells) = domain.validate_plane(channel, polarization)?;
                 (NormalPlaneBacking::Stored(domain), plane, cells)
             }
             Self::Coupled(domains) => {
                 let domain = domains
                     .get(ordinal)
-                    .ok_or(SpectralOperatorError::InvalidSlab)?
+                    .ok_or(NormalStateError::InvalidSlab)?
                     .primitives();
-                if !matches!(domain.basis, SpectralBasisPlan::Polynomial(plan) if plan.coefficient_term_count() == 1)
-                {
-                    return Err(SpectralOperatorError::NormalStorage("selective plane reads require channel-local or constant-polynomial normal state".into()));
+                if domain.basis != (SpectralBasisPlan::Polynomial { terms: 1 }) {
+                    return Err(NormalStateError::NormalStorage(
+                        "a single plane is read only from a channel-local or constant-basis normal state"
+                            .into(),
+                    ));
                 }
                 if domain.slab.core_depth() != 1
                     || !domain.slab.core_range().contains(&channel)
                     || polarization >= domain.polarizations
                 {
-                    return Err(SpectralOperatorError::InvalidSlab);
+                    return Err(NormalStateError::InvalidSlab);
                 }
                 let cells = checked_cells(domain.shape)?;
                 let values = cells
                     .checked_mul(domain.polarizations)
-                    .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                    .ok_or(NormalStateError::ResidencyOverflow)?;
                 if domain.dirty.len() != values
                     || domain.psf.len() != values
                     || domain.sensitivity.len() != values
@@ -283,7 +250,7 @@ impl NormalStatePrimitives {
                     || domain.published_sum_weights.len() != domain.polarizations
                     || domain.validity.len() != domain.polarizations
                 {
-                    return Err(SpectralOperatorError::ProblemMismatch);
+                    return Err(NormalStateError::ProblemMismatch);
                 }
                 (NormalPlaneBacking::Resident(domain), polarization, cells)
             }
@@ -294,17 +261,6 @@ impl NormalStatePrimitives {
             plane,
             cells,
         })
-    }
-
-    pub(crate) fn maximum_read_channels(&self) -> usize {
-        match self {
-            Self::ChannelLocal(domains) => domains
-                .iter()
-                .map(|domain| domain.window_channels)
-                .min()
-                .expect("normal state has domains"),
-            Self::Coupled(_) => self.primary_metadata().slab.core_depth(),
-        }
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -328,7 +284,6 @@ impl NormalStatePrimitives {
                     polarizations: d.polarizations,
                     coefficient_terms: d.total_channels,
                     normal_moments: d.total_channels,
-                    reference_frequency_hz: None,
                     sum_weights: &d.sum_weights,
                     published_sum_weights: &d.published_sum_weights,
                     validity: &d.validity,
@@ -343,7 +298,6 @@ impl NormalStatePrimitives {
                     polarizations: p.polarization_count(),
                     coefficient_terms: p.coefficient_term_count(),
                     normal_moments: p.normal_moment_count(),
-                    reference_frequency_hz: p.reference_frequency_hz(),
                     sum_weights: p.sum_weights(),
                     published_sum_weights: p.published_sum_weights(),
                     validity: p.channel_validity(),
@@ -360,7 +314,7 @@ impl NormalStatePrimitives {
     pub(crate) fn read_window(
         &self,
         channels: Range<usize>,
-    ) -> Result<NormalStateWindowPayload<'_>, SpectralOperatorError> {
+    ) -> Result<NormalStateWindowPayload<'_>, NormalStateError> {
         match self {
             Self::ChannelLocal(domains) => {
                 let windows = domains
@@ -373,7 +327,7 @@ impl NormalStatePrimitives {
             }
             Self::Coupled(domains) => {
                 if channels != domains.slab().core_range() {
-                    return Err(SpectralOperatorError::InvalidSlab);
+                    return Err(NormalStateError::InvalidSlab);
                 }
                 Ok(NormalStateWindowPayload::Coupled(domains))
             }
@@ -405,7 +359,7 @@ impl NormalStorageFactory for ResidentNormalStorage {
         &self,
         _domain: usize,
         scalars: usize,
-    ) -> Result<Box<dyn NormalArrayStorage>, SpectralOperatorError> {
+    ) -> Result<Box<dyn NormalArrayStorage>, NormalStateError> {
         Ok(Box::new(vec![0.0; scalars].into_boxed_slice()))
     }
 }
@@ -415,22 +369,21 @@ impl NormalArrayStorage for Box<[f64]> {
         self.as_ref().len()
     }
 
-    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
+    fn read(&self, start: usize, len: usize) -> Result<Cow<'_, [f64]>, NormalStateError> {
         let end = start
             .checked_add(len)
-            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+            .ok_or(NormalStateError::ResidencyOverflow)?;
         Ok(Cow::Borrowed(
-            self.get(start..end)
-                .ok_or(SpectralOperatorError::InvalidSlab)?,
+            self.get(start..end).ok_or(NormalStateError::InvalidSlab)?,
         ))
     }
 
-    fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
+    fn write(&mut self, start: usize, values: &[f64]) -> Result<(), NormalStateError> {
         let end = start
             .checked_add(values.len())
-            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+            .ok_or(NormalStateError::ResidencyOverflow)?;
         self.get_mut(start..end)
-            .ok_or(SpectralOperatorError::InvalidSlab)?
+            .ok_or(NormalStateError::InvalidSlab)?
             .copy_from_slice(values);
         Ok(())
     }
@@ -454,16 +407,16 @@ struct ChannelNormalFields {
 }
 
 impl ChannelNormalFields {
-    fn new(values: usize, dense_sensitivity: bool) -> Result<Self, SpectralOperatorError> {
+    fn new(values: usize, dense_sensitivity: bool) -> Result<Self, NormalStateError> {
         let complex = values
             .checked_mul(2)
-            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+            .ok_or(NormalStateError::ResidencyOverflow)?;
         let mut end = 0_usize;
-        let mut field = |len: usize| -> Result<Range<usize>, SpectralOperatorError> {
+        let mut field = |len: usize| -> Result<Range<usize>, NormalStateError> {
             let start = end;
             end = end
                 .checked_add(len)
-                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                .ok_or(NormalStateError::ResidencyOverflow)?;
             Ok(start..end)
         };
         let dirty = field(complex)?;
@@ -520,7 +473,7 @@ pub struct FinalNormalPlaneReader<'a> {
 #[derive(Debug)]
 enum NormalPlaneBacking<'a> {
     Stored(&'a StoredChannelNormalDomain),
-    Resident(&'a SpectralOperatorPrimitives),
+    Resident(&'a NormalPrimitives),
 }
 
 impl<'a> FinalNormalPlaneReader<'a> {
@@ -567,7 +520,7 @@ impl<'a> FinalNormalPlaneReader<'a> {
     }
 
     /// Load only the selected dirty or residual plane.
-    pub fn read_residual(&self) -> Result<Cow<'a, [Complex64]>, SpectralOperatorError> {
+    pub fn read_residual(&self) -> Result<Cow<'a, [Complex64]>, NormalStateError> {
         let offset = self.plane * self.cells;
         match self.backing {
             NormalPlaneBacking::Stored(d) => d.read_complex(&d.fields.dirty, offset, self.cells),
@@ -575,15 +528,13 @@ impl<'a> FinalNormalPlaneReader<'a> {
                 let values = d
                     .dirty()
                     .complex()
-                    .ok_or(SpectralOperatorError::ProblemMismatch)?;
+                    .ok_or(NormalStateError::ProblemMismatch)?;
                 Ok(Cow::Borrowed(&values[offset..offset + self.cells]))
             }
         }
     }
 
-    pub(crate) fn read_residual_real(
-        &self,
-    ) -> Result<Option<Cow<'a, [f32]>>, SpectralOperatorError> {
+    pub(crate) fn read_residual_real(&self) -> Result<Option<Cow<'a, [f32]>>, NormalStateError> {
         let offset = self.plane * self.cells;
         match self.backing {
             NormalPlaneBacking::Stored(d) => d.read_real(&d.fields.dirty, offset, self.cells),
@@ -592,21 +543,18 @@ impl<'a> FinalNormalPlaneReader<'a> {
     }
 
     /// Load only the selected unnormalized point-spread-function plane.
-    pub fn read_psf(&self) -> Result<Cow<'a, [Complex64]>, SpectralOperatorError> {
+    pub fn read_psf(&self) -> Result<Cow<'a, [Complex64]>, NormalStateError> {
         let offset = self.plane * self.cells;
         match self.backing {
             NormalPlaneBacking::Stored(d) => d.read_complex(&d.fields.psf, offset, self.cells),
             NormalPlaneBacking::Resident(d) => {
-                let values = d
-                    .psf()
-                    .complex()
-                    .ok_or(SpectralOperatorError::ProblemMismatch)?;
+                let values = d.psf().complex().ok_or(NormalStateError::ProblemMismatch)?;
                 Ok(Cow::Borrowed(&values[offset..offset + self.cells]))
             }
         }
     }
 
-    pub(crate) fn read_psf_real(&self) -> Result<Option<Cow<'a, [f32]>>, SpectralOperatorError> {
+    pub(crate) fn read_psf_real(&self) -> Result<Option<Cow<'a, [f32]>>, NormalStateError> {
         let offset = self.plane * self.cells;
         match self.backing {
             NormalPlaneBacking::Stored(d) => d.read_real(&d.fields.psf, offset, self.cells),
@@ -615,7 +563,7 @@ impl<'a> FinalNormalPlaneReader<'a> {
     }
 
     /// Load only the selected unnormalized sensitivity plane.
-    pub fn read_sensitivity(&self) -> Result<Cow<'a, [f64]>, SpectralOperatorError> {
+    pub fn read_sensitivity(&self) -> Result<Cow<'a, [f64]>, NormalStateError> {
         let offset = self.plane * self.cells;
         match self.backing {
             NormalPlaneBacking::Stored(d) => Ok(Cow::Owned(if d.fields.dense_sensitivity() {
@@ -627,7 +575,7 @@ impl<'a> FinalNormalPlaneReader<'a> {
                 let values = d
                     .sensitivity()
                     .dense()
-                    .ok_or(SpectralOperatorError::ProblemMismatch)?;
+                    .ok_or(NormalStateError::ProblemMismatch)?;
                 Ok(Cow::Borrowed(&values[offset..offset + self.cells]))
             }
         }
@@ -635,14 +583,14 @@ impl<'a> FinalNormalPlaneReader<'a> {
 }
 
 impl StoredChannelNormalDomain {
-    pub(crate) fn refresh(&self, plan: &NormalStoragePlan) -> Result<Self, SpectralOperatorError> {
+    pub(crate) fn refresh(&self, plan: &NormalStoragePlan) -> Result<Self, NormalStateError> {
         if !self.is_complete() {
-            return Err(SpectralOperatorError::IncompleteCoverage);
+            return Err(NormalStateError::IncompleteCoverage);
         }
         let fields = self.fields.clone();
         let storage = plan.factory.create(self.ordinal * 2, fields.dirty.len())?;
         if storage.len() != fields.dirty.len() {
-            return Err(SpectralOperatorError::NormalStorage(
+            return Err(NormalStateError::NormalStorage(
                 "allocated scalar capacity differs from the admitted layout".into(),
             ));
         }
@@ -670,17 +618,17 @@ impl StoredChannelNormalDomain {
         range: Range<usize>,
         shape: [usize; 2],
         residual: &[f32],
-    ) -> Result<(), SpectralOperatorError> {
+    ) -> Result<(), NormalStateError> {
         if range.start != self.next_channel
             || range.start >= range.end
             || range.end > self.total_channels
         {
-            return Err(SpectralOperatorError::IncompleteCoverage);
+            return Err(NormalStateError::IncompleteCoverage);
         }
         if shape != self.shape
             || residual.len() != range.len() * self.polarizations * checked_cells(self.shape)?
         {
-            return Err(SpectralOperatorError::ProblemMismatch);
+            return Err(NormalStateError::ProblemMismatch);
         }
         let plane_values = self.polarizations * checked_cells(self.shape)?;
         for (index, values) in residual
@@ -700,12 +648,12 @@ impl StoredChannelNormalDomain {
         &self,
         channel: usize,
         polarization: usize,
-    ) -> Result<(usize, usize), SpectralOperatorError> {
+    ) -> Result<(usize, usize), NormalStateError> {
         if !self.is_complete() {
-            return Err(SpectralOperatorError::IncompleteCoverage);
+            return Err(NormalStateError::IncompleteCoverage);
         }
         if channel >= self.total_channels || polarization >= self.polarizations {
-            return Err(SpectralOperatorError::InvalidSlab);
+            return Err(NormalStateError::InvalidSlab);
         }
         Ok((
             channel * self.polarizations + polarization,
@@ -716,18 +664,18 @@ impl StoredChannelNormalDomain {
     pub(crate) fn begin(
         first: SpectralDomainPrimitives,
         plan: &NormalStoragePlan,
-    ) -> Result<Self, SpectralOperatorError> {
+    ) -> Result<Self, NormalStateError> {
         let p = first.primitives();
         let total_channels = p.slab.total_channels();
         if p.slab.core_range().start != 0 || p.polarizations == 0 {
-            return Err(SpectralOperatorError::InvalidSlab);
+            return Err(NormalStateError::InvalidSlab);
         }
         let planes = total_channels
             .checked_mul(p.polarizations)
-            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+            .ok_or(NormalStateError::ResidencyOverflow)?;
         let values = planes
             .checked_mul(checked_cells(p.shape)?)
-            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+            .ok_or(NormalStateError::ResidencyOverflow)?;
         // The first window decides: a gridded weight image makes the
         // sensitivity dense, its absence one `sumwt` per plane.
         let dense = p
@@ -745,7 +693,7 @@ impl StoredChannelNormalDomain {
         if storage.len() != fields.epoch_scalars
             || invariants.len() != fields.scalars - fields.epoch_scalars
         {
-            return Err(SpectralOperatorError::NormalStorage(
+            return Err(NormalStateError::NormalStorage(
                 "allocated scalar capacity differs from the admitted layout".into(),
             ));
         }
@@ -771,19 +719,19 @@ impl StoredChannelNormalDomain {
     pub(crate) fn append(
         &mut self,
         domain: SpectralDomainPrimitives,
-    ) -> Result<(), SpectralOperatorError> {
+    ) -> Result<(), NormalStateError> {
         let p = domain.primitives();
         let compact = p.cube_real.as_ref();
         let range = p.slab.core_range();
         if range.start != self.next_channel {
-            return Err(SpectralOperatorError::IncompleteCoverage);
+            return Err(NormalStateError::IncompleteCoverage);
         }
         let dense = compact.map_or(!p.sensitivity.is_empty(), |real| real.sensitivity.is_some());
         if dense != self.fields.dense_sensitivity() {
-            return Err(SpectralOperatorError::ProblemMismatch);
+            return Err(NormalStateError::ProblemMismatch);
         }
         if range.len() > self.window_channels {
-            return Err(SpectralOperatorError::NormalStorage(
+            return Err(NormalStateError::NormalStorage(
                 "normal-state write exceeds the admitted channel window".into(),
             ));
         }
@@ -795,7 +743,7 @@ impl StoredChannelNormalDomain {
             self.storage
                 .write_real(self.fields.dirty.start + 2 * offset, &real.dirty)?;
             Arc::get_mut(&mut self.invariants)
-                .ok_or(SpectralOperatorError::IncompleteCoverage)?
+                .ok_or(NormalStateError::IncompleteCoverage)?
                 .write_real(
                     self.fields.psf.start - self.fields.epoch_scalars + 2 * offset,
                     &real.psf,
@@ -810,7 +758,7 @@ impl StoredChannelNormalDomain {
                 let start = field.start + 2 * offset;
                 if field.start >= self.fields.epoch_scalars {
                     Arc::get_mut(&mut self.invariants)
-                        .ok_or(SpectralOperatorError::IncompleteCoverage)?
+                        .ok_or(NormalStateError::IncompleteCoverage)?
                         .write(start - self.fields.epoch_scalars, scalars)?;
                 } else {
                     self.storage.write(start, scalars)?;
@@ -818,8 +766,8 @@ impl StoredChannelNormalDomain {
             }
         }
         if dense {
-            let invariant = Arc::get_mut(&mut self.invariants)
-                .ok_or(SpectralOperatorError::IncompleteCoverage)?;
+            let invariant =
+                Arc::get_mut(&mut self.invariants).ok_or(NormalStateError::IncompleteCoverage)?;
             let start = self.fields.sensitivity.start - self.fields.epoch_scalars + 2 * offset;
             match compact.and_then(|real| real.sensitivity.as_deref()) {
                 Some(weight) => invariant.write_real(start, weight)?,
@@ -855,7 +803,7 @@ impl StoredChannelNormalDomain {
         field: &Range<usize>,
         offset: usize,
         values: usize,
-    ) -> Result<Vec<f64>, SpectralOperatorError> {
+    ) -> Result<Vec<f64>, NormalStateError> {
         if let Some(real) = self.read_real(field, offset, values)? {
             return Ok(real.iter().map(|&value| f64::from(value)).collect());
         }
@@ -871,7 +819,7 @@ impl StoredChannelNormalDomain {
         field: &Range<usize>,
         offset: usize,
         values: usize,
-    ) -> Result<Cow<'_, [Complex64]>, SpectralOperatorError> {
+    ) -> Result<Cow<'_, [Complex64]>, NormalStateError> {
         let start = field.start + offset * 2;
         let result = if start >= self.fields.epoch_scalars {
             self.invariants
@@ -880,7 +828,7 @@ impl StoredChannelNormalDomain {
             self.storage.read_complex(start, values)
         }?;
         if result.len() != values {
-            return Err(SpectralOperatorError::NormalStorage(
+            return Err(NormalStateError::NormalStorage(
                 "normal backing returned an incorrect complex window length".into(),
             ));
         }
@@ -892,7 +840,7 @@ impl StoredChannelNormalDomain {
         field: &Range<usize>,
         offset: usize,
         values: usize,
-    ) -> Result<Option<Cow<'_, [f32]>>, SpectralOperatorError> {
+    ) -> Result<Option<Cow<'_, [f32]>>, NormalStateError> {
         let start = field.start + 2 * offset;
         let result = if field.start >= self.fields.epoch_scalars {
             self.invariants
@@ -901,7 +849,7 @@ impl StoredChannelNormalDomain {
             self.storage.read_real(start, values)
         }?;
         if result.as_ref().is_some_and(|window| window.len() != values) {
-            return Err(SpectralOperatorError::NormalStorage(
+            return Err(NormalStateError::NormalStorage(
                 "normal backing returned an incorrect real window length".into(),
             ));
         }
@@ -911,15 +859,15 @@ impl StoredChannelNormalDomain {
     pub(crate) fn read_window(
         &self,
         range: Range<usize>,
-    ) -> Result<SpectralDomainPrimitives, SpectralOperatorError> {
+    ) -> Result<SpectralDomainPrimitives, NormalStateError> {
         if !self.is_complete() {
-            return Err(SpectralOperatorError::IncompleteCoverage);
+            return Err(NormalStateError::IncompleteCoverage);
         }
         if range.start >= range.end || range.end > self.total_channels {
-            return Err(SpectralOperatorError::InvalidSlab);
+            return Err(NormalStateError::InvalidSlab);
         }
         if range.len() > self.window_channels {
-            return Err(SpectralOperatorError::NormalStorage(
+            return Err(NormalStateError::NormalStorage(
                 "normal-state read exceeds the admitted channel window".into(),
             ));
         }
@@ -930,7 +878,7 @@ impl StoredChannelNormalDomain {
         Ok(SpectralDomainPrimitives::new(
             self.ordinal,
             self.role.clone(),
-            SpectralOperatorPrimitives {
+            NormalPrimitives {
                 shape: self.shape,
                 slab: SpectralSlabPlan {
                     total_channels: self.total_channels,

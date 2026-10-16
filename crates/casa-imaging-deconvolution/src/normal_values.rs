@@ -110,14 +110,7 @@ pub(crate) enum NormalPlane<'a> {
     Complex(Cow<'a, [Complex64]>),
 }
 
-impl<'a> NormalPlane<'a> {
-    pub(crate) fn borrowed(values: NormalValues<'a>) -> Self {
-        match values {
-            NormalValues::Real(v) => Self::Real(Cow::Borrowed(v)),
-            NormalValues::Complex(v) => Self::Complex(Cow::Borrowed(v)),
-        }
-    }
-
+impl NormalPlane<'_> {
     pub(crate) fn values(&self) -> NormalValues<'_> {
         match self {
             Self::Real(v) => NormalValues::Real(v),
@@ -173,30 +166,23 @@ impl<'a> SensitivityValues<'a> {
 }
 
 #[test]
-fn plane_borrows_and_moves_preserve_the_single_allocation() {
+fn plane_views_borrow_and_moves_preserve_the_single_allocation() {
     let real = vec![1.0_f32, -2.5, 0.0];
     let pointer = real.as_ptr();
     let plane = NormalPlane::Real(Cow::Owned(real));
-    let borrowed = NormalPlane::borrowed(plane.values().slice(1..3).unwrap());
-    assert_eq!(
-        borrowed.values().real().unwrap().as_ptr(),
-        pointer.wrapping_add(1)
-    );
-    assert!(borrowed.values().complex().is_none());
-    assert_eq!(borrowed.values().value(0), Complex64::new(-2.5, 0.0));
+    let view = plane.values().slice(1..3).unwrap();
+    assert_eq!(view.real().unwrap().as_ptr(), pointer.wrapping_add(1));
+    assert!(view.complex().is_none());
+    assert_eq!(view.value(0), Complex64::new(-2.5, 0.0));
     assert!(plane.values().slice(0..4).is_none());
-    drop(borrowed);
     let moved = plane;
     assert_eq!(moved.values().real().unwrap().as_ptr(), pointer);
 
     let complex = [Complex64::new(2.0, -3.0), Complex64::new(4.0, 5.0)];
-    let borrowed = NormalPlane::borrowed(NormalValues::Complex(&complex));
-    assert_eq!(
-        borrowed.values().complex().unwrap().as_ptr(),
-        complex.as_ptr()
-    );
-    assert_eq!(borrowed.values().iter().collect::<Vec<_>>(), complex);
-    assert!(borrowed.values().real().is_none());
+    let plane = NormalPlane::Complex(Cow::Borrowed(&complex));
+    assert_eq!(plane.values().complex().unwrap().as_ptr(), complex.as_ptr());
+    assert_eq!(plane.values().iter().collect::<Vec<_>>(), complex);
+    assert!(plane.values().real().is_none());
     assert_eq!(
         SensitivityValues::PerPlane {
             weights: &[2.0, 3.0],
