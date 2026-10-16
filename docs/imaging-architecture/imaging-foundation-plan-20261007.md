@@ -1717,3 +1717,6 @@ recorded in those outcome sections.
 | #659 17 | An empty facet 0 hands the reference to the lowest populated facet | §5.7 |
 | #659 18 | An unflagged non-finite input fails the run | §5.8 |
 | #660 1 | Normal state, model lifecycle, masks and `MajorCycle` in deconvolution; continuum fit in the operator; reconstruction crate deleted | D4; §5.2; §5.3 |
+| #660 2 | The `MODEL_DATA` writer's fix needed a casa-tables API (`Table::array_column_tile_bytes`) and fixed a latent sparse-save bug; four allowlisted casa-tables files grew | this table; `TESTING.md` memory rules |
+| #660 3 | A Metal purge-on-drop, withdrawn: the reading it answered was macOS's footprint lag after frees | this table; `TESTING.md` memory rules |
+| #660 4 | Three documents named by ADR-0013 and ADR-0014, and one source study, kept pending the owner | this table |
