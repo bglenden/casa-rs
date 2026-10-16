@@ -142,15 +142,12 @@ def native(args):
         CASA_RS_C_ARRAY_WORKERS=str(args.workers),
         CASA_RS_C_ARRAY_NITER=str(niter),
         CASA_RS_C_ARRAY_MASK=str(args.outputs / "casa-mask-single.image"),
-        CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND="1000000000",
-        CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND="1000000000",
     )
     command = [str(args.binary), "t55_c_array_turnaround::contiguous_spectral_block",
                "--exact", "--ignored", "--nocapture", "--test-threads=1"]
     save(args.records / f"app-{name}-command.json", dict(
         command=command, environment={key: value for key, value in environment.items()
-                                      if key.startswith("CASA_RS_C_ARRAY_")
-                                      or key.startswith("CASA_RS_IMAGING_SPILL_")},
+                                      if key.startswith("CASA_RS_C_ARRAY_")},
         binary_sha256=hashlib.sha256(args.binary.read_bytes()).hexdigest()))
     with (args.records / f"app-{name}.log").open("x") as log:
         subprocess.run(command, env=environment, stdout=log, stderr=subprocess.STDOUT,
@@ -159,7 +156,7 @@ def native(args):
     assert summary["workers"] == args.workers
     assert summary["rows"] == rows
     assert summary["output_channels"] == count
-    assert summary["execution_route"] == "native-streaming-cube"
+    assert summary["execution_route"] == "major-cycle-pass"
     save(args.records / f"app-{name}-result.json", summary)
     print(json.dumps(summary), flush=True)
 

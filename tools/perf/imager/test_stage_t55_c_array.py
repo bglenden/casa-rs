@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Scientific-truth checks for the isolated C-array fixture, not imaging acceptance."""
+import importlib.util
 import unittest
 import numpy as np
 
@@ -52,6 +53,7 @@ class CArraySkyTest(unittest.TestCase):
         core_support = self.templates["continuum"][0][3] != 0
         self.assertTrue(np.all(absorption[~core_support] == 0))
 
+    @unittest.skipUnless(importlib.util.find_spec("astropy"), "astropy verifies the FITS cards")
     def test_fits_wcs_and_channel_shape_are_explicit(self):
         from astropy.io.fits import Card
         header = sky.fits_header(1024, 0.06, 512)

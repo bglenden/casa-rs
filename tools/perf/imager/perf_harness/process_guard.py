@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Outer, single-attempt guard for the entire T51 paired diagnostic pipeline.
+"""Outer, single-attempt wall-clock and RSS guard for one diagnostic command.
 
-The child command must include setup, builds, both engines and validation.
-Nothing in this module grants permission to run that command. RSS is sampled
+The child command must include everything the measurement needs; nothing in
+this module grants permission to run it. RSS is sampled
 across the group and observed descendants; the receipt does not claim a kernel
 aggregate-RSS limit or an unsampled instantaneous peak.
 """
@@ -37,7 +37,7 @@ def process_scope(listing, root_pid, retained):
     return owned, sum(rows[pid][2] for pid in owned)
 
 
-def run_pair_pipeline(argv, *, cwd, environment, log, wall_seconds=WALL_SECONDS):
+def run_guarded(argv, *, cwd, environment, log, wall_seconds=WALL_SECONDS):
     """Run one already-authorized pipeline under one nonrenewable deadline.
 
     The timer begins before process launch. Errors in the guardian fail closed;

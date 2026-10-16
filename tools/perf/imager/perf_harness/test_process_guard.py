@@ -3,10 +3,10 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from .t51_pair_guard import RSS_BYTES, process_scope, run_pair_pipeline
+from .process_guard import RSS_BYTES, process_scope, run_guarded
 
 
-class PairGuardTests(unittest.TestCase):
+class ProcessGuardTests(unittest.TestCase):
     def test_scope_tracks_escaped_debugger_descendants_and_reparenting(self):
         rows = "10 1 10 20\n11 10 11 30\n12 11 11 40\n20 1 20 1000\n"
         owned, rss = process_scope(rows, 10, set())
@@ -27,7 +27,7 @@ class PairGuardTests(unittest.TestCase):
                 patch("time.monotonic", side_effect=[100, 1000, 1000.01]), \
                 patch("os.killpg") as kill, patch("os.kill"), \
                 patch("subprocess.check_output") as census:
-            receipt = run_pair_pipeline(["approved-pipeline"], cwd=".", environment={}, log=None)
+            receipt = run_guarded(["approved-pipeline"], cwd=".", environment={}, log=None)
         launch.assert_called_once()
         census.assert_not_called()
         kill.assert_called_once_with(10, 9)
@@ -41,7 +41,7 @@ class PairGuardTests(unittest.TestCase):
                 patch("time.monotonic", side_effect=[0, 1, 2]), \
                 patch("subprocess.check_output", return_value=f"10 1 10 {RSS_BYTES // 1024}"), \
                 patch("os.killpg") as kill, patch("os.kill"):
-            receipt = run_pair_pipeline(["approved-pipeline"], cwd=".", environment={}, log=None)
+            receipt = run_guarded(["approved-pipeline"], cwd=".", environment={}, log=None)
         kill.assert_called_once_with(10, 9)
         self.assertEqual(receipt["stop_reason"], "rss_cap")
 
@@ -52,7 +52,7 @@ class PairGuardTests(unittest.TestCase):
                 patch("subprocess.check_output", side_effect=ValueError("census failed")), \
                 patch("os.killpg") as kill, patch("os.kill"):
             with self.assertRaisesRegex(ValueError, "census failed"):
-                run_pair_pipeline(["approved-pipeline"], cwd=".", environment={}, log=None)
+                run_guarded(["approved-pipeline"], cwd=".", environment={}, log=None)
         self.assertTrue(kill.called)
         proc.wait.assert_called_once()
 

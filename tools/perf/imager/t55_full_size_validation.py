@@ -109,7 +109,7 @@ def native(args):
     assert result["rows"] == args.rows and result["image_size"] == 512
     assert result["native_memory_bytes"] == 16 << 30
     assert result["requested_workers"] == args.workers
-    assert result["execution_route"] == "native-streaming-cube"
+    assert result["execution_route"] == "major-cycle-pass"
     save(args.records / f"{args.label}-summary.json", result)
     print(json.dumps(result), flush=True)
 

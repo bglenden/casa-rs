@@ -11,7 +11,7 @@ import statistics
 import subprocess
 import sys
 
-from perf_harness import t51_pair_guard as resource_guard
+from perf_harness import process_guard as resource_guard
 
 TEST = 't55_real_cube::t55_q_band_rebaseline_preflight'
 PRODUCTS = {'.image', '.residual', '.model', '.psf', '.pb', '.mask', '.sumwt'}
@@ -64,8 +64,6 @@ def worker(args):
         CASA_RS_T55_ARTIFACT_ROOT=str(output/'products'),
         CASA_RS_T55_PREFLIGHT_IMAGE_SIZE='128', CASA_RS_T55_PREFLIGHT_ROWS='351',
         CASA_RS_T55_PUBLICATION_PROBE='1', CASA_RS_MEASURESPATH=str(args.measures),
-        CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND='1000000000',
-        CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND='1000000000',
         OMP_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1', VECLIB_MAXIMUM_THREADS='1')
     command = [str(args.binary), TEST, '--exact', '--ignored', '--nocapture', '--test-threads=1']
     save(output/'command.json', {'command': command, 'environment': {
@@ -79,7 +77,7 @@ def sample(args, binary, output):
         '--measures', str(args.measures), '--output', str(output)]
     resource_guard.RSS_BYTES = 8 << 30
     with output.with_suffix('.log').open('x') as log:
-        receipt = resource_guard.run_pair_pipeline(command, cwd=Path.cwd(),
+        receipt = resource_guard.run_guarded(command, cwd=Path.cwd(),
             environment=os.environ.copy(), log=log, wall_seconds=600)
     save(output.with_suffix('.resource.json'), receipt)
     assert receipt['complete'], receipt
