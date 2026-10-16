@@ -54,7 +54,6 @@
   "casa-imaging-model": "science",
   "casa-imaging-operator": "reconstruction",
   "casa-imaging-deconvolution": "reconstruction",
-  "casa-imaging-reconstruction": "reconstruction",
   "casa-imaging-products": "product",
   "casa-imaging-runtime": "execution",
   "casa-imaging-metal": "backend",
@@ -79,18 +78,12 @@
    "casa-imaging-model",
    "casa-numerics"
   ],
-  "casa-imaging-reconstruction": [
-   "casa-fft",
-   "casa-imaging-model",
-   "casa-numerics"
-  ],
   "casa-imaging-products": [
    "casa-coordinates",
    "casa-fft",
    "casa-images",
    "casa-imaging-deconvolution",
    "casa-imaging-model",
-   "casa-imaging-reconstruction",
    "casa-numerics",
    "casa-types"
   ],
@@ -103,7 +96,6 @@
    "casa-imaging-model",
    "casa-imaging-operator",
    "casa-imaging-products",
-   "casa-imaging-reconstruction",
    "casa-lattices",
    "casa-ms",
    "casa-tables"
@@ -115,7 +107,6 @@
    "casa-imaging-model",
    "casa-imaging-operator",
    "casa-imaging-products",
-   "casa-imaging-reconstruction",
    "casa-imaging-runtime",
    "casa-ms",
    "casa-types"
@@ -151,7 +142,6 @@
     "crates/casa-imaging-model/src",
     "crates/casa-imaging-operator/src",
     "crates/casa-imaging-deconvolution/src",
-    "crates/casa-imaging-reconstruction/src",
     "crates/casa-imaging-products/src",
     "crates/casa-imaging-application/src",
     "crates/casa-provider-contracts/src",
@@ -173,7 +163,6 @@
     "crates/casa-imaging-model/src",
     "crates/casa-imaging-operator/src",
     "crates/casa-imaging-deconvolution/src",
-    "crates/casa-imaging-reconstruction/src",
     "crates/casa-provider-contracts/src",
     "crates/casars/src",
     "crates/casars-frontend-services/src",
@@ -193,7 +182,6 @@
     "crates/casa-imaging-model/src",
     "crates/casa-imaging-operator/src",
     "crates/casa-imaging-deconvolution/src",
-    "crates/casa-imaging-reconstruction/src",
     "crates/casa-imaging-products/src",
     "crates/casa-imaging-runtime/src",
     "crates/casa-imaging-metal/src",
@@ -235,7 +223,6 @@
     "crates/casa-imaging-model/src",
     "crates/casa-imaging-operator/src",
     "crates/casa-imaging-deconvolution/src",
-    "crates/casa-imaging-reconstruction/src",
     "crates/casa-imaging-products/src",
     "crates/casa-imaging-runtime/src",
     "crates/casa-imaging-metal/src",
@@ -273,7 +260,6 @@
     "crates/casa-imaging-model/src",
     "crates/casa-imaging-operator/src",
     "crates/casa-imaging-deconvolution/src",
-    "crates/casa-imaging-reconstruction/src",
     "crates/casa-imaging-products/src",
     "crates/casa-imaging-runtime/src",
     "crates/casa-imaging-metal/src",

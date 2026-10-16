@@ -3,10 +3,10 @@
 
 use std::ops::Range;
 
+use casa_imaging_deconvolution::resident_bytes_per_cell;
 use casa_imaging_operator::{
     Basis, CellHold, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile, grid_planning_bytes,
 };
-use casa_imaging_reconstruction::resident_bytes_per_cell;
 
 use super::{BackendChoice, BlockShape, PassDomain};
 
@@ -128,7 +128,7 @@ impl WaveDemand<'_> {
     /// Bytes a wave of `planes` planes holds. Per image domain and plane:
     /// its accumulator holding `modes`; the operator's `f32` images; and, for
     /// a basis whose normal state is resident, that state's copy at its
-    /// stored size ([`casa_imaging_reconstruction::resident_bytes_per_cell`]):
+    /// stored size ([`casa_imaging_deconvolution::resident_bytes_per_cell`]):
     /// a channel-local state is paged, under its cube cache's charge. With a
     /// model, the prepared grids of the wave's planes and of its model halo on
     /// each side. Per worker: one

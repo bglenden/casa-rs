@@ -93,7 +93,7 @@ fn assert_model_agreement(
 }
 
 fn fixture_model_samples(
-    model: &casa_imaging_reconstruction::ModelGeneration,
+    model: &casa_imaging_deconvolution::ModelGeneration,
 ) -> Vec<casa_imaging_model::ModelSample> {
     let mut samples = Vec::with_capacity(model.sample_count());
     for domain in 0..model.shape().domains().len() {
@@ -1450,7 +1450,7 @@ fn t607_application_preserves_channel_topology_and_wcs_through_cube_planning() {
     assert_dirty_products(&image_name, &result.product_names());
     assert_eq!(
         result.scientific().normal_state().catalog(),
-        casa_imaging_reconstruction::NormalStateCatalog::UnnormalizedChannelSlabV1
+        casa_imaging_deconvolution::NormalStateCatalog::UnnormalizedChannelSlabV1
     );
     let residual =
         PagedImage::<f32>::open(PathBuf::from(format!("{}.residual", image_name.display())))

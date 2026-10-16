@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The selected MeasurementSet as a [`BoundedSource`] of native row blocks.
 
+use casa_imaging_deconvolution::direction_world_to_pixel;
 use casa_imaging_model::{
     AntennaResponseClass, CompiledProblem, DirectionCoordinateSpec, FiniteValuePolicy,
     SelectedAntennaResponses, SelectedNumericRow, SelectedNumericVisibility,
     SelectedNumericWeights, SkyDirection,
 };
 use casa_imaging_operator::{PlaneRange, RowContext};
-use casa_imaging_reconstruction::direction_world_to_pixel;
 use casa_imaging_runtime::pass::{
     BlockShape, BoundedSource, DomainProjection, NativeBlock, NativeRowHeader, RowAddress,
     SampleContent, SourceError,

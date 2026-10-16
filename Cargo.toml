@@ -26,7 +26,6 @@ members = [
     "crates/casa-imaging-model",
     "crates/casa-imaging-operator",
     "crates/casa-imaging-deconvolution",
-    "crates/casa-imaging-reconstruction",
     "crates/casa-imaging-products",
     "crates/casa-imaging-application",
     "crates/casa-imaging-runtime",
@@ -89,8 +88,6 @@ opt-level = 3
 [profile.test.package.casa-imaging-operator]
 opt-level = 3
 [profile.test.package.casa-imaging-deconvolution]
-opt-level = 3
-[profile.test.package.casa-imaging-reconstruction]
 opt-level = 3
 [profile.test.package.casa-imaging-products]
 opt-level = 3

@@ -4,8 +4,8 @@
 
 use std::mem::size_of;
 
+use casa_imaging_deconvolution::NormalStateCatalog;
 use casa_imaging_model::{ProductBeamRule, ProductRole, ProductValidityRule, RestoringBeamPolicy};
-use casa_imaging_reconstruction::NormalStateCatalog;
 use num_complex::Complex64;
 
 use crate::{
@@ -414,7 +414,7 @@ fn generic_scratch_bytes(
         // including the scalar-to-complex conversion overlap.
         normal_window = checked_add(
             normal_window,
-            casa_imaging_reconstruction::normal_state_window_residency_bytes(
+            casa_imaging_deconvolution::normal_state_window_residency_bytes(
                 shape,
                 inputs.normal_state().polarization_count(),
                 1,

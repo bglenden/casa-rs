@@ -4,8 +4,8 @@
 
 use std::{borrow::Cow, fmt, io, path::Path, sync::Arc};
 
-use casa_imaging_reconstruction::SpectralOperatorError;
-use casa_imaging_reconstruction::runtime_adapter::{NormalArrayStorage, NormalStorageFactory};
+use casa_imaging_deconvolution::SpectralOperatorError;
+use casa_imaging_deconvolution::runtime_adapter::{NormalArrayStorage, NormalStorageFactory};
 use num_complex::Complex64;
 
 use crate::managed_cube_blocks::{CubeResidency, ManagedPlaneArray};

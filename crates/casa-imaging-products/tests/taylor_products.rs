@@ -10,6 +10,7 @@ use common::observation::source;
 use common::synthetic_pass::{Scene, two_cycle_round};
 use common::{GeneratedMember, GeneratedProducts, ImageOutput, full_window};
 
+use casa_imaging_deconvolution::MajorCycleCompletion;
 use casa_imaging_model::{
     AxisOrder, CentreLaws, DeclaredInnerProducts, DirectionCoordinateSpec, DirectionFrame,
     DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis,
@@ -32,7 +33,6 @@ use casa_imaging_products::{
     PlannedContinuumGeneration, ProductsError, fft_convolve, gaussian_beam_image,
     produce_continuum_members,
 };
-use casa_imaging_reconstruction::MajorCycleCompletion;
 
 const SHAPE: [usize; 2] = [8, 8];
 const TERMS: usize = 2;

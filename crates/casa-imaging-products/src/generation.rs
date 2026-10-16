@@ -5,10 +5,10 @@
 
 use std::ops::Range;
 
+use casa_imaging_deconvolution::{NormalStateCatalog, SpectralChannelValidity};
 use casa_imaging_model::{
     ProductPixelMask, ProductRole, ProductTerm, ProductValidityRule, RestoringBeamPolicy,
 };
-use casa_imaging_reconstruction::{NormalStateCatalog, SpectralChannelValidity};
 
 use crate::beam::{RestoringBeam, fit_restoring_beam};
 use crate::error::ProductsError;

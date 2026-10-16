@@ -12,9 +12,9 @@
 //! held at one channel and 522,792 at 512 against 21,184 admitted at
 //! every count). A global allocator applies to this test binary alone.
 
-#[path = "../../casa-imaging-reconstruction/tests/support/problems.rs"]
+#[path = "../../casa-imaging-deconvolution/tests/support/problems.rs"]
 mod problems;
-#[path = "../../casa-imaging-reconstruction/tests/support/synthetic_pass.rs"]
+#[path = "../../casa-imaging-deconvolution/tests/support/synthetic_pass.rs"]
 mod synthetic_pass;
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -22,11 +22,11 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
 use casa_imaging_deconvolution::CycleControls;
+use casa_imaging_deconvolution::{
+    ImageDomainReconstructionMaskPlans, MajorCycle, ReconstructionMaskPlan,
+};
 use casa_imaging_model::{
     HogbomIterationAccounting, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionControls,
-};
-use casa_imaging_reconstruction::{
-    ImageDomainReconstructionMaskPlans, MajorCycle, ReconstructionMaskPlan,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{

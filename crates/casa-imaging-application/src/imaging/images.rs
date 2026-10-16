@@ -2,12 +2,12 @@
 //! Conversions between the operator's images and the reconstruction's
 //! normal-state and model representations.
 
+use casa_imaging_deconvolution::{ModelGeneration, PassImages};
 use casa_imaging_model::ModelSupport;
 use casa_imaging_operator::{
     Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, PlaneRange,
     PreparedModelGrids,
 };
-use casa_imaging_reconstruction::{ModelGeneration, PassImages};
 use ndarray::Array2;
 
 use super::ImagingError;

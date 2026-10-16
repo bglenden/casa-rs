@@ -19,7 +19,6 @@ casa-imaging-deconvolution = { path = "../casa-imaging-deconvolution" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-operator = { path = "../casa-imaging-operator" }
 casa-imaging-products = { path = "../casa-imaging-products" }
-casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
 casa-imaging-runtime = { path = "../casa-imaging-runtime" }
 casa-ms = { path = "../casa-ms" }
 casa-types = { path = "../casa-types" }

@@ -6,21 +6,21 @@
 //! task publishes, and results independent of the worker count. The
 //! problems and passes are the reconstruction tests' shared fixtures.
 
-#[path = "../../casa-imaging-reconstruction/tests/support/problems.rs"]
+#[path = "../../casa-imaging-deconvolution/tests/support/problems.rs"]
 mod problems;
-#[path = "../../casa-imaging-reconstruction/tests/support/synthetic_pass.rs"]
+#[path = "../../casa-imaging-deconvolution/tests/support/synthetic_pass.rs"]
 mod synthetic_pass;
 
 use casa_imaging_deconvolution::CycleControls;
+use casa_imaging_deconvolution::{
+    ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, PassImages,
+    ReconstructionMaskPlan,
+};
 use casa_imaging_model::{
     CompiledProblem, HogbomIterationAccounting, ProductNormalization, ReconstructionAlgorithm,
     ReconstructionBasis, ReconstructionControls,
 };
 use casa_imaging_products::MinorCycleImageResponse;
-use casa_imaging_reconstruction::{
-    ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, PassImages,
-    ReconstructionMaskPlan,
-};
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{
     HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache, ResourcePolicy,

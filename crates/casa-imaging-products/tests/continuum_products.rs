@@ -16,6 +16,10 @@ use common::continuum::{
 use common::synthetic_pass::{Scene, continue_round, two_cycle_round};
 use common::{GeneratedProducts, ImageOutput, full_window};
 
+use casa_imaging_deconvolution::{
+    ImageDomainReconstructionMaskPlans, MajorCycleCompletion, MaskBox, ReconstructionMask,
+    ReconstructionMaskPlan,
+};
 use casa_imaging_model::{
     CompiledProblem, FacetLayout, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
     ModelCell, ModelDeltaTerm, ModelValue, ProductKind, ProductRole, ReconstructionAlgorithm,
@@ -25,10 +29,6 @@ use casa_imaging_products::{
     AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
     PlannedContinuumGeneration, ProductStoragePlan, ProductsError, gaussian_beam_image,
     produce_continuum_members,
-};
-use casa_imaging_reconstruction::{
-    ImageDomainReconstructionMaskPlans, MajorCycleCompletion, MaskBox, ReconstructionMask,
-    ReconstructionMaskPlan,
 };
 
 /// One fixture round: two major cycles, the initial one over the empty model
@@ -732,8 +732,7 @@ fn generic_generation_demand_charges_exact_owned_arrays() {
         (SHAPE[0]
             * SHAPE[1]
             * (2 * size_of::<f32>() + size_of::<casa_imaging_model::ModelSample>())) as u64
-            + casa_imaging_reconstruction::normal_state_window_residency_bytes(SHAPE, 1, 1)
-                .unwrap()
+            + casa_imaging_deconvolution::normal_state_window_residency_bytes(SHAPE, 1, 1).unwrap()
             + maximum * 5
             + size_of::<Option<casa_imaging_products::ProductWindow>>() as u64,
         "generic normalization overlaps input windows, its converted plane/result, and one output window"

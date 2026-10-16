@@ -4,10 +4,10 @@
 
 use std::{fmt, io, path::Path, sync::Arc};
 
-use casa_imaging_model::{ModelSample, ModelSupport, ModelValue, NumericPrecision};
-use casa_imaging_reconstruction::{
+use casa_imaging_deconvolution::{
     ModelLifecycleError, ModelSampleStorage, ModelSampleUpdate, ModelStorageFactory,
 };
+use casa_imaging_model::{ModelSample, ModelSupport, ModelValue, NumericPrecision};
 
 use crate::managed_cube_blocks::{CubeResidency, ManagedPlaneArray};
 

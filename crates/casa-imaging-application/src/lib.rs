@@ -32,6 +32,7 @@ pub use request::{
 
 use std::{error::Error, fmt, io, path::PathBuf, sync::Arc};
 
+use casa_imaging_deconvolution::MajorCycleCompletion;
 use casa_imaging_model::{
     CompileProblemError, CompiledProblem, ObservationSelection, ProblemInput,
     SpectralWindowSelection, compile, compile_observation,
@@ -40,7 +41,6 @@ use casa_imaging_products::{
     ContinuumProductControls, PlannedContinuumGeneration, PublishedContinuumGeneration,
     VisibilityProductCompletion,
 };
-use casa_imaging_reconstruction::MajorCycleCompletion;
 use casa_imaging_runtime::run_phase;
 use casa_ms::resolve_selected_observation;
 use native::NativeInput;
@@ -210,7 +210,7 @@ pub struct NativeMinorCycleOutcome {
     /// Exact x-major reconstruction support used for component placement.
     pub mask_support: Vec<bool>,
     /// Auto-multithreshold diagnostics, when that mask mode generated support.
-    pub auto_mask: Option<casa_imaging_reconstruction::AutoMultithreshEvidence>,
+    pub auto_mask: Option<casa_imaging_deconvolution::AutoMultithreshEvidence>,
 }
 
 /// Stable application spelling of the scientific minor-cycle terminal reason.

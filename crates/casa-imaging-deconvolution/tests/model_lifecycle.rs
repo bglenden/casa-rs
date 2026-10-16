@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_imaging_deconvolution::{
+    MajorCycle, ModelGeneration, ModelLifecycle, ModelLifecycleError, ModelStoragePlan, PassImages,
+    PreparedFinalModel, runtime_adapter::NormalStoragePlan,
+};
 use casa_imaging_model::{
     AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts, DirectionCoordinateSpec,
     DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
@@ -16,10 +20,6 @@ use casa_imaging_model::{
     SpectralSamplingLaw, SpectralWcs, StageErrorBudget, TaylorSupportReference,
     TaylorValidityPolicy, UvwCoordinateLaw, VisibilityInnerProduct, WeightDensityScope,
     WeightingContract, WeightingScheme, compile,
-};
-use casa_imaging_reconstruction::{
-    MajorCycle, ModelGeneration, ModelLifecycle, ModelLifecycleError, ModelStoragePlan, PassImages,
-    PreparedFinalModel, runtime_adapter::NormalStoragePlan,
 };
 
 #[path = "../../casa-imaging-model/tests/common/mod.rs"]
@@ -410,11 +410,11 @@ struct CountedModelStorage {
 #[derive(Debug)]
 struct CountedModelFactory(std::sync::Arc<ModelIoCounts>);
 
-impl casa_imaging_reconstruction::ModelStorageFactory for CountedModelFactory {
+impl casa_imaging_deconvolution::ModelStorageFactory for CountedModelFactory {
     fn create(
         &self,
         count: usize,
-    ) -> Result<Box<dyn casa_imaging_reconstruction::ModelSampleStorage>, ModelLifecycleError> {
+    ) -> Result<Box<dyn casa_imaging_deconvolution::ModelSampleStorage>, ModelLifecycleError> {
         self.0
             .creations
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -425,7 +425,7 @@ impl casa_imaging_reconstruction::ModelStorageFactory for CountedModelFactory {
     }
 }
 
-impl casa_imaging_reconstruction::ModelSampleStorage for CountedModelStorage {
+impl casa_imaging_deconvolution::ModelSampleStorage for CountedModelStorage {
     fn sample_count(&self) -> usize {
         self.samples.read().unwrap().len()
     }
@@ -452,7 +452,7 @@ impl casa_imaging_reconstruction::ModelSampleStorage for CountedModelStorage {
 
     fn apply_updates(
         &self,
-        updates: &[casa_imaging_reconstruction::ModelSampleUpdate],
+        updates: &[casa_imaging_deconvolution::ModelSampleUpdate],
         precision: NumericPrecision,
         bound: f64,
     ) -> Result<f64, ModelLifecycleError> {
@@ -462,7 +462,7 @@ impl casa_imaging_reconstruction::ModelSampleStorage for CountedModelStorage {
             return Err(ModelLifecycleError::Storage("injected read failure".into()));
         }
         self.counts.updated.fetch_add(updates.len(), Relaxed);
-        casa_imaging_reconstruction::ModelSampleStorage::apply_updates(
+        casa_imaging_deconvolution::ModelSampleStorage::apply_updates(
             &self.samples,
             updates,
             precision,

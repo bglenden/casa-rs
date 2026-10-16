@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
 
-//! Image-domain deconvolution: the minor-cycle driver, the CLEAN controller
-//! and the solvers.
+//! Image-domain reconstruction: the state a run reconstructs from and into,
+//! and the minor cycle that updates it.
 //!
-//! [`run_plane`] runs a [`Solver`] (Högbom, Clark, multiscale, multi-term)
+//! **State.** A major-cycle pass appends its unnormalised images to a
+//! [`MajorCycle`], which pairs them with the final model the pass predicted
+//! and releases both as one [`MajorCycleCompletion`]: the
+//! [`FinalNormalState`] (residual, PSF moments, sensitivity and `sumwt` per
+//! plane, resident or paged) and the [`ModelGeneration`]. A
+//! [`ModelLifecycle`] owns the run's model generations and applies each
+//! minor cycle's sparse update. [`ReconstructionMask`]s, from boxes or
+//! CASA's `auto-multithresh`, bound where the model may change.
+//!
+//! **Minor cycle.** [`run_plane`] runs a [`Solver`] (Högbom, Clark, multiscale, multi-term)
 //! over one plane's [`MinorCycleView`] in steps, under the per-plane rules
 //! of [`PlaneControl`], and returns the plane's model [`Delta`]. The
 //! run-wide rules between major cycles — `niter`, the global threshold with
@@ -18,18 +27,68 @@
 //! `docs/imaging-architecture/imaging-foundation-plan-20261007.md`.
 
 mod beam;
+mod block_normal;
 mod clark;
 mod controller;
 mod driver;
 mod hogbom;
+mod major_cycle;
+mod mask;
+mod model_lifecycle;
+mod model_storage;
 mod multiscale;
+mod normal_values;
 mod patch;
 mod plane;
 mod psf;
 mod refresh;
 mod scales;
 mod solver;
+mod spectral_operator;
 mod taylor;
+
+pub use major_cycle::{
+    FinalNormalDomainState, FinalNormalState, FinalNormalStateCoefficientTerm,
+    FinalNormalStateNormalMoment, FinalNormalStatePlane, FinalNormalStateWindow, MajorCycle,
+    MajorCycleCompletion, MajorCycleError, NormalStateCatalog, PassAppender,
+    normal_state_window_residency_bytes,
+};
+pub use mask::{
+    AutoMaskBeam, AutoMultithreshControls, AutoMultithreshEvidence, ImageDomainMaskMaterialization,
+    ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MaskBox, MaskError,
+    ReconstructionMask, ReconstructionMaskPlan, ReconstructionMaskSet, auto_multithresh,
+    direction_world_to_pixel, reproject_mask_support,
+};
+pub(crate) use model_lifecycle::validate_model_value;
+pub use model_lifecycle::{
+    ModelGeneration, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
+};
+#[doc(hidden)]
+pub use model_storage::{
+    ModelSampleStorage, ModelSampleUpdate, ModelStorageFactory, ModelStoragePlan,
+};
+pub use normal_values::{NormalValues, SensitivityValues};
+pub(crate) use spectral_operator::PassNormalState;
+pub use spectral_operator::normal_storage::FinalNormalPlaneReader;
+pub use spectral_operator::{
+    PassImages, SpectralChannelValidity, SpectralOperatorError, SpectralOperatorPrimitives,
+    SpectralPrimitiveCatalog, SpectralSlabPlan, resident_bytes_per_cell,
+};
+
+/// The normal-state storage seam: `casa-imaging-runtime` implements paged
+/// storage behind it, and a run chooses the storage plan its major cycles
+/// write.
+///
+/// These opaque operations are public only because Rust crates have no friend
+/// visibility.
+#[doc(hidden)]
+pub mod runtime_adapter {
+    pub use crate::spectral_operator::CompleteDataOwnerCompletion;
+    pub use crate::spectral_operator::normal_storage::{
+        CompleteDataNormalState, CompleteDataNormalWindow, NormalArrayStorage,
+        NormalStorageFactory, NormalStoragePlan,
+    };
+}
 
 pub use beam::{
     DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_restoring_beam,

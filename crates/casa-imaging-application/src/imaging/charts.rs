@@ -10,9 +10,9 @@
 
 use std::collections::BTreeMap;
 
+use casa_imaging_deconvolution::PassImages;
 use casa_imaging_model::{CompiledImageDomain, CompiledProblem};
 use casa_imaging_operator::ImageExtent;
-use casa_imaging_reconstruction::PassImages;
 
 use super::ImagingError;
 use super::measurement::image_extent;

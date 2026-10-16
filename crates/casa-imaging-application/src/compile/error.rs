@@ -47,7 +47,7 @@ pub enum PrepareError {
     Measures(#[from] casa_types::measures::MeasureError),
     /// A mask box, mask plan or mask reprojection is invalid.
     #[error(transparent)]
-    Mask(#[from] casa_imaging_reconstruction::MaskError),
+    Mask(#[from] casa_imaging_deconvolution::MaskError),
     /// The image's model-state bounds are invalid (no pixels, planes or
     /// polarizations).
     #[error(transparent)]

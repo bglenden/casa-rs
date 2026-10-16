@@ -68,7 +68,7 @@ pub enum NormalStateCatalog {
 /// shift-invariant. Products are formed from it; it is not one.
 ///
 /// ```compile_fail
-/// use casa_imaging_reconstruction::FinalNormalState;
+/// use casa_imaging_deconvolution::FinalNormalState;
 ///
 /// let _ = FinalNormalState {};
 /// ```
@@ -757,7 +757,7 @@ impl<'a> FinalNormalStatePlane<'a> {
 /// A caller cannot assemble one from parts:
 ///
 /// ```compile_fail
-/// use casa_imaging_reconstruction::MajorCycleCompletion;
+/// use casa_imaging_deconvolution::MajorCycleCompletion;
 ///
 /// let _ = MajorCycleCompletion {};
 /// ```
@@ -810,7 +810,7 @@ impl MajorCycleCompletion {
 /// out of its cycle, for example to exchange two cycles' states:
 ///
 /// ```compile_fail,E0308
-/// use casa_imaging_reconstruction::MajorCycle;
+/// use casa_imaging_deconvolution::MajorCycle;
 ///
 /// fn exchange_states(first: &mut MajorCycle, second: &mut MajorCycle) {
 ///     std::mem::swap(first.parts().1, second.parts().1);

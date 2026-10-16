@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn normal_reconciliation_transfers_owned_storage_without_reading_arrays() {
-    use casa_imaging_reconstruction::runtime_adapter::{NormalArrayStorage, NormalStorageFactory};
+    use casa_imaging_deconvolution::runtime_adapter::{NormalArrayStorage, NormalStorageFactory};
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -82,7 +82,7 @@ fn reconciliation_applies_one_pending_delta_through_the_model_owner() {
     assert_eq!(normal_state.block_count(), BLOCKS);
     assert_eq!(
         normal_state.catalog(),
-        casa_imaging_reconstruction::NormalStateCatalog::UnnormalizedPlaneV1
+        casa_imaging_deconvolution::NormalStateCatalog::UnnormalizedPlaneV1
     );
     // The residual content is model-dependent: a nonzero final model never
     // relabels the data side of the same sky.

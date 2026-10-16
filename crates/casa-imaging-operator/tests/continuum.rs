@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::ContinuumChannelUse;
-use casa_imaging_reconstruction::{
+use casa_imaging_operator::{
     ContinuumFitStatus, ContinuumRowInput, ContinuumSample, fit_and_subtract_continuum,
 };
 use num_complex::Complex64;

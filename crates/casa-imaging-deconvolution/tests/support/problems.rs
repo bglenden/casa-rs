@@ -10,6 +10,7 @@
     reason = "each integration-test crate uses a subset of the shared fixture"
 )]
 
+use casa_imaging_deconvolution::{ModelLifecycle, ModelStoragePlan, PreparedFinalModel};
 use casa_imaging_model::{
     AxisOrder, CentreLaws, CompiledProblem, CorrelationProduct, CorrelationSelection,
     CorrelationType, DataDescriptionSelection, DeclaredInnerProducts, DirectionCoordinateSpec,
@@ -31,7 +32,6 @@ use casa_imaging_model::{
     VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
     WeightingScheme, compile, compile_observation,
 };
-use casa_imaging_reconstruction::{ModelLifecycle, ModelStoragePlan, PreparedFinalModel};
 
 pub fn source(seed: u8) -> ObservationSourceInput {
     ObservationSourceInput::new(

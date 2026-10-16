@@ -23,6 +23,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use casa_imaging_deconvolution::ImageDomainReconstructionMaskPlans;
 use casa_imaging_model::{
     CentreLaws, GeometryInput, ModelBounds, ModelLifecycleRequirements, NativeAwRequestInput,
     NumericPrecision, ProblemSpecification, SequentialContinuumTransform, UvwCoordinateLaw,
@@ -33,7 +34,6 @@ use casa_imaging_products::{
     AnalyticPrimaryBeamModel, CasaImageWriter, ContinuumProductControls, MinorCycleImageResponse,
     PrimaryBeamCentres,
 };
-use casa_imaging_reconstruction::ImageDomainReconstructionMaskPlans;
 use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{
     MeasurementSet, SelectedObservationContentBudget, SelectedObservationEphemeris,

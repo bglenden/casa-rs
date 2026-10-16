@@ -3,12 +3,12 @@
 //! One member's values on one normal-state plane, and where a plane's
 //! values go in a member's storage order.
 
+use casa_imaging_deconvolution::{
+    FinalNormalPlaneReader, ModelGeneration, ReconstructionMask, SpectralChannelValidity,
+};
 use casa_imaging_model::{
     AxisOrder, ImageAxis, ImageDomainRole, ProductAxes, ProductNormalization, ProductRole,
     ProductSupportComparison, ProductValidityRule,
-};
-use casa_imaging_reconstruction::{
-    FinalNormalPlaneReader, ModelGeneration, ReconstructionMask, SpectralChannelValidity,
 };
 
 use crate::beam::RestoringBeam;

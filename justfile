@@ -49,7 +49,6 @@ imaging-t31-multidomain-geometry testdata_root casa_prefix:
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model image_domain_projections_require_canonical_ordinals_and_share_equal_psf_values
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_geometry multi_domain_centres_are_canonical_explicit_and_identity_bearing -- --exact
     CARGO_INCREMENTAL=0 cargo test -p casa-ms reproject_raw_uvw --lib
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --lib minor_cycle
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products --test continuum_products two_domain_members_consume_their_matching_normal_and_model_chart -- --exact
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test continuum_application application_uses_weight_when_selected_weight_spectrum_cells_are_undefined -- --exact
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test continuum_application t31_application_executes_recentered_domains_through_one_scientific_route -- --exact
@@ -65,10 +64,6 @@ imaging-t36-spectral-law:
     CARGO_INCREMENTAL=0 cargo test -p casa-ms --features cpp-interop-tests --test spectral_frame_parity
     CARGO_INCREMENTAL=0 cargo test -p casa-test-support --features cpp-interop-tests --test spectral_frame_exact_interop
     CARGO_INCREMENTAL=0 cargo test -p casa-test-support --features cpp-interop-tests --test frequency_sequence_interop
-
-# Focused #524 CASA/Rust multi-channel clean gate.
-imaging-t38-cube-clean:
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --features cpp-interop-tests --test major_cycle t38_
 
 # Focused #527 moving-source, ephemeris and provider-contract gate.
 imaging-t41-moving-source:
@@ -96,7 +91,6 @@ imaging-t48-heterogeneous-response:
     CARGO_INCREMENTAL=0 cargo test -p casa-ms observation_pointing_interpolates_each_antenna_on_the_shortest_arc -- --nocapture
     CARGO_INCREMENTAL=0 cargo test -p casa-ms polarized_linear_prediction_rotates_with_parallactic_angle -- --nocapture
     CARGO_INCREMENTAL=0 cargo test -p casa-ms t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles -- --nocapture
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction heterogeneous -- --nocapture
 
 # Regenerate and compare the representative #534 2,016,000-sample dirty response with CASA.
 # Mosaic imaging is unavailable from IF-2 until IF-3 (#652), so the imaging step fails typed until then.
@@ -115,7 +109,6 @@ imaging-t42-mtmfs-normal:
     CARGO_INCREMENTAL=0 cargo test -p casa-ms imaging_weight_groups_reject_ambiguous_or_mixed_multi_correlation_layouts
     CARGO_INCREMENTAL=0 cargo test -p casa-ms selected_projection_preserves_cell_flags_and_derives_parallel_hand_group_flags
     CARGO_INCREMENTAL=0 cargo test -p casa-ms refillable_block_stream_matches_scalar_traversal_and_returns_the_owner
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction t42_
 
 # Focused #529 coupled MT-MFS minor-cycle gate. The real-MS frozen-CASA
 # comparison runs through the application in imaging-t44-mtmfs-products.
@@ -124,8 +117,6 @@ imaging-t43-mtmfs-clean:
     CARGO_INCREMENTAL=0 cargo test -p casa-numerics dynamic_casacore_ldlt_matches_fixed_solver
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_problem
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test measurement_equation_contract
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --lib mtmfs_
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --test mtmfs_minor_cycle
 
 # Focused #530 sealed Taylor-product and frozen-CASA publication gate.
 imaging-t44-mtmfs-products testdata_root casa_python casa_prefix:

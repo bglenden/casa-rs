@@ -8,11 +8,11 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use casa_imaging_model::{CompiledProblem, ImageDomainRole, ReconstructionBasis};
-use casa_imaging_reconstruction::{
+use casa_imaging_deconvolution::{
     FinalNormalState, ImageDomainReconstructionMasks, MajorCycleCompletion, ModelGeneration,
     NormalStateCatalog, ReconstructionMask,
 };
+use casa_imaging_model::{CompiledProblem, ImageDomainRole, ReconstructionBasis};
 
 /// Where an analytic primary beam is centred on each image domain: the
 /// pixel position `[x, y]` of every selected field's phase direction.

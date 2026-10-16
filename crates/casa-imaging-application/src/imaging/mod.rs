@@ -16,10 +16,10 @@ pub(crate) use cycle::{ImagingInputs, run};
 pub(crate) use measurement::{row_samples, standard_kernel_set};
 pub(crate) use visibility_write::VisibilityWriteTarget;
 
-use casa_imaging_operator::OperatorError;
-use casa_imaging_reconstruction::{
+use casa_imaging_deconvolution::{
     MajorCycleError, MaskError, ModelLifecycleError, SpectralOperatorError,
 };
+use casa_imaging_operator::OperatorError;
 use casa_imaging_runtime::pass::PassError;
 use casa_imaging_runtime::{Admission, Cancelled, MinorCycleRunError};
 

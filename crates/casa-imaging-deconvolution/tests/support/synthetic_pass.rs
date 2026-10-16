@@ -26,11 +26,11 @@
     reason = "each integration-test crate uses a subset of the shared fixture"
 )]
 
-use casa_imaging_model::{CompiledProblem, ModelSupport, ReconstructionBasis};
-use casa_imaging_reconstruction::{
+use casa_imaging_deconvolution::{
     FinalNormalState, MajorCycle, MajorCycleCompletion, ModelGeneration, PassImages,
     PreparedFinalModel, runtime_adapter::NormalStoragePlan,
 };
+use casa_imaging_model::{CompiledProblem, ModelSupport, ReconstructionBasis};
 
 /// Traversal counts the synthetic pass reports; any positive pair proves
 /// coverage to the major cycle.
