@@ -10181,14 +10181,14 @@
 <a href=#10181 id=10181 data-nosnippet>10181</a>            .iter()
 <a href=#10182 id=10182 data-nosnippet>10182</a>            .find(|argument| argument.id == <span class="string">"backend"</span>)
 <a href=#10183 id=10183 data-nosnippet>10183</a>            .expect(<span class="string">"backend UI argument"</span>);
-<a href=#10184 id=10184 data-nosnippet>10184</a>        <span class="macro">assert_eq!</span>(backend.default.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"cpu"</span>));
+<a href=#10184 id=10184 data-nosnippet>10184</a>        <span class="macro">assert_eq!</span>(backend.default.as_deref(), <span class="prelude-val">Some</span>(<span class="string">"auto"</span>));
 <a href=#10185 id=10185 data-nosnippet>10185</a>        <span class="macro">assert_eq!</span>(
 <a href=#10186 id=10186 data-nosnippet>10186</a>            backend
 <a href=#10187 id=10187 data-nosnippet>10187</a>                .parser
 <a href=#10188 id=10188 data-nosnippet>10188</a>                .choices
 <a href=#10189 id=10189 data-nosnippet>10189</a>                .as_ref()
 <a href=#10190 id=10190 data-nosnippet>10190</a>                .map(|choices| { choices.iter().map(String::as_str).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;() }),
-<a href=#10191 id=10191 data-nosnippet>10191</a>            <span class="prelude-val">Some</span>(<span class="macro">vec!</span>[<span class="string">"cpu"</span>, <span class="string">"metal"</span>])
+<a href=#10191 id=10191 data-nosnippet>10191</a>            <span class="prelude-val">Some</span>(<span class="macro">vec!</span>[<span class="string">"auto"</span>, <span class="string">"cpu"</span>, <span class="string">"gpu"</span>])
 <a href=#10192 id=10192 data-nosnippet>10192</a>        );
 <a href=#10193 id=10193 data-nosnippet>10193</a>    }
 <a href=#10194 id=10194 data-nosnippet>10194</a>

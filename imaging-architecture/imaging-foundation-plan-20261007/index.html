@@ -800,7 +800,13 @@ unless the owner strikes one.</p>
   in the parameter catalog. <code>auto</code> selects f64 for constant and Taylor bases
   on CPU and f32 for channel-local cubes and for Metal. <code>f32</code> halves grid and
   accumulator memory so large problems become tractable on this workstation;
-  the CPU backend supports both precisions for every convolution-function set.</li>
+  the CPU backend supports both precisions for every convolution-function set.
+  <strong>Amended by the owner 2026-10-15 (#659):</strong> <code>auto</code> selects f64 on the CPU
+  for every basis, channel-local cubes included, and f32 on Metal. An f32
+  running sum drifts with the number of samples a grid cell takes: a mosaic
+  cube's weight image, which takes every sample of a channel at the uv
+  origin, missed CASA (which accumulates in double) by 2.6e-3. <code>f32</code> stays a
+  user choice for large problems, and choosing the GPU accepts it.</li>
 <li><strong>D3 AW convolution-function cache.</strong> Replace the private content-addressed
   prepared-artifact store (manifest schema 7, 18 hash domains, eviction
   ledger; about 15k lines across <code>aw_cache.rs</code>, <code>prepared_aw_phase.rs</code>,

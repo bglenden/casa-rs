@@ -1037,6 +1037,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#multitermftnew-forms-taylor-imaging-weights-in-single-precision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MultiTermFTNew forms Taylor imaging weights in single precision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#facets-of-an-image-size-that-does-not-divide" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Facets of an image size that does not divide
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1067,7 +1089,9 @@ CASA behaviours casa-rs does not follow:
 <a href="#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes">odd-size scale convolutions</a>,
 <a href="#matrixcleaners-step-residual-forgets-earlier-steps">MatrixCleaner's step residual</a>,
 <a href="#the-analytic-pb-ignores-a-failed-topixel">an unplaceable PB pointing</a>,
-<a href="#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames">the cube density's two uvw frames</a>.</p>
+<a href="#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames">the cube density's two uvw frames</a>,
+<a href="#multitermftnew-forms-taylor-imaging-weights-in-single-precision">single-precision Taylor weights</a>,
+<a href="#facets-of-an-image-size-that-does-not-divide">facets of an image size that does not divide</a>.</p>
 <h2 id="aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell">AW-projection pairs the partner hand's visibility with the conjugate-baseline cell<a class="headerlink" href="#aw-projection-pairs-the-partner-hands-visibility-with-the-conjugate-baseline-cell" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-09</li>
@@ -1367,6 +1391,38 @@ rule at the MeasurementSet uvw, as <code>VisImagingWeight</code> does
 (<code>the_standard_density_bins_the_measurement_set_uvw</code>). Cubes imaged at their
 own field centre agree with CASA either way; off-centre and multi-field cubes
 under a density weighting differ from CASA's weights by this mechanism.</p>
+<h2 id="multitermftnew-forms-taylor-imaging-weights-in-single-precision">MultiTermFTNew forms Taylor imaging weights in single precision<a class="headerlink" href="#multitermftnew-forms-taylor-imaging-weights-in-single-precision" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-11; metric approved 2026-10-15</li>
+<li>Status: CASA rounding; casa-rs does not follow it (#690)</li>
+<li>Affected code: <code>synthesis/TransformMachines2/MultiTermFTNew.cc</code>
+  (<code>modifyVisWeights</code>, <code>modifyModelVis</code>)</li>
+</ul>
+<p><code>modifyVisWeights</code> holds each channel frequency and the Taylor variable
+<code>(ν − ν₀) / ν₀</code> in <code>Float</code>, and multiplies the <code>Float</code> imaging weights by its
+powers. The odd moments of <code>.sumwt</code> are sums that nearly cancel (two channels
+at x ≈ ±1/3 leave Σw·x ≈ −0.05 of Σ|w·x| ≈ 8·10⁴), so this rounding shows as
+a 1 % relative difference in <code>.sumwt.tt1</code> on <code>refim_twopoints_twochan</code>. An
+emulation of both codes' arithmetic reproduces both published values to
+every stored digit; casa-rs, which rounds the Taylor variable to <code>f32</code> once
+and accumulates in <code>f64</code>, is 0.06 % from the exact sum, CASA 0.93 %. No image
+reads the odd moments' sums.</p>
+<p>casa-rs keeps its arithmetic. The T1.5 comparison judges an odd moment <code>k</code> by
+|Δ| / √(tt_{k−1} · tt_{k+1}) and every other <code>.sumwt</code> by its relative
+difference, both against 1e-6, and leaves <code>.sumwt</code> out of a case's image
+NRMS. The narrow-band mosaic MT-MFS rows (three channels at 340 GHz) still
+miss that bound at about 5e-6 and are listed exceptions until an emulation
+confirms the same mechanism there and in the odd-moment weight images.</p>
+<h2 id="facets-of-an-image-size-that-does-not-divide">Facets of an image size that does not divide<a class="headerlink" href="#facets-of-an-image-size-that-does-not-divide" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-15</li>
+<li>Status: CASA behaviour casa-rs does not follow (#664)</li>
+<li>Affected code: <code>synthesis/ImagerObjects/SIImageStore.cc</code> (<code>makeSubImage</code>)</li>
+</ul>
+<p>A facet of an <code>n</code>-pixel image split <code>N</code> ways is <code>n / N</code> pixels (integer
+division) from <code>facet · (n / N)</code>, so when <code>N</code> does not divide <code>n</code> the top and
+right remainder strips belong to no facet: CASA grids and cleans nothing
+there, silently. casa-rs refuses such a layout (<code>NonDivisibleFacetLayout</code>).</p>
 
 
 

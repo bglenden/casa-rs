@@ -1451,9 +1451,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 388</li>
+<li>Concepts: 389</li>
 <li>Surfaces: 29 (27 task, 2 session)</li>
-<li>Surface bindings: 559</li>
+<li>Surface bindings: 560</li>
 </ul>
 <table>
 <thead>
@@ -1494,9 +1494,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-imager">Imager</a><br><code>imager</code></td>
 <td>task</td>
-<td style="text-align: right;">21</td>
+<td style="text-align: right;">24</td>
 <td><code>imager</code></td>
-<td style="text-align: right;">80</td>
+<td style="text-align: right;">81</td>
 <td>Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</td>
 </tr>
 <tr>
@@ -2806,7 +2806,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="imager-imager">Imager (<code>imager</code>)<a class="headerlink" href="#imager-imager" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>21</code></li>
+<li>Contract version: <code>24</code></li>
 <li>Category: Imaging</li>
 <li>Provider family: <code>imager</code></li>
 <li>Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</li>
@@ -3280,6 +3280,14 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td>CASA tclean gridder family</td>
 </tr>
 <tr>
+<td><code>facets</code></td>
+<td><code>parameter.facets@r3</code></td>
+<td><code>integer</code></td>
+<td><code>1</code>; optional</td>
+<td>Stages</td>
+<td>Number of wide-field image facets<br><em>Surface:</em> The standard gridder with a constant-basis MFS image; other spectral bases fail closed.</td>
+</tr>
+<tr>
 <td><code>parallel</code></td>
 <td><code>parameter.parallel@r2</code></td>
 <td><code>bool</code></td>
@@ -3425,15 +3433,15 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>backend</code></td>
-<td><code>parameter.backend@r1</code></td>
-<td><code>choice (2 values)</code></td>
-<td><code>"cpu"</code>; optional</td>
+<td><code>parameter.backend@r2</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>"auto"</code>; optional</td>
 <td>Stages</td>
-<td>Gridding backend of the major-cycle passes: cpu, or metal on macOS</td>
+<td>Device the major-cycle passes grid on: auto, cpu or gpu</td>
 </tr>
 <tr>
 <td><code>gridprecision</code></td>
-<td><code>parameter.gridprecision@r1</code></td>
+<td><code>parameter.gridprecision@r2</code></td>
 <td><code>choice (3 values)</code></td>
 <td><code>"auto"</code>; optional</td>
 <td>Stages</td>

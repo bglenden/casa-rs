@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Unsupported"],"fn":["check"],"struct":["ImplementationUnavailable"]};
+window.SIDEBAR_ITEMS = {"enum":["Unsupported"],"fn":["check","resolve_backend"],"struct":["ImplementationUnavailable"]};
