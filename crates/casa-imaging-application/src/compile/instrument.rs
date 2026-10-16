@@ -98,7 +98,7 @@ pub(super) fn scientific_instrument_model(
             InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
             |diameter| (diameter - 12.0).abs() < 0.5 || (diameter - 7.0).abs() < 1.0,
         ),
-        Gridder::Standard | Gridder::Wproject { .. } => return Ok(None),
+        Gridder::Standard { .. } | Gridder::Wproject { .. } => return Ok(None),
     };
     let telescopes = telescopes(ms)?;
     let supported = !telescopes.is_empty()
@@ -156,7 +156,9 @@ pub(super) fn pointing_centre_law(gridder: &Gridder) -> PointingCentreLaw {
             MissingPointingPolicy::Reject,
         )),
         Gridder::Awproject(_) | Gridder::Mosaic { .. } => PointingCentreLaw::FieldCentre,
-        Gridder::Standard | Gridder::Wproject { .. } => PointingCentreLaw::PhaseTrackingCentre,
+        Gridder::Standard { .. } | Gridder::Wproject { .. } => {
+            PointingCentreLaw::PhaseTrackingCentre
+        }
     }
 }
 
@@ -205,7 +207,9 @@ mod tests {
             normtype: ProductNormalization::FlatNoise,
         };
         assert!(matches!(
-            pointing_centre_law(&Gridder::Standard),
+            pointing_centre_law(&Gridder::Standard {
+                facets: std::num::NonZeroUsize::MIN
+            }),
             PointingCentreLaw::PhaseTrackingCentre
         ));
         assert!(matches!(

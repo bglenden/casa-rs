@@ -375,6 +375,60 @@ fn a_cube_channel_divides_by_its_own_published_sum_of_weights() {
     }
 }
 
+/// A mosaic cube keeps each channel's gridded weight image (#672, #659).
+/// Under flat noise a channel's residual `R` normalises to `R / W` for a
+/// constant weight image `W` (`(R / s) / (√(W / s) · √(W / s))`), so the
+/// same point at sum weights 8 and 4 under weight images 16 and 36 cleans as
+/// 8/16 and 4/36 Jy. Channel 0's image read for both channels would give
+/// 4/16 Jy for channel 1, and each plane's sum weight alone 1 Jy for both.
+#[test]
+fn a_mosaic_cube_normalises_each_channel_by_its_own_weight_image() {
+    let problem = problem(
+        8,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Hogbom,
+    );
+    let scene = Scene::new(&problem);
+    let psf = scene.unit_psf();
+    let (sums, weights) = ([8.0, 4.0], [16.0_f32, 36.0]);
+    let completion = completion(&problem, &scene, |images| {
+        let planes = sums
+            .iter()
+            .flat_map(|&sum| psf.iter().map(move |value| (sum * value) as f32))
+            .collect::<Vec<_>>();
+        images.sum_weights = sums.to_vec();
+        images.published_sum_weights = sums.to_vec();
+        images.weight = Some(
+            weights
+                .iter()
+                .flat_map(|&weight| std::iter::repeat_n(weight, psf.len()))
+                .collect(),
+        );
+        images.residual.clone_from(&planes);
+        images.psf = Some(planes);
+    });
+    let response =
+        MinorCycleImageResponse::new(ProductNormalization::FlatNoise, validity().primary_beam())
+            .expect("response");
+    let (peak, outcome) = minor_cycle(
+        &problem,
+        &completion,
+        &setup(&problem, Some(response)),
+        &controls(1, 1.0),
+        1,
+    );
+    assert!((peak - 0.5).abs() < 1e-6, "{peak}");
+    let increments = increments(&outcome);
+    assert_eq!(increments.len(), 2, "{increments:?}");
+    for (channel, value) in increments {
+        let expected = sums[channel] / f64::from(weights[channel]);
+        assert!(
+            (value - expected).abs() < 1e-6,
+            "channel {channel}: {value}, expected {expected}"
+        );
+    }
+}
+
 /// A channel no sample reached (CASA's `test_cube_flagged_mosaic_hogbom`)
 /// is skipped; the other channels still clean with their own weights.
 #[test]

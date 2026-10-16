@@ -3,6 +3,7 @@
 //! from the compiled problem, the MeasurementSet as a bounded source, and
 //! the loop of major and minor cycles (plan section 5.4).
 
+mod charts;
 mod continuum;
 mod cycle;
 mod images;

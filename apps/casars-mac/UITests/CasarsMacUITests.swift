@@ -2324,7 +2324,7 @@ final class CasarsMacUITests: XCTestCase {
         format = 1
         surface = "imager"
         kind = "task"
-        contract = 21
+        contract = 23
 
         [parameters]
         vis = "data/science.bin"

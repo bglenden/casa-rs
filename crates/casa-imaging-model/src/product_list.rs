@@ -912,7 +912,16 @@ fn product_axes(
 ) -> ProductAxes {
     let direction_pixels = match kind {
         ProductAxisKind::SkyImage => domain.shape().pixels(),
-        ProductAxisKind::PlaneState => [1, 1],
+        // One value per facet: CASA's `.sumwt` of N×N facets is N×N
+        // (`SIImageStore` reads `itsNFacets` back from its shape).
+        ProductAxisKind::PlaneState => {
+            let columns = domain
+                .facets()
+                .iter()
+                .filter(|facet| facet.origin()[1] == 0)
+                .count();
+            [columns, domain.facets().len() / columns]
+        }
         ProductAxisKind::Metadata => [0, 0],
     };
     let polarization = reconstruction.polarization().coordinates();

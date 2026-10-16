@@ -64,6 +64,7 @@ imaging-t36-spectral-law:
     CARGO_INCREMENTAL=0 cargo test -p casa-ms real_ms_cubedata_traversal_reports_source_backed_native_evaluations
     CARGO_INCREMENTAL=0 cargo test -p casa-ms --features cpp-interop-tests --test spectral_frame_parity
     CARGO_INCREMENTAL=0 cargo test -p casa-test-support --features cpp-interop-tests --test spectral_frame_exact_interop
+    CARGO_INCREMENTAL=0 cargo test -p casa-test-support --features cpp-interop-tests --test frequency_sequence_interop
 
 # Focused #524 CASA/Rust multi-channel clean gate.
 imaging-t38-cube-clean:

@@ -945,6 +945,46 @@ int measures_shim_frequency_convert_via_reset_frame(
     }
 }
 
+// MSUtil::getFreqRangeInSpw's whole loop: ONE converter whose shared frame
+// is reset to each epoch in turn, converting every frequency at each. The
+// converter's Aberration (and the dUT1 lookup) are anchored at the first
+// conversion and extrapolated within 0.04 days, so the result depends on the
+// order of the epochs. freq_out is epoch-major: freq_out[e * n_freq + f].
+int measures_shim_frequency_convert_sequence(
+    const double* freq_hz, int n_freq, const char* ref_in, const char* ref_out,
+    const double* epoch_mjd, int n_epoch,
+    double dir_lon, double dir_lat, const char* dir_ref,
+    double obs_lon, double obs_lat, double obs_h,
+    double* freq_out)
+{
+    try {
+        if (n_freq < 1 || n_epoch < 1) {
+            return -2;
+        }
+        auto tp_in = parse_frequency_ref(ref_in);
+        auto tp_out = parse_frequency_ref(ref_out);
+        auto tp_dir = parse_direction_ref(dir_ref);
+        MDirection dir(MVDirection(Quantity(dir_lon, "rad"), Quantity(dir_lat, "rad")),
+                       tp_dir);
+        MPosition obs(
+            MVPosition(Quantity(obs_h, "m"), Quantity(obs_lon, "rad"), Quantity(obs_lat, "rad")),
+            MPosition::WGS84);
+        MeasFrame frame(MEpoch(MVEpoch(epoch_mjd[0]), MEpoch::UTC), obs, dir);
+        MFrequency::Convert converter(tp_in, MFrequency::Ref(tp_out, frame));
+        for (int e = 0; e < n_epoch; ++e) {
+            frame.resetEpoch(MEpoch(MVEpoch(epoch_mjd[e]), MEpoch::UTC));
+            frame.resetDirection(dir);
+            for (int f = 0; f < n_freq; ++f) {
+                freq_out[e * n_freq + f] =
+                    converter(Quantity(freq_hz[f], "Hz")).get("Hz").getValue();
+            }
+        }
+        return 0;
+    } catch (...) {
+        return -1;
+    }
+}
+
 int measures_shim_frequency_convert_between_frames(
     double freq_hz, const char* ref_in, const char* ref_out,
     double src_dir_lon, double src_dir_lat, const char* src_dir_ref,

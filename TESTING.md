@@ -121,9 +121,9 @@ metadata in both byte orders.
 `tools/perf/imager/test_bench_cli.py` checks the
 benchmark command against a current release imager before opening a dataset.
 The representative workload is `issue607-standard-cube-dirty-representative`.
-The W and mosaic cube workloads (`t53-w-cube-shared-phase-representative`,
-`t53-mosaic-cube-alma-representative`) are unavailable until IF-3; the W one
-uses the immutable-source copy produced by
+The W and mosaic cube workloads are `t53-w-cube-shared-phase-representative`
+and `t53-mosaic-cube-alma-representative` (cube AW stays refused, #719). The
+W one uses the immutable-source copy produced by
 `tools/perf/imager/stage_t53_shared_phase.py` with CASA Python, which
 preserves the original IncrementalStMan UVW layout and values.
 Current native-AW Taylor evidence may be reused only after checking code and

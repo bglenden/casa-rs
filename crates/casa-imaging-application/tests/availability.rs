@@ -156,7 +156,15 @@ fn aw_projection_runs_on_the_cpu_pass() {
         .expect("AW contract"),
     );
     fixture.products.push(ProductKind::Weight);
+    let cube = ProblemFixture {
+        basis: ReconstructionBasis::ChannelLocal { channels: 1 },
+        measurement_equation: fixture.measurement_equation,
+        products: fixture.products.clone(),
+        ..ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1)
+    };
     on_cpu(&fixture.compile()).expect("AW projection runs with its catalog and weight image");
+    // An AW cube's per-plane weights wait for a CASA comparison (#719).
+    assert_exactly_unsupported(on_cpu(&cube.compile()), [Unsupported::CubeAwProjection]);
 }
 
 #[test]
@@ -205,20 +213,41 @@ fn metal_needs_a_device_single_precision_and_the_standard_kernel_set() {
     .expect("the CPU grids in either precision");
 }
 
+/// Facets (#664) run with the standard kernel set and a constant basis, on
+/// the CPU and on Metal; a Taylor basis or a W, mosaic or AW set is refused,
+/// each with its own reason.
 #[test]
-fn faceted_geometry_rejects_without_a_pass_implementation() {
-    let problem = ProblemFixture {
+fn facets_run_with_the_standard_set_and_a_constant_basis() {
+    let faceted = || ProblemFixture {
         facets: FacetLayout::Regular {
             columns: 2,
             rows: 2,
         },
         ..ProblemFixture::standard()
+    };
+    let problem = faceted().compile();
+    assert!(
+        problem
+            .required_capabilities()
+            .contains(&RequiredCapability::FacetedGeometry)
+    );
+    on_cpu(&problem).expect("standard facets on the CPU");
+    check(&problem, BackendChoice::Metal, None, &host(true)).expect("standard facets on Metal");
+    let taylor = ProblemFixture {
+        basis: ReconstructionBasis::Taylor { terms: 2 },
+        algorithm: ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+        ..faceted()
     }
     .compile();
-    assert_exactly_unsupported(
-        on_cpu(&problem),
-        [Unsupported::Capability(RequiredCapability::FacetedGeometry)],
-    );
+    assert_exactly_unsupported(on_cpu(&taylor), [Unsupported::FacetedBasis]);
+    let mut w = faceted();
+    w.measurement_equation = w
+        .measurement_equation
+        .with_w_projection(WProjectionContract::new(100.0, None).expect("W contract"));
+    assert_exactly_unsupported(on_cpu(&w.compile()), [Unsupported::FacetedKernelSet]);
 }
 
 /// One compiled-problem fixture; [`ProblemFixture::standard`] is a dirty

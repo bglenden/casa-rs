@@ -7936,7 +7936,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 21,
+      "contract_version": 23,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -10962,6 +10962,61 @@
           "reviewed_homonym": null
         },
         {
+          "name": "facets",
+          "concept": {
+            "id": "parameter.facets",
+            "semantic_revision": 3
+          },
+          "order": 62,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 1
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "equals",
+            "parameter": "gridder",
+            "value": {
+              "kind": "string",
+              "value": "standard"
+            }
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": "The standard gridder with a constant-basis MFS image; other spectral bases fail closed.",
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--facets"
+              ],
+              "false_flags": [],
+              "metavar": "N"
+            },
+            "provider": {
+              "field": "facets",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "facets",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Facets",
+              "group": "Stages",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
           "name": "backend",
           "concept": {
             "id": "parameter.backend",
@@ -11994,7 +12049,7 @@
           "name": "gridprecision",
           "concept": {
             "id": "parameter.gridprecision",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 103,
           "default": {

@@ -141,6 +141,38 @@ fn standard_mfs_clark_recovers_the_analytic_sky() {
     assert_recovers_the_point("standard-mfs-clark", controls("clark"));
 }
 
+/// Faceted imaging (#664): the same sky as two-by-two facets, each gridded
+/// about its own centre. The point and the Gaussian, each in its own facet
+/// away from the seams, are recovered as in the unfaceted run; `.sumwt` is
+/// CASA's `[2, 2]`, each facet carrying facet 0's sum; the PSF is facet 0's,
+/// peaking at one at the image centre (`setPsfFromOneFacet`).
+#[test]
+fn standard_mfs_facets_recover_the_analytic_sky() {
+    let mut faceted = controls("hogbom");
+    faceted["facets"] = json!(2);
+    let (observation, _, products) = assert_recovers_the_point("standard-mfs-facets", faceted);
+    let sumwt = products.get(".sumwt");
+    assert_eq!(&sumwt.image.shape()[..2], &[2, 2]);
+    assert!(
+        sumwt
+            .channel_values()
+            .iter()
+            .all(|value| f64::from(*value) == observation.stokes_i_samples() as f64),
+        "every facet's .sumwt counts the Stokes I samples: {:?}",
+        sumwt.channel_values()
+    );
+    let centre = component_pixel(Component {
+        offset_px: [0, 0],
+        ..POINT
+    });
+    let psf = &products.get(".psf").pixels;
+    assert!(
+        (psf[centre] - 1.0).abs() < 1.0e-6,
+        "PSF at the image centre {}",
+        psf[centre]
+    );
+}
+
 #[test]
 fn standard_mfs_multiscale_recovers_the_extended_flux() {
     let mut multiscale = controls("multiscale");

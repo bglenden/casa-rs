@@ -366,9 +366,6 @@ pub enum PrepareError {
     /// The image is too large to address its model samples.
     #[error("the image's model samples exceed addressable memory")]
     ImageSize,
-    /// The selected spectral envelope leaves no room in the row budget.
-    #[error("selected spectral envelope exhausts the row traversal budget")]
-    SpectralEnvelopeBudget,
     /// A mask image could not be read.
     #[error(transparent)]
     MaskImage(#[from] casa_images::ImageError),

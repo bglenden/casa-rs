@@ -1,0 +1,299 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! The MFS spectral envelope reducer holds at most what it charges
+//! ([`SelectedObservationSpectralEnvelopeReducer::retained_bytes`]), through
+//! `observe` and `finish`, and what it charges follows the selection's
+//! distinct `TIME·(DATA_DESC_ID+1)` keys, not MAIN's rows (#722).
+//!
+//! This binary's global allocator counts the live heap. The rows are read
+//! into memory and one reduction is run unmeasured first, so the walk's
+//! buffers, the table-read cache and the frame engine's Measures caches
+//! are live before the baseline is taken.
+
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use casa_ms::derived::engine::MsCalEngine;
+use casa_ms::{
+    MeasurementSet, MsSelectionIoBudget, SPECTRAL_ENVELOPE_KEY_BYTES, SelectedObservationRow,
+    SelectedObservationSpectralWindow, SyntheticObservationRequest, SyntheticSpectralSetup,
+    generate_synthetic_observation_ms, tutorial_vla_a_antennas,
+};
+use casa_types::measures::frequency::FrequencyRef;
+
+#[global_allocator]
+static HEAP: CountingHeap = CountingHeap;
+
+/// The system allocator, counting live bytes and their largest value.
+struct CountingHeap;
+
+static LIVE: AtomicU64 = AtomicU64::new(0);
+static PEAK: AtomicU64 = AtomicU64::new(0);
+
+fn grow(bytes: u64) {
+    let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
+    PEAK.fetch_max(live, Ordering::Relaxed);
+}
+
+// SAFETY: forwards to `System` with the caller's arguments and adds atomic
+// bookkeeping only.
+unsafe impl GlobalAlloc for CountingHeap {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: the caller's contract for `alloc`.
+        let pointer = unsafe { System.alloc(layout) };
+        if !pointer.is_null() {
+            grow(layout.size() as u64);
+        }
+        pointer
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: the caller's contract for `alloc_zeroed`.
+        let pointer = unsafe { System.alloc_zeroed(layout) };
+        if !pointer.is_null() {
+            grow(layout.size() as u64);
+        }
+        pointer
+    }
+
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        // SAFETY: the caller's contract for `dealloc`.
+        unsafe { System.dealloc(pointer, layout) };
+        LIVE.fetch_sub(layout.size() as u64, Ordering::Relaxed);
+    }
+
+    unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        let (old, new) = (layout.size() as u64, new_size as u64);
+        // SAFETY: the caller's contract for `realloc`.
+        let moved = unsafe { System.realloc(pointer, layout, new_size) };
+        if !moved.is_null() {
+            if moved != pointer {
+                // Old and new were held at once while the block moved.
+                PEAK.fetch_max(LIVE.load(Ordering::Relaxed) + new, Ordering::Relaxed);
+            }
+            if new >= old {
+                grow(new - old);
+            } else {
+                LIVE.fetch_sub(old - new, Ordering::Relaxed);
+            }
+        }
+        moved
+    }
+}
+
+/// A track of `integrations` one-second integrations over `antennas` in
+/// two spectral windows, so two data descriptions: `antennas·(antennas−1)/2`
+/// rows per integration and data description, two keys per integration.
+fn track(root: &Path, antennas: usize, integrations: usize) -> PathBuf {
+    let measurement_set = root.join(format!("envelope-{antennas}-{integrations}.ms"));
+    let mut request = SyntheticObservationRequest::vla_ppdisk(
+        root.join("unused.fits"),
+        &measurement_set,
+        tutorial_vla_a_antennas()
+            .into_iter()
+            .take(antennas)
+            .collect(),
+    );
+    request.duration_seconds = integrations as f64;
+    request.integration_seconds = 1.0;
+    request.predict_model = false;
+    request.allow_below_elevation_limit = true;
+    request.spectral_windows = [44.0e9, 45.0e9]
+        .map(|start_frequency_hz| SyntheticSpectralSetup {
+            name: format!("{start_frequency_hz}"),
+            start_frequency_hz,
+            channel_width_hz: 1.0e6,
+            channel_count: 1,
+        })
+        .to_vec();
+    generate_synthetic_observation_ms(&request).expect("synthesise the envelope MS");
+    measurement_set
+}
+
+/// Every selected row of both data descriptions, read into memory.
+fn rows(ms: &MeasurementSet) -> Vec<SelectedObservationRow> {
+    let selection = ms
+        .selected_observation_row_selection(&[0, 1], None, None, None)
+        .expect("selection");
+    let mut rows = Vec::with_capacity(ms.row_count());
+    ms.visit_selected_observation_rows(
+        &selection,
+        MsSelectionIoBudget {
+            available_bytes: 4 << 20,
+            maximum_live_blocks: 2,
+            requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
+            storage_alignment_rows: None,
+        },
+        |row| rows.push(row),
+    )
+    .expect("walk the rows");
+    rows
+}
+
+/// The window edges of both spectral windows.
+struct Windows {
+    frequencies_hz: Vec<Vec<f64>>,
+    widths_hz: Vec<Vec<f64>>,
+    channels: Vec<usize>,
+}
+
+impl Windows {
+    fn read(ms: &MeasurementSet) -> Self {
+        let window = ms.spectral_window().expect("SPECTRAL_WINDOW");
+        Self {
+            frequencies_hz: (0..2)
+                .map(|spw| window.chan_freq(spw).expect("CHAN_FREQ"))
+                .collect(),
+            widths_hz: (0..2)
+                .map(|spw| window.chan_width(spw).expect("CHAN_WIDTH"))
+                .collect(),
+            channels: vec![0],
+        }
+    }
+
+    fn borrowed(&self) -> [SelectedObservationSpectralWindow<'_>; 2] {
+        [0, 1].map(|spw| {
+            SelectedObservationSpectralWindow::borrow_selected(
+                spw as u32,
+                FrequencyRef::TOPO,
+                &self.frequencies_hz[spw],
+                &self.widths_hz[spw],
+                &self.channels,
+            )
+        })
+    }
+}
+
+/// Reduce `rows` under `available` bytes: the envelope, or the reducer's
+/// refusal, with the most it charged.
+fn reduce(
+    ms: &MeasurementSet,
+    engine: &MsCalEngine,
+    windows: &Windows,
+    rows: &[SelectedObservationRow],
+    available: usize,
+) -> (Result<[f64; 2], String>, usize) {
+    let selection = ms
+        .selected_observation_row_selection(&[0, 1], None, None, None)
+        .expect("selection");
+    let mut reducer = match ms.selected_observation_spectral_envelope_reducer(
+        &selection,
+        windows.borrowed(),
+        FrequencyRef::LSRK,
+        engine,
+        available,
+    ) {
+        Ok(reducer) => reducer,
+        Err(error) => return (Err(error.to_string()), 0),
+    };
+    for row in rows {
+        if let Err(error) = reducer.observe(*row) {
+            return (Err(error.to_string()), reducer.retained_bytes());
+        }
+    }
+    let charged = reducer.retained_bytes();
+    (
+        reducer
+            .finish()
+            .map(|envelope| envelope.edges_hz())
+            .map_err(|error| error.to_string()),
+        charged,
+    )
+}
+
+/// The distinct `TIME·(DATA_DESC_ID+1)` keys of `rows`.
+fn distinct_keys(rows: &[SelectedObservationRow]) -> usize {
+    rows.iter()
+        .map(|row| {
+            (row.time_mjd_seconds() * (f64::from(row.data_description_id()) + 1.0)).to_bits()
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+}
+
+/// `rows` in a fixed scrambled order, so the map's nodes split as they do
+/// for rows that do not arrive in key order.
+fn scrambled(rows: &[SelectedObservationRow]) -> Vec<SelectedObservationRow> {
+    let mut order = (0..rows.len()).collect::<Vec<_>>();
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+    for index in (1..order.len()).rev() {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        order.swap(index, (state >> 33) as usize % (index + 1));
+    }
+    order.into_iter().map(|index| rows[index]).collect()
+}
+
+/// Many distinct keys, with every key's rows repeated non-consecutively in
+/// the scrambled order: the live heap of `observe` and `finish` stays
+/// within the reducer's charge, which is its fixed part and
+/// [`SPECTRAL_ENVELOPE_KEY_BYTES`] per key.
+#[test]
+fn observe_and_finish_hold_at_most_what_the_envelope_charges() {
+    let root = tempfile::tempdir().expect("test root");
+    let ms = MeasurementSet::open(track(root.path(), 3, 6_000)).expect("open");
+    let engine = MsCalEngine::new(&ms).expect("frame engine");
+    let windows = Windows::read(&ms);
+    let in_order = rows(&ms);
+    let keys = distinct_keys(&in_order);
+    assert!(keys >= 10_000, "{keys} keys");
+    let mut breaches = Vec::new();
+    for (label, rows) in [
+        ("in order", in_order.clone()),
+        ("scrambled", scrambled(&in_order)),
+    ] {
+        // Warm the engine's Measures caches and the allocator's pools.
+        let (warm, _) = reduce(&ms, &engine, &windows, &rows, usize::MAX);
+        let warm = warm.expect("warm reduction");
+        let baseline = LIVE.load(Ordering::Relaxed);
+        PEAK.store(baseline, Ordering::Relaxed);
+        let (edges, charged) = reduce(&ms, &engine, &windows, &rows, usize::MAX);
+        let peak = PEAK.load(Ordering::Relaxed) - baseline;
+        assert_eq!(edges.expect("measured reduction"), warm, "{label}");
+        eprintln!(
+            "{label}: {keys} keys, {} rows: peak {peak} bytes, charged {charged} \
+             ({:.1} bytes a key)",
+            rows.len(),
+            peak as f64 / keys as f64
+        );
+        if peak > charged as u64 {
+            breaches.push(format!(
+                "{label}: the reduction held {peak} bytes, more than its {charged}"
+            ));
+        }
+    }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// A MAIN of many baselines per integration, so far more rows than keys:
+/// the charge follows the keys. A budget of the fixed part and a key's
+/// bytes per key suffices, where one row's 16 bytes per MAIN row would not;
+/// one key's bytes fewer is refused, naming the keys.
+#[test]
+fn the_envelope_charge_follows_the_keys_not_the_rows() {
+    let root = tempfile::tempdir().expect("test root");
+    let ms = MeasurementSet::open(track(root.path(), 27, 20)).expect("open");
+    let engine = MsCalEngine::new(&ms).expect("frame engine");
+    let windows = Windows::read(&ms);
+    let rows = rows(&ms);
+    let keys = distinct_keys(&rows);
+    assert_eq!(rows.len(), keys * 351, "351 baselines per key");
+    let (_, charged) = reduce(&ms, &engine, &windows, &rows, usize::MAX);
+    let (no_keys, fixed) = reduce(&ms, &engine, &windows, &[], usize::MAX);
+    no_keys.expect_err("no rows, no envelope");
+    assert_eq!(charged, fixed + keys * SPECTRAL_ENVELOPE_KEY_BYTES);
+    assert!(
+        charged < 16 * ms.row_count(),
+        "{charged} bytes for {} rows",
+        ms.row_count()
+    );
+    let (enough, _) = reduce(&ms, &engine, &windows, &rows, charged);
+    enough.expect("the keys' bytes suffice");
+    let (short, _) = reduce(&ms, &engine, &windows, &rows, charged - 1);
+    let refusal = short.expect_err("one key's bytes short");
+    assert!(
+        refusal.contains("distinct TIME·(DATA_DESC_ID+1) keys"),
+        "{refusal}"
+    );
+}

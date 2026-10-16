@@ -1078,6 +1078,27 @@ mod tests {
         assert_eq!(cells.cell_of(100.1e9), 2);
     }
 
+    /// #713's multi-channel MFS mosaic: 16 channels of 2 MHz at 230.0 GHz in
+    /// a window topping at 230.51 GHz. tol = 0.5 % of the top, 1.15255 GHz,
+    /// is wider than the band, so the top steps below the band, steps back
+    /// up, and the one cell lands a tolerance below the top (229.35745 GHz,
+    /// below the band): every channel takes that one beam, in CASA's
+    /// `findUsefulChannels` and here.
+    #[test]
+    fn a_narrow_band_takes_one_cell_a_tolerance_below_the_window_top() {
+        let selected = (0..16)
+            .map(|k| 230.002e9 + k as f64 * 2.0e6)
+            .collect::<Vec<_>>();
+        let cells = FrequencyCells::new(&window(selected, 230.51e9, 2.0e6), 0).expect("cells");
+        let tol = 230.51e9 * 0.005;
+        assert_eq!(cells.tolerance_hz, Some(tol));
+        assert_eq!(cells.frequencies_hz.len(), 1);
+        assert!((cells.frequencies_hz[0] - (230.51e9 - tol)).abs() < 1.0);
+        for frequency in [230.002e9, 230.032e9] {
+            assert_eq!(cells.cell_of(frequency), 0);
+        }
+    }
+
     #[test]
     fn enough_cells_for_the_channels_is_the_identity() {
         // 3 channels 1 GHz apart at 100 GHz: tol 0.5 GHz → cells from

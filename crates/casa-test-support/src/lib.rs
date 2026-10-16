@@ -8,6 +8,7 @@ mod lattice_oracle;
 mod lattice_oracle_impl;
 pub mod measures_interop;
 mod measures_oracle;
+mod measures_sequence;
 pub mod ms_interop;
 mod oracle_ffi;
 mod oracle_runtime;
@@ -31,6 +32,7 @@ pub use image_oracle_impl::{
 };
 pub use lattice_oracle::LatticeOracle;
 pub use lattice_oracle_impl::CppLatticeStatisticsBenchResult;
+pub use measures_sequence::FrequencySequence;
 pub use oracle_runtime::OracleError;
 pub use table_oracle::{HeldCppTableReader, TableOracle};
 pub use table_oracle_impl::{

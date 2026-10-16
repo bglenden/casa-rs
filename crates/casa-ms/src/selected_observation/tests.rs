@@ -53,6 +53,7 @@ use std::sync::{Arc, Mutex};
 
 #[cfg(unix)]
 mod content_requirements;
+mod spectral_envelope;
 mod t41_ephemeris_oracle;
 mod walk;
 

@@ -92,6 +92,11 @@ path = "tests/measures_interop.rs"
 required-features = ["cpp-interop-tests"]
 
 [[test]]
+name = "frequency_sequence_interop"
+path = "tests/frequency_sequence_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
 name = "measures_perf_vs_cpp"
 path = "tests/measures_perf_vs_cpp.rs"
 required-features = ["performance-tests"]

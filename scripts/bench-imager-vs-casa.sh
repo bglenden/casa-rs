@@ -160,7 +160,7 @@ aw_cf_resident_mb="${IMAGER_BENCH_AW_CF_RESIDENT_MB:-384}"
 aterm="${IMAGER_BENCH_ATERM:-1}"
 psterm="${IMAGER_BENCH_PSTERM:-0}"
 wbawp="${IMAGER_BENCH_WBAWP:-1}"
-conjbeams="${IMAGER_BENCH_CONJBEAMS:-1}"
+conjbeams="${IMAGER_BENCH_CONJBEAMS:-}"
 computepastep="${IMAGER_BENCH_COMPUTEPASTEP:-360.0}"
 rotatepastep="${IMAGER_BENCH_ROTATEPASTEP:-360.0}"
 pointingoffsetsigdev="${IMAGER_BENCH_POINTINGOFFSETSIGDEV:-0.0}"
@@ -183,7 +183,9 @@ esac
 if [[ -z "$casa_wprojplanes" ]]; then
   case "$casa_gridder" in
     wproject|widefield)
-      casa_wprojplanes=-1
+      # CASA's plane count follows casa-rs's when the workload names one
+      # (widefield with one plane is CASA's gridft, below), else CASA picks.
+      casa_wprojplanes=${wprojplanes:--1}
       ;;
   esac
 fi
@@ -209,13 +211,9 @@ if [[ ! "$facets" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 
-# casars-imager's request (IF-7) has no facet, memory-target or AW-term
-# controls: faceted geometry has no pass implementation (#664), admission
-# budgets memory from the host, and the AW terms are CASA's defaults.
-if [[ "$facets" != "1" ]]; then
-  echo "error: IMAGER_BENCH_FACETS=$facets: casars-imager has no faceted geometry (#664)" >&2
-  exit 2
-fi
+# casars-imager's request (IF-7) has no memory-target or AW-term controls:
+# admission budgets memory from the host, and the AW terms are CASA's
+# defaults.
 if [[ -n "$imaging_memory_target_mb" ]]; then
   echo "error: IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB: casars-imager budgets memory from the host" >&2
   exit 2
@@ -225,7 +223,15 @@ case "$gridder" in
     rust_gridder="$gridder"
     ;;
   widefield)
-    rust_gridder="wproject"
+    # CASA's widefield with one w-plane is gridft: it selects wprojectft
+    # only for `wprojplanes > 1 || wprojplanes == -1`
+    # (SynthesisParamsGrid::fromRecord).
+    if [[ "$wprojplanes" == "1" ]]; then
+      rust_gridder="standard"
+      wprojplanes=""
+    else
+      rust_gridder="wproject"
+    fi
     ;;
   *)
     echo "error: casars-imager has no gridder $gridder" >&2
@@ -235,6 +241,19 @@ esac
 is_true() {
   [[ "$1" =~ ^(1|true|TRUE|yes|YES|on|ON)$ ]]
 }
+# casars-imager grids AW with conjugate beams and mosaic without them; it has
+# no conjbeams parameter yet (#720, #721). CASA runs the same unless told
+# otherwise: on for AW, tclean's default (off) for every other gridder.
+if [[ -z "$conjbeams" ]]; then
+  if [[ "$rust_gridder" == "awproject" ]]; then
+    conjbeams=1
+  else
+    conjbeams=0
+  fi
+elif [[ "$rust_gridder" == "mosaic" ]] && is_true "$conjbeams"; then
+  echo "error: IMAGER_BENCH_CONJBEAMS=$conjbeams: casars-imager's mosaic gridder has no conjugate beams (#720)" >&2
+  exit 2
+fi
 if [[ -n "$prepared_aw_casa_cache" && -n "$native_aw_cf_cache" ]]; then
   echo "error: set one AW convolution-function source: IMAGER_BENCH_PREPARED_AW_CASA_CACHE or IMAGER_BENCH_NATIVE_AW_CF_CACHE" >&2
   exit 2
@@ -367,6 +386,19 @@ case "$standard_mfs_acceleration" in
     ;;
   *)
     echo "error: IMAGER_BENCH_STANDARD_MFS_ACCELERATION=$standard_mfs_acceleration: casars-imager runs cpu, multi-cpu or metal" >&2
+    exit 2
+    ;;
+esac
+# The workload's grid precision (`imaging_fft_precision`) is casars-imager's
+# `gridprecision`; `auto` leaves plan decision D2's rule.
+case "${IMAGER_BENCH_IMAGING_FFT_PRECISION:-auto}" in
+  auto)
+    ;;
+  f32 | f64)
+    rust_backend_flags+=(--gridprecision "$IMAGER_BENCH_IMAGING_FFT_PRECISION")
+    ;;
+  *)
+    echo "error: IMAGER_BENCH_IMAGING_FFT_PRECISION=$IMAGER_BENCH_IMAGING_FFT_PRECISION: auto, f32 or f64" >&2
     exit 2
     ;;
 esac
@@ -667,6 +699,9 @@ build_rust_cli_args() {
     --maxpsffraction "$max_psf_fraction"
   )
   rust_cli_args+=(${rust_wproject_flags[@]+"${rust_wproject_flags[@]}"})
+  if [[ "$facets" != "1" ]]; then
+    rust_cli_args+=(--facets "$facets")
+  fi
   if [[ -n "$phasecenter_field" ]]; then
     rust_cli_args+=(--phasecenter-field "$phasecenter_field")
   fi

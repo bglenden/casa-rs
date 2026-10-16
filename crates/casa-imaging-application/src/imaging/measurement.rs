@@ -102,23 +102,25 @@ pub(crate) fn reference_frequency_hz(problem: &CompiledProblem) -> Result<f64, I
     }
 }
 
-/// The grid precision: the requested one, else plan decision D2's rule
-/// (`gridprecision = auto`): f32 on Metal, which accumulates in `f32` for
-/// every basis; on the CPU f64 for the constant and Taylor bases and f32
-/// for channel-local cubes.
+/// The grid precision: the requested one, else plan decision D2's rule as
+/// the owner amended it on 2026-10-15 (`gridprecision = auto`): f64 on the
+/// CPU for every basis, since CASA accumulates its grids in double
+/// (`useDoublePrec`, `SynthesisUtilMethods.cc:3722`), and f32 on Metal,
+/// which accumulates in `f32` only.
+///
+/// A cube is no exception: an f32 running sum drifts with the number of
+/// samples a cell takes, and a mosaic's weight image takes every sample of
+/// a channel at the uv origin (#659).
 pub(crate) const fn precision(
-    basis: Basis,
     backend: BackendChoice,
     requested: Option<GridPrecision>,
 ) -> GridPrecision {
     if let Some(precision) = requested {
         return precision;
     }
-    match (backend, basis) {
-        (BackendChoice::Cpu, Basis::Constant | Basis::Taylor { .. }) => GridPrecision::F64,
-        (BackendChoice::Cpu, Basis::ChannelLocal { .. }) | (BackendChoice::Metal, _) => {
-            GridPrecision::F32
-        }
+    match backend {
+        BackendChoice::Cpu => GridPrecision::F64,
+        BackendChoice::Metal => GridPrecision::F32,
     }
 }
 
@@ -157,7 +159,8 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
     }
 }
 
-/// The operator of `domain` with the kernel set the problem names: the
+/// The operator of a chart of `extent` (an image domain, or one of its
+/// facets) with the kernel set the problem names: the
 /// standard spheroidal set, W-projection planes sized by the W contract,
 /// the mosaic primary beams of the selected windows, or the AW catalog of
 /// `aw_catalog`, in the requested precision or the one `backend` grids at.
@@ -170,7 +173,7 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn domain_operator(
     problem: &CompiledProblem,
-    domain: &CompiledImageDomain,
+    extent: ImageExtent,
     correlations: &[CorrelationType],
     backend: BackendChoice,
     requested_precision: Option<GridPrecision>,
@@ -179,26 +182,18 @@ pub(crate) fn domain_operator(
     admission: KernelAdmission<'_>,
 ) -> Result<DomainOperator, ImagingError> {
     let kind = kernel_set_kind(problem);
+    // Each CASA facet's GridFT pads its own facet grid.
     let padding = match kind {
         KernelSetKind::Standard | KernelSetKind::WPlanes => GridPadding::CasaComposite,
         KernelSetKind::Mosaic | KernelSetKind::Aw => GridPadding::None,
     };
-    let geometry = GridGeometry::new(image_extent(domain)?, padding)?;
+    let geometry = GridGeometry::new(extent, padding)?;
     let polarization = PolarizationRouting::compile(
         correlations,
         problem.reconstruction().polarization().coordinates(),
     )?;
+    // An AW cube is refused by the gate (`Unsupported::CubeAwProjection`).
     let basis = basis(problem)?;
-    if matches!(basis, Basis::ChannelLocal { .. })
-        && matches!(kind, KernelSetKind::Mosaic | KernelSetKind::Aw)
-    {
-        // The channel-local normal state keeps a scalar sumwt per plane;
-        // the dense sensitivity these sets grid has no plane to live in
-        // until the cube tickets.
-        return Err(ImagingError::Unsupported {
-            reason: "cube mosaic and A-projection imaging wait for the cube tickets' per-plane sensitivity",
-        });
-    }
     let resampler = resampler(problem, basis)?;
     let (cf, kernels) = kernel_set(
         problem,
@@ -214,7 +209,7 @@ pub(crate) fn domain_operator(
             basis,
             polarization,
             cf,
-            precision(basis, backend, requested_precision),
+            precision(backend, requested_precision),
         ),
         resampler,
         weight_image: matches!(kind, KernelSetKind::Mosaic | KernelSetKind::Aw),
@@ -377,7 +372,7 @@ fn mosaic_windows(problem: &CompiledProblem) -> Result<Vec<MosaicWindow>, Imagin
     Ok(windows)
 }
 
-fn image_extent(domain: &CompiledImageDomain) -> Result<ImageExtent, ImagingError> {
+pub(crate) fn image_extent(domain: &CompiledImageDomain) -> Result<ImageExtent, ImagingError> {
     let direction = domain.direction();
     let reference = direction.reference_pixel();
     if reference

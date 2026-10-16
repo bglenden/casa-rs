@@ -131,6 +131,9 @@ mod t53_spectral_joins;
 #[path = "continuum_application/domains_and_waves.rs"]
 mod domains_and_waves;
 
+#[path = "continuum_application/facets.rs"]
+mod facets;
+
 #[path = "continuum_application/run_summary.rs"]
 mod run_summary;
 

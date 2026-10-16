@@ -52,10 +52,6 @@ impl ManagedNormalFactory {
 }
 
 impl NormalStorageFactory for ManagedNormalFactory {
-    fn scalar_sensitivity(&self) -> bool {
-        true
-    }
-
     /// Storage for slot `slot`: `2 · domain` holds a domain's epoch arrays,
     /// `2 · domain + 1` its invariants.
     fn create(

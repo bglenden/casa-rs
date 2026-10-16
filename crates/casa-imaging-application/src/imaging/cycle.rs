@@ -15,7 +15,9 @@ use casa_imaging_model::{CompiledProblem, ModelDeltaTerm, SpectralWcs, Weighting
 use casa_imaging_operator::{
     BandwidthTaper, Basis, GridPrecision, ModeSet, PlaneRange, WeightingGeneration,
 };
-use casa_imaging_products::{MinorCycleImageResponse, VisibilityProductCompletion};
+use casa_imaging_products::{
+    FacetSumWeights, MinorCycleImageResponse, VisibilityProductCompletion,
+};
 use casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan;
 use casa_imaging_reconstruction::{
     ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, ModelGeneration,
@@ -33,6 +35,7 @@ use casa_imaging_runtime::{
 };
 use casa_ms::ResolvedSelectedObservationAccess;
 
+use super::charts::{Chart, ChartStitch, charts};
 use super::images::{pass_images, prepare_model};
 use super::measurement::{
     DomainOperator, KernelAdmission, density_shape, domain_operator, native_spacing_hz,
@@ -77,6 +80,9 @@ pub(crate) struct ImagingOutcome {
     pub(crate) total_actual_minor_iterations: usize,
     pub(crate) visibility_products: Option<VisibilityProductCompletion>,
     pub(crate) planes_per_wave: Option<u32>,
+    /// Each faceted domain's facets' own sums of weights, which its
+    /// `.sumwt` publishes.
+    pub(crate) facet_sum_weights: FacetSumWeights,
     /// The charge of the memory `scientific` holds resident, released with
     /// it.
     pub(crate) retained: Reservation,
@@ -85,7 +91,12 @@ pub(crate) struct ImagingOutcome {
 /// Fixed parts of one run shared by every pass.
 struct Run<'a> {
     problem: &'a CompiledProblem,
+    /// One operator per chart, the pass domains.
     domains: Vec<DomainOperator>,
+    /// Each pass domain's image domain and facet.
+    charts: Vec<Chart>,
+    /// The image domains' images from their charts.
+    stitch: ChartStitch,
     source: MeasurementSetSource<'a>,
     weighting: WeightingGeneration,
     /// The charge of the weighting's density grid, held with it.
@@ -135,6 +146,7 @@ impl ImagingOutcome {
             total_actual_minor_iterations: 0,
             visibility_products: major.visibility,
             planes_per_wave: run.planes_per_wave,
+            facet_sum_weights: run.stitch.facet_sum_weights(),
             retained: Reservation::none(),
         }
     }
@@ -418,14 +430,15 @@ impl<'a> Run<'a> {
             policy: &inputs.policy,
             workers: inputs.teams.streaming().workers(),
         };
-        let domains = problem
-            .geometry()
-            .domains()
+        // One operator per chart: each image domain, or each facet of a
+        // faceted one.
+        let charts = charts(problem);
+        let domains = charts
             .iter()
-            .map(|domain| {
+            .map(|chart| {
                 domain_operator(
                     problem,
-                    domain,
+                    chart.extent(&problem.geometry().domains()[chart.domain])?,
                     &correlations,
                     backend,
                     inputs.grid_precision,
@@ -436,7 +449,7 @@ impl<'a> Run<'a> {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let weight_image = domains.iter().any(|domain| domain.weight_image);
-        if inputs.visibility_write.is_some() && domains.len() > 1 {
+        if inputs.visibility_write.is_some() && problem.geometry().domains().len() > 1 {
             return Err(ImagingError::Unsupported {
                 reason: "visibilities are written back for one image domain",
             });
@@ -474,7 +487,13 @@ impl<'a> Run<'a> {
         let cube = matches!(main.basis(), Basis::ChannelLocal { .. })
             .then(|| {
                 let workers = teams.compute().workers();
-                cube_state(problem, inputs.spill_directory, workers, &host, &policy)
+                cube_state(
+                    problem,
+                    inputs.spill_directory,
+                    (workers, weight_image),
+                    &host,
+                    &policy,
+                )
             })
             .transpose()?;
         let lifecycle = ModelLifecycle::new(
@@ -487,6 +506,8 @@ impl<'a> Run<'a> {
         let run = Self {
             problem,
             domains,
+            stitch: ChartStitch::new(problem, charts.clone()),
+            charts,
             source,
             weighting,
             _weights: weights,
@@ -681,14 +702,17 @@ impl<'a> Run<'a> {
 
     /// The waves of a pass accumulating `modes`, with a model when
     /// `with_model`, that fit the free memory beside `besides` bytes the
-    /// pass also allocates (an initial model), and the reservation of both:
-    /// planned once per major cycle for the pass and its normal storage.
+    /// pass also allocates (an initial model) and the faceted domains'
+    /// stitched images ([`ChartStitch::pass_bytes`]), and the reservation of
+    /// all three: planned once per major cycle for the pass and its normal
+    /// storage.
     fn admit_pass(
         &self,
         modes: ModeSet,
         with_model: bool,
         besides: u64,
     ) -> Result<(Residency, Reservation), ImagingError> {
+        let besides = besides + self.stitch.pass_bytes(modes.psf);
         let workers = self.teams.streaming().workers();
         let domains = pass_domains(&self.domains, workers);
         let demand = WaveDemand {
@@ -762,10 +786,17 @@ impl<'a> Run<'a> {
         }
         let team = self.teams.streaming();
         let domains = pass_domains(&self.domains, team.workers());
-        let prepare = |domain: usize, planes: PlaneRange| {
+        let charts = &self.charts;
+        let prepare = |chart: usize, planes: PlaneRange| {
             let generation = model.expect("the closure is installed only with a model");
-            prepare_model(&self.domains[domain].operator, generation, domain, planes)
-                .map_err(|error| PassError::Model(Box::new(error)))
+            let Chart { domain, window } = charts[chart];
+            prepare_model(
+                &self.domains[chart].operator,
+                generation,
+                (domain, window),
+                planes,
+            )
+            .map_err(|error| PassError::Model(Box::new(error)))
         };
         let pass = MajorCyclePass {
             domains: &domains,
@@ -792,11 +823,18 @@ impl<'a> Run<'a> {
             &mut self.source,
             team,
             &self.cancel,
-            &mut |domain, images| {
-                let basis = self.domains[domain].operator.basis();
-                state
-                    .append(pass_images(domain, &images, initial, basis))
-                    .map_err(|error| PassError::Images(Box::new(error)))
+            &mut |chart, images| {
+                let basis = self.domains[chart].operator.basis();
+                let images = self
+                    .stitch
+                    .accept(chart, pass_images(chart, &images, initial, basis))
+                    .map_err(|error| PassError::Images(error.into()))?;
+                match images {
+                    Some(images) => state
+                        .append(images)
+                        .map_err(|error| PassError::Images(Box::new(error))),
+                    None => Ok(()),
+                }
             },
             sink.as_mut(),
         )?)
@@ -926,11 +964,12 @@ fn plane_bounds(problem: &CompiledProblem) -> Option<PlaneBounds> {
 
 /// The paged cube state of a channel-local run, with a cache as large as
 /// the whole cube when a quarter of the free memory allows; the state holds
-/// the cache's reservation for as long as its storage lives.
+/// the cache's reservation for as long as its storage lives. With a weight
+/// image (a mosaic cube) each plane keeps its own beside the PSF.
 fn cube_state(
     problem: &CompiledProblem,
     directory: &Path,
-    workers: usize,
+    (workers, weight_image): (usize, bool),
     host: &HostResources,
     policy: &ResourcePolicy,
 ) -> Result<CubeState, ImagingError> {
@@ -941,7 +980,8 @@ fn cube_state(
         .map(|domain| domain.pixels())
         .collect::<Vec<_>>();
     let planes = target.coefficients() * target.polarizations();
-    let (minimum, full) = CubeState::cache_limits(directory, &domains, planes, workers)?;
+    let (minimum, full) =
+        CubeState::cache_limits(directory, &domains, planes, weight_image, workers)?;
     let quarter = usize::try_from(free_memory(host, policy) / 4).unwrap_or(usize::MAX);
     let cache = full.min(minimum.max(quarter));
     let reservation = admit(
@@ -952,7 +992,13 @@ fn cube_state(
             memory: cache as u64,
         },
     )?;
-    Ok(CubeState::new(directory, &domains, planes, reservation)?)
+    Ok(CubeState::new(
+        directory,
+        &domains,
+        planes,
+        weight_image,
+        reservation,
+    )?)
 }
 
 /// The record of one minor cycle; `global_threshold` is the run's

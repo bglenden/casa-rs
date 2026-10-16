@@ -83,6 +83,11 @@ impl SpectralSlabPlan {
 pub struct CubeRealFields {
     pub(crate) dirty: Box<[f32]>,
     pub(crate) psf: Box<[f32]>,
+    /// Each plane's gridded weight image (CASA's per-channel `.weight` before
+    /// its `sumwt` division), for kernel sets with a direction-dependent
+    /// response such as the mosaic; `None` when the response is the plane's
+    /// `sumwt` alone.
+    pub(crate) sensitivity: Option<Box<[f32]>>,
 }
 
 impl CubeRealFields {
@@ -94,6 +99,12 @@ impl CubeRealFields {
     /// Unnormalized point-spread-function values.
     pub fn psf(&self) -> &[f32] {
         &self.psf
+    }
+
+    /// Unnormalized weight-image values, when the response varies across the
+    /// plane.
+    pub fn sensitivity(&self) -> Option<&[f32]> {
+        self.sensitivity.as_deref()
     }
 }
 
@@ -133,7 +144,9 @@ impl SpectralOperatorPrimitives {
     #[must_use]
     pub fn resident_bytes(&self) -> u64 {
         let cube_real = self.cube_real.as_ref().map_or(0, |fields| {
-            size_of_val(&*fields.dirty) + size_of_val(&*fields.psf)
+            size_of_val(&*fields.dirty)
+                + size_of_val(&*fields.psf)
+                + fields.sensitivity.as_deref().map_or(0, size_of_val)
         });
         (size_of_val(&*self.dirty)
             + cube_real
@@ -215,16 +228,19 @@ impl SpectralOperatorPrimitives {
         self.cube_real.as_ref()
     }
 
-    /// Return scalar-response sensitivity in normal-state units.
+    /// Return the response sensitivity in normal-state units.
     #[must_use]
     pub fn sensitivity(&self) -> crate::SensitivityValues<'_> {
-        if self.cube_real.is_some() {
-            crate::SensitivityValues::PerPlane {
+        match &self.cube_real {
+            Some(CubeRealFields {
+                sensitivity: Some(weight),
+                ..
+            }) => crate::SensitivityValues::Real(weight),
+            Some(_) => crate::SensitivityValues::PerPlane {
                 weights: &self.sum_weights,
                 cells: self.shape[0] * self.shape[1],
-            }
-        } else {
-            crate::SensitivityValues::Dense(&self.sensitivity)
+            },
+            None => crate::SensitivityValues::Dense(&self.sensitivity),
         }
     }
 

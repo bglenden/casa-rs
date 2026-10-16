@@ -13,7 +13,9 @@ CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
 [an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel),
-[the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames).
+[the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
+[single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
+[facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -351,3 +353,38 @@ rule at the MeasurementSet uvw, as `VisImagingWeight` does
 (`the_standard_density_bins_the_measurement_set_uvw`). Cubes imaged at their
 own field centre agree with CASA either way; off-centre and multi-field cubes
 under a density weighting differ from CASA's weights by this mechanism.
+
+## MultiTermFTNew forms Taylor imaging weights in single precision
+
+- Date noted: 2026-10-11; metric approved 2026-10-15
+- Status: CASA rounding; casa-rs does not follow it (#690)
+- Affected code: `synthesis/TransformMachines2/MultiTermFTNew.cc`
+  (`modifyVisWeights`, `modifyModelVis`)
+
+`modifyVisWeights` holds each channel frequency and the Taylor variable
+`(ν − ν₀) / ν₀` in `Float`, and multiplies the `Float` imaging weights by its
+powers. The odd moments of `.sumwt` are sums that nearly cancel (two channels
+at x ≈ ±1/3 leave Σw·x ≈ −0.05 of Σ|w·x| ≈ 8·10⁴), so this rounding shows as
+a 1 % relative difference in `.sumwt.tt1` on `refim_twopoints_twochan`. An
+emulation of both codes' arithmetic reproduces both published values to
+every stored digit; casa-rs, which rounds the Taylor variable to `f32` once
+and accumulates in `f64`, is 0.06 % from the exact sum, CASA 0.93 %. No image
+reads the odd moments' sums.
+
+casa-rs keeps its arithmetic. The T1.5 comparison judges an odd moment `k` by
+|Δ| / √(tt_{k−1} · tt_{k+1}) and every other `.sumwt` by its relative
+difference, both against 1e-6, and leaves `.sumwt` out of a case's image
+NRMS. The narrow-band mosaic MT-MFS rows (three channels at 340 GHz) still
+miss that bound at about 5e-6 and are listed exceptions until an emulation
+confirms the same mechanism there and in the odd-moment weight images.
+
+## Facets of an image size that does not divide
+
+- Date noted: 2026-10-15
+- Status: CASA behaviour casa-rs does not follow (#664)
+- Affected code: `synthesis/ImagerObjects/SIImageStore.cc` (`makeSubImage`)
+
+A facet of an `n`-pixel image split `N` ways is `n / N` pixels (integer
+division) from `facet · (n / N)`, so when `N` does not divide `n` the top and
+right remainder strips belong to no facet: CASA grids and cleans nothing
+there, silently. casa-rs refuses such a layout (`NonDivisibleFacetLayout`).

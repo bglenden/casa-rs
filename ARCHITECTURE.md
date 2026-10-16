@@ -593,10 +593,21 @@ targets; no imaging library reads the environment. `parallel=false` (the
 default) runs the pass with one worker. All production FFTs use FFTW; there is
 no FFT backend selector or fallback.
 
-W-projection, AW-projection and mosaics run on the pass. Facets,
-`mtmfs` via cube and cubic spectral interpolation are not in the catalog, so no
-request names them; a compiled problem with faceted geometry is typed
-unavailability in `availability::check` (facets #664, cubic #42).
+W-projection, AW-projection, mosaics and mosaic cubes run on the pass; an AW
+cube is refused until its per-plane weights have a CASA comparison (#719).
+`facets = N` (standard gridder, constant basis; #664) makes each of the main
+domain's N×N facets a chart: a pass domain of its own, a facet-sized operator
+about the facet's centre, onto which casa-ms projects every row with CASA's
+`UVWMachine(project=true)`. The pass sees charts, the normal state and
+products see image domains: the stitch divides each facet's residual by its own
+`sumwt` (scaled to a reference facet's, facet 0 unless it is empty), zeroes a
+facet whose `sumwt` is at most 1e-7 (`divideImageByWeightVal`), places the
+reference facet's PSF at the image centre
+(`SynthesisNormalizer::setPsfFromOneFacet`), and `.sumwt` is N×N with each
+facet's own sum. Taylor and
+cube bases, and other gridders, with facets are typed unavailability in
+`availability::check`. `mtmfs` via cube and cubic spectral interpolation are
+not in the catalog, so no request names them (cubic #42).
 
 `backend = metal` (macOS, a unified-memory Metal 3 device) grids every pass on
 the Metal device: `casa-imaging-metal` implements the operator's

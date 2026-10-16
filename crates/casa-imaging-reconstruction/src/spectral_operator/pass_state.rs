@@ -292,11 +292,7 @@ impl PassNormalState {
             psf,
             sum_weights,
             published_sum_weights,
-            // A channel-local state keeps the per-plane `sumwt` as its
-            // sensitivity (`SensitivityValues::PerPlane`); the application
-            // refuses the kernel sets that grid a weight image for a cube
-            // until a cube stores it (#652).
-            weight: _,
+            weight,
         } = images;
         let planes = channels.len() * polarizations;
         let values = planes * checked_cells(shape)?;
@@ -307,6 +303,7 @@ impl PassNormalState {
             || psf.len() != values
             || sum_weights.len() != planes
             || published_sum_weights.len() != planes
+            || weight.as_ref().is_some_and(|weight| weight.len() != values)
         {
             return Err(SpectralOperatorError::InvalidSlab);
         }
@@ -324,9 +321,13 @@ impl PassNormalState {
                 basis: SpectralBasisPlan::ChannelLocal,
                 polarizations,
                 dirty: Box::new([]),
+                // A set with weight taps (mosaic) keeps each plane's gridded
+                // weight image as it is, in f32; otherwise the sensitivity is
+                // the plane's `sumwt`.
                 cube_real: Some(CubeRealFields {
                     dirty: residual.into_boxed_slice(),
                     psf: psf.into_boxed_slice(),
+                    sensitivity: weight.map(Vec::into_boxed_slice),
                 }),
                 psf: Box::new([]),
                 sensitivity: Box::new([]),

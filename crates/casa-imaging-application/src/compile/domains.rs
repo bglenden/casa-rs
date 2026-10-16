@@ -27,7 +27,7 @@ use super::direction::{
 use super::outliers::read_outlier_domains;
 use casa_imaging_products::CasaImageDomainOutput;
 
-use crate::{ImagingRequest, UseMask};
+use crate::{Gridder, ImagingRequest, UseMask};
 
 /// The pixels a domain's minor cycle may update.
 #[derive(Clone, Debug, PartialEq)]
@@ -52,17 +52,20 @@ pub(super) struct PreparedImageDomain {
     pub(super) direction: DirectionCoordinateSpec,
     pub(super) coordinates: CoordinateSystem,
     pub(super) mask: DomainMask,
+    /// CASA facets the first image field only (`SynthesisImager`'s
+    /// `createFacetImageStoreList`); outliers are single.
+    pub(super) facets: FacetLayout,
 }
 
 impl PreparedImageDomain {
-    /// The model's specification of this domain: one facet, axes
+    /// The model's specification of this domain: its facets, axes
     /// direction, polarization, spectral.
     pub(super) fn spec(&self) -> ImageDomainSpec {
         ImageDomainSpec::new(
             self.role.clone(),
             ImageShape::new(self.image_size, self.image_size),
             self.direction,
-            FacetLayout::Single,
+            self.facets,
             AxisOrder::new([
                 ImageAxis::DirectionLongitude,
                 ImageAxis::DirectionLatitude,
@@ -91,6 +94,13 @@ pub(super) fn prepare_domains(
     observation: &ObsInfo,
 ) -> Result<Vec<PreparedImageDomain>, PrepareError> {
     let polarizations = &request.stokes;
+    let facets = match request.gridder {
+        Gridder::Standard { facets } if facets.get() > 1 => FacetLayout::Regular {
+            columns: facets.get(),
+            rows: facets.get(),
+        },
+        _ => FacetLayout::Single,
+    };
     let mut domains = vec![PreparedImageDomain {
         role: ImageDomainRole::Main,
         output: request.imagename.clone(),
@@ -104,6 +114,7 @@ pub(super) fn prepare_domains(
             observation,
         ),
         mask: request_mask(request),
+        facets,
     }];
     if let Some(path) = request.outlierfile.as_deref() {
         for outlier in read_outlier_domains(path, request.imsize, request.cell)? {
@@ -128,6 +139,7 @@ pub(super) fn prepare_domains(
                     observation,
                 ),
                 mask: outlier.mask,
+                facets: FacetLayout::Single,
             });
         }
     }
