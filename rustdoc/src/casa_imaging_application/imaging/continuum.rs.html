@@ -74,11 +74,27 @@
 <a href=#74 id=74 data-nosnippet>74</a>            values[channel * correlations + pol] = Complex32::new(residual.re <span class="kw">as </span>f32, imaginary);
 <a href=#75 id=75 data-nosnippet>75</a>        }
 <a href=#76 id=76 data-nosnippet>76</a>    }
-<a href=#77 id=77 data-nosnippet>77</a>    <span class="kw">for </span>(channel, role) <span class="kw">in </span>roles.iter().enumerate() {
-<a href=#78 id=78 data-nosnippet>78</a>        <span class="kw">if </span>!role.contributes_to_output() {
-<a href=#79 id=79 data-nosnippet>79</a>            flags[channel * correlations..(channel + <span class="number">1</span>) * correlations].fill(<span class="bool-val">true</span>);
-<a href=#80 id=80 data-nosnippet>80</a>        }
-<a href=#81 id=81 data-nosnippet>81</a>    }
-<a href=#82 id=82 data-nosnippet>82</a>    <span class="prelude-val">Ok</span>(())
-<a href=#83 id=83 data-nosnippet>83</a>}
+<a href=#77 id=77 data-nosnippet>77</a>    flag_unimaged_channels(rule, row, flags)
+<a href=#78 id=78 data-nosnippet>78</a>}
+<a href=#79 id=79 data-nosnippet>79</a>
+<a href=#80 id=80 data-nosnippet>80</a><span class="doccomment">/// Flag the channels of one row whose `rule` role does not reach the line
+<a href=#81 id=81 data-nosnippet>81</a>/// output, so they are not imaged. This needs no visibilities, so a
+<a href=#82 id=82 data-nosnippet>82</a>/// flags-and-weights traversal applies it alone; `flags` is
+<a href=#83 id=83 data-nosnippet>83</a>/// `[channel][correlation]`.
+<a href=#84 id=84 data-nosnippet>84</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>flag_unimaged_channels(
+<a href=#85 id=85 data-nosnippet>85</a>    rule: <span class="kw-2">&amp;</span>ContinuumFitRule,
+<a href=#86 id=86 data-nosnippet>86</a>    row: <span class="kw-2">&amp;</span>SelectedNumericRow&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#87 id=87 data-nosnippet>87</a>    flags: <span class="kw-2">&amp;mut </span>[bool],
+<a href=#88 id=88 data-nosnippet>88</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), SourceError&gt; {
+<a href=#89 id=89 data-nosnippet>89</a>    <span class="kw">let </span>correlations = row.correlations.len();
+<a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">for </span>(channel, selected) <span class="kw">in </span>row.channels.iter().enumerate() {
+<a href=#91 id=91 data-nosnippet>91</a>        <span class="kw">let </span>role = rule
+<a href=#92 id=92 data-nosnippet>92</a>            .channel_use(selected.channel_index)
+<a href=#93 id=93 data-nosnippet>93</a>            .ok_or(<span class="string">"a selected channel has no continuum fit or application role"</span>)<span class="question-mark">?</span>;
+<a href=#94 id=94 data-nosnippet>94</a>        <span class="kw">if </span>!role.contributes_to_output() {
+<a href=#95 id=95 data-nosnippet>95</a>            flags[channel * correlations..(channel + <span class="number">1</span>) * correlations].fill(<span class="bool-val">true</span>);
+<a href=#96 id=96 data-nosnippet>96</a>        }
+<a href=#97 id=97 data-nosnippet>97</a>    }
+<a href=#98 id=98 data-nosnippet>98</a>    <span class="prelude-val">Ok</span>(())
+<a href=#99 id=99 data-nosnippet>99</a>}
 </code></pre></div></section></main></body></html>
