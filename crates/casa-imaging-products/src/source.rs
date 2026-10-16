@@ -36,7 +36,14 @@ pub struct ContinuumProductInputs<'a> {
     reconstruction_mask: Option<&'a ReconstructionMask>,
     domain_reconstruction_masks: Option<&'a ImageDomainReconstructionMasks>,
     primary_beam_centres: Option<&'a PrimaryBeamCentres>,
+    facet_sum_weights: Option<&'a FacetSumWeights>,
 }
+
+/// Each faceted image domain's facets' own sums of weights, by domain
+/// ordinal: per facet in CASA's order (facet `row·N + column`, facet 0 at
+/// the bottom left), per polarization. CASA's `.sumwt` of a faceted image
+/// holds each facet store's own sum (`SIImageStore::getSubImageStore`).
+pub type FacetSumWeights = std::collections::BTreeMap<usize, Vec<Vec<f64>>>;
 
 impl<'a> ContinuumProductInputs<'a> {
     /// Bind the completion of a run of `problem`.
@@ -98,7 +105,42 @@ impl<'a> ContinuumProductInputs<'a> {
             reconstruction_mask: None,
             domain_reconstruction_masks: None,
             primary_beam_centres: None,
+            facet_sum_weights: None,
         }
+    }
+
+    /// Bind each faceted domain's facets' own sums of weights, which its
+    /// `.sumwt` publishes one per facet pixel; an unfaceted domain publishes
+    /// its normal state's sum.
+    ///
+    /// # Panics
+    ///
+    /// If an entry is not a faceted domain of the problem with one sum per
+    /// facet and polarization.
+    #[must_use]
+    pub fn with_facet_sum_weights(mut self, sums: &'a FacetSumWeights) -> Self {
+        let domains = self.problem.geometry().domains();
+        let polarizations = self.normal_state.polarization_count();
+        assert!(
+            sums.iter().all(|(ordinal, facets)| {
+                domains.get(*ordinal).is_some_and(|domain| {
+                    domain.facets().len() > 1
+                        && facets.len() == domain.facets().len()
+                        && facets.iter().all(|facet| facet.len() == polarizations)
+                })
+            }),
+            "facet sums of weights cover faceted domains, one per facet and polarization"
+        );
+        self.facet_sum_weights = Some(sums);
+        self
+    }
+
+    /// Domain `ordinal`'s facets' own sums of weights when it is faceted.
+    #[must_use]
+    pub fn facet_sum_weights(&self, ordinal: usize) -> Option<&'a [Vec<f64>]> {
+        self.facet_sum_weights
+            .and_then(|sums| sums.get(&ordinal))
+            .map(Vec::as_slice)
     }
 
     /// Bind the exact reconstruction mask used by the final bounded solve.

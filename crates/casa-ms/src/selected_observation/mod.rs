@@ -34,6 +34,6 @@ pub use content_plan::{
 pub use measures::{SelectedObservationMeasures, SelectedObservationMeasuresError};
 pub use row_access::SelectedObservationRowSelection;
 pub use spectral_evaluation::{
-    SelectedObservationSpectralEnvelope, SelectedObservationSpectralEnvelopeReducer,
-    SelectedObservationSpectralWindow,
+    SPECTRAL_ENVELOPE_KEY_BYTES, SelectedObservationSpectralEnvelope,
+    SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralWindow,
 };

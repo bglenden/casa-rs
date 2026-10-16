@@ -464,15 +464,17 @@ pub(crate) fn scatter_image_polarization_plane<T: Copy>(
 }
 
 /// Write one plane's scalar state, such as its sum of weights, at every
-/// direction pixel: one per facet of a faceted domain, which all carry
-/// facet 0's value (#664), else the single pixel.
+/// direction pixel: one per facet of a faceted domain, `value(facet)` at
+/// facet `row·N + column`'s pixel `(column, row)` as CASA's facet stores
+/// address `.sumwt` (`SIImageStore::getSubImageStore`), else the single
+/// pixel's `value(0)`.
 pub(crate) fn scatter_polarization_plane_state(
     payload: &mut [f32],
     axes: &ProductAxes,
     storage_shape: [usize; 4],
     polarization: usize,
     output_channel: usize,
-    value: f32,
+    value: impl Fn(usize) -> f32,
 ) {
     let extent = |axis| {
         axes.order()
@@ -481,7 +483,8 @@ pub(crate) fn scatter_polarization_plane_state(
             .position(|candidate| *candidate == axis)
             .map_or(1, |position| storage_shape[position])
     };
-    for longitude in 0..extent(ImageAxis::DirectionLongitude) {
+    let columns = extent(ImageAxis::DirectionLongitude);
+    for longitude in 0..columns {
         for latitude in 0..extent(ImageAxis::DirectionLatitude) {
             let offset = product_offset(
                 axes.order(),
@@ -491,7 +494,7 @@ pub(crate) fn scatter_polarization_plane_state(
                 polarization,
                 output_channel,
             );
-            payload[offset] = value;
+            payload[offset] = value(latitude * columns + longitude);
         }
     }
 }

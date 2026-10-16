@@ -109,7 +109,23 @@ pub(crate) fn prepare(
     // observation's both evaluate with it.
     let measures = casa_ms::open_measures_runtime()?;
     let engine = MsCalEngine::with_measures(&ms, Arc::clone(&measures))?;
-    let survey = selection::survey(request, &ms, budget, &engine)?;
+    // An MFS run's spectral envelope is held beside the survey walk and
+    // admitted on its own, against the run's memory.
+    let envelope_bytes = if request.specmode == SpecMode::Mfs {
+        selection::envelope_bytes(&ms, context.policy.memory(&context.host))?
+    } else {
+        0
+    };
+    let envelope = casa_imaging_runtime::admit(
+        &context.host,
+        &context.policy,
+        &casa_imaging_runtime::Demand {
+            phase: "spectral envelope",
+            memory: envelope_bytes as u64,
+        },
+    )?;
+    let survey = selection::survey(request, &ms, budget, envelope_bytes, &engine)?;
+    drop(envelope);
     let centre = direction::resolve_centre(request, &ms, &survey, &engine, budget)?;
     let frame = FrameContext {
         anchor_time_mjd_seconds: survey.first_time_mjd_seconds,

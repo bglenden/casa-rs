@@ -345,13 +345,18 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             // cell's norms, 0.24 % above the data gridding's). The flat-noise
             // products divide by the raw sensitivity, where every such sum
             // cancels, as CASA's `divideResidualByWeight` reduces to.
+            // A faceted domain publishes each facet store's own sum.
+            let facets = self.inputs.facet_sum_weights(self.domain_ordinal);
             scatter_polarization_plane_state(
                 &mut window.payload,
                 self.member.axes(),
                 window.shape,
                 polarization,
                 local_channel,
-                plane.sum_weight() as f32,
+                |facet| match facets {
+                    Some(facets) => facets[facet][polarization] as f32,
+                    None => plane.sum_weight() as f32,
+                },
             );
             return Ok(());
         }

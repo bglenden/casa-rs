@@ -15,7 +15,9 @@ use casa_imaging_model::{CompiledProblem, ModelDeltaTerm, SpectralWcs, Weighting
 use casa_imaging_operator::{
     BandwidthTaper, Basis, GridPrecision, ModeSet, PlaneRange, WeightingGeneration,
 };
-use casa_imaging_products::{MinorCycleImageResponse, VisibilityProductCompletion};
+use casa_imaging_products::{
+    FacetSumWeights, MinorCycleImageResponse, VisibilityProductCompletion,
+};
 use casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan;
 use casa_imaging_reconstruction::{
     ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, ModelGeneration,
@@ -78,6 +80,9 @@ pub(crate) struct ImagingOutcome {
     pub(crate) total_actual_minor_iterations: usize,
     pub(crate) visibility_products: Option<VisibilityProductCompletion>,
     pub(crate) planes_per_wave: Option<u32>,
+    /// Each faceted domain's facets' own sums of weights, which its
+    /// `.sumwt` publishes.
+    pub(crate) facet_sum_weights: FacetSumWeights,
     /// The charge of the memory `scientific` holds resident, released with
     /// it.
     pub(crate) retained: Reservation,
@@ -141,6 +146,7 @@ impl ImagingOutcome {
             total_actual_minor_iterations: 0,
             visibility_products: major.visibility,
             planes_per_wave: run.planes_per_wave,
+            facet_sum_weights: run.stitch.facet_sum_weights(),
             retained: Reservation::none(),
         }
     }
@@ -696,14 +702,17 @@ impl<'a> Run<'a> {
 
     /// The waves of a pass accumulating `modes`, with a model when
     /// `with_model`, that fit the free memory beside `besides` bytes the
-    /// pass also allocates (an initial model), and the reservation of both:
-    /// planned once per major cycle for the pass and its normal storage.
+    /// pass also allocates (an initial model) and the faceted domains'
+    /// stitched images ([`ChartStitch::pass_bytes`]), and the reservation of
+    /// all three: planned once per major cycle for the pass and its normal
+    /// storage.
     fn admit_pass(
         &self,
         modes: ModeSet,
         with_model: bool,
         besides: u64,
     ) -> Result<(Residency, Reservation), ImagingError> {
+        let besides = besides + self.stitch.pass_bytes(modes.psf);
         let workers = self.teams.streaming().workers();
         let domains = pass_domains(&self.domains, workers);
         let demand = WaveDemand {
