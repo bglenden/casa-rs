@@ -1035,7 +1035,7 @@ impl MeasurementSet {
             .chain(SubtableId::ALL_OPTIONAL.iter())
         {
             if let Some(subtable_path) = self.subtable_paths.get(id) {
-                let keyword_path = subtable_keyword_value(base_path, subtable_path);
+                let keyword_path = casa_tables::strip_directory(subtable_path, base_path);
                 self.main
                     .keywords_mut()
                     .upsert(id.name(), Value::table_ref(keyword_path));
@@ -1378,7 +1378,7 @@ fn subtable_path_from_main(main: &Table, base_path: &Path, id: SubtableId) -> Op
             _ => None,
         };
         if let Some(keyword_path) = keyword_path {
-            let candidate = resolve_subtable_path(base_path, keyword_path);
+            let candidate = casa_tables::add_directory(keyword_path, base_path);
             if candidate.exists() {
                 return Some(candidate);
             }
@@ -1387,49 +1387,6 @@ fn subtable_path_from_main(main: &Table, base_path: &Path, id: SubtableId) -> Op
 
     let fallback = base_path.join(id.name());
     fallback.exists().then_some(fallback)
-}
-
-fn resolve_subtable_path(base_path: &Path, keyword_path: &str) -> PathBuf {
-    let mut trimmed = keyword_path;
-    let mut removed_prefixes = 0_usize;
-    while let Some(rest) = trimmed.strip_prefix("./") {
-        trimmed = rest;
-        removed_prefixes += 1;
-    }
-
-    if removed_prefixes > 0 {
-        let anchor = if removed_prefixes == 1 {
-            base_path.parent().unwrap_or(base_path)
-        } else {
-            base_path
-        };
-        return anchor.join(trimmed);
-    }
-
-    let candidate = PathBuf::from(trimmed);
-    if candidate.is_absolute() {
-        candidate
-    } else {
-        base_path.join(candidate)
-    }
-}
-
-fn subtable_keyword_value(base_path: &Path, subtable_path: &Path) -> String {
-    if let Ok(relative) = subtable_path.strip_prefix(base_path) {
-        let rel = relative.to_string_lossy();
-        return format!("././{rel}");
-    }
-    if let Some(parent) = base_path.parent()
-        && let Ok(relative) = subtable_path.strip_prefix(parent)
-    {
-        let rel = relative.to_string_lossy();
-        return format!("./{rel}");
-    }
-    if subtable_path.is_relative() {
-        let rel = subtable_path.to_string_lossy();
-        return format!("././{}", rel.trim_start_matches("./"));
-    }
-    subtable_path.to_string_lossy().to_string()
 }
 
 #[cfg(test)]

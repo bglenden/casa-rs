@@ -15,6 +15,7 @@ use super::data_type::{
     CasacoreDataType, ColumnClassInfo, RECORD_COLUMN_CLASS_NAME, array_column_class_name,
     parse_column_class_name, scalar_column_class_name,
 };
+use crate::table_path::stored_table_dat_keywords;
 
 // ---------------------------------------------------------------------------
 // Parsed structures
@@ -968,12 +969,18 @@ fn is_array_data_type(dt: CasacoreDataType) -> bool {
 // Write path
 // ---------------------------------------------------------------------------
 
+/// Writes `contents` to `path`, the `table.dat` inside a table's directory.
+///
+/// Absolute table keywords are stored relative to that table, as casacore
+/// stores them ([`stored_table_dat_keywords`]).
 pub(crate) fn write_table_dat(
     path: &Path,
     contents: &TableDatContents,
 ) -> Result<(), StorageError> {
+    let table = path.parent().unwrap_or(path);
+    let contents = stored_table_dat_keywords(contents, table);
     let mut io = AipsIo::open(path, AipsOpenOption::New)?;
-    write_table_dat_contents(&mut io, contents)?;
+    write_table_dat_contents(&mut io, &contents)?;
     io.close()?;
     Ok(())
 }
@@ -1831,7 +1838,7 @@ impl TableDatContents {
                     ref_table,
                 } => {
                     if let Some(desc) = columns.iter_mut().find(|c| c.col_name == *col_name) {
-                        let rel_path = super::strip_directory(ref_table, table_path);
+                        let rel_path = crate::table_path::strip_directory(ref_table, table_path);
                         desc.keywords.push(RecordField::new(
                             "_ForwardColumn_TableName".to_string(),
                             Value::Scalar(ScalarValue::String(rel_path)),
@@ -2003,7 +2010,7 @@ impl TableDatContents {
                     row_column,
                 } => {
                     if let Some(desc) = columns.iter_mut().find(|c| c.col_name == *col_name) {
-                        let rel_path = super::strip_directory(ref_table, table_path);
+                        let rel_path = crate::table_path::strip_directory(ref_table, table_path);
                         desc.keywords.push(RecordField::new(
                             "_ForwardColumn_TableName_Row".to_string(),
                             Value::Scalar(ScalarValue::String(rel_path)),

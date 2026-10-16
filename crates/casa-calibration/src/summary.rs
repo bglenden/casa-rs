@@ -2,9 +2,9 @@
 //! Calibration-table opening and summary generation.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use casa_tables::{Table, TableError, TableOptions};
+use casa_tables::{Table, TableError, TableOptions, add_directory};
 use casa_types::{ScalarValue, Value};
 use thiserror::Error;
 
@@ -150,7 +150,7 @@ fn summarize_subtables(path: &Path, table: &Table) -> Vec<CalibrationSubtableSum
                 .map(ToOwned::to_owned);
             let resolved_path = stored_reference
                 .as_deref()
-                .map(|stored| resolve_table_ref(path, stored));
+                .map(|stored| add_directory(stored, path));
 
             match resolved_path.as_ref() {
                 Some(resolved) if resolved.exists() => {
@@ -615,15 +615,6 @@ fn keyword_string(record: &casa_types::RecordValue, name: &str) -> Option<String
     match record.get(name) {
         Some(Value::Scalar(ScalarValue::String(value))) => Some(value.clone()),
         _ => None,
-    }
-}
-
-fn resolve_table_ref(table_path: &Path, stored: &str) -> PathBuf {
-    let stored_path = Path::new(stored);
-    if stored_path.is_absolute() {
-        stored_path.to_path_buf()
-    } else {
-        table_path.join(stored_path)
     }
 }
 

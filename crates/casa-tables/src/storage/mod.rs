@@ -48,6 +48,7 @@ use crate::table::{
     SelectedArray1DCellsMut, SelectedArray1DShape, SelectedArray2DCells, SelectedArray2DCellsMut,
     SelectedArray2DShape, SelectedReadFootprint, StreamedScalarColumn, StreamedScalarType,
 };
+use crate::table_path::add_directory_for_link;
 
 use self::data_type::CasacoreDataType;
 use self::incremental_stman::{
@@ -3700,11 +3701,7 @@ impl CompositeStorage {
         table_path: &Path,
         ref_dat: &RefTableDatContents,
     ) -> Result<StorageSnapshot, StorageError> {
-        // Resolve parent path using C++ addDirectory convention:
-        //  - Leading "./" means: take parent directory of ref table, then append
-        //  - Leading "././" means: the path is inside the ref table directory
-        //  - Otherwise: use as-is (absolute or plain relative)
-        let parent_path = add_directory(&ref_dat.parent_relative_path, table_path)?;
+        let parent_path = add_directory_for_link(&ref_dat.parent_relative_path, table_path);
 
         // Recursively load the parent table.
         let parent = self.load(&parent_path)?;
@@ -3830,7 +3827,7 @@ impl CompositeStorage {
         let mut undefined_cells = Vec::new();
 
         for (i, rel_path) in concat_dat.table_paths.iter().enumerate() {
-            let abs_path = add_directory(rel_path, table_path)?;
+            let abs_path = add_directory_for_link(rel_path, table_path);
             let sub_snapshot = self.load(&abs_path)?;
 
             if i == 0 {
@@ -5360,45 +5357,6 @@ pub(crate) fn make_undefined_array(dt: CasacoreDataType, ndim: usize) -> casa_ty
     Value::Array(av)
 }
 
-/// Compute a relative path using the C++ `Path::stripDirectory` convention.
-///
-/// Given `target_path` (the table being referenced) and `from_path` (the table
-/// that contains the reference), produces a relative path string that
-/// [`add_directory`] can invert.
-///
-/// Convention:
-/// - If target is a sibling (same parent directory): `"./name"`
-/// - If target is inside the from directory: `"././name"`
-/// - Otherwise: absolute path as fallback
-pub(crate) fn strip_directory(target_path: &Path, from_path: &Path) -> String {
-    let target_abs = std::path::absolute(target_path).unwrap_or_else(|_| target_path.to_path_buf());
-    let from_abs = std::path::absolute(from_path).unwrap_or_else(|_| from_path.to_path_buf());
-
-    // Check if target is inside the from directory (././ convention).
-    let from_dir_prefix = format!("{}/", from_abs.display());
-    let target_str = format!("{}", target_abs.display());
-    if target_str.starts_with(&from_dir_prefix) {
-        let remainder = &target_str[from_dir_prefix.len()..];
-        return format!("././{remainder}");
-    }
-
-    // Check if they share the same parent directory (./ convention).
-    if let (Some(from_parent), Some(target_parent)) = (from_abs.parent(), target_abs.parent())
-        && from_parent == target_parent
-    {
-        let name = target_abs.file_name().unwrap_or_default().to_string_lossy();
-        return format!("./{name}");
-    }
-
-    // Fallback: absolute path.
-    target_abs.to_string_lossy().to_string()
-}
-
-/// Resolve a stored relative path using the C++ `Path::addDirectory` convention.
-///
-/// - `"./name"` → `parent_dir(ref_table_path) / name`
-/// - `"././name"` → `ref_table_path / name`
-/// - absolute or plain → used as-is
 fn apply_physical_dm_descriptor_group(
     table_dat: &mut TableDatContents,
     dm_type_name: &str,
@@ -5412,47 +5370,6 @@ fn apply_physical_dm_descriptor_group(
         desc.data_manager_type = dm_type_name.to_string();
         desc.data_manager_group = dm_group_name.to_string();
     }
-}
-
-pub(crate) fn add_directory(
-    relative: &str,
-    ref_table_path: &Path,
-) -> Result<PathBuf, StorageError> {
-    let mut name = relative;
-    let mut stripped_count = 0usize;
-
-    // Strip leading "./" segments, counting how many were removed.
-    while name.len() >= 2 && name.starts_with("./") {
-        name = &name[2..];
-        stripped_count += 1;
-    }
-
-    if stripped_count == 0 {
-        // No "./" prefix — use as-is (absolute or plain relative).
-        let p = PathBuf::from(relative);
-        if p.is_absolute() {
-            return Ok(p);
-        }
-        // Plain relative: resolve relative to ref table's parent directory.
-        return Ok(ref_table_path
-            .parent()
-            .unwrap_or(ref_table_path)
-            .join(relative));
-    }
-
-    if stripped_count == 1 {
-        // "./" was removed → add parent directory of ref_table_path.
-        let dir = ref_table_path.parent().ok_or_else(|| {
-            StorageError::FormatMismatch(format!(
-                "cannot get parent directory of '{}'",
-                ref_table_path.display()
-            ))
-        })?;
-        return Ok(dir.join(name));
-    }
-
-    // "././" or more → add the ref table path itself (subtable inside it).
-    Ok(ref_table_path.join(name))
 }
 
 /// Read and parse the `table.info` file from a table directory.

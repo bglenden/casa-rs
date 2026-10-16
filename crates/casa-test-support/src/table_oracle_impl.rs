@@ -514,6 +514,45 @@ pub(crate) fn cpp_lock_read_relock(path: &std::path::Path) -> Result<(u64, u32),
     Ok((rows, columns))
 }
 
+/// Open the table that a table keyword of the table at `path` (of its column
+/// `column`, when given) refers to in C++ casacore and return its name.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_keyword_table_name(
+    path: &std::path::Path,
+    column: Option<&str>,
+    keyword: &str,
+) -> Result<String, String> {
+    let c_path =
+        CasacoreOracleRuntime::c_path("table path", path).map_err(|error| error.to_string())?;
+    let c_column = CasacoreOracleRuntime::c_string("column name", column.unwrap_or(""))
+        .map_err(|error| error.to_string())?;
+    let c_keyword = CasacoreOracleRuntime::c_string("keyword name", keyword)
+        .map_err(|error| error.to_string())?;
+    let mut buf = vec![0 as std::ffi::c_char; 4096];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        cpp_table_keyword_table_name(
+            c_path.as_ptr(),
+            c_column.as_ptr(),
+            c_keyword.as_ptr(),
+            buf.as_mut_ptr(),
+            buf.len() as i32,
+            &mut error,
+        )
+    };
+    unsafe {
+        CasacoreOracleRuntime::cpp_status(
+            "table.keyword_table_name",
+            rc,
+            error,
+            cpp_table_free_error,
+        )
+    }
+    .map_err(|error| error.to_string())?;
+    CasacoreOracleRuntime::output_c_char_string("table.keyword_table_name", &buf)
+        .map_err(|error| error.to_string())
+}
+
 /// A C++ casacore `Table` and its `ScalarColumn<Int>` "id", opened with
 /// `UserLocking` and held open; closed with [`cpp_held_reader_close`].
 #[cfg(has_casacore_cpp)]

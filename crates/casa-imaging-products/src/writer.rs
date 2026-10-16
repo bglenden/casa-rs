@@ -371,7 +371,6 @@ impl MemberImage<'_> {
         if self.explicit_mask {
             self.image.set_default_mask("mask0").map_err(image_error)?;
         }
-        self.image.prepare_relocation(&self.staged.target);
         self.image.save().map_err(image_error)?;
         if let Some(stats) = self.image.tiled_io_stats() {
             tracing::debug!(
