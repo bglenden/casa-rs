@@ -3,7 +3,6 @@
 //! complete) over a ring of slots.
 
 use std::ops::Range;
-use std::sync::{Mutex, PoisonError};
 
 use casa_imaging_operator::{
     AccumulatorLayout, CellHold, ConvolutionFunctionSet, DeviceCells, DeviceFailure,
@@ -16,7 +15,7 @@ use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_metal::{
     MTLCommandBuffer, MTLCommandBufferStatus, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputeCommandEncoder, MTLPurgeableState, MTLResource, MTLSize,
+    MTLComputeCommandEncoder, MTLSize,
 };
 
 use crate::device::{Buffer, Device, Pipeline};
@@ -140,10 +139,8 @@ struct Command(Retained<ProtocolObject<dyn MTLCommandBuffer>>);
 
 // SAFETY: a committed command buffer is only waited on and queried, which
 // Metal allows from any thread; the backend that owns it is used by one
-// thread at a time (`GridBackend` is `Send`, not `Sync`), a clone handed to
-// `DeviceCells::defer` is only waited on, and the clones a `ModelCopy` keeps
-// for the backends of several threads are only queried (`status`) and
-// waited on, under the copy's mutex.
+// thread at a time (`GridBackend` is `Send`, not `Sync`), and a clone handed
+// to `DeviceCells::defer` is only waited on.
 unsafe impl Send for Command {}
 
 impl Command {
@@ -445,7 +442,7 @@ impl<'cf> MetalBackend<'cf> {
         targets: &Targets<'_>,
         mut sumwt: Option<&mut [f64]>,
         cells: Option<&DeviceCells>,
-        model: Option<&ModelCopy>,
+        model: Option<&Buffer>,
         native: Option<&Buffer>,
         mut readback: Readback<'_>,
         leave_running: bool,
@@ -645,7 +642,7 @@ impl<'cf> MetalBackend<'cf> {
         slot_index: usize,
         kernel: Kernel,
         grid: Option<&Buffer>,
-        model: Option<&ModelCopy>,
+        model: Option<&Buffer>,
         native: Option<&Buffer>,
         mut params: Params,
         range: Range<usize>,
@@ -712,7 +709,7 @@ impl<'cf> MetalBackend<'cf> {
                     bind(&slot.norms, 1);
                     // The phasors, read only for a native prediction.
                     bind(&slot.values, 2);
-                    bind(&model.expect("prediction has a model").buffer, 6);
+                    bind(model.expect("prediction has a model"), 6);
                     let out = if kernel == Kernel::Predict {
                         &slot.out
                     } else {
@@ -731,7 +728,7 @@ impl<'cf> MetalBackend<'cf> {
                     bind(&slot.weights, 2);
                     bind(grid.expect("the residual has a grid"), 6);
                     bind(&slot.out, 8);
-                    bind(&model.expect("the residual has a model").buffer, 9);
+                    bind(model.expect("the residual has a model"), 9);
                     bind(&slot.norms, 10);
                 }
             }
@@ -752,9 +749,6 @@ impl<'cf> MetalBackend<'cf> {
             );
             encoder.endEncoding();
             command.commit();
-            if let Some(model) = model {
-                model.bound_by(&command);
-            }
             slot.command = Some(Command(command));
             slot.range = range;
             Ok(())
@@ -821,10 +815,7 @@ impl<'cf> MetalBackend<'cf> {
     }
 
     /// The device copy of `model`, made once and kept in the grids.
-    fn model_copy<'m>(
-        &self,
-        model: &'m PreparedModelGrids,
-    ) -> Result<&'m ModelCopy, OperatorError> {
+    fn model_copy<'m>(&self, model: &'m PreparedModelGrids) -> Result<&'m Buffer, OperatorError> {
         let device = self.device;
         model
             .device_copy(|storage| {
@@ -833,58 +824,10 @@ impl<'cf> MetalBackend<'cf> {
                 buffer
                     .slice_mut::<Complex32>(cells.len())
                     .copy_from_slice(cells);
-                Ok::<_, OperatorError>(ModelCopy {
-                    buffer,
-                    commands: Mutex::new(Vec::new()),
-                })
+                Ok::<_, OperatorError>(buffer)
             })
             .as_ref()
             .map_err(Clone::clone)
-    }
-}
-
-/// The device copy of a model's grids, kept in them
-/// ([`PreparedModelGrids::device_copy`]) for every backend that predicts
-/// from them.
-///
-/// Metal frees a buffer only after it releases the last command that bound
-/// it, which can be a second after the buffer drops; the pass that charged
-/// a copy (as large as the model's grids) would release its reservation
-/// while the copy's memory is still held. So the copy keeps the commands
-/// that bind it, and its drop waits for them and then discards its memory
-/// at once.
-struct ModelCopy {
-    buffer: Buffer,
-    /// Committed commands that bind the copy, less those seen complete.
-    commands: Mutex<Vec<Command>>,
-}
-
-impl ModelCopy {
-    /// Keep `command`, just committed with the copy bound, until it completes.
-    fn bound_by(&self, command: &Retained<ProtocolObject<dyn MTLCommandBuffer>>) {
-        let mut commands = self.commands.lock().unwrap_or_else(PoisonError::into_inner);
-        commands.retain(|Command(command)| {
-            !matches!(
-                command.status(),
-                MTLCommandBufferStatus::Completed | MTLCommandBufferStatus::Error
-            )
-        });
-        commands.push(Command(command.clone()));
-    }
-}
-
-impl Drop for ModelCopy {
-    fn drop(&mut self) {
-        let commands = self
-            .commands
-            .get_mut()
-            .unwrap_or_else(PoisonError::into_inner);
-        for command in commands.drain(..) {
-            command.wait_until_completed();
-        }
-        // No command reads the copy any more: its contents can go now,
-        // whenever Metal releases the buffer itself.
-        self.buffer.raw.setPurgeableState(MTLPurgeableState::Empty);
     }
 }
 
@@ -1271,135 +1214,5 @@ impl MetalBackend<'_> {
             false,
             params,
         )
-    }
-}
-
-#[cfg(test)]
-mod model_copy_tests {
-    use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
-    use casa_imaging_operator::{
-        Basis, CfKey, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
-        ModelImages, ModelPlane, ModelPrescale, Placement, PolarizationRouting, SampleBuffer,
-        Spheroidal,
-    };
-    use ndarray::Array2;
-
-    use super::*;
-
-    /// Dropped model grids discard their device copy at once, after every
-    /// command that bound it (IF-11, #660). Metal frees a buffer only when
-    /// it releases those commands, which held a 512-plane cube's 1.6 GB
-    /// copy for up to a second past the pass that charged it.
-    #[test]
-    fn dropped_model_grids_discard_their_device_copy() {
-        let geometry = GridGeometry::new(
-            ImageExtent {
-                shape: [64, 64],
-                increment_rad: [-2.0e-5, 2.0e-5],
-                reference_pixel: [32, 32],
-            },
-            GridPadding::CasaComposite,
-        )
-        .expect("geometry");
-        let routing = PolarizationRouting::compile(
-            &[CorrelationType::LinearXx, CorrelationType::LinearYy],
-            &[
-                PolarizationCoordinate::LinearXx,
-                PolarizationCoordinate::LinearYy,
-            ],
-        )
-        .expect("routing");
-        let kernels = Spheroidal::new(&geometry, &routing);
-        let operator = MeasurementOperator::new(
-            geometry,
-            Basis::ChannelLocal { planes: 2 },
-            routing,
-            Box::new(kernels),
-            GridPrecision::F32,
-        );
-        let mut backend = match MetalBackend::new(operator.cf(), false) {
-            Ok(backend) => backend,
-            Err(error) => {
-                eprintln!("skipped: {error}");
-                return;
-            }
-        };
-        let model = ModelImages {
-            first_plane: 0,
-            planes: (0..2)
-                .map(|_| ModelPlane {
-                    images: vec![
-                        Array2::from_elem((64, 64), 1.0),
-                        Array2::from_elem((64, 64), 0.5),
-                    ],
-                })
-                .collect(),
-        };
-        let prepared = operator
-            .prepare_model(&model, ModelPrescale::Unit)
-            .expect("model");
-        let mut block = SampleBuffer::new(2);
-        for plane in 0..2 {
-            let placement = Placement {
-                u: 100.0,
-                v: -50.0,
-                w: 0.0,
-                prediction_w_positive: false,
-                phase: 0.0,
-                plane,
-                spectral: 0.0,
-                cf: CfKey::default(),
-                gradient: [0.0; 2],
-            };
-            block.push(placement, &[Complex32::default(); 2], &[1.0; 2]);
-        }
-        let mut out = vec![Complex32::default(); 4];
-        backend
-            .apply(
-                &block.block(),
-                operator.cf(),
-                Work::Predict {
-                    model: &prepared,
-                    out: &mut out,
-                },
-            )
-            .expect("predict");
-        assert!(
-            out.iter().any(|value| value.norm() > 0.0),
-            "the prediction read the copy"
-        );
-        let copy = backend
-            .model_copy(&prepared)
-            .expect("the prediction's copy");
-        let buffer = copy.buffer.raw.clone();
-        let commands: Vec<_> = copy
-            .commands
-            .lock()
-            .expect("the copy's commands")
-            .iter()
-            .map(|Command(command)| command.clone())
-            .collect();
-        assert_eq!(
-            commands.len(),
-            1,
-            "the copy keeps the command that bound it"
-        );
-        assert_eq!(
-            buffer.setPurgeableState(MTLPurgeableState::KeepCurrent),
-            MTLPurgeableState::NonVolatile,
-            "the copy is whole while the grids live"
-        );
-        drop(prepared);
-        assert!(
-            commands
-                .iter()
-                .all(|command| command.status() == MTLCommandBufferStatus::Completed),
-            "the copy outlives every command that bound it"
-        );
-        assert_eq!(
-            buffer.setPurgeableState(MTLPurgeableState::KeepCurrent),
-            MTLPurgeableState::Empty,
-            "the copy's memory goes with the grids"
-        );
     }
 }
