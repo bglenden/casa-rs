@@ -32,15 +32,15 @@
 <a href=#32 id=32 data-nosnippet>32</a>
 <a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span>std::{error::Error, fmt, io, path::PathBuf, sync::Arc};
 <a href=#34 id=34 data-nosnippet>34</a>
-<a href=#35 id=35 data-nosnippet>35</a><span class="kw">use </span>casa_imaging_model::{
-<a href=#36 id=36 data-nosnippet>36</a>    CompileProblemError, CompiledProblem, ObservationSelection, ProblemInput,
-<a href=#37 id=37 data-nosnippet>37</a>    SpectralWindowSelection, compile, compile_observation,
-<a href=#38 id=38 data-nosnippet>38</a>};
-<a href=#39 id=39 data-nosnippet>39</a><span class="kw">use </span>casa_imaging_products::{
-<a href=#40 id=40 data-nosnippet>40</a>    ContinuumProductControls, PlannedContinuumGeneration, PublishedContinuumGeneration,
-<a href=#41 id=41 data-nosnippet>41</a>    VisibilityProductCompletion,
-<a href=#42 id=42 data-nosnippet>42</a>};
-<a href=#43 id=43 data-nosnippet>43</a><span class="kw">use </span>casa_imaging_reconstruction::MajorCycleCompletion;
+<a href=#35 id=35 data-nosnippet>35</a><span class="kw">use </span>casa_imaging_deconvolution::MajorCycleCompletion;
+<a href=#36 id=36 data-nosnippet>36</a><span class="kw">use </span>casa_imaging_model::{
+<a href=#37 id=37 data-nosnippet>37</a>    CompileProblemError, CompiledProblem, ObservationSelection, ProblemInput,
+<a href=#38 id=38 data-nosnippet>38</a>    SpectralWindowSelection, compile, compile_observation,
+<a href=#39 id=39 data-nosnippet>39</a>};
+<a href=#40 id=40 data-nosnippet>40</a><span class="kw">use </span>casa_imaging_products::{
+<a href=#41 id=41 data-nosnippet>41</a>    ContinuumProductControls, PlannedContinuumGeneration, PublishedContinuumGeneration,
+<a href=#42 id=42 data-nosnippet>42</a>    VisibilityProductCompletion,
+<a href=#43 id=43 data-nosnippet>43</a>};
 <a href=#44 id=44 data-nosnippet>44</a><span class="kw">use </span>casa_imaging_runtime::run_phase;
 <a href=#45 id=45 data-nosnippet>45</a><span class="kw">use </span>casa_ms::resolve_selected_observation;
 <a href=#46 id=46 data-nosnippet>46</a><span class="kw">use </span>native::NativeInput;
@@ -210,7 +210,7 @@
 <a href=#210 id=210 data-nosnippet>210</a>    <span class="doccomment">/// Exact x-major reconstruction support used for component placement.
 <a href=#211 id=211 data-nosnippet>211</a>    </span><span class="kw">pub </span>mask_support: Vec&lt;bool&gt;,
 <a href=#212 id=212 data-nosnippet>212</a>    <span class="doccomment">/// Auto-multithreshold diagnostics, when that mask mode generated support.
-<a href=#213 id=213 data-nosnippet>213</a>    </span><span class="kw">pub </span>auto_mask: <span class="prelude-ty">Option</span>&lt;casa_imaging_reconstruction::AutoMultithreshEvidence&gt;,
+<a href=#213 id=213 data-nosnippet>213</a>    </span><span class="kw">pub </span>auto_mask: <span class="prelude-ty">Option</span>&lt;casa_imaging_deconvolution::AutoMultithreshEvidence&gt;,
 <a href=#214 id=214 data-nosnippet>214</a>}
 <a href=#215 id=215 data-nosnippet>215</a>
 <a href=#216 id=216 data-nosnippet>216</a><span class="doccomment">/// Stable application spelling of the scientific minor-cycle terminal reason.

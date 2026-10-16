@@ -20,7 +20,7 @@ sizes a wave’s model halo
 </div></details><details class="toggle method-toggle" open><summary><section id="method.bytes" class="method"><a class="src rightside" href="../../src/casa_imaging_runtime/pass/partition.rs.html#145-217">Source</a><h4 class="code-header">pub fn <a href="#method.bytes" class="fn">bytes</a>(&amp;self, planes: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.u32.html">u32</a>) -&gt; <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.u64.html">u64</a></h4></section></summary><div class="docblock"><p>Bytes a wave of <code>planes</code> planes holds. Per image domain and plane:
 its accumulator holding <code>modes</code>; the operator’s <code>f32</code> images; and, for
 a basis whose normal state is resident, that state’s copy at its
-stored size ([<code>casa_imaging_reconstruction::resident_bytes_per_cell</code>]):
+stored size ([<code>casa_imaging_deconvolution::resident_bytes_per_cell</code>]):
 a channel-local state is paged, under its cube cache’s charge. With a
 model, the prepared grids of the wave’s planes and of its model halo on
 each side. Per worker: one

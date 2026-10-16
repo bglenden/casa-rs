@@ -2,12 +2,12 @@
 <a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! Conversions between the operator's images and the reconstruction's
 <a href=#3 id=3 data-nosnippet>3</a>//! normal-state and model representations.
 <a href=#4 id=4 data-nosnippet>4</a>
-<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>casa_imaging_model::ModelSupport;
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_imaging_operator::{
-<a href=#7 id=7 data-nosnippet>7</a>    Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, PlaneRange,
-<a href=#8 id=8 data-nosnippet>8</a>    PreparedModelGrids,
-<a href=#9 id=9 data-nosnippet>9</a>};
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>casa_imaging_reconstruction::{ModelGeneration, PassImages};
+<a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>casa_imaging_deconvolution::{ModelGeneration, PassImages};
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_imaging_model::ModelSupport;
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_imaging_operator::{
+<a href=#8 id=8 data-nosnippet>8</a>    Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, PlaneRange,
+<a href=#9 id=9 data-nosnippet>9</a>    PreparedModelGrids,
+<a href=#10 id=10 data-nosnippet>10</a>};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>ndarray::Array2;
 <a href=#12 id=12 data-nosnippet>12</a>
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span><span class="kw">super</span>::ImagingError;

@@ -3,10 +3,10 @@
 <a href=#3 id=3 data-nosnippet>3</a>
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span>std::ops::Range;
 <a href=#5 id=5 data-nosnippet>5</a>
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_imaging_operator::{
-<a href=#7 id=7 data-nosnippet>7</a>    Basis, CellHold, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile, grid_planning_bytes,
-<a href=#8 id=8 data-nosnippet>8</a>};
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_imaging_reconstruction::resident_bytes_per_cell;
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_imaging_deconvolution::resident_bytes_per_cell;
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>casa_imaging_operator::{
+<a href=#8 id=8 data-nosnippet>8</a>    Basis, CellHold, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile, grid_planning_bytes,
+<a href=#9 id=9 data-nosnippet>9</a>};
 <a href=#10 id=10 data-nosnippet>10</a>
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use super</span>::{BackendChoice, BlockShape, PassDomain};
 <a href=#12 id=12 data-nosnippet>12</a>
@@ -128,7 +128,7 @@
 <a href=#128 id=128 data-nosnippet>128</a>    <span class="doccomment">/// Bytes a wave of `planes` planes holds. Per image domain and plane:
 <a href=#129 id=129 data-nosnippet>129</a>    /// its accumulator holding `modes`; the operator's `f32` images; and, for
 <a href=#130 id=130 data-nosnippet>130</a>    /// a basis whose normal state is resident, that state's copy at its
-<a href=#131 id=131 data-nosnippet>131</a>    /// stored size ([`casa_imaging_reconstruction::resident_bytes_per_cell`]):
+<a href=#131 id=131 data-nosnippet>131</a>    /// stored size ([`casa_imaging_deconvolution::resident_bytes_per_cell`]):
 <a href=#132 id=132 data-nosnippet>132</a>    /// a channel-local state is paged, under its cube cache's charge. With a
 <a href=#133 id=133 data-nosnippet>133</a>    /// model, the prepared grids of the wave's planes and of its model halo on
 <a href=#134 id=134 data-nosnippet>134</a>    /// each side. Per worker: one

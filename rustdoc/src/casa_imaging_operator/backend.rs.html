@@ -127,64 +127,65 @@
 <a href=#127 id=127 data-nosnippet>127</a>        </span>out: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>[Complex32],
 <a href=#128 id=128 data-nosnippet>128</a>    },
 <a href=#129 id=129 data-nosnippet>129</a>    <span class="doccomment">/// Predict, subtract from the block and grid the residual data terms in
-<a href=#130 id=130 data-nosnippet>130</a>    /// one dispatch; optionally hand back the raw residual samples for a
-<a href=#131 id=131 data-nosnippet>131</a>    /// final pass that writes the corrected or model column.
-<a href=#132 id=132 data-nosnippet>132</a>    </span>ResidualGrid {
-<a href=#133 id=133 data-nosnippet>133</a>        <span class="doccomment">/// Prepared model grids covering every plane in the block.
-<a href=#134 id=134 data-nosnippet>134</a>        </span>model: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>PreparedModelGrids,
-<a href=#135 id=135 data-nosnippet>135</a>        <span class="doccomment">/// Target accumulator; it must hold the data terms.
-<a href=#136 id=136 data-nosnippet>136</a>        </span>acc: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>GridAccumulator,
-<a href=#137 id=137 data-nosnippet>137</a>        <span class="doccomment">/// `npol × placements` raw residual visibilities, when wanted.
-<a href=#138 id=138 data-nosnippet>138</a>        </span>residual_out: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>[Complex32]&gt;,
-<a href=#139 id=139 data-nosnippet>139</a>    },
-<a href=#140 id=140 data-nosnippet>140</a>    <span class="doccomment">/// Predict the block's placements from `grids`, phase-centre phasor
-<a href=#141 id=141 data-nosnippet>141</a>    /// applied, as [`Work::Predict`] does, and interpolate the predictions
-<a href=#142 id=142 data-nosnippet>142</a>    /// to native cells ([`NativeTerm`]): the model of each term's cell is
-<a href=#143 id=143 data-nosnippet>143</a>    /// written into `model`, or with `add` added to it, so that several
-<a href=#144 id=144 data-nosnippet>144</a>    /// image domains' predictions sum before the residual is formed
-<a href=#145 id=145 data-nosnippet>145</a>    /// (`SIMapperCollection::degrid`). Reads only the block's placements.
-<a href=#146 id=146 data-nosnippet>146</a>    ///
-<a href=#147 id=147 data-nosnippet>147</a>    /// A device backend may leave the work running when `apply` returns;
-<a href=#148 id=148 data-nosnippet>148</a>    /// later device work that reads `model` runs after it, and the host
-<a href=#149 id=149 data-nosnippet>149</a>    /// reads device cells only once the backend has completed it.
-<a href=#150 id=150 data-nosnippet>150</a>    </span>PredictNative {
-<a href=#151 id=151 data-nosnippet>151</a>        <span class="doccomment">/// Prepared model grids covering every plane in the block.
-<a href=#152 id=152 data-nosnippet>152</a>        </span>grids: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>PreparedModelGrids,
-<a href=#153 id=153 data-nosnippet>153</a>        <span class="doccomment">/// One term per native cell to form.
-<a href=#154 id=154 data-nosnippet>154</a>        </span>terms: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[NativeTerm],
-<a href=#155 id=155 data-nosnippet>155</a>        <span class="doccomment">/// Where the model at native cells goes.
-<a href=#156 id=156 data-nosnippet>156</a>        </span>model: NativeTarget&lt;<span class="lifetime">'a</span>&gt;,
-<a href=#157 id=157 data-nosnippet>157</a>        <span class="doccomment">/// Add to the cells instead of writing them.
-<a href=#158 id=158 data-nosnippet>158</a>        </span>add: bool,
-<a href=#159 id=159 data-nosnippet>159</a>    },
-<a href=#160 id=160 data-nosnippet>160</a>    <span class="doccomment">/// Grid the residual at native channels into the data terms of `acc`:
-<a href=#161 id=161 data-nosnippet>161</a>    /// each placement's values (`W·V·e^{iφ}` interpolated between its native
-<a href=#162 id=162 data-nosnippet>162</a>    /// endpoints) less `scale · Σ factors · M[cells]` of its endpoints
-<a href=#163 id=163 data-nosnippet>163</a>    /// ([`SampleBlock::sources`], [`NativeSource`]) in `model`.
-<a href=#164 id=164 data-nosnippet>164</a>    </span>NativeResidualGrid {
-<a href=#165 id=165 data-nosnippet>165</a>        <span class="doccomment">/// The model at native cells, from [`Work::PredictNative`].
-<a href=#166 id=166 data-nosnippet>166</a>        </span>model: NativeModel&lt;<span class="lifetime">'a</span>&gt;,
-<a href=#167 id=167 data-nosnippet>167</a>        <span class="doccomment">/// Target accumulator; it must hold the data terms.
-<a href=#168 id=168 data-nosnippet>168</a>        </span>acc: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>GridAccumulator,
-<a href=#169 id=169 data-nosnippet>169</a>    },
-<a href=#170 id=170 data-nosnippet>170</a>}
-<a href=#171 id=171 data-nosnippet>171</a>
-<a href=#172 id=172 data-nosnippet>172</a><span class="doccomment">/// A gridding backend: CPU or device. One implementation of the kernel
-<a href=#173 id=173 data-nosnippet>173</a>/// contract in plan section 5.3, selected by the runtime.
-<a href=#174 id=174 data-nosnippet>174</a></span><span class="kw">pub trait </span>GridBackend: Send {
-<a href=#175 id=175 data-nosnippet>175</a>    <span class="doccomment">/// Apply `work` to one block with kernel set `cf`; the work is complete
-<a href=#176 id=176 data-nosnippet>176</a>    /// when this returns, except that a device backend may leave grid-only
-<a href=#177 id=177 data-nosnippet>177</a>    /// work running on device cells, which the host's next access to the
-<a href=#178 id=178 data-nosnippet>178</a>    /// cells waits for ([`DeviceCells::defer`](crate::DeviceCells::defer)).
-<a href=#179 id=179 data-nosnippet>179</a>    ///
-<a href=#180 id=180 data-nosnippet>180</a>    /// Every placement must lie on a plane the target holds and have its
-<a href=#181 id=181 data-nosnippet>181</a>    /// whole support inside the target's tile; the block's polarization
-<a href=#182 id=182 data-nosnippet>182</a>    /// count must equal the kernel set's visibility polarizations.
-<a href=#183 id=183 data-nosnippet>183</a>    </span><span class="kw">fn </span>apply(
-<a href=#184 id=184 data-nosnippet>184</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#185 id=185 data-nosnippet>185</a>        block: <span class="kw-2">&amp;</span>SampleBlock&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#186 id=186 data-nosnippet>186</a>        cf: <span class="kw-2">&amp;</span><span class="kw">dyn </span>ConvolutionFunctionSet,
-<a href=#187 id=187 data-nosnippet>187</a>        work: Work&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#188 id=188 data-nosnippet>188</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), OperatorError&gt;;
-<a href=#189 id=189 data-nosnippet>189</a>}
+<a href=#130 id=130 data-nosnippet>130</a>    /// one dispatch; optionally hand back the raw residual samples. The
+<a href=#131 id=131 data-nosnippet>131</a>    /// read-back serves the T0 laws: the major-cycle pass passes `None`, and
+<a href=#132 id=132 data-nosnippet>132</a>    /// its visibility writer takes the native-channel predictions instead.
+<a href=#133 id=133 data-nosnippet>133</a>    </span>ResidualGrid {
+<a href=#134 id=134 data-nosnippet>134</a>        <span class="doccomment">/// Prepared model grids covering every plane in the block.
+<a href=#135 id=135 data-nosnippet>135</a>        </span>model: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>PreparedModelGrids,
+<a href=#136 id=136 data-nosnippet>136</a>        <span class="doccomment">/// Target accumulator; it must hold the data terms.
+<a href=#137 id=137 data-nosnippet>137</a>        </span>acc: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>GridAccumulator,
+<a href=#138 id=138 data-nosnippet>138</a>        <span class="doccomment">/// `npol × placements` raw residual visibilities, when wanted.
+<a href=#139 id=139 data-nosnippet>139</a>        </span>residual_out: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>[Complex32]&gt;,
+<a href=#140 id=140 data-nosnippet>140</a>    },
+<a href=#141 id=141 data-nosnippet>141</a>    <span class="doccomment">/// Predict the block's placements from `grids`, phase-centre phasor
+<a href=#142 id=142 data-nosnippet>142</a>    /// applied, as [`Work::Predict`] does, and interpolate the predictions
+<a href=#143 id=143 data-nosnippet>143</a>    /// to native cells ([`NativeTerm`]): the model of each term's cell is
+<a href=#144 id=144 data-nosnippet>144</a>    /// written into `model`, or with `add` added to it, so that several
+<a href=#145 id=145 data-nosnippet>145</a>    /// image domains' predictions sum before the residual is formed
+<a href=#146 id=146 data-nosnippet>146</a>    /// (`SIMapperCollection::degrid`). Reads only the block's placements.
+<a href=#147 id=147 data-nosnippet>147</a>    ///
+<a href=#148 id=148 data-nosnippet>148</a>    /// A device backend may leave the work running when `apply` returns;
+<a href=#149 id=149 data-nosnippet>149</a>    /// later device work that reads `model` runs after it, and the host
+<a href=#150 id=150 data-nosnippet>150</a>    /// reads device cells only once the backend has completed it.
+<a href=#151 id=151 data-nosnippet>151</a>    </span>PredictNative {
+<a href=#152 id=152 data-nosnippet>152</a>        <span class="doccomment">/// Prepared model grids covering every plane in the block.
+<a href=#153 id=153 data-nosnippet>153</a>        </span>grids: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>PreparedModelGrids,
+<a href=#154 id=154 data-nosnippet>154</a>        <span class="doccomment">/// One term per native cell to form.
+<a href=#155 id=155 data-nosnippet>155</a>        </span>terms: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[NativeTerm],
+<a href=#156 id=156 data-nosnippet>156</a>        <span class="doccomment">/// Where the model at native cells goes.
+<a href=#157 id=157 data-nosnippet>157</a>        </span>model: NativeTarget&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#158 id=158 data-nosnippet>158</a>        <span class="doccomment">/// Add to the cells instead of writing them.
+<a href=#159 id=159 data-nosnippet>159</a>        </span>add: bool,
+<a href=#160 id=160 data-nosnippet>160</a>    },
+<a href=#161 id=161 data-nosnippet>161</a>    <span class="doccomment">/// Grid the residual at native channels into the data terms of `acc`:
+<a href=#162 id=162 data-nosnippet>162</a>    /// each placement's values (`W·V·e^{iφ}` interpolated between its native
+<a href=#163 id=163 data-nosnippet>163</a>    /// endpoints) less `scale · Σ factors · M[cells]` of its endpoints
+<a href=#164 id=164 data-nosnippet>164</a>    /// ([`SampleBlock::sources`], [`NativeSource`]) in `model`.
+<a href=#165 id=165 data-nosnippet>165</a>    </span>NativeResidualGrid {
+<a href=#166 id=166 data-nosnippet>166</a>        <span class="doccomment">/// The model at native cells, from [`Work::PredictNative`].
+<a href=#167 id=167 data-nosnippet>167</a>        </span>model: NativeModel&lt;<span class="lifetime">'a</span>&gt;,
+<a href=#168 id=168 data-nosnippet>168</a>        <span class="doccomment">/// Target accumulator; it must hold the data terms.
+<a href=#169 id=169 data-nosnippet>169</a>        </span>acc: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>GridAccumulator,
+<a href=#170 id=170 data-nosnippet>170</a>    },
+<a href=#171 id=171 data-nosnippet>171</a>}
+<a href=#172 id=172 data-nosnippet>172</a>
+<a href=#173 id=173 data-nosnippet>173</a><span class="doccomment">/// A gridding backend: CPU or device. One implementation of the kernel
+<a href=#174 id=174 data-nosnippet>174</a>/// contract in plan section 5.3, selected by the runtime.
+<a href=#175 id=175 data-nosnippet>175</a></span><span class="kw">pub trait </span>GridBackend: Send {
+<a href=#176 id=176 data-nosnippet>176</a>    <span class="doccomment">/// Apply `work` to one block with kernel set `cf`; the work is complete
+<a href=#177 id=177 data-nosnippet>177</a>    /// when this returns, except that a device backend may leave grid-only
+<a href=#178 id=178 data-nosnippet>178</a>    /// work running on device cells, which the host's next access to the
+<a href=#179 id=179 data-nosnippet>179</a>    /// cells waits for ([`DeviceCells::defer`](crate::DeviceCells::defer)).
+<a href=#180 id=180 data-nosnippet>180</a>    ///
+<a href=#181 id=181 data-nosnippet>181</a>    /// Every placement must lie on a plane the target holds and have its
+<a href=#182 id=182 data-nosnippet>182</a>    /// whole support inside the target's tile; the block's polarization
+<a href=#183 id=183 data-nosnippet>183</a>    /// count must equal the kernel set's visibility polarizations.
+<a href=#184 id=184 data-nosnippet>184</a>    </span><span class="kw">fn </span>apply(
+<a href=#185 id=185 data-nosnippet>185</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#186 id=186 data-nosnippet>186</a>        block: <span class="kw-2">&amp;</span>SampleBlock&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#187 id=187 data-nosnippet>187</a>        cf: <span class="kw-2">&amp;</span><span class="kw">dyn </span>ConvolutionFunctionSet,
+<a href=#188 id=188 data-nosnippet>188</a>        work: Work&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#189 id=189 data-nosnippet>189</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), OperatorError&gt;;
+<a href=#190 id=190 data-nosnippet>190</a>}
 </code></pre></div></section></main></body></html>
