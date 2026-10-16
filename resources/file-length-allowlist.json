@@ -18,7 +18,6 @@
     "crates/casa-imaging-model/src/geometry.rs",
     "crates/casa-imaging-model/src/observation.rs",
     "crates/casa-imaging-model/tests/compiled_problem.rs",
-    "crates/casa-imaging-operator/src/aw/mod.rs",
     "crates/casa-imaging-runtime/src/managed_cube_blocks.rs",
     "crates/casa-lattices/src/statistics.rs",
     "crates/casa-measures-data/src/lib.rs",
