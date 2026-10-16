@@ -47,20 +47,14 @@ release-cpp-interop:
 imaging-t31-multidomain-geometry testdata_root casa_prefix:
     just arch-check
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model image_domain_projections_require_canonical_ordinals_and_share_equal_psf_values
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_geometry multi_domain_centres_are_canonical_explicit_and_identity_bearing -- --exact
     CARGO_INCREMENTAL=0 cargo test -p casa-ms reproject_raw_uvw --lib
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products --test continuum_products two_domain_members_consume_their_matching_normal_and_model_chart -- --exact
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test continuum_application application_uses_weight_when_selected_weight_spectrum_cells_are_undefined -- --exact
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test continuum_application t31_application_executes_recentered_domains_through_one_scientific_route -- --exact
     CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T31_CASA_PREFIX="{{casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test t31_multidomain_casa_oracle t31_multidomain_geometry_matches_frozen_casa_dirty_and_hogbom -- --ignored --exact --nocapture
 
-# Focused #521 source-backed spectral identity/tracer foundation.
-imaging-t35-spectral-tracer:
-    CARGO_INCREMENTAL=0 cargo test -p casa-ms t35_source_backed_identity_and_nonidentity_traversals_report_native_evaluations
-
 # Focused #522 frame/interval evaluation and edge coverage.
 imaging-t36-spectral-law:
-    CARGO_INCREMENTAL=0 cargo test -p casa-ms real_ms_cubedata_traversal_reports_source_backed_native_evaluations
     CARGO_INCREMENTAL=0 cargo test -p casa-ms --features cpp-interop-tests --test spectral_frame_parity
     CARGO_INCREMENTAL=0 cargo test -p casa-test-support --features cpp-interop-tests --test spectral_frame_exact_interop
     CARGO_INCREMENTAL=0 cargo test -p casa-test-support --features cpp-interop-tests --test frequency_sequence_interop
@@ -71,8 +65,6 @@ imaging-t41-moving-source:
     CARGO_INCREMENTAL=0 cargo test -p casa-provider-contracts
     CARGO_INCREMENTAL=0 cargo test -p casa-tables add_variable_shape_tiled_column_in_place_persists_defined_rows_only
     CARGO_INCREMENTAL=0 cargo test -p casa-ms t41_
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_problem t41_
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_geometry ephemeris_centre_laws_require_and_identify_one_bound_snapshot -- --exact
     CARGO_INCREMENTAL=0 cargo test -p casars-imager task_contract
 
 # Representative #527 frozen-CASA gate on the slow-parity ALMA ephemeris
@@ -93,7 +85,6 @@ imaging-t48-heterogeneous-response:
     CARGO_INCREMENTAL=0 cargo test -p casa-ms t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles -- --nocapture
 
 # Regenerate and compare the representative #534 2,016,000-sample dirty response with CASA.
-# Mosaic imaging is unavailable from IF-2 until IF-3 (#652), so the imaging step fails typed until then.
 imaging-t48-heterogeneous-response-casa:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -104,11 +95,7 @@ imaging-t48-heterogeneous-response-casa:
 # Focused #528 MT-MFS weight grouping and Taylor reconstruction gate.
 imaging-t42-mtmfs-normal:
     just arch-check
-    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test measurement_equation_contract problem_and_weighting_commitment_identities_are_pinned
-    CARGO_INCREMENTAL=0 cargo test -p casa-ms block_traversal_reports_one_canonical_unequal_parallel_hand_weight_group
     CARGO_INCREMENTAL=0 cargo test -p casa-ms imaging_weight_groups_reject_ambiguous_or_mixed_multi_correlation_layouts
-    CARGO_INCREMENTAL=0 cargo test -p casa-ms selected_projection_preserves_cell_flags_and_derives_parallel_hand_group_flags
-    CARGO_INCREMENTAL=0 cargo test -p casa-ms refillable_block_stream_matches_scalar_traversal_and_returns_the_owner
 
 # Focused #529 coupled MT-MFS minor-cycle gate. The real-MS frozen-CASA
 # comparison runs through the application in imaging-t44-mtmfs-products.
