@@ -156,7 +156,15 @@ fn aw_projection_runs_on_the_cpu_pass() {
         .expect("AW contract"),
     );
     fixture.products.push(ProductKind::Weight);
+    let cube = ProblemFixture {
+        basis: ReconstructionBasis::ChannelLocal { channels: 1 },
+        measurement_equation: fixture.measurement_equation,
+        products: fixture.products.clone(),
+        ..ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1)
+    };
     on_cpu(&fixture.compile()).expect("AW projection runs with its catalog and weight image");
+    // An AW cube's per-plane weights wait for a CASA comparison (#719).
+    assert_exactly_unsupported(on_cpu(&cube.compile()), [Unsupported::CubeAwProjection]);
 }
 
 #[test]

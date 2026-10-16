@@ -146,3 +146,7 @@ path = "tests/simulation_ms.rs"
 [[test]]
 name = "row_walk_memory"
 path = "tests/row_walk_memory.rs"
+
+[[test]]
+name = "spectral_envelope_memory"
+path = "tests/spectral_envelope_memory.rs"

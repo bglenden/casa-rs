@@ -132,11 +132,33 @@ impl RowFacts {
     }
 }
 
-/// Resolve the request's selection and survey its rows in one pass.
+/// Bytes an MFS run's spectral envelope reducer may hold beside the survey
+/// walk, admitted on its own: one key per MAIN row at most (each key stands
+/// for a row), and at most a sixty-fourth of the run's `memory` (16 MiB at
+/// least), with its fixed part. Its keys are the selection's distinct
+/// `TIME·(DATA_DESC_ID+1)` products, about an integration per data
+/// description, so this binds only beyond about a million integrations per
+/// gibibyte of memory.
+pub(super) fn envelope_bytes(ms: &MeasurementSet, memory: u64) -> Result<usize, PrepareError> {
+    let fields = ms.field()?.row_count();
+    let fixed = fields.saturating_mul(512).saturating_add(1 << 20);
+    let keys = ms
+        .row_count()
+        .saturating_mul(casa_ms::SPECTRAL_ENVELOPE_KEY_BYTES);
+    let share = usize::try_from(memory / 64)
+        .unwrap_or(usize::MAX)
+        .max(16 << 20);
+    Ok(fixed.saturating_add(keys.min(share)))
+}
+
+/// Resolve the request's selection and survey its rows in one pass; an MFS
+/// run's spectral envelope holds at most `envelope_bytes`, admitted beside
+/// the walk's `budget`.
 pub(super) fn survey(
     request: &ImagingRequest,
     ms: &MeasurementSet,
     budget: SelectedObservationContentBudget,
+    envelope_bytes: usize,
     frame_engine: &casa_ms::derived::engine::MsCalEngine,
 ) -> Result<Survey, PrepareError> {
     let data_description = ms.data_description()?;
@@ -154,17 +176,9 @@ pub(super) fn survey(
         &row_selection,
         &spectral_windows,
         frame_engine,
-        budget,
+        envelope_bytes,
     )?;
-    let mut io = budget.row_io_budget();
-    io.available_bytes = io
-        .available_bytes
-        .checked_sub(
-            continuum
-                .as_ref()
-                .map_or(0, |(_, reducer)| reducer.retained_bytes()),
-        )
-        .ok_or(PrepareError::SpectralEnvelopeBudget)?;
+    let io = budget.row_io_budget();
     let mut facts = RowFacts::new(ms.row_count(), ddids.len());
     let main_table = ms.main_table();
     let mut weight_spectrum_complete = main_table.column_accessor("WEIGHT_SPECTRUM").is_ok();
@@ -238,15 +252,15 @@ pub(super) fn survey(
 }
 
 /// A continuum run's selected channels per candidate window, with the
-/// reducer of their LSRK envelope that the row pass feeds; `None` for a
-/// cube.
+/// reducer of their LSRK envelope that the row pass feeds, holding at most
+/// `envelope_bytes`; `None` for a cube.
 fn continuum_envelope<'a>(
     request: &ImagingRequest,
     ms: &'a MeasurementSet,
     row_selection: &'a SelectedObservationRowSelection,
     spectral_windows: &[SourceSpectralWindow],
     frame_engine: &'a casa_ms::derived::engine::MsCalEngine,
-    budget: SelectedObservationContentBudget,
+    envelope_bytes: usize,
 ) -> Result<
     Option<(
         WindowChannels,
@@ -281,7 +295,7 @@ fn continuum_envelope<'a>(
         }),
         FrequencyRef::LSRK,
         frame_engine,
-        budget.available_bytes(),
+        envelope_bytes,
     )?;
     Ok(Some((selected, reducer)))
 }

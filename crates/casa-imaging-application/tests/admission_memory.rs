@@ -305,12 +305,25 @@ fn report(measured: &Measured, offset: i64) {
 /// A point and a Gaussian observed by a short VLA-A Q-band track in
 /// `channels` 128 MHz channels.
 fn observation(root: &Path, channels: usize) -> PathBuf {
-    let measurement_set = root.join("admission.ms");
+    observation_as(root, channels, "VLA")
+}
+
+/// [`observation`] recorded as `telescope`'s, the ALMA one with 12 m dishes
+/// on the VLA-A pads: the mosaic gridder's beams are ALMA's.
+fn observation_as(root: &Path, channels: usize, telescope: &str) -> PathBuf {
+    let measurement_set = root.join(format!("admission-{telescope}.ms"));
+    let mut antennas = tutorial_vla_a_antennas();
+    if telescope == "ALMA" {
+        for antenna in &mut antennas {
+            antenna.dish_diameter_m = 12.0;
+        }
+    }
     let mut request = SyntheticObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         &measurement_set,
-        tutorial_vla_a_antennas(),
+        antennas,
     );
+    request.telescope_name = telescope.to_string();
     request.duration_seconds = 600.0;
     request.integration_seconds = 60.0;
     request.spectral_windows = vec![SyntheticSpectralSetup {
@@ -628,6 +641,45 @@ fn a_visibility_write_stays_within_its_admission() {
             AMPLE,
         );
     }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// The shapes IF-10's closeout rows added stay within their admission
+/// (#722): a 2048² image in 2×2 facets, whose pass also holds the stitched
+/// full-size residual and PSF, and an eight-channel mosaic cube, whose paged
+/// state also holds each channel's weight image. Both charges are smaller
+/// than the slack of an ample admission, so this law does not resolve them
+/// alone; `a_stitch_charges_its_full_images_and_one_held_facet_psf` and
+/// `a_dense_sensitivity_charges_a_second_invariant_plane_per_plane` pin
+/// their sizes.
+#[test]
+fn facets_and_mosaic_cubes_stay_within_their_admission() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), CUBE_CHANNELS);
+    warm(&measurement_set, root.path());
+    let mut breaches = Vec::new();
+    check(
+        &mut breaches,
+        "facets 2 at 2048",
+        &request(
+            &measurement_set,
+            &root.path().join("facets"),
+            2048,
+            json!({ "facets": 2, "deconvolver": "hogbom", "niter": 20 }),
+        ),
+        2,
+        AMPLE,
+    );
+    let alma = observation_as(root.path(), CUBE_CHANNELS, "ALMA");
+    warm(&alma, root.path());
+    let mut mosaic = cube(
+        &alma,
+        &root.path().join("mosaic-cube"),
+        json!({ "gridder": "mosaic", "deconvolver": "hogbom", "channel_count": 8 }),
+    );
+    mosaic.imsize = 1024;
+    check(&mut breaches, "mosaic cube 8 × 1024²", &mosaic, 2, AMPLE);
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
 

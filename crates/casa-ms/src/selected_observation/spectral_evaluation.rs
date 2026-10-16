@@ -124,37 +124,80 @@ impl SelectedObservationSpectralEnvelope {
 /// It follows CASA's `MSUtil::getFreqRangeInSpw` (`fromEdge`), which
 /// `SynthesisUtilMethods::buildCoordinateSystem` uses for the MFS spectral
 /// axis. The selected rows' `TIME·(DATA_DESC_ID+1)` keys are kept unique and
-/// sorted ascending. Each spectral window then converts its selected channel
-/// edges, low edge first, at every key of its data descriptions in that
-/// order, through **one** `MFrequency::Convert`. That converter's aberration
-/// and dUT1 are anchored at the first key and extrapolated across 0.04 days
-/// (`MFrequencyConverter`), which moves the far end of a long track by
-/// about 1e-12. A fresh exact conversion per row would not.
+/// sorted ascending, each standing for the lowest physical row with that
+/// key (`rejectConsecutive`, then `GenSortIndirect` with `NoDuplicates`,
+/// whose ties fall to the earlier row). Each spectral window then converts
+/// its selected channel edges, low edge first, at every key of its data
+/// descriptions in that order, through **one** `MFrequency::Convert`. That
+/// converter's aberration and dUT1 are anchored at the first key and
+/// extrapolated across 0.04 days (`MFrequencyConverter`), which moves the
+/// far end of a long track by about 1e-12. A fresh exact conversion per row
+/// would not.
+///
+/// The reducer holds one entry per distinct key, about an integration per
+/// data description, never one per row, and charges
+/// [`SPECTRAL_ENVELOPE_KEY_BYTES`] for each against the bytes it was given.
 pub struct SelectedObservationSpectralEnvelopeReducer<'a> {
     measurement_set: &'a MeasurementSet,
     row_selection: &'a SelectedObservationRowSelection,
     geometry_engine: &'a MsCalEngine,
     output_frequency_reference: FrequencyRef,
     windows: Vec<SelectedWindowEdges>,
-    epochs: Vec<EnvelopeEpoch>,
-    epoch_limit: usize,
-    last_key_bits: Option<u64>,
+    epochs: BTreeMap<EpochKey, EnvelopeEpoch>,
+    /// The key and physical row of the last row observed, which a run of
+    /// rows of one integration repeats.
+    last: Option<(u64, usize)>,
+    available_bytes: usize,
     retained_bytes: usize,
 }
 
-/// One row of the selection standing for its `TIME·(DATA_DESC_ID+1)` key:
-/// the first row with that key in traversal order, as CASA keeps.
+/// Bytes the reducer charges for each distinct `TIME·(DATA_DESC_ID+1)` key:
+/// its entry in an ordered map, with the map's node overhead
+/// (`tests/spectral_envelope_memory.rs` measures it).
+pub const SPECTRAL_ENVELOPE_KEY_BYTES: usize = 96;
+
+/// Bytes the reducer charges for each FIELD direction its conversion reads.
+const DIRECTION_BYTES: usize = 512;
+
+/// CASA's sort key, the time scaled by the one-based data description,
+/// ordered as `f64::total_cmp`.
+#[derive(Debug, Clone, Copy)]
+struct EpochKey(f64);
+
+impl PartialEq for EpochKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for EpochKey {}
+
+impl PartialOrd for EpochKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for EpochKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+/// The row of the selection standing for its `TIME·(DATA_DESC_ID+1)` key:
+/// the lowest physical row with that key, as CASA keeps.
 #[derive(Debug, Clone, Copy)]
 struct EnvelopeEpoch {
     time_mjd_seconds: f64,
     field_id: i32,
     data_description_id: u32,
+    physical_row: usize,
 }
 
 impl EnvelopeEpoch {
     /// CASA's sort key: the time scaled by the one-based data description.
-    fn key(self) -> f64 {
-        self.time_mjd_seconds * (f64::from(self.data_description_id) + 1.0)
+    fn key(self) -> EpochKey {
+        EpochKey(self.time_mjd_seconds * (f64::from(self.data_description_id) + 1.0))
     }
 }
 
@@ -196,19 +239,26 @@ impl<'a> SelectedObservationSpectralEnvelopeReducer<'a> {
                 )));
             }
         }
-        // Every key stands for at least one row, so the MS row count bounds
-        // the epochs; CASA itself reads the whole TIME, DATA_DESC_ID and
-        // FIELD_ID columns (16 bytes a row).
-        let epoch_limit = measurement_set.row_count();
+        // The fixed part: the windows, and the FIELD directions and data
+        // descriptions the conversion looks up.
         let overflow =
             || MsError::InvalidInput("spectral-envelope residency overflows usize".to_string());
         let retained_bytes = windows
             .capacity()
             .checked_mul(std::mem::size_of::<SelectedWindowEdges>())
             .and_then(|windows| {
-                epoch_limit
-                    .checked_mul(std::mem::size_of::<EnvelopeEpoch>())?
-                    .checked_add(windows)
+                measurement_set
+                    .field()
+                    .ok()?
+                    .row_count()
+                    .checked_mul(DIRECTION_BYTES)?
+                    .checked_add(windows)?
+                    .checked_add(
+                        row_selection
+                            .data_descriptions()
+                            .len()
+                            .checked_mul(SPECTRAL_ENVELOPE_KEY_BYTES)?,
+                    )
             })
             .ok_or_else(overflow)?;
         if retained_bytes > available_bytes {
@@ -222,14 +272,16 @@ impl<'a> SelectedObservationSpectralEnvelopeReducer<'a> {
             geometry_engine,
             output_frequency_reference,
             windows,
-            epochs: Vec::new(),
-            epoch_limit,
-            last_key_bits: None,
+            epochs: BTreeMap::new(),
+            last: None,
+            available_bytes,
             retained_bytes,
         })
     }
 
-    /// Return the exact heap capacity retained concurrently with row blocks.
+    /// Return the bytes the reduction holds now: its fixed part and
+    /// [`SPECTRAL_ENVELOPE_KEY_BYTES`] for each distinct key observed, never
+    /// more than the bytes it was given.
     #[must_use]
     pub const fn retained_bytes(&self) -> usize {
         self.retained_bytes
@@ -246,14 +298,19 @@ impl<'a> SelectedObservationSpectralEnvelopeReducer<'a> {
             time_mjd_seconds: row.time_mjd_seconds(),
             field_id: row.field_id(),
             data_description_id,
+            physical_row: row.physical_row(),
         };
-        // CASA rejects consecutive repeats of a key before it sorts
-        // (`rejectConsecutive`).
-        let key_bits = epoch.key().to_bits();
-        if self.last_key_bits == Some(key_bits) {
+        let key = epoch.key();
+        // A row repeating the last row's key at a later physical row is
+        // already stood for (CASA's `rejectConsecutive`).
+        let key_bits = key.0.to_bits();
+        if self
+            .last
+            .is_some_and(|(bits, physical)| bits == key_bits && physical < epoch.physical_row)
+        {
             return Ok(());
         }
-        self.last_key_bits = Some(key_bits);
+        self.last = Some((key_bits, epoch.physical_row));
         if !self
             .row_selection
             .data_descriptions()
@@ -264,29 +321,35 @@ impl<'a> SelectedObservationSpectralEnvelopeReducer<'a> {
                 "selected DATA_DESC_ID {data_description_id} has no storage binding"
             )));
         }
-        if self.epochs.len() == self.epoch_limit {
-            return Err(MsError::InvalidInput(
-                "selected spectral envelope observed more keys than MAIN has rows".to_string(),
-            ));
+        match self.epochs.entry(key) {
+            std::collections::btree_map::Entry::Occupied(mut held) => {
+                // Colliding keys, whether one data description's repeated
+                // integration or two data descriptions' equal products:
+                // CASA's sort keeps the earlier row.
+                if epoch.physical_row < held.get().physical_row {
+                    held.insert(epoch);
+                }
+            }
+            std::collections::btree_map::Entry::Vacant(vacant) => {
+                let retained = self.retained_bytes + SPECTRAL_ENVELOPE_KEY_BYTES;
+                if retained > self.available_bytes {
+                    return Err(MsError::InvalidInput(format!(
+                        "selected spectral envelope holds {} distinct TIME·(DATA_DESC_ID+1) keys \
+                         in {} bytes, all of its {}-byte reservation; raise the run's memory",
+                        self.epochs.len(),
+                        self.retained_bytes,
+                        self.available_bytes
+                    )));
+                }
+                self.retained_bytes = retained;
+                vacant.insert(epoch);
+            }
         }
-        if self.epochs.len() == self.epochs.capacity() {
-            // Grow geometrically but never past the charged bound.
-            let room = self.epoch_limit - self.epochs.len();
-            self.epochs
-                .reserve_exact(self.epochs.capacity().max(64).min(room));
-        }
-        self.epochs.push(epoch);
         Ok(())
     }
 
     /// Complete the reduction after the shared selected-row pass.
-    pub fn finish(mut self) -> MsResult<SelectedObservationSpectralEnvelope> {
-        // CASA sorts the keys ascending and keeps one row per key
-        // (`GenSortIndirect`, `NoDuplicates`); a stable sort keeps the first.
-        self.epochs
-            .sort_by(|left, right| left.key().total_cmp(&right.key()));
-        self.epochs
-            .dedup_by(|later, earlier| later.key() == earlier.key());
+    pub fn finish(self) -> MsResult<SelectedObservationSpectralEnvelope> {
         let window_of = self
             .row_selection
             .data_descriptions()
@@ -316,7 +379,7 @@ impl<'a> SelectedObservationSpectralEnvelopeReducer<'a> {
                 continue;
             }
             let mut converter = MFrequencyConverter::new(source, self.output_frequency_reference);
-            for epoch in self.epochs.iter().filter(|epoch| {
+            for epoch in self.epochs.values().filter(|epoch| {
                 window_of.get(&epoch.data_description_id) == Some(&window.spectral_window_id)
             }) {
                 let direction = if let Some(direction) = directions.get(&epoch.field_id) {

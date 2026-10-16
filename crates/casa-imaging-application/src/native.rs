@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use casa_imaging_model::CompiledProblem;
 use casa_imaging_products::{
-    ContinuumProductInputs, MinorCycleImageResponse, PlannedContinuumGeneration,
+    ContinuumProductInputs, FacetSumWeights, MinorCycleImageResponse, PlannedContinuumGeneration,
     ProductStoragePlan, ProductsError, PublishedContinuumGeneration, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
@@ -227,8 +227,11 @@ pub(crate) fn run(
         || {
             publish_products(
                 problem,
-                outcome.scientific,
-                outcome.masks,
+                ProductSource {
+                    scientific: outcome.scientific,
+                    masks: outcome.masks,
+                    facet_sum_weights: outcome.facet_sum_weights,
+                },
                 &runtime,
                 publication,
                 teams.compute(),
@@ -265,19 +268,32 @@ struct Products {
     published: PublishedContinuumGeneration,
 }
 
+/// What the products are formed from: the final completion, its
+/// reconstruction masks and the faceted domains' facets' own sums of
+/// weights.
+struct ProductSource {
+    scientific: MajorCycleCompletion,
+    masks: Option<ReconstructionMaskSet>,
+    facet_sum_weights: FacetSumWeights,
+}
+
 /// Generate every planned product member into the writer's private staging,
 /// one output channel per window on the run's team, and publish them,
 /// adding each image published to `published`; a cancelled run publishes
 /// nothing.
 fn publish_products(
     problem: &CompiledProblem,
-    scientific: MajorCycleCompletion,
-    reconstruction_masks: Option<ReconstructionMaskSet>,
+    source: ProductSource,
     runtime: &ApplicationRuntime,
     publication: ApplicationPublication,
     team: &WorkerTeam,
     published: &mut Vec<String>,
 ) -> Result<Products, NativeError> {
+    let ProductSource {
+        scientific,
+        masks: reconstruction_masks,
+        facet_sum_weights,
+    } = source;
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific);
     if let Some(masks) = reconstruction_masks.as_ref() {
         inputs = match masks {
@@ -287,6 +303,9 @@ fn publish_products(
     }
     if let Some(centres) = publication.primary_beam_centres.as_ref() {
         inputs = inputs.with_primary_beam_centres(centres);
+    }
+    if !facet_sum_weights.is_empty() {
+        inputs = inputs.with_facet_sum_weights(&facet_sum_weights);
     }
     let planned = PlannedContinuumGeneration::new(&inputs, &publication.controls)?;
     let window = ProductStoragePlan::new(1, team.workers())?;

@@ -192,15 +192,8 @@ pub(crate) fn domain_operator(
         correlations,
         problem.reconstruction().polarization().coordinates(),
     )?;
+    // An AW cube is refused by the gate (`Unsupported::CubeAwProjection`).
     let basis = basis(problem)?;
-    if matches!(basis, Basis::ChannelLocal { .. }) && matches!(kind, KernelSetKind::Aw) {
-        // A mosaic cube keeps each channel's weight image as its plane's
-        // sensitivity; an AW cube would too, but its per-plane weights have
-        // no CASA comparison yet.
-        return Err(ImagingError::Unsupported {
-            reason: "cube A-projection imaging waits for its per-plane weight check (#719)",
-        });
-    }
     let resampler = resampler(problem, basis)?;
     let (cf, kernels) = kernel_set(
         problem,

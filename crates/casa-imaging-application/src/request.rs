@@ -902,6 +902,22 @@ pub(crate) mod tests {
             .parameters
     }
 
+    /// `facets` is active only with the standard gridder, so naming it with
+    /// another gridder is refused, not ignored.
+    #[test]
+    fn facets_with_another_gridder_are_refused() {
+        for gridder in ["wproject", "mosaic", "awproject"] {
+            let error = resolved(json!({ "gridder": gridder, "facets": 2 }))
+                .expect_err("facets with a non-standard gridder");
+            assert!(
+                error.to_string().contains("\"facets\" is inactive"),
+                "{gridder}: {error}"
+            );
+        }
+        let resolved = resolved(json!({ "gridder": "standard", "facets": 2 })).expect("facets");
+        assert_eq!(resolved["facets"], json!(2));
+    }
+
     #[test]
     fn the_catalog_defaults_validate() {
         let request = request(json!({}));

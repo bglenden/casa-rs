@@ -89,8 +89,8 @@ fn t53_one_channel_standard_cubes_preserve_all_products() {
         products.push((image_name, result.product_names()));
     }
     // The one-channel cube and the continuum run different bases through
-    // the pass, so they agree to rounding, not bit for bit; the tolerance
-    // also admits a cube gridded with `gridprecision = f32`.
+    // the pass, both in f64, so they agree to the products' f32 rounding,
+    // not bit for bit; a cube gridded in f32 would differ by about 1e-5.
     for candidate in &products[1..] {
         assert_eq!(products[0].1, candidate.1, "standard product inventory");
         for suffix in &products[0].1 {
@@ -108,7 +108,7 @@ fn t53_one_channel_standard_cubes_preserve_all_products() {
                 .zip(cube.iter())
                 .fold(0.0_f32, |worst, (a, b)| worst.max((a - b).abs()));
             assert!(
-                difference <= 1.0e-5 * scale,
+                difference <= 1.0e-6 * scale,
                 "standard single-channel {suffix}: difference {difference}, peak {scale}"
             );
         }

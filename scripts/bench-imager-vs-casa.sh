@@ -183,7 +183,9 @@ esac
 if [[ -z "$casa_wprojplanes" ]]; then
   case "$casa_gridder" in
     wproject|widefield)
-      casa_wprojplanes=-1
+      # CASA's plane count follows casa-rs's when the workload names one
+      # (widefield with one plane is CASA's gridft, below), else CASA picks.
+      casa_wprojplanes=${wprojplanes:--1}
       ;;
   esac
 fi
