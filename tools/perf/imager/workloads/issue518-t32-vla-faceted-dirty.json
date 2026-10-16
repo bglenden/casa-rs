@@ -67,6 +67,13 @@
         "allowed_structure_labels": ["good"]
       },
       "products": {
+        ".image": {
+          "beam_area_relative": 0.001,
+          "beam_kernel_nrmse": 0.001,
+          "beam_major_relative": 0.001,
+          "beam_minor_relative": 0.001,
+          "beam_pa_degrees": 0.1
+        },
         ".model": {
           "allowed_structure_labels": ["good", "not_applicable_exact_zero"]
         }
