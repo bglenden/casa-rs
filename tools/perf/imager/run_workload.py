@@ -705,25 +705,10 @@ def build_plan(
         env["IMAGER_BENCH_REUSE_RUST_PREFIX"] = reuse_rust_prefix
     if reuse_casa_prefix:
         env["IMAGER_BENCH_REUSE_CASA_PREFIX"] = reuse_casa_prefix
-    optional_imaging_env = {
-        "standard_mfs_grid_threads": "IMAGER_BENCH_STANDARD_MFS_GRID_THREADS",
-        "standard_mfs_metal_minor_cycle_chunk": "IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK",
-        "imaging_memory_target_mb": "IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB",
-        "imaging_prepare_buffer_mb": "IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB",
-        "imaging_row_block_rows": "IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS",
-        "imaging_prepare_workers": "IMAGER_BENCH_IMAGING_PREPARE_WORKERS",
-        "imaging_read_ahead_blocks": "IMAGER_BENCH_IMAGING_READ_AHEAD_BLOCKS",
-        "chanchunks": "IMAGER_BENCH_CHANCHUNKS",
-    }
-    for imaging_key, env_key in optional_imaging_env.items():
-        if imaging.get(imaging_key) is not None:
-            if imaging_key in {
-                "standard_mfs_grid_threads",
-                "standard_mfs_metal_minor_cycle_chunk",
-            }:
-                env[env_key] = str(imaging[imaging_key])
-            else:
-                env[env_key] = str(int_value(imaging, imaging_key, 0))
+    if imaging.get("imaging_memory_target_mb") is not None:
+        env["IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB"] = str(
+            int_value(imaging, "imaging_memory_target_mb", 0)
+        )
     if imaging.get("parallel") is not None:
         env["IMAGER_BENCH_PARALLEL"] = boolean_env_value(imaging, "parallel", True)
     env.update(extra_env)

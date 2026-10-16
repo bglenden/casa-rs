@@ -1429,11 +1429,11 @@ real 1.145408
         self.assertEqual("copy", env["IMAGER_BENCH_MS_STAGING"])
         self.assertEqual("full", plan["comparison"]["mode"])
         self.assertEqual(
-            [".image", ".residual", ".model", ".psf"],
+            [".image", ".residual", ".model", ".psf", ".sumwt", ".pb", ".mask"],
             plan["comparison"]["products"],
         )
-        self.assertFalse(plan["comparison"]["require_exact_product_inventory"])
-        self.assertFalse(plan["comparison"]["require_metadata_parity"])
+        self.assertTrue(plan["comparison"]["require_exact_product_inventory"])
+        self.assertTrue(plan["comparison"]["require_metadata_parity"])
         self.assertTrue(plan["comparison"]["require_direction_wcs_parity"])
         self.assertEqual(
             ["facet-seam-x", "facet-seam-y"],
@@ -1447,8 +1447,7 @@ real 1.145408
         )
 
         bench = (run_workload.REPO_ROOT / "scripts/bench-imager-vs-casa.sh").read_text()
-        # CASA images the facets; casars-imager refuses them (#664).
-        self.assertIn("casars-imager has no faceted geometry", bench)
+        self.assertIn('rust_cli_args+=(--facets "$facets")', bench)
         self.assertIn('--stokes "$stokes"', bench)
         self.assertIn("rust_pointing_flags+=(--usepointing)", bench)
         self.assertIn("facets=facets,", bench)
@@ -1896,22 +1895,25 @@ real 1.145408
 
         env = plan["command"]["env"]
         self.assertEqual("2048", env["IMAGER_BENCH_IMAGING_MEMORY_TARGET_MB"])
-        self.assertEqual("128", env["IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB"])
-        self.assertEqual("4096", env["IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS"])
-        self.assertEqual("3", env["IMAGER_BENCH_IMAGING_PREPARE_WORKERS"])
-        self.assertEqual("2", env["IMAGER_BENCH_IMAGING_READ_AHEAD_BLOCKS"])
         self.assertEqual("f32", env["IMAGER_BENCH_IMAGING_FFT_PRECISION"])
         self.assertNotIn("IMAGER_BENCH_IMAGING_FFT_BACKEND", env)
         self.assertEqual("0", env["IMAGER_BENCH_PARALLEL"])
-        self.assertEqual("4", env["IMAGER_BENCH_CHANCHUNKS"])
         self.assertEqual("f32", plan["mode"]["imaging_fft_precision"])
         self.assertIs(False, plan["mode"]["parallel"])
         self.assertEqual(4, plan["mode"]["chanchunks"])
         self.assertEqual(2, plan["mode"]["imaging_read_ahead_blocks"])
-        self.assertEqual("1", env["IMAGER_BENCH_STANDARD_MFS_GRID_THREADS"])
-        self.assertEqual(
-            "auto:1000", env["IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK"]
-        )
+        # The bench script reads none of these; casars-imager has no such
+        # controls since the imaging foundation refactor.
+        for retired in (
+            "IMAGER_BENCH_IMAGING_PREPARE_BUFFER_MB",
+            "IMAGER_BENCH_IMAGING_ROW_BLOCK_ROWS",
+            "IMAGER_BENCH_IMAGING_PREPARE_WORKERS",
+            "IMAGER_BENCH_IMAGING_READ_AHEAD_BLOCKS",
+            "IMAGER_BENCH_CHANCHUNKS",
+            "IMAGER_BENCH_STANDARD_MFS_GRID_THREADS",
+            "IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK",
+        ):
+            self.assertNotIn(retired, env)
         self.assertNotIn("CASA_RS_STANDARD_MFS_PROFILE_DETAIL", env)
 
     def test_casa_unlimited_nmajor_flows_to_the_matched_benchmark(self) -> None:
