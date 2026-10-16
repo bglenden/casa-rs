@@ -62,7 +62,7 @@ fn numerics(reverse: bool) -> NumericsContract {
     NumericsContract::new(
         precisions,
         ReductionPolicy::Compensated,
-        FiniteValuePolicy::FlagInputRejectGenerated,
+        FiniteValuePolicy::RejectUnflaggedInput,
         budgets,
     )
 }
@@ -974,7 +974,7 @@ fn incomplete_or_non_finite_numerics_fail_at_compile_time() {
         NumericsContract::new(
             vec![NumericPrecision::F64],
             ReductionPolicy::Compensated,
-            FiniteValuePolicy::FlagInputRejectGenerated,
+            FiniteValuePolicy::RejectUnflaggedInput,
             non_finite,
         ),
     );

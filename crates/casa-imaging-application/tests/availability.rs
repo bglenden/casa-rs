@@ -467,7 +467,7 @@ impl ProblemFixture {
         let numerics = NumericsContract::new(
             vec![NumericPrecision::F64],
             ReductionPolicy::UnorderedWithinBudget,
-            FiniteValuePolicy::FlagInputRejectGenerated,
+            FiniteValuePolicy::RejectUnflaggedInput,
             NumericalStage::ALL
                 .into_iter()
                 .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))

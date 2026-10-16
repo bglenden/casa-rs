@@ -48,7 +48,7 @@ pub(crate) enum SelectedWeightColumn {
 /// One closed bounded selected-observation storage read.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SelectedObservationBufferRequest<'a> {
-    visibility: SelectedVisibilityColumn,
+    visibility: Option<SelectedVisibilityColumn>,
     weight: SelectedWeightColumn,
     rows: &'a [SelectedObservationRow],
     channel_range: VisibilityChannelReadRange,
@@ -56,10 +56,11 @@ pub(crate) struct SelectedObservationBufferRequest<'a> {
 
 impl<'a> SelectedObservationBufferRequest<'a> {
     /// Construct one exact contiguous-channel storage request for `rows`,
-    /// the stored MAIN rows the row walk already read.
+    /// the stored MAIN rows the row walk already read. Without a
+    /// `visibility` column the fill reads flags and weights only.
     #[must_use]
     pub(crate) const fn new(
-        visibility: SelectedVisibilityColumn,
+        visibility: Option<SelectedVisibilityColumn>,
         weight: SelectedWeightColumn,
         rows: &'a [SelectedObservationRow],
         channel_range: VisibilityChannelReadRange,
@@ -118,6 +119,9 @@ pub(crate) struct SelectedObservationBuffer {
     channel_range: VisibilityChannelReadRange,
     correlation_count: usize,
     visibility: Option<SelectedStoredVisibilities>,
+    /// Whether the last fill read the visibility column; an earlier fill's
+    /// values are never handed out for a fill that did not.
+    visibility_read: bool,
     flags: Vec<bool>,
     weights: Option<SelectedStoredWeights>,
     row_flag: Vec<bool>,
@@ -308,6 +312,7 @@ impl SelectedObservationBuffer {
             // Installed at this capacity by the first fill, which knows
             // the stored type.
             visibility: None,
+            visibility_read: false,
             flags: Vec::with_capacity(capacity.samples()),
             weights: None,
             row_flag: Vec::with_capacity(rows),
@@ -353,13 +358,15 @@ impl SelectedObservationBuffer {
     }
 
     pub(crate) fn numeric_columns(&self) -> Option<SelectedObservationNumericColumns<'_>> {
-        let visibility = match self.visibility.as_ref()? {
-            SelectedStoredVisibilities::Float32(values) => {
+        let visibility = match (self.visibility_read, self.visibility.as_ref()) {
+            (false, _) => SelectedNumericVisibility::Unread,
+            (true, Some(SelectedStoredVisibilities::Float32(values))) => {
                 SelectedNumericVisibility::Float32(values)
             }
-            SelectedStoredVisibilities::Complex32(values) => {
+            (true, Some(SelectedStoredVisibilities::Complex32(values))) => {
                 SelectedNumericVisibility::Complex32(values)
             }
+            (true, None) => return None,
         };
         let weights = match self.weights.as_ref()? {
             SelectedStoredWeights::PerRow(values) => SelectedNumericWeights::PerRow(values),
@@ -462,7 +469,8 @@ impl MeasurementSet {
     /// The row metadata (`DATA_DESC_ID`, `FIELD_ID`, the antennas, `TIME`,
     /// `TIME_CENTROID`, `FLAG_ROW` and `UVW`) is copied from the request's
     /// stored rows, which the row walk read; only the visibility, `FLAG` and
-    /// weight columns are read here.
+    /// weight columns are read here, and the visibility column only when the
+    /// request names one.
     ///
     /// This selected-channel operation requires a lazily reopened disk-backed MeasurementSet with
     /// no pending array-cell writes. It never falls back to cloning complete array cells.
@@ -480,75 +488,29 @@ impl MeasurementSet {
         let weight_values = buffer.capacity.weight_values();
         let row_indices = buffer.row_indices.as_slice();
 
-        let visibility_shape = match request.visibility {
-            SelectedVisibilityColumn::FloatData => {
-                if !matches!(
-                    buffer.visibility,
-                    Some(SelectedStoredVisibilities::Float32(_))
-                ) {
-                    buffer.visibility = Some(SelectedStoredVisibilities::Float32(
-                        Vec::with_capacity(samples),
-                    ));
-                }
-                let Some(SelectedStoredVisibilities::Float32(values)) = buffer.visibility.as_mut()
-                else {
-                    unreachable!("FLOAT_DATA destination installed above")
-                };
-                self.main_table()
-                    .column_accessor(request.visibility.name())?
-                    .fill_array_cells_2d_channel_range_typed_uncached(
-                        row_indices,
-                        request.channel_range.start,
-                        request.channel_range.count,
-                        SelectedArray2DCellsMut::RowChannelFloat32(values),
-                    )?
-                    .ok_or_else(|| {
-                        invalid(format!(
-                            "required MAIN {} cells are undefined",
-                            request.visibility.name()
-                        ))
-                    })?
+        buffer.visibility_read = false;
+        let visibility_correlations = match request.visibility {
+            Some(column) => {
+                let shape = self.fill_selected_visibilities(
+                    column,
+                    row_indices,
+                    request.channel_range,
+                    samples,
+                    &mut buffer.visibility,
+                )?;
+                require_shape(
+                    column.name(),
+                    shape.row_count,
+                    shape.channel_count,
+                    shape.axis0_count,
+                    request,
+                    shape.axis0_count,
+                )?;
+                buffer.visibility_read = true;
+                Some(shape.axis0_count)
             }
-            SelectedVisibilityColumn::Data | SelectedVisibilityColumn::CorrectedData => {
-                if !matches!(
-                    buffer.visibility,
-                    Some(SelectedStoredVisibilities::Complex32(_))
-                ) {
-                    buffer.visibility = Some(SelectedStoredVisibilities::Complex32(
-                        Vec::with_capacity(samples),
-                    ));
-                }
-                let Some(SelectedStoredVisibilities::Complex32(values)) =
-                    buffer.visibility.as_mut()
-                else {
-                    unreachable!("complex visibility destination installed above")
-                };
-                self.main_table()
-                    .column_accessor(request.visibility.name())?
-                    .fill_array_cells_2d_channel_range_typed_uncached(
-                        row_indices,
-                        request.channel_range.start,
-                        request.channel_range.count,
-                        SelectedArray2DCellsMut::RowChannelComplex32(values),
-                    )?
-                    .ok_or_else(|| {
-                        invalid(format!(
-                            "required MAIN {} cells are undefined",
-                            request.visibility.name()
-                        ))
-                    })?
-            }
+            None => None,
         };
-        require_shape(
-            request.visibility.name(),
-            visibility_shape.row_count,
-            visibility_shape.channel_count,
-            visibility_shape.axis0_count,
-            request,
-            visibility_shape.axis0_count,
-        )?;
-        let correlation_count = visibility_shape.axis0_count;
-        buffer.correlation_count = correlation_count;
 
         let flag_shape = self
             .main_table()
@@ -560,6 +522,9 @@ impl MeasurementSet {
                 SelectedArray2DCellsMut::RowChannelBool(&mut buffer.flags),
             )?
             .ok_or_else(|| invalid("required MAIN FLAG cells are undefined"))?;
+        // Without the visibilities, FLAG gives the stored correlations.
+        let correlation_count = visibility_correlations.unwrap_or(flag_shape.axis0_count);
+        buffer.correlation_count = correlation_count;
         require_shape(
             "FLAG",
             flag_shape.row_count,
@@ -633,6 +598,57 @@ impl MeasurementSet {
             "a selected-observation fill grew its buffer past the planned capacity"
         );
         Ok(())
+    }
+
+    /// Read `column`'s selected channels of `row_indices` into `destination`,
+    /// installing a vector of the stored type at `samples` the first time.
+    fn fill_selected_visibilities(
+        &self,
+        column: SelectedVisibilityColumn,
+        row_indices: &[usize],
+        channel_range: VisibilityChannelReadRange,
+        samples: usize,
+        destination: &mut Option<SelectedStoredVisibilities>,
+    ) -> MsResult<casa_tables::SelectedArray2DShape> {
+        let values = match column {
+            SelectedVisibilityColumn::FloatData => {
+                if !matches!(destination, Some(SelectedStoredVisibilities::Float32(_))) {
+                    *destination = Some(SelectedStoredVisibilities::Float32(Vec::with_capacity(
+                        samples,
+                    )));
+                }
+                let Some(SelectedStoredVisibilities::Float32(values)) = destination.as_mut() else {
+                    unreachable!("FLOAT_DATA destination installed above")
+                };
+                SelectedArray2DCellsMut::RowChannelFloat32(values)
+            }
+            SelectedVisibilityColumn::Data | SelectedVisibilityColumn::CorrectedData => {
+                if !matches!(destination, Some(SelectedStoredVisibilities::Complex32(_))) {
+                    *destination = Some(SelectedStoredVisibilities::Complex32(Vec::with_capacity(
+                        samples,
+                    )));
+                }
+                let Some(SelectedStoredVisibilities::Complex32(values)) = destination.as_mut()
+                else {
+                    unreachable!("complex visibility destination installed above")
+                };
+                SelectedArray2DCellsMut::RowChannelComplex32(values)
+            }
+        };
+        self.main_table()
+            .column_accessor(column.name())?
+            .fill_array_cells_2d_channel_range_typed_uncached(
+                row_indices,
+                channel_range.start,
+                channel_range.count,
+                values,
+            )?
+            .ok_or_else(|| {
+                invalid(format!(
+                    "required MAIN {} cells are undefined",
+                    column.name()
+                ))
+            })
     }
 }
 
@@ -732,8 +748,9 @@ mod tests {
     /// A buffer with room for the rows of `request`, each holding the
     /// fixture's whole 2-correlation x 4-channel cells.
     fn buffer_for(request: &SelectedObservationBufferRequest<'_>) -> SelectedObservationBuffer {
+        let visibility = request.visibility.unwrap_or(SelectedVisibilityColumn::Data);
         SelectedObservationBuffer::with_capacity(
-            SelectedObservationBufferCapacity::row(request.visibility, request.weight, 2, 4)
+            SelectedObservationBufferCapacity::row(visibility, request.weight, 2, 4)
                 .unwrap()
                 .with_rows(request.rows.len()),
         )
@@ -778,7 +795,7 @@ mod tests {
         let ms = MeasurementSet::open(&path).unwrap();
         let rows = stored_rows(&ms, &[1, 0]);
         let request = SelectedObservationBufferRequest::new(
-            SelectedVisibilityColumn::Data,
+            Some(SelectedVisibilityColumn::Data),
             SelectedWeightColumn::WeightSpectrum,
             &rows,
             VisibilityChannelReadRange::new(1, 2),
@@ -852,7 +869,7 @@ mod tests {
         let ms = MeasurementSet::open(&path).unwrap();
         let rows = stored_rows(&ms, &[1, 0]);
         let request = SelectedObservationBufferRequest::new(
-            SelectedVisibilityColumn::Data,
+            Some(SelectedVisibilityColumn::Data),
             SelectedWeightColumn::WeightSpectrum,
             &rows,
             VisibilityChannelReadRange::new(1, 2),
@@ -882,6 +899,81 @@ mod tests {
 
         assert_eq!(storage_pointers(&buffer), first_storage);
         assert_eq!(snapshot(&buffer), first);
+    }
+
+    /// A fill that names no visibility column reads none: on an MS without
+    /// `DATA`, where a full fill fails, it returns the flags, weights and
+    /// correlation count a full fill of the twin MS with `DATA` returns.
+    /// A buffer refilled that way hands out no values from its last fill.
+    #[test]
+    fn a_fill_without_visibilities_reads_flags_and_weights_only() {
+        let directory = tempfile::tempdir().unwrap();
+        let with_data = directory.path().join("with-data.ms");
+        let without_data = directory.path().join("without-data.ms");
+        for (path, builder) in [
+            (
+                &with_data,
+                MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+            ),
+            (&without_data, MeasurementSetBuilder::new()),
+        ] {
+            let mut ms = MeasurementSet::create(
+                path,
+                builder.with_main_column(OptionalMainColumn::WeightSpectrum),
+            )
+            .unwrap();
+            add_row(&mut ms, 0);
+            add_row(&mut ms, 1);
+            ms.save().unwrap();
+        }
+        let fill = |ms: &MeasurementSet,
+                    buffer: Option<SelectedObservationBuffer>,
+                    visibility: Option<SelectedVisibilityColumn>| {
+            let rows = stored_rows(ms, &[1, 0]);
+            let request = SelectedObservationBufferRequest::new(
+                visibility,
+                SelectedWeightColumn::WeightSpectrum,
+                &rows,
+                VisibilityChannelReadRange::new(1, 2),
+            );
+            let mut buffer = buffer.unwrap_or_else(|| buffer_for(&request));
+            ms.fill_selected_observation_buffer(&request, &mut buffer)
+                .map(|()| buffer)
+        };
+        let with_data = MeasurementSet::open(&with_data).unwrap();
+        let without_data = MeasurementSet::open(&without_data).unwrap();
+        assert!(fill(&without_data, None, Some(SelectedVisibilityColumn::Data)).is_err());
+        let full = fill(&with_data, None, Some(SelectedVisibilityColumn::Data)).unwrap();
+        let unread = fill(&without_data, None, None).unwrap();
+
+        let (full_columns, unread_columns) = (
+            full.numeric_columns().unwrap(),
+            unread.numeric_columns().unwrap(),
+        );
+        assert!(matches!(
+            unread_columns.visibility,
+            SelectedNumericVisibility::Unread
+        ));
+        assert_eq!(
+            unread_columns.correlation_count,
+            full_columns.correlation_count
+        );
+        assert_eq!(unread_columns.flags, full_columns.flags);
+        assert_eq!(unread_columns.row_flags, full_columns.row_flags);
+        let (
+            SelectedNumericWeights::PerChannel(unread_weights),
+            SelectedNumericWeights::PerChannel(full_weights),
+        ) = (unread_columns.weights, full_columns.weights)
+        else {
+            panic!("selected WEIGHT_SPECTRUM must remain per-channel");
+        };
+        assert_eq!(unread_weights, full_weights);
+
+        let refilled = fill(&with_data, Some(full), None).unwrap();
+        assert!(matches!(
+            refilled.numeric_columns().unwrap().visibility,
+            SelectedNumericVisibility::Unread
+        ));
     }
 
     /// Refilling the row metadata of 2^14 + 1 rows between shorter blocks
@@ -936,7 +1028,7 @@ mod tests {
         let ms = MeasurementSet::open(&path).unwrap();
         let rows = stored_rows(&ms, &[0]);
         let request = SelectedObservationBufferRequest::new(
-            SelectedVisibilityColumn::Data,
+            Some(SelectedVisibilityColumn::Data),
             SelectedWeightColumn::WeightSpectrum,
             &rows,
             VisibilityChannelReadRange::new(0, 1),
@@ -997,7 +1089,7 @@ mod tests {
         let ms = MeasurementSet::open(&path).unwrap();
         let rows = stored_rows(&ms, &[0]);
         let request = SelectedObservationBufferRequest::new(
-            SelectedVisibilityColumn::FloatData,
+            Some(SelectedVisibilityColumn::FloatData),
             SelectedWeightColumn::Weight,
             &rows,
             VisibilityChannelReadRange::new(1, 2),

@@ -8,8 +8,8 @@ use casa_imaging_operator::{
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockShape, BoundedSource, Cancel, MajorCyclePass, NativeBlock, Partition,
-    PassDomain, PassError, Residency, SourceError, WeightCache, WorkerTeam, run_density_pass,
-    run_major_cycle,
+    PassDomain, PassError, Residency, SampleContent, SourceError, WeightCache, WorkerTeam,
+    run_density_pass, run_major_cycle,
 };
 use num_complex::Complex32;
 
@@ -46,8 +46,13 @@ fn plane_partition_is_bitwise_invariant_across_workers_and_waves_in_f64() {
         assert_eq!(images, reference, "{workers} workers, {residency:?}");
     }
     // A data and PSF pass reads restricted traversals: no prediction needs
-    // a whole row.
+    // a whole row. It grids the values, so it reads them.
     assert!(rows.restricted.iter().all(|restricted| *restricted));
+    assert!(
+        rows.contents
+            .iter()
+            .all(|content| *content == SampleContent::Visibilities)
+    );
 }
 
 #[test]
@@ -83,6 +88,8 @@ fn region_partition_matches_one_owner() {
     }
 }
 
+/// The density pass reads flags and weights only: its source delivers zero
+/// values, and the grid equals the one built from the rows' own values.
 #[test]
 fn streamed_density_grid_equals_the_one_shot_build() {
     let operator = operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
@@ -117,6 +124,7 @@ fn streamed_density_grid_equals_the_one_shot_build() {
         .expect("density pass");
         assert_eq!(streamed, expected, "{workers} workers");
     }
+    assert_eq!(rows.contents, [SampleContent::FlagsAndWeights; 2]);
 }
 
 /// Kept weights place exactly what weighing places: the pass that fills the
@@ -189,8 +197,13 @@ struct CancellingRows {
 }
 
 impl BoundedSource for CancellingRows {
-    fn begin(&mut self, planes: PlaneRange, restrict: bool) -> Result<(), SourceError> {
-        self.rows.begin(planes, restrict)
+    fn begin(
+        &mut self,
+        planes: PlaneRange,
+        restrict: bool,
+        content: SampleContent,
+    ) -> Result<(), SourceError> {
+        self.rows.begin(planes, restrict, content)
     }
 
     fn fill(&mut self, block: &mut NativeBlock) -> Result<bool, SourceError> {

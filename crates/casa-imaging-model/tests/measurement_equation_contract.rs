@@ -291,7 +291,7 @@ fn compile_contract_with_reduction(
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         reduction,
-        FiniteValuePolicy::FlagInputRejectGenerated,
+        FiniteValuePolicy::RejectUnflaggedInput,
         NumericalStage::ALL
             .into_iter()
             .map(|stage| (stage, StageErrorBudget::new(1.0e-9, 1.0e-6)))

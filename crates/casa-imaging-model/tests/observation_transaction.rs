@@ -142,7 +142,7 @@ fn try_compile_transaction(
         NumericsContract::new(
             vec![NumericPrecision::F32, NumericPrecision::F64],
             ReductionPolicy::Compensated,
-            FiniteValuePolicy::FlagInputRejectGenerated,
+            FiniteValuePolicy::RejectUnflaggedInput,
             NumericalStage::ALL
                 .into_iter()
                 .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))

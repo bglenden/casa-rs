@@ -135,16 +135,33 @@ impl Cancel {
     }
 }
 
+/// What one traversal of a [`BoundedSource`] reads of each sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SampleContent {
+    /// Values, flags and weights: every gridding, prediction and write pass.
+    Visibilities,
+    /// Flags and weights only, which is all density weighting reads, as
+    /// CASA's does. Every value is zero; a stored value is checked when an
+    /// imaging pass reads it.
+    FlagsAndWeights,
+}
+
 /// A re-traversable source of native rows.
 ///
 /// Each wave of a pass begins one traversal. Rows are delivered in a fixed
 /// order, so repeated traversals see the same samples.
 pub trait BoundedSource: Send {
-    /// Start a traversal for a wave over `planes`. With `restrict`, the
-    /// source may deliver only the native channels whose samples reach
-    /// `planes`, with both interpolation partners of each; without it, it
-    /// delivers every selected channel of each row.
-    fn begin(&mut self, planes: PlaneRange, restrict: bool) -> Result<(), SourceError>;
+    /// Start a traversal for a wave over `planes`, reading `content` of each
+    /// sample. With `restrict`, the source may deliver only the native
+    /// channels whose samples reach `planes`, with both interpolation
+    /// partners of each; without it, it delivers every selected channel of
+    /// each row.
+    fn begin(
+        &mut self,
+        planes: PlaneRange,
+        restrict: bool,
+        content: SampleContent,
+    ) -> Result<(), SourceError>;
 
     /// Fill `block` with the next rows of the traversal; `Ok(false)` once
     /// the traversal is exhausted.
@@ -310,7 +327,9 @@ pub fn run_major_cycle(
     let native_residuals = pass.native_residuals();
     let mut summary = PassSummary::default();
     for planes in pass.residency.waves(total) {
-        source.begin(planes, restrict).map_err(PassError::Source)?;
+        source
+            .begin(planes, restrict, SampleContent::Visibilities)
+            .map_err(PassError::Source)?;
         let models = pass
             .model
             .map(|prepare| {
@@ -469,6 +488,10 @@ pub fn density_pass_bytes(
 /// first image domain's projection: each row is placed with
 /// [`SpectralResampler::place_density`] on row chunks and the chunks are
 /// added in row order. It holds [`density_pass_bytes`] while it runs.
+///
+/// The traversal reads flags and weights only
+/// ([`SampleContent::FlagsAndWeights`]): a density placement carries the
+/// sample's weight and no value.
 pub fn run_density_pass(
     operator: &MeasurementOperator,
     resampler: &SpectralResampler,
@@ -478,7 +501,11 @@ pub fn run_density_pass(
     cancel: &Cancel,
 ) -> Result<DensityGrid, PassError> {
     source
-        .begin(PlaneRange::new(0, operator.basis().planes()), false)
+        .begin(
+            PlaneRange::new(0, operator.basis().planes()),
+            false,
+            SampleContent::FlagsAndWeights,
+        )
         .map_err(PassError::Source)?;
     let mut grid = DensityGrid::new(shape);
     let maximum = source.maximum_block();

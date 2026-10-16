@@ -11,7 +11,7 @@ use casa_imaging_operator::{
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockShape, BoundedSource, Cancel, DomainProjection, MajorCyclePass,
     ModelPreparation, NativeBlock, NativeRowHeader, Partition, PassDomain, PassError, PassSummary,
-    Residency, RowAddress, SourceError, WeightCache, WorkerTeam, run_major_cycle,
+    Residency, RowAddress, SampleContent, SourceError, WeightCache, WorkerTeam, run_major_cycle,
 };
 use ndarray::Array2;
 use num_complex::Complex32;
@@ -56,6 +56,9 @@ pub struct Rows {
     pub frequencies: Vec<f64>,
     next: usize,
     pub restricted: Vec<bool>,
+    /// What each traversal asked for; a flags-and-weights traversal
+    /// delivers zero values.
+    pub contents: Vec<SampleContent>,
 }
 
 /// `CHANNELS` native channels `WIDTH_HZ` apart from `FIRST_HZ`.
@@ -104,6 +107,7 @@ impl Rows {
             frequencies,
             next: 0,
             restricted: Vec::new(),
+            contents: Vec::new(),
         }
     }
 
@@ -195,9 +199,15 @@ pub fn context(index: usize) -> RowContext {
 }
 
 impl BoundedSource for Rows {
-    fn begin(&mut self, _: PlaneRange, restrict: bool) -> Result<(), SourceError> {
+    fn begin(
+        &mut self,
+        _: PlaneRange,
+        restrict: bool,
+        content: SampleContent,
+    ) -> Result<(), SourceError> {
         self.next = 0;
         self.restricted.push(restrict);
+        self.contents.push(content);
         Ok(())
     }
 
@@ -208,7 +218,9 @@ impl BoundedSource for Rows {
         let channels = (0..self.frequencies.len() as u32).collect::<Vec<_>>();
         block.reset(self.rows[0].projections.len(), &channels, &[0, 1]);
         let end = (self.next + 37).min(self.rows.len());
+        let unread = self.contents.last() == Some(&SampleContent::FlagsAndWeights);
         for (index, row) in self.rows[self.next..end].iter().enumerate() {
+            let zeros = vec![Complex32::default(); row.values.len()];
             block.push_row(
                 NativeRowHeader {
                     row_flag: false,
@@ -220,7 +232,7 @@ impl BoundedSource for Rows {
                 },
                 &row.projections,
                 &self.frequencies,
-                &row.values,
+                if unread { &zeros } else { &row.values },
                 &row.weights,
                 &row.flags,
             );
