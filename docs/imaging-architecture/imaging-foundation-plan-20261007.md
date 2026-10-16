@@ -1099,6 +1099,12 @@ Philosophy of Software Design* (deep modules; define errors out of existence).
    R3 sharpened this for memory: the owner of an allocation charges what it
    holds, which means retained capacities, overlapping temporaries and storage
    read footprints, not lengths. One authoritative charge, no ledger of proofs.
+   R4 added a requirement: a change that moves or adds scratch ownership (a
+   buffer, a batch, a cache, a second owner of the same data) adds a counting
+   law. The law measures the owner's peak against its charge, under the
+   inputs that make the charge grow: wide cells, high native-to-output
+   spectral ratios, and several live owners at once. #706, #712's CPU batch
+   and IF-11's `MODEL_DATA` write were missed charges of this kind.
 6. **Bookkeeping must not scale with data.** Telemetry and summaries are O(1)
    per phase. Nothing serialises, hashes or walks whole plans, models, sample
    streams or historical records for progress reporting.
@@ -1111,7 +1117,12 @@ Philosophy of Software Design* (deep modules; define errors out of existence).
    that exists only to erase a type inside one owner, or to place an
    implementation behind a dependency boundary, is allowed when its rustdoc
    names that reason. Test doubles don't count as a second implementation.
-   Don't invent a dummy implementation to satisfy this rule.
+   Don't invent a dummy implementation to satisfy this rule. The exceptions
+   at R4, each with its reason in rustdoc: `BoundedSource` (a dependency
+   boundary), the private `BlockIo` and `BackendIo` (type erasure), and the
+   normal-state and model storage traits, which runtime's paged storage
+   implements beside the resident ones (a dependency boundary with two
+   implementations).
 8. **Errors are types, not strings.** No `io::Error::other(format!(..))` for
    domain failures. Each crate has one `Error` enum with variants a caller
    could act on; everything else is a bug and panics with the invariant named.

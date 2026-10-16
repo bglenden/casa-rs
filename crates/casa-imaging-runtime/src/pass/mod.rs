@@ -150,6 +150,10 @@ pub enum SampleContent {
 ///
 /// Each wave of a pass begins one traversal. Rows are delivered in a fixed
 /// order, so repeated traversals see the same samples.
+///
+/// The trait is a dependency boundary (plan §10 rule 7): the pass, here,
+/// traverses the MeasurementSet source of `casa-imaging-application`, its
+/// one production implementation, which this crate cannot name.
 pub trait BoundedSource: Send {
     /// Start a traversal for a wave over `planes`, reading `content` of each
     /// sample. With `restrict`, the source may deliver only the native
