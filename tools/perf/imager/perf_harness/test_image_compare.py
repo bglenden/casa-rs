@@ -682,7 +682,12 @@ class ImageComparisonProtocolTests(unittest.TestCase):
             * np.dot(centered_right, centered_right)
         )
 
-        self.assertGreater(raw_correlation, 1.0)
+        # The one-pass formula cancels catastrophically on this fixture. The
+        # sign of its error depends on the platform's summation order (it
+        # exceeds 1 with arm64 numpy 2.3, falls short with x86-64 numpy 2.5),
+        # but it always misses by orders of magnitude more than the
+        # comparator's tolerance below.
+        self.assertGreater(abs(raw_correlation - expected), 1.0e-9)
         self.assertGreater(raw_left_variance, 0.0)
         self.assertGreater(raw_right_variance, 0.0)
         self.assertGreaterEqual(result["correlation"], -1.0)

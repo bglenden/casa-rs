@@ -20,28 +20,6 @@ observer-off/on controls and matched scientific evidence before use in a
 performance claim. They do not bypass runtime, mask or CF-cache identity
 validation; a newer CASA installation is not the frozen older runtime.
 
-## Native cache-only diagnostic guard (development)
-
-`perf_harness/casa_cf_guard.py` is a diagnostic-only LLDB guard, separate from
-the frozen recipe protocol. An outer supervisor must enforce the approved
-combined deadline and process-group RSS ceiling. Before launch, the guard
-installs classic and TM2 AW generation/fill breakpoints with prologue skipping
-disabled. One initial interpreter `exec` stop may continue with the pending
-guards enabled and unhit; repeated exec or other unexpected stops fail closed.
-The bootstrap imports CASA and stops before running the separately
-manifested workload. Continuation requires every breakpoint to be enabled,
-unhit, runtime-resolved and located at its symbol's first instruction in the
-exact manifested library path and UUID. Any later stop or generation hit fails
-and terminates the child; it is never resumed past a forbidden function entry.
-
-The policy unit tests use mocks and import neither CASA nor LLDB. They do not
-prove installed-runtime interception, complete native callgraph coverage, cache
-compatibility, model equivalence, or numerical acceptance. Those remain explicit
-preflight obligations before using this guard for a timing. No automatic
-retry is supplied. In particular, a read-only
-cache directory or a Python `fillCFCache` wrapper is not a substitute for the
-native guard, and guard success alone is not matched-performance evidence.
-
 ## Issue 540 C++ component instrumentation
 
 The issue-540 CASA build is intentionally isolated from the user's dirty CASA

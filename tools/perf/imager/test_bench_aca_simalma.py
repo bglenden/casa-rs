@@ -116,21 +116,22 @@ class AcaSimalmaHarnessTests(unittest.TestCase):
             },
         }
 
-        plan = bench_aca_simalma.native_family_plan(
-            "aca-7m-interferometric",
-            staged,
-            Path("/tmp/native"),
-            model_key="m51ha_fits",
-            config_name="aca.i.cfg",
-            telescope="ACA",
-            imaging_mode="mosaic",
-            observation_mode="interferometric",
-            target_gib=0.5,
-            pointing_count=7,
-            polarizations=1,
-            row_workers=4,
-            channel_workers=8,
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = bench_aca_simalma.native_family_plan(
+                "aca-7m-interferometric",
+                staged,
+                Path(tmp) / "native",
+                model_key="m51ha_fits",
+                config_name="aca.i.cfg",
+                telescope="ACA",
+                imaging_mode="mosaic",
+                observation_mode="interferometric",
+                target_gib=0.5,
+                pointing_count=7,
+                polarizations=1,
+                row_workers=4,
+                channel_workers=8,
+            )
 
         self.assertEqual(plan["status"], "planned")
         self.assertEqual(plan["request"]["kind"], "family")

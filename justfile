@@ -13,6 +13,7 @@ quick:
     CARGO_INCREMENTAL=0 cargo clippy --workspace --all-targets -- -D warnings
     bash scripts/test-workspace.sh
     python3 scripts/test-task-cli-hosts.py
+    bash scripts/test-perf-tools.sh --if-available
     python3 apps/casars-mac/script/test_gui_acceptance.py
 
 verify:
@@ -151,6 +152,10 @@ release-perf:
 
 external-data-cleanup *args:
     tools/perf/imager/cleanup_external_data.py {{args}}
+
+# Tests of the imaging performance and evidence tools (tools/perf/imager).
+perf-tools-test *args:
+    bash scripts/test-perf-tools.sh {{args}}
 
 arch-check:
     bash scripts/arch-check.sh
