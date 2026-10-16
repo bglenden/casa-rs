@@ -478,8 +478,11 @@ allocation stays within the bytes it charges (for example
 `a_model_data_write_holds_at_most_its_bytes` in `casa-ms`). At T2, a run's
 peak footprint must stay within its largest reservation plus the process's
 fixed overhead; the run summary's per-phase `peak_reserved_bytes` and
-`/usr/bin/time -l` give both. A measured allocation above its reservation
-is fixed with a regression law, never documented as harmless.
+`/usr/bin/time -l` give both. On macOS the footprint drops up to about a
+second after memory is freed, so a phase boundary is judged after a short
+idle, or with that lag counted in the allocator allowance. A measured live
+allocation above its reservation is fixed with a regression law, never
+documented as harmless.
 
 **Every evidence run names its conditions.** Defaults and binary labels are
 not enough: in IF-10 a build linked Homebrew's scalar FFTW instead of the

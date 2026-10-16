@@ -133,12 +133,14 @@ attributing a change. Build evidence binaries from the committed state and
 rerun the affected T1.5 rows before recording numbers.
 
 Memory evidence compares each phase's peak footprint (over the footprint
-before the first phase) with its `peak_reserved_bytes`. The footprint
-returns freed memory lazily on macOS (about 100–250 ms for large host frees,
-longer for Metal buffers until Metal releases their commands), so judge a
-phase boundary after the process idles briefly, or by the mechanism, before
-calling it an under-charge. A real allocation above its reservation gets a
-counting or mechanism law. An explicit evidence budget needs an
+before the first phase) with its `peak_reserved_bytes`. On macOS the
+footprint drops 50 ms to about 1 s after memory is freed, host or Metal
+alike (IF-11 measured a 1.6 GB Metal model copy and a plain 262 MB `Vec`).
+A phase that starts right after a large free can therefore read above its
+reservation. Judge a phase boundary after the process idles about a second,
+or count the lag within the allowance for allocator overhead, before calling
+it an under-charge, and check that the allocation is still live. A real live
+allocation above its reservation gets a counting or mechanism law. An explicit evidence budget needs an
 evidence-only patch, because production reads no environment and clips an
 explicit budget to `vm_stat`'s free memory.
 
