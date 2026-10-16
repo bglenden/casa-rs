@@ -140,8 +140,10 @@ struct Command(Retained<ProtocolObject<dyn MTLCommandBuffer>>);
 
 // SAFETY: a committed command buffer is only waited on and queried, which
 // Metal allows from any thread; the backend that owns it is used by one
-// thread at a time (`GridBackend` is `Send`, not `Sync`), and a clone handed
-// to `DeviceCells::defer` is only waited on.
+// thread at a time (`GridBackend` is `Send`, not `Sync`), a clone handed to
+// `DeviceCells::defer` is only waited on, and the clones a `ModelCopy` keeps
+// for the backends of several threads are only queried (`status`) and
+// waited on, under the copy's mutex.
 unsafe impl Send for Command {}
 
 impl Command {
