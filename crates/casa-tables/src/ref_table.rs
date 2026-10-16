@@ -652,4 +652,41 @@ mod tests {
         let rel = strip_directory(Path::new("/a/b/ref.tbl/sub"), Path::new("/a/b/ref.tbl"));
         assert_eq!(rel, "././sub");
     }
+
+    fn stored_parent(ref_table: &Path) -> String {
+        let control = ref_table.join("table.dat");
+        match crate::storage::table_control::read_table_dat_dispatch(&control).unwrap() {
+            crate::storage::table_control::TableDatResult::Ref(dat) => dat.parent_relative_path,
+            _ => panic!("{} is not a RefTable", ref_table.display()),
+        }
+    }
+
+    #[test]
+    fn deeper_and_enclosing_parents_are_stored_relative_and_survive_a_move() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("run");
+        let parent_path = root.join("sub").join("parent.tbl");
+        let beside = root.join("beside.tbl");
+        let inside = parent_path.join("sel.tbl");
+        std::fs::create_dir_all(parent_path.parent().unwrap()).unwrap();
+        test_table()
+            .save(crate::table::TableOptions::new(&parent_path))
+            .unwrap();
+        let table = Table::open(crate::table::TableOptions::new(&parent_path)).unwrap();
+        let rows = table.select_rows(&[0, 2, 4]).unwrap();
+        rows.save(crate::table::TableOptions::new(&beside)).unwrap();
+        let rows = table.select_rows(&[1, 3]).unwrap();
+        rows.save(crate::table::TableOptions::new(&inside)).unwrap();
+        assert_eq!(stored_parent(&beside), "./sub/parent.tbl");
+        assert_eq!(stored_parent(&inside), "sel.tbl/.");
+
+        let moved = dir.path().join("elsewhere").join("run");
+        std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+        std::fs::rename(&root, &moved).unwrap();
+        let reopened = Table::open(crate::table::TableOptions::new(moved.join("beside.tbl")));
+        assert_eq!(reopened.unwrap().row_count(), 3);
+        let inside = moved.join("sub").join("parent.tbl").join("sel.tbl");
+        let reopened = Table::open(crate::table::TableOptions::new(inside)).unwrap();
+        assert_eq!(reopened.row_count(), 2);
+    }
 }

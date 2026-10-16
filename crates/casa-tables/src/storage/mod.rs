@@ -48,7 +48,7 @@ use crate::table::{
     SelectedArray1DCellsMut, SelectedArray1DShape, SelectedArray2DCells, SelectedArray2DCellsMut,
     SelectedArray2DShape, SelectedReadFootprint, StreamedScalarColumn, StreamedScalarType,
 };
-use crate::table_path::add_directory;
+use crate::table_path::add_directory_for_link;
 
 use self::data_type::CasacoreDataType;
 use self::incremental_stman::{
@@ -3701,7 +3701,7 @@ impl CompositeStorage {
         table_path: &Path,
         ref_dat: &RefTableDatContents,
     ) -> Result<StorageSnapshot, StorageError> {
-        let parent_path = add_directory(&ref_dat.parent_relative_path, table_path);
+        let parent_path = add_directory_for_link(&ref_dat.parent_relative_path, table_path);
 
         // Recursively load the parent table.
         let parent = self.load(&parent_path)?;
@@ -3827,7 +3827,7 @@ impl CompositeStorage {
         let mut undefined_cells = Vec::new();
 
         for (i, rel_path) in concat_dat.table_paths.iter().enumerate() {
-            let abs_path = add_directory(rel_path, table_path);
+            let abs_path = add_directory_for_link(rel_path, table_path);
             let sub_snapshot = self.load(&abs_path)?;
 
             if i == 0 {

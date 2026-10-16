@@ -334,7 +334,7 @@ fn digest_array(digest: &mut StableDigest, value: &ArrayValue) {
 }
 
 fn resolve_table_ref(owner_path: &Path, rel: &str) -> PathBuf {
-    normalize_existing_path(&owner_path.join(rel))
+    normalize_existing_path(&casa_tables::add_directory(rel, owner_path))
 }
 
 fn digest_value(

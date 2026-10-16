@@ -222,6 +222,11 @@ path = "tests/tables_table_info_interop.rs"
 required-features = ["cpp-interop-tests"]
 
 [[test]]
+name = "tables_table_keyword_interop"
+path = "tests/tables_table_keyword_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
 name = "tables_virtual_column_interop"
 path = "tests/tables_virtual_column_interop.rs"
 required-features = ["cpp-interop-tests"]

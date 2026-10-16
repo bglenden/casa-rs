@@ -33,6 +33,9 @@ use ndarray::{ArrayViewD, IxDyn, Slice, SliceInfoElem};
 use crate::error::ImageError;
 use crate::image_expr::ImageExprBuilder;
 use crate::image_info::ImageInfo;
+use crate::mask_reference::{
+    heal_legacy_mask_references, point_mask_references_inside, subtable_reference,
+};
 use crate::subimage::{SubImage, SubImageMut};
 
 const MAP_COLUMN: &str = "map";
@@ -736,6 +739,14 @@ impl<T: ImagePixel> PagedImage<T> {
         self.refresh_tiled_io()
     }
 
+    /// Heals, in memory, mask references that older casa-rs builds wrote
+    /// ([`heal_legacy_mask_references`]); a later save stores the healed form.
+    fn heal_mask_references(table: &mut Table, path: &Path) {
+        if let Some(Value::Record(masks)) = table.keywords_mut().get_mut(MASKS_KEYWORD) {
+            heal_legacy_mask_references(masks, path);
+        }
+    }
+
     fn persistent_mask_relative_path(record: &RecordValue) -> Result<String, ImageError> {
         match record.get("mask") {
             Some(Value::TableRef(path)) => Ok(path.clone()),
@@ -759,7 +770,7 @@ impl<T: ImagePixel> PagedImage<T> {
             let image_path = self.path.as_deref().ok_or(ImageError::NotPersistent)?;
             let relative_path = Self::persistent_mask_relative_path(record)?;
             let mask = PagedArray::<bool>::open_with_cache(
-                resolve_mask_table_path(image_path, &relative_path),
+                casa_tables::add_directory(&relative_path, image_path),
                 self.cache_bytes(),
             )?;
             self.persistent_masks
@@ -959,11 +970,12 @@ impl<T: ImagePixel> PagedImage<T> {
         let tiled_io = Self::open_tiled_io(&path, max_cache_bytes)
             .ok()
             .map(RefCell::new);
-        let table = if tiled_io.is_some() {
+        let mut table = if tiled_io.is_some() {
             Table::open_metadata_only(TableOptions::new(&path))?
         } else {
             Table::open(TableOptions::new(&path))?
         };
+        Self::heal_mask_references(&mut table, &path);
         let coords = match table.keywords().get("coords") {
             Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)
                 .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?,
@@ -1061,11 +1073,12 @@ impl<T: ImagePixel> PagedImage<T> {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ImageError> {
         let path = path.as_ref().to_path_buf();
         let tiled_io = Self::open_tiled_io(&path, 0).ok().map(RefCell::new);
-        let table = if tiled_io.is_some() {
+        let mut table = if tiled_io.is_some() {
             Table::open_metadata_only(TableOptions::new(&path))?
         } else {
             Table::open(TableOptions::new(&path))?
         };
+        Self::heal_mask_references(&mut table, &path);
         let coords = match table.keywords().get("coords") {
             Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)
                 .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?,
@@ -1701,8 +1714,7 @@ impl<T: ImagePixel> PagedImage<T> {
         start: &[usize],
     ) -> Result<(), ImageError> {
         validate_mask_slice_write(&self.shape, data.shape(), start)?;
-        let table_ref = subtable_reference(name);
-        let record = make_paged_mask_record(&table_ref, &self.shape);
+        let record = make_paged_mask_record(&subtable_reference(name), &self.shape);
         let mut masks = match self.table.keywords().get(MASKS_KEYWORD) {
             Some(Value::Record(rec)) => rec.clone(),
             _ => RecordValue::default(),
@@ -1713,7 +1725,7 @@ impl<T: ImagePixel> PagedImage<T> {
             .upsert(MASKS_KEYWORD, Value::Record(masks));
 
         if let Some(path) = &self.path {
-            let mask_path = resolve_mask_table_path(path, &table_ref);
+            let mask_path = path.join(name);
             if !mask_path.exists() {
                 let mut mask = PagedArray::<bool>::create_with_cache(
                     TiledShape::with_tile_shape(self.shape.clone(), self.tile_shape.clone())?,
@@ -1903,7 +1915,9 @@ impl<T: ImagePixel> PagedImage<T> {
             LOGTABLE_KEYWORD,
             Value::TableRef(subtable_reference(LOGTABLE_NAME)),
         );
-        self.normalize_mask_table_references();
+        if let Some(Value::Record(masks)) = self.table.keywords_mut().get_mut(MASKS_KEYWORD) {
+            point_mask_references_inside(masks);
+        }
         let has_masks = !self.temp_masks.is_empty();
         let has_history = !self.temp_history.is_empty();
         if has_masks || has_history {
@@ -2018,45 +2032,13 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(())
     }
 
-    /// Points every mask region at the mask table of the same name inside the
-    /// image, replacing the absolute and `<image>/<mask>` references that older
-    /// casa-rs builds wrote, before the image is written to a new path.
-    fn normalize_mask_table_references(&mut self) {
-        let Some(Value::Record(mut masks)) = self.table.keywords().get(MASKS_KEYWORD).cloned()
-        else {
-            return;
-        };
-
-        let mut changed = false;
-        for field in masks.fields_mut() {
-            let Value::Record(record) = &mut field.value else {
-                continue;
-            };
-
-            let table_ref = subtable_reference(&field.name);
-            match record.get("mask") {
-                Some(Value::TableRef(existing)) if existing == &table_ref => {}
-                Some(Value::TableRef(_)) | Some(Value::Scalar(ScalarValue::String(_))) => {
-                    record.upsert("mask", Value::TableRef(table_ref));
-                    changed = true;
-                }
-                _ => {}
-            }
-        }
-
-        if changed {
-            self.table
-                .keywords_mut()
-                .upsert(MASKS_KEYWORD, Value::Record(masks));
-        }
-    }
-
+    /// Writes mask `name` as the image's `<name>` subtable.
     fn write_mask_table(
         image_path: &Path,
-        relative_mask_path: &str,
+        name: &str,
         data: &ArrayD<bool>,
     ) -> Result<(), ImageError> {
-        let mask_path = resolve_mask_table_path(image_path, relative_mask_path);
+        let mask_path = image_path.join(name);
         if mask_path.exists() {
             std::fs::remove_dir_all(&mask_path).map_err(|e| ImageError::Io(e.to_string()))?;
         }
@@ -2541,43 +2523,6 @@ fn make_lcbox_record(shape: &[usize]) -> RecordValue {
     record
 }
 
-/// The stored reference to the subtable `name` inside the image.
-///
-/// This is casacore's `Path::stripDirectory` form for a table inside its
-/// owner (`././<name>`, see [`casa_tables::strip_directory`]), as `PagedImage`
-/// writes its `logtable` and mask tables, so the reference stays valid when
-/// the image directory is moved or copied.
-fn subtable_reference(name: &str) -> String {
-    format!("././{name}")
-}
-
-/// Resolves a mask region's stored `mask` table reference against the image's
-/// current path.
-///
-/// casacore's stored forms resolve through [`casa_tables::add_directory`].
-/// casa-rs builds before #715 also wrote `<image name>/<mask>`, relative to the
-/// image's directory, and absolute paths. An absolute path names the image's
-/// location when it was written; once the image has moved, the mask table of
-/// the same name inside the image is used instead.
-fn resolve_mask_table_path(image_path: &Path, stored_path: &str) -> PathBuf {
-    if let Some(image_name) = image_path.file_name()
-        && Path::new(stored_path).starts_with(image_name)
-        && let Some(dir) = image_path.parent()
-    {
-        return dir.join(stored_path);
-    }
-
-    let resolved = casa_tables::add_directory(stored_path, image_path);
-    if Path::new(stored_path).is_absolute()
-        && !resolved.exists()
-        && let Some(name) = resolved.file_name()
-        && image_path.join(name).exists()
-    {
-        return image_path.join(name);
-    }
-    resolved
-}
-
 fn slice_mask_array(
     mask: ArrayD<bool>,
     start: &[usize],
@@ -2817,27 +2762,6 @@ mod tests {
         fn name(&self) -> Option<&Path> {
             None
         }
-    }
-
-    #[test]
-    fn resolves_bare_and_cxx_style_mask_table_refs() {
-        let image_path = Path::new("/tmp/demo.image");
-        assert_eq!(
-            resolve_mask_table_path(image_path, "././flags"),
-            PathBuf::from("/tmp/demo.image/flags")
-        );
-        assert_eq!(
-            resolve_mask_table_path(image_path, "flags"),
-            PathBuf::from("/tmp/demo.image/flags")
-        );
-        assert_eq!(
-            resolve_mask_table_path(image_path, "demo.image/flags"),
-            PathBuf::from("/tmp/demo.image/flags")
-        );
-        assert_eq!(
-            resolve_mask_table_path(image_path, "./other.image/flags"),
-            PathBuf::from("/tmp/other.image/flags")
-        );
     }
 
     #[test]
@@ -3504,8 +3428,8 @@ mod tests {
         }
     }
 
-    fn stored_mask_reference(image: &PagedImage<f32>, mask: &str) -> Option<Value> {
-        let Some(Value::Record(masks)) = image.table.keywords().get(MASKS_KEYWORD) else {
+    fn stored_mask_reference(table: &Table, mask: &str) -> Option<Value> {
+        let Some(Value::Record(masks)) = table.keywords().get(MASKS_KEYWORD) else {
             return None;
         };
         let Some(Value::Record(region)) = masks.get(mask) else {
@@ -3532,7 +3456,7 @@ mod tests {
         let reopened = PagedImage::<f32>::open(&moved).unwrap();
         assert_eq!(reopened.get_mask().unwrap(), Some(expected));
         assert_eq!(
-            stored_mask_reference(&reopened, "mask0"),
+            stored_mask_reference(&reopened.table, "mask0"),
             Some(Value::table_ref("././mask0"))
         );
         assert_eq!(
@@ -3542,7 +3466,7 @@ mod tests {
     }
 
     #[test]
-    fn absolute_mask_references_from_older_builds_still_read() {
+    fn older_absolute_mask_references_heal_and_survive_a_rename_and_save() {
         // casa-rs before #715 stored the mask table's absolute path; a staged
         // product stored the path its image was about to be moved to.
         let dir = tempfile::tempdir().unwrap();
@@ -3568,18 +3492,38 @@ mod tests {
 
         std::fs::create_dir_all(visible.parent().unwrap()).unwrap();
         std::fs::rename(&staging, &visible).unwrap();
+
+        // Opening reads the mask and heals the reference in memory only.
         let in_place = PagedImage::<f32>::open(&visible).unwrap();
+        assert_eq!(in_place.get_mask().unwrap(), Some(expected.clone()));
         assert_eq!(
-            stored_mask_reference(&in_place, "mask0"),
+            stored_mask_reference(&in_place.table, "mask0"),
+            Some(Value::table_ref("././mask0"))
+        );
+        drop(in_place);
+        let on_disk = Table::open(TableOptions::new(&visible)).unwrap();
+        assert_eq!(
+            stored_mask_reference(&on_disk, "mask0"),
             Some(Value::table_ref(legacy))
         );
-        assert_eq!(in_place.get_mask().unwrap(), Some(expected.clone()));
-        drop(in_place);
 
+        // Renamed within its directory and saved in place, the image stores
+        // the healed form, so it keeps its mask through any later move.
+        let renamed = visible.with_file_name("renamed.pb");
+        std::fs::rename(&visible, &renamed).unwrap();
+        let mut image = PagedImage::<f32>::open(&renamed).unwrap();
+        assert_eq!(image.get_mask().unwrap(), Some(expected.clone()));
+        image.save().unwrap();
+        drop(image);
         let moved = dir.path().join("moved.pb");
-        std::fs::rename(&visible, &moved).unwrap();
+        std::fs::rename(&renamed, &moved).unwrap();
         let reopened = PagedImage::<f32>::open(&moved).unwrap();
         assert_eq!(reopened.get_mask().unwrap(), Some(expected));
+        let on_disk = Table::open(TableOptions::new(&moved)).unwrap();
+        assert_eq!(
+            stored_mask_reference(&on_disk, "mask0"),
+            Some(Value::table_ref("././mask0"))
+        );
     }
 
     #[test]

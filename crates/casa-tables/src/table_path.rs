@@ -29,6 +29,8 @@ use std::path::{Component, Path, PathBuf};
 
 use casa_types::{RecordValue, Value};
 
+use crate::storage::table_control::TableDatContents;
+
 /// Returns the path of `table` as `owner` stores a reference to it.
 ///
 /// Port of casacore's `Path::stripDirectory(name, otherName)`. Both paths are
@@ -41,10 +43,9 @@ use casa_types::{RecordValue, Value};
 /// 3. `table` under `owner`'s directory: `./<rest>`.
 /// 4. otherwise the absolute path of `table`.
 ///
-/// casacore's last rule returns the name as given rather than absolute; the
-/// two agree whenever casacore applies the rule to a table keyword, whose name
-/// it always holds in absolute form. casacore also expands `$VAR` and `~`
-/// before matching; casa-rs paths are taken literally.
+/// casacore's last rule returns the name as given rather than absolute; both
+/// name the same table at the time of writing. casacore also expands `$VAR`
+/// and `~` before matching; casa-rs paths are taken literally.
 ///
 /// # Examples
 ///
@@ -88,7 +89,9 @@ pub fn strip_directory(table: &Path, owner: &Path) -> String {
 /// which leaves it relative to the working directory, where it does not name
 /// the intended table. casa-rs builds before #715 wrote subtable keywords that
 /// way (an image's `logtable`, MeasurementSet subtables), meaning a table
-/// inside `owner`, so such a name resolves inside `owner`.
+/// inside `owner`, so such a name resolves inside `owner`. A table that
+/// `owner` links to rather than contains resolves through
+/// `add_directory_for_link` instead.
 ///
 /// # Examples
 ///
@@ -123,13 +126,50 @@ pub fn add_directory(stored: &str, owner: &Path) -> PathBuf {
     owner.join(name)
 }
 
+/// [`add_directory`] for a table that `owner` links to rather than contains:
+/// the parent of a `RefTable`, a part of a `ConcatTable`, or the table a
+/// `ForwardColumnEngine` forwards to.
+///
+/// A plain relative name resolves beside `owner`, as casa-rs resolved such
+/// links before #715. casacore writes one for a chain of forwarding columns:
+/// `ForwardColumn::fillTableName` strips the referenced column's already
+/// relative name (`./orig.tbl`), which matches nothing and is stored as
+/// `orig.tbl`, the original table beside the owner.
+pub(crate) fn add_directory_for_link(stored: &str, owner: &Path) -> PathBuf {
+    let plain =
+        !stored.starts_with("./") && !stored.ends_with("/.") && Path::new(stored).is_relative();
+    if plain {
+        return owner.parent().unwrap_or(owner).join(stored);
+    }
+    add_directory(stored, owner)
+}
+
+/// `contents` with its table and column keywords as the table at `owner`
+/// stores them ([`stored_table_keywords`]); copied only when one changes.
+pub(crate) fn stored_table_dat_keywords<'a>(
+    contents: &'a TableDatContents,
+    owner: &Path,
+) -> Cow<'a, TableDatContents> {
+    let mut stored = Cow::Borrowed(contents);
+    if let Cow::Owned(keywords) = stored_table_keywords(&contents.table_desc.table_keywords, owner)
+    {
+        stored.to_mut().table_desc.table_keywords = keywords;
+    }
+    for (index, column) in contents.table_desc.columns.iter().enumerate() {
+        if let Cow::Owned(keywords) = stored_table_keywords(&column.keywords, owner) {
+            stored.to_mut().table_desc.columns[index].keywords = keywords;
+        }
+    }
+    stored
+}
+
 /// Returns `keywords` as the table at `owner` stores them: every absolute
 /// table keyword, at any depth of nested records, in [`strip_directory`] form.
 ///
 /// casacore's `TableRecordRep::putData` writes each `TpTable` field as
 /// `TableKeyword::tableName(parentAttr)`, which is `Path::stripDirectory` of
 /// the keyword's absolute name against the owning table. The record is
-/// borrowed unchanged when it holds no absolute table keyword.
+/// borrowed unchanged when stripping changes no value.
 pub(crate) fn stored_table_keywords<'a>(
     keywords: &'a RecordValue,
     owner: &Path,
@@ -177,8 +217,8 @@ fn proper_suffix(path: &Path, base: &Path) -> Option<String> {
     (!rest.as_os_str().is_empty()).then(|| rest.to_string_lossy().into_owned())
 }
 
-/// `owner` with the trailing components `below` removed, if it ends in them
-/// and something remains above.
+/// `owner` with the trailing components `below` removed, if it ends in them.
+/// A relative `owner` with nothing above them gives the working directory.
 fn ancestor_above(owner: &Path, below: &Path) -> Option<PathBuf> {
     if below.as_os_str().is_empty() || below.is_absolute() || !owner.ends_with(below) {
         return None;
@@ -187,7 +227,11 @@ fn ancestor_above(owner: &Path, below: &Path) -> Option<PathBuf> {
     for _ in below.components() {
         ancestor.pop();
     }
-    (!ancestor.as_os_str().is_empty()).then_some(ancestor)
+    Some(if ancestor.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        ancestor
+    })
 }
 
 #[cfg(test)]
@@ -262,6 +306,23 @@ mod tests {
             add_directory("b/c/.", Path::new("/root/a/x/c")),
             PathBuf::from("/root/a/x/c/b/c/.")
         );
+    }
+
+    #[test]
+    fn the_ancestor_of_a_single_component_relative_owner_is_the_working_directory() {
+        assert_eq!(add_directory("sel/.", Path::new("sel")), PathBuf::from("."));
+    }
+
+    #[test]
+    fn linked_tables_resolve_plain_names_beside_the_owner() {
+        let owner = Path::new("/data/top.tbl");
+        let link = |stored| add_directory_for_link(stored, owner);
+        // casacore's stored name for a chain of forwarding columns.
+        assert_eq!(link("orig.tbl"), PathBuf::from("/data/orig.tbl"));
+        assert_eq!(link("./orig.tbl"), PathBuf::from("/data/orig.tbl"));
+        assert_eq!(link("././sel.tbl"), PathBuf::from("/data/top.tbl/sel.tbl"));
+        assert_eq!(link("top.tbl/."), PathBuf::from("/data"));
+        assert_eq!(link("/elsewhere/t"), PathBuf::from("/elsewhere/t"));
     }
 
     #[test]

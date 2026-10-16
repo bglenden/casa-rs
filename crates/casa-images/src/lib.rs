@@ -73,6 +73,7 @@ pub mod temp_image;
 
 #[cfg(test)]
 mod mask;
+mod mask_reference;
 
 pub use analysis::{
     ExportFitsRequest, FeatherRequest, FeatherSummary, FitsExportSummary, FitsImportSummary,

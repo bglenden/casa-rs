@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![allow(dead_code)]
 
-use std::borrow::Cow;
 use std::mem::size_of;
 use std::path::Path;
 
@@ -16,7 +15,7 @@ use super::data_type::{
     CasacoreDataType, ColumnClassInfo, RECORD_COLUMN_CLASS_NAME, array_column_class_name,
     parse_column_class_name, scalar_column_class_name,
 };
-use crate::table_path::stored_table_keywords;
+use crate::table_path::stored_table_dat_keywords;
 
 // ---------------------------------------------------------------------------
 // Parsed structures
@@ -970,35 +969,20 @@ fn is_array_data_type(dt: CasacoreDataType) -> bool {
 // Write path
 // ---------------------------------------------------------------------------
 
+/// Writes `contents` to `path`, the `table.dat` inside a table's directory.
+///
+/// Absolute table keywords are stored relative to that table, as casacore
+/// stores them ([`stored_table_dat_keywords`]).
 pub(crate) fn write_table_dat(
     path: &Path,
     contents: &TableDatContents,
 ) -> Result<(), StorageError> {
-    let owner = path.parent().unwrap_or(path);
-    let contents = with_stored_table_keywords(contents, owner);
+    let table = path.parent().unwrap_or(path);
+    let contents = stored_table_dat_keywords(contents, table);
     let mut io = AipsIo::open(path, AipsOpenOption::New)?;
     write_table_dat_contents(&mut io, &contents)?;
     io.close()?;
     Ok(())
-}
-
-/// `contents` with its table and column keywords as the table at `owner`
-/// stores them ([`stored_table_keywords`]); copied only when one changes.
-fn with_stored_table_keywords<'a>(
-    contents: &'a TableDatContents,
-    owner: &Path,
-) -> Cow<'a, TableDatContents> {
-    let mut stored = Cow::Borrowed(contents);
-    if let Cow::Owned(keywords) = stored_table_keywords(&contents.table_desc.table_keywords, owner)
-    {
-        stored.to_mut().table_desc.table_keywords = keywords;
-    }
-    for (index, column) in contents.table_desc.columns.iter().enumerate() {
-        if let Cow::Owned(keywords) = stored_table_keywords(&column.keywords, owner) {
-            stored.to_mut().table_desc.columns[index].keywords = keywords;
-        }
-    }
-    stored
 }
 
 /// Encode the same control file before a typed array's storage is admitted.
