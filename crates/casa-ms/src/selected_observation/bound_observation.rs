@@ -349,6 +349,7 @@ impl BoundSelectedObservation {
             exhausted: false,
             block_capacity,
             window,
+            visibilities: true,
         }
     }
 }
@@ -365,9 +366,24 @@ pub struct SelectedObservationBlockSource<'a> {
     /// What one block of any source needs; the stream refills one block.
     block_capacity: SelectedObservationBufferCapacity,
     window: Option<[f64; 2]>,
+    /// Whether blocks read the visibility column.
+    visibilities: bool,
 }
 
 impl SelectedObservationBlockSource<'_> {
+    /// This stream reading each block's flags, weights and row geometry
+    /// but not its visibility column, whose payload is then
+    /// [`casa_imaging_model::SelectedNumericVisibility::Unread`]. Density
+    /// weighting needs no more, and the visibilities are most of a block's
+    /// bytes.
+    #[must_use]
+    pub fn without_visibilities(self) -> Self {
+        Self {
+            visibilities: false,
+            ..self
+        }
+    }
+
     /// Exact row ceiling from the freshly opened source's physical content plan.
     /// Consumers may reduce an already admitted scratch bound to this size.
     pub const fn maximum_rows_per_block(&self) -> usize {
@@ -415,6 +431,7 @@ impl SelectedObservationBlockSource<'_> {
                 replay,
                 block,
                 self.window,
+                self.visibilities,
             )? {
                 return Ok(Some(FilledObservationBlock::new(block, binding)));
             }

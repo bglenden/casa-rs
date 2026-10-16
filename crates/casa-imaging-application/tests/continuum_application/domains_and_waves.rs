@@ -94,6 +94,77 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
     }
 }
 
+/// The density pass reads no visibilities but still applies the continuum
+/// transform's channel roles, which flag the fit-only channels (0 and 31)
+/// out of the output. On 2 MHz planes from 44.0005 GHz, plane 0 holds
+/// fit-only channel 0 and output channel 1, so under uniform weighting
+/// channel 0 left in the plane's density would weigh down channel 1. The
+/// cube's PSF and weight sums, which read only flags and weights, equal
+/// those of the same request over data with channels 0 and 31 flagged in
+/// `FLAG` as well.
+#[test]
+fn fit_only_channels_stay_out_of_the_density() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let image = |name: &str, flagged: bool| {
+        let directory = root.path().join(name);
+        std::fs::create_dir(&directory).expect("run directory");
+        let measurement_set = thirty_two_channel_multi_row_measurement_set(&directory);
+        if flagged {
+            flag_channels(&measurement_set, &[0, 31]);
+        }
+        let values = json!({
+            "niter": 0,
+            "imsize": 32,
+            "spw": "0:1~30",
+            "channel_start": 1,
+            "channel_count": 30,
+            "specmode": "cube",
+            "outframe": "TOPO",
+            "start": "44.0005GHz",
+            "width": "2MHz",
+            "weighting": "uniform",
+            "fitspw": "0:0~2;29~31",
+            "fitorder": 1,
+        });
+        let image_name = directory.join("image");
+        casa_imaging_application::execute(
+            &request(&measurement_set, &image_name, values),
+            context(),
+        )
+        .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+        image_name
+    };
+    let role_flagged = image("role-flagged", false);
+    let flagged = image("flagged", true);
+    for suffix in [".psf", ".sumwt"] {
+        assert_eq!(
+            read_product(&role_flagged, suffix),
+            read_product(&flagged, suffix),
+            "{suffix}"
+        );
+    }
+}
+
+/// Set FLAG for `channels` of every row and correlation.
+fn flag_channels(measurement_set: &Path, channels: &[usize]) {
+    let mut ms = MeasurementSet::open(measurement_set).expect("open fixture");
+    for row in 0..ms.row_count() {
+        let ArrayValue::Bool(mut cell) = ms.flag_column().get(row).expect("FLAG cell").clone()
+        else {
+            panic!("FLAG is boolean");
+        };
+        for &channel in channels {
+            cell.index_axis_mut(ndarray::Axis(1), channel).fill(true);
+        }
+        ms.main_table_mut()
+            .row_accessor_mut()
+            .set_cell(row, "FLAG", Value::Array(ArrayValue::Bool(cell)))
+            .expect("flag the channels");
+    }
+    ms.save().expect("save fixture");
+}
+
 /// Host memory for which the 128 × 128, 30-channel line cube's passes need
 /// waves but the selection and one plane fit.
 const WAVED_MEMORY_BYTES: u64 = 8 << 20;

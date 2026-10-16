@@ -1478,6 +1478,10 @@ pub enum FiniteValuePolicy {
     /// Reject every non-finite value.
     RejectAll,
     /// Treat declared non-finite inputs as flagged and reject generated non-finite values.
+    ///
+    /// An input is flagged where a traversal reads it. Density weighting
+    /// reads flags and weights only, so a non-finite visibility counts in
+    /// the density, as in CASA's weighting, and every imaging pass flags it.
     FlagInputRejectGenerated,
 }
 

@@ -402,8 +402,9 @@ impl BoundObservationSource {
         self.measurement_set.retained_read_metadata_bytes()
     }
 
-    /// Fill `block` with this source's next row group and return what the
-    /// fill bound it to; `None` once the source's selected rows are spent.
+    /// Fill `block` with this source's next row group, its visibilities only
+    /// when `visibilities` asks for them, and return what the fill bound it
+    /// to; `None` once the source's selected rows are spent.
     pub(super) fn fill_next_selected_block(
         &self,
         problem: &CompiledProblem,
@@ -411,6 +412,7 @@ impl BoundObservationSource {
         replay: &mut SelectedRowReplay,
         block: &mut SelectedObservationBlock,
         window: Option<[f64; 2]>,
+        visibilities: bool,
     ) -> Result<Option<BlockBinding>, BoundObservationSourceError> {
         loop {
             let Some(coordinate_index) =
@@ -444,7 +446,9 @@ impl BoundObservationSource {
             };
             self.measurement_set.fill_selected_observation_buffer(
                 &SelectedObservationBufferRequest::new(
-                    selected_visibility(logical_source.selected_columns().visibility()),
+                    visibilities.then(|| {
+                        selected_visibility(logical_source.selected_columns().visibility())
+                    }),
                     selected_weight(logical_source.selected_columns().weights()),
                     &block.selected_rows,
                     channel_range,
@@ -1168,6 +1172,7 @@ impl<'a> ProjectedObservationBlock<'a> {
             crate::SelectedNumericVisibility::Complex32(values) => {
                 crate::SelectedNumericVisibility::Complex32(&values[start..start + width])
             }
+            unread @ crate::SelectedNumericVisibility::Unread => unread,
         };
         let weights = match columns.weights {
             crate::SelectedNumericWeights::PerRow(values) => crate::SelectedNumericWeights::PerRow(

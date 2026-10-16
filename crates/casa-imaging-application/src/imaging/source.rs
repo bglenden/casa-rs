@@ -10,7 +10,7 @@ use casa_imaging_operator::{PlaneRange, RowContext};
 use casa_imaging_reconstruction::direction_world_to_pixel;
 use casa_imaging_runtime::pass::{
     BlockShape, BoundedSource, DomainProjection, NativeBlock, NativeRowHeader, RowAddress,
-    SourceError,
+    SampleContent, SourceError,
 };
 use casa_imaging_runtime::row_layout;
 use casa_ms::{
@@ -19,14 +19,17 @@ use casa_ms::{
 };
 use num_complex::Complex32;
 
-use super::continuum::subtract_continuum;
+use super::continuum::{flag_unimaged_channels, subtract_continuum};
 
 /// Seconds per day, for row times in MJD days.
 const SECONDS_PER_DAY: f64 = 86_400.0;
 
 /// Under [`FiniteValuePolicy::RejectAll`] a non-finite visibility, weight or
-/// uvw fails the run, flagged or not; under
-/// [`FiniteValuePolicy::FlagInputRejectGenerated`] it is flagged.
+/// uvw that a traversal reads fails the run, flagged or not; under
+/// [`FiniteValuePolicy::FlagInputRejectGenerated`] it is flagged. A
+/// flags-and-weights traversal reads no visibilities, so a non-finite one
+/// counts in the density grid, as in CASA's weighting, and is flagged in
+/// every imaging pass.
 const NONFINITE_INPUT: &str = "a selected visibility, weight or uvw is not finite";
 
 /// Output-frame frequency bounds of a plane range, for windowed traversals
@@ -94,6 +97,7 @@ struct Stream<'a> {
     source: SelectedObservationBlockSource<'a>,
     block: SelectedObservationBlock,
     geometry: SelectedObservationNumericGeometry,
+    content: SampleContent,
 }
 
 /// Native rows of the selected observation, projected onto every image
@@ -105,7 +109,9 @@ struct Stream<'a> {
 /// transform fits each whole row, so its traversals are never restricted.
 /// Rows CASA excludes from imaging and flagged rows arrive with their row
 /// flag set; autocorrelations arrive unflagged, since CASA weighs them in the
-/// density grids and only `GridFT` drops them.
+/// density grids and only `GridFT` drops them. A flags-and-weights traversal
+/// does not read the visibility column: its values are zero, and a continuum
+/// transform only flags the channels it keeps out of the output.
 pub(crate) struct MeasurementSetSource<'a> {
     problem: &'a CompiledProblem,
     domains: usize,
@@ -161,10 +167,15 @@ impl<'a> MeasurementSetSource<'a> {
     fn convert(
         &mut self,
         block: &ProjectedObservationBlock<'_>,
+        content: SampleContent,
         out: &mut NativeBlock,
     ) -> Result<(), SourceError> {
         let rows = block.row_count();
         let first = block.numeric_row(0);
+        let unread = matches!(first.visibility, SelectedNumericVisibility::Unread);
+        if unread != (content == SampleContent::FlagsAndWeights) {
+            return Err("a block's visibilities do not match its traversal".into());
+        }
         let channel_indices = first
             .channels
             .iter()
@@ -246,6 +257,7 @@ impl<'a> MeasurementSetSource<'a> {
                 |values, weights, flags| {
                     fill_samples(&numeric, values, weights, flags, reject_nonfinite)?;
                     match rule {
+                        Some(rule) if unread => flag_unimaged_channels(rule, &numeric, flags),
                         Some(rule) => subtract_continuum(rule, &numeric, values, weights, flags),
                         None => Ok(()),
                     }
@@ -257,9 +269,9 @@ impl<'a> MeasurementSetSource<'a> {
 }
 
 /// Write `numeric`'s selected values, weights and flags in channel and
-/// correlation order. A non-finite value or weight flags its sample, or
-/// fails the row under `reject_nonfinite`. The stored layouts are matched
-/// once per row, not once per sample.
+/// correlation order; unread values are zero. A non-finite value or weight
+/// flags its sample, or fails the row under `reject_nonfinite`. The stored
+/// layouts are matched once per row, not once per sample.
 fn fill_samples(
     numeric: &SelectedNumericRow<'_>,
     values: &mut [Complex32],
@@ -293,6 +305,20 @@ fn fill_samples(
             out,
             reject_nonfinite,
             |i| Complex32::new(v[i], 0.0),
+            |_, c| w[c],
+        ),
+        (SelectedNumericVisibility::Unread, SelectedNumericWeights::PerChannel(w)) => fill_with(
+            numeric,
+            out,
+            reject_nonfinite,
+            |_| Complex32::default(),
+            |i, _| w[i],
+        ),
+        (SelectedNumericVisibility::Unread, SelectedNumericWeights::PerRow(w)) => fill_with(
+            numeric,
+            out,
+            reject_nonfinite,
+            |_| Complex32::default(),
             |_, c| w[c],
         ),
     }
@@ -337,7 +363,12 @@ fn fill_with(
 }
 
 impl BoundedSource for MeasurementSetSource<'_> {
-    fn begin(&mut self, planes: PlaneRange, restrict: bool) -> Result<(), SourceError> {
+    fn begin(
+        &mut self,
+        planes: PlaneRange,
+        restrict: bool,
+        content: SampleContent,
+    ) -> Result<(), SourceError> {
         let selected = match std::mem::replace(&mut self.traversal, Traversal::Failed) {
             Traversal::Idle(selected) => selected,
             Traversal::Streaming(_) | Traversal::Failed => {
@@ -353,6 +384,10 @@ impl BoundedSource for MeasurementSetSource<'_> {
             Some(bounds) => selected.into_windowed_block_stream(self.problem, bounds),
             None => selected.into_block_stream(self.problem),
         };
+        let source = match content {
+            SampleContent::Visibilities => source,
+            SampleContent::FlagsAndWeights => source.without_visibilities(),
+        };
         let block = source.create_storage();
         let geometry = SelectedObservationNumericGeometry::new(
             source.maximum_rows_per_block(),
@@ -362,6 +397,7 @@ impl BoundedSource for MeasurementSetSource<'_> {
             source,
             block,
             geometry,
+            content,
         }));
         Ok(())
     }
@@ -376,13 +412,14 @@ impl BoundedSource for MeasurementSetSource<'_> {
             source,
             block,
             geometry,
+            content,
         } = &mut *stream;
         let Some(filled) = source.fill_next(block)? else {
             self.traversal = Traversal::Idle(stream.source.complete()?);
             return Ok(false);
         };
         let projected = filled.project_numeric_geometry(self.problem, geometry)?;
-        self.convert(&projected, out)?;
+        self.convert(&projected, *content, out)?;
         self.traversal = Traversal::Streaming(stream);
         Ok(true)
     }

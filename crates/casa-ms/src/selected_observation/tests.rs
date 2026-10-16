@@ -1555,6 +1555,7 @@ fn refillable_block_stream_reads_whole_numeric_blocks_and_returns_the_owner() {
             crate::SelectedNumericVisibility::Complex32(values) => {
                 assert_eq!(values.len(), samples);
             }
+            crate::SelectedNumericVisibility::Unread => panic!("a full stream reads visibilities"),
         }
         match numeric.weights {
             crate::SelectedNumericWeights::PerRow(values) => {
@@ -1580,6 +1581,50 @@ fn refillable_block_stream_reads_whole_numeric_blocks_and_returns_the_owner() {
     let (_, replayed) = stream(&problem, observation).expect("stream the returned owner");
     assert_eq!(replayed.len(), 16);
     assert_eq!(replayed, stream_rows(&problem, 3));
+}
+
+/// A stream without visibilities walks the full stream's blocks, rows,
+/// flags and weights, and hands out no values.
+#[test]
+fn a_stream_without_visibilities_delivers_the_full_streams_flags_and_weights() {
+    let directory = tempfile::tempdir().expect("temporary block-stream fixture");
+    let path = directory.path().join("block-stream.ms");
+    generate_fixture_with_rows(&path, 4);
+    let problem = compiled_problem(&path, 4);
+    let source = &problem.observation().sources()[0];
+    let mut observation = open_observation(
+        &problem,
+        source,
+        content_budget_for_rows(&problem, source, 1, 1),
+    )
+    .expect("bind block traversal");
+    let mut traversals = Vec::new();
+    for visibilities in [true, false] {
+        let mut stream = observation.into_block_stream(&problem);
+        if !visibilities {
+            stream = stream.without_visibilities();
+        }
+        let mut storage = stream.create_storage();
+        let mut blocks = Vec::new();
+        while let Some(filled) = stream.fill_next(&mut storage).expect("fill block") {
+            let numeric = filled.numeric_columns();
+            let unread = matches!(numeric.visibility, crate::SelectedNumericVisibility::Unread);
+            assert_eq!(unread, !visibilities);
+            let (crate::SelectedNumericWeights::PerRow(weights)
+            | crate::SelectedNumericWeights::PerChannel(weights)) = numeric.weights;
+            blocks.push((
+                numeric.physical_rows.to_vec(),
+                numeric.correlation_count,
+                numeric.flags.to_vec(),
+                weights.to_vec(),
+                numeric.row_flags.to_vec(),
+            ));
+        }
+        traversals.push(blocks);
+        observation = stream.complete().expect("return the owner");
+    }
+    assert_eq!(traversals[0].len(), 4);
+    assert_eq!(traversals[0], traversals[1]);
 }
 
 #[test]
@@ -2334,6 +2379,9 @@ fn stream(
                             }
                             crate::SelectedNumericVisibility::Float32(values) => {
                                 Visibility::Float32(values[index])
+                            }
+                            crate::SelectedNumericVisibility::Unread => {
+                                panic!("a full stream reads visibilities")
                             }
                         },
                         flag: numeric.flags[index],

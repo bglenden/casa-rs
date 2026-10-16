@@ -14,6 +14,9 @@ pub enum SelectedNumericVisibility<'a> {
     Float32(&'a [f32]),
     /// `DATA` or `CORRECTED_DATA` values.
     Complex32(&'a [Complex32]),
+    /// The traversal read flags and weights only, as density weighting
+    /// needs; the visibility column was not read.
+    Unread,
 }
 
 /// Input weights, retaining the original broadcast representation.
@@ -72,6 +75,7 @@ impl SelectedNumericRow<'_> {
             && match self.visibility {
                 SelectedNumericVisibility::Float32(values) => values.len() == samples,
                 SelectedNumericVisibility::Complex32(values) => values.len() == samples,
+                SelectedNumericVisibility::Unread => true,
             }
             && match self.weights {
                 SelectedNumericWeights::PerRow(values) => values.len() == self.stored_correlations,

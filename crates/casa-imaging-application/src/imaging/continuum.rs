@@ -74,7 +74,23 @@ pub(crate) fn subtract_continuum(
             values[channel * correlations + pol] = Complex32::new(residual.re as f32, imaginary);
         }
     }
-    for (channel, role) in roles.iter().enumerate() {
+    flag_unimaged_channels(rule, row, flags)
+}
+
+/// Flag the channels of one row whose `rule` role does not reach the line
+/// output, so they are not imaged. This needs no visibilities, so a
+/// flags-and-weights traversal applies it alone; `flags` is
+/// `[channel][correlation]`.
+pub(crate) fn flag_unimaged_channels(
+    rule: &ContinuumFitRule,
+    row: &SelectedNumericRow<'_>,
+    flags: &mut [bool],
+) -> Result<(), SourceError> {
+    let correlations = row.correlations.len();
+    for (channel, selected) in row.channels.iter().enumerate() {
+        let role = rule
+            .channel_use(selected.channel_index)
+            .ok_or("a selected channel has no continuum fit or application role")?;
         if !role.contributes_to_output() {
             flags[channel * correlations..(channel + 1) * correlations].fill(true);
         }
