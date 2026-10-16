@@ -800,6 +800,35 @@ pub(crate) fn tiled_2d_channel_tile_width(
     Ok((default_tile_shape.len() >= 3).then(|| default_tile_shape[1].max(1) as usize))
 }
 
+/// Bytes of the largest bucket (tile) of the tiled manager `dm_seq_nr`,
+/// over its hypercubes and its default tile shape: what reading or writing
+/// one of its cells holds whole.
+pub(crate) fn tiled_bucket_bytes(table_path: &Path, dm_seq_nr: u32) -> Result<usize, StorageError> {
+    let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+    let (variant, header) = read_tiled_header(&header_path)?;
+    let default_tile_shape: Vec<usize> = match variant {
+        TiledVariant::Column { default_tile_shape }
+        | TiledVariant::Shape {
+            default_tile_shape, ..
+        }
+        | TiledVariant::Cell { default_tile_shape }
+        | TiledVariant::Data {
+            default_tile_shape, ..
+        } => default_tile_shape
+            .iter()
+            .map(|&extent| usize::try_from(extent).unwrap_or(0))
+            .collect(),
+    };
+    Ok(header
+        .cubes
+        .iter()
+        .map(|cube| cube.tile_shape.as_slice())
+        .chain(std::iter::once(default_tile_shape.as_slice()))
+        .map(|tile_shape| compute_tile_layout(&header.col_data_types, tile_shape).0)
+        .max()
+        .unwrap_or(0))
+}
+
 /// Parse the `TiledStMan` base class AipsIO object.
 ///
 /// Handles versions 1 (big-endian, 32-bit), 2 (explicit endian, 32-bit),
@@ -5023,6 +5052,12 @@ fn patch_tiled_cube_sparse_rows(
     let cell_tiles_per_dim = &tiles_per_dim[..row_axis];
     let cell_tile_total = cell_tiles_per_dim.iter().product::<usize>().max(1);
 
+    // Only this cube's rows: a heterogeneous TiledShapeStMan holds the other
+    // rows, with other cell shapes, in other cubes.
+    let cube_rows: std::collections::HashSet<usize> = row_patches
+        .iter()
+        .map(|patch| patch.global_row_idx)
+        .collect();
     let mut column_patches = Vec::new();
     for (col_idx, sparse_values) in sparse_columns.iter().enumerate() {
         let Some(sparse_values) = sparse_values else {
@@ -5040,8 +5075,11 @@ fn patch_tiled_cube_sparse_rows(
             )));
         }
         let expected_row_bytes = cell_shape.iter().product::<usize>() * elem_size;
-        let mut encoded_rows = std::collections::HashMap::with_capacity(sparse_values.len());
+        let mut encoded_rows = std::collections::HashMap::with_capacity(cube_rows.len());
         for (row_idx, value) in sparse_values {
+            if !cube_rows.contains(row_idx) {
+                continue;
+            }
             let encoded = match value {
                 Some(value) => {
                     let wrapped = Value::Array(value.clone());

@@ -113,6 +113,9 @@ struct Run<'a> {
     /// Whether each Metal backend logs its timing.
     metal_stage_timing: bool,
     visibility_write: Option<VisibilityWriteTarget>,
+    /// What the visibility write holds, admitted with the pass that writes;
+    /// zero when nothing is written.
+    visibility_write_bytes: u64,
     /// Planes per wave of the most finely waved pass so far.
     planes_per_wave: Option<u32>,
     /// Whether the initial pass also grids the sensitivity image
@@ -502,6 +505,13 @@ impl<'a> Run<'a> {
                 None => ModelStoragePlan::resident(usize::MAX)?,
             },
         );
+        let visibility_write_bytes = inputs
+            .visibility_write
+            .as_ref()
+            .map(VisibilityWriteTarget::retained_bytes)
+            .transpose()
+            .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?
+            .unwrap_or(0);
         let run = Self {
             problem,
             domains,
@@ -520,6 +530,7 @@ impl<'a> Run<'a> {
             backend,
             metal_stage_timing: inputs.diagnostics.metal_stage_timing,
             visibility_write: inputs.visibility_write,
+            visibility_write_bytes,
             planes_per_wave: None,
             weight_image,
             retained: Reservation::none(),
@@ -535,7 +546,11 @@ impl<'a> Run<'a> {
             } else {
                 (run.initial_modes(), false)
             };
-            if run.admit_pass(modes, with_model, 0)?.0 != Residency::All {
+            if run
+                .admit_pass(modes, with_model, run.visibility_write_bytes)?
+                .0
+                != Residency::All
+            {
                 return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
             }
         }
@@ -546,8 +561,11 @@ impl<'a> Run<'a> {
     /// visibilities when it is also final.
     fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
         // The model is admitted with the pass, before it is allocated.
-        let (residency, pass) =
-            self.admit_pass(self.initial_modes(), false, self.lifecycle.resident_bytes())?;
+        let (residency, pass) = self.admit_pass(
+            self.initial_modes(),
+            false,
+            self.lifecycle.resident_bytes() + self.write_bytes(last),
+        )?;
         let model = self
             .lifecycle
             .prepare_final_model(self.lifecycle.initial_empty()?, [])?;
@@ -570,7 +588,7 @@ impl<'a> Run<'a> {
         // and the minor cycle's charge covers its terms until the model
         // holds them.
         let (normal_state, model) = completion.into_parts();
-        let (residency, mut pass) = self.admit_pass(ModeSet::DATA, true, 0)?;
+        let (residency, mut pass) = self.admit_pass(ModeSet::DATA, true, self.write_bytes(last))?;
         let model = self.lifecycle.prepare_final_model(model, terms)?;
         let cycle = MajorCycle::refresh(
             self.problem,
@@ -582,6 +600,12 @@ impl<'a> Run<'a> {
         pass.join(results);
         self.retain(&major, pass)?;
         Ok(major)
+    }
+
+    /// What the pass holds for the visibility write: the write's bytes on
+    /// the last pass, which writes.
+    const fn write_bytes(&self, last: bool) -> u64 {
+        if last { self.visibility_write_bytes } else { 0 }
     }
 
     /// Admit `memory` bytes for `phase` under the run's policy.

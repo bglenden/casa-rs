@@ -21,6 +21,18 @@ pub(crate) struct VisibilityWriteTarget {
     pub(crate) corrected_data: bool,
 }
 
+impl VisibilityWriteTarget {
+    /// Heap bytes the write holds at most
+    /// ([`SelectedVisibilityWrite::retained_bytes`]), admitted with the pass
+    /// that writes.
+    pub(crate) fn retained_bytes(&self) -> Result<u64, SourceError> {
+        Ok(SelectedVisibilityWrite::retained_bytes(
+            &self.path,
+            SelectedVisibilityWriteTargets::new(self.model_data, self.corrected_data),
+        )?)
+    }
+}
+
 /// An open in-place write of every selected sample.
 ///
 /// Under a continuum transform only the channels that reach the line output

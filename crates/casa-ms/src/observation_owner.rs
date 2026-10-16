@@ -194,35 +194,23 @@ impl SelectedVisibilityWrite {
                 .prepare_write()
                 .add_tiled_column_clone("DATA", "MODEL_DATA", "TiledModelData")?;
             let row_count = measurement_set.main_table().row_count();
-            let mut pending_rows = Vec::with_capacity(VISIBILITY_WRITE_BATCH_ROWS as usize);
-            for row in 0..row_count {
-                let data_description_id = main_data_description_id(&measurement_set, row)?;
-                let shape = model_cell_shape(&measurement_set, data_description_id)?;
-                queue_visibility_cell(
-                    measurement_set.main_table_mut(),
-                    "MODEL_DATA",
-                    row,
-                    ArrayValue::Complex32(ndarray::ArrayD::from_elem(
-                        ndarray::IxDyn(&shape),
-                        Complex32::new(0.0, 0.0),
-                    )),
-                )?;
-                pending_rows.push(row);
-                if pending_rows.len() == VISIBILITY_WRITE_BATCH_ROWS as usize {
-                    persist_visibility_rows(
+            let batch = VISIBILITY_WRITE_BATCH_ROWS as usize;
+            for start in (0..row_count).step_by(batch) {
+                let rows: Vec<usize> = (start..row_count.min(start + batch)).collect();
+                let descriptions = main_data_description_ids(&measurement_set, &rows)?;
+                for (&row, description) in rows.iter().zip(descriptions) {
+                    let shape = model_cell_shape(&measurement_set, description)?;
+                    queue_visibility_cell(
                         measurement_set.main_table_mut(),
-                        &["MODEL_DATA"],
-                        &pending_rows,
+                        "MODEL_DATA",
+                        row,
+                        ArrayValue::Complex32(ndarray::ArrayD::from_elem(
+                            ndarray::IxDyn(&shape),
+                            Complex32::new(0.0, 0.0),
+                        )),
                     )?;
-                    pending_rows.clear();
                 }
-            }
-            if !pending_rows.is_empty() {
-                persist_visibility_rows(
-                    measurement_set.main_table_mut(),
-                    &["MODEL_DATA"],
-                    &pending_rows,
-                )?;
+                persist_visibility_rows(measurement_set.main_table_mut(), &["MODEL_DATA"], &rows)?;
             }
         }
         Ok(Self {
@@ -232,6 +220,70 @@ impl SelectedVisibilityWrite {
             pending_rows: Vec::with_capacity(VISIBILITY_WRITE_BATCH_ROWS as usize),
             completed: false,
         })
+    }
+
+    /// Heap bytes a write of `targets` to the MeasurementSet at `path`
+    /// holds at most, which the pass that writes admits before it begins.
+    ///
+    /// Per written column, that is a batch of queued cells of the
+    /// MeasurementSet's largest cell, the queue's list of them, the row
+    /// being written, and, while a batch is saved, the batch's cells twice
+    /// more (gathered for the save and staged by tile) with the column's tile
+    /// read and its tile written; the list holds its old and new buffers at
+    /// once while it grows. Beside them are the batch's row numbers and, while a missing
+    /// `MODEL_DATA` is created, their data-description ids as read and as
+    /// indices. Tiles cached for reuse go to the process-wide table cache,
+    /// charged on its own.
+    ///
+    /// # Errors
+    ///
+    /// When the MeasurementSet's spectral-window, polarization or table
+    /// descriptions cannot be read.
+    pub fn retained_bytes(
+        path: impl AsRef<Path>,
+        targets: SelectedVisibilityWriteTargets,
+    ) -> Result<u64, ObservationOwnerError> {
+        /// Staging per batch row: the save's sorted row list and the cells
+        /// it gathers by tile; measured at about 140 bytes.
+        const STAGING_BYTES_PER_ROW: u64 = 192;
+        /// Staging whatever the batch: the MeasurementSet opened for the
+        /// write and the table description each save reads; measured at
+        /// about 240 KB.
+        const STAGING_BYTES: u64 = 1 << 20;
+        let measurement_set = MeasurementSet::open(path.as_ref())?;
+        let mut cell_values = 0;
+        for description in 0..measurement_set.data_description()?.row_count() {
+            let [correlations, channels] = model_cell_shape(&measurement_set, description)?;
+            cell_values = cell_values.max(correlations * channels);
+        }
+        let main = measurement_set.main_table();
+        let tile = |column: &str| -> Result<u64, ObservationOwnerError> {
+            Ok(main.array_column_tile_bytes(column)?.unwrap_or(0) as u64)
+        };
+        // A created MODEL_DATA clones DATA's tiled manager.
+        let model_tile = if main
+            .schema()
+            .is_some_and(|schema| schema.contains_column("MODEL_DATA"))
+        {
+            tile("MODEL_DATA")?
+        } else {
+            tile("DATA")?
+        };
+        let tiles = 2
+            * (u64::from(targets.model_data) * model_tile
+                + u64::from(targets.corrected_data) * tile("CORRECTED_DATA")?);
+        let cell = (cell_values * size_of::<Complex32>()) as u64;
+        let batch = VISIBILITY_WRITE_BATCH_ROWS;
+        let entry = size_of::<(usize, ArrayValue)>() as u64;
+        let queue = 3 * batch * cell + batch.next_power_of_two() * entry * 3 / 2;
+        let columns = u64::from(targets.model_data) + u64::from(targets.corrected_data);
+        let rows = batch * (size_of::<usize>() as u64 + STAGING_BYTES_PER_ROW);
+        let creation = if targets.model_data {
+            batch * (size_of::<Option<ScalarValue>>() + size_of::<usize>()) as u64
+        } else {
+            0
+        };
+        Ok(columns * (queue + cell) + tiles + rows + creation + STAGING_BYTES)
     }
 
     /// Write one selected prediction at its physical row/channel/correlation.
@@ -250,14 +302,17 @@ impl SelectedVisibilityWrite {
                 .measurement_set
                 .as_ref()
                 .ok_or(ObservationOwnerError::TransactionClosed)?;
+            // The row's one cell, read past the table's row cache: a cached
+            // read would load every row of MAIN (ADR-0008).
             let load = |name: &str| -> Result<ndarray::ArrayD<Complex32>, ObservationOwnerError> {
                 let current = measurement_set
                     .main_table()
                     .column_accessor(name)?
-                    .get(row)?
-                    .cloned()
+                    .array_cells_owned_uncached(&[row])?
+                    .pop()
+                    .flatten()
                     .ok_or(ObservationOwnerError::PredictionAddress)?;
-                let Value::Array(ArrayValue::Complex32(values)) = current else {
+                let ArrayValue::Complex32(values) = current else {
                     return Err(ObservationOwnerError::PredictionAddress);
                 };
                 Ok(values)
@@ -689,19 +744,24 @@ pub(crate) fn test_pointing_query_domain(
     selected_pointing_query_domain(measurement_set, selection, content_budget)
 }
 
-fn main_data_description_id(
+/// The `DATA_DESC_ID` of each of `rows`, read without filling the table's
+/// row cache.
+fn main_data_description_ids(
     measurement_set: &MeasurementSet,
-    row: usize,
-) -> Result<usize, ObservationOwnerError> {
-    let value = measurement_set
+    rows: &[usize],
+) -> Result<Vec<usize>, ObservationOwnerError> {
+    measurement_set
         .main_table()
         .column_accessor("DATA_DESC_ID")?
-        .get(row)?
-        .ok_or(ObservationOwnerError::PredictionAddress)?;
-    let Value::Scalar(ScalarValue::Int32(data_description_id)) = value else {
-        return Err(ObservationOwnerError::PredictionAddress);
-    };
-    usize::try_from(*data_description_id).map_err(|_| ObservationOwnerError::PredictionAddress)
+        .scalar_cells_owned_for_rows(rows)?
+        .into_iter()
+        .map(|value| match value {
+            Some(ScalarValue::Int32(id)) => {
+                usize::try_from(id).map_err(|_| ObservationOwnerError::PredictionAddress)
+            }
+            _ => Err(ObservationOwnerError::PredictionAddress),
+        })
+        .collect()
 }
 
 fn model_cell_shape(
