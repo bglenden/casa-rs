@@ -141,8 +141,8 @@ pub enum SampleContent {
     /// Values, flags and weights: every gridding, prediction and write pass.
     Visibilities,
     /// Flags and weights only, which is all density weighting reads, as
-    /// CASA's does. Every value is zero, and a non-finite stored value,
-    /// being unread, does not flag its sample.
+    /// CASA's does. Every value is zero; a stored value is checked when an
+    /// imaging pass reads it.
     FlagsAndWeights,
 }
 

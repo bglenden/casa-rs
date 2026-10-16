@@ -114,7 +114,7 @@ fn request(geometry: GeometryInput) -> ProblemInput {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         ReductionPolicy::Compensated,
-        FiniteValuePolicy::FlagInputRejectGenerated,
+        FiniteValuePolicy::RejectUnflaggedInput,
         NumericalStage::ALL
             .into_iter()
             .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))

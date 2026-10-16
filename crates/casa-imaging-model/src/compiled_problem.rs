@@ -1475,14 +1475,17 @@ pub enum ReductionPolicy {
 /// Treatment of non-finite input and generated values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FiniteValuePolicy {
-    /// Reject every non-finite value.
+    /// Reject every non-finite value, flagged or not.
     RejectAll,
-    /// Treat declared non-finite inputs as flagged and reject generated non-finite values.
+    /// Reject a non-finite input in an unflagged sample, and every
+    /// generated non-finite value; ignore one in a flagged sample.
     ///
-    /// An input is flagged where a traversal reads it. Density weighting
-    /// reads flags and weights only, so a non-finite visibility counts in
-    /// the density, as in CASA's weighting, and every imaging pass flags it.
-    FlagInputRejectGenerated,
+    /// A flagged sample is never imaged, so its values do not matter, as in
+    /// CASA. An unflagged non-finite visibility is a different matter: CASA
+    /// grids it, and one such sample turns the whole residual and image
+    /// into NaN without a message. Failing the run says so at the first
+    /// pass that reads it, so the data can be flagged first.
+    RejectUnflaggedInput,
 }
 
 /// Logical numerical stage requiring an explicit error budget.

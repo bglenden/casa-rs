@@ -3054,7 +3054,7 @@ fn specification_with_science(
         NumericsContract::new(
             vec![NumericPrecision::F32],
             ReductionPolicy::Compensated,
-            FiniteValuePolicy::FlagInputRejectGenerated,
+            FiniteValuePolicy::RejectUnflaggedInput,
             NumericalStage::ALL
                 .into_iter()
                 .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))

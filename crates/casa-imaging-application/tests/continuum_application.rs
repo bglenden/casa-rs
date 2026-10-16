@@ -925,97 +925,112 @@ fn application_uses_weight_when_selected_weight_spectrum_cells_are_undefined() {
 
 /// How [`spoiled_row_images`] spoils row 3 of the multi-row fixture.
 #[derive(Clone, Copy, Debug)]
-enum Spoiled {
+struct Spoiled {
     /// Every DATA value of the row is NaN.
-    NonFinite,
+    nonfinite: bool,
     /// Every FLAG of the row is set.
-    Flagged,
+    flagged: bool,
 }
 
 /// The dirty `.residual`, `.psf` and `.sumwt` planes of the multi-row
-/// fixture with row 3 `spoiled`, under `weighting`.
-fn spoiled_row_images(spoiled: Spoiled, weighting: &str) -> [ArrayD<f32>; 3] {
+/// fixture with row 3 `spoiled`, under `weighting`, or the run's error.
+fn spoiled_row_images(spoiled: Spoiled, weighting: &str) -> Result<[ArrayD<f32>; 3], String> {
     const ROW: usize = 3;
     let root = tempfile::tempdir().expect("test root");
     let path = multi_row_measurement_set(root.path());
     let mut ms = MeasurementSet::open(&path).expect("open fixture");
-    match spoiled {
-        Spoiled::NonFinite => {
-            let mut data = ms
-                .data_column_mut(VisibilityDataColumn::Data)
-                .expect("DATA column");
-            let ArrayValue::Complex32(cell) = data.get(ROW).expect("DATA cell").clone() else {
-                panic!("DATA is complex");
-            };
-            data.put(
+    if spoiled.nonfinite {
+        let mut data = ms
+            .data_column_mut(VisibilityDataColumn::Data)
+            .expect("DATA column");
+        let ArrayValue::Complex32(cell) = data.get(ROW).expect("DATA cell").clone() else {
+            panic!("DATA is complex");
+        };
+        data.put(
+            ROW,
+            ArrayValue::Complex32(cell.mapv(|_| Complex32::new(f32::NAN, 0.0))),
+        )
+        .expect("write NaN");
+    }
+    if spoiled.flagged {
+        let flags = ms.flag_column();
+        let ArrayValue::Bool(cell) = flags.get(ROW).expect("FLAG cell").clone() else {
+            panic!("FLAG is boolean");
+        };
+        ms.main_table_mut()
+            .row_accessor_mut()
+            .set_cell(
                 ROW,
-                ArrayValue::Complex32(cell.mapv(|_| Complex32::new(f32::NAN, 0.0))),
+                "FLAG",
+                Value::Array(ArrayValue::Bool(cell.mapv(|_| true))),
             )
-            .expect("write NaN");
-        }
-        Spoiled::Flagged => {
-            let flags = ms.flag_column();
-            let ArrayValue::Bool(cell) = flags.get(ROW).expect("FLAG cell").clone() else {
-                panic!("FLAG is boolean");
-            };
-            ms.main_table_mut()
-                .row_accessor_mut()
-                .set_cell(
-                    ROW,
-                    "FLAG",
-                    Value::Array(ArrayValue::Bool(cell.mapv(|_| true))),
-                )
-                .expect("flag the row's samples");
-        }
+            .expect("flag the row's samples");
     }
     ms.save().expect("save fixture");
     drop(ms);
     let image_name = root.path().join("finite");
     let overrides = json!({ "niter": 0, "weighting": weighting });
-    let result = execute(&request(&path, &image_name, overrides))
-        .unwrap_or_else(|error| panic!("{spoiled:?} under {weighting}: {error}"));
+    let result =
+        execute(&request(&path, &image_name, overrides)).map_err(|error| error.to_string())?;
     assert_dirty_products(&image_name, &result.product_names());
-    [".residual", ".psf", ".sumwt"].map(|suffix| {
+    Ok([".residual", ".psf", ".sumwt"].map(|suffix| {
         product_plane_with_size(&image_name, suffix, if suffix == ".sumwt" { 1 } else { 16 })
-    })
+    }))
 }
 
-/// The compiled `FiniteValuePolicy::FlagInputRejectGenerated`: an imaging
-/// pass flags a non-finite visibility, so under natural weighting, which
-/// reads no density, the image equals the image of the same data with that
-/// sample flagged instead.
+/// The compiled `FiniteValuePolicy::RejectUnflaggedInput`: an unflagged
+/// non-finite visibility fails the run, naming its row and the remedy,
+/// where CASA images it as NaN everywhere. Under uniform weighting the
+/// density pass reads no visibilities, so the first imaging pass finds it.
 #[test]
-fn nonfinite_visibilities_image_as_flagged_samples() {
+fn an_unflagged_nonfinite_visibility_fails_the_run_and_names_it() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    let nonfinite = spoiled_row_images(Spoiled::NonFinite, "natural");
-    assert!(nonfinite[0].iter().all(|value| value.is_finite()));
-    assert_eq!(nonfinite, spoiled_row_images(Spoiled::Flagged, "natural"));
+    for weighting in ["natural", "uniform"] {
+        let spoiled = Spoiled {
+            nonfinite: true,
+            flagged: false,
+        };
+        let Err(error) = spoiled_row_images(spoiled, weighting) else {
+            panic!("{weighting}: an unflagged NaN visibility imaged");
+        };
+        assert!(
+            error.contains("visibility at MAIN row 3") && error.contains("flagdata"),
+            "{weighting}: {error}"
+        );
+    }
 }
 
-/// The density pass reads flags and weights only, as CASA's weighting
-/// does: a non-finite visibility still counts in the uniform density, while
-/// the imaging passes flag it.
-///
-/// The fixture's eight equally weighted rows share one uniform cell. With
-/// the NaN row counted, each of the seven gridded rows weighs w / 8w, so
-/// `.sumwt` is 7/8; with the row flagged, each weighs w / 7w, so it is 1.
+/// A non-finite visibility in a flagged sample is never imaged, so it is
+/// ignored, as in CASA: the products equal those of the same row flagged
+/// with finite values, under natural and uniform weighting alike.
 #[test]
-fn density_weighting_counts_nonfinite_visibilities_as_casa_does() {
+fn a_flagged_nonfinite_visibility_is_ignored_as_casa_ignores_it() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
-    let nonfinite = spoiled_row_images(Spoiled::NonFinite, "uniform");
-    let flagged = spoiled_row_images(Spoiled::Flagged, "uniform");
-    assert!(
-        nonfinite
-            .iter()
-            .flat_map(|plane| plane.iter())
-            .all(|value| value.is_finite())
-    );
-    let (counted, excluded) = (nonfinite[2].sum(), flagged[2].sum());
-    assert!(
-        (counted - 0.875).abs() < 1e-6 && (excluded - 1.0).abs() < 1e-6,
-        "sumwt {counted} with the NaN row counted in the density (7/8), \
-         {excluded} with it flagged (1)"
-    );
+    for weighting in ["natural", "uniform"] {
+        let nonfinite = spoiled_row_images(
+            Spoiled {
+                nonfinite: true,
+                flagged: true,
+            },
+            weighting,
+        )
+        .unwrap_or_else(|error| panic!("{weighting}: {error}"));
+        let finite = spoiled_row_images(
+            Spoiled {
+                nonfinite: false,
+                flagged: true,
+            },
+            weighting,
+        )
+        .unwrap_or_else(|error| panic!("{weighting}: {error}"));
+        assert!(
+            nonfinite
+                .iter()
+                .flat_map(|plane| plane.iter())
+                .all(|value| value.is_finite())
+        );
+        assert_eq!(nonfinite, finite, "{weighting}");
+    }
 }
 
 #[test]
