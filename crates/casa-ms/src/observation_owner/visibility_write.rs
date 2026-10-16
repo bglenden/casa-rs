@@ -52,6 +52,14 @@ impl SelectedVisibilityWriteTargets {
 /// partially written derived values, as an interrupted CASA write does; the
 /// next run recomputes them. No backup, staging column, rollback, snapshot,
 /// marker, or content digest is created.
+///
+/// Only destinations stored in `TiledShapeStMan` or `TiledColumnStMan`, the
+/// managers CASA and casa-rs store visibilities in, are written: their save
+/// patches the written rows' tiles in place. Any other manager's save
+/// rewrites its whole group from loaded cells, which holds every row of
+/// MAIN (ADR-0008), so [`retained_bytes`](Self::retained_bytes) and
+/// [`begin`](Self::begin) refuse such a destination before anything is
+/// changed.
 #[cfg(unix)]
 pub struct SelectedVisibilityWrite {
     measurement_set: Option<MeasurementSet>,
@@ -79,6 +87,10 @@ impl SelectedVisibilityWrite {
     /// two waits; if it is this one, the write fails with
     /// [`ObservationOwnerError::WriteLockUnavailable`] and releases its read
     /// locks.
+    ///
+    /// A destination that cannot be written in bounded memory fails with
+    /// [`ObservationOwnerError::UnboundedWriteDestination`] before the lock
+    /// is taken.
     pub fn begin(
         path: impl AsRef<Path>,
         targets: SelectedVisibilityWriteTargets,
@@ -87,6 +99,7 @@ impl SelectedVisibilityWrite {
             return Err(ObservationOwnerError::EmptyWriteTargets);
         }
         let mut measurement_set = MeasurementSet::open_retained_read(path.as_ref())?;
+        require_bounded_destinations(measurement_set.main_table(), targets)?;
         if !measurement_set.main_table_mut().lock(LockType::Write, 0)? {
             return Err(ObservationOwnerError::WriteLockUnavailable);
         }
@@ -96,13 +109,6 @@ impl SelectedVisibilityWrite {
             })?;
             schema.contains_column("MODEL_DATA")
         };
-        let has_corrected = measurement_set
-            .main_table()
-            .schema()
-            .is_some_and(|schema| schema.contains_column("CORRECTED_DATA"));
-        if targets.corrected_data && !has_corrected {
-            return Err(ObservationOwnerError::MissingCorrectedDataDestination);
-        }
         if targets.model_data && !has_model {
             measurement_set.main_table_mut().add_column(
                 ColumnSchema::array_variable("MODEL_DATA", PrimitiveType::Complex32, Some(2)),
@@ -157,7 +163,10 @@ impl SelectedVisibilityWrite {
     /// # Errors
     ///
     /// When the MeasurementSet's spectral-window, polarization or table
-    /// descriptions cannot be read.
+    /// descriptions cannot be read, and, as [`begin`](Self::begin) would,
+    /// when a destination cannot be written in bounded memory or
+    /// `CORRECTED_DATA` is missing: the pass that writes then fails before
+    /// it runs.
     pub fn retained_bytes(
         path: impl AsRef<Path>,
         targets: SelectedVisibilityWriteTargets,
@@ -176,21 +185,33 @@ impl SelectedVisibilityWrite {
             cell_values = cell_values.max(correlations * channels);
         }
         let main = measurement_set.main_table();
-        let tile = |column: &str| -> Result<u64, ObservationOwnerError> {
-            Ok(main.array_column_tile_bytes(column)?.unwrap_or(0) as u64)
+        require_bounded_destinations(main, targets)?;
+        let tile = |column: &'static str| -> Result<u64, ObservationOwnerError> {
+            // A created MODEL_DATA clones DATA's tiled manager.
+            let stored = if column == "MODEL_DATA"
+                && !main
+                    .schema()
+                    .is_some_and(|schema| schema.contains_column(column))
+            {
+                "DATA"
+            } else {
+                column
+            };
+            let bytes = main.array_column_tile_bytes(stored)?.ok_or_else(|| {
+                ObservationOwnerError::UnboundedWriteDestination {
+                    column,
+                    reason: format!("{stored} has no tiles on disk"),
+                }
+            })?;
+            Ok(bytes as u64)
         };
-        // A created MODEL_DATA clones DATA's tiled manager.
-        let model_tile = if main
-            .schema()
-            .is_some_and(|schema| schema.contains_column("MODEL_DATA"))
-        {
-            tile("MODEL_DATA")?
-        } else {
-            tile("DATA")?
-        };
-        let tiles = 2
-            * (u64::from(targets.model_data) * model_tile
-                + u64::from(targets.corrected_data) * tile("CORRECTED_DATA")?);
+        let mut tiles = 0;
+        if targets.model_data {
+            tiles += 2 * tile("MODEL_DATA")?;
+        }
+        if targets.corrected_data {
+            tiles += 2 * tile("CORRECTED_DATA")?;
+        }
         let cell = (cell_values * size_of::<Complex32>()) as u64;
         let batch = VISIBILITY_WRITE_BATCH_ROWS;
         let entry = size_of::<(usize, ArrayValue)>() as u64;
@@ -355,6 +376,74 @@ impl Drop for SelectedVisibilityWrite {
             self.measurement_set = None;
         }
     }
+}
+
+/// Storage managers whose selected-row save patches the written rows' tiles
+/// in place: the managers CASA and casa-rs store visibilities in.
+#[cfg(unix)]
+const BOUNDED_WRITE_MANAGERS: [&str; 2] = ["TiledShapeStMan", "TiledColumnStMan"];
+
+/// Refuse, before anything is changed, a write whose save would not be
+/// bounded: an existing destination stored outside
+/// [`BOUNDED_WRITE_MANAGERS`], or a missing `MODEL_DATA` whose clone of
+/// DATA's manager would be or cannot be made. A missing `CORRECTED_DATA` is
+/// refused too, since it holds the output of a continuum transform.
+#[cfg(unix)]
+fn require_bounded_destinations(
+    main: &Table,
+    targets: SelectedVisibilityWriteTargets,
+) -> Result<(), ObservationOwnerError> {
+    let has = |column: &str| {
+        main.schema()
+            .is_some_and(|schema| schema.contains_column(column))
+    };
+    if targets.corrected_data && !has("CORRECTED_DATA") {
+        return Err(ObservationOwnerError::MissingCorrectedDataDestination);
+    }
+    let destinations = [
+        ("MODEL_DATA", targets.model_data),
+        ("CORRECTED_DATA", targets.corrected_data),
+    ];
+    for (column, written) in destinations {
+        if !written {
+            continue;
+        }
+        let created = !has(column);
+        let stored = if created { "DATA" } else { column };
+        let Some(manager) = main
+            .data_manager_info()
+            .iter()
+            .find(|manager| manager.columns.iter().any(|name| name == stored))
+        else {
+            return Err(ObservationOwnerError::UnboundedWriteDestination {
+                column,
+                reason: format!("{stored} has no storage manager on disk"),
+            });
+        };
+        let storage = if created {
+            format!(
+                "it would be created in a clone of DATA's {}",
+                manager.dm_type
+            )
+        } else {
+            format!("it is stored in {}", manager.dm_type)
+        };
+        if !BOUNDED_WRITE_MANAGERS.contains(&manager.dm_type.as_str()) {
+            return Err(ObservationOwnerError::UnboundedWriteDestination {
+                column,
+                reason: format!(
+                    "{storage}; only TiledShapeStMan and TiledColumnStMan columns are written in place"
+                ),
+            });
+        }
+        if created && manager.columns.len() != 1 {
+            return Err(ObservationOwnerError::UnboundedWriteDestination {
+                column,
+                reason: format!("{storage}, which DATA shares with other columns"),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// The `DATA_DESC_ID` of each of `rows`, read without filling the table's

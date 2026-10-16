@@ -355,6 +355,15 @@ pub enum ObservationOwnerError {
     /// CORRECTED_DATA persistence requires an existing column.
     #[error("selected visibility write requires an existing CORRECTED_DATA column")]
     MissingCorrectedDataDestination,
+    /// A destination cannot be written in place in bounded memory: its
+    /// storage manager's save rewrites every row of its group (ADR-0008).
+    #[error("cannot write {column} in place in bounded memory: {reason}")]
+    UnboundedWriteDestination {
+        /// The destination column.
+        column: &'static str,
+        /// The storage that makes the write unbounded.
+        reason: String,
+    },
     /// A cell write named a column outside the bound destination set.
     #[error("selected visibility write named an unselected destination")]
     UnselectedWriteTarget,

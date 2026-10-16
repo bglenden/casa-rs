@@ -1,23 +1,38 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! An in-place `MODEL_DATA` write holds at most what the writer says it does
-//! ([`SelectedVisibilityWrite::retained_bytes`]), so the pass that writes can
-//! admit it, and it never holds MAIN's rows (ADR-0008).
+//! An in-place `MODEL_DATA` or `CORRECTED_DATA` write holds at most what the
+//! writer says it does ([`SelectedVisibilityWrite::retained_bytes`]), so the
+//! pass that writes can admit it, and it never holds MAIN's rows (ADR-0008).
 //!
-//! This binary's global allocator counts the live heap; the law compares a
+//! The laws cover every destination layout the writer accepts: a
+//! `MODEL_DATA` it creates in a clone of DATA's manager, and existing
+//! destinations in `TiledShapeStMan` or `TiledColumnStMan`. A write of one
+//! cell must not grow with MAIN's row count, neither in the cell's read nor
+//! in the save at completion. A destination in any other manager is refused
+//! before anything changes.
+//!
+//! This binary's global allocator counts the live heap; the laws compare a
 //! write's peak beyond the heap live before it with the writer's bytes. The
 //! tiles a write reads go to the process-wide table-read cache, which is
-//! charged on its own, so the law gives that cache no budget.
+//! charged on its own, so the laws give that cache no budget. The laws share
+//! the counters, so they run one at a time.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::collections::HashMap;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use casa_imaging_model::MsColumnKind;
 use casa_ms::{
-    MeasurementSet, SelectedVisibilityWrite, SelectedVisibilityWriteTargets,
+    MeasurementSet, ObservationOwnerError, SelectedVisibilityWrite, SelectedVisibilityWriteTargets,
     SyntheticObservationRequest, generate_synthetic_observation_ms, tutorial_vla_a_antennas,
 };
-use casa_types::ArrayValue;
+use casa_tables::{
+    ColumnBinding, ColumnSchema, DataManagerKind, LockMode, LockOptions, LockType, Table,
+    TableOptions,
+};
+use casa_types::{ArrayValue, PrimitiveType, Value};
 use num_complex::Complex32;
 
 #[global_allocator]
@@ -28,6 +43,7 @@ struct CountingHeap;
 
 static LIVE: AtomicU64 = AtomicU64::new(0);
 static PEAK: AtomicU64 = AtomicU64::new(0);
+static SERIAL: Mutex<()> = Mutex::new(());
 
 fn grow(bytes: u64) {
     let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
@@ -80,17 +96,32 @@ unsafe impl GlobalAlloc for CountingHeap {
     }
 }
 
-/// A VLA-A track of 60 two-second integrations in `channels` channels,
-/// without model data and without `MODEL_DATA`: 21,060 rows, more than a
-/// write batch.
-fn many_rows(root: &Path, channels: usize) -> PathBuf {
-    let measurement_set = root.join(format!("rows-{channels}.ms"));
+/// Run one law alone: the counters are shared.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The peak heap `write` holds beyond what was live before it.
+fn peak_of(write: impl FnOnce()) -> u64 {
+    let baseline = LIVE.load(Ordering::Relaxed);
+    PEAK.store(baseline, Ordering::Relaxed);
+    write();
+    PEAK.load(Ordering::Relaxed) - baseline
+}
+
+/// A VLA-A track of two-second integrations for `seconds` in `channels`
+/// channels, without model data and without `MODEL_DATA`: 351 rows an
+/// integration, so 120 s gives 21,060 rows, more than a write batch.
+fn many_rows(root: &Path, label: &str, channels: usize, seconds: f64) -> PathBuf {
+    let measurement_set = root.join(format!("{label}-{channels}-{seconds}.ms"));
     let mut request = SyntheticObservationRequest::vla_ppdisk(
         root.join("unused.fits"),
         &measurement_set,
         tutorial_vla_a_antennas(),
     );
-    request.duration_seconds = 120.0;
+    request.duration_seconds = seconds;
     request.integration_seconds = 2.0;
     request.spectral_windows[0].channel_count = channels;
     request.predict_model = false;
@@ -98,27 +129,83 @@ fn many_rows(root: &Path, channels: usize) -> PathBuf {
     measurement_set
 }
 
-/// Write `MODEL_DATA` for every channel and correlation of every row, as the
-/// final imaging pass does, and complete the write.
-fn write_every_cell(path: &Path, rows: usize, cell: [usize; 2]) {
+/// Rewrite MAIN with every column in `StandardStMan` except `destinations`,
+/// added zero-filled in `manager`: the layouts other tools write.
+fn relayout(path: &Path, destinations: &[&str], manager: DataManagerKind) {
+    let [correlations, channels] = cell_shape(path, "DATA");
+    let mut main = Table::open(TableOptions::new(path)).expect("open MAIN");
+    let zeros = Value::Array(ArrayValue::Complex32(ndarray::ArrayD::from_elem(
+        ndarray::IxDyn(&[correlations, channels]),
+        Complex32::new(0.0, 0.0),
+    )));
+    let tiled = matches!(
+        manager,
+        DataManagerKind::TiledShapeStMan | DataManagerKind::TiledColumnStMan
+    );
+    let mut bindings = HashMap::new();
+    for &column in destinations {
+        let schema = if manager == DataManagerKind::TiledColumnStMan {
+            ColumnSchema::array_fixed(
+                column,
+                PrimitiveType::Complex32,
+                vec![correlations, channels],
+            )
+        } else {
+            ColumnSchema::array_variable(column, PrimitiveType::Complex32, Some(2))
+        };
+        main.add_column(schema, Some(zeros.clone()))
+            .expect("add the destination");
+        bindings.insert(
+            column.to_string(),
+            ColumnBinding {
+                data_manager: manager,
+                tile_shape: tiled.then(|| vec![correlations, channels, 512]),
+            },
+        );
+    }
+    // Every row is in memory before the files it came from are replaced.
+    main.rows().expect("load MAIN");
+    main.prepare_write()
+        .save_with_bindings(
+            TableOptions::new(path).with_data_manager(DataManagerKind::StandardStMan),
+            &bindings,
+        )
+        .expect("rewrite MAIN");
+}
+
+/// Write the destinations of `targets` for every channel and correlation of
+/// `rows` with `[correlations, channels]` cells, as the final imaging pass
+/// does, and complete the write.
+fn write_cells(
+    path: &Path,
+    targets: SelectedVisibilityWriteTargets,
+    rows: Range<usize>,
+    cell: [usize; 2],
+) {
     let [correlations, channels] = cell;
-    let mut writer =
-        SelectedVisibilityWrite::begin(path, SelectedVisibilityWriteTargets::new(true, false))
-            .expect("begin the write");
-    for row in 0..rows {
+    let columns = [
+        (MsColumnKind::ModelData, targets.model_data()),
+        (MsColumnKind::CorrectedData, targets.corrected_data()),
+    ];
+    let mut writer = SelectedVisibilityWrite::begin(path, targets).expect("begin the write");
+    for row in rows {
         for channel in 0..channels {
             for correlation in 0..correlations {
                 let value =
                     Complex32::new(row as f32, (channel * correlations + correlation) as f32);
-                writer
-                    .write(
-                        MsColumnKind::ModelData,
-                        row as u64,
-                        channel as u32,
-                        correlation as u32,
-                        value,
-                    )
-                    .expect("write a cell");
+                for (column, written) in columns {
+                    if written {
+                        writer
+                            .write(
+                                column,
+                                row as u64,
+                                channel as u32,
+                                correlation as u32,
+                                value,
+                            )
+                            .expect("write a cell");
+                    }
+                }
             }
         }
     }
@@ -139,28 +226,51 @@ fn cell_shape(path: &Path, column: &str) -> [usize; 2] {
     [cell.shape()[0], cell.shape()[1]]
 }
 
+/// `column`'s cell at `row`, read from the disk.
+fn stored_cell(path: &Path, column: &str, row: usize) -> ndarray::ArrayD<Complex32> {
+    let ms = MeasurementSet::open(path).expect("reopen");
+    let written = ms
+        .main_table()
+        .column_accessor(column)
+        .expect("the destination")
+        .array_cells_owned_uncached(&[row])
+        .expect("read a cell")[0]
+        .clone();
+    let Some(ArrayValue::Complex32(written)) = written else {
+        panic!("{column} holds Complex32 cells");
+    };
+    written
+}
+
+/// The storage manager `column` is stored in.
+fn manager_of(path: &Path, column: &str) -> String {
+    let ms = MeasurementSet::open(path).expect("open");
+    ms.main_table()
+        .data_manager_info()
+        .iter()
+        .find(|manager| manager.columns.iter().any(|name| name == column))
+        .map(|manager| manager.dm_type.clone())
+        .expect("the column's manager")
+}
+
 #[test]
 fn a_model_data_write_holds_at_most_its_bytes() {
+    let _serial = serial();
     casa_tables::set_table_cache_budget_bytes(0);
     let root = tempfile::tempdir().expect("test root");
+    let targets = SelectedVisibilityWriteTargets::new(true, false);
     let mut breaches = Vec::new();
     // A narrow and a wide cell: the queued cells against the per-row cost.
     for channels in [1, 64] {
-        let path = many_rows(root.path(), channels);
+        let path = many_rows(root.path(), "created", channels, 120.0);
         let rows = MeasurementSet::open(&path).expect("open").row_count();
         let cell = cell_shape(&path, "DATA");
-        let bound = SelectedVisibilityWrite::retained_bytes(
-            &path,
-            SelectedVisibilityWriteTargets::new(true, false),
-        )
-        .expect("the writer's bytes");
+        let bound =
+            SelectedVisibilityWrite::retained_bytes(&path, targets).expect("the writer's bytes");
         // The first write creates MODEL_DATA, zero-filled; the second
         // rewrites it.
         for write in ["creating", "rewriting"] {
-            let baseline = LIVE.load(Ordering::Relaxed);
-            PEAK.store(baseline, Ordering::Relaxed);
-            write_every_cell(&path, rows, cell);
-            let peak = PEAK.load(Ordering::Relaxed) - baseline;
+            let peak = peak_of(|| write_cells(&path, targets, 0..rows, cell));
             eprintln!("{write} {rows} rows of {cell:?} cells: peak {peak} bytes, bound {bound}");
             if peak > bound {
                 breaches.push(format!(
@@ -170,19 +280,155 @@ fn a_model_data_write_holds_at_most_its_bytes() {
             }
         }
         // The write reached the disk: the last row holds what was written.
-        let ms = MeasurementSet::open(&path).expect("reopen");
-        let written = ms
-            .main_table()
-            .column_accessor("MODEL_DATA")
-            .expect("MODEL_DATA")
-            .array_cells_owned_uncached(&[rows - 1])
-            .expect("read the last cell")[0]
-            .clone();
-        let Some(ArrayValue::Complex32(written)) = written else {
-            panic!("MODEL_DATA holds Complex32 cells");
-        };
+        let written = stored_cell(&path, "MODEL_DATA", rows - 1);
         assert_eq!(written.shape(), &cell);
         assert_eq!(written[[0, 0]], Complex32::new((rows - 1) as f32, 0.0));
     }
     assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+#[test]
+fn every_accepted_destination_layout_holds_at_most_its_bytes_whatever_mains_rows() {
+    let _serial = serial();
+    casa_tables::set_table_cache_budget_bytes(0);
+    let root = tempfile::tempdir().expect("test root");
+    let mut breaches = Vec::new();
+    for manager in [
+        DataManagerKind::TiledShapeStMan,
+        DataManagerKind::TiledColumnStMan,
+    ] {
+        let label = format!("{manager:?}");
+        // A write of one cell, with MAIN at one and twice the rows.
+        let mut one_cell = Vec::new();
+        for seconds in [120.0, 240.0] {
+            let path = many_rows(root.path(), &label, 64, seconds);
+            relayout(&path, &["MODEL_DATA", "CORRECTED_DATA"], manager);
+            assert_eq!(manager_of(&path, "MODEL_DATA"), label);
+            assert_eq!(manager_of(&path, "CORRECTED_DATA"), label);
+            let rows = MeasurementSet::open(&path).expect("open").row_count();
+            let cell = cell_shape(&path, "DATA");
+            let both = SelectedVisibilityWriteTargets::new(true, true);
+            let bound =
+                SelectedVisibilityWrite::retained_bytes(&path, both).expect("the writer's bytes");
+            let peak = peak_of(|| write_cells(&path, both, 0..1, [1, 1]));
+            eprintln!("{label}: one cell of {rows} rows: peak {peak} bytes, bound {bound}");
+            if peak > bound {
+                breaches.push(format!(
+                    "{label}: a one-cell write of {rows} rows held {peak} bytes, more than {bound}"
+                ));
+            }
+            let column_bytes = (rows * cell[0] * cell[1] * size_of::<Complex32>()) as u64;
+            one_cell.push((rows, peak, column_bytes));
+            let peak = peak_of(|| write_cells(&path, both, 0..rows, cell));
+            eprintln!(
+                "{label}: all {rows} rows of {cell:?} cells: peak {peak} bytes, bound {bound}"
+            );
+            if peak > bound {
+                breaches.push(format!(
+                    "{label}: a write of {rows} rows of {cell:?} cells held {peak} bytes, \
+                     more than its {bound}"
+                ));
+            }
+            for column in ["MODEL_DATA", "CORRECTED_DATA"] {
+                let written = stored_cell(&path, column, rows - 1);
+                assert_eq!(written.shape(), &cell);
+                assert_eq!(written[[1, 2]], Complex32::new((rows - 1) as f32, 5.0));
+            }
+        }
+        // Twice MAIN's rows adds a whole destination column's worth of
+        // cells; a one-cell write must hold none of them, so this law would
+        // see a cell read or a save that loads the column.
+        let [(rows, peak, column_bytes), (more_rows, more_peak, _)] = one_cell[..] else {
+            unreachable!("two row counts");
+        };
+        let slack = 256 << 10;
+        assert!(
+            column_bytes > 16 * slack,
+            "the law must be able to see a column"
+        );
+        if more_peak > peak + slack {
+            breaches.push(format!(
+                "{label}: a one-cell write held {more_peak} bytes with {more_rows} rows against \
+                 {peak} with {rows}: it grows with MAIN"
+            ));
+        }
+    }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+#[test]
+fn a_destination_in_any_other_manager_is_refused_before_anything_changes() {
+    let _serial = serial();
+    let root = tempfile::tempdir().expect("test root");
+    let model = SelectedVisibilityWriteTargets::new(true, false);
+    let corrected = SelectedVisibilityWriteTargets::new(false, true);
+    for (label, destinations, manager, targets, refused) in [
+        (
+            "standard-model",
+            &["MODEL_DATA"][..],
+            DataManagerKind::StandardStMan,
+            model,
+            "MODEL_DATA",
+        ),
+        (
+            "aipsio-model",
+            &["MODEL_DATA"][..],
+            DataManagerKind::StManAipsIO,
+            model,
+            "MODEL_DATA",
+        ),
+        (
+            "standard-corrected",
+            &["CORRECTED_DATA"][..],
+            DataManagerKind::StandardStMan,
+            corrected,
+            "CORRECTED_DATA",
+        ),
+        // No MODEL_DATA, and DATA in StandardStMan: its clone would be too.
+        (
+            "standard-data",
+            &[][..],
+            DataManagerKind::StandardStMan,
+            model,
+            "MODEL_DATA",
+        ),
+    ] {
+        let path = many_rows(root.path(), label, 1, 120.0);
+        relayout(&path, destinations, manager);
+        let description = std::fs::read(path.join("table.dat")).expect("MAIN's description");
+        let unbounded = |result: Result<_, ObservationOwnerError>, step: &str| match result {
+            Err(ObservationOwnerError::UnboundedWriteDestination { column, reason }) => {
+                assert_eq!(
+                    column, refused,
+                    "{label}: {step} refused {column}: {reason}"
+                );
+                eprintln!("{label}: {step}: {reason}");
+            }
+            Err(other) => panic!("{label}: {step} failed otherwise: {other}"),
+            Ok(_) => panic!("{label}: {step} accepted a destination it cannot bound"),
+        };
+        unbounded(
+            SelectedVisibilityWrite::retained_bytes(&path, targets).map(|_| ()),
+            "planning",
+        );
+        unbounded(
+            SelectedVisibilityWrite::begin(&path, targets).map(|_| ()),
+            "begin",
+        );
+        // Nothing changed and no lock is held.
+        assert_eq!(
+            std::fs::read(path.join("table.dat")).expect("MAIN's description"),
+            description,
+            "{label}: MAIN changed"
+        );
+        let mut main = Table::open_with_lock(
+            TableOptions::new(&path),
+            LockOptions::new(LockMode::AutoLocking),
+        )
+        .expect("reopen MAIN");
+        assert!(
+            main.lock(LockType::Write, 0).expect("lock MAIN"),
+            "{label}: the refused write left MAIN locked"
+        );
+    }
 }
