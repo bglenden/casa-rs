@@ -8,6 +8,7 @@
 #include <casacore/casa/Utilities/Sort.h>
 #include <casacore/tables/Tables/ConcatTable.h>
 #include <casacore/tables/Tables/TableCopy.h>
+#include <casacore/tables/Tables/TableColumn.h>
 #include <casacore/casa/Containers/Block.h>
 
 #include <chrono>
@@ -122,6 +123,25 @@ void lock_read_relock_impl(const std::string& path, uint64_t* out_rows,
     *out_rows = table.nrow();
     *out_columns = table.tableDesc().ncolumn();
     table.unlock();
+}
+
+// Open the table that table keyword `keyword` of the table at `path` (of its
+// column `column` when that is not empty) refers to, as casacore resolves the
+// stored name (TableKeyword::set, Path::addDirectory), and copy that table's
+// name into `buf`.
+void keyword_table_name_impl(const std::string& path, const std::string& column,
+                             const std::string& keyword, char* buf, int32_t bufsize) {
+    casacore::Table table(path, casacore::Table::Old);
+    std::string name;
+    if (column.empty()) {
+        name = table.keywordSet().asTable(casacore::String(keyword)).tableName();
+    } else {
+        casacore::TableColumn tableColumn(table, column);
+        name = tableColumn.keywordSet().asTable(casacore::String(keyword)).tableName();
+    }
+    if (static_cast<int32_t>(name.size()) >= bufsize)
+        throw std::runtime_error("table name longer than the output buffer: " + name);
+    std::memcpy(buf, name.c_str(), name.size() + 1);
 }
 
 // A reader that keeps a table and its Int column "id" open between lock
@@ -541,6 +561,13 @@ int32_t cpp_table_write_with_lock(const char* path, char** out_error) {
 int32_t cpp_table_lock_read_relock(const char* path, uint64_t* out_rows,
                                    uint32_t* out_columns, char** out_error) {
     try { lock_read_relock_impl(path, out_rows, out_columns); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+int32_t cpp_table_keyword_table_name(const char* path, const char* column,
+                                     const char* keyword, char* buf, int32_t bufsize,
+                                     char** out_error) {
+    try { keyword_table_name_impl(path, column, keyword, buf, bufsize); return 0;
     } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
     } catch (...) { *out_error = make_error("unknown exception"); return -1; }
 }

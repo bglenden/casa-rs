@@ -44,6 +44,24 @@ impl TableOracle {
         })
     }
 
+    /// Open, in C++ casacore, the table that table keyword `keyword` of the
+    /// table at `path` refers to (a keyword of its column `column`, when
+    /// given), and return that table's name as casacore resolves it.
+    pub fn keyword_table_name(
+        path: &std::path::Path,
+        column: Option<&str>,
+        keyword: &str,
+    ) -> Result<String, OracleError> {
+        table_operation!("table.keyword_table_name", {
+            cpp_keyword_table_name(path, column, keyword).map_err(|message| {
+                OracleError::CppFailure {
+                    operation: "table.keyword_table_name",
+                    message,
+                }
+            })
+        })
+    }
+
     /// Open the table at `path` in C++ casacore with `UserLocking`, take,
     /// release and retake an explicit read lock, and return `(rows,
     /// columns)` as the locked table reports them.

@@ -137,6 +137,45 @@ fn rc_ref_table() {
         .expect("C++ should read Rust-produced RefTable");
 }
 
+/// RC after a move (#715): casa-rs stores a parent deeper under the RefTable's
+/// directory as `./sub/parent.tbl` and a parent enclosing the RefTable as
+/// `sel.tbl/.`; casacore resolves both once the whole tree has moved.
+#[test]
+fn rc_ref_tables_beside_and_inside_their_parent_open_after_a_move() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping RC moved ref_table test: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let root = dir.path().join("run");
+    let parent_path = root.join("sub").join("parent.tbl");
+    std::fs::create_dir_all(parent_path.parent().unwrap()).unwrap();
+    let mut parent = build_ref_parent_table();
+    parent
+        .save(TableOptions::new(&parent_path))
+        .expect("save parent");
+    parent.set_path(&parent_path);
+    let beside = parent.select_rows(&[0, 2]).expect("select rows 0 and 2");
+    beside
+        .save(TableOptions::new(root.join("beside.tbl")))
+        .expect("save the RefTable beside");
+    let inside = parent.select_rows(&[1]).expect("select row 1");
+    inside
+        .save(TableOptions::new(parent_path.join("sel.tbl")))
+        .expect("save the RefTable inside");
+
+    let moved = dir.path().join("moved").join("run");
+    std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+    std::fs::rename(&root, &moved).unwrap();
+    let (rows, _) = TableOracle::lock_read_relock(&moved.join("beside.tbl"))
+        .expect("C++ opens the moved RefTable beside its parent");
+    assert_eq!(rows, 2);
+    let inside = moved.join("sub").join("parent.tbl").join("sel.tbl");
+    let (rows, _) = TableOracle::lock_read_relock(&inside)
+        .expect("C++ opens the moved RefTable inside its parent");
+    assert_eq!(rows, 1);
+}
+
 /// RR: Rust writes parent + RefTable → Rust opens and verifies data.
 #[test]
 fn rr_ref_table() {

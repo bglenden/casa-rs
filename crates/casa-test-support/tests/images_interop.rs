@@ -11,13 +11,15 @@ use casa_coordinates::{
     SpectralCoordinate, StokesCoordinate, StokesType, TabularCoordinate,
 };
 use casa_images::{Image, OpenedImageView, PagedImage};
+use casa_tables::{Table, TableOptions};
 use casa_test_support::{
     CppUnsupportedRegionKind, ImageOracle, casacore_oracle_available, discover_casa_python,
 };
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::FrequencyRef;
-use casa_types::{Complex32, Complex64};
+use casa_types::{Complex32, Complex64, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Helper: generate ramp data for a given shape (flat Fortran-order sequence).
@@ -918,4 +920,118 @@ fn cr_cpp_write_default_mask_rust_reads_it() {
     let rust_mask = reopened.get_named_mask("cppmask").unwrap();
     let rust_flat = rust_mask.as_slice_memory_order().unwrap().to_vec();
     assert_eq!(rust_flat, mask);
+}
+
+// ---------------------------------------------------------------------------
+// Moved images: table keywords are stored relative to the image (#715)
+// ---------------------------------------------------------------------------
+
+/// Moves an image directory one level deeper under a different parent, so a
+/// keyword resolved against the wrong anchor (the old location, or the
+/// parent directory instead of the image) cannot find the mask by accident.
+fn move_image(root: &Path, image: &Path) -> PathBuf {
+    let parent = root.join("moved").join("deeper");
+    std::fs::create_dir_all(&parent).unwrap();
+    let moved = parent.join(image.file_name().unwrap());
+    std::fs::rename(image, &moved).unwrap();
+    moved
+}
+
+/// Writes a 4×4 casa-rs image with default mask `mask0` under `root/written/`.
+fn write_rust_masked_image(root: &Path, mask: &ArrayD<bool>) -> PathBuf {
+    let path = root.join("written").join("rust_mask.image");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut image = PagedImage::<f32>::create(vec![4, 4], direction_coords(), &path).unwrap();
+    image.put_mask("mask0", mask).unwrap();
+    image.set_default_mask("mask0").unwrap();
+    image.save().unwrap();
+    path
+}
+
+/// Returns the stored `logtable` and `masks.<mask>.mask` table keywords.
+fn stored_table_keywords(image: &Path, mask: &str) -> (Value, Value) {
+    let table = Table::open(TableOptions::new(image)).unwrap();
+    let keywords = table.keywords();
+    let Some(Value::Record(masks)) = keywords.get("masks") else {
+        panic!("{} has no masks keyword", image.display());
+    };
+    let Some(Value::Record(region)) = masks.get(mask) else {
+        panic!("{} has no {mask} mask region", image.display());
+    };
+    (
+        keywords.get("logtable").cloned().unwrap(),
+        region.get("mask").cloned().unwrap(),
+    )
+}
+
+#[test]
+fn rc_moved_rust_masked_image_opens_with_its_mask() {
+    if !casacore_oracle_available() {
+        eprintln!(
+            "skipping rc_moved_rust_masked_image_opens_with_its_mask: C++ casacore not available"
+        );
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let mask = ArrayD::from_shape_fn(IxDyn(&[4, 4]).f(), |idx| (idx[0] + 2 * idx[1]) % 3 != 0);
+    let written = write_rust_masked_image(dir.path(), &mask);
+    let moved = move_image(dir.path(), &written);
+
+    assert_eq!(
+        ImageOracle::read_image_default_mask_name(&moved).unwrap(),
+        "mask0"
+    );
+    let cpp_mask = ImageOracle::read_image_default_mask(&moved, 16).unwrap();
+    assert_eq!(cpp_mask, mask.as_slice_memory_order().unwrap());
+
+    let reopened = PagedImage::<f32>::open(&moved).unwrap();
+    assert_eq!(reopened.get_mask().unwrap(), Some(mask));
+}
+
+#[test]
+fn cr_moved_cpp_masked_image_reads_its_mask_in_rust() {
+    if !casacore_oracle_available() {
+        eprintln!(
+            "skipping cr_moved_cpp_masked_image_reads_its_mask_in_rust: C++ casacore not available"
+        );
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let written = dir.path().join("written").join("cpp_mask.image");
+    std::fs::create_dir_all(written.parent().unwrap()).unwrap();
+    ImageOracle::create_image(&written, &[4, 4], &[0.0; 16], "").unwrap();
+    let mask = (0..16).map(|index| index % 3 != 1).collect::<Vec<_>>();
+    ImageOracle::write_default_mask(&written, "mask0", &mask).unwrap();
+    let moved = move_image(dir.path(), &written);
+
+    let reopened = PagedImage::<f32>::open(&moved).unwrap();
+    assert_eq!(reopened.default_mask_name().as_deref(), Some("mask0"));
+    let rust_mask = reopened.get_named_mask("mask0").unwrap();
+    assert_eq!(rust_mask.as_slice_memory_order().unwrap(), mask);
+}
+
+#[test]
+fn rust_and_cpp_store_image_table_keywords_in_the_same_form() {
+    if !casacore_oracle_available() {
+        eprintln!(
+            "skipping rust_and_cpp_store_image_table_keywords_in_the_same_form: C++ casacore not available"
+        );
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let cpp = dir.path().join("cpp_mask.image");
+    ImageOracle::create_image(&cpp, &[4, 4], &[0.0; 16], "").unwrap();
+    ImageOracle::write_default_mask(&cpp, "mask0", &[true; 16]).unwrap();
+    let rust = write_rust_masked_image(dir.path(), &ArrayD::from_elem(IxDyn(&[4, 4]).f(), true));
+
+    let (cpp_logtable, cpp_mask) = stored_table_keywords(&cpp, "mask0");
+    assert_eq!(cpp_logtable, Value::table_ref("././logtable"));
+    assert_eq!(cpp_mask, Value::table_ref("././mask0"));
+    assert_eq!(
+        stored_table_keywords(&rust, "mask0"),
+        (cpp_logtable, cpp_mask)
+    );
 }

@@ -252,6 +252,7 @@ mod schema;
 mod sorting;
 mod table;
 mod table_impl;
+mod table_path;
 
 pub(crate) mod lock;
 pub(crate) mod storage;
@@ -292,3 +293,4 @@ pub use table::{
     Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
     TableOptions, TableRow, TableRowMut, TableWritePlan,
 };
+pub use table_path::{add_directory, strip_directory};

@@ -154,6 +154,14 @@ unsafe extern "C" {
         out_columns: *mut u32,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    pub(crate) fn cpp_table_keyword_table_name(
+        path: *const std::ffi::c_char,
+        column: *const std::ffi::c_char,
+        keyword: *const std::ffi::c_char,
+        buf: *mut std::ffi::c_char,
+        bufsize: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     pub(crate) fn cpp_table_held_reader_open(
         path: *const std::ffi::c_char,
         out_reader: *mut *mut std::ffi::c_void,
