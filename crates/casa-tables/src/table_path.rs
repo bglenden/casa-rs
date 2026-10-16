@@ -18,10 +18,16 @@
 //! | `<rest>/.` | an ancestor of the owner | `obs.ms/.` → `/data` (owner `/data/obs.ms`) |
 //! | `/abs/path` | absolute, no common directory | unchanged |
 //!
-//! casa-rs keeps a table keyword's in-memory value in its stored form, so a
-//! caller resolves it with [`add_directory`] against the table's current path.
+//! casa-rs keeps a table keyword's in-memory value as the caller set it or as
+//! it was read, so a caller resolves it with [`add_directory`] against the
+//! table's current path. When a table is written, an absolute table keyword
+//! is stored in the form [`strip_directory`] gives, as casacore stores every
+//! table keyword; a relative one is already in stored form and is kept.
 
+use std::borrow::Cow;
 use std::path::{Component, Path, PathBuf};
+
+use casa_types::{RecordValue, Value};
 
 /// Returns the path of `table` as `owner` stores a reference to it.
 ///
@@ -117,6 +123,37 @@ pub fn add_directory(stored: &str, owner: &Path) -> PathBuf {
     owner.join(name)
 }
 
+/// Returns `keywords` as the table at `owner` stores them: every absolute
+/// table keyword, at any depth of nested records, in [`strip_directory`] form.
+///
+/// casacore's `TableRecordRep::putData` writes each `TpTable` field as
+/// `TableKeyword::tableName(parentAttr)`, which is `Path::stripDirectory` of
+/// the keyword's absolute name against the owning table. The record is
+/// borrowed unchanged when it holds no absolute table keyword.
+pub(crate) fn stored_table_keywords<'a>(
+    keywords: &'a RecordValue,
+    owner: &Path,
+) -> Cow<'a, RecordValue> {
+    let mut stored = Cow::Borrowed(keywords);
+    for (index, field) in keywords.fields().iter().enumerate() {
+        let value = match &field.value {
+            Value::TableRef(path) if Path::new(path).is_absolute() => {
+                let relative = strip_directory(Path::new(path), owner);
+                (relative != *path).then_some(Value::TableRef(relative))
+            }
+            Value::Record(nested) => match stored_table_keywords(nested, owner) {
+                Cow::Owned(nested) => Some(Value::Record(nested)),
+                Cow::Borrowed(_) => None,
+            },
+            _ => None,
+        };
+        if let Some(value) = value {
+            stored.to_mut().fields_mut()[index].value = value;
+        }
+    }
+    stored
+}
+
 /// Absolute form of `path` with `.` and `..` resolved lexically, like
 /// casacore's `Path::absoluteName`.
 fn lexical_absolute(path: &Path) -> PathBuf {
@@ -156,6 +193,7 @@ fn ancestor_above(owner: &Path, below: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casa_types::{RecordField, ScalarValue};
 
     fn cwd() -> PathBuf {
         std::env::current_dir().unwrap()
@@ -248,6 +286,101 @@ mod tests {
             assert_eq!(add_directory(&stored, owner), PathBuf::from(table));
             assert_eq!(add_directory(&stored, moved), PathBuf::from(expected));
         }
+    }
+
+    #[test]
+    fn stored_table_keywords_strips_absolute_references_at_any_depth() {
+        let owner = Path::new("/data/img.image");
+        let region = RecordValue::new(vec![
+            RecordField::new("mask", Value::table_ref("/data/img.image/mask0")),
+            RecordField::new("name", Value::Scalar(ScalarValue::String("x".into()))),
+        ]);
+        let keywords = RecordValue::new(vec![
+            RecordField::new("logtable", Value::table_ref("/data/img.image/logtable")),
+            RecordField::new(
+                "masks",
+                Value::Record(RecordValue::new(vec![RecordField::new(
+                    "mask0",
+                    Value::Record(region),
+                )])),
+            ),
+            RecordField::new("PSF", Value::table_ref("/data/img.psf")),
+            RecordField::new("OTHER", Value::table_ref("/elsewhere/t")),
+            RecordField::new("KEPT", Value::table_ref("././already")),
+        ]);
+
+        let stored = stored_table_keywords(&keywords, owner);
+        assert_eq!(
+            stored.get("logtable"),
+            Some(&Value::table_ref("././logtable"))
+        );
+        let Some(Value::Record(masks)) = stored.get("masks") else {
+            panic!("masks record");
+        };
+        let Some(Value::Record(region)) = masks.get("mask0") else {
+            panic!("mask0 region");
+        };
+        assert_eq!(region.get("mask"), Some(&Value::table_ref("././mask0")));
+        assert_eq!(
+            region.get("name"),
+            Some(&Value::Scalar(ScalarValue::String("x".into())))
+        );
+        assert_eq!(stored.get("PSF"), Some(&Value::table_ref("./img.psf")));
+        assert_eq!(stored.get("OTHER"), Some(&Value::table_ref("/elsewhere/t")));
+        assert_eq!(stored.get("KEPT"), Some(&Value::table_ref("././already")));
+    }
+
+    #[test]
+    fn saved_tables_store_absolute_table_keywords_relative_to_themselves() {
+        use crate::{ColumnSchema, Table, TableOptions, TableSchema};
+        use casa_types::PrimitiveType;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("main.tbl");
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("TIME", PrimitiveType::Float64)]).unwrap();
+        let mut table = Table::with_schema(schema);
+        let subtable = path.join("ANTENNA").to_string_lossy().into_owned();
+        table
+            .keywords_mut()
+            .upsert("ANTENNA", Value::table_ref(subtable.clone()));
+        table.set_column_keywords(
+            "TIME",
+            RecordValue::new(vec![RecordField::new(
+                "SIBLING",
+                Value::table_ref(dir.path().join("cal.tbl").to_string_lossy().into_owned()),
+            )]),
+        );
+        table.save(TableOptions::new(&path)).unwrap();
+        // The in-memory value is left as the caller set it.
+        assert_eq!(
+            table.keywords().get("ANTENNA"),
+            Some(&Value::table_ref(subtable))
+        );
+
+        let reopened = Table::open(TableOptions::new(&path)).unwrap();
+        assert_eq!(
+            reopened.keywords().get("ANTENNA"),
+            Some(&Value::table_ref("././ANTENNA"))
+        );
+        assert_eq!(
+            reopened
+                .column_keywords("TIME")
+                .and_then(|kw| kw.get("SIBLING")),
+            Some(&Value::table_ref("./cal.tbl"))
+        );
+    }
+
+    #[test]
+    fn stored_table_keywords_borrows_when_nothing_is_absolute() {
+        let keywords = RecordValue::new(vec![
+            RecordField::new("ANTENNA", Value::table_ref("././ANTENNA")),
+            RecordField::new("elsewhere", Value::table_ref("/elsewhere/t")),
+        ]);
+        assert!(matches!(
+            stored_table_keywords(&keywords, Path::new("/data/obs.ms")),
+            Cow::Borrowed(_)
+        ));
     }
 
     #[test]
