@@ -281,6 +281,43 @@ fn a_run_that_fails_while_publishing_lists_the_images_it_published() {
     }
 }
 
+/// A run whose request resolves to the GPU (`backend = auto` on a host
+/// reporting a Metal device) and then fails in preparation, its image
+/// directory under a regular file, records the GPU it resolved to, not the
+/// provisional CPU (review of #723). It fails before any GPU work, so it
+/// needs no device.
+#[test]
+fn a_preparation_failure_records_the_device_the_request_resolved_to() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+    let blocker = root.path().join("a-file");
+    std::fs::write(&blocker, b"").expect("a regular file");
+    let mut imaging = request(
+        &measurement_set,
+        &blocker.join("image"),
+        json!({ "niter": 0 }),
+    );
+    imaging.backend = casa_imaging_application::BackendRequest::Auto;
+    let path = root.path().join("resolved.summary.json");
+    let mut context = summarised(&path, ResourcePolicy::Balanced);
+    context.host = HostResources {
+        metal: true,
+        ..context.host
+    };
+    let error = casa_imaging_application::execute(&imaging, context)
+        .err()
+        .expect("the image directory cannot be made");
+    assert!(
+        matches!(error, ApplicationDispatchError::Preparation(_)),
+        "{error:?}"
+    );
+    let summary = read_summary(&path);
+    assert_the_last_phase_failed(&summary);
+    assert_eq!(phase_names(&summary), vec!["preparation"]);
+    assert_eq!(summary["backend"], "metal");
+}
+
 #[test]
 fn a_run_that_fails_after_its_cycles_keeps_their_record() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");

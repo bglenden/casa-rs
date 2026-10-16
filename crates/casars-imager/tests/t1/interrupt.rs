@@ -64,6 +64,7 @@ fn an_interrupted_cube_clean_exits_130_and_leaves_nothing_behind() {
             "imagename": image_name,
             "imsize": geometry.image_size,
             "cell": format!("{}arcsec", geometry.cell_arcsec),
+            "backend": "cpu",
             "specmode": "cube",
             "channel_count": 4,
             "deconvolver": "hogbom",

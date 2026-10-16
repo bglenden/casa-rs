@@ -5,11 +5,14 @@
 use casa_imaging_application::{Cancel, HostResources, ImagingRequest, ResourcePolicy, RunContext};
 
 /// The request for catalog `values`, plain JSON by imager parameter name,
-/// defaulted and checked by the catalog.
+/// defaulted and checked by the catalog. It grids on the CPU unless the
+/// values name a `backend`: the catalog's `auto` would move a test onto the
+/// GPU wherever the host has one.
 pub fn request(values: serde_json::Value) -> ImagingRequest {
-    let serde_json::Value::Object(values) = values else {
+    let serde_json::Value::Object(mut values) = values else {
         panic!("request values are a JSON object");
     };
+    values.entry("backend").or_insert_with(|| "cpu".into());
     let resolved = casa_task_runtime::resolve_plain_values(
         casa_provider_contracts::builtin_surface_bundle("imager").expect("imager surface"),
         std::path::PathBuf::from("."),

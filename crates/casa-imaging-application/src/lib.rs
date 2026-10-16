@@ -26,8 +26,8 @@ pub use casa_imaging_runtime::{
 };
 pub use compile::{OutlierProblem, PrepareError};
 pub use request::{
-    AwCfSource, AwProjection, DataColumn, Deconvolver, Gridder, ImagingRequest, InvalidRequest,
-    NativeAwCachePolicy, SpecMode, UseMask, Weighting,
+    AwCfSource, AwProjection, BackendRequest, DataColumn, Deconvolver, Gridder, ImagingRequest,
+    InvalidRequest, NativeAwCachePolicy, SpecMode, UseMask, Weighting,
 };
 
 use std::{error::Error, fmt, io, path::PathBuf, sync::Arc};
@@ -260,13 +260,19 @@ pub fn execute(
     request: &ImagingRequest,
     context: RunContext,
 ) -> Result<ImagingOutcome, ApplicationDispatchError> {
+    // The device is resolved once the problem is compiled; until then the
+    // summary names the one asked for, and for `auto` the CPU.
+    let asked = match request.backend {
+        BackendRequest::Gpu => BackendChoice::Metal,
+        BackendRequest::Auto | BackendRequest::Cpu => BackendChoice::Cpu,
+    };
     let mut summary = RunSummary::begin(
         context
             .summary
             .as_ref()
             .map_or(serde_json::Value::Null, |target| target.request.clone()),
         context.policy.memory(&context.host),
-        request.backend,
+        asked,
     );
     let result = prepare_and_run(request, &context, &mut summary);
     let Some(target) = &context.summary else {
@@ -303,18 +309,25 @@ fn prepare_and_run(
     context: &RunContext,
     summary: &mut RunSummary,
 ) -> Result<impl FnOnce(RunSummary) -> ImagingOutcome + use<>, ApplicationDispatchError> {
+    // The device the request resolves to, recorded in the summary even when
+    // the rest of preparation then fails.
+    let resolved = std::cell::Cell::new(None);
     // The Measures charge stays with the run.
-    let (problem, run, _resident) = run_phase(
+    let prepared = run_phase(
         "preparation",
         &context.cancel,
         request.diagnostics,
         summary,
         || {
-            let (problem, input, deployed, resident) = compile_run(request, context)?;
+            let (problem, input, deployed, resident) = compile_run(request, context, &resolved)?;
             let run = native::prepare(&problem, input, deployed)?;
             Ok::<_, ApplicationDispatchError>((problem, run, resident))
         },
-    )?;
+    );
+    if let Some(backend) = resolved.get() {
+        summary.backend = backend;
+    }
+    let (problem, run, _resident) = prepared?;
     Ok(native::run(&problem, run, summary)?)
 }
 
@@ -355,10 +368,12 @@ fn admit_process_caches(context: &RunContext) -> Result<(), ApplicationDispatchE
 /// opens anything, after the process's caches ([`admit_process_caches`]);
 /// the MeasurementSet walks are admitted once its rows are known
 /// ([`compile::prepare`]) and released once the selected observation is
-/// resolved.
+/// resolved. The device the request resolves to is set in
+/// `resolved_backend` as soon as it is known.
 fn compile_run(
     request: &ImagingRequest,
     context: &RunContext,
+    resolved_backend: &std::cell::Cell<Option<BackendChoice>>,
 ) -> Result<
     (
         CompiledProblem,
@@ -398,16 +413,18 @@ fn compile_run(
         prepared.model_lifecycle,
     ))
     .map_err(ApplicationDispatchError::Compile)?;
-    availability::check(
+    let backend = availability::resolve_backend(
         &problem,
         request.backend,
         request.gridprecision,
         &context.host,
-    )
-    .map_err(ApplicationDispatchError::Unavailable)?;
+    );
+    resolved_backend.set(Some(backend));
+    availability::check(&problem, backend, request.gridprecision, &context.host)
+        .map_err(ApplicationDispatchError::Unavailable)?;
     let native = prepared
         .deployment
-        .deploy()
+        .deploy(backend)
         .map_err(ApplicationDispatchError::Preparation)?;
     let input = NativeInput {
         observation: prepared.observation,

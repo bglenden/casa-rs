@@ -372,17 +372,22 @@ case "$pbcor" in
     ;;
 esac
 
+# The backend is always explicit: casars-imager's `backend = auto` would
+# move a CPU workload onto the GPU wherever the host has one, and a timed
+# row must name the device it was measured on.
 rust_backend_flags=()
 case "$standard_mfs_acceleration" in
   cpu)
+    rust_backend_flags+=(--backend cpu)
     ;;
   multi-cpu)
+    rust_backend_flags+=(--backend cpu)
     if [[ -z "$parallel" ]]; then
       rust_backend_flags+=(--parallel)
     fi
     ;;
   metal)
-    rust_backend_flags+=(--backend metal)
+    rust_backend_flags+=(--backend gpu)
     ;;
   *)
     echo "error: IMAGER_BENCH_STANDARD_MFS_ACCELERATION=$standard_mfs_acceleration: casars-imager runs cpu, multi-cpu or metal" >&2

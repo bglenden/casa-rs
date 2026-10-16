@@ -10181,14 +10181,14 @@ mod tests {
             .iter()
             .find(|argument| argument.id == "backend")
             .expect("backend UI argument");
-        assert_eq!(backend.default.as_deref(), Some("cpu"));
+        assert_eq!(backend.default.as_deref(), Some("auto"));
         assert_eq!(
             backend
                 .parser
                 .choices
                 .as_ref()
                 .map(|choices| { choices.iter().map(String::as_str).collect::<Vec<_>>() }),
-            Some(vec!["cpu", "metal"])
+            Some(vec!["auto", "cpu", "gpu"])
         );
     }
 

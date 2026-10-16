@@ -11,7 +11,7 @@
     "kind": "run",
     "request": {
       "aw_cf_source": "casa-import",
-      "backend": "cpu",
+      "backend": "auto",
       "cell": ["0.6arcsec", "0.6arcsec"],
       "cf_resident_mb": 512,
       "cfcache": "cf-cache/vlass-spw2-17",

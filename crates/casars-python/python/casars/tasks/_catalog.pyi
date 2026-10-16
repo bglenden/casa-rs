@@ -276,7 +276,7 @@ def imager(
     native_cf_oversampling: int | Literal['none'] = ...,
     native_cf_cache_bytes: int | Literal['none'] = ...,
     native_cf_maximum_cells: int | Literal['none'] = ...,
-    backend: Literal['cpu', 'metal'] = ...,
+    backend: Literal['auto', 'cpu', 'gpu'] = ...,
     gridprecision: Literal['auto', 'f32', 'f64'] = ...,
     stage_timing: bool = ...,
     metal_stage_timing: bool = ...,

@@ -41,6 +41,13 @@ fn clean_logging(
     let directory = observation.scratch("diagnostics");
     std::fs::create_dir_all(&directory).expect("run directory");
     let geometry = observation.geometry();
+    // The CPU unless `flags` name a backend: the catalog's `auto` would move
+    // a law onto the GPU wherever the host has one.
+    let backend: &[&str] = if flags.contains(&"--backend") {
+        &[]
+    } else {
+        &["--backend", "cpu"]
+    };
     let output = Command::new(env!("CARGO_BIN_EXE_casars-imager"))
         .args([
             "--ms",
@@ -60,6 +67,7 @@ fn clean_logging(
             "--log-stderr-priority",
             priority,
         ])
+        .args(backend)
         .args(flags)
         .current_dir(&directory)
         .output()
@@ -176,7 +184,7 @@ fn stage_timing_logs_each_phase_record_and_switches_off_log_nothing() {
 /// degridded on the device.
 #[test]
 fn metal_stage_timing_logs_each_metal_backend() {
-    let metal = ["--backend", "metal", "--metal-stage-timing"];
+    let metal = ["--backend", "gpu", "--metal-stage-timing"];
     let observation = Observation::synthesise(&[("point", POINT)]);
     let stderr = match clean(&observation, "metal-timed", &metal) {
         Ok(stderr) => stderr,
@@ -237,6 +245,43 @@ fn metal_stage_timing_logs_each_metal_backend() {
         check(&stderr) > 0,
         "the cube's later major cycle predicts on the device:\n{stderr}"
     );
+}
+
+/// `backend = auto` grids standard imaging on the GPU where the host has
+/// one and on the CPU where it has not, and the run summary names the
+/// device. W projection, which the GPU does not grid, and an explicit
+/// `gridprecision = f64`, which it cannot, stay on the CPU.
+#[test]
+fn auto_grids_on_the_gpu_where_it_can_and_the_summary_says_which() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let device = match clean(&observation, "gpu-probe", &["--backend", "gpu"]) {
+        Ok(_) => "metal",
+        Err(stderr) if !cfg!(target_os = "macos") || stderr.contains("Metal 3 device") => "cpu",
+        Err(stderr) => panic!("GPU probe failed: {stderr}"),
+    };
+    for (name, flags, expected) in [
+        ("auto", &["--backend", "auto"][..], device),
+        (
+            "auto-wproject",
+            &[
+                "--backend",
+                "auto",
+                "--gridder",
+                "wproject",
+                "--wprojplanes",
+                "4",
+            ][..],
+            "cpu",
+        ),
+        (
+            "auto-f64",
+            &["--backend", "auto", "--gridprecision", "f64"][..],
+            "cpu",
+        ),
+    ] {
+        clean(&observation, name, flags).unwrap_or_else(|stderr| panic!("{name}: {stderr}"));
+        assert_eq!(summary(&observation, name)["backend"], expected, "{name}");
+    }
 }
 
 /// The imaging log does not grow with the planes a cube cleans (plan

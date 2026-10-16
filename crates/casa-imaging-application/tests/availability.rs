@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_application::{
-    BackendChoice, GridPrecision, HostResources,
-    availability::{ImplementationUnavailable, Unsupported, check},
+    BackendChoice, BackendRequest, GridPrecision, HostResources,
+    availability::{ImplementationUnavailable, Unsupported, check, resolve_backend},
 };
 use casa_imaging_model::{
     AwProjectionContract, AxisOrder, CentreLaws, CompiledProblem, DeclaredInnerProducts,
@@ -213,6 +213,98 @@ fn metal_needs_a_device_single_precision_and_the_standard_kernel_set() {
     .expect("the CPU grids in either precision");
 }
 
+/// `backend = auto` takes the GPU for what it runs and the T1 Metal laws
+/// compare with the CPU (one image domain, any basis, facets or not), and
+/// the CPU otherwise; `cpu` and `gpu` are taken as asked, and a `gpu`
+/// request the GPU cannot run is refused by the gate.
+#[test]
+fn auto_takes_the_gpu_where_it_runs_the_problem_and_the_cpu_otherwise() {
+    use BackendChoice::{Cpu, Metal};
+    let resolve = |problem: &CompiledProblem, requested, precision, metal| {
+        resolve_backend(problem, requested, precision, &host(metal))
+    };
+    let standard = ProblemFixture::standard().compile();
+    assert_eq!(resolve(&standard, BackendRequest::Auto, None, true), Metal);
+    let f32 = Some(GridPrecision::F32);
+    assert_eq!(resolve(&standard, BackendRequest::Auto, f32, true), Metal);
+    assert_eq!(resolve(&standard, BackendRequest::Auto, None, false), Cpu);
+    let f64 = Some(GridPrecision::F64);
+    assert_eq!(resolve(&standard, BackendRequest::Auto, f64, true), Cpu);
+    assert_eq!(resolve(&standard, BackendRequest::Cpu, None, true), Cpu);
+    assert_eq!(resolve(&standard, BackendRequest::Gpu, None, false), Metal);
+
+    let taylor = ProblemFixture {
+        basis: ReconstructionBasis::Taylor { terms: 2 },
+        algorithm: ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+        ..ProblemFixture::standard()
+    }
+    .compile();
+    assert_eq!(resolve(&taylor, BackendRequest::Auto, None, true), Metal);
+    let faceted = ProblemFixture {
+        facets: FacetLayout::Regular {
+            columns: 2,
+            rows: 2,
+        },
+        ..ProblemFixture::standard()
+    }
+    .compile();
+    assert_eq!(resolve(&faceted, BackendRequest::Auto, None, true), Metal);
+
+    let outliers = ProblemFixture {
+        outlier: true,
+        ..ProblemFixture::standard()
+    }
+    .compile();
+    assert_eq!(resolve(&outliers, BackendRequest::Auto, None, true), Cpu);
+    // No Metal law covers another polarization or a visibility write yet:
+    // `auto` keeps them on the CPU, `gpu` still takes the GPU.
+    for coordinate in [
+        PolarizationCoordinate::StokesQ,
+        PolarizationCoordinate::CircularRl,
+    ] {
+        let polarized = ProblemFixture {
+            polarizations: vec![coordinate],
+            ..ProblemFixture::standard()
+        }
+        .compile();
+        assert_eq!(resolve(&polarized, BackendRequest::Auto, None, true), Cpu);
+        assert_eq!(resolve(&polarized, BackendRequest::Gpu, None, true), Metal);
+    }
+    let model_write = ProblemFixture {
+        model_column_write: ModelColumnWrite::SelectedRows,
+        ..ProblemFixture::standard()
+    }
+    .compile();
+    assert!(
+        !model_write
+            .observation_transaction()
+            .write_set()
+            .visibility_columns()
+            .is_empty()
+    );
+    assert_eq!(resolve(&model_write, BackendRequest::Auto, None, true), Cpu);
+    let mut w = ProblemFixture::standard();
+    w.measurement_equation = w
+        .measurement_equation
+        .with_w_projection(WProjectionContract::new(100.0, None).expect("W contract"));
+    assert_eq!(resolve(&w.compile(), BackendRequest::Auto, None, true), Cpu);
+    let mut mosaic = ProblemFixture::standard()
+        .with_primary_beam(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
+    mosaic.uvw = UvwCoordinateLaw::MosaicPhaseTrackingCentre;
+    mosaic.products.push(ProductKind::Sensitivity);
+    let mosaic = mosaic.compile();
+    assert_eq!(resolve(&mosaic, BackendRequest::Auto, None, true), Cpu);
+    let asked = resolve(&mosaic, BackendRequest::Gpu, None, true);
+    assert_eq!(asked, Metal);
+    assert_exactly_unsupported(
+        check(&mosaic, asked, None, &host(true)),
+        [Unsupported::KernelSetOnMetal],
+    );
+}
+
 /// Facets (#664) run with the standard kernel set and a constant basis, on
 /// the CPU and on Metal; a Taylor basis or a W, mosaic or AW set is refused,
 /// each with its own reason.
@@ -263,6 +355,7 @@ struct ProblemFixture {
     instrument_model: Option<InstrumentModel>,
     products: Vec<ProductKind>,
     outlier: bool,
+    model_column_write: ModelColumnWrite,
 }
 
 impl ProblemFixture {
@@ -285,6 +378,7 @@ impl ProblemFixture {
             instrument_model: None,
             products: vec![ProductKind::Psf],
             outlier: false,
+            model_column_write: ModelColumnWrite::Disabled,
         }
     }
 
@@ -403,7 +497,7 @@ impl ProblemFixture {
                     RestoringBeamPolicy::None,
                     product_validity(),
                 ),
-                ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+                ObservationTransactionRequirements::new(self.model_column_write),
                 numerics,
             ),
             geometry,

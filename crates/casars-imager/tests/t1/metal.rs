@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Metal variants: `backend = metal` through the production route agrees with
+//! Metal variants: `backend = gpu` through the production route agrees with
 //! the CPU route product by product, to 1e-4 of the restored peak. The MFS
 //! case also meets the CPU route's analytic laws (flux, position, beam,
 //! residual noise). The cubes include output channels twice the native
@@ -14,6 +14,9 @@ use super::standard_mfs::assert_recovers_the_point;
 /// The application's refusal on a host whose inventory has no Metal device.
 const NO_METAL_DEVICE: &str = "the Metal backend needs a unified-memory Metal 3 device";
 const TOLERANCE: f64 = 1.0e-4;
+/// Spectral index and its error, absolute, where the restored image is
+/// above a tenth of its peak: `tt1/tt0` from terms that agree to 1e-4.
+const ALPHA_TOLERANCE: f64 = 1.0e-3;
 
 const POINT: Component = Component {
     offset_px: [24, 16],
@@ -23,7 +26,7 @@ const POINT: Component = Component {
 };
 
 fn on_metal(mut controls: Value) -> Value {
-    controls["backend"] = json!("metal");
+    controls["backend"] = json!("gpu");
     controls
 }
 
@@ -51,12 +54,36 @@ fn assert_products_agree(metal: &Products, cpu: &Products, label: &str) {
             .iter()
             .fold(0.0_f64, |peak, value| peak.max(f64::from(*value).abs()))
     };
-    let image_peak = peak(&cpu.get(".image").image.get().expect("read image"));
+    let restored = if cpu.suffixes().contains(".image") {
+        ".image"
+    } else {
+        ".image.tt0"
+    };
+    let restored_image = cpu.get(restored).image.get().expect("read image");
+    let image_peak = peak(&restored_image);
     assert!(image_peak > 0.0, "{label}: the restored image is empty");
     for suffix in cpu.suffixes() {
         let metal = metal.get(&suffix).image.get().expect("read Metal product");
         let cpu = cpu.get(&suffix).image.get().expect("read CPU product");
         assert_eq!(metal.shape(), cpu.shape(), "{label} {suffix}");
+        if suffix.starts_with(".alpha") {
+            // The spectral index and its error are cut where the image falls
+            // below a threshold, so a pixel at the cut may land on either
+            // side; they are compared where the image is bright, absolutely.
+            let worst = metal
+                .iter()
+                .zip(&cpu)
+                .zip(&restored_image)
+                .filter(|(_, image)| f64::from(**image) > 0.1 * image_peak)
+                .fold(0.0_f64, |worst, ((m, c), _)| {
+                    worst.max((f64::from(*m) - f64::from(*c)).abs())
+                });
+            assert!(
+                worst <= ALPHA_TOLERANCE,
+                "{label} {suffix}: largest difference {worst:e} where the image is bright"
+            );
+            continue;
+        }
         let scale = peak(&cpu).max(image_peak);
         let worst = metal.iter().zip(&cpu).fold(0.0_f64, |worst, (m, c)| {
             worst.max((f64::from(*m) - f64::from(*c)).abs())
@@ -125,4 +152,45 @@ fn metal_cubes_with_native_and_coarse_output_channels_match_the_cpu() {
         let (_, cpu) = observation.image(&format!("cpu-cube-{label}"), controls);
         assert_products_agree(&metal, &cpu, &format!("{label} cube"));
     }
+}
+
+/// Two Taylor terms on Metal: `backend = auto` sends MT-MFS to the GPU.
+#[test]
+fn metal_mtmfs_matches_the_cpu() {
+    let observation = Observation::synthesise_band(8, &[("point", POINT)]);
+    let controls = json!({
+        "weighting": "natural",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "niter": 200,
+        "threshold": "0.01Jy",
+    });
+    let metal = observation.try_image("metal-mtmfs", on_metal(controls.clone()));
+    if no_device(&metal) {
+        return;
+    }
+    let (_, metal) = metal.expect("Metal MT-MFS");
+    let (_, cpu) = observation.image("cpu-mtmfs", controls);
+    assert_products_agree(&metal, &cpu, "MT-MFS");
+}
+
+/// Facets on Metal, each facet a pass domain of its own (#664):
+/// `backend = auto` sends faceted standard imaging to the GPU.
+#[test]
+fn metal_facets_match_the_cpu() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let controls = json!({
+        "weighting": "natural",
+        "deconvolver": "hogbom",
+        "niter": 500,
+        "threshold": "0.005Jy",
+        "facets": 2,
+    });
+    let metal = observation.try_image("metal-facets", on_metal(controls.clone()));
+    if no_device(&metal) {
+        return;
+    }
+    let (_, metal) = metal.expect("Metal facets");
+    let (_, cpu) = observation.image("cpu-facets", controls);
+    assert_products_agree(&metal, &cpu, "facets");
 }

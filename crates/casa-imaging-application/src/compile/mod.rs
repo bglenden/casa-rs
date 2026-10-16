@@ -43,7 +43,8 @@ use casa_types::measures::{MeasuresProvider, frame::MeasFrame};
 
 use crate::{
     ApplicationNative, ApplicationPublication, ApplicationRuntime, AwCatalogDeployment, AwCfSource,
-    AwProjection, Deconvolver, Gridder, ImagingRequest, NativeAwCachePolicy, RunContext, SpecMode,
+    AwProjection, BackendChoice, Deconvolver, Gridder, ImagingRequest, NativeAwCachePolicy,
+    RunContext, SpecMode,
 };
 use direction::{Centre, ImageSpectralCoordinate};
 use domains::PreparedImageDomain;
@@ -423,12 +424,23 @@ fn cube_density_padding(
 /// be deployed: no directory exists and no AW cell is generated until
 /// [`Deployment::deploy`].
 pub(crate) struct Deployment {
-    /// The runtime; its spill directory is made canonical on deployment.
-    runtime: ApplicationRuntime,
+    runtime: PendingRuntime,
     publication: ApplicationPublication,
     /// Every domain's output directory.
     output_directories: Vec<PathBuf>,
     aw: Option<AwPlan>,
+}
+
+/// The run's runtime but for its device, which the compiled problem resolves
+/// ([`Deployment::deploy`]); its spill directory is made canonical on
+/// deployment.
+struct PendingRuntime {
+    host: crate::HostResources,
+    resource_policy: crate::ResourcePolicy,
+    grid_precision: Option<crate::GridPrecision>,
+    cancel: crate::Cancel,
+    spill_directory: PathBuf,
+    diagnostics: crate::Diagnostics,
 }
 
 /// The AW catalog a run opens and, for a native cache, the cells to bring
@@ -442,24 +454,41 @@ struct AwPlan {
 
 impl Deployment {
     /// Create every domain's output directory, settle the spill directory
-    /// beside the main image and bring a native AW cache to the request's
-    /// policy.
-    pub(crate) fn deploy(self) -> Result<ApplicationNative, PrepareError> {
+    /// beside the main image, bring a native AW cache to the request's
+    /// policy and grid on `backend`, the device the request resolved to on
+    /// the compiled problem ([`crate::availability::resolve_backend`]).
+    pub(crate) fn deploy(self, backend: BackendChoice) -> Result<ApplicationNative, PrepareError> {
         for directory in &self.output_directories {
             std::fs::create_dir_all(directory).map_err(|source| PrepareError::OutputDirectory {
                 path: directory.clone(),
                 source,
             })?;
         }
-        let mut runtime = self.runtime;
-        runtime.spill_directory = runtime.spill_directory.canonicalize().map_err(|source| {
-            PrepareError::OutputDirectory {
-                path: runtime.spill_directory.clone(),
-                source,
-            }
-        })?;
+        let PendingRuntime {
+            host,
+            resource_policy,
+            grid_precision,
+            cancel,
+            spill_directory,
+            diagnostics,
+        } = self.runtime;
+        let spill_directory =
+            spill_directory
+                .canonicalize()
+                .map_err(|source| PrepareError::OutputDirectory {
+                    path: spill_directory.clone(),
+                    source,
+                })?;
         Ok(ApplicationNative {
-            runtime,
+            runtime: ApplicationRuntime {
+                host,
+                resource_policy,
+                backend,
+                grid_precision,
+                cancel,
+                spill_directory,
+                diagnostics,
+            },
             publication: self.publication,
             aw_catalog: self.aw.map(AwPlan::deploy).transpose()?,
         })
@@ -523,10 +552,9 @@ fn deployment(
         controls = controls.with_primary_beam_model(model);
     }
     Ok(Deployment {
-        runtime: ApplicationRuntime {
+        runtime: PendingRuntime {
             host: context.host,
             resource_policy: context.policy,
-            backend: request.backend,
             grid_precision: request.gridprecision,
             cancel: context.cancel.clone(),
             spill_directory: parent(&request.imagename),

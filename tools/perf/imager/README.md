@@ -365,8 +365,13 @@ name on `--json-run`, or as command-line flags). The execution controls are:
 
 - `parallel`: `true` runs the passes on the host's balanced worker team;
   `false`, the default, runs one worker.
-- `backend`: `cpu` or `metal`. Metal grids the standard kernel set in `f32`;
-  W projection, mosaics and AW projection run on the CPU.
+- `backend`: `auto` (the default), `cpu` or `gpu`. `gpu` is Metal on macOS:
+  it grids the standard kernel set in `f32`, and W projection, mosaics and
+  AW projection run on the CPU. `auto` takes the GPU where it runs the
+  request and the CPU otherwise; the run summary records which. Imager
+  contract 23 and earlier spelled `gpu` as `metal` and defaulted to `cpu`, so
+  a timing must name its backend to be repeatable; `bench-imager-vs-casa.sh`
+  always passes one.
 - `gridprecision`: `auto` (`f64` on the CPU for every basis, cubes included;
   `f32` on Metal), `f32` or `f64`. Metal refuses `f64`. CPU cube timings
   recorded before 2026-10-15 ran at `f32`; set `gridprecision` explicitly
