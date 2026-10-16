@@ -228,6 +228,11 @@ existing no-cache I/O path and does not require this Linux-specific setup.
   `casars-imager` route; each case under ten minutes):
   `CARGO_INCREMENTAL=0 cargo test -p casars-imager --test t1`
 - Full default pre-review gate: `just verify`
+- Performance and evidence tool tests (`tools/perf/imager`, pytest):
+  `just perf-tools-test`. CI's `perf_tools` job enforces them; `just quick`
+  runs them when the host's `python3` has pytest, numpy, scipy and
+  matplotlib, and prints a skip notice otherwise. A tool whose casa-rs inputs
+  are deleted goes with them; its tests fail here otherwise
 - Smoke/release gate: `just smoke`
 - Blocking C++ interop release gate: `just release-cpp-interop`
 - Informational release performance suite: `just release-perf`
@@ -235,12 +240,12 @@ existing no-cache I/O path and does not require this Linux-specific setup.
 - Heavy parity suites: `scripts/test-slow.sh`
 - Release/tag-only CI-like coverage: `scripts/run-coverage.sh --ci-like`
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
-- GitHub PR CI: lint/test, editable Python package, strict docs, and native GUI
-  checks (Swift core unit tests, then the `just gui-test` interaction gate) for
+- GitHub PR CI: lint/test, editable Python package, performance-tool tests,
+  strict docs, and native GUI checks (Swift core unit tests, then the `just gui-test` interaction gate) for
   non-draft PRs. The required check is `gui_gate`, which passes only when
   `native_gui` actually ran and passed; it is red on drafts by design, because
   GitHub would count a skipped `native_gui` as passing
-- GitHub tag CI: lint/test and editable Python package checks plus smoke,
+- GitHub tag CI: lint/test, editable Python package and performance-tool checks plus smoke,
   suite-install, and CI-like coverage
 - Main-branch pushes run the rustdoc and MkDocs deployment workflow
 

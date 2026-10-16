@@ -32,8 +32,6 @@ class Wave3WorkerPolicyMatrixTests(unittest.TestCase):
                 "mosaic_mfs_hogbom",
                 "mosaic_mfs_clark",
                 "mosaic_mfs_multiscale",
-                "aw_widefield_hogbom",
-                "aw_widefield_clark",
                 "standard_cube_hogbom",
                 "standard_cube_clark",
                 "cubedata_hogbom",
@@ -47,7 +45,7 @@ class Wave3WorkerPolicyMatrixTests(unittest.TestCase):
             self.assertEqual({"cpu", "multi-cpu", "auto", "metal"}, backends)
             blocks = {row["paired_block"] for row in rows if row["mode_family"] == family}
             self.assertEqual({1, 2, 3}, blocks)
-        self.assertEqual(16 * 4 * 3, len(rows))
+        self.assertEqual(14 * 4 * 3, len(rows))
 
     def test_generated_commands_skip_casa_by_default_and_use_overrides(self) -> None:
         rows = wave3_worker_policy_matrix.build_rows(3, 1, Path("out"), skip_casa=True)
@@ -82,7 +80,7 @@ class Wave3WorkerPolicyMatrixTests(unittest.TestCase):
             paired_blocks=False,
         )
 
-        self.assertEqual(16 * 4, len(rows))
+        self.assertEqual(14 * 4, len(rows))
         self.assertTrue(all("paired_block" not in row for row in rows))
         self.assertTrue(all(row["repeats"] == 3 for row in rows))
 

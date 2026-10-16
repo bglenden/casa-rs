@@ -17,7 +17,9 @@ class Wave3MatrixTests(unittest.TestCase):
         rows = wave3_matrix.enumerate_rows(matrix)
 
         issues = {row["issue"] for row in rows}
-        self.assertEqual(set(range(276, 285)), issues)
+        # The AW-style widefield mode (#281) left the matrix with the bounded
+        # paired AW operator (1e691f99c8).
+        self.assertEqual(set(range(276, 285)) - {281}, issues)
         for issue in issues:
             tiers = {row["tier"] for row in rows if row["issue"] == issue}
             self.assertEqual({"smoke", "medium", "stress"}, tiers)
@@ -42,7 +44,7 @@ class Wave3MatrixTests(unittest.TestCase):
             if "clark" in row["deconvolver_variants"]
         }
 
-        self.assertEqual({276, 279, 280, 281, 282, 283, 284}, clark_issues)
+        self.assertEqual({276, 279, 280, 282, 283, 284}, clark_issues)
         self.assertNotIn(277, clark_issues)
         self.assertNotIn(278, clark_issues)
 
