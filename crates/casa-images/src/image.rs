@@ -33,9 +33,7 @@ use ndarray::{ArrayViewD, IxDyn, Slice, SliceInfoElem};
 use crate::error::ImageError;
 use crate::image_expr::ImageExprBuilder;
 use crate::image_info::ImageInfo;
-use crate::mask_reference::{
-    heal_legacy_mask_references, point_mask_references_inside, subtable_reference,
-};
+use crate::mask_reference::{point_mask_references_inside, subtable_reference};
 use crate::subimage::{SubImage, SubImageMut};
 
 const MAP_COLUMN: &str = "map";
@@ -739,14 +737,6 @@ impl<T: ImagePixel> PagedImage<T> {
         self.refresh_tiled_io()
     }
 
-    /// Heals, in memory, mask references that older casa-rs builds wrote
-    /// ([`heal_legacy_mask_references`]); a later save stores the healed form.
-    fn heal_mask_references(table: &mut Table, path: &Path) {
-        if let Some(Value::Record(masks)) = table.keywords_mut().get_mut(MASKS_KEYWORD) {
-            heal_legacy_mask_references(masks, path);
-        }
-    }
-
     fn persistent_mask_relative_path(record: &RecordValue) -> Result<String, ImageError> {
         match record.get("mask") {
             Some(Value::TableRef(path)) => Ok(path.clone()),
@@ -970,12 +960,11 @@ impl<T: ImagePixel> PagedImage<T> {
         let tiled_io = Self::open_tiled_io(&path, max_cache_bytes)
             .ok()
             .map(RefCell::new);
-        let mut table = if tiled_io.is_some() {
+        let table = if tiled_io.is_some() {
             Table::open_metadata_only(TableOptions::new(&path))?
         } else {
             Table::open(TableOptions::new(&path))?
         };
-        Self::heal_mask_references(&mut table, &path);
         let coords = match table.keywords().get("coords") {
             Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)
                 .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?,
@@ -1073,12 +1062,11 @@ impl<T: ImagePixel> PagedImage<T> {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ImageError> {
         let path = path.as_ref().to_path_buf();
         let tiled_io = Self::open_tiled_io(&path, 0).ok().map(RefCell::new);
-        let mut table = if tiled_io.is_some() {
+        let table = if tiled_io.is_some() {
             Table::open_metadata_only(TableOptions::new(&path))?
         } else {
             Table::open(TableOptions::new(&path))?
         };
-        Self::heal_mask_references(&mut table, &path);
         let coords = match table.keywords().get("coords") {
             Some(Value::Record(rec)) => CoordinateSystem::from_record(rec)
                 .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?,
@@ -3466,7 +3454,7 @@ mod tests {
     }
 
     #[test]
-    fn older_absolute_mask_references_heal_and_survive_a_rename_and_save() {
+    fn older_absolute_mask_references_read_in_place_and_save_relative() {
         // casa-rs before #715 stored the mask table's absolute path; a staged
         // product stored the path its image was about to be moved to.
         let dir = tempfile::tempdir().unwrap();
@@ -3493,30 +3481,18 @@ mod tests {
         std::fs::create_dir_all(visible.parent().unwrap()).unwrap();
         std::fs::rename(&staging, &visible).unwrap();
 
-        // Opening reads the mask and heals the reference in memory only.
-        let in_place = PagedImage::<f32>::open(&visible).unwrap();
-        assert_eq!(in_place.get_mask().unwrap(), Some(expected.clone()));
+        // In place, the absolute reference still resolves; a save in place
+        // stores it relative to the image, so the image can then be moved.
+        let mut in_place = PagedImage::<f32>::open(&visible).unwrap();
         assert_eq!(
             stored_mask_reference(&in_place.table, "mask0"),
-            Some(Value::table_ref("././mask0"))
-        );
-        drop(in_place);
-        let on_disk = Table::open(TableOptions::new(&visible)).unwrap();
-        assert_eq!(
-            stored_mask_reference(&on_disk, "mask0"),
             Some(Value::table_ref(legacy))
         );
-
-        // Renamed within its directory and saved in place, the image stores
-        // the healed form, so it keeps its mask through any later move.
-        let renamed = visible.with_file_name("renamed.pb");
-        std::fs::rename(&visible, &renamed).unwrap();
-        let mut image = PagedImage::<f32>::open(&renamed).unwrap();
-        assert_eq!(image.get_mask().unwrap(), Some(expected.clone()));
-        image.save().unwrap();
-        drop(image);
+        assert_eq!(in_place.get_mask().unwrap(), Some(expected.clone()));
+        in_place.save().unwrap();
+        drop(in_place);
         let moved = dir.path().join("moved.pb");
-        std::fs::rename(&renamed, &moved).unwrap();
+        std::fs::rename(&visible, &moved).unwrap();
         let reopened = PagedImage::<f32>::open(&moved).unwrap();
         assert_eq!(reopened.get_mask().unwrap(), Some(expected));
         let on_disk = Table::open(TableOptions::new(&moved)).unwrap();
