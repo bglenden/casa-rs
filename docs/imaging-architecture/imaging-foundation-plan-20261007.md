@@ -1352,3 +1352,120 @@ These summarise Astra's gate review on #656, which is the record.
   - **IF-10:** the full T2 list and bars kept. Admitted-versus-observed memory added for resident and paged runs. The three MAIN walks profiled first. Near-tie rows carried explicitly.
 
 Gate closed (conditional on IF-8's first change): #692 (carrying #686–#688) and #699 merged and this section reached `main` on 2026-10-10.
+
+## Gate R4 outcome — 2026-10-16
+
+**Gate ticket:** IF-10 (#659).
+
+**PRs:**
+- #711 (part 1, the timed bars);
+- #712 (part 2, CPU work and the remaining T2 rows);
+- #722 (the mosaic MFS, mosaic cube and facets rows);
+- #723 (`backend = auto | cpu | gpu`);
+- #724 (the density pass reads no visibilities, and an unflagged non-finite input fails the run).
+
+**Reviewers:**
+- OpenAI Astra: independent reviews of every PR, and the gate review on #659. Posted under the owner's login.
+- Fable: structural reviews of #712, #722 and #723.
+- The owner: the decisions below.
+- Claude (Opus): implementer.
+
+### Inputs
+
+All inputs are on #659 ([gate inputs](https://github.com/bglenden/casa-rs/issues/659#issuecomment-6218158934)) and #648 ([results table](https://github.com/bglenden/casa-rs/issues/648#issuecomment-6210600264)).
+
+| Input | Value |
+|---|---|
+| PRs | #711 +1,035 / −131; #712 +5,823 / −1,500; #722 +3,098 / −428; #723 +484 / −82 (its own diff); #724 +521 / −132 at review, plus `5ca1b5d244` |
+| Imaging non-test source | 54,311 lines at `5ca1b5d244` (54,282 at the reviewed `af10699a5e`), against 50,572 at IF-10's start and 47,044 at R3, by R3's convention (question 7). Under 70k (target), over 50k (stretch). |
+| casa-ms non-test source | 58,871 → 59,211 |
+| T0 / T1 | `just quick` green at `af10699a5e` and `5ca1b5d244`. casa-ms C++ interop (`ms_full_verify_vs_cpp`, `ms_data_interop`, `ms_locking_vs_cpp`) green against casacore. Metal laws on the GPU at `4056e91abe`. |
+| T1.5 | At the final head, every case equals the previous head to rounding, except the recorded near-ties. Every `.sumwt` case is within the 5e-5 limit. |
+| T2 | 18 of 19 matrix rows pass; one is excluded by the owner. Every timed bar is met. #625 is 1.90× faster than CASA, the full cube 5.22×, and Wave3 1.71× on the same MS and machine. |
+| Pilot W4 | CPU 13.1 s, Metal 10.9 s, against bars of 17.4 and 16.3 s |
+| Deviations | 1–18 on #659 |
+| Implementer note | in the gate inputs on #659 |
+
+### Answers to the R4 questions
+
+These summarise Astra's gate review on #659, which is the record.
+
+1. **Converging on §5 types: yes.** The live route is still compile → `MeasurementOperator` / `MajorCyclePass` → normal and model state → products.
+   - `SampleContent` changes a traversal's content, not the driver.
+   - The native-residual `Work` variants are backend operations.
+   - `ChartStitch` assembles facets onto the common normal state's reference scale and must stay limited to that.
+2. **Deletion rows: the displaced routes stay removed.** No replay operator, execution DAG, prepared-artifact cache, slab driver or request mirror is back. `casa-imaging-reconstruction`, 5,478 lines of live mathematics and storage, is IF-11's to inventory, move and delete.
+3. **Second implementations:** IF-10 added no new trait. `BoundedSource` (a dependency boundary) and the private `BlockIo` and `BackendIo` (type erasure) need their reasons in rustdoc (rule 7); that goes to IF-11.
+4. **Law-based tests: yes, predominantly.** The #724 continuum law discriminates a missing role flag: Astra reproduced the mutation, 0.5 against 1. The core-allocation and native-residual laws exist, and the evidence table should name them.
+5. **Repeated rule problems:** allocation accounting (rule 5) and the size exceptions.
+   - IF-11 adds a counting law whenever scratch ownership changes, splits `aw/mod.rs` (1,554 lines) and `access.rs` (2,569), and shrinks the allowlist.
+   - Evidence runs must name their backend, precision, FFTW build, input, comparator and memory policy.
+6. **Discoveries that changed decisions and signatures: yes, all recorded.**
+   - D2: the CPU default is f64.
+   - D1: a narrow, charged kept-weight cache.
+   - The native prediction and residual `Work` variants.
+   - `ResourcePolicy::cores`.
+   - `backend = auto | cpu | gpu`.
+   - Residual passes keep their response.
+   - Explicit traversal content.
+   - The finite-input rule.
+
+   D1's re-traversal stands: the MAIN-walk profile does not justify a visibility or replay cache.
+7. **Bars:**
+   - **Met:** every timed checkpoint and every peak RSS.
+     - The 512-plane row is met on its re-baselined f32 bars of 30.5 and 12.5 s, for a resimulated input.
+     - The f64 CPU default costs about 13.5 s at W4 and a 9.1–9.2 GB footprint. That is the accepted cost of the D2 amendment, not a pass of the f32 bar.
+   - **Deep32 cycles:** 1.045× the pre-refactor build, against the 1.10 bar.
+   - **#625:** 4,764.57 s against 9,073.69 s, at `01ceae21eb`. A cold run is estimated at 4,924 s; it was not run.
+   - **Full cube:** 4,144.27 s against 21,622.67 s. The 9.61 GB footprint against an 11.55 GiB sampled RSS is not a matched peak comparison.
+   - **Wave3:** 4,654 s against 7,944.7 s on the same MS and machine.
+   - **Exceptions, each with the owner's decision:**
+     - deep-clean residuals, both denominators recorded;
+     - the `.sumwt` limit, 5e-5;
+     - Wave3 on the CPU and Metal;
+     - the near-ties, below;
+     - `.weight.tt1`, until #690.
+   - The forced-paging `withline` exception is retired: 1.87e-6 at f64.
+8. **Retained optimisations:** each has a reported measurement, with attribution limits.
+   - Row 2 was measured jointly with row 3.
+   - Row 12 was superseded by row 16.
+   - Row 26 corrects the evidence build; it is not a production optimisation.
+   - Do not sum the percentages.
+9. **IF-11 scope:** consolidated in #660's body ("Gate R4 replan").
+10. **The next programme should assume:**
+    - one foundation route;
+    - an f64 CPU and an f32 Metal, validated by tolerance;
+    - `auto` as an eligibility choice, not a guarantee of the fastest backend;
+    - W-projection, mosaic and AW on the CPU (#653);
+    - #719, #720, #721, #714 and #690 carried;
+    - no global tolerance from Wave3's near-tie;
+    - storage I/O measured before it is assumed.
+
+### Decisions
+
+- **Owner, 2026-10-15:** the closure decisions ([6200701530](https://github.com/bglenden/casa-rs/issues/659#issuecomment-6200701530)):
+  - the three matrix rows pass before closure;
+  - the moving-source cube is excluded;
+  - rows without a timed checkpoint are judged against CASA's time;
+  - deep-clean residuals are judged against the image peak;
+  - the T1.5 exceptions;
+  - the memory table goes to IF-11 and full-360 is dropped;
+  - Wave3 runs on the mini.
+- **Owner, 2026-10-16:**
+  - the `.sumwt` limit is 5e-5;
+  - Wave3's acceptance extends to Metal;
+  - an unflagged non-finite input fails the run (deviation 18, `5ca1b5d244`, no separate re-review);
+  - deviations 11 and 12 are accepted;
+  - deviations 4, 9, 10, 15, 16 and 17 are accepted with their stated costs and divergences ([6219345824](https://github.com/bglenden/casa-rs/issues/659#issuecomment-6219345824)), so every deviation 1–18 has an owner disposition;
+  - the T1.5 near-ties are accepted on the corrected evidence: the flip predates IF-10, and no pre-refactor control was run.
+- **Corrections to the record:**
+  - #659's 512-plane bars are re-baselined.
+  - The near-tie repeats are all on post-refactor builds.
+  - The refim T1.5 harness pins the CPU for every binary of protocol 12 or later.
+
+### Replanning
+
+- **IF-11 (#660):** its body carries the "Gate R4 replan" scope: documents, the reconstruction crate, counts, the evidence table, the memory table, the file splits, rules 5 and 7, evidence discipline, and the per-issue mapping of #445–#450.
+- **#445–#450:** #446 stays closed. #445 and #447–#450 stay open until IF-11 maps them.
+
+Gate closed: #724, which carries this section, merged on 2026-10-16.
