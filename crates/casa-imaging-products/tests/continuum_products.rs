@@ -16,6 +16,7 @@ use common::continuum::{
 use common::synthetic_pass::{Scene, continue_round, two_cycle_round};
 use common::{GeneratedProducts, ImageOutput, full_window};
 
+use casa_images::PagedImage;
 use casa_imaging_model::{
     CompiledProblem, FacetLayout, ImageDomainRole, ImageDomainSpec, ImageShape, InstrumentResponse,
     ModelCell, ModelDeltaTerm, ModelValue, ProductKind, ProductRole, ReconstructionAlgorithm,
@@ -30,6 +31,7 @@ use casa_imaging_reconstruction::{
     ImageDomainReconstructionMaskPlans, MajorCycleCompletion, MaskBox, ReconstructionMask,
     ReconstructionMaskPlan,
 };
+use casa_types::Value;
 
 /// One fixture round: two major cycles, the initial one over the empty model
 /// forming the PSF and a refresh after a nonzero model delta.
@@ -959,6 +961,74 @@ fn standard_products_publish_the_selected_analytic_primary_beam() {
         corner < centre,
         "analytic PB must fall away from phase centre"
     );
+}
+
+/// #715: the writer stages each image and then promotes it, and the published
+/// image's mask table reference must be relative to the image itself, so the
+/// mask survives a later move of the published image.
+#[test]
+fn a_published_masked_product_keeps_its_mask_after_the_image_is_moved() {
+    let products = [
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::RestoredImage,
+        ProductKind::SumWeights,
+        ProductKind::PrimaryBeam,
+    ];
+    let problem = continuum_problem_with_reconstruction(
+        109,
+        &products,
+        RestoringBeamPolicy::PerPlane,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Dirty,
+        1,
+    );
+    let round = run_continuum_round(&problem);
+    let controls = ContinuumProductControls::default()
+        .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
+    let planned = planned_for(&inputs, &controls);
+    let output = ImageOutput::for_problem(inputs.problem());
+    let generated =
+        produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &output)
+            .expect("direct product generation");
+    let published = GeneratedProducts::from_output(&planned, &generated, &output);
+    let validity = published
+        .members()
+        .iter()
+        .find(|member| member.name() == ".pb")
+        .expect("primary beam")
+        .validity()
+        .to_vec();
+    let member = planned
+        .members()
+        .iter()
+        .find(|member| member.name() == ".pb")
+        .expect("planned primary beam");
+    let image = PagedImage::<f32>::open(output.path(member)).expect("published primary beam");
+    let Some(Value::Record(masks)) = image.table().keywords().get("masks") else {
+        panic!("the published primary beam has no masks keyword");
+    };
+    let Some(Value::Record(region)) = masks.get("mask0") else {
+        panic!("the published primary beam has no mask0 region");
+    };
+    assert_eq!(region.get("mask"), Some(&Value::table_ref("././mask0")));
+    drop(image);
+
+    let moved_root = tempfile::tempdir().expect("moved directory");
+    let moved = moved_root.path().join("deeper").join("moved.pb");
+    std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+    std::fs::rename(output.path(member), &moved).expect("move the published image");
+    let image = PagedImage::<f32>::open(&moved).expect("moved primary beam");
+    assert_eq!(image.default_mask_name().as_deref(), Some("mask0"));
+    let shape = image.shape().to_vec();
+    let mask = image
+        .get_mask_slice(&vec![0; shape.len()], &shape, &vec![1; shape.len()])
+        .expect("moved mask")
+        .expect("default mask");
+    assert_eq!(mask.iter().copied().collect::<Vec<_>>(), validity);
 }
 
 #[test]
