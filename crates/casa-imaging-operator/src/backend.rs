@@ -127,8 +127,9 @@ pub enum Work<'a> {
         out: &'a mut [Complex32],
     },
     /// Predict, subtract from the block and grid the residual data terms in
-    /// one dispatch; optionally hand back the raw residual samples for a
-    /// final pass that writes the corrected or model column.
+    /// one dispatch; optionally hand back the raw residual samples. The
+    /// read-back serves the T0 laws: the major-cycle pass passes `None`, and
+    /// its visibility writer takes the native-channel predictions instead.
     ResidualGrid {
         /// Prepared model grids covering every plane in the block.
         model: &'a PreparedModelGrids,

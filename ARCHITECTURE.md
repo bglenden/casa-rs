@@ -298,8 +298,12 @@ per-member recovery ledger.
 `MODEL_DATA` and `CORRECTED_DATA` follow ADR-0008: the final major-cycle
 pass writes selected cells in place through casa-ms's selected-visibility
 writer under casacore's table lock, creating `MODEL_DATA` when MAIN lacks it,
-as CASA does. Interruption may leave partial derived values, as in CASA; the
-next run recomputes them. No
+as CASA does. The writer saves in bounded batches by patching the written
+rows' tiles, so it accepts only destinations in `TiledShapeStMan` or
+`TiledColumnStMan`, the managers CASA and casa-rs store visibilities in. It
+refuses any other manager, whose save would rewrite every row of MAIN, when
+the writing pass is admitted, before anything changes. Interruption may leave
+partial derived values, as in CASA; the next run recomputes them. No
 backup column, full-column staging copy, content digest, rollback, snapshot, or
 copy-on-write generation is part of this path. Users may retain or delete
 conventional products independently; `MODEL_DATA` remains a distinct
@@ -616,8 +620,9 @@ each pass.
 
 A backend receives one `Work` per sample block (`GridBackend::apply`):
 `Grid` (data, PSF or weight terms), `Predict`, `ResidualGrid` (predict,
-subtract and grid the residual, optionally handing the residual samples to a
-visibility writer), `PredictNative` (predict a row chunk and interpolate it to
+subtract and grid the residual; its optional read-back of the residual
+samples serves the T0 laws, and the pass leaves it off), `PredictNative`
+(predict a row chunk and interpolate it to
 native cells, adding when several domains sum) and `NativeResidualGrid` (grid
 values less the model at each sample's native endpoints). Work is complete
 when `apply` returns, except that a device backend may leave grid-only work

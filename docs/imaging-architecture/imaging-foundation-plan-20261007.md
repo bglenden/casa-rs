@@ -535,8 +535,10 @@ pub enum Work<'a> {
     Grid { mode: Mode, acc: &'a mut GridAccumulator },
     /// Reads only the block's placements; values and weights may be empty.
     Predict { model: &'a PreparedModelGrids, out: &'a mut [Complex32] },
-    /// Predict, subtract, grid the residual in one dispatch; optionally hand
-    /// the residual samples back (final pass writing MODEL_DATA/CORRECTED).
+    /// Predict, subtract, grid the residual in one dispatch. `residual_out`
+    /// hands the residual samples back for the T0 laws; the pass passes
+    /// `None`. The final pass's visibility writer takes the native-channel
+    /// predictions instead (`VisibilitySink`).
     ResidualGrid { model: &'a PreparedModelGrids, acc: &'a mut GridAccumulator,
                    residual_out: Option<&'a mut [Complex32]> },
     /// Predict the block and interpolate it to native cells
@@ -754,43 +756,92 @@ it fits a sixteenth of the free memory; the first complete pass fills it.
 
 ### 5.5 Deconvolution (`casa-imaging-deconvolution`)
 
-```rust
-pub struct MinorCycleView<'a> {
-    pub residual: Planes<'a>,          // N_t terms × pols × planes
-    pub psf: &'a PsfSummary,           // cached per PSF generation: peak, beam fit, sidelobe, Clark patch
-    pub support: &'a BitMask,          // mask ∧ valid support, built once
-    pub controls: &'a CleanControls,   // gain, niter, threshold, nsigma, cycleniter, cyclefactor, min/max psf fraction
-    pub budget: Budget,
-}
-pub struct Controller { /* global, cycle and effective thresholds; inclusive flag; 1% check; divergence */ }
+One plane's minor cycle, as landed (`solver.rs`, `driver.rs`,
+`controller.rs`):
 
-/// A pixel component today; a Gaussian "aspen" (amplitude, sub-pixel centre,
-/// width) when an ASP solver lands. `accept` may revise earlier accepted
-/// components (ASP re-fits its active set), so `Update` is a list.
-pub enum Candidate { Pixel { index: usize, scale: u8, flux: Vec<f64> },
-                     Gaussian { amplitude: f64, centre: [f64; 2], width: f64 } }
+```rust
+/// x-major planes; residual in Jy/beam; PSF term 0 peaks at 1. A Taylor view
+/// holds N_t residual terms and 2·N_t − 1 PSF terms, every other view one.
+pub struct MinorCycleView<'a> {
+    pub shape: PlaneShape,
+    pub residual: &'a [Vec<f64>],
+    pub psf: &'a [Vec<f64>],
+    pub summary: &'a PsfSummary,   // term 0: peak, beam fit, sidelobe, Clark patch
+    pub support: &'a Support,      // mask ∧ valid support
+}
+#[non_exhaustive]
+pub enum Candidate { Pixel { index: usize, scale: usize, strength: f64 } }
+pub enum Next { Clean(Candidate), Stop }   // Stop: the solver's own rule ended the step
 
 pub trait Solver {
     type State;
-    fn initialize(&self, view: &MinorCycleView) -> Self::State;
-    fn next(&self, state: &mut Self::State, view: &MinorCycleView) -> Option<Candidate>;
-    fn accept(&self, state: &mut Self::State, c: Candidate, gain: f64) -> Update;
-    fn finalize(self, state: Self::State, residual: &mut Planes) -> ModelDelta;
+    fn extra_iterations(&self) -> usize { 0 }  // 1 for CASA's inclusive Högbom loop
+    fn charges_stop(&self) -> bool { false }   // MatrixCleaner charges the stopping iteration
+    fn initialize(&self, view: &MinorCycleView<'_>, residual: &[Vec<f64>], threshold: f64)
+        -> Result<Self::State, Error>;
+    fn next(&self, state: &mut Self::State, view: &MinorCycleView<'_>, residual: &mut [Vec<f64>])
+        -> Result<Next, Error>;
+    /// Flux per model term, term 0 first; the default is gain × strength.
+    fn component_fluxes(&self, state: &Self::State, candidate: Candidate, gain: f64,
+                        fluxes: &mut Vec<f64>);
+    fn accept(&self, state: &mut Self::State, view: &MinorCycleView<'_>,
+              residual: &mut [Vec<f64>], candidate: Candidate, gain: f64, delta: &mut Delta)
+        -> Result<(), Error>;
+    fn finalize(&self, state: Self::State, view: &MinorCycleView<'_>,
+                residual: &mut [Vec<f64>], delta: &Delta) -> Result<StepEnd, Error>;
+    /// Heap one step's state holds at most, admitted before the cycle runs.
+    fn working_bytes(&self, shape: PlaneShape, terms: usize) -> u64;
+    /// Pixels one component adds flux to, per term: it bounds a `Delta`.
+    fn component_cells(&self, shape: PlaneShape) -> usize;
 }
-pub fn run_minor_cycle<S: Solver>(solver: S, view: MinorCycleView, ctl: &mut Controller) -> (ModelDelta, StopReason);
+pub struct StepEnd { pub peak: f64, pub refreshes: usize }
+pub struct Delta { /* per term: storage index → flux */ }
+
+pub struct CycleControls { pub iterations: usize, pub threshold: f64,
+                           pub threshold_reached: bool, pub gain: f64, pub nsigma: f64 }
+pub fn run_plane<S: Solver>(solver: &S, view: &MinorCycleView<'_>, cycle: &CycleControls,
+                            statistics: &PlaneStatistics, trace: usize)
+    -> Result<PlaneOutcome, Error>;
+pub fn solve_bytes<S: Solver>(solver: &S, shape: PlaneShape, terms: usize,
+                              components: usize, trace: usize) -> u64;
 ```
 
-Solvers: `Hogbom`, `Clark` (active-list state), `Multiscale` (`ScaleBank`
-with one term), `Taylor` (`ScaleBank` with N_t terms and per-scale Hessian);
-image-domain multi-field Hogbom is the driver run over several views with a
-shared threshold. Shared primitives: `peak_search` (masked, windowed, scored),
-`patch_subtract` (clip | circular), `ScaleBank`, generalised `LinearRefresh`
-(FFT or sparse direct) used by Clark, the multiscale terminal refresh and the
-Taylor refresh. The controller is the one place for cycle threshold,
-`nsigma`, `cycleniter`, inclusive accounting, the 1% convergence check and the
-divergence rule (CASA stop codes 1–4, 6). Sparse refresh runs on the worker
-team, not raw threads. CASA auto `cycleniter` semantics (#341) are part of
-`Controller`.
+The runtime (`casa-imaging-runtime`, `minor.rs`) runs every plane of a major
+cycle's completion on the worker team:
+
+```rust
+pub fn prepare_minor_cycle(completion: &MajorCycleCompletion,
+                           mask_plans: &ImageDomainReconstructionMaskPlans,
+                           setup: &MinorCycleSetup, cache: &mut PsfCache, team: &WorkerTeam)
+    -> Result<PreparedMinorCycle, MinorCycleRunError>;
+pub fn run_minor_cycle(prepared: PreparedMinorCycle, completion: &MajorCycleCompletion,
+                       setup: &MinorCycleSetup, controls: &CycleControls, cache: &mut PsfCache,
+                       team: &WorkerTeam, (host, policy): (&HostResources, &ResourcePolicy))
+    -> Result<MinorCycleOutcome, MinorCycleRunError>;
+```
+
+Solvers: `Hogbom` (with CASA's inclusive loop), `Clark` (active list, exact
+refresh by `LinearRefresh`, FFT or direct sparse sums, whichever costs less),
+`Multiscale` and `Taylor` (the crate-private `ScaleBank`; Taylor with N_t
+terms and the per-scale Hessian). Planes are independent: `run_minor_cycle`
+runs several at once, one thread each, under the same `CycleControls`, and
+merges their terms in model order, so image domains (outlier fields, facets)
+share one cycle threshold. A single plane spreads Clark's sparse refresh
+across the team instead. Each plane's working bytes (`solve_bytes`) and
+result terms are admitted before they are formed.
+
+Control is in two places, as in CASA. The run-wide `Controller`
+(`SIIterBot`) derives each cycle's `CycleControls`: the PSF-sidelobe cycle
+threshold, never below the global threshold, `cycleniter` (CASA's automatic
+value, #341) and `nsigma`. It stops the run with CASA's `stopcode`
+(`CleanStop`: `niter`, threshold within 1%, no change, the two divergence
+rules, empty mask, n-sigma, `nmajor`). The per-plane `PlaneControl`
+(`SIMinorCycleController`) stops a plane with the minor-cycle codes 0–6
+(`PlaneStop`), including the 10% divergence rule.
+
+Future, not landed: an ASP solver would add a Gaussian `Candidate` (amplitude,
+sub-pixel centre, width) and re-fit its active set in `accept`; `Candidate`
+is `#[non_exhaustive]` for it.
 
 ### 5.6 AW and mosaic convolution functions
 
@@ -819,12 +870,24 @@ pointing pair.
 | dirty/residual (standard) | FFT⁻¹ grid ÷ correction × N_x N_y ÷ sumwt |
 | PSF | each plane ÷ max of term-0 PSF; peak = 1 |
 | weight image (mosaic/AW) | gridded FT[PB²] at uvw = 0, FFT, Stokes convert, ÷ sumwt |
-| PB | √weight ÷ pbmax, masked where > pblimit |
-| residual, flatnoise (default) | ÷ (pbmax·√weight) where > pblimit·pbmax², else 0 |
-| residual, flatsky | ÷ weight where > pblimit²·pbmax² |
-| model prescale before degrid (flatnoise) | × √weight ÷ pbmax; undone after |
-| pbcor | restored ÷ PB where PB > 0 |
+| PB | √\|weight\| ÷ pbmax, zero where PB ≤ pblimit |
+| residual, flatnoise (default) | ÷ (pbmax·√\|weight\|) where that exceeds pblimit·pbmax², else 0 |
+| residual, flatsky, one term | ÷ weight where it exceeds pblimit²·pbmax², else 0 |
+| residual, flatsky, Taylor family | ÷ weight where it exceeds \|pblimit\|·pbmax², else 0 |
+| model prescale before degrid (flatnoise) | × PB before prediction; ÷ PB after the solve |
+| pbcor | restored ÷ PB where PB > pblimit |
 | MT-MFS | each term ÷ term-0 sumwt and the same weight image; alpha and error products from terms |
+
+These are `SIImageStore::makePBFromWeight` and `divideResidualByWeight`, as
+`casa-imaging-products/src/normalization.rs` implements them. For one term
+both residual cutoffs are PB > pblimit where the weight is positive. At
+negative weights, which FFT ringing leaves at a mosaic's edges, flat noise
+keeps CASA's absolute value and flat sky has no support.
+`SIImageStoreMultiTerm::divideResidualByWeight` keeps the flat-noise cutoff
+for flat sky, so a Taylor family's flat-sky residual is blanked where
+PB ≤ √pblimit. For example, with pbmax = 1, pblimit = 0.2 and a weight of
+0.1, one term keeps the sample (0.1 > 0.04) and a Taylor family blanks it
+(0.1 ≤ 0.2).
 
 The product list (image, residual, psf, sumwt, model, pb, mask, weight,
 alpha, alpha.error, pbcor) replaces the product graph topology. The CASA
@@ -1720,3 +1783,5 @@ recorded in those outcome sections.
 | #660 2 | The `MODEL_DATA` writer's fix needed a casa-tables API (`Table::array_column_tile_bytes`) and fixed a latent sparse-save bug; four allowlisted casa-tables files grew | this table; `TESTING.md` memory rules |
 | #660 3 | A Metal purge-on-drop, withdrawn: the reading it answered was macOS's footprint lag after frees | this table; `TESTING.md` memory rules |
 | #660 4 | The three documents ADR-0013 and ADR-0014 name, and the source study one of them linked, deleted too; the ADRs keep their text as history (owner, 2026-10-16) | this table |
+| #660 5 | The catalog's `backend` details say the GPU predicts at native channels and forms the residual there; description only, so `semantic_revision` stays 2 (owner, 2026-10-16) | §5.8; this table |
+| #660 6 | The visibility writer accepts only `TiledShapeStMan` and `TiledColumnStMan` destinations and refuses any other manager, whose save rewrites all of MAIN, when the writing pass is admitted (#726 review) | `ARCHITECTURE.md` (MODEL_DATA and CORRECTED_DATA); this table |
