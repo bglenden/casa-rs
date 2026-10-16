@@ -43,10 +43,10 @@ pub enum ProductsError {
     },
     /// An authoritative Normal State window could not be read.
     #[error(transparent)]
-    NormalAccess(#[from] casa_imaging_reconstruction::SpectralOperatorError),
+    NormalAccess(#[from] casa_imaging_deconvolution::NormalStateError),
     /// An authoritative model plane could not be read for product generation.
     #[error(transparent)]
-    ModelAccess(#[from] casa_imaging_reconstruction::ModelLifecycleError),
+    ModelAccess(#[from] casa_imaging_deconvolution::ModelLifecycleError),
     /// A direction-dependent sensitivity plane has no positive value: no
     /// weighted sample reached it.
     #[error("the sensitivity plane has no positive support")]

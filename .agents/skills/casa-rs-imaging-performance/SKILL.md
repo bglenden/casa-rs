@@ -33,11 +33,21 @@ necessarily a historical per-sample interface. Scalar arithmetic is not itself
 the diagnosis; inspect compiler output when hoisting or vectorization is the
 unresolved question. Do not prescribe SIMD or fast-math as a substitute for this.
 
-Inspect the matching mechanism in the last optimized pre-cutover revision
-`fff9c2d553eace4b6a57b1df9ded4773f2263ceb` early. Its source and deleted
-performance ledgers can reveal useful locality, reuse, and streaming choices.
-Consult CASA/casacore for disputed science semantics and LibRA for a relevant
-technique; do not make every local experiment a three-repository survey.
+Read the prior art before experimenting. The imaging foundation (#648)
+measured and recorded most of the optimizations worth trying:
+- the #648 results table: the 27 retained changes, the rejected candidates
+  and the accepted costs;
+- the catalogue of the pre-refactor build `f38033668a`'s mechanisms, with
+  its do-not-retry list (#659, comment 6134710065); that build is the
+  baseline for diagnosing a regression;
+- the cube, Metal and MFS checkpoint and audit documents IF-11 retired,
+  still in git at `ebb0c66a7b:docs/imaging-architecture/`;
+- the older pre-cutover revision `fff9c2d553eace4b6a57b1df9ded4773f2263ceb`
+  and its deleted performance ledgers.
+Then measure with per-stage counters (`--stage-timing`,
+`--metal-stage-timing`) before choosing what to change. Consult CASA/casacore
+for disputed science semantics and LibRA for a relevant technique; do not
+make every local experiment a three-repository survey.
 
 Local upstreams are under `/Users/brianglendenning/SoftwareProjects/`:
 `casa`, `casacore`, and `libRA`. Reuse proven mechanisms through the current
@@ -64,7 +74,12 @@ end-to-end performance claim, not as a prerequisite to a cheap experiment.
 
 Start with one before/after observation and correctness checks for a clear effect.
 Repeat only when noise or effect size leaves the decision unresolved; do not
-impose a fixed pair count. If unchanged phases drift from historical timings,
+impose a fixed pair count. On the fanless laptop, back-to-back runs throttle:
+alternate A B B A with rests on a quiet host, and track small steps in
+instructions retired (which repeat to about 0.1%) before confirming in
+cycles. Compare equal work: cap `--nmajor` when builds stop after different
+pass counts. Report user CPU and cycles beside wall time, and a W1 run beside
+any W4 bar: parallelism must not mask a serial cost. If unchanged phases drift from historical timings,
 run a current parent control before attributing that drift to the candidate.
 Include source/build, selection, backend, cache state, elapsed time and output
 checks; disclose single observations without claiming statistical significance.
@@ -105,6 +120,33 @@ Before a long run, check data and disk availability and use progress/resource
 monitoring that can stop at the agreed limits. Do not wait through opaque runs
 or repeated unchanged failures. Reuse completed CASA references when their
 inputs and parameters have not changed.
+
+## Evidence discipline
+
+`TESTING.md` ("Imaging tiers and evidence") is the rule; this is how it
+fails in practice. Name every run's build (commit, any evidence-only patch),
+linked FFTW, input and host, backend and grid precision as the run summary
+records them, worker and memory policy, comparator, and cache state. Since
+`backend = auto` and the f64 CPU default, a run that names neither may grid
+somewhere else than its label says: read `<imagename>.summary.json` before
+attributing a change. Build evidence binaries from the committed state and
+rerun the affected T1.5 rows before recording numbers.
+
+Memory evidence compares each phase's peak footprint (over the footprint
+before the first phase) with its `peak_reserved_bytes`. On macOS the
+footprint drops 50 ms to about 1 s after memory is freed, host or Metal
+alike (IF-11 measured a 1.6 GB Metal model copy and a plain 262 MB `Vec`).
+A phase that starts right after a large free can therefore read above its
+reservation. Judge a phase boundary after the process idles about a second,
+or count the lag within the allowance for allocator overhead, before calling
+it an under-charge, and check that the allocation is still live. A real live
+allocation above its reservation gets a counting or mechanism law. An explicit evidence budget needs an
+evidence-only patch, because production reads no environment and clips an
+explicit budget to `vm_stat`'s free memory.
+
+Judge a finished row against CASA's own time and products, not against
+intermediate builds; old-build A/Bs diagnose a regression, they do not
+accept a row.
 
 ## Acceptance and reporting
 

@@ -3,7 +3,7 @@
 //! is imaged (the compiled `fitspw` transform, CASA `uvcontsub`).
 
 use casa_imaging_model::{ContinuumFitRule, SelectedNumericRow};
-use casa_imaging_reconstruction::{ContinuumRowInput, ContinuumSample, fit_and_subtract_continuum};
+use casa_imaging_operator::{ContinuumRowInput, ContinuumSample, fit_and_subtract_continuum};
 use casa_imaging_runtime::pass::SourceError;
 use num_complex::{Complex32, Complex64};
 

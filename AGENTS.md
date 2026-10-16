@@ -1,7 +1,7 @@
 # Agent Operating Contract
 
 Truth class: normative
-Last reality check: 2026-10-07
+Last reality check: 2026-10-16
 Verification: just docs-check
 
 casa-rs is a native Rust implementation of casacore/CASA libraries and
@@ -151,17 +151,16 @@ The internal disk is small. Do not fill it.
 - Done means the relevant gates are green, the evidence is recorded on the
   issue or PR, and the docs match reality.
 
-## Imaging Foundation (#648, tickets IF-0 to IF-11)
+## Imaging
 
-The owner-approved plan
-`docs/imaging-architecture/imaging-foundation-plan-20261007.md` and ADR-0016
-are the work contract. Each ticket body carries outcome, deletion rows and
-acceptance tests; plan section 10 is the review checklist; section 9.3 defines
-the review gates R1–R4. Gates per ticket are its T0/T1/T1.5 tests, clippy
-`-D warnings` on touched crates, the dependency checker and `just quick`;
-`just verify` runs once at IF-11. Rust API changes need no approval (see Ask
-First); the deletions and dependency-direction changes written in the plan
-are pre-approved; persisted CASA-interoperable formats, cleanup and release
-still need approval. Record
-disagreements between plan and code under `## Deviations` on the ticket as
-they occur. Programme #486 and its rules are retired.
+The imaging foundation (#648, tickets IF-0 to IF-11) is complete. ADR-0016
+and its dependency checker stay binding. The plan
+`docs/imaging-architecture/imaging-foundation-plan-20261007.md` records the
+design as landed (section 5), the review checklist every imaging change is
+held to (section 10) and the deviations taken (section 12). An imaging
+change runs its T0 and T1 tests, the T1.5 rows its code touches
+(`TESTING.md`), clippy `-D warnings` on touched crates, the dependency
+checker and `just quick`; an owner that changes what it keeps adds a
+counting law. Evidence runs follow `TESTING.md` "Imaging tiers and
+evidence". Open imaging work is in #445, #447–#450, #653, #690, #714 and
+#719–#721. Programme #486 and its rules are retired.

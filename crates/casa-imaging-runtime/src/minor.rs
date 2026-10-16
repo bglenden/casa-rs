@@ -18,6 +18,11 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_imaging_deconvolution::{
+    AutoMaskBeam, AutoMultithreshEvidence, FinalNormalState, ImageDomainReconstructionMaskPlans,
+    ImageDomainReconstructionMasks, MajorCycleCompletion, MaskError, ModelGeneration,
+    ModelLifecycle, ModelLifecycleError, NormalBasis, NormalStateError, SpectralChannelValidity,
+};
+use casa_imaging_deconvolution::{
     Clark, Component, CycleControls, Delta, Hogbom, LinearRefresh, MinorCycleView, Multiscale,
     PlaneOutcome, PlaneShape, PlaneStatistics, PlaneStop, PsfSummary, ResidualStatistics, Solver,
     Support, Taylor, run_plane,
@@ -28,12 +33,6 @@ use casa_imaging_model::{
 };
 use casa_imaging_products::{
     MinorCycleImageResponse, MosaicSensitivity, ProductsError, ResidualFamily,
-};
-use casa_imaging_reconstruction::{
-    AutoMaskBeam, AutoMultithreshEvidence, FinalNormalState, ImageDomainReconstructionMaskPlans,
-    ImageDomainReconstructionMasks, MajorCycleCompletion, MaskError, ModelGeneration,
-    ModelLifecycle, ModelLifecycleError, NormalStateCatalog, SpectralChannelValidity,
-    SpectralOperatorError,
 };
 
 use crate::pass::WorkerTeam;
@@ -50,7 +49,7 @@ pub enum MinorCycleRunError {
     Mask(#[from] MaskError),
     /// A normal-state plane could not be read.
     #[error("normal state: {0}")]
-    Normal(#[from] SpectralOperatorError),
+    Normal(#[from] NormalStateError),
     /// The model support could not be read or a term is out of range.
     #[error("model: {0}")]
     Model(#[from] ModelLifecycleError),
@@ -656,7 +655,7 @@ pub fn run_minor_cycle(
 
 /// Whether `normal` holds one Taylor family (decided once per cycle half).
 fn is_taylor(normal: &FinalNormalState) -> bool {
-    normal.catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1
+    normal.basis() == NormalBasis::Taylor
 }
 
 /// The planes a minor cycle cleans, in CASA's order within each image

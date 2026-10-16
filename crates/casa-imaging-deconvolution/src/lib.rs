@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
 
-//! Image-domain deconvolution: the minor-cycle driver, the CLEAN controller
-//! and the solvers.
+//! Image-domain reconstruction: the state a run reconstructs from and into,
+//! and the minor cycle that updates it.
 //!
-//! [`run_plane`] runs a [`Solver`] (Högbom, Clark, multiscale, multi-term)
+//! **State.** A major-cycle pass appends its unnormalised images to a
+//! [`MajorCycle`], which pairs them with the final model the pass predicted
+//! and releases both as one [`MajorCycleCompletion`]: the
+//! [`FinalNormalState`] (residual, PSF moments, sensitivity and `sumwt` per
+//! plane, resident or paged) and the [`ModelGeneration`]. A
+//! [`ModelLifecycle`] owns the run's model generations and applies each
+//! minor cycle's sparse update. [`ReconstructionMask`]s, from boxes or
+//! CASA's `auto-multithresh`, bound where the model may change.
+//!
+//! **Minor cycle.** [`run_plane`] runs a [`Solver`] (Högbom, Clark, multiscale, multi-term)
 //! over one plane's [`MinorCycleView`] in steps, under the per-plane rules
 //! of [`PlaneControl`], and returns the plane's model [`Delta`]. The
 //! run-wide rules between major cycles — `niter`, the global threshold with
@@ -22,7 +31,13 @@ mod clark;
 mod controller;
 mod driver;
 mod hogbom;
+mod major_cycle;
+mod mask;
+mod model_lifecycle;
+mod model_storage;
 mod multiscale;
+mod normal_state;
+mod normal_values;
 mod patch;
 mod plane;
 mod psf;
@@ -30,6 +45,34 @@ mod refresh;
 mod scales;
 mod solver;
 mod taylor;
+
+pub use major_cycle::{
+    FinalNormalDomainState, FinalNormalState, FinalNormalStateCoefficientTerm,
+    FinalNormalStateNormalMoment, FinalNormalStatePlane, FinalNormalStateWindow, MajorCycle,
+    MajorCycleCompletion, MajorCycleError, PassAppender, normal_state_window_residency_bytes,
+};
+pub use mask::{
+    AutoMaskBeam, AutoMultithreshControls, AutoMultithreshEvidence, ImageDomainMaskMaterialization,
+    ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MaskBox, MaskError,
+    ReconstructionMask, ReconstructionMaskPlan, ReconstructionMaskSet, auto_multithresh,
+    direction_world_to_pixel, reproject_mask_support,
+};
+pub(crate) use model_lifecycle::validate_model_value;
+pub use model_lifecycle::{
+    ModelGeneration, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
+};
+pub use model_storage::{
+    ModelSampleStorage, ModelSampleUpdate, ModelStorageFactory, ModelStoragePlan,
+};
+pub(crate) use normal_state::PassNormalState;
+pub use normal_state::storage::{
+    FinalNormalPlaneReader, NormalArrayStorage, NormalStorageFactory, NormalStoragePlan,
+};
+pub use normal_state::{
+    NormalBasis, NormalStateError, PassImages, SpectralChannelValidity, SpectralSlabPlan,
+    resident_bytes_per_cell,
+};
+pub use normal_values::{NormalValues, SensitivityValues};
 
 pub use beam::{
     DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_restoring_beam,

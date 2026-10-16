@@ -10,12 +10,12 @@ use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo, ProjectionType,
 };
 use casa_images::AnyPagedImage;
+use casa_imaging_deconvolution::{
+    AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, ReconstructionMaskPlan,
+};
 use casa_imaging_model::{
     AxisOrder, DirectionCoordinateSpec, DirectionFrame, FacetLayout, ImageAxis, ImageDomainRole,
     ImageDomainSpec, ImageShape, PolarizationCoordinate, Projection, SkyDirection,
-};
-use casa_imaging_reconstruction::{
-    AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, ReconstructionMaskPlan,
 };
 use casa_types::measures::direction::DirectionRef;
 
@@ -281,7 +281,7 @@ fn reproject_image_mask(
         .find_coordinate(CoordinateType::Direction)
         .ok_or(PrepareError::MaskImageDirection)?;
     let source_spec = direction_model_spec(source_coordinates.coordinate(index))?;
-    let support = casa_imaging_reconstruction::reproject_mask_support(
+    let support = casa_imaging_deconvolution::reproject_mask_support(
         source_spec,
         [source_shape[0], source_shape[1]],
         &source_support,

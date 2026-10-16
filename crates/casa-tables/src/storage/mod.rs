@@ -3179,6 +3179,43 @@ impl CompositeStorage {
         }
     }
 
+    pub(crate) fn array_column_tile_bytes(
+        &self,
+        table_path: &Path,
+        column: &str,
+    ) -> Result<Option<usize>, StorageError> {
+        let control_path = table_path.join(TABLE_CONTROL_FILE);
+        if !control_path.exists() {
+            return Err(StorageError::MissingControlFile(control_path));
+        }
+        let TableDatResult::Plain(table_dat) = read_table_dat_dispatch(&control_path)? else {
+            return Ok(None);
+        };
+        let Some(dm_seq_nr) = table_dat
+            .column_set
+            .columns
+            .iter()
+            .find(|entry| entry.original_name == column)
+            .map(|entry| entry.dm_seq_nr)
+        else {
+            return Ok(None);
+        };
+        let Some(dm) = table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .find(|dm| dm.seq_nr == dm_seq_nr)
+        else {
+            return Ok(None);
+        };
+        match dm.type_name.as_str() {
+            "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan" => {
+                tiled_stman::tiled_bucket_bytes(table_path, dm.seq_nr).map(Some)
+            }
+            _ => Ok(None),
+        }
+    }
+
     pub(crate) fn array_column_2d_channel_tile_width(
         &self,
         table_path: &Path,

@@ -1,7 +1,7 @@
 # Agent Reference
 
 Truth class: normative
-Last reality check: 2026-10-10
+Last reality check: 2026-10-16
 Verification: just docs-check
 
 This is situational guidance for agents. Read only the section relevant to the
@@ -113,6 +113,39 @@ and replace superseded runs rather than accumulating them.
 
 Use `TESTING.md` to decide when these heavier commands apply. Routine branch
 merges do not run release/tag-only gates.
+
+## Imaging Evidence
+
+`TESTING.md` ("Imaging tiers and evidence") says what an evidence run must
+record. Locations on this workstation:
+
+- **T1.5 harness** (not in the repository): working copies under
+  `/Volumes/GLENDENNING/casa-rs-evidence/if/IF-8/{refim,kernels}`, each with
+  `t15.py`, `casa_references.py` and its `data/`, `casa/` and `bin/` folders.
+  Run `T15_TAG=-<commit> /Applications/CASA.app/Contents/MacOS/python3
+  t15.py bin/casars-imager-<commit> [cases]` in each, with a binary built
+  from the committed state; about 15 minutes for both. Durable copies of the
+  scripts, the CASA 6.7.6 references and the results are on the NAS under
+  `/Volumes/home/casa-rs/if10/`; the inputs are the NAS casatestdata
+  (`measurementset/{vla,alma,evla}`, `unittest/tclean`). Check each case's
+  `image.summary.json` `backend` when a result jumps: a case that names no
+  backend runs on `auto`.
+- **T2 matrix**: `tools/perf/imager/run_workload.py` with
+  `CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance` and
+  `CASA_RS_CASA_PYTHON`; receipts under
+  `/Volumes/GLENDENNING/casa-rs-evidence/if/t2/`, durable copies on the NAS.
+- **Timed rows and large inputs** (pilot, 512-plane cube, deep32, full
+  cube, Wave3, #625): `~/SoftwareProjects/casa-rs-if10-data.noindex/` on
+  this laptop, `~/ext/SoftwareProjects/casa-rs-data/` on the Mac mini, and
+  the NAS manifests under `/Volumes/home/casa-rs/if10/`. The pre-refactor
+  build `f38033668a` is the baseline for diagnosing a regression, not for
+  accepting a row.
+- **An explicit memory policy**: production reads none from the
+  environment. An evidence run that needs one (forced paging, a fixed
+  budget) builds an evidence-only patch of `ImagingRequest::resource_policy`
+  and `HostResources::detect` from the committed head, labels the binary
+  with the patch, and reverts the checkout afterwards; IF-11's patch is
+  recorded on #660.
 
 ## TUI Evidence
 

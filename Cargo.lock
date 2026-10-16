@@ -604,7 +604,6 @@ dependencies = [
  "casa-imaging-model",
  "casa-imaging-operator",
  "casa-imaging-products",
- "casa-imaging-reconstruction",
  "casa-imaging-runtime",
  "casa-ms",
  "casa-provider-contracts",
@@ -686,7 +685,6 @@ dependencies = [
  "casa-images",
  "casa-imaging-deconvolution",
  "casa-imaging-model",
- "casa-imaging-reconstruction",
  "casa-numerics",
  "casa-test-support",
  "casa-types",
@@ -694,24 +692,6 @@ dependencies = [
  "ndarray",
  "num-complex",
  "tempfile",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
-name = "casa-imaging-reconstruction"
-version = "0.27.0"
-dependencies = [
- "bytemuck",
- "casa-fft",
- "casa-images",
- "casa-imaging-model",
- "casa-numerics",
- "casa-test-support",
- "ndarray",
- "num-complex",
- "serde_json",
- "smallvec",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -725,7 +705,6 @@ dependencies = [
  "casa-imaging-model",
  "casa-imaging-operator",
  "casa-imaging-products",
- "casa-imaging-reconstruction",
  "casa-lattices",
  "casa-ms",
  "casa-tables",

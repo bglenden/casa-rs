@@ -3,7 +3,7 @@ name = "casa-imaging-deconvolution"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Minor-cycle driver, controller and solvers (Hogbom, Clark, multiscale, Taylor)"
+description = "Image-domain reconstruction: normal and model state, masks, the major-cycle pairing, and the minor-cycle driver, controller and solvers"
 repository.workspace = true
 publish = false
 
@@ -11,7 +11,7 @@ publish = false
 workspace = true
 
 [dependencies]
-bytemuck = "1.25"
+bytemuck = { version = "1.25", features = ["extern_crate_alloc"] }
 casa-fft = { path = "../casa-fft" }
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-numerics = { path = "../casa-numerics" }

@@ -24,12 +24,12 @@
 //! channel-local basis gives output channel `c` weight `1 + c`. Every domain
 //! sees every sample unless a test replaces its weights.
 
+use casa_imaging_deconvolution::{
+    FinalNormalState, MajorCycle, MajorCycleCompletion, ModelGeneration, ModelLifecycle,
+    ModelStoragePlan, NormalStoragePlan, PassImages, PreparedFinalModel,
+};
 use casa_imaging_model::{
     CompiledProblem, ModelDeltaTerm, ModelSupport, ReconstructionBasis, SpectralWcs,
-};
-use casa_imaging_reconstruction::{
-    FinalNormalState, MajorCycle, MajorCycleCompletion, ModelGeneration, ModelLifecycle,
-    ModelStoragePlan, PassImages, PreparedFinalModel, runtime_adapter::NormalStoragePlan,
 };
 
 /// Traversal counts every synthetic pass reports; any positive pair proves

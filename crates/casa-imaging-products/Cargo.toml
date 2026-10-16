@@ -21,7 +21,6 @@ casa-fft = { path = "../casa-fft" }
 casa-images = { path = "../casa-images" }
 casa-imaging-deconvolution = { path = "../casa-imaging-deconvolution" }
 casa-imaging-model = { path = "../casa-imaging-model" }
-casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
 casa-numerics = { path = "../casa-numerics" }
 casa-types = { path = "../casa-types" }
 libc = "0.2"

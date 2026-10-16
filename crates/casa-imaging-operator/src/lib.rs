@@ -7,15 +7,16 @@
 //! visibilities) and its adjoint `A*` (weighted visibilities to unnormalised
 //! image-domain normal images) as one implementation parameterised by a
 //! convolution-function set ([`ConvolutionFunctionSet`]: the standard
-//! [`Spheroidal`] set here, W-planes, AW catalog and mosaic primary beam in
-//! later tickets) and a gridding backend ([`GridBackend`]: [`CpuBackend`]
+//! [`Spheroidal`] set, [`WPlanes`], the [`AwCatalog`] and the mosaic
+//! [`MosaicPb`]) and a gridding backend ([`GridBackend`]: [`CpuBackend`]
 //! here; the Metal backend in `casa-imaging-metal` grids into
 //! [`GridStorage::Device`] cells). It also owns the global weighting generation
-//! ([`WeightingGeneration`]) and the spectral resampler that turns native
-//! rows into [`Placement`]s.
+//! ([`WeightingGeneration`]), the spectral resampler that turns native
+//! rows into [`Placement`]s, and CASA's visibility-domain continuum fit
+//! ([`fit_and_subtract_continuum`]).
 //!
 //! The design is `docs/imaging-architecture/imaging-foundation-plan-20261007.md`
-//! section 5.3 and ADR-0016; ticket IF-1 (#650) filled this crate.
+//! section 5.3 and ADR-0016.
 //!
 //! # Conventions
 //!
@@ -34,6 +35,7 @@
 mod accumulator;
 mod aw;
 mod backend;
+mod continuum;
 mod convolution;
 mod cpu;
 mod dense;
@@ -59,6 +61,10 @@ pub use aw::{
     NativeAwGenerationError, NativeAwPair, NativeAwPlane,
 };
 pub use backend::{GridBackend, PreparedModelGrids, Work};
+pub use continuum::{
+    ContinuumFitError, ContinuumFitStatus, ContinuumRowInput, ContinuumRowResult, ContinuumSample,
+    fit_and_subtract_continuum,
+};
 pub use convolution::{
     CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
     MuellerRouting, RowContext, TapLayout,

@@ -4,13 +4,13 @@
 
 use std::path::{Path, PathBuf};
 
+use casa_imaging_deconvolution::{
+    ImageDomainReconstructionMaskPlans, MajorCycleCompletion, ReconstructionMaskSet,
+};
 use casa_imaging_model::CompiledProblem;
 use casa_imaging_products::{
     ContinuumProductInputs, FacetSumWeights, MinorCycleImageResponse, PlannedContinuumGeneration,
     ProductStoragePlan, ProductsError, PublishedContinuumGeneration, produce_continuum_members,
-};
-use casa_imaging_reconstruction::{
-    ImageDomainReconstructionMaskPlans, MajorCycleCompletion, ReconstructionMaskSet,
 };
 use casa_imaging_runtime::pass::{PassError, WorkerTeam, WorkerTeams};
 use casa_imaging_runtime::{

@@ -4,11 +4,11 @@
 
 use std::borrow::Cow;
 
+use casa_imaging_deconvolution::FinalNormalStateWindow;
 use casa_imaging_model::{
     ProductBlankingPolicy, ProductNormalization, ProductRole, ProductSupportComparison,
     ProductTerm, ProductValidityRule, RestoringBeamPolicy, TaylorSupportReference,
 };
-use casa_imaging_reconstruction::FinalNormalStateWindow;
 use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 
 use crate::AnalyticPrimaryBeamModel;

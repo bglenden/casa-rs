@@ -7,17 +7,14 @@
 //! are the only coordination, and casa-rs stores nothing of its own in it: no
 //! keywords, marker files, generations or identities.
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use casa_imaging_model::{
-    FlagPolicy, MsColumnKind, ObservationSelection, ObservationSnapshotInput,
-    ObservationSourceInput, ObservationSourceProvenance, SelectedColumns,
-    SpectralWindowCoordinateCatalog, SpectralWindowSelection, VisibilityColumn, WeightColumn,
+    FlagPolicy, ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
+    ObservationSourceProvenance, SelectedColumns, SpectralWindowCoordinateCatalog,
+    SpectralWindowSelection, VisibilityColumn, WeightColumn,
 };
-use casa_tables::{ColumnSchema, LockType, Table};
-use casa_types::{
-    ArrayValue, Complex32, PrimitiveType, ScalarValue, Value, measures::MeasuresProvider,
-};
+use casa_types::measures::MeasuresProvider;
 use thiserror::Error;
 
 use crate::selected_pointing::SelectedPointingQueryDomain;
@@ -29,7 +26,11 @@ use crate::{
     SelectedObservationRowSelection,
 };
 
-const VISIBILITY_WRITE_BATCH_ROWS: u64 = 10_000;
+mod visibility_write;
+
+#[cfg(unix)]
+pub use visibility_write::SelectedVisibilityWrite;
+pub use visibility_write::SelectedVisibilityWriteTargets;
 
 /// Explicit production inputs for resolving one selected MeasurementSet.
 ///
@@ -93,293 +94,6 @@ impl SelectedObservationResolutionRequest {
     #[must_use]
     pub fn selection(&self) -> Arc<ObservationSelection> {
         Arc::clone(&self.selection)
-    }
-}
-
-/// Selected visibility columns written by one bounded owner transaction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SelectedVisibilityWriteTargets {
-    model_data: bool,
-    corrected_data: bool,
-}
-
-impl SelectedVisibilityWriteTargets {
-    /// Construct the exact destination set. At least one destination is required.
-    #[must_use]
-    pub const fn new(model_data: bool, corrected_data: bool) -> Self {
-        Self {
-            model_data,
-            corrected_data,
-        }
-    }
-
-    /// Return whether `MODEL_DATA` is written.
-    #[must_use]
-    pub const fn model_data(self) -> bool {
-        self.model_data
-    }
-
-    /// Return whether existing `CORRECTED_DATA` is written.
-    #[must_use]
-    pub const fn corrected_data(self) -> bool {
-        self.corrected_data
-    }
-}
-
-/// Bounded in-place selected-visibility writer following ordinary casacore semantics.
-///
-/// The writer holds the MAIN write lock until it completes. Completion flushes
-/// every selected destination and releases the lock. A failure may leave
-/// partially written derived values, as an interrupted CASA write does; the
-/// next run recomputes them. No backup, staging column, rollback, snapshot,
-/// marker, or content digest is created.
-#[cfg(unix)]
-pub struct SelectedVisibilityWrite {
-    measurement_set: Option<MeasurementSet>,
-    targets: SelectedVisibilityWriteTargets,
-    pending_cell: Option<PendingVisibilityCells>,
-    pending_rows: Vec<usize>,
-    completed: bool,
-}
-
-struct PendingVisibilityCells {
-    row: usize,
-    model_data: Option<ndarray::ArrayD<Complex32>>,
-    corrected_data: Option<ndarray::ArrayD<Complex32>>,
-}
-
-#[cfg(unix)]
-impl SelectedVisibilityWrite {
-    /// Take the MAIN write lock and start an in-place write. `MODEL_DATA` is
-    /// created, zero-filled, when MAIN lacks it, as CASA does.
-    ///
-    /// The MeasurementSet is opened with retained read locks, and MAIN's is
-    /// then upgraded to the write lock. Both wait, as casacore's do, for a
-    /// conflicting lock another process holds. When another process holding
-    /// a read lock waits to upgrade it too, the kernel refuses one of the
-    /// two waits; if it is this one, the write fails with
-    /// [`ObservationOwnerError::WriteLockUnavailable`] and releases its read
-    /// locks.
-    pub fn begin(
-        path: impl AsRef<Path>,
-        targets: SelectedVisibilityWriteTargets,
-    ) -> Result<Self, ObservationOwnerError> {
-        if !targets.model_data && !targets.corrected_data {
-            return Err(ObservationOwnerError::EmptyWriteTargets);
-        }
-        let mut measurement_set = MeasurementSet::open_retained_read(path.as_ref())?;
-        if !measurement_set.main_table_mut().lock(LockType::Write, 0)? {
-            return Err(ObservationOwnerError::WriteLockUnavailable);
-        }
-        let has_model = {
-            let schema = measurement_set.main_table().schema().ok_or_else(|| {
-                MsError::InvalidInput("MeasurementSet MAIN has no schema".to_string())
-            })?;
-            schema.contains_column("MODEL_DATA")
-        };
-        let has_corrected = measurement_set
-            .main_table()
-            .schema()
-            .is_some_and(|schema| schema.contains_column("CORRECTED_DATA"));
-        if targets.corrected_data && !has_corrected {
-            return Err(ObservationOwnerError::MissingCorrectedDataDestination);
-        }
-        if targets.model_data && !has_model {
-            measurement_set.main_table_mut().add_column(
-                ColumnSchema::array_variable("MODEL_DATA", PrimitiveType::Complex32, Some(2)),
-                None,
-            )?;
-            measurement_set
-                .main_table_mut()
-                .prepare_write()
-                .add_tiled_column_clone("DATA", "MODEL_DATA", "TiledModelData")?;
-            let row_count = measurement_set.main_table().row_count();
-            let mut pending_rows = Vec::with_capacity(VISIBILITY_WRITE_BATCH_ROWS as usize);
-            for row in 0..row_count {
-                let data_description_id = main_data_description_id(&measurement_set, row)?;
-                let shape = model_cell_shape(&measurement_set, data_description_id)?;
-                queue_visibility_cell(
-                    measurement_set.main_table_mut(),
-                    "MODEL_DATA",
-                    row,
-                    ArrayValue::Complex32(ndarray::ArrayD::from_elem(
-                        ndarray::IxDyn(&shape),
-                        Complex32::new(0.0, 0.0),
-                    )),
-                )?;
-                pending_rows.push(row);
-                if pending_rows.len() == VISIBILITY_WRITE_BATCH_ROWS as usize {
-                    persist_visibility_rows(
-                        measurement_set.main_table_mut(),
-                        &["MODEL_DATA"],
-                        &pending_rows,
-                    )?;
-                    pending_rows.clear();
-                }
-            }
-            if !pending_rows.is_empty() {
-                persist_visibility_rows(
-                    measurement_set.main_table_mut(),
-                    &["MODEL_DATA"],
-                    &pending_rows,
-                )?;
-            }
-        }
-        Ok(Self {
-            measurement_set: Some(measurement_set),
-            targets,
-            pending_cell: None,
-            pending_rows: Vec::with_capacity(VISIBILITY_WRITE_BATCH_ROWS as usize),
-            completed: false,
-        })
-    }
-
-    /// Write one selected prediction at its physical row/channel/correlation.
-    pub fn write(
-        &mut self,
-        column: MsColumnKind,
-        row: u64,
-        channel: u32,
-        correlation: u32,
-        value: Complex32,
-    ) -> Result<(), ObservationOwnerError> {
-        let row = usize::try_from(row).map_err(|_| ObservationOwnerError::PredictionAddress)?;
-        if self.pending_cell.as_ref().map(|cell| cell.row) != Some(row) {
-            self.flush_pending_cell()?;
-            let measurement_set = self
-                .measurement_set
-                .as_ref()
-                .ok_or(ObservationOwnerError::TransactionClosed)?;
-            let load = |name: &str| -> Result<ndarray::ArrayD<Complex32>, ObservationOwnerError> {
-                let current = measurement_set
-                    .main_table()
-                    .column_accessor(name)?
-                    .get(row)?
-                    .cloned()
-                    .ok_or(ObservationOwnerError::PredictionAddress)?;
-                let Value::Array(ArrayValue::Complex32(values)) = current else {
-                    return Err(ObservationOwnerError::PredictionAddress);
-                };
-                Ok(values)
-            };
-            self.pending_cell = Some(PendingVisibilityCells {
-                row,
-                model_data: self
-                    .targets
-                    .model_data
-                    .then(|| load("MODEL_DATA"))
-                    .transpose()?,
-                corrected_data: self
-                    .targets
-                    .corrected_data
-                    .then(|| load("CORRECTED_DATA"))
-                    .transpose()?,
-            });
-        }
-        let pending = self
-            .pending_cell
-            .as_mut()
-            .ok_or(ObservationOwnerError::TransactionClosed)?;
-        let values = match column {
-            MsColumnKind::ModelData if self.targets.model_data => pending.model_data.as_mut(),
-            MsColumnKind::CorrectedData if self.targets.corrected_data => {
-                pending.corrected_data.as_mut()
-            }
-            _ => None,
-        }
-        .ok_or(ObservationOwnerError::UnselectedWriteTarget)?;
-        let index = [correlation as usize, channel as usize];
-        let Some(cell) = values.get_mut(index) else {
-            return Err(ObservationOwnerError::PredictionAddress);
-        };
-        *cell = value;
-        Ok(())
-    }
-
-    /// Flush the in-place write and release the MAIN write lock.
-    ///
-    /// The selected cells were persisted in bounded row batches, so only the
-    /// table metadata (a newly created `MODEL_DATA`) remains to flush.
-    pub fn complete(mut self) -> Result<(), ObservationOwnerError> {
-        self.flush_pending_cell()?;
-        self.persist_pending_rows()?;
-        let measurement_set = self
-            .measurement_set
-            .as_mut()
-            .ok_or(ObservationOwnerError::TransactionClosed)?;
-        measurement_set.main_table_mut().unlock_metadata_only()?;
-        self.measurement_set = None;
-        self.completed = true;
-        Ok(())
-    }
-
-    fn flush_pending_cell(&mut self) -> Result<(), ObservationOwnerError> {
-        let Some(cell) = self.pending_cell.take() else {
-            return Ok(());
-        };
-        let measurement_set = self
-            .measurement_set
-            .as_mut()
-            .ok_or(ObservationOwnerError::TransactionClosed)?;
-        if let Some(values) = cell.model_data {
-            queue_visibility_cell(
-                measurement_set.main_table_mut(),
-                "MODEL_DATA",
-                cell.row,
-                ArrayValue::Complex32(values),
-            )?;
-        }
-        if let Some(values) = cell.corrected_data {
-            queue_visibility_cell(
-                measurement_set.main_table_mut(),
-                "CORRECTED_DATA",
-                cell.row,
-                ArrayValue::Complex32(values),
-            )?;
-        }
-        self.pending_rows.push(cell.row);
-        if self.pending_rows.len() == VISIBILITY_WRITE_BATCH_ROWS as usize {
-            self.persist_pending_rows()?;
-        }
-        Ok(())
-    }
-
-    fn persist_pending_rows(&mut self) -> Result<(), ObservationOwnerError> {
-        if self.pending_rows.is_empty() {
-            return Ok(());
-        }
-        let columns = match (self.targets.model_data, self.targets.corrected_data) {
-            (true, true) => &["MODEL_DATA", "CORRECTED_DATA"][..],
-            (true, false) => &["MODEL_DATA"][..],
-            (false, true) => &["CORRECTED_DATA"][..],
-            (false, false) => return Err(ObservationOwnerError::EmptyWriteTargets),
-        };
-        let measurement_set = self
-            .measurement_set
-            .as_mut()
-            .ok_or(ObservationOwnerError::TransactionClosed)?;
-        persist_visibility_rows(
-            measurement_set.main_table_mut(),
-            columns,
-            &self.pending_rows,
-        )?;
-        self.pending_rows.clear();
-        Ok(())
-    }
-}
-
-#[cfg(unix)]
-impl Drop for SelectedVisibilityWrite {
-    /// An abandoned write releases the MAIN write lock without flushing the
-    /// cells still queued: the batches persisted so far stay, as after an
-    /// interrupted CASA write, and MAIN is not rewritten.
-    fn drop(&mut self) {
-        if !self.completed {
-            if let Some(measurement_set) = self.measurement_set.as_mut() {
-                let _ = measurement_set.main_table_mut().unlock_metadata_only();
-            }
-            self.measurement_set = None;
-        }
     }
 }
 
@@ -641,6 +355,15 @@ pub enum ObservationOwnerError {
     /// CORRECTED_DATA persistence requires an existing column.
     #[error("selected visibility write requires an existing CORRECTED_DATA column")]
     MissingCorrectedDataDestination,
+    /// A destination cannot be written in place in bounded memory: its
+    /// storage manager's save rewrites every row of its group (ADR-0008).
+    #[error("cannot write {column} in place in bounded memory: {reason}")]
+    UnboundedWriteDestination {
+        /// The destination column.
+        column: &'static str,
+        /// The storage that makes the write unbounded.
+        reason: String,
+    },
     /// A cell write named a column outside the bound destination set.
     #[error("selected visibility write named an unselected destination")]
     UnselectedWriteTarget,
@@ -689,68 +412,6 @@ pub(crate) fn test_pointing_query_domain(
     selected_pointing_query_domain(measurement_set, selection, content_budget)
 }
 
-fn main_data_description_id(
-    measurement_set: &MeasurementSet,
-    row: usize,
-) -> Result<usize, ObservationOwnerError> {
-    let value = measurement_set
-        .main_table()
-        .column_accessor("DATA_DESC_ID")?
-        .get(row)?
-        .ok_or(ObservationOwnerError::PredictionAddress)?;
-    let Value::Scalar(ScalarValue::Int32(data_description_id)) = value else {
-        return Err(ObservationOwnerError::PredictionAddress);
-    };
-    usize::try_from(*data_description_id).map_err(|_| ObservationOwnerError::PredictionAddress)
-}
-
-fn model_cell_shape(
-    measurement_set: &MeasurementSet,
-    data_description_id: usize,
-) -> Result<[usize; 2], ObservationOwnerError> {
-    let data_description = measurement_set.data_description()?;
-    let spectral_window_id =
-        usize::try_from(data_description.spectral_window_id(data_description_id)?)
-            .map_err(|_| ObservationOwnerError::PredictionAddress)?;
-    let polarization_id = usize::try_from(data_description.polarization_id(data_description_id)?)
-        .map_err(|_| ObservationOwnerError::PredictionAddress)?;
-    let channels = usize::try_from(
-        measurement_set
-            .spectral_window()?
-            .num_chan(spectral_window_id)?,
-    )
-    .map_err(|_| ObservationOwnerError::PredictionAddress)?;
-    let correlations = usize::try_from(measurement_set.polarization()?.num_corr(polarization_id)?)
-        .map_err(|_| ObservationOwnerError::PredictionAddress)?;
-    Ok([correlations, channels])
-}
-
-#[cfg(unix)]
-fn queue_visibility_cell(
-    table: &mut Table,
-    column: &str,
-    row: usize,
-    value: ArrayValue,
-) -> Result<(), ObservationOwnerError> {
-    {
-        let mut prepared = table.row_accessor_mut().prepare(&[column])?;
-        prepared.seek(row)?;
-        prepared.set_value_at(0, Value::Array(value))?;
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn persist_visibility_rows(
-    table: &mut Table,
-    columns: &[&str],
-    rows: &[usize],
-) -> Result<(), ObservationOwnerError> {
-    table.prepare_write().save_selected_rows(columns, rows)?;
-    table.discard_persisted_cell_updates(columns, rows);
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -760,12 +421,13 @@ mod tests {
     };
     use casa_imaging_model::{
         CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-        IdSelection, IntentSelection, PointingTimeSampling, RowSelection, SelectedMainRow,
-        SelectedRows, SpectralWindowSelection, UvSelection, compile_observation,
+        IdSelection, IntentSelection, MsColumnKind, PointingTimeSampling, RowSelection,
+        SelectedMainRow, SelectedRows, SpectralWindowSelection, UvSelection, compile_observation,
     };
-    use casa_tables::TableOptions;
-    use casa_types::{ArrayValue, Complex32, RecordField, RecordValue};
+    use casa_tables::{Table, TableOptions};
+    use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
     use ndarray::ArrayD;
+    use std::path::Path;
 
     fn one_row_selection() -> ObservationSelection {
         one_row_selection_with_channels(vec![0])

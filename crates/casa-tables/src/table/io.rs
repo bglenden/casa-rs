@@ -1401,6 +1401,29 @@ impl Table {
             .map(|manager| manager.dm_type.as_str())
     }
 
+    /// Bytes of the largest tile of `column`'s tiled storage manager, which
+    /// reading or writing one of its cells holds whole.
+    ///
+    /// Columns without a tiled manager (or with none on disk yet) and
+    /// in-memory tables return `Ok(None)`.
+    ///
+    /// # Errors
+    ///
+    /// When the table's description or the manager's header cannot be read.
+    pub fn array_column_tile_bytes(&self, column: &str) -> Result<Option<usize>, TableError> {
+        let Some(path) = self.path() else {
+            return Ok(None);
+        };
+        crate::storage::CompositeStorage
+            .array_column_tile_bytes(path, column)
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to inspect the tile size of column '{column}' in table {}: {err}",
+                    path.display()
+                ))
+            })
+    }
+
     /// Returns the channel-axis tile width for a tiled rank-2 array column.
     ///
     /// Non-tiled columns, in-memory tables, or columns whose tiled shape is not

@@ -2455,6 +2455,78 @@ fn incremental_selected_array_cell_writes_retain_at_most_one_cell_and_no_rows() 
     std::fs::remove_dir_all(&root).expect("cleanup test dir");
 }
 
+/// A selected-row save whose rows span the hypercubes of a heterogeneous
+/// `TiledShapeStMan` patches each row into its own cube.
+#[test]
+fn a_selected_row_save_across_tiled_shape_cubes_patches_each_row_in_its_cube() {
+    let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+        "MODEL_DATA",
+        PrimitiveType::Complex32,
+        Some(2),
+    )])
+    .expect("schema");
+    let shape = |row: usize| {
+        if row.is_multiple_of(2) {
+            vec![2, 2]
+        } else {
+            vec![2, 3]
+        }
+    };
+    let cell = |row: usize, value: f32| {
+        let shape = shape(row);
+        let values = shape.iter().product();
+        Value::Array(ArrayValue::Complex32(
+            ndarray::ArrayD::from_shape_vec(shape, vec![Complex32::new(value, 0.0); values])
+                .expect("cell"),
+        ))
+    };
+    let mut table = Table::with_schema(schema);
+    for row in 0..4 {
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "MODEL_DATA",
+                cell(row, row as f32),
+            )]))
+            .expect("append cell");
+    }
+    let root = unique_test_dir("selected_rows_across_tiled_shape_cubes");
+    std::fs::create_dir_all(&root).expect("create test dir");
+    table
+        .save(TableOptions::new(&root).with_data_manager(DataManagerKind::TiledShapeStMan))
+        .expect("save tiled table");
+
+    let mut reopened = Table::open(TableOptions::new(&root)).expect("open lazy tiled table");
+    for row in 0..4 {
+        let mut prepared = reopened
+            .row_accessor_mut()
+            .prepare(&["MODEL_DATA"])
+            .expect("prepare one array column");
+        prepared.seek(row).expect("select row without loading it");
+        prepared
+            .set_value_at(0, cell(row, 10.0 + row as f32))
+            .expect("write one lazy cell");
+    }
+    assert!(!reopened.inner.has_loaded_rows());
+    reopened
+        .prepare_write()
+        .save_selected_rows(&["MODEL_DATA"], &[0, 1, 2, 3])
+        .expect("persist rows of both cubes");
+
+    let verify = Table::open(TableOptions::new(&root)).expect("verify the save");
+    for row in 0..4 {
+        let ArrayValue::Complex32(values) = table_array(&verify, row, "MODEL_DATA").unwrap() else {
+            panic!("MODEL_DATA is complex")
+        };
+        assert_eq!(values.shape(), shape(row).as_slice());
+        assert!(
+            values
+                .iter()
+                .all(|value| *value == Complex32::new(10.0 + row as f32, 0.0))
+        );
+    }
+    std::fs::remove_dir_all(&root).expect("cleanup test dir");
+}
+
 #[test]
 fn selected_row_reads_reuse_open_control_metadata_without_retaining_payloads() {
     use crate::storage::table_control::CONTROL_FILE_READS;
