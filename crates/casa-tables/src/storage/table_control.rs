@@ -1831,7 +1831,7 @@ impl TableDatContents {
                     ref_table,
                 } => {
                     if let Some(desc) = columns.iter_mut().find(|c| c.col_name == *col_name) {
-                        let rel_path = super::strip_directory(ref_table, table_path);
+                        let rel_path = crate::table_path::strip_directory(ref_table, table_path);
                         desc.keywords.push(RecordField::new(
                             "_ForwardColumn_TableName".to_string(),
                             Value::Scalar(ScalarValue::String(rel_path)),
@@ -2003,7 +2003,7 @@ impl TableDatContents {
                     row_column,
                 } => {
                     if let Some(desc) = columns.iter_mut().find(|c| c.col_name == *col_name) {
-                        let rel_path = super::strip_directory(ref_table, table_path);
+                        let rel_path = crate::table_path::strip_directory(ref_table, table_path);
                         desc.keywords.push(RecordField::new(
                             "_ForwardColumn_TableName_Row".to_string(),
                             Value::Scalar(ScalarValue::String(rel_path)),

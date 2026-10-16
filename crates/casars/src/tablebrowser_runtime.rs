@@ -2192,30 +2192,16 @@ fn keyword_owner_prefix(owner: &KeywordOwner) -> String {
     }
 }
 
-fn resolve_linked_table_path(owner_path: &Path, relative: &str) -> PathBuf {
-    let candidate = PathBuf::from(relative);
-    if candidate.is_absolute() {
-        return candidate;
+/// Resolves a stored table reference with casacore's rules
+/// ([`casa_tables::add_directory`]). A plain relative name that names no table
+/// inside the owner is taken as a sibling of the owner instead, for hand-made
+/// tables that store a sibling's bare name.
+fn resolve_linked_table_path(owner_path: &Path, stored: &str) -> PathBuf {
+    let resolved = casa_tables::add_directory(stored, owner_path);
+    if resolved.exists() || stored.starts_with("./") || Path::new(stored).is_absolute() {
+        return resolved;
     }
-
-    let mut stripped = relative;
-    let mut stripped_count = 0usize;
-    while stripped.len() >= 2 && stripped.starts_with("./") {
-        stripped = &stripped[2..];
-        stripped_count += 1;
-    }
-
-    if stripped_count == 0 {
-        let nested = owner_path.join(relative);
-        if nested.exists() {
-            return nested;
-        }
-        return owner_path.parent().unwrap_or(owner_path).join(relative);
-    }
-    if stripped_count == 1 {
-        return owner_path.parent().unwrap_or(owner_path).join(stripped);
-    }
-    owner_path.join(stripped)
+    owner_path.parent().unwrap_or(owner_path).join(stored)
 }
 
 fn compact_optional_value_with_unit(value: Option<&Value>, unit: Option<&str>) -> String {

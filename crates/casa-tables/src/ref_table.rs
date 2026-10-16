@@ -14,8 +14,9 @@ use std::path::Path;
 use casa_types::{RecordValue, Value};
 
 use crate::schema::{ColumnSchema, TableSchema};
-use crate::storage::{CompositeStorage, RefTableDatContents, strip_directory};
+use crate::storage::{CompositeStorage, RefTableDatContents};
 use crate::table::{Table, TableError};
+use crate::table_path::strip_directory;
 
 #[derive(Clone)]
 struct RefLayout {

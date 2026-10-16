@@ -21,7 +21,8 @@ use casa_types::{RecordField, RecordValue, Value};
 use super::StorageError;
 use super::table_control::PlainColumnEntry;
 use super::virtual_engine::{VirtualColumnEngine, VirtualContext};
-use super::{CompositeStorage, StorageManager, add_directory};
+use super::{CompositeStorage, StorageManager};
+use crate::table_path::add_directory;
 
 /// Keyword name storing the referenced table path on each forwarding column.
 const FORWARD_TABLE_KEYWORD: &str = "_ForwardColumn_TableName";
@@ -58,7 +59,7 @@ impl VirtualColumnEngine for ForwardColumnEngine {
             let ref_table_rel = get_forward_table_name(&col_desc.keywords, col_name)?;
 
             // Resolve relative path using C++ addDirectory convention.
-            let ref_table_path = add_directory(&ref_table_rel, ctx.table_path)?;
+            let ref_table_path = add_directory(&ref_table_rel, ctx.table_path);
 
             // Open the referenced table.
             let storage = CompositeStorage;
@@ -129,7 +130,7 @@ impl VirtualColumnEngine for ForwardColumnIndexedRowEngine {
             &first_col_desc.col_name,
         )
         .or_else(|_| get_forward_table_name(&first_col_desc.keywords, &first_col_desc.col_name))?;
-        let ref_table_path = add_directory(&ref_table_rel, ctx.table_path)?;
+        let ref_table_path = add_directory(&ref_table_rel, ctx.table_path);
 
         // Read the row-mapping column name from the DM group keyword.
         let dm_group = &first_col_desc.data_manager_group;

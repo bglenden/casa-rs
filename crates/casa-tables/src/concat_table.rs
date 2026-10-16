@@ -15,10 +15,10 @@ use casa_types::{RecordValue, Value};
 
 use crate::schema::TableSchema;
 use crate::storage::{
-    CompositeStorage, StorageManager, StorageSnapshot, strip_directory,
-    table_control::ConcatTableDatContents,
+    CompositeStorage, StorageManager, StorageSnapshot, table_control::ConcatTableDatContents,
 };
 use crate::table::{Table, TableError, TableOptions};
+use crate::table_path::strip_directory;
 
 /// Row mapping for concatenated tables.
 ///

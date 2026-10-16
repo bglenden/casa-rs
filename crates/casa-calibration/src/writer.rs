@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 
 use casa_ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
-use casa_tables::{DataManagerKind, Table, TableError, TableInfo, TableOptions, TableSchema};
+use casa_tables::{
+    DataManagerKind, Table, TableError, TableInfo, TableOptions, TableSchema, strip_directory,
+};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use thiserror::Error;
 
@@ -108,7 +110,7 @@ impl<'a> CalibrationTableWriter<'a> {
         for name in STANDARD_SUBTABLE_KEYWORDS {
             table.keywords_mut().upsert(
                 *name,
-                Value::table_ref(subtable_keyword_value(&output, &output.join(name))),
+                Value::table_ref(strip_directory(&output.join(name), &output)),
             );
         }
         Ok(Self {
@@ -250,24 +252,6 @@ pub(crate) fn set_measinfo_keyword(
     }
     keywords.upsert("MEASINFO", Value::Record(RecordValue::new(fields)));
     table.set_column_keywords(column, keywords);
-}
-
-pub(crate) fn subtable_keyword_value(base_path: &Path, subtable_path: &Path) -> String {
-    if let Ok(relative) = subtable_path.strip_prefix(base_path) {
-        return format!("././{}", relative.to_string_lossy());
-    }
-    if let Some(parent) = base_path.parent()
-        && let Ok(relative) = subtable_path.strip_prefix(parent)
-    {
-        return format!("./{}", relative.to_string_lossy());
-    }
-    if subtable_path.is_relative() {
-        return format!(
-            "././{}",
-            subtable_path.to_string_lossy().trim_start_matches("./")
-        );
-    }
-    subtable_path.to_string_lossy().to_string()
 }
 
 #[cfg(test)]
