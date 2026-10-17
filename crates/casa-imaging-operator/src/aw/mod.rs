@@ -12,7 +12,7 @@ mod native;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 use casa_imaging_model::{CorrelationType, EvlaAwCellRequest, NativeAwRequestInput};
 use num_complex::Complex32;
@@ -813,7 +813,10 @@ impl AwCatalog {
         loaded.last_use = lru.clock;
         let pair = (loaded.imaging.clone(), loaded.weight.clone());
         lru.bytes += loaded.bytes();
+        // Caching the group ends its load in the same lock hold, so no
+        // other fetcher can mark it loading in between.
         lru.loaded.insert(group, loaded);
+        lru.loading.remove(&group);
         while lru.bytes > lru.bound && lru.loaded.len() > 1 {
             let oldest = lru
                 .loaded
@@ -825,24 +828,36 @@ impl AwCatalog {
                 lru.bytes -= cell.bytes();
             }
         }
-        drop(lru);
-        drop(loading);
+        loading.cached(lru);
         pair
     }
 }
 
-/// A group one fetcher is reading ([`AwCatalog::loaded`]). Dropped, once
-/// the group is cached or as a failed load unwinds, it unmarks the group
-/// and wakes the fetchers waiting on it.
+/// A group one fetcher is reading ([`AwCatalog::loaded`]). Its load ends
+/// with the group cached ([`Self::cached`]) or, dropped as a failed load
+/// unwinds, with the group unmarked; either way the fetchers waiting on it
+/// wake.
 struct Loading<'c> {
     catalog: &'c AwCatalog,
     group: usize,
 }
 
+impl Loading<'_> {
+    /// The group is cached and unmarked in `lru`, one lock hold, which this
+    /// releases before it wakes the waiters.
+    fn cached(self, lru: MutexGuard<'_, Lru>) {
+        drop(lru);
+        self.catalog.load_ended.notify_all();
+        std::mem::forget(self);
+    }
+}
+
 impl Drop for Loading<'_> {
     fn drop(&mut self) {
-        // The load holds no lock, so it cannot have poisoned this one; a
-        // poisoned lock is another thread's panic, which ends the pass.
+        // Only a failed load drops its mark here: a cached group's mark
+        // went with its insert ([`Self::cached`]). The load holds no lock,
+        // so it cannot have poisoned this one; a poisoned lock is another
+        // thread's panic, which ends the pass.
         if let Ok(mut lru) = self.catalog.lru.lock() {
             lru.loading.remove(&self.group);
         }
