@@ -758,6 +758,20 @@ pub enum HogbomIterationAccounting {
     CasaInclusive,
 }
 
+/// CASA's PSF-sidelobe per-cycle stopping threshold law
+/// (`SIMinorCycleController::getMinorCycleControls`): the cycle threshold is
+/// the peak residual times `clamp(sidelobe × factor, minimum, maximum)` PSF
+/// fraction, never below the global threshold.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CycleThresholdRule {
+    /// `cyclefactor`.
+    pub factor: f64,
+    /// `minpsffraction`.
+    pub minimum_psf_fraction: f64,
+    /// `maxpsffraction`.
+    pub maximum_psf_fraction: f64,
+}
+
 /// Scientific stopping and update controls for reconstruction.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReconstructionControls {
@@ -767,9 +781,7 @@ pub struct ReconstructionControls {
     cycle_iteration_limit: Option<usize>,
     maximum_major_cycles: Option<usize>,
     noise_sigma: Option<f64>,
-    cycle_factor: Option<f64>,
-    minimum_psf_fraction: Option<f64>,
-    maximum_psf_fraction: Option<f64>,
+    cycle_threshold: Option<CycleThresholdRule>,
     hogbom_iteration_accounting: HogbomIterationAccounting,
 }
 
@@ -784,9 +796,7 @@ impl ReconstructionControls {
             cycle_iteration_limit: None,
             maximum_major_cycles: None,
             noise_sigma: None,
-            cycle_factor: None,
-            minimum_psf_fraction: None,
-            maximum_psf_fraction: None,
+            cycle_threshold: None,
             hogbom_iteration_accounting: HogbomIterationAccounting::Strict,
         }
     }
@@ -818,9 +828,11 @@ impl ReconstructionControls {
         minimum_psf_fraction: f64,
         maximum_psf_fraction: f64,
     ) -> Self {
-        self.cycle_factor = Some(cycle_factor);
-        self.minimum_psf_fraction = Some(minimum_psf_fraction);
-        self.maximum_psf_fraction = Some(maximum_psf_fraction);
+        self.cycle_threshold = Some(CycleThresholdRule {
+            factor: cycle_factor,
+            minimum_psf_fraction,
+            maximum_psf_fraction,
+        });
         self
     }
 
@@ -870,22 +882,10 @@ impl ReconstructionControls {
         self.noise_sigma
     }
 
-    /// Return the optional CASA cycle-factor multiplier.
+    /// Return CASA's per-cycle threshold rule, when it is bound.
     #[must_use]
-    pub const fn cycle_factor(self) -> Option<f64> {
-        self.cycle_factor
-    }
-
-    /// Return the optional lower PSF-fraction clamp.
-    #[must_use]
-    pub const fn minimum_psf_fraction(self) -> Option<f64> {
-        self.minimum_psf_fraction
-    }
-
-    /// Return the optional upper PSF-fraction clamp.
-    #[must_use]
-    pub const fn maximum_psf_fraction(self) -> Option<f64> {
-        self.maximum_psf_fraction
+    pub const fn cycle_threshold_rule(self) -> Option<CycleThresholdRule> {
+        self.cycle_threshold
     }
 
     /// Return Högbom's iteration-accounting policy.
@@ -2228,27 +2228,15 @@ fn validate_reconstruction(
             reason: "cycle limits must be positive and nsigma must be finite and non-negative",
         });
     }
-    let cycle_threshold_values = [
-        contract.controls.cycle_factor,
-        contract.controls.minimum_psf_fraction,
-        contract.controls.maximum_psf_fraction,
-    ];
-    if cycle_threshold_values.iter().any(Option::is_some)
-        && (cycle_threshold_values.iter().any(Option::is_none)
-            || contract
-                .controls
-                .cycle_factor
-                .is_some_and(|value| !value.is_finite() || value <= 0.0)
-            || contract
-                .controls
-                .minimum_psf_fraction
-                .is_some_and(|value| !value.is_finite() || value < 0.0)
-            || contract
-                .controls
-                .maximum_psf_fraction
-                .is_some_and(|value| !value.is_finite() || value <= 0.0)
-            || contract.controls.minimum_psf_fraction > contract.controls.maximum_psf_fraction)
-    {
+    if contract.controls.cycle_threshold.is_some_and(|rule| {
+        !(rule.factor.is_finite()
+            && rule.factor > 0.0
+            && rule.minimum_psf_fraction.is_finite()
+            && rule.minimum_psf_fraction >= 0.0
+            && rule.maximum_psf_fraction.is_finite()
+            && rule.maximum_psf_fraction > 0.0
+            && rule.minimum_psf_fraction <= rule.maximum_psf_fraction)
+    }) {
         return Err(CompileProblemError::InvalidCapabilityCombination {
             reason: "cycle threshold requires a positive factor and ordered finite PSF fractions",
         });

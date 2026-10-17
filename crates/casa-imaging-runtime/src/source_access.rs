@@ -9,7 +9,7 @@ use casa_ms::{
 };
 
 use crate::pass::{BlockShape, RowSamples, chunk_bytes_per_row, source_block_bytes};
-use crate::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit, free_memory};
+use crate::{Admission, Admitted, Demand, HostResources, ResourcePolicy, admit, free_memory};
 
 /// Relative allowance for the Doppler factor between the frame of a
 /// spectral window's stored `CHAN_FREQ` and the output frame rows reach the
@@ -134,7 +134,7 @@ pub fn finalize_source_access(
     row: RowSamples,
     host: &HostResources,
     policy: &ResourcePolicy,
-) -> Result<(ResolvedSelectedObservationAccess, Reservation), SourceAccessError> {
+) -> Result<Admitted<ResolvedSelectedObservationAccess>, SourceAccessError> {
     let requirements = access.content_requirements(problem)?;
     let maximum_live_blocks = access
         .source_binding()
@@ -193,5 +193,8 @@ pub fn finalize_source_access(
         maximum_live_blocks,
         requirements.maximum_pointing_polynomial_terms(),
     );
-    Ok((access.with_content_budget(budget), reservation))
+    Ok(Admitted {
+        value: access.with_content_budget(budget),
+        reservation,
+    })
 }

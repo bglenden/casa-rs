@@ -15,10 +15,10 @@ mod visibility_transform;
 
 pub use compiled_problem::{
     AwProjectionContract, AwProjectionContractError, CompileProblemError, CompiledProblem,
-    FiniteValuePolicy, HogbomIterationAccounting, InstrumentModel, InstrumentResponse,
-    MeasurementEquationContract, NumericPrecision, NumericalStage, NumericsContract,
-    PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInput,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    CycleThresholdRule, FiniteValuePolicy, HogbomIterationAccounting, InstrumentModel,
+    InstrumentResponse, MeasurementEquationContract, NumericPrecision, NumericalStage,
+    NumericsContract, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
+    ProblemInput, ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
     ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     ProductValidityPolicyError, ReconstructionAlgorithm, ReconstructionBasis,
     ReconstructionContract, ReconstructionControls, ReductionPolicy, RequiredCapability,
