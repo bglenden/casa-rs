@@ -15,14 +15,96 @@
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
+use std::fs::{File, TryLockError};
 use std::path::Path;
 
 use casa_imaging_model::NativeAwRequestInput;
 
 use super::{AwCatalog, AwCatalogError, IMAGING_PREFIX, WEIGHT_PREFIX, cache_error};
 
-/// The request manifest native generation writes beside its cells.
+/// The request manifest native generation writes beside its cells, last,
+/// once every cell is in place.
 const MANIFEST: &str = "CasaRsNativeRequest.txt";
+
+/// The lock file runs share while they read the cache and a generation
+/// holds alone while it writes ([`NativeCacheLock`]).
+const LOCK: &str = "CasaRsNativeCache.lock";
+
+/// The prefix of a cell image being written: [`super::write_cell`] builds
+/// the image under it and renames it to its cell name only when complete,
+/// so a cell name always names a complete image (#739 review).
+pub(super) const STAGING_PREFIX: &str = ".staging-";
+
+/// An advisory lock on a native cache directory, held until dropped
+/// (#739 review). A run holds it shared for as long as its catalog reads
+/// cells, which load lazily. Generation holds it exclusive while it clears
+/// and writes. So a cache is never replaced under a run that reads it, and
+/// a run never opens one that is being written. Both are taken without
+/// waiting: the conflicting run's error names the directory.
+#[derive(Debug)]
+pub struct NativeCacheLock {
+    _file: File,
+}
+
+impl NativeCacheLock {
+    /// The shared lock a reading run holds on the cache at `root`, created
+    /// if missing.
+    ///
+    /// # Errors
+    ///
+    /// The directory or its lock file cannot be created, or another run is
+    /// writing the cache.
+    pub fn shared(root: impl AsRef<Path>) -> Result<Self, AwCatalogError> {
+        let root = root.as_ref();
+        let file = Self::open(root)?;
+        match file.try_lock_shared() {
+            Ok(()) => Ok(Self { _file: file }),
+            Err(TryLockError::WouldBlock) => Err(cache_error(
+                root,
+                "another run is generating this native AW cache; wait for it or use another \
+                 native_cf_cache",
+            )),
+            Err(TryLockError::Error(error)) => {
+                Err(cache_error(root, format!("cannot lock the cache: {error}")))
+            }
+        }
+    }
+
+    /// The exclusive lock generation holds on the cache at `root`, created
+    /// if missing.
+    ///
+    /// # Errors
+    ///
+    /// The directory or its lock file cannot be created, or another run is
+    /// reading or writing the cache.
+    pub fn exclusive(root: impl AsRef<Path>) -> Result<Self, AwCatalogError> {
+        let root = root.as_ref();
+        let file = Self::open(root)?;
+        match file.try_lock() {
+            Ok(()) => Ok(Self { _file: file }),
+            Err(TryLockError::WouldBlock) => Err(cache_error(
+                root,
+                "another run is using this native AW cache, so it cannot be regenerated for this \
+                 request now; wait for that run or use another native_cf_cache",
+            )),
+            Err(TryLockError::Error(error)) => {
+                Err(cache_error(root, format!("cannot lock the cache: {error}")))
+            }
+        }
+    }
+
+    fn open(root: &Path) -> Result<File, AwCatalogError> {
+        std::fs::create_dir_all(root)
+            .map_err(|error| cache_error(root, format!("cannot create: {error}")))?;
+        let path = root.join(LOCK);
+        File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|error| cache_error(&path, format!("cannot open the lock file: {error}")))
+    }
+}
 
 /// The suffix a cell's `CFS_` and `WTCFS_` images share,
 /// `<pa>_0_CF_<frequency>_<w>_<mueller>.im` (one baseline type).
@@ -46,10 +128,15 @@ fn request_suffixes(input: &NativeAwRequestInput) -> HashSet<String> {
 }
 
 /// The manifest of `input`: one line per input that enters a cell, values
-/// in Rust's round-trip `Debug` form so equal text means equal bits.
-/// The channel frequencies and SPW identifiers of a frequency group route
-/// rows but do not enter its cell, and the cell bound only limits the
-/// request, so neither is recorded.
+/// in Rust's round-trip `Debug` form, so equal text means equal values
+/// (signed zeros differ, which can only cost a needless regeneration). The
+/// dish surface is recorded by its sample count and a 64-bit FNV-1a hash of
+/// its samples' bits, which identifies it with overwhelming but not
+/// certain probability. The channel frequencies and SPW identifiers of a
+/// frequency group route rows but do not enter its cell, and the cell bound
+/// only limits the request, so neither is recorded. A change to how cells
+/// are computed must bump the version line, which invalidates every
+/// existing cache.
 fn manifest(input: &NativeAwRequestInput) -> String {
     let mut text = String::from("casa-rs native AW request, version 1\n");
     let samples = input.surface.samples();
@@ -104,6 +191,17 @@ fn manifest(input: &NativeAwRequestInput) -> String {
         terms.conjugate_beams
     );
     text
+}
+
+/// Remove the manifest from `root`, so the directory claims no request
+/// while its cells change (#739 review).
+pub(super) fn remove_manifest(root: &Path) -> Result<(), AwCatalogError> {
+    let path = root.join(MANIFEST);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(cache_error(&path, format!("cannot remove: {error}"))),
+    }
 }
 
 /// Write `input`'s manifest into `root`.
@@ -258,9 +356,12 @@ impl AwCatalog {
         })
     }
 
-    /// Remove every `CFS_` and `WTCFS_` cell and the request manifest under
-    /// `root`, so a regenerated catalog carries no member of an earlier
-    /// request.
+    /// Remove the request manifest, then every `CFS_` and `WTCFS_` cell and
+    /// any cell image left half written under `root`, so a regenerated
+    /// catalog carries no member of an earlier request. The manifest goes
+    /// first, so a clear that stops part way leaves a directory that claims
+    /// no request. The lock file stays. The caller holds the exclusive
+    /// [`NativeCacheLock`].
     ///
     /// # Errors
     ///
@@ -270,6 +371,7 @@ impl AwCatalog {
         if !root.is_dir() {
             return Ok(());
         }
+        remove_manifest(root)?;
         let entries = std::fs::read_dir(root)
             .map_err(|error| cache_error(root, format!("cannot list: {error}")))?;
         for entry in entries {
@@ -279,12 +381,11 @@ impl AwCatalog {
             let Some(name) = name.to_str() else {
                 continue;
             };
-            if name.starts_with(IMAGING_PREFIX) || name.starts_with(WEIGHT_PREFIX) {
+            if name.starts_with(IMAGING_PREFIX)
+                || name.starts_with(WEIGHT_PREFIX)
+                || name.starts_with(STAGING_PREFIX)
+            {
                 std::fs::remove_dir_all(entry.path()).map_err(|error| {
-                    cache_error(entry.path(), format!("cannot remove: {error}"))
-                })?;
-            } else if name == MANIFEST {
-                std::fs::remove_file(entry.path()).map_err(|error| {
                     cache_error(entry.path(), format!("cannot remove: {error}"))
                 })?;
             }

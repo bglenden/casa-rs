@@ -15,9 +15,9 @@ use casa_imaging_model::{
 use casa_imaging_operator::{
     AwCatalog, AwIndexing, Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend,
     GridGeometry, GridPadding, GridPrecision, GridScalar, ImageExtent, KernelNormalisation,
-    MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane, ModelPrescale, NativeCacheState,
-    NativeManifest, NativeRow, Placement, PlaneRange, PolarizationRouting, RowContext,
-    SampleBuffer, SpectralResampler, TapLayout, WeightingGeneration, Work,
+    MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane, ModelPrescale, NativeCacheLock,
+    NativeCacheState, NativeManifest, NativeRow, Placement, PlaneRange, PolarizationRouting,
+    RowContext, SampleBuffer, SpectralResampler, TapLayout, WeightingGeneration, Work,
 };
 use common::{IMAGE, Rng, buffer, placements, samples};
 use ndarray::Array2;
@@ -984,4 +984,105 @@ fn the_manifest_records_the_terms_and_the_reference_frequency() {
     // One unit in the last place.
     shifted.reference_frequency_hz = f64::from_bits(shifted.reference_frequency_hz.to_bits() + 1);
     assert_eq!(manifest(&shifted), NativeManifest::Differs);
+}
+
+/// Entries of `root` under the staging prefix: half-written cell images.
+fn staged(root: &std::path::Path) -> Vec<String> {
+    std::fs::read_dir(root)
+        .expect("list")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|name| name.starts_with(".staging-"))
+        .collect()
+}
+
+/// #739 review: generation that fails before its first cell leaves no
+/// manifest and no old cell. Neither the failing request nor the cache's
+/// previous one then reads as reusable, so no deployment can accept the old
+/// cells for the new request; the empty directory is simply generated
+/// again.
+#[test]
+fn generation_that_fails_leaves_no_request_claimed() {
+    let root = tempfile::tempdir().expect("cache directory");
+    let subset = subset_request();
+    AwCatalog::generate_native(root.path(), &subset, false).expect("generate");
+    assert!(staged(root.path()).is_empty(), "complete images only");
+    // A flat dish passes validation but its aperture normalises to nothing.
+    let mut failing = subset_request();
+    failing.surface =
+        EvlaDishSurface::new((0..=125).map(|i| [f64::from(i) / 10.0, 0.0, 0.0]).collect())
+            .expect("a valid surface");
+    assert!(AwCatalog::generate_native(root.path(), &failing, false).is_err());
+    for input in [&failing, &subset] {
+        let state = AwCatalog::native_cache_state(root.path(), input).expect("state");
+        assert_eq!(
+            (state.manifest, state.present, state.foreign),
+            (NativeManifest::Absent, 0, 0),
+            "{state}"
+        );
+        assert!(!state.reusable(), "{state}");
+    }
+    AwCatalog::generate_native(root.path(), &subset, true).expect("fill the emptied cache");
+    assert!(
+        AwCatalog::native_cache_state(root.path(), &subset)
+            .expect("state")
+            .reusable()
+    );
+}
+
+/// #739 review: a cell image is published under its name only once
+/// complete, so a write that stops leaves it under its staging name. That
+/// cell counts as missing, whether the imaging or the weight image stopped,
+/// a fill writes it again, and the catalog then opens and serves exactly
+/// what a fresh cache does.
+#[test]
+fn a_half_written_cell_counts_as_missing_and_is_filled_in() {
+    let subset = subset_request();
+    let fresh = tempfile::tempdir().expect("cache directory");
+    AwCatalog::generate_native(fresh.path(), &subset, false).expect("generate");
+    for name in ["CFS_0_0_CF_0_1_0.im", "WTCFS_0_0_CF_0_1_1.im"] {
+        let root = tempfile::tempdir().expect("cache directory");
+        AwCatalog::generate_native(root.path(), &subset, false).expect("generate");
+        let staging = root.path().join(format!(".staging-{name}"));
+        std::fs::rename(root.path().join(name), &staging).expect("stage");
+        std::fs::remove_file(staging.join("table.dat")).expect("break the staged image");
+        let state = AwCatalog::native_cache_state(root.path(), &subset).expect("state");
+        assert_eq!(
+            (state.manifest, state.present, state.expected, state.foreign),
+            (NativeManifest::Matches, 3, 4, 0),
+            "{name}"
+        );
+        assert!(!state.reusable() && state.fillable());
+        AwCatalog::generate_native(root.path(), &subset, true).expect("fill");
+        let state = AwCatalog::native_cache_state(root.path(), &subset).expect("state");
+        assert!(state.reusable(), "{name}: {state}");
+        assert!(staged(root.path()).is_empty(), "{name}");
+        assert_eq!(
+            all_taps(&open(root.path())),
+            all_taps(&open(fresh.path())),
+            "{name}"
+        );
+    }
+}
+
+/// #739 review: readers share a cache, and a writer needs it alone, so a
+/// cache is never replaced under a run that reads it nor read while it is
+/// written. Neither lock waits.
+#[test]
+fn readers_share_a_cache_and_a_writer_needs_it_alone() {
+    let root = tempfile::tempdir().expect("cache directory");
+    let first = NativeCacheLock::shared(root.path()).expect("shared");
+    let second = NativeCacheLock::shared(root.path()).expect("readers share");
+    assert!(NativeCacheLock::exclusive(root.path()).is_err());
+    drop((first, second));
+    let writer = NativeCacheLock::exclusive(root.path()).expect("alone");
+    assert!(NativeCacheLock::shared(root.path()).is_err());
+    assert!(NativeCacheLock::exclusive(root.path()).is_err());
+    drop(writer);
+    NativeCacheLock::shared(root.path()).expect("free again");
 }

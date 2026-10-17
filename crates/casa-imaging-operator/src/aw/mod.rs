@@ -21,12 +21,12 @@ use thiserror::Error;
 
 pub use evla::{EvlaApertureGrid, EvlaApertureModel};
 pub use native::{EvlaAwWorkspace, NativeAwPair, NativeAwPlane};
-pub use native_cache::{NativeCacheState, NativeManifest};
+pub use native_cache::{NativeCacheLock, NativeCacheState, NativeManifest};
 
 use cell_image::{CellMisc, load_group, read_header, write_cell};
 #[cfg(test)]
 use cell_image::{cf_area, dense_cell_padded};
-use native_cache::{cell_suffix, write_manifest};
+use native_cache::{STAGING_PREFIX, cell_suffix, write_manifest};
 
 use crate::convolution::{
     CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
@@ -475,16 +475,21 @@ impl AwCatalog {
     /// images (`CFS_<pa>_0_CF_<f>_<w>_<m>.im` and the `WTCFS_` partner, one
     /// baseline type) so [`AwCatalog::open_casa`] serves them, and record
     /// `input` in the directory's request manifest
-    /// ([`AwCatalog::native_cache_state`]). Existing cells of the same
-    /// names are replaced; with `only_missing`, cells already present are
-    /// kept.
+    /// ([`AwCatalog::native_cache_state`]).
+    ///
+    /// Without `only_missing` the directory is cleared first
+    /// ([`AwCatalog::clear_native`]). With it, the cells already present
+    /// are kept, and the directory must hold nothing of another request
+    /// ([`NativeCacheState::fillable`]). Each cell image is published only
+    /// once complete, and the manifest is written last, so generation that
+    /// fails or stops part way never leaves a directory that claims a
+    /// request it does not hold (#739 review). The caller holds the
+    /// exclusive [`NativeCacheLock`].
     ///
     /// # Errors
     ///
     /// Generation fails or an image cannot be written, or `only_missing`
-    /// is asked of a directory that holds cells of another request
-    /// ([`NativeCacheState::fillable`]): its present cells would be served
-    /// beside cells generated for `input`.
+    /// is asked of a directory that holds cells of another request.
     pub fn generate_native(
         root: impl AsRef<Path>,
         input: &NativeAwRequestInput,
@@ -499,10 +504,11 @@ impl AwCatalog {
                     format!("cannot fill in a cache of another request: {state}"),
                 ));
             }
+        } else {
+            Self::clear_native(root)?;
         }
         std::fs::create_dir_all(root)
             .map_err(|error| cache_error(root, format!("cannot create: {error}")))?;
-        write_manifest(root, input)?;
         let model = EvlaApertureModel::new(input.surface.clone());
         let grid = input.grid;
         let mut workspace: Option<EvlaAwWorkspace> = None;
@@ -572,7 +578,7 @@ impl AwCatalog {
                 }
             }
         }
-        Ok(())
+        write_manifest(root, input)
     }
 
     /// The cache directory.

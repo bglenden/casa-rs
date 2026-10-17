@@ -69,9 +69,17 @@ fn subset() -> NativeAwRequestInput {
 }
 
 fn plan(root: &std::path::Path, policy: NativeAwCachePolicy) -> AwPlan {
+    plan_for(root, policy, subset())
+}
+
+fn plan_for(
+    root: &std::path::Path,
+    policy: NativeAwCachePolicy,
+    input: NativeAwRequestInput,
+) -> AwPlan {
     AwPlan {
         root: root.to_path_buf(),
-        native: Some((policy, subset())),
+        native: Some((policy, input)),
         indexing: AwIndexing {
             conjugate_beams: true,
             image_reference_hz: REFERENCE_HZ,
@@ -127,4 +135,45 @@ fn generate_missing_keeps_a_cache_of_this_request() {
         .modified()
         .expect("mtime");
     assert_eq!(written, kept, "a reusable cache is not regenerated");
+}
+
+/// #739 review: a run's deployment holds the cache's shared lock for as
+/// long as it lives, since its catalog reads cells lazily. Another
+/// request's generate-missing, or a regenerate, is then refused rather than
+/// replacing the cells under it, and the cache stays the first run's. Once
+/// that run ends the cache is regenerated for the other request.
+#[test]
+fn a_cache_in_use_is_not_regenerated_under_its_run() {
+    let root = tempfile::tempdir().expect("cache directory");
+    let running = plan_for(root.path(), NativeAwCachePolicy::GenerateMissing, wide())
+        .deploy()
+        .expect("the first run deploys");
+    for policy in [
+        NativeAwCachePolicy::GenerateMissing,
+        NativeAwCachePolicy::Regenerate,
+    ] {
+        let Err(PrepareError::AwCatalog(error)) = plan(root.path(), policy).deploy() else {
+            panic!("{policy:?} replaced a cache in use");
+        };
+        assert!(error.to_string().contains("another run"), "{error}");
+        assert!(
+            AwCatalog::native_cache_state(root.path(), &wide())
+                .expect("state")
+                .reusable(),
+            "{policy:?} touched the cache in use"
+        );
+    }
+    // Another reader of the same request shares it.
+    let sharing = plan_for(root.path(), NativeAwCachePolicy::ReuseOnly, wide())
+        .deploy()
+        .expect("a second reader shares the cache");
+    drop((running, sharing));
+    plan(root.path(), NativeAwCachePolicy::GenerateMissing)
+        .deploy()
+        .expect("regenerated once the runs end");
+    assert!(
+        AwCatalog::native_cache_state(root.path(), &subset())
+            .expect("state")
+            .reusable()
+    );
 }

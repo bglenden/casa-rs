@@ -94,6 +94,10 @@ pub(crate) struct AwCatalogDeployment {
     pub(crate) root: PathBuf,
     pub(crate) indexing: casa_imaging_operator::AwIndexing,
     pub(crate) resident_bytes: usize,
+    /// A native cache's shared lock, held (never read) while the run lives
+    /// so no other run regenerates the cells it reads lazily (#739 review);
+    /// `None` for an imported CASA cache.
+    pub(crate) _lock: Option<std::sync::Arc<casa_imaging_operator::NativeCacheLock>>,
 }
 
 /// Product-generation controls, the analytic primary beam's pointings and
