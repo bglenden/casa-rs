@@ -866,3 +866,82 @@ fn an_aw_taylor_weight_moment_publishes_its_magnitude() {
         );
     }
 }
+
+/// Every group's key: its gridding and prediction group alike.
+fn group_keys(catalog: &AwCatalog) -> Vec<CfKey> {
+    (0..catalog.groups())
+        .map(|group| CfKey {
+            group: group as u16,
+            cube: group as u16,
+        })
+        .collect()
+}
+
+/// #744: a region router reads a key's gridding half support and
+/// oversampling from the catalog's index, without loading the group or
+/// taking the cache's lock. For every group they are the loaded imaging
+/// taps', and asking for them loads nothing.
+#[test]
+fn the_gridding_metadata_is_the_loaded_taps_and_loads_nothing() {
+    let root = tempfile::tempdir().expect("cache directory");
+    let catalog = generated(root.path(), true, usize::MAX);
+    let keys = group_keys(&catalog);
+    let metadata = keys
+        .iter()
+        .map(|key| {
+            (
+                catalog.gridding_half_support(*key),
+                catalog.gridding_oversampling(*key),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(catalog.loads(), 0, "the metadata loads no group");
+    assert_eq!(catalog.resident_bytes(), 0);
+    for (key, (half_support, oversampling)) in keys.iter().zip(metadata) {
+        let mut hold = CellHold::new();
+        let taps = catalog.taps(*key, &mut hold);
+        assert_eq!(taps.half_support(), half_support, "group {}", key.group);
+        assert_eq!(taps.oversampling(), oversampling, "group {}", key.group);
+    }
+}
+
+/// #744: groups are read outside the cache's lock, and each once. Workers
+/// that fetch every group at the same moment, in the same order, read each
+/// group from disk one time and share its cells.
+#[test]
+fn concurrent_fetches_load_each_group_once() {
+    const WORKERS: usize = 8;
+    let root = tempfile::tempdir().expect("cache directory");
+    let catalog = generated(root.path(), true, usize::MAX);
+    let keys = group_keys(&catalog);
+    let start = std::sync::Barrier::new(WORKERS);
+    let seen = std::thread::scope(|scope| {
+        let workers = (0..WORKERS)
+            .map(|_| {
+                let (catalog, keys, start) = (&catalog, &keys, &start);
+                scope.spawn(move || {
+                    start.wait();
+                    keys.iter()
+                        .map(|key| {
+                            let mut hold = CellHold::new();
+                            let TapLayout::Dense { data, .. } = catalog.taps(*key, &mut hold)
+                            else {
+                                panic!("AW cells are dense");
+                            };
+                            data.as_ptr() as usize
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect::<Vec<_>>();
+        workers
+            .into_iter()
+            .map(|worker| worker.join().expect("worker"))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(catalog.loads(), keys.len() as u64, "each group read once");
+    assert!(
+        seen.iter().all(|cells| *cells == seen[0]),
+        "every worker shares each group's cells"
+    );
+}

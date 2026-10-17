@@ -10,9 +10,9 @@ mod cell_image;
 mod evla;
 mod native;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 use casa_imaging_model::{CorrelationType, EvlaAwCellRequest, NativeAwRequestInput};
 use num_complex::Complex32;
@@ -216,10 +216,16 @@ impl Loaded {
 /// [`CellHold`] after eviction.
 struct Lru {
     loaded: HashMap<usize, Loaded>,
+    /// Groups a fetcher is reading from disk, outside the cache's lock;
+    /// another fetcher of one of them waits for that load rather than
+    /// reading the group again (#744).
+    loading: HashSet<usize>,
     /// Use counter stamped on every fetch.
     clock: u64,
     bytes: usize,
     bound: usize,
+    /// Groups read from disk since the catalog opened.
+    loads: u64,
 }
 
 /// The AW-projection kernel set over a CASA convolution-function cache.
@@ -255,6 +261,9 @@ pub struct AwCatalog {
     mueller: MuellerRouting,
     correction: ImageCorrection,
     lru: Mutex<Lru>,
+    /// Signalled whenever a group's load ends, loaded or not, for the
+    /// fetchers waiting on it ([`Lru::loading`]).
+    load_ended: Condvar,
 }
 
 impl std::fmt::Debug for AwCatalog {
@@ -461,10 +470,13 @@ impl AwCatalog {
             ),
             lru: Mutex::new(Lru {
                 loaded: HashMap::new(),
+                loading: HashSet::new(),
                 clock: 0,
                 bytes: 0,
                 bound: bound_bytes,
+                loads: 0,
             }),
+            load_ended: Condvar::new(),
         })
     }
 
@@ -662,12 +674,21 @@ impl AwCatalog {
         self.lru.lock().expect("cache lock").bytes
     }
 
+    /// Cell groups read from disk since the catalog opened: one per group
+    /// while the cache holds every group, however many workers fetch it at
+    /// once (#744).
+    #[must_use]
+    pub fn loads(&self) -> u64 {
+        self.lru.lock().expect("cache lock").loads
+    }
+
     /// Bytes the catalog holds at most while it lives with `holders`
     /// workers fetching cells: its index and corrections; the cache's bound
     /// and one group past it, which a fetch inserts before the cache
-    /// evicts; and for each holder the largest group, which its
-    /// [`CellHold`] keeps alive after eviction, and the planes it reads to
-    /// build one (each read as an image array and its copy).
+    /// evicts; and for each holder the largest group twice, the one its
+    /// [`CellHold`] keeps alive after eviction and the one it builds outside
+    /// the cache's lock beside it (#744), and the planes it reads to build
+    /// one (each read as an image array and its copy).
     #[must_use]
     pub fn charge_bytes(&self, holders: usize) -> u64 {
         let header = |header: &CellHeader| size_of::<CellHeader>() + header.path.as_os_str().len();
@@ -706,7 +727,7 @@ impl AwCatalog {
         index as u64
             + self.correction.resident_bytes()
             + bound
-            + (holders as u64 + 1) * largest
+            + (2 * holders as u64 + 1) * largest
             + holders as u64 * reading
     }
 
@@ -755,19 +776,41 @@ impl AwCatalog {
         (pa * self.frequencies_hz.len() + frequency) * self.w_values.len() + w
     }
 
-    /// Load group `group`'s cells, or fetch them from the cache, and park
-    /// them in `hold`.
+    /// Fetch group `group`'s cells from the cache, or load them.
+    ///
+    /// The cache's lock is held only to look a group up and to insert it,
+    /// never while a group is read from disk, so a load does not stall the
+    /// other workers' fetches, hits included (#744). One fetcher at a time
+    /// reads a group: it marks the group loading, and another fetcher of
+    /// that group waits for the load to end and then finds it cached. A
+    /// load that panics unmarks its group as it unwinds, so a waiter reads
+    /// the group itself.
     fn loaded(&self, group: usize) -> (Arc<DenseCell>, Arc<DenseCell>) {
         let mut lru = self.lru.lock().expect("cache lock");
-        lru.clock += 1;
-        let now = lru.clock;
-        if let Some(loaded) = lru.loaded.get_mut(&group) {
-            loaded.last_use = now;
-            return (loaded.imaging.clone(), loaded.weight.clone());
+        loop {
+            lru.clock += 1;
+            let now = lru.clock;
+            if let Some(loaded) = lru.loaded.get_mut(&group) {
+                loaded.last_use = now;
+                return (loaded.imaging.clone(), loaded.weight.clone());
+            }
+            if !lru.loading.contains(&group) {
+                break;
+            }
+            lru = self.load_ended.wait(lru).expect("cache lock");
         }
+        lru.loading.insert(group);
+        lru.loads += 1;
+        drop(lru);
+        let loading = Loading {
+            catalog: self,
+            group,
+        };
         let mut loaded = load_group(&self.groups[group], self.oversampling)
             .unwrap_or_else(|error| panic!("AW cell group {group} cannot be read: {error}"));
-        loaded.last_use = now;
+        let mut lru = self.lru.lock().expect("cache lock");
+        lru.clock += 1;
+        loaded.last_use = lru.clock;
         let pair = (loaded.imaging.clone(), loaded.weight.clone());
         lru.bytes += loaded.bytes();
         lru.loaded.insert(group, loaded);
@@ -782,7 +825,28 @@ impl AwCatalog {
                 lru.bytes -= cell.bytes();
             }
         }
+        drop(lru);
+        drop(loading);
         pair
+    }
+}
+
+/// A group one fetcher is reading ([`AwCatalog::loaded`]). Dropped, once
+/// the group is cached or as a failed load unwinds, it unmarks the group
+/// and wakes the fetchers waiting on it.
+struct Loading<'c> {
+    catalog: &'c AwCatalog,
+    group: usize,
+}
+
+impl Drop for Loading<'_> {
+    fn drop(&mut self) {
+        // The load holds no lock, so it cannot have poisoned this one; a
+        // poisoned lock is another thread's panic, which ends the pass.
+        if let Ok(mut lru) = self.catalog.lru.lock() {
+            lru.loading.remove(&self.group);
+        }
+        self.catalog.load_ended.notify_all();
     }
 }
 
@@ -810,6 +874,17 @@ impl ConvolutionFunctionSet for AwCatalog {
 
     fn taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
         hold.lend_keyed(key, 0, || self.loaded(usize::from(key.group)).0)
+    }
+
+    /// The gridding group's imaging support, to which its dense imaging
+    /// cell is padded, read from the index without loading the group.
+    fn gridding_half_support(&self, key: CfKey) -> [u16; 2] {
+        self.groups[usize::from(key.group)].imaging_half_support
+    }
+
+    /// The catalog's one `Sampling`, which every dense cell carries.
+    fn gridding_oversampling(&self, _key: CfKey) -> u16 {
+        self.oversampling
     }
 
     fn max_half_support(&self) -> [u16; 2] {
