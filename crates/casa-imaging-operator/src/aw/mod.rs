@@ -449,16 +449,23 @@ impl AwCatalog {
     /// ([`EvlaAwWorkspace::bytes`]) and the cell image being written (a crop
     /// of the working grid at most as wide, as its pixel array and the copy
     /// the image takes of it, and the image's table and records, 16 KiB);
-    /// and planning the grid's transform, which the process does one at a
-    /// time and then caches for every workspace.
+    /// planning the grid's transform, which the process does one at a time
+    /// and then caches for every workspace; and the bookkeeping that grows
+    /// with the request (#747 review): the work list, two presence bits per
+    /// cell for the state a fill checks first, and the request manifest.
     #[must_use]
     pub const fn generation_bytes(input: &NativeAwRequestInput, workers: usize) -> u64 {
+        let workers = if workers > 1 { workers } else { 1 };
         let cells = input.grid.size * input.grid.size;
         let worker = EvlaAwWorkspace::bytes(input.grid.size)
             + 2 * cells * size_of::<Complex32>()
             + CELL_IMAGE_RECORD_BYTES;
-        (if workers > 1 { workers } else { 1 } * worker) as u64
-            + casa_fft::planning_bytes::<f32>(cells)
+        let apertures =
+            input.pa_values.len() * input.frequencies.len() * input.mueller_elements.len();
+        let bookkeeping = generation::units_bytes(apertures, workers)
+            + native_cache::cache_state_bytes(input)
+            + native_cache::manifest_bytes(input);
+        (workers * worker + bookkeeping) as u64 + casa_fft::planning_bytes::<f32>(cells)
     }
 
     /// Generate every cell of `input` natively into `root` as CASA-format
@@ -504,7 +511,7 @@ impl AwCatalog {
         std::fs::create_dir_all(root)
             .map_err(|error| cache_error(root, format!("cannot create: {error}")))?;
         let units = generation::units(root, input, only_missing, workers);
-        generation::generate(root, input, &units, workers)?;
+        generation::generate(root, input, &units, only_missing, workers)?;
         write_manifest(root, input)
     }
 

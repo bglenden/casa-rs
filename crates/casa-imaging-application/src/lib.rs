@@ -98,6 +98,10 @@ pub(crate) struct AwCatalogDeployment {
     /// so no other run regenerates the cells it reads lazily (#739 review);
     /// `None` for an imported CASA cache.
     pub(crate) _lock: Option<std::sync::Arc<casa_imaging_operator::NativeCacheLock>>,
+    /// The workers that generated the native cache's cells for this run;
+    /// `None` when it generated none (#708).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) generation_workers: Option<usize>,
 }
 
 /// Product-generation controls, the analytic primary beam's pointings and

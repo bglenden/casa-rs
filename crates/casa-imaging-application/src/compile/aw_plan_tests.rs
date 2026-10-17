@@ -193,9 +193,11 @@ fn a_cache_in_use_is_not_regenerated_under_its_run() {
     );
 }
 
-/// #708: generation runs on the most workers whose workspaces fit the
-/// policy. Under a policy of four workers that holds two workspaces it is
-/// admitted on two, where four would be refused.
+/// #708, #747 review: generation runs on the most workers whose workspaces
+/// fit the policy, and on no more than there are cells to generate. Of
+/// eight cells, under a policy of four workers that holds two workspaces,
+/// it runs on two, where three would be refused; a fill of one missing cell
+/// runs on one, however many fit; and a complete cache is reused.
 #[test]
 fn native_generation_takes_the_workers_its_policy_fits() {
     let root = tempfile::tempdir().expect("cache directory");
@@ -204,19 +206,38 @@ fn native_generation_takes_the_workers_its_policy_fits() {
         performance_cores: 4,
         ..HOST
     };
+    let mut input = subset();
+    input.w_values = vec![0.0, 10.0, 20.0, 30.0];
+    input.maximum_cells = 8;
     let two = ResourcePolicy::Explicit {
         workers: 4,
-        memory: AwCatalog::generation_bytes(&subset(), 2),
+        memory: AwCatalog::generation_bytes(&input, 2),
     };
-    assert!(AwCatalog::generation_bytes(&subset(), 4) > two.memory(&host));
-    plan(root.path(), NativeAwCachePolicy::GenerateMissing)
-        .deploy((&host, &two))
-        .expect("generated on two workers");
-    assert!(
-        AwCatalog::native_cache_state(root.path(), &subset())
-            .expect("state")
-            .reusable()
-    );
+    assert!(AwCatalog::generation_bytes(&input, 3) > two.memory(&host));
+    let workers = |policy: &ResourcePolicy| {
+        plan_for(
+            root.path(),
+            NativeAwCachePolicy::GenerateMissing,
+            input.clone(),
+        )
+        .deploy((&host, policy))
+        .expect("deployed")
+        .generation_workers
+    };
+    assert_eq!(workers(&two), Some(2));
+    let state = AwCatalog::native_cache_state(root.path(), &input).expect("state");
+    assert!(state.reusable(), "{state}");
+
+    for prefix in ["CFS_", "WTCFS_"] {
+        std::fs::remove_dir_all(root.path().join(format!("{prefix}0_0_CF_0_2_1.im")))
+            .expect("remove a cell");
+    }
+    let four = ResourcePolicy::Explicit {
+        workers: 4,
+        memory: AwCatalog::generation_bytes(&input, 4),
+    };
+    assert_eq!(workers(&four), Some(1), "one cell to generate");
+    assert_eq!(workers(&four), None, "a complete cache");
 }
 
 /// #738: native generation is admitted before it starts. Under a policy
