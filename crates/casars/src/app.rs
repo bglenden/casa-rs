@@ -148,15 +148,11 @@ use crate::config::{ConfigStore, ThemeMode};
 use crate::execution::{ExecutionEvent, ExecutionPlan, RunningProcess, spawn_process};
 use crate::graphics::{
     BrowserRenderTheme, ImagePlaneColormap, ImagePlaneOverlayMarker, ImagePlaneRenderInput,
-    ImageSpectrumOverlaySeries, ImageSpectrumRenderInput, ImagingPlotPayload,
-    ImagingPlotRenderInput, MsExplorePlotRenderInput, PlotRenderInput, image_plane_layout,
-    image_spectrum_layout, plot_theme, render_image_plane_image, render_image_spectrum_image,
-    render_plot_image,
+    ImageSpectrumOverlaySeries, ImageSpectrumRenderInput, MsExplorePlotRenderInput,
+    image_plane_layout, image_spectrum_layout, plot_theme, render_image_plane_image,
+    render_image_spectrum_image, render_plot_image,
 };
-use crate::imaging_workflow::{
-    ImagingDiagnosticKind, imaging_catalog_entries, imaging_preferred_diagnostic,
-    imaging_products_display_groups,
-};
+use crate::imaging_workflow::imaging_products_display_groups;
 use crate::movie_perf::{
     BackendTimingBreakdown, MovieFrameOutcome, MoviePerfContext, MoviePerfTracer,
     MoviePipelineState,
@@ -681,7 +677,6 @@ pub(crate) struct PlotCatalogRowView {
 pub(crate) enum PlotCatalogTarget {
     Preset(MsPlotPreset),
     Calibration(CalibrationPlotPreset),
-    Imaging(ImagingDiagnosticKind),
     CustomPlot,
     PageSpec,
 }
@@ -2185,7 +2180,7 @@ impl BrowserSession {
 }
 
 struct PlotPanelState {
-    renderer: ProtocolPanelScheduler<PlotRenderInput>,
+    renderer: ProtocolPanelScheduler<MsExplorePlotRenderInput>,
     font_size: (u16, u16),
     request_key: Option<PlotRequestKey>,
     last_error: Option<String>,
@@ -2279,12 +2274,6 @@ struct MeasurementSetRunSnapshot {
     path: Option<PathBuf>,
     options: MeasurementSetSummaryOptions,
     dirty: bool,
-}
-
-#[derive(Debug, Clone)]
-enum CurrentPlotPayload {
-    MsPlot(Box<MsPlotPayload>),
-    Imaging(ImagingPlotPayload),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11754,28 +11743,9 @@ impl AppState {
                 .unwrap_or_else(|| self.default_calibration_plot_target());
             return match target {
                 PlotCatalogTarget::Calibration(preset) => preset.display_name().to_string(),
-                PlotCatalogTarget::Imaging(_)
-                | PlotCatalogTarget::Preset(_)
+                PlotCatalogTarget::Preset(_)
                 | PlotCatalogTarget::CustomPlot
                 | PlotCatalogTarget::PageSpec => "Calibration Plot".to_string(),
-            };
-        }
-        if self.app.id == "imager" {
-            let report = match self.current_imaging_report() {
-                Some(report) => report,
-                None => return "Imaging Diagnostics".to_string(),
-            };
-            let target = self
-                .current_plot_catalog_target()
-                .unwrap_or(PlotCatalogTarget::Imaging(imaging_preferred_diagnostic(
-                    report,
-                )));
-            return match target {
-                PlotCatalogTarget::Imaging(kind) => kind.label().to_string(),
-                PlotCatalogTarget::Calibration(_)
-                | PlotCatalogTarget::Preset(_)
-                | PlotCatalogTarget::CustomPlot
-                | PlotCatalogTarget::PageSpec => "Imaging Diagnostics".to_string(),
             };
         }
         self.msexplore_plot_label()
@@ -11814,26 +11784,6 @@ impl AppState {
                     ),
                 },
             ));
-        }
-        if self.app.id == "imager" {
-            let report = self.current_imaging_report()?;
-            let target = self
-                .current_plot_catalog_target()
-                .unwrap_or(PlotCatalogTarget::Imaging(imaging_preferred_diagnostic(
-                    report,
-                )));
-            return Some(match target {
-                PlotCatalogTarget::Imaging(kind) => {
-                    format!(
-                        "Preview the {} written by the latest imaging run.",
-                        kind.label()
-                    )
-                }
-                PlotCatalogTarget::Calibration(_)
-                | PlotCatalogTarget::Preset(_)
-                | PlotCatalogTarget::CustomPlot
-                | PlotCatalogTarget::PageSpec => "Choose an imaging diagnostic.".to_string(),
-            });
         }
         let ms_path = self.field_text("vis").unwrap_or_default();
         if ms_path.trim().is_empty() {
@@ -12036,11 +11986,7 @@ impl AppState {
         if !(self.app.shell_kind() == AppShellKind::Workflow && self.app.id == "imager") {
             return;
         }
-        self.plot_workspace.selected_catalog_target = Some(PlotCatalogTarget::Imaging(
-            imaging_preferred_diagnostic(report),
-        ));
-        self.clear_plot_render_cache();
-        self.activate_result_tab(ResultTab::Diagnostics);
+        self.activate_result_tab(ResultTab::Products);
         self.result.status_line = format!(
             "Imaging completed. {} artifacts recorded at {}.",
             report.artifacts.len(),
@@ -12403,28 +12349,7 @@ impl AppState {
         build_msexplore_payload_from_spec(&spec)
     }
 
-    fn current_imaging_plot_payload(&self) -> Result<ImagingPlotPayload, String> {
-        let report = self
-            .current_imaging_report()
-            .ok_or_else(|| "run imaging first".to_string())?;
-        let target = self
-            .current_plot_catalog_target()
-            .unwrap_or(PlotCatalogTarget::Imaging(imaging_preferred_diagnostic(
-                report,
-            )));
-        match target {
-            // Imaging runs write no preview images (#681).
-            PlotCatalogTarget::Imaging(kind) => {
-                Err(format!("no preview image available for {}", kind.label()))
-            }
-            PlotCatalogTarget::Calibration(_)
-            | PlotCatalogTarget::Preset(_)
-            | PlotCatalogTarget::CustomPlot
-            | PlotCatalogTarget::PageSpec => Err("choose an imaging diagnostic".to_string()),
-        }
-    }
-
-    fn current_plot_payload(&self) -> Result<CurrentPlotPayload, String> {
+    fn current_plot_payload(&self) -> Result<MsPlotPayload, String> {
         if self.app.id == "calibrate" {
             let target = self
                 .current_plot_catalog_target()
@@ -12436,16 +12361,9 @@ impl AppState {
                 &self.current_calibration_plot_request(),
                 preset,
             )
-            .map(|payload| CurrentPlotPayload::MsPlot(Box::new(payload)))
             .map_err(|error| error.to_string());
         }
-        if self.app.id == "imager" {
-            return self
-                .current_imaging_plot_payload()
-                .map(CurrentPlotPayload::Imaging);
-        }
         self.current_msexplore_plot_payload()
-            .map(|payload| CurrentPlotPayload::MsPlot(Box::new(payload)))
     }
 
     fn current_plot_spec_key(&self) -> Result<String, String> {
@@ -12480,21 +12398,6 @@ impl AppState {
             }
             parts.push(format!("target={target:?}"));
             return Ok(parts.join("\u{1f}"));
-        }
-        if self.app.id == "imager" {
-            let report = self
-                .current_imaging_report()
-                .ok_or_else(|| "run imaging first".to_string())?;
-            let target = self
-                .current_plot_catalog_target()
-                .unwrap_or(PlotCatalogTarget::Imaging(imaging_preferred_diagnostic(
-                    report,
-                )));
-            return Ok(format!(
-                "{}\u{1f}{}\u{1f}{target:?}",
-                imaging_parameter(report, "imagename"),
-                imaging_parameter(report, "specmode")
-            ));
         }
         self.build_execution_plan().map(|plan| {
             plan.arguments
@@ -13210,20 +13113,10 @@ impl AppState {
             area,
             pixel_width.max(1),
             pixel_height.max(1),
-            match payload {
-                CurrentPlotPayload::MsPlot(payload) => {
-                    PlotRenderInput::MsExplore(Box::new(MsExplorePlotRenderInput {
-                        payload: *payload,
-                        theme_mode,
-                        terminal_cell_px: panel.font_size,
-                    }))
-                }
-                CurrentPlotPayload::Imaging(payload) => {
-                    PlotRenderInput::Imaging(ImagingPlotRenderInput {
-                        payload,
-                        theme_mode,
-                    })
-                }
+            MsExplorePlotRenderInput {
+                payload,
+                theme_mode,
+                terminal_cell_px: panel.font_size,
             },
             true,
         ) {
@@ -13722,23 +13615,6 @@ impl AppState {
                 })
                 .collect();
         }
-        if self.app.id == "imager" {
-            let Some(report) = self.current_imaging_report() else {
-                return Vec::new();
-            };
-            let selected_kind = match selected {
-                Some(PlotCatalogTarget::Imaging(kind)) => kind,
-                _ => imaging_preferred_diagnostic(report),
-            };
-            return imaging_catalog_entries(report, selected_kind)
-                .into_iter()
-                .map(|entry| PlotCatalogRowView {
-                    target: PlotCatalogTarget::Imaging(entry.target),
-                    label: entry.label,
-                    selected: entry.selected,
-                })
-                .collect();
-        }
         let mut rows = Vec::new();
         match selected {
             Some(PlotCatalogTarget::PageSpec) => rows.push(PlotCatalogRowView {
@@ -13772,11 +13648,6 @@ impl AppState {
                 (PlotControlTarget::Refresh, "Refresh Preview"),
                 (PlotControlTarget::ExportPng, "Export PNG"),
                 (PlotControlTarget::ExportPdf, "Export PDF"),
-            ]
-        } else if self.app.id == "imager" {
-            vec![
-                (PlotControlTarget::Refresh, "Refresh Preview"),
-                (PlotControlTarget::ExportPng, "Export PNG"),
             ]
         } else {
             vec![
@@ -13886,7 +13757,7 @@ impl AppState {
     }
 
     fn copy_current_plot_cli(&mut self) {
-        if matches!(self.app.id.as_str(), "calibrate" | "imager") {
+        if self.app.id == "calibrate" {
             self.result.status_line =
                 "Copy CLI is not available for this diagnostic workspace.".to_string();
             self.result.status_kind = StatusKind::Warning;
@@ -13915,33 +13786,14 @@ impl AppState {
         let output_path = self.current_plot_output_path(format);
         let width = self.current_plot_export_width();
         let height = self.current_plot_export_height();
-        let export_result = match payload {
-            CurrentPlotPayload::MsPlot(payload) => export_msexplore_plot(
-                &payload,
-                plot_theme(self.theme_mode()),
-                &output_path,
-                format,
-                width,
-                height,
-            ),
-            CurrentPlotPayload::Imaging(payload) => match format {
-                MsExportFormat::Png => render_plot_image(
-                    width,
-                    height,
-                    &PlotRenderInput::Imaging(ImagingPlotRenderInput {
-                        payload,
-                        theme_mode: self.theme_mode(),
-                    }),
-                )
-                .and_then(|image| image.save(&output_path).map_err(|error| error.to_string())),
-                MsExportFormat::Pdf => {
-                    Err("PDF export is not available for imaging diagnostics yet.".to_string())
-                }
-                MsExportFormat::Txt => {
-                    Err("Text export is not available for imaging diagnostics.".to_string())
-                }
-            },
-        };
+        let export_result = export_msexplore_plot(
+            &payload,
+            plot_theme(self.theme_mode()),
+            &output_path,
+            format,
+            width,
+            height,
+        );
         match export_result {
             Ok(()) => {
                 self.result.status_line = format!("Saved {}.", output_path.display());
@@ -13974,26 +13826,18 @@ impl AppState {
             path.set_extension(format.extension());
             return path;
         }
-        if self.app.id == "imager" {
-            let slug = self
-                .selected_plot_label()
-                .to_ascii_lowercase()
-                .replace(':', "")
-                .replace(['/', ' '], "-");
-            return PathBuf::from(format!("imager-{slug}.{}", format.extension()));
-        }
         self.current_msexplore_output_path(format)
     }
 
     fn current_plot_export_width(&self) -> u32 {
-        if matches!(self.app.id.as_str(), "calibrate" | "imager") {
+        if self.app.id == "calibrate" {
             return 1600;
         }
         self.current_msexplore_export_width()
     }
 
     fn current_plot_export_height(&self) -> u32 {
-        if matches!(self.app.id.as_str(), "calibrate" | "imager") {
+        if self.app.id == "calibrate" {
             return 900;
         }
         self.current_msexplore_export_height()
@@ -14051,9 +13895,6 @@ impl AppState {
                     .unwrap_or_else(|| self.default_calibration_plot_target()),
             );
         }
-        if self.app.id == "imager" {
-            return self.plot_workspace.selected_catalog_target;
-        }
         if self
             .field_text("page_spec")
             .is_some_and(|value| !value.trim().is_empty())
@@ -14084,11 +13925,6 @@ impl AppState {
             PlotCatalogTarget::Calibration(preset) => {
                 self.plot_workspace.selected_catalog_target =
                     Some(PlotCatalogTarget::Calibration(preset));
-                self.clear_plot_render_cache();
-            }
-            PlotCatalogTarget::Imaging(kind) => {
-                self.plot_workspace.selected_catalog_target =
-                    Some(PlotCatalogTarget::Imaging(kind));
                 self.clear_plot_render_cache();
             }
             PlotCatalogTarget::Preset(preset) => self.apply_msexplore_preset(preset),
@@ -15556,6 +15392,16 @@ impl AppState {
             ResultTab::Stdout,
             ResultTab::Stderr,
         ];
+        // Imaging writes no preview images, so the imager has no diagnostics
+        // plot workspace; its results are the Products groups.
+        const IMAGER: [ResultTab; 6] = [
+            ResultTab::Overview,
+            ResultTab::Data,
+            ResultTab::Products,
+            ResultTab::History,
+            ResultTab::Stdout,
+            ResultTab::Stderr,
+        ];
         if self.current_calibration_report().is_some() {
             return if self.app.shell_kind() == AppShellKind::Workflow {
                 &WORKFLOW
@@ -15565,6 +15411,7 @@ impl AppState {
         }
         match self.app.shell_kind() {
             AppShellKind::Inspect => &INSPECT,
+            AppShellKind::Workflow if self.app.id == "imager" => &IMAGER,
             AppShellKind::Workflow => &WORKFLOW,
             AppShellKind::Browser => &BROWSER,
         }
@@ -15907,9 +15754,12 @@ impl AppState {
                     .current_imaging_report()
                     .map(|report| report.artifacts.len())
                     .unwrap_or_else(|| self.workflow_products.len()),
-                guidance:
+                guidance: if self.app.id == "imager" {
+                    "Use Context for dataset/selection, Stages for the imaging run, and Products for the images it wrote; imaging writes no preview plots."
+                } else {
                     "Use Context for dataset/selection, Products for revisions, Stages for the ordered workflow, and Diagnostics for recommended plots/stats."
-                        .to_string(),
+                }
+                .to_string(),
                 latest_run_lines: self
                     .current_calibration_report()
                     .map(build_calibration_overview_lines)

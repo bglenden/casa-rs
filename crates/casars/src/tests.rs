@@ -1054,6 +1054,48 @@ fn calibrate_shell_uses_framework_workflow_sections_and_tabs() {
     );
 }
 
+/// Imaging writes no preview images, so the imager has no diagnostics
+/// plot workspace and never falls through to msexplore's plot pane (#681).
+#[test]
+fn imager_shell_has_no_diagnostics_plot_workspace() {
+    let temp = tempdir().expect("tempdir");
+    let schema = imager_app().load_schema().expect("load imager schema");
+    let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
+    let mut app = AppState::from_schema_with_config(imager_app(), schema, config);
+
+    let tab_labels = app
+        .result_tabs()
+        .iter()
+        .map(|tab| tab.label())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tab_labels,
+        vec![
+            "Overview", "Data", "Products", "History", "Stdout", "Stderr"
+        ]
+    );
+    for &tab in app.result_tabs() {
+        app.set_active_result_tab(tab);
+        assert!(!app.result_tab_uses_plot_workspace(), "{tab:?}");
+        let layout = ui::compute_layout(ratatui::layout::Rect::new(0, 0, 160, 34), &app);
+        assert!(layout.plot_workspace.is_none(), "{tab:?}");
+        let rendered = render_app(&app, 160, 34);
+        assert!(!rendered.contains("msexplore"), "{tab:?}:\n{rendered}");
+    }
+
+    app.set_active_result_tab(ResultTab::Overview);
+    assert!(
+        matches!(
+            app.active_result_content(),
+            crate::app::ResultContent::Lines(lines)
+                if lines.iter().any(|line| line.contains("imaging writes no preview plots"))
+                    && !lines.iter().any(|line| line.contains("Diagnostics"))
+        ),
+        "content={:?}",
+        app.active_result_content()
+    );
+}
+
 #[test]
 fn calibrate_ready_status_and_stage_selection_are_guided() {
     let temp = tempdir().expect("tempdir");
@@ -9394,7 +9436,7 @@ fn imager_summary_tabs_do_not_treat_stokes_i_as_ms_correlation_selector() {
 }
 
 #[test]
-fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
+fn imager_workflow_runs_against_fixture_and_renders_products() {
     with_test_env_lock(clear_imager_launcher_bin);
 
     let fixture_temp = tempdir().expect("fixture tempdir");
@@ -9424,11 +9466,17 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
         app.status_line_for_test(),
         stderr
     );
-    assert_eq!(app.active_result_tab(), ResultTab::Diagnostics);
+    assert_eq!(app.active_result_tab(), ResultTab::Products);
     assert!(
         app.status_line_for_test().contains("Imaging completed."),
         "status={}",
         app.status_line_for_test()
+    );
+    let products = render_app(&app, 160, 34);
+    assert!(products.contains("Imaging Products"), "{products}");
+    assert!(
+        !products.contains("Diag") && !products.contains("msexplore"),
+        "imaging writes no previews, so the imager has no plot workspace:\n{products}"
     );
 
     for suffix in ["psf", "residual", "model", "image", "sumwt"] {
