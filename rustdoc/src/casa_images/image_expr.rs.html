@@ -3586,213 +3586,212 @@
 <a href=#3586 id=3586 data-nosnippet>3586</a>    }
 <a href=#3587 id=3587 data-nosnippet>3587</a>
 <a href=#3588 id=3588 data-nosnippet>3588</a>    <span class="attr">#[test]
-<a href=#3589 id=3589 data-nosnippet>3589</a>    #[expect(
-<a href=#3590 id=3590 data-nosnippet>3590</a>        clippy::too_many_lines,
-<a href=#3591 id=3591 data-nosnippet>3591</a>        reason = <span class="string">"predates the function-length limit; #705"
-<a href=#3592 id=3592 data-nosnippet>3592</a>    </span>)]
-<a href=#3593 id=3593 data-nosnippet>3593</a>    </span><span class="kw">fn </span>direct_trait_ops_cover_remaining_complex_impls() {
-<a href=#3594 id=3594 data-nosnippet>3594</a>        <span class="kw">let </span>c32 = Complex32::new(<span class="number">1.25</span>, -<span class="number">0.75</span>);
-<a href=#3595 id=3595 data-nosnippet>3595</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_exp(c32) - c32.exp()).norm() &lt; <span class="number">1e-5</span>);
-<a href=#3596 id=3596 data-nosnippet>3596</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_sin(c32) - c32.sin()).norm() &lt; <span class="number">1e-5</span>);
-<a href=#3597 id=3597 data-nosnippet>3597</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_cos(c32) - c32.cos()).norm() &lt; <span class="number">1e-5</span>);
-<a href=#3598 id=3598 data-nosnippet>3598</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_tan(c32) - c32.tan()).norm() &lt; <span class="number">1e-5</span>);
-<a href=#3599 id=3599 data-nosnippet>3599</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_asin(c32) - c32.asin()).norm() &lt; <span class="number">1e-5</span>);
-<a href=#3600 id=3600 data-nosnippet>3600</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_acos(c32) - c32.acos()).norm() &lt; <span class="number">1e-5</span>);
-<a href=#3601 id=3601 data-nosnippet>3601</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_atan(c32) - c32.atan()).norm() &lt; <span class="number">1e-5</span>);
-<a href=#3602 id=3602 data-nosnippet>3602</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_sinh(c32) - c32.sinh()).norm() &lt; <span class="number">1e-5</span>);
-<a href=#3603 id=3603 data-nosnippet>3603</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_cosh(c32) - c32.cosh()).norm() &lt; <span class="number">1e-5</span>);
-<a href=#3604 id=3604 data-nosnippet>3604</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_tanh(c32) - c32.tanh()).norm() &lt; <span class="number">1e-5</span>);
-<a href=#3605 id=3605 data-nosnippet>3605</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_log(c32) - c32.ln()).norm() &lt; <span class="number">1e-5</span>);
-<a href=#3606 id=3606 data-nosnippet>3606</a>        <span class="macro">assert!</span>(
-<a href=#3607 id=3607 data-nosnippet>3607</a>            (&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_log10(c32)
-<a href=#3608 id=3608 data-nosnippet>3608</a>                - (c32.ln() / Complex32::new(std::f32::consts::LN_10, <span class="number">0.0</span>)))
-<a href=#3609 id=3609 data-nosnippet>3609</a>            .norm()
-<a href=#3610 id=3610 data-nosnippet>3610</a>                &lt; <span class="number">1e-5
-<a href=#3611 id=3611 data-nosnippet>3611</a>        </span>);
-<a href=#3612 id=3612 data-nosnippet>3612</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_sqrt(c32) - c32.sqrt()).norm() &lt; <span class="number">1e-5</span>);
-<a href=#3613 id=3613 data-nosnippet>3613</a>        <span class="macro">assert_eq!</span>(
-<a href=#3614 id=3614 data-nosnippet>3614</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_abs(c32),
-<a href=#3615 id=3615 data-nosnippet>3615</a>            Complex32::new(c32.norm(), <span class="number">0.0</span>)
-<a href=#3616 id=3616 data-nosnippet>3616</a>        );
-<a href=#3617 id=3617 data-nosnippet>3617</a>        <span class="macro">assert_eq!</span>(&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_conj(c32), c32.conj());
+<a href=#3589 id=3589 data-nosnippet>3589</a>    </span><span class="kw">fn </span>direct_trait_ops_cover_remaining_complex32_impls() {
+<a href=#3590 id=3590 data-nosnippet>3590</a>        <span class="kw">let </span>c32 = Complex32::new(<span class="number">1.25</span>, -<span class="number">0.75</span>);
+<a href=#3591 id=3591 data-nosnippet>3591</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_exp(c32) - c32.exp()).norm() &lt; <span class="number">1e-5</span>);
+<a href=#3592 id=3592 data-nosnippet>3592</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_sin(c32) - c32.sin()).norm() &lt; <span class="number">1e-5</span>);
+<a href=#3593 id=3593 data-nosnippet>3593</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_cos(c32) - c32.cos()).norm() &lt; <span class="number">1e-5</span>);
+<a href=#3594 id=3594 data-nosnippet>3594</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_tan(c32) - c32.tan()).norm() &lt; <span class="number">1e-5</span>);
+<a href=#3595 id=3595 data-nosnippet>3595</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_asin(c32) - c32.asin()).norm() &lt; <span class="number">1e-5</span>);
+<a href=#3596 id=3596 data-nosnippet>3596</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_acos(c32) - c32.acos()).norm() &lt; <span class="number">1e-5</span>);
+<a href=#3597 id=3597 data-nosnippet>3597</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_atan(c32) - c32.atan()).norm() &lt; <span class="number">1e-5</span>);
+<a href=#3598 id=3598 data-nosnippet>3598</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_sinh(c32) - c32.sinh()).norm() &lt; <span class="number">1e-5</span>);
+<a href=#3599 id=3599 data-nosnippet>3599</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_cosh(c32) - c32.cosh()).norm() &lt; <span class="number">1e-5</span>);
+<a href=#3600 id=3600 data-nosnippet>3600</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_tanh(c32) - c32.tanh()).norm() &lt; <span class="number">1e-5</span>);
+<a href=#3601 id=3601 data-nosnippet>3601</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_log(c32) - c32.ln()).norm() &lt; <span class="number">1e-5</span>);
+<a href=#3602 id=3602 data-nosnippet>3602</a>        <span class="macro">assert!</span>(
+<a href=#3603 id=3603 data-nosnippet>3603</a>            (&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_log10(c32)
+<a href=#3604 id=3604 data-nosnippet>3604</a>                - (c32.ln() / Complex32::new(std::f32::consts::LN_10, <span class="number">0.0</span>)))
+<a href=#3605 id=3605 data-nosnippet>3605</a>            .norm()
+<a href=#3606 id=3606 data-nosnippet>3606</a>                &lt; <span class="number">1e-5
+<a href=#3607 id=3607 data-nosnippet>3607</a>        </span>);
+<a href=#3608 id=3608 data-nosnippet>3608</a>        <span class="macro">assert!</span>((&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_sqrt(c32) - c32.sqrt()).norm() &lt; <span class="number">1e-5</span>);
+<a href=#3609 id=3609 data-nosnippet>3609</a>        <span class="macro">assert_eq!</span>(
+<a href=#3610 id=3610 data-nosnippet>3610</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_abs(c32),
+<a href=#3611 id=3611 data-nosnippet>3611</a>            Complex32::new(c32.norm(), <span class="number">0.0</span>)
+<a href=#3612 id=3612 data-nosnippet>3612</a>        );
+<a href=#3613 id=3613 data-nosnippet>3613</a>        <span class="macro">assert_eq!</span>(&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_conj(c32), c32.conj());
+<a href=#3614 id=3614 data-nosnippet>3614</a>        <span class="macro">assert_eq!</span>(
+<a href=#3615 id=3615 data-nosnippet>3615</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_ceil(c32),
+<a href=#3616 id=3616 data-nosnippet>3616</a>            Complex32::new(c32.re.ceil(), c32.im.ceil())
+<a href=#3617 id=3617 data-nosnippet>3617</a>        );
 <a href=#3618 id=3618 data-nosnippet>3618</a>        <span class="macro">assert_eq!</span>(
-<a href=#3619 id=3619 data-nosnippet>3619</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_ceil(c32),
-<a href=#3620 id=3620 data-nosnippet>3620</a>            Complex32::new(c32.re.ceil(), c32.im.ceil())
+<a href=#3619 id=3619 data-nosnippet>3619</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_floor(c32),
+<a href=#3620 id=3620 data-nosnippet>3620</a>            Complex32::new(c32.re.floor(), c32.im.floor())
 <a href=#3621 id=3621 data-nosnippet>3621</a>        );
 <a href=#3622 id=3622 data-nosnippet>3622</a>        <span class="macro">assert_eq!</span>(
-<a href=#3623 id=3623 data-nosnippet>3623</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_floor(c32),
-<a href=#3624 id=3624 data-nosnippet>3624</a>            Complex32::new(c32.re.floor(), c32.im.floor())
+<a href=#3623 id=3623 data-nosnippet>3623</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_round(c32),
+<a href=#3624 id=3624 data-nosnippet>3624</a>            Complex32::new(c32.re.round(), c32.im.round())
 <a href=#3625 id=3625 data-nosnippet>3625</a>        );
-<a href=#3626 id=3626 data-nosnippet>3626</a>        <span class="macro">assert_eq!</span>(
-<a href=#3627 id=3627 data-nosnippet>3627</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_round(c32),
-<a href=#3628 id=3628 data-nosnippet>3628</a>            Complex32::new(c32.re.round(), c32.im.round())
-<a href=#3629 id=3629 data-nosnippet>3629</a>        );
-<a href=#3630 id=3630 data-nosnippet>3630</a>        <span class="kw">let </span>sign32 = &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_sign(c32);
-<a href=#3631 id=3631 data-nosnippet>3631</a>        <span class="macro">assert!</span>((sign32.norm() - <span class="number">1.0</span>).abs() &lt; <span class="number">1e-5</span>);
-<a href=#3632 id=3632 data-nosnippet>3632</a>        <span class="macro">assert_eq!</span>(
-<a href=#3633 id=3633 data-nosnippet>3633</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_sign(Complex32::new(<span class="number">0.0</span>, <span class="number">0.0</span>)),
-<a href=#3634 id=3634 data-nosnippet>3634</a>            Complex32::new(<span class="number">0.0</span>, <span class="number">0.0</span>)
-<a href=#3635 id=3635 data-nosnippet>3635</a>        );
-<a href=#3636 id=3636 data-nosnippet>3636</a>        <span class="macro">assert!</span>(
-<a href=#3637 id=3637 data-nosnippet>3637</a>            (&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_pow(c32, Complex32::new(<span class="number">0.5</span>, <span class="number">0.0</span>))
-<a href=#3638 id=3638 data-nosnippet>3638</a>                - c32.powc(Complex32::new(<span class="number">0.5</span>, <span class="number">0.0</span>)))
-<a href=#3639 id=3639 data-nosnippet>3639</a>            .norm()
-<a href=#3640 id=3640 data-nosnippet>3640</a>                &lt; <span class="number">1e-5
-<a href=#3641 id=3641 data-nosnippet>3641</a>        </span>);
-<a href=#3642 id=3642 data-nosnippet>3642</a>        <span class="macro">assert_eq!</span>(
-<a href=#3643 id=3643 data-nosnippet>3643</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_fmod(
-<a href=#3644 id=3644 data-nosnippet>3644</a>                Complex32::new(<span class="number">5.5</span>, <span class="number">7.5</span>),
-<a href=#3645 id=3645 data-nosnippet>3645</a>                Complex32::new(<span class="number">2.0</span>, <span class="number">3.0</span>)
-<a href=#3646 id=3646 data-nosnippet>3646</a>            ),
-<a href=#3647 id=3647 data-nosnippet>3647</a>            Complex32::new(<span class="number">1.5</span>, <span class="number">1.5</span>)
-<a href=#3648 id=3648 data-nosnippet>3648</a>        );
-<a href=#3649 id=3649 data-nosnippet>3649</a>        <span class="macro">assert_eq!</span>(
-<a href=#3650 id=3650 data-nosnippet>3650</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_atan2(
-<a href=#3651 id=3651 data-nosnippet>3651</a>                Complex32::new(<span class="number">3.0</span>, <span class="number">4.0</span>),
-<a href=#3652 id=3652 data-nosnippet>3652</a>                Complex32::new(<span class="number">2.0</span>, <span class="number">5.0</span>)
-<a href=#3653 id=3653 data-nosnippet>3653</a>            ),
-<a href=#3654 id=3654 data-nosnippet>3654</a>            Complex32::new(<span class="number">3.0f32</span>.atan2(<span class="number">2.0</span>), <span class="number">4.0f32</span>.atan2(<span class="number">5.0</span>))
-<a href=#3655 id=3655 data-nosnippet>3655</a>        );
-<a href=#3656 id=3656 data-nosnippet>3656</a>        <span class="macro">assert_eq!</span>(
-<a href=#3657 id=3657 data-nosnippet>3657</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_min(
-<a href=#3658 id=3658 data-nosnippet>3658</a>                Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>),
-<a href=#3659 id=3659 data-nosnippet>3659</a>                Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
-<a href=#3660 id=3660 data-nosnippet>3660</a>            ),
-<a href=#3661 id=3661 data-nosnippet>3661</a>            Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>)
-<a href=#3662 id=3662 data-nosnippet>3662</a>        );
-<a href=#3663 id=3663 data-nosnippet>3663</a>        <span class="macro">assert_eq!</span>(
-<a href=#3664 id=3664 data-nosnippet>3664</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_max(
-<a href=#3665 id=3665 data-nosnippet>3665</a>                Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>),
-<a href=#3666 id=3666 data-nosnippet>3666</a>                Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
-<a href=#3667 id=3667 data-nosnippet>3667</a>            ),
-<a href=#3668 id=3668 data-nosnippet>3668</a>            Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
-<a href=#3669 id=3669 data-nosnippet>3669</a>        );
-<a href=#3670 id=3670 data-nosnippet>3670</a>        <span class="macro">assert!</span>(&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_isnan(<span class="kw-2">&amp;</span>Complex32::new(
-<a href=#3671 id=3671 data-nosnippet>3671</a>            f32::NAN,
-<a href=#3672 id=3672 data-nosnippet>3672</a>            <span class="number">0.0
-<a href=#3673 id=3673 data-nosnippet>3673</a>        </span>)));
-<a href=#3674 id=3674 data-nosnippet>3674</a>        <span class="macro">assert_eq!</span>(
-<a href=#3675 id=3675 data-nosnippet>3675</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::from_f64_lossy(<span class="number">2.0</span>),
-<a href=#3676 id=3676 data-nosnippet>3676</a>            Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
-<a href=#3677 id=3677 data-nosnippet>3677</a>        );
-<a href=#3678 id=3678 data-nosnippet>3678</a>        <span class="macro">assert!</span>(
-<a href=#3679 id=3679 data-nosnippet>3679</a>            (&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::to_f64_lossy(<span class="kw-2">&amp;</span>Complex32::new(<span class="number">3.0</span>, <span class="number">4.0</span>)) - <span class="number">5.0</span>).abs()
-<a href=#3680 id=3680 data-nosnippet>3680</a>                &lt; <span class="number">1e-6
-<a href=#3681 id=3681 data-nosnippet>3681</a>        </span>);
-<a href=#3682 id=3682 data-nosnippet>3682</a>        <span class="macro">assert!</span>(&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_compare(
-<a href=#3683 id=3683 data-nosnippet>3683</a>            Complex32::new(<span class="number">3.0</span>, <span class="number">0.0</span>),
+<a href=#3626 id=3626 data-nosnippet>3626</a>        <span class="kw">let </span>sign32 = &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_sign(c32);
+<a href=#3627 id=3627 data-nosnippet>3627</a>        <span class="macro">assert!</span>((sign32.norm() - <span class="number">1.0</span>).abs() &lt; <span class="number">1e-5</span>);
+<a href=#3628 id=3628 data-nosnippet>3628</a>        <span class="macro">assert_eq!</span>(
+<a href=#3629 id=3629 data-nosnippet>3629</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_sign(Complex32::new(<span class="number">0.0</span>, <span class="number">0.0</span>)),
+<a href=#3630 id=3630 data-nosnippet>3630</a>            Complex32::new(<span class="number">0.0</span>, <span class="number">0.0</span>)
+<a href=#3631 id=3631 data-nosnippet>3631</a>        );
+<a href=#3632 id=3632 data-nosnippet>3632</a>        <span class="macro">assert!</span>(
+<a href=#3633 id=3633 data-nosnippet>3633</a>            (&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_pow(c32, Complex32::new(<span class="number">0.5</span>, <span class="number">0.0</span>))
+<a href=#3634 id=3634 data-nosnippet>3634</a>                - c32.powc(Complex32::new(<span class="number">0.5</span>, <span class="number">0.0</span>)))
+<a href=#3635 id=3635 data-nosnippet>3635</a>            .norm()
+<a href=#3636 id=3636 data-nosnippet>3636</a>                &lt; <span class="number">1e-5
+<a href=#3637 id=3637 data-nosnippet>3637</a>        </span>);
+<a href=#3638 id=3638 data-nosnippet>3638</a>        <span class="macro">assert_eq!</span>(
+<a href=#3639 id=3639 data-nosnippet>3639</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_fmod(
+<a href=#3640 id=3640 data-nosnippet>3640</a>                Complex32::new(<span class="number">5.5</span>, <span class="number">7.5</span>),
+<a href=#3641 id=3641 data-nosnippet>3641</a>                Complex32::new(<span class="number">2.0</span>, <span class="number">3.0</span>)
+<a href=#3642 id=3642 data-nosnippet>3642</a>            ),
+<a href=#3643 id=3643 data-nosnippet>3643</a>            Complex32::new(<span class="number">1.5</span>, <span class="number">1.5</span>)
+<a href=#3644 id=3644 data-nosnippet>3644</a>        );
+<a href=#3645 id=3645 data-nosnippet>3645</a>        <span class="macro">assert_eq!</span>(
+<a href=#3646 id=3646 data-nosnippet>3646</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_atan2(
+<a href=#3647 id=3647 data-nosnippet>3647</a>                Complex32::new(<span class="number">3.0</span>, <span class="number">4.0</span>),
+<a href=#3648 id=3648 data-nosnippet>3648</a>                Complex32::new(<span class="number">2.0</span>, <span class="number">5.0</span>)
+<a href=#3649 id=3649 data-nosnippet>3649</a>            ),
+<a href=#3650 id=3650 data-nosnippet>3650</a>            Complex32::new(<span class="number">3.0f32</span>.atan2(<span class="number">2.0</span>), <span class="number">4.0f32</span>.atan2(<span class="number">5.0</span>))
+<a href=#3651 id=3651 data-nosnippet>3651</a>        );
+<a href=#3652 id=3652 data-nosnippet>3652</a>        <span class="macro">assert_eq!</span>(
+<a href=#3653 id=3653 data-nosnippet>3653</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_min(
+<a href=#3654 id=3654 data-nosnippet>3654</a>                Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>),
+<a href=#3655 id=3655 data-nosnippet>3655</a>                Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
+<a href=#3656 id=3656 data-nosnippet>3656</a>            ),
+<a href=#3657 id=3657 data-nosnippet>3657</a>            Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>)
+<a href=#3658 id=3658 data-nosnippet>3658</a>        );
+<a href=#3659 id=3659 data-nosnippet>3659</a>        <span class="macro">assert_eq!</span>(
+<a href=#3660 id=3660 data-nosnippet>3660</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_max(
+<a href=#3661 id=3661 data-nosnippet>3661</a>                Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>),
+<a href=#3662 id=3662 data-nosnippet>3662</a>                Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
+<a href=#3663 id=3663 data-nosnippet>3663</a>            ),
+<a href=#3664 id=3664 data-nosnippet>3664</a>            Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
+<a href=#3665 id=3665 data-nosnippet>3665</a>        );
+<a href=#3666 id=3666 data-nosnippet>3666</a>        <span class="macro">assert!</span>(&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_isnan(<span class="kw-2">&amp;</span>Complex32::new(
+<a href=#3667 id=3667 data-nosnippet>3667</a>            f32::NAN,
+<a href=#3668 id=3668 data-nosnippet>3668</a>            <span class="number">0.0
+<a href=#3669 id=3669 data-nosnippet>3669</a>        </span>)));
+<a href=#3670 id=3670 data-nosnippet>3670</a>        <span class="macro">assert_eq!</span>(
+<a href=#3671 id=3671 data-nosnippet>3671</a>            &lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::from_f64_lossy(<span class="number">2.0</span>),
+<a href=#3672 id=3672 data-nosnippet>3672</a>            Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
+<a href=#3673 id=3673 data-nosnippet>3673</a>        );
+<a href=#3674 id=3674 data-nosnippet>3674</a>        <span class="macro">assert!</span>(
+<a href=#3675 id=3675 data-nosnippet>3675</a>            (&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::to_f64_lossy(<span class="kw-2">&amp;</span>Complex32::new(<span class="number">3.0</span>, <span class="number">4.0</span>)) - <span class="number">5.0</span>).abs()
+<a href=#3676 id=3676 data-nosnippet>3676</a>                &lt; <span class="number">1e-6
+<a href=#3677 id=3677 data-nosnippet>3677</a>        </span>);
+<a href=#3678 id=3678 data-nosnippet>3678</a>        <span class="macro">assert!</span>(&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_compare(
+<a href=#3679 id=3679 data-nosnippet>3679</a>            Complex32::new(<span class="number">3.0</span>, <span class="number">0.0</span>),
+<a href=#3680 id=3680 data-nosnippet>3680</a>            Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>),
+<a href=#3681 id=3681 data-nosnippet>3681</a>            ImageExprCompareOp::GreaterThan
+<a href=#3682 id=3682 data-nosnippet>3682</a>        ));
+<a href=#3683 id=3683 data-nosnippet>3683</a>        <span class="macro">assert!</span>(&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_compare(
 <a href=#3684 id=3684 data-nosnippet>3684</a>            Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>),
-<a href=#3685 id=3685 data-nosnippet>3685</a>            ImageExprCompareOp::GreaterThan
-<a href=#3686 id=3686 data-nosnippet>3686</a>        ));
-<a href=#3687 id=3687 data-nosnippet>3687</a>        <span class="macro">assert!</span>(&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_compare(
-<a href=#3688 id=3688 data-nosnippet>3688</a>            Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>),
-<a href=#3689 id=3689 data-nosnippet>3689</a>            Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>),
-<a href=#3690 id=3690 data-nosnippet>3690</a>            ImageExprCompareOp::Equal
-<a href=#3691 id=3691 data-nosnippet>3691</a>        ));
-<a href=#3692 id=3692 data-nosnippet>3692</a>        <span class="macro">assert!</span>(&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_compare(
-<a href=#3693 id=3693 data-nosnippet>3693</a>            Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>),
-<a href=#3694 id=3694 data-nosnippet>3694</a>            Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>),
-<a href=#3695 id=3695 data-nosnippet>3695</a>            ImageExprCompareOp::NotEqual
-<a href=#3696 id=3696 data-nosnippet>3696</a>        ));
-<a href=#3697 id=3697 data-nosnippet>3697</a>
-<a href=#3698 id=3698 data-nosnippet>3698</a>        <span class="kw">let </span>c64 = Complex64::new(-<span class="number">1.5</span>, <span class="number">0.25</span>);
-<a href=#3699 id=3699 data-nosnippet>3699</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_exp(c64) - c64.exp()).norm() &lt; <span class="number">1e-12</span>);
-<a href=#3700 id=3700 data-nosnippet>3700</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_sin(c64) - c64.sin()).norm() &lt; <span class="number">1e-12</span>);
-<a href=#3701 id=3701 data-nosnippet>3701</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_cos(c64) - c64.cos()).norm() &lt; <span class="number">1e-12</span>);
-<a href=#3702 id=3702 data-nosnippet>3702</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_tan(c64) - c64.tan()).norm() &lt; <span class="number">1e-12</span>);
-<a href=#3703 id=3703 data-nosnippet>3703</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_asin(c64) - c64.asin()).norm() &lt; <span class="number">1e-12</span>);
-<a href=#3704 id=3704 data-nosnippet>3704</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_acos(c64) - c64.acos()).norm() &lt; <span class="number">1e-12</span>);
-<a href=#3705 id=3705 data-nosnippet>3705</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_atan(c64) - c64.atan()).norm() &lt; <span class="number">1e-12</span>);
-<a href=#3706 id=3706 data-nosnippet>3706</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_sinh(c64) - c64.sinh()).norm() &lt; <span class="number">1e-12</span>);
-<a href=#3707 id=3707 data-nosnippet>3707</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_cosh(c64) - c64.cosh()).norm() &lt; <span class="number">1e-12</span>);
-<a href=#3708 id=3708 data-nosnippet>3708</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_tanh(c64) - c64.tanh()).norm() &lt; <span class="number">1e-12</span>);
-<a href=#3709 id=3709 data-nosnippet>3709</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_log(c64) - c64.ln()).norm() &lt; <span class="number">1e-12</span>);
-<a href=#3710 id=3710 data-nosnippet>3710</a>        <span class="macro">assert!</span>(
-<a href=#3711 id=3711 data-nosnippet>3711</a>            (&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_log10(c64)
-<a href=#3712 id=3712 data-nosnippet>3712</a>                - (c64.ln() / Complex64::new(std::f64::consts::LN_10, <span class="number">0.0</span>)))
-<a href=#3713 id=3713 data-nosnippet>3713</a>            .norm()
-<a href=#3714 id=3714 data-nosnippet>3714</a>                &lt; <span class="number">1e-12
-<a href=#3715 id=3715 data-nosnippet>3715</a>        </span>);
-<a href=#3716 id=3716 data-nosnippet>3716</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_sqrt(c64) - c64.sqrt()).norm() &lt; <span class="number">1e-12</span>);
-<a href=#3717 id=3717 data-nosnippet>3717</a>        <span class="macro">assert_eq!</span>(
-<a href=#3718 id=3718 data-nosnippet>3718</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_abs(c64),
-<a href=#3719 id=3719 data-nosnippet>3719</a>            Complex64::new(c64.norm(), <span class="number">0.0</span>)
-<a href=#3720 id=3720 data-nosnippet>3720</a>        );
-<a href=#3721 id=3721 data-nosnippet>3721</a>        <span class="macro">assert_eq!</span>(&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_conj(c64), c64.conj());
-<a href=#3722 id=3722 data-nosnippet>3722</a>        <span class="macro">assert_eq!</span>(
-<a href=#3723 id=3723 data-nosnippet>3723</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_ceil(c64),
-<a href=#3724 id=3724 data-nosnippet>3724</a>            Complex64::new(c64.re.ceil(), c64.im.ceil())
-<a href=#3725 id=3725 data-nosnippet>3725</a>        );
-<a href=#3726 id=3726 data-nosnippet>3726</a>        <span class="macro">assert_eq!</span>(
-<a href=#3727 id=3727 data-nosnippet>3727</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_floor(c64),
-<a href=#3728 id=3728 data-nosnippet>3728</a>            Complex64::new(c64.re.floor(), c64.im.floor())
-<a href=#3729 id=3729 data-nosnippet>3729</a>        );
-<a href=#3730 id=3730 data-nosnippet>3730</a>        <span class="macro">assert_eq!</span>(
-<a href=#3731 id=3731 data-nosnippet>3731</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_round(c64),
-<a href=#3732 id=3732 data-nosnippet>3732</a>            Complex64::new(c64.re.round(), c64.im.round())
-<a href=#3733 id=3733 data-nosnippet>3733</a>        );
-<a href=#3734 id=3734 data-nosnippet>3734</a>        <span class="kw">let </span>sign64 = &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_sign(c64);
-<a href=#3735 id=3735 data-nosnippet>3735</a>        <span class="macro">assert!</span>((sign64.norm() - <span class="number">1.0</span>).abs() &lt; <span class="number">1e-12</span>);
-<a href=#3736 id=3736 data-nosnippet>3736</a>        <span class="macro">assert_eq!</span>(
-<a href=#3737 id=3737 data-nosnippet>3737</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_sign(Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>)),
-<a href=#3738 id=3738 data-nosnippet>3738</a>            Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>)
-<a href=#3739 id=3739 data-nosnippet>3739</a>        );
-<a href=#3740 id=3740 data-nosnippet>3740</a>        <span class="macro">assert!</span>(
-<a href=#3741 id=3741 data-nosnippet>3741</a>            (&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_pow(c64, Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>))
-<a href=#3742 id=3742 data-nosnippet>3742</a>                - c64.powc(Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>)))
-<a href=#3743 id=3743 data-nosnippet>3743</a>            .norm()
-<a href=#3744 id=3744 data-nosnippet>3744</a>                &lt; <span class="number">1e-12
-<a href=#3745 id=3745 data-nosnippet>3745</a>        </span>);
-<a href=#3746 id=3746 data-nosnippet>3746</a>        <span class="macro">assert_eq!</span>(
-<a href=#3747 id=3747 data-nosnippet>3747</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_fmod(
-<a href=#3748 id=3748 data-nosnippet>3748</a>                Complex64::new(<span class="number">5.5</span>, <span class="number">7.5</span>),
-<a href=#3749 id=3749 data-nosnippet>3749</a>                Complex64::new(<span class="number">2.0</span>, <span class="number">3.0</span>)
-<a href=#3750 id=3750 data-nosnippet>3750</a>            ),
-<a href=#3751 id=3751 data-nosnippet>3751</a>            Complex64::new(<span class="number">1.5</span>, <span class="number">1.5</span>)
-<a href=#3752 id=3752 data-nosnippet>3752</a>        );
-<a href=#3753 id=3753 data-nosnippet>3753</a>        <span class="macro">assert_eq!</span>(
-<a href=#3754 id=3754 data-nosnippet>3754</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_atan2(
-<a href=#3755 id=3755 data-nosnippet>3755</a>                Complex64::new(<span class="number">3.0</span>, <span class="number">4.0</span>),
-<a href=#3756 id=3756 data-nosnippet>3756</a>                Complex64::new(<span class="number">2.0</span>, <span class="number">5.0</span>)
-<a href=#3757 id=3757 data-nosnippet>3757</a>            ),
-<a href=#3758 id=3758 data-nosnippet>3758</a>            Complex64::new(<span class="number">3.0f64</span>.atan2(<span class="number">2.0</span>), <span class="number">4.0f64</span>.atan2(<span class="number">5.0</span>))
-<a href=#3759 id=3759 data-nosnippet>3759</a>        );
-<a href=#3760 id=3760 data-nosnippet>3760</a>        <span class="macro">assert_eq!</span>(
-<a href=#3761 id=3761 data-nosnippet>3761</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_min(
-<a href=#3762 id=3762 data-nosnippet>3762</a>                Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>),
-<a href=#3763 id=3763 data-nosnippet>3763</a>                Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
-<a href=#3764 id=3764 data-nosnippet>3764</a>            ),
-<a href=#3765 id=3765 data-nosnippet>3765</a>            Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>)
-<a href=#3766 id=3766 data-nosnippet>3766</a>        );
-<a href=#3767 id=3767 data-nosnippet>3767</a>        <span class="macro">assert_eq!</span>(
-<a href=#3768 id=3768 data-nosnippet>3768</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_max(
-<a href=#3769 id=3769 data-nosnippet>3769</a>                Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>),
-<a href=#3770 id=3770 data-nosnippet>3770</a>                Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
-<a href=#3771 id=3771 data-nosnippet>3771</a>            ),
-<a href=#3772 id=3772 data-nosnippet>3772</a>            Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
-<a href=#3773 id=3773 data-nosnippet>3773</a>        );
-<a href=#3774 id=3774 data-nosnippet>3774</a>        <span class="macro">assert!</span>(&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_isnan(<span class="kw-2">&amp;</span>Complex64::new(
-<a href=#3775 id=3775 data-nosnippet>3775</a>            <span class="number">0.0</span>,
-<a href=#3776 id=3776 data-nosnippet>3776</a>            f64::NAN
-<a href=#3777 id=3777 data-nosnippet>3777</a>        )));
-<a href=#3778 id=3778 data-nosnippet>3778</a>        <span class="macro">assert_eq!</span>(
-<a href=#3779 id=3779 data-nosnippet>3779</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::from_f64_lossy(<span class="number">2.0</span>),
-<a href=#3780 id=3780 data-nosnippet>3780</a>            Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
-<a href=#3781 id=3781 data-nosnippet>3781</a>        );
-<a href=#3782 id=3782 data-nosnippet>3782</a>        <span class="macro">assert!</span>(
-<a href=#3783 id=3783 data-nosnippet>3783</a>            (&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::to_f64_lossy(<span class="kw-2">&amp;</span>Complex64::new(<span class="number">3.0</span>, <span class="number">4.0</span>)) - <span class="number">5.0</span>).abs()
-<a href=#3784 id=3784 data-nosnippet>3784</a>                &lt; <span class="number">1e-12
-<a href=#3785 id=3785 data-nosnippet>3785</a>        </span>);
-<a href=#3786 id=3786 data-nosnippet>3786</a>        <span class="macro">assert!</span>(&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_compare(
-<a href=#3787 id=3787 data-nosnippet>3787</a>            Complex64::new(<span class="number">3.0</span>, <span class="number">0.0</span>),
-<a href=#3788 id=3788 data-nosnippet>3788</a>            Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>),
-<a href=#3789 id=3789 data-nosnippet>3789</a>            ImageExprCompareOp::GreaterEqual
-<a href=#3790 id=3790 data-nosnippet>3790</a>        ));
-<a href=#3791 id=3791 data-nosnippet>3791</a>        <span class="macro">assert!</span>(&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_compare(
-<a href=#3792 id=3792 data-nosnippet>3792</a>            Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>),
-<a href=#3793 id=3793 data-nosnippet>3793</a>            Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>),
-<a href=#3794 id=3794 data-nosnippet>3794</a>            ImageExprCompareOp::LessEqual
-<a href=#3795 id=3795 data-nosnippet>3795</a>        ));
-<a href=#3796 id=3796 data-nosnippet>3796</a>    }
-<a href=#3797 id=3797 data-nosnippet>3797</a>}
+<a href=#3685 id=3685 data-nosnippet>3685</a>            Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>),
+<a href=#3686 id=3686 data-nosnippet>3686</a>            ImageExprCompareOp::Equal
+<a href=#3687 id=3687 data-nosnippet>3687</a>        ));
+<a href=#3688 id=3688 data-nosnippet>3688</a>        <span class="macro">assert!</span>(&lt;Complex32 <span class="kw">as </span>ImageExprValue&gt;::expr_compare(
+<a href=#3689 id=3689 data-nosnippet>3689</a>            Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>),
+<a href=#3690 id=3690 data-nosnippet>3690</a>            Complex32::new(<span class="number">2.0</span>, <span class="number">0.0</span>),
+<a href=#3691 id=3691 data-nosnippet>3691</a>            ImageExprCompareOp::NotEqual
+<a href=#3692 id=3692 data-nosnippet>3692</a>        ));
+<a href=#3693 id=3693 data-nosnippet>3693</a>    }
+<a href=#3694 id=3694 data-nosnippet>3694</a>
+<a href=#3695 id=3695 data-nosnippet>3695</a>    <span class="attr">#[test]
+<a href=#3696 id=3696 data-nosnippet>3696</a>    </span><span class="kw">fn </span>direct_trait_ops_cover_remaining_complex64_impls() {
+<a href=#3697 id=3697 data-nosnippet>3697</a>        <span class="kw">let </span>c64 = Complex64::new(-<span class="number">1.5</span>, <span class="number">0.25</span>);
+<a href=#3698 id=3698 data-nosnippet>3698</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_exp(c64) - c64.exp()).norm() &lt; <span class="number">1e-12</span>);
+<a href=#3699 id=3699 data-nosnippet>3699</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_sin(c64) - c64.sin()).norm() &lt; <span class="number">1e-12</span>);
+<a href=#3700 id=3700 data-nosnippet>3700</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_cos(c64) - c64.cos()).norm() &lt; <span class="number">1e-12</span>);
+<a href=#3701 id=3701 data-nosnippet>3701</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_tan(c64) - c64.tan()).norm() &lt; <span class="number">1e-12</span>);
+<a href=#3702 id=3702 data-nosnippet>3702</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_asin(c64) - c64.asin()).norm() &lt; <span class="number">1e-12</span>);
+<a href=#3703 id=3703 data-nosnippet>3703</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_acos(c64) - c64.acos()).norm() &lt; <span class="number">1e-12</span>);
+<a href=#3704 id=3704 data-nosnippet>3704</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_atan(c64) - c64.atan()).norm() &lt; <span class="number">1e-12</span>);
+<a href=#3705 id=3705 data-nosnippet>3705</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_sinh(c64) - c64.sinh()).norm() &lt; <span class="number">1e-12</span>);
+<a href=#3706 id=3706 data-nosnippet>3706</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_cosh(c64) - c64.cosh()).norm() &lt; <span class="number">1e-12</span>);
+<a href=#3707 id=3707 data-nosnippet>3707</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_tanh(c64) - c64.tanh()).norm() &lt; <span class="number">1e-12</span>);
+<a href=#3708 id=3708 data-nosnippet>3708</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_log(c64) - c64.ln()).norm() &lt; <span class="number">1e-12</span>);
+<a href=#3709 id=3709 data-nosnippet>3709</a>        <span class="macro">assert!</span>(
+<a href=#3710 id=3710 data-nosnippet>3710</a>            (&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_log10(c64)
+<a href=#3711 id=3711 data-nosnippet>3711</a>                - (c64.ln() / Complex64::new(std::f64::consts::LN_10, <span class="number">0.0</span>)))
+<a href=#3712 id=3712 data-nosnippet>3712</a>            .norm()
+<a href=#3713 id=3713 data-nosnippet>3713</a>                &lt; <span class="number">1e-12
+<a href=#3714 id=3714 data-nosnippet>3714</a>        </span>);
+<a href=#3715 id=3715 data-nosnippet>3715</a>        <span class="macro">assert!</span>((&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_sqrt(c64) - c64.sqrt()).norm() &lt; <span class="number">1e-12</span>);
+<a href=#3716 id=3716 data-nosnippet>3716</a>        <span class="macro">assert_eq!</span>(
+<a href=#3717 id=3717 data-nosnippet>3717</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_abs(c64),
+<a href=#3718 id=3718 data-nosnippet>3718</a>            Complex64::new(c64.norm(), <span class="number">0.0</span>)
+<a href=#3719 id=3719 data-nosnippet>3719</a>        );
+<a href=#3720 id=3720 data-nosnippet>3720</a>        <span class="macro">assert_eq!</span>(&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_conj(c64), c64.conj());
+<a href=#3721 id=3721 data-nosnippet>3721</a>        <span class="macro">assert_eq!</span>(
+<a href=#3722 id=3722 data-nosnippet>3722</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_ceil(c64),
+<a href=#3723 id=3723 data-nosnippet>3723</a>            Complex64::new(c64.re.ceil(), c64.im.ceil())
+<a href=#3724 id=3724 data-nosnippet>3724</a>        );
+<a href=#3725 id=3725 data-nosnippet>3725</a>        <span class="macro">assert_eq!</span>(
+<a href=#3726 id=3726 data-nosnippet>3726</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_floor(c64),
+<a href=#3727 id=3727 data-nosnippet>3727</a>            Complex64::new(c64.re.floor(), c64.im.floor())
+<a href=#3728 id=3728 data-nosnippet>3728</a>        );
+<a href=#3729 id=3729 data-nosnippet>3729</a>        <span class="macro">assert_eq!</span>(
+<a href=#3730 id=3730 data-nosnippet>3730</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_round(c64),
+<a href=#3731 id=3731 data-nosnippet>3731</a>            Complex64::new(c64.re.round(), c64.im.round())
+<a href=#3732 id=3732 data-nosnippet>3732</a>        );
+<a href=#3733 id=3733 data-nosnippet>3733</a>        <span class="kw">let </span>sign64 = &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_sign(c64);
+<a href=#3734 id=3734 data-nosnippet>3734</a>        <span class="macro">assert!</span>((sign64.norm() - <span class="number">1.0</span>).abs() &lt; <span class="number">1e-12</span>);
+<a href=#3735 id=3735 data-nosnippet>3735</a>        <span class="macro">assert_eq!</span>(
+<a href=#3736 id=3736 data-nosnippet>3736</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_sign(Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>)),
+<a href=#3737 id=3737 data-nosnippet>3737</a>            Complex64::new(<span class="number">0.0</span>, <span class="number">0.0</span>)
+<a href=#3738 id=3738 data-nosnippet>3738</a>        );
+<a href=#3739 id=3739 data-nosnippet>3739</a>        <span class="macro">assert!</span>(
+<a href=#3740 id=3740 data-nosnippet>3740</a>            (&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_pow(c64, Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>))
+<a href=#3741 id=3741 data-nosnippet>3741</a>                - c64.powc(Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>)))
+<a href=#3742 id=3742 data-nosnippet>3742</a>            .norm()
+<a href=#3743 id=3743 data-nosnippet>3743</a>                &lt; <span class="number">1e-12
+<a href=#3744 id=3744 data-nosnippet>3744</a>        </span>);
+<a href=#3745 id=3745 data-nosnippet>3745</a>        <span class="macro">assert_eq!</span>(
+<a href=#3746 id=3746 data-nosnippet>3746</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_fmod(
+<a href=#3747 id=3747 data-nosnippet>3747</a>                Complex64::new(<span class="number">5.5</span>, <span class="number">7.5</span>),
+<a href=#3748 id=3748 data-nosnippet>3748</a>                Complex64::new(<span class="number">2.0</span>, <span class="number">3.0</span>)
+<a href=#3749 id=3749 data-nosnippet>3749</a>            ),
+<a href=#3750 id=3750 data-nosnippet>3750</a>            Complex64::new(<span class="number">1.5</span>, <span class="number">1.5</span>)
+<a href=#3751 id=3751 data-nosnippet>3751</a>        );
+<a href=#3752 id=3752 data-nosnippet>3752</a>        <span class="macro">assert_eq!</span>(
+<a href=#3753 id=3753 data-nosnippet>3753</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_atan2(
+<a href=#3754 id=3754 data-nosnippet>3754</a>                Complex64::new(<span class="number">3.0</span>, <span class="number">4.0</span>),
+<a href=#3755 id=3755 data-nosnippet>3755</a>                Complex64::new(<span class="number">2.0</span>, <span class="number">5.0</span>)
+<a href=#3756 id=3756 data-nosnippet>3756</a>            ),
+<a href=#3757 id=3757 data-nosnippet>3757</a>            Complex64::new(<span class="number">3.0f64</span>.atan2(<span class="number">2.0</span>), <span class="number">4.0f64</span>.atan2(<span class="number">5.0</span>))
+<a href=#3758 id=3758 data-nosnippet>3758</a>        );
+<a href=#3759 id=3759 data-nosnippet>3759</a>        <span class="macro">assert_eq!</span>(
+<a href=#3760 id=3760 data-nosnippet>3760</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_min(
+<a href=#3761 id=3761 data-nosnippet>3761</a>                Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>),
+<a href=#3762 id=3762 data-nosnippet>3762</a>                Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
+<a href=#3763 id=3763 data-nosnippet>3763</a>            ),
+<a href=#3764 id=3764 data-nosnippet>3764</a>            Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>)
+<a href=#3765 id=3765 data-nosnippet>3765</a>        );
+<a href=#3766 id=3766 data-nosnippet>3766</a>        <span class="macro">assert_eq!</span>(
+<a href=#3767 id=3767 data-nosnippet>3767</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_max(
+<a href=#3768 id=3768 data-nosnippet>3768</a>                Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>),
+<a href=#3769 id=3769 data-nosnippet>3769</a>                Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
+<a href=#3770 id=3770 data-nosnippet>3770</a>            ),
+<a href=#3771 id=3771 data-nosnippet>3771</a>            Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
+<a href=#3772 id=3772 data-nosnippet>3772</a>        );
+<a href=#3773 id=3773 data-nosnippet>3773</a>        <span class="macro">assert!</span>(&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_isnan(<span class="kw-2">&amp;</span>Complex64::new(
+<a href=#3774 id=3774 data-nosnippet>3774</a>            <span class="number">0.0</span>,
+<a href=#3775 id=3775 data-nosnippet>3775</a>            f64::NAN
+<a href=#3776 id=3776 data-nosnippet>3776</a>        )));
+<a href=#3777 id=3777 data-nosnippet>3777</a>        <span class="macro">assert_eq!</span>(
+<a href=#3778 id=3778 data-nosnippet>3778</a>            &lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::from_f64_lossy(<span class="number">2.0</span>),
+<a href=#3779 id=3779 data-nosnippet>3779</a>            Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>)
+<a href=#3780 id=3780 data-nosnippet>3780</a>        );
+<a href=#3781 id=3781 data-nosnippet>3781</a>        <span class="macro">assert!</span>(
+<a href=#3782 id=3782 data-nosnippet>3782</a>            (&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::to_f64_lossy(<span class="kw-2">&amp;</span>Complex64::new(<span class="number">3.0</span>, <span class="number">4.0</span>)) - <span class="number">5.0</span>).abs()
+<a href=#3783 id=3783 data-nosnippet>3783</a>                &lt; <span class="number">1e-12
+<a href=#3784 id=3784 data-nosnippet>3784</a>        </span>);
+<a href=#3785 id=3785 data-nosnippet>3785</a>        <span class="macro">assert!</span>(&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_compare(
+<a href=#3786 id=3786 data-nosnippet>3786</a>            Complex64::new(<span class="number">3.0</span>, <span class="number">0.0</span>),
+<a href=#3787 id=3787 data-nosnippet>3787</a>            Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>),
+<a href=#3788 id=3788 data-nosnippet>3788</a>            ImageExprCompareOp::GreaterEqual
+<a href=#3789 id=3789 data-nosnippet>3789</a>        ));
+<a href=#3790 id=3790 data-nosnippet>3790</a>        <span class="macro">assert!</span>(&lt;Complex64 <span class="kw">as </span>ImageExprValue&gt;::expr_compare(
+<a href=#3791 id=3791 data-nosnippet>3791</a>            Complex64::new(<span class="number">1.0</span>, <span class="number">0.0</span>),
+<a href=#3792 id=3792 data-nosnippet>3792</a>            Complex64::new(<span class="number">2.0</span>, <span class="number">0.0</span>),
+<a href=#3793 id=3793 data-nosnippet>3793</a>            ImageExprCompareOp::LessEqual
+<a href=#3794 id=3794 data-nosnippet>3794</a>        ));
+<a href=#3795 id=3795 data-nosnippet>3795</a>    }
+<a href=#3796 id=3796 data-nosnippet>3796</a>}
 </code></pre></div></section></main></body></html>
