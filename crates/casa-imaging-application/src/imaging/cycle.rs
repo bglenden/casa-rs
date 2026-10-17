@@ -28,9 +28,9 @@ use casa_imaging_runtime::pass::{
     WorkerTeams, density_pass_bytes, run_density_pass, run_major_cycle,
 };
 use casa_imaging_runtime::{
-    CubeState, Demand, Diagnostics, HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache,
-    Reservation, ResourcePolicy, RunSummary, admit, free_memory, mask_bytes, prepare_bytes,
-    prepare_minor_cycle, run_bytes, run_minor_cycle, run_phase,
+    Admitted, CubeState, Demand, Diagnostics, HostResources, MinorCycleOutcome, MinorCycleSetup,
+    PsfCache, Reservation, ResourcePolicy, RunSummary, admit, free_memory, mask_bytes,
+    prepare_bytes, prepare_minor_cycle, run_bytes, run_minor_cycle, run_phase,
 };
 use casa_ms::ResolvedSelectedObservationAccess;
 
@@ -548,7 +548,7 @@ impl<'a> Run<'a> {
             };
             if run
                 .admit_pass(modes, with_model, run.visibility_write_bytes)?
-                .0
+                .value
                 != Residency::All
             {
                 return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
@@ -561,7 +561,10 @@ impl<'a> Run<'a> {
     /// visibilities when it is also final.
     fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
         // The model is admitted with the pass, before it is allocated.
-        let (residency, pass) = self.admit_pass(
+        let Admitted {
+            value: residency,
+            reservation: pass,
+        } = self.admit_pass(
             self.initial_modes(),
             false,
             self.lifecycle.resident_bytes() + self.write_bytes(last),
@@ -588,7 +591,10 @@ impl<'a> Run<'a> {
         // and the minor cycle's charge covers its terms until the model
         // holds them.
         let (normal_state, model) = completion.into_parts();
-        let (residency, mut pass) = self.admit_pass(ModeSet::DATA, true, self.write_bytes(last))?;
+        let Admitted {
+            value: residency,
+            reservation: mut pass,
+        } = self.admit_pass(ModeSet::DATA, true, self.write_bytes(last))?;
         let model = self.lifecycle.prepare_final_model(model, terms)?;
         let cycle = MajorCycle::refresh(
             self.problem,
@@ -734,7 +740,7 @@ impl<'a> Run<'a> {
         modes: ModeSet,
         with_model: bool,
         besides: u64,
-    ) -> Result<(Residency, Reservation), ImagingError> {
+    ) -> Result<Admitted<Residency>, ImagingError> {
         let besides = besides + self.stitch.pass_bytes(modes.psf);
         let workers = self.teams.streaming().workers();
         let domains = pass_domains(&self.domains, workers);
@@ -761,7 +767,10 @@ impl<'a> Run<'a> {
                 memory: demand.bytes(planes) + besides,
             },
         )?;
-        Ok((residency, reservation))
+        Ok(Admitted {
+            value: residency,
+            reservation,
+        })
     }
 
     /// Keep the imaging weights of every sample across passes (#659) when a
