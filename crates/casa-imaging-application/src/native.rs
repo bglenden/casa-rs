@@ -14,7 +14,7 @@ use casa_imaging_products::{
 };
 use casa_imaging_runtime::pass::{PassError, WorkerTeam, WorkerTeams};
 use casa_imaging_runtime::{
-    Admission, Cancelled, Demand, Reservation, RunSummary, SourceAccessError, admit,
+    Admission, Admitted, Cancelled, Demand, Reservation, RunSummary, SourceAccessError, admit,
     finalize_source_access, run_phase,
 };
 use casa_ms::{ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest};
@@ -150,7 +150,10 @@ pub(crate) fn prepare(
             })
         })
         .transpose()?;
-    let (access, source) = finalize_source_access(
+    let Admitted {
+        value: access,
+        reservation: source,
+    } = finalize_source_access(
         problem,
         input.initial_access,
         imaging::row_samples(problem)?,
