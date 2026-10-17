@@ -567,7 +567,39 @@ superseded by a faster same-landmark implementation, or explicitly retired by
 Brian. Branch restructuring, recovery selection, and experimental cleanup are
 not retirement decisions.
 
-The finite implementation sequence is:
+### Retirement of both landmarks (2026-10-16)
+
+Brian retired both landmarks explicitly on 2026-10-16 (#449). The historical
+figures above stay as history; neither landmark gates promotion any longer.
+The machine-readable record is each landmark row's `retirement` member.
+
+The retirement followed the prior-art study
+`docs/imaging-architecture/aw-prior-art-20261016.md`, which found:
+
+- The landmark capabilities had already left the code twice, without a
+  retirement on record:
+  - the response cache, sparse MT-MFS state, radix statistics and resident
+    Metal replay went with the legacy `casa-imaging` crate at the August
+    ADR-0009 cutover (`27b9b602fe`, 2026-08-25);
+  - IF-2 then deleted #486's replay successor under the imaging foundation's
+    decision D1 (`e7d29c8e5b`, 2026-10-07).
+- The four-SPW `126.7647x` compared casa-rs on the laptop with CASA 6.7.5.18
+  on the Mac mini. The same-host figure on the mini was 46.14 s, `78.7x`.
+- The mechanism behind it was gated by an environment variable and admitted
+  only a single pending model-delta position. It was never admitted on the
+  63-field trajectory.
+
+The 10x programme now measures progress against CASA on the benchmark set in
+`docs/imaging-architecture/imaging-mode-taxonomy-20261016.md` §5. Row B1 is
+the four-SPW landmark's workload, compared with its frozen CASA time
+(3,631.8 s) and not with the retired casa-rs figure. The retirement policy
+itself is unchanged: any landmark adopted later can leave the lineage only on
+the record.
+
+The finite implementation sequence below is superseded by that programme. It
+is kept as history.
+
+The finite implementation sequence was:
 
 1. revalidate the two landmark rows with one frozen release executable;
 2. run the already-available model-delta census on the real `4,096`-square,
