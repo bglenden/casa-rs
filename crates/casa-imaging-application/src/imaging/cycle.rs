@@ -25,7 +25,8 @@ use casa_imaging_products::{
 use casa_imaging_runtime::pass::{
     BackendChoice, BoundedSource, CHUNK_PLACEMENTS, Cancel, MajorCyclePass, ModelPreparation,
     Partition, PassDomain, PassError, PassSummary, Residency, VisibilitySink, WaveDemand,
-    WeightCache, WorkerTeam, WorkerTeams, density_pass_bytes, run_density_pass, run_major_cycle,
+    WeightCache, WorkerTeam, WorkerTeams, density_pass_bytes, needs_row_work, row_work_pass_bytes,
+    run_density_pass, run_major_cycle, run_row_work_pass,
 };
 use casa_imaging_runtime::{
     CubeState, Demand, Diagnostics, HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache,
@@ -574,6 +575,7 @@ impl<'a> Run<'a> {
     /// The initial major cycle: data and PSF, from an empty model; it writes
     /// visibilities when it is also final.
     fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
+        self.measure_row_work()?;
         // The model is admitted with the pass, before it is allocated.
         let (plan, pass) = self.admit_pass(
             self.initial_modes(),
@@ -816,6 +818,43 @@ impl<'a> Run<'a> {
         }
         let charge = self.admit("kept imaging weights", bytes).ok()?;
         Some((WeightCache::new(samples), charge))
+    }
+
+    /// Measure each region-split domain's gridding work by anchor row before
+    /// the first pass, over a traversal of flags and weights only
+    /// ([`run_row_work_pass`]), so that the first pass cuts balanced strips
+    /// too (#736). A run without several region owners measures nothing,
+    /// and the pass is charged while it runs.
+    fn measure_row_work(&mut self) -> Result<(), ImagingError> {
+        if self.row_work.is_some() {
+            return Ok(());
+        }
+        let team = self.teams.streaming();
+        let work = {
+            let domains = pass_domains(&self.domains, team.workers(), None);
+            if !needs_row_work(&domains) {
+                return Ok(());
+            }
+            let _charge = self.admit(
+                "region row-work pass",
+                row_work_pass_bytes(&domains, team.workers()),
+            )?;
+            let started = Instant::now();
+            let work = run_row_work_pass(
+                &domains,
+                &self.weighting,
+                &mut self.source,
+                team,
+                &self.cancel,
+            )?;
+            tracing::info!(
+                "imaging region row work: measured in {:.2} s",
+                started.elapsed().as_secs_f64()
+            );
+            work
+        };
+        self.keep_row_work(work);
+        Ok(())
     }
 
     /// The kept gridding work by anchor row, per domain ([`Self::keep_row_work`]).

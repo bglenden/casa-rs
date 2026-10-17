@@ -9,7 +9,7 @@ use casa_imaging_operator::{
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, MajorCyclePass,
     NativeBlock, Partition, PassDomain, PassError, Residency, SampleContent, SourceError,
-    WeightCache, WorkerTeam, run_density_pass, run_major_cycle,
+    WeightCache, WorkerTeam, needs_row_work, run_density_pass, run_major_cycle, run_row_work_pass,
 };
 use num_complex::Complex32;
 
@@ -158,6 +158,50 @@ fn balanced_regions_from_a_pass_row_work_match_one_owner() {
         vec![None],
         "plane owners report no row work"
     );
+}
+
+/// The row-work pass measures, from flags and weights alone, the row work a
+/// first pass over the same strips reports, on any number of workers; and
+/// only region-split domains with several owners ask for it.
+#[test]
+fn the_row_work_pass_measures_what_a_first_pass_reports() {
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let mut rows = Rows::random(500, 31, operator.geometry());
+    let regions = [PassDomain {
+        operator: &operator,
+        resampler: &resampler,
+        partition: Partition::regions(&operator, 3),
+    }];
+    let (_, summary) = try_run(
+        &regions,
+        &mut rows,
+        &Run {
+            workers: 3,
+            ..Run::initial()
+        },
+    )
+    .expect("pass");
+    assert!(summary.row_work.iter().all(Option::is_some));
+    let weighting = WeightingGeneration::Natural { taper: None };
+    rows.contents.clear();
+    for workers in [1, 3] {
+        let team = WorkerTeam::new(workers).expect("team");
+        let measured = run_row_work_pass(&regions, &weighting, &mut rows, &team, &Cancel::new())
+            .expect("row-work pass");
+        assert_eq!(measured, summary.row_work, "{workers} workers");
+    }
+    assert_eq!(rows.contents, [SampleContent::FlagsAndWeights; 2]);
+    assert!(needs_row_work(&regions));
+
+    let cube = crate::fixture::operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
+    let cube_resampler = nearest_cube();
+    assert!(!needs_row_work(&[planes(&cube, &cube_resampler, 2)]));
+    assert!(!needs_row_work(&[PassDomain {
+        operator: &operator,
+        resampler: &resampler,
+        partition: Partition::regions(&operator, 1),
+    }]));
 }
 
 /// The density pass reads flags and weights only: its source delivers zero
