@@ -9,8 +9,9 @@ use casa_imaging_operator::{
     SpectralKernel, SpectralResampler, WeightingGeneration,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, BoundedSource, Cancel, MajorCyclePass, NativeBlock, PassError, Residency,
-    SourceError, VisibilitySink, WaveDemand, WorkerTeam, run_major_cycle,
+    BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, MajorCyclePass,
+    NativeBlock, Partition, PassDomain, PassError, Residency, SourceError, VisibilitySink,
+    WaveDemand, WorkerTeam, run_major_cycle,
 };
 use casa_imaging_runtime::{Admission, Demand, HostResources, ResourcePolicy, admit};
 use num_complex::Complex32;
@@ -27,6 +28,77 @@ const HOST: HostResources = HostResources {
     available_memory: u64::MAX,
     metal: true,
 };
+
+/// A pass whose grid three region owners split takes the largest chunks
+/// that fit its budget (#736), and the default chunks when none does, so a
+/// pass that fits with the default is never refused for larger ones. One
+/// region owner, or plane owners, keep the default chunks whatever the
+/// budget. The block is wide enough for every chunk size to bind.
+#[test]
+fn region_owners_take_the_largest_chunks_that_fit() {
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let rows = Rows::random(50, 17, operator.geometry());
+    let block = BlockShape {
+        rows: 1 << 20,
+        ..rows.maximum_block()
+    };
+    let demand_of = |domains| WaveDemand {
+        domains,
+        modes: ModeSet::DATA,
+        with_model: true,
+        native_spacing_hz: WIDTH_HZ,
+        workers: 3,
+        backend: BackendChoice::Cpu,
+        block,
+        chunk_placements: CHUNK_PLACEMENTS,
+    };
+    let regions = [PassDomain {
+        operator: &operator,
+        resampler: &resampler,
+        partition: Partition::regions(&operator, 3),
+    }];
+    let demand = demand_of(&regions);
+    let bytes = |chunk_placements| {
+        WaveDemand {
+            chunk_placements,
+            ..demand
+        }
+        .bytes(1)
+    };
+    let default = bytes(CHUNK_PLACEMENTS);
+    let largest = bytes(1 << 18);
+    assert!(bytes(1 << 16) > default && largest > bytes(1 << 17));
+    assert_eq!(demand.plan_chunk_placements(1, u64::MAX), 1 << 18);
+    assert_eq!(demand.plan_chunk_placements(1, largest), 1 << 18);
+    assert_eq!(demand.plan_chunk_placements(1, largest - 1), 1 << 17);
+    assert_eq!(demand.plan_chunk_placements(1, bytes(1 << 16)), 1 << 16);
+    assert_eq!(demand.plan_chunk_placements(1, default), CHUNK_PLACEMENTS);
+    assert_eq!(
+        demand.plan_chunk_placements(1, 0),
+        CHUNK_PLACEMENTS,
+        "nothing fits: the default, which admission then refuses"
+    );
+
+    let one_owner = [PassDomain {
+        operator: &operator,
+        resampler: &resampler,
+        partition: Partition::regions(&operator, 1),
+    }];
+    let cube = operator_of_planes();
+    let cube_resampler = nearest_cube();
+    let plane_owners = [planes(&cube, &cube_resampler, 3)];
+    for domains in [&one_owner[..], &plane_owners[..]] {
+        assert_eq!(
+            demand_of(domains).plan_chunk_placements(1, u64::MAX),
+            CHUNK_PLACEMENTS
+        );
+    }
+}
+
+fn operator_of_planes() -> casa_imaging_operator::MeasurementOperator {
+    operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 })
+}
 
 /// A budget that fits exactly one plane gives one-plane waves whose images
 /// equal one resident pass; a byte less is refused at admission. Every
@@ -67,6 +139,7 @@ fn one_plane_budget(backend: BackendChoice, precision: GridPrecision) {
             workers: 1,
             backend,
             block: rows.maximum_block(),
+            chunk_placements: CHUNK_PLACEMENTS,
         };
         let one = demand.bytes(1);
         assert_eq!(
@@ -152,6 +225,7 @@ fn a_writing_pass_in_waves_is_a_typed_error() {
         backend: BackendChoice::Cpu,
         metal_stage_timing: false,
         weights: None,
+        chunk_placements: CHUNK_PLACEMENTS,
     };
     let mut write = |_: &_, _: &[_]| -> Result<(), _> { panic!("nothing is written") };
     let mut sink = VisibilitySink {
@@ -216,6 +290,7 @@ fn a_writing_pass_hands_each_row_its_own_prediction() {
             backend: BackendChoice::Cpu,
             metal_stage_timing: false,
             weights: None,
+            chunk_placements: CHUNK_PLACEMENTS,
         };
         let mut written = vec![None; expected.len()];
         let mut write = |block: &NativeBlock, predictions: &[Complex32]| {

@@ -9,9 +9,10 @@ use casa_imaging_operator::{
     SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WeightingGeneration,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, BlockShape, BoundedSource, Cancel, DomainProjection, MajorCyclePass,
-    ModelPreparation, NativeBlock, NativeRowHeader, Partition, PassDomain, PassError, PassSummary,
-    Residency, RowAddress, SampleContent, SourceError, WeightCache, WorkerTeam, run_major_cycle,
+    BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, DomainProjection,
+    MajorCyclePass, ModelPreparation, NativeBlock, NativeRowHeader, Partition, PassDomain,
+    PassError, PassSummary, Residency, RowAddress, SampleContent, SourceError, WeightCache,
+    WorkerTeam, run_major_cycle,
 };
 use ndarray::Array2;
 use num_complex::Complex32;
@@ -374,11 +375,12 @@ pub struct Run<'a> {
     pub native_spacing_hz: f64,
     pub backend: BackendChoice,
     pub weights: Option<&'a WeightCache>,
+    pub chunk_placements: usize,
 }
 
 impl Run<'_> {
     /// Data and PSF without a model, every plane resident, one worker, on
-    /// the CPU, weighing every sample.
+    /// the CPU, weighing every sample, in chunks of the default size.
     pub fn initial() -> Self {
         Self {
             residency: Residency::All,
@@ -388,6 +390,7 @@ impl Run<'_> {
             native_spacing_hz: WIDTH_HZ,
             backend: BackendChoice::Cpu,
             weights: None,
+            chunk_placements: CHUNK_PLACEMENTS,
         }
     }
 }
@@ -410,6 +413,7 @@ pub fn try_run(
         backend: run.backend,
         metal_stage_timing: false,
         weights: run.weights,
+        chunk_placements: run.chunk_placements,
     };
     let team = WorkerTeam::new(run.workers).expect("team");
     let mut joined: Vec<Option<NormalImages>> = (0..domains.len()).map(|_| None).collect();

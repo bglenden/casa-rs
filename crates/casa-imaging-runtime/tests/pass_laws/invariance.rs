@@ -7,15 +7,16 @@ use casa_imaging_operator::{
     SampleBuffer, SpectralResampler, WeightingGeneration, build_density_grid,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, BlockShape, BoundedSource, Cancel, MajorCyclePass, ModelPreparation,
-    NativeBlock, Partition, PassDomain, PassError, Residency, SampleContent, SourceError,
-    VisibilitySink, WeightCache, WorkerTeam, run_density_pass, run_major_cycle,
+    BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, MajorCyclePass,
+    ModelPreparation, NativeBlock, Partition, PassDomain, PassError, Residency, SampleContent,
+    SourceError, VisibilitySink, WeightCache, WorkerTeam, needs_row_work, run_density_pass,
+    run_major_cycle, run_row_work_pass,
 };
 use num_complex::Complex32;
 
 use crate::fixture::{
     CHANNELS, IMAGE, INCREMENT_RAD, Rows, Run, WIDTH_HZ, nearest_cube, operator, planes, run,
-    sparse_model, window_of, worst_relative,
+    sparse_model, try_run, window_of, worst_relative,
 };
 
 #[test]
@@ -66,26 +67,142 @@ fn region_partition_matches_one_owner() {
             &mut rows,
             &Run::initial(),
         );
+        // Chunks of 8 placements cut each block into many slices; the
+        // default and the largest region chunks take a block in one (#736).
         for workers in [2, 4] {
-            let images = run(
-                &[PassDomain {
-                    operator: &operator,
-                    resampler: &resampler,
-                    partition: Partition::regions(&operator, workers),
-                }],
-                &mut rows,
-                &Run {
-                    workers,
-                    ..Run::initial()
-                },
-            );
-            let worst = worst_relative(&reference[0], &images[0]);
-            assert!(
-                worst <= tolerance,
-                "{precision:?} {workers} regions: {worst}"
-            );
+            for chunk_placements in [8, CHUNK_PLACEMENTS, 1 << 18] {
+                let images = run(
+                    &[PassDomain {
+                        operator: &operator,
+                        resampler: &resampler,
+                        partition: Partition::regions(&operator, workers),
+                    }],
+                    &mut rows,
+                    &Run {
+                        workers,
+                        chunk_placements,
+                        ..Run::initial()
+                    },
+                );
+                let worst = worst_relative(&reference[0], &images[0]);
+                assert!(
+                    worst <= tolerance,
+                    "{precision:?} {workers} regions, chunks of {chunk_placements}: {worst}"
+                );
+            }
         }
     }
+}
+
+/// A region pass reports its gridding work by anchor row, and strips cut to
+/// equal shares of it (#736) grid what one owner grids, to rounding. Plane
+/// owners report none.
+#[test]
+fn balanced_regions_from_a_pass_row_work_match_one_owner() {
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let mut rows = Rows::random(500, 7, operator.geometry());
+    let reference = run(
+        &[planes(&operator, &resampler, 1)],
+        &mut rows,
+        &Run::initial(),
+    );
+    let regions = [PassDomain {
+        operator: &operator,
+        resampler: &resampler,
+        partition: Partition::regions(&operator, 3),
+    }];
+    let (_, summary) = try_run(
+        &regions,
+        &mut rows,
+        &Run {
+            workers: 3,
+            ..Run::initial()
+        },
+    )
+    .expect("pass");
+    let [Some(row_work)] = summary.row_work.as_slice() else {
+        panic!("one region-split domain reports its work");
+    };
+    assert_eq!(row_work.len(), operator.geometry().grid_shape()[1]);
+    // The spheroidal kernel's 7 × 7 taps for every placed sample.
+    assert_eq!(row_work.iter().sum::<u64>(), 49 * summary.samples);
+    let balanced = Partition::regions_balanced(&operator, 3, row_work);
+    let images = run(
+        &[PassDomain {
+            operator: &operator,
+            resampler: &resampler,
+            partition: balanced,
+        }],
+        &mut rows,
+        &Run {
+            workers: 3,
+            ..Run::initial()
+        },
+    );
+    let worst = worst_relative(&reference[0], &images[0]);
+    assert!(worst <= 1.0e-6, "balanced regions: {worst}");
+
+    let cube = crate::fixture::operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
+    let cube_resampler = nearest_cube();
+    let (_, summary) = try_run(
+        &[planes(&cube, &cube_resampler, 2)],
+        &mut Rows::random(100, 11, cube.geometry()),
+        &Run {
+            workers: 2,
+            ..Run::initial()
+        },
+    )
+    .expect("pass");
+    assert_eq!(
+        summary.row_work,
+        vec![None],
+        "plane owners report no row work"
+    );
+}
+
+/// The row-work pass measures, from flags and weights alone, the row work a
+/// first pass over the same strips reports, on any number of workers; and
+/// only region-split domains with several owners ask for it.
+#[test]
+fn the_row_work_pass_measures_what_a_first_pass_reports() {
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let mut rows = Rows::random(500, 31, operator.geometry());
+    let regions = [PassDomain {
+        operator: &operator,
+        resampler: &resampler,
+        partition: Partition::regions(&operator, 3),
+    }];
+    let (_, summary) = try_run(
+        &regions,
+        &mut rows,
+        &Run {
+            workers: 3,
+            ..Run::initial()
+        },
+    )
+    .expect("pass");
+    assert!(summary.row_work.iter().all(Option::is_some));
+    let weighting = WeightingGeneration::Natural { taper: None };
+    rows.contents.clear();
+    for workers in [1, 3] {
+        let team = WorkerTeam::new(workers).expect("team");
+        let measured = run_row_work_pass(&regions, &weighting, &mut rows, &team, &Cancel::new())
+            .expect("row-work pass");
+        assert_eq!(measured, summary.row_work, "{workers} workers");
+    }
+    assert_eq!(rows.contents, [SampleContent::FlagsAndWeights; 2]);
+    assert!(needs_row_work(&regions));
+
+    let cube = crate::fixture::operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
+    let cube_resampler = nearest_cube();
+    assert!(!needs_row_work(&[planes(&cube, &cube_resampler, 2)]));
+    assert!(!needs_row_work(&[PassDomain {
+        operator: &operator,
+        resampler: &resampler,
+        partition: Partition::regions(&operator, 1),
+    }]));
 }
 
 /// The density pass reads flags and weights only: its source delivers zero
@@ -176,6 +293,7 @@ fn writing_pass(
         backend: BackendChoice::Cpu,
         metal_stage_timing: false,
         weights,
+        chunk_placements: CHUNK_PLACEMENTS,
     };
     let mut written = vec![None; rows.rows.len()];
     let mut write = |block: &NativeBlock, predictions: &[Complex32]| {
@@ -279,6 +397,7 @@ fn a_cancelled_pass_stops_with_a_typed_error() {
         backend: BackendChoice::Cpu,
         metal_stage_timing: false,
         weights: None,
+        chunk_placements: CHUNK_PLACEMENTS,
     };
     let cancel = Cancel::new();
     cancel.cancel();
@@ -345,6 +464,7 @@ fn a_pass_cancelled_midway_reads_no_further_block() {
         backend: BackendChoice::Cpu,
         metal_stage_timing: false,
         weights: None,
+        chunk_placements: CHUNK_PLACEMENTS,
     };
     for workers in [1, 3] {
         let cancel = Cancel::new();
