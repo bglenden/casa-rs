@@ -465,10 +465,6 @@ pub struct EvalContext<'a> {
 }
 
 /// Evaluate an expression against a row context.
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
 pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlError> {
     match expr {
         Expr::Literal(lit) => Ok(eval_literal(lit)),
@@ -603,55 +599,7 @@ pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlEr
             if val.is_null() {
                 return Ok(ExprValue::Null);
             }
-            let mut found = false;
-            for elem in elements {
-                match elem {
-                    ast::InSetElement::Value(v) => {
-                        let item = eval_expr(v, ctx)?;
-                        if val == item {
-                            found = true;
-                            break;
-                        }
-                    }
-                    ast::InSetElement::Range { start, end, step } => {
-                        let lo = start.as_ref().map(|s| eval_expr(s, ctx)).transpose()?;
-                        let hi = end.as_ref().map(|e| eval_expr(e, ctx)).transpose()?;
-                        // Check range membership
-                        let ge_lo = match &lo {
-                            Some(l) => val.compare(l)? != Ordering::Less,
-                            None => true,
-                        };
-                        let le_hi = match &hi {
-                            Some(h) => val.compare(h)? != Ordering::Greater,
-                            None => true,
-                        };
-                        if ge_lo && le_hi {
-                            // If step is given, check stride
-                            if let Some(step_expr) = step {
-                                let s_val = eval_expr(step_expr, ctx)?;
-                                let step_f = s_val.to_float()?;
-                                let v_f = val.to_float()?;
-                                let lo_f = lo
-                                    .as_ref()
-                                    .map(|l| l.to_float())
-                                    .transpose()?
-                                    .unwrap_or(0.0);
-                                if step_f != 0.0 {
-                                    let offset = v_f - lo_f;
-                                    let remainder = offset % step_f;
-                                    if remainder.abs() < 1e-10 {
-                                        found = true;
-                                        break;
-                                    }
-                                }
-                            } else {
-                                found = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
+            let found = in_set_contains(&val, elements, ctx)?;
             Ok(ExprValue::Bool(if *negated { !found } else { found }))
         }
         Expr::ArrayIndex { array, indices } => {
@@ -684,6 +632,64 @@ pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlEr
             })
         }
     }
+}
+
+/// Test `val` (non-NULL) for membership in the elements of an `IN [...]`
+/// set, evaluating elements in order and stopping at the first match.
+///
+/// A range element matches when `val` lies within its inclusive bounds and,
+/// if a step is given, sits on the stride counted from the start (or 0).
+fn in_set_contains(
+    val: &ExprValue,
+    elements: &[ast::InSetElement],
+    ctx: &EvalContext<'_>,
+) -> Result<bool, TaqlError> {
+    for elem in elements {
+        match elem {
+            ast::InSetElement::Value(v) => {
+                let item = eval_expr(v, ctx)?;
+                if *val == item {
+                    return Ok(true);
+                }
+            }
+            ast::InSetElement::Range { start, end, step } => {
+                let lo = start.as_ref().map(|s| eval_expr(s, ctx)).transpose()?;
+                let hi = end.as_ref().map(|e| eval_expr(e, ctx)).transpose()?;
+                // Check range membership
+                let ge_lo = match &lo {
+                    Some(l) => val.compare(l)? != Ordering::Less,
+                    None => true,
+                };
+                let le_hi = match &hi {
+                    Some(h) => val.compare(h)? != Ordering::Greater,
+                    None => true,
+                };
+                if ge_lo && le_hi {
+                    // If step is given, check stride
+                    if let Some(step_expr) = step {
+                        let s_val = eval_expr(step_expr, ctx)?;
+                        let step_f = s_val.to_float()?;
+                        let v_f = val.to_float()?;
+                        let lo_f = lo
+                            .as_ref()
+                            .map(|l| l.to_float())
+                            .transpose()?
+                            .unwrap_or(0.0);
+                        if step_f != 0.0 {
+                            let offset = v_f - lo_f;
+                            let remainder = offset % step_f;
+                            if remainder.abs() < 1e-10 {
+                                return Ok(true);
+                            }
+                        }
+                    } else {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+    }
+    Ok(false)
 }
 
 fn eval_literal(lit: &Literal) -> ExprValue {

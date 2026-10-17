@@ -79,10 +79,6 @@ fn append_line(out: &mut String, line: &str) {
     out.push('\n');
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
 fn do_io(do_excp: bool, writing: bool, io: &mut AipsIo, out: &mut String) -> AipsIoDemoResult<()> {
     let _ = do_excp;
 
@@ -158,21 +154,7 @@ fn do_io(do_excp: bool, writing: bool, io: &mut AipsIo, out: &mut String) -> Aip
         io.put_i32_slice(&[i], true)?;
         append_line(out, &io.putend()?.to_string());
 
-        append_line(out, &io.putstart("abcdefghij", 20)?.to_string());
-        io.put_i32(1)?;
-        append_line(out, &io.putstart("klm", 21)?.to_string());
-        io.put_i32(2)?;
-        append_line(out, &io.putstart("nopq", 22)?.to_string());
-        io.put_i32(3)?;
-        append_line(out, &io.putend()?.to_string());
-        io.put_i32(4)?;
-        append_line(out, &io.putstart("r", 23)?.to_string());
-        io.put_i32(5)?;
-        append_line(out, &io.putend()?.to_string());
-        io.put_i32(6)?;
-        append_line(out, &io.putend()?.to_string());
-        io.put_i32(7)?;
-        append_line(out, &io.putend()?.to_string());
+        write_nested_object(io, out)?;
 
         append_line(out, &io.putstart("abcdefghij", 20)?.to_string());
         io.put_i32(3)?;
@@ -275,6 +257,39 @@ fn do_io(do_excp: bool, writing: bool, io: &mut AipsIo, out: &mut String) -> Aip
     append_line(out, &format!("{} {}", ip.len(), ip[0]));
     append_line(out, &io.getend()?.to_string());
 
+    read_nested_object(io, out)?;
+    read_array_object(io, out, &arr, &barr)?;
+
+    append_line(out, &format!("Length={}", io.getpos()?));
+    io.setpos(1)?;
+    io.setpos(0)?;
+    Ok(())
+}
+
+/// Write the third test object: an outer object holding the nested
+/// `klm`/`nopq` and `r` objects between plain integers.
+fn write_nested_object(io: &mut AipsIo, out: &mut String) -> AipsIoDemoResult<()> {
+    append_line(out, &io.putstart("abcdefghij", 20)?.to_string());
+    io.put_i32(1)?;
+    append_line(out, &io.putstart("klm", 21)?.to_string());
+    io.put_i32(2)?;
+    append_line(out, &io.putstart("nopq", 22)?.to_string());
+    io.put_i32(3)?;
+    append_line(out, &io.putend()?.to_string());
+    io.put_i32(4)?;
+    append_line(out, &io.putstart("r", 23)?.to_string());
+    io.put_i32(5)?;
+    append_line(out, &io.putend()?.to_string());
+    io.put_i32(6)?;
+    append_line(out, &io.putend()?.to_string());
+    io.put_i32(7)?;
+    append_line(out, &io.putend()?.to_string());
+    Ok(())
+}
+
+/// Read back the nested object written by [`write_nested_object`], printing
+/// each version, value and end count.
+fn read_nested_object(io: &mut AipsIo, out: &mut String) -> AipsIoDemoResult<()> {
     append_line(out, &format!("Version={}", io.getstart("abcdefghij")?));
     let val = io.get_i32()?;
     append_line(out, &val.to_string());
@@ -302,7 +317,17 @@ fn do_io(do_excp: bool, writing: bool, io: &mut AipsIo, out: &mut String) -> Aip
     append_line(out, &io.getend()?.to_string());
     append_line(out, &io.get_i32()?.to_string());
     append_line(out, &io.getend()?.to_string());
+    Ok(())
+}
 
+/// Read back the fourth test object (the integer, Boolean and string arrays)
+/// and report every element that differs from what was written.
+fn read_array_object(
+    io: &mut AipsIo,
+    out: &mut String,
+    arr: &[i32],
+    barr: &[bool],
+) -> AipsIoDemoResult<()> {
     append_line(out, &format!("Version={}", io.getstart("abcdefghij")?));
     let v1 = io.get_i32()?;
     let v2 = io.get_i32()?;
@@ -384,9 +409,6 @@ fn do_io(do_excp: bool, writing: bool, io: &mut AipsIo, out: &mut String) -> Aip
     }
 
     append_line(out, &io.getend()?.to_string());
-    append_line(out, &format!("Length={}", io.getpos()?));
-    io.setpos(1)?;
-    io.setpos(0)?;
     Ok(())
 }
 

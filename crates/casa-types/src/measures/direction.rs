@@ -1669,10 +1669,6 @@ impl ConvCtx {
 // ---------------------------------------------------------------------------
 
 /// Applies a single conversion hop.
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
 fn apply_hop(
     cosines: [f64; 3],
     from: DirectionRef,
@@ -1801,112 +1797,14 @@ fn apply_hop(
         }
 
         // JTRUE → APP (aberration)
-        (JTRUE, APP) => {
-            let (v_au_day, sun_dist) = earth_velocity_au_per_day(frame, ctx)?;
-            // Convert velocity to units of c
-            let v = [
-                v_au_day[0] / C_AU_PER_DAY,
-                v_au_day[1] / C_AU_PER_DAY,
-                v_au_day[2] / C_AU_PER_DAY,
-            ];
-            // Rotate velocity to true equatorial frame
-            let (tt1, tt2) = get_tt_jd(frame, ctx)?;
-            let rbpn = bias_precession_nutation(frame, tt1, tt2);
-            let v_true = rotate(&rbpn, &v);
-            // Reciprocal of Lorentz factor: sqrt(1 - |v|²)
-            let v2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
-            let bm1 = (1.0 - v2).sqrt();
-            Ok(sofars::astro::ab(&cosines, &v_true, sun_dist, bm1))
-        }
+        (JTRUE, APP) => apply_annual_aberration(cosines, frame, ctx),
         // APP → JTRUE (inverse aberration — iterative)
-        (APP, JTRUE) => {
-            let (v_au_day, sun_dist) = earth_velocity_au_per_day(frame, ctx)?;
-            let v = [
-                v_au_day[0] / C_AU_PER_DAY,
-                v_au_day[1] / C_AU_PER_DAY,
-                v_au_day[2] / C_AU_PER_DAY,
-            ];
-            let (tt1, tt2) = get_tt_jd(frame, ctx)?;
-            let rbpn = bias_precession_nutation(frame, tt1, tt2);
-            let v_true = rotate(&rbpn, &v);
-            let v2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
-            let bm1 = (1.0 - v2).sqrt();
-
-            // Iterative removal: start with apparent as guess for natural
-            let mut pnat = cosines;
-            for _ in 0..5 {
-                let papp = sofars::astro::ab(&pnat, &v_true, sun_dist, bm1);
-                // Correct: pnat += (cosines - papp)
-                for k in 0..3 {
-                    pnat[k] += cosines[k] - papp[k];
-                }
-                // Re-normalize
-                let (_, unit) = sofars::vm::pn(&pnat);
-                pnat = unit;
-            }
-            Ok(pnat)
-        }
+        (APP, JTRUE) => remove_annual_aberration(cosines, frame, ctx),
 
         // APP → HADEC (sidereal time + diurnal aberration + polar motion)
-        //
-        // Matches C++ casacore's TOPO→HADEC path (APP→TOPO is a no-op for
-        // unit-vector directions). The steps are:
-        //   1. Diurnal aberration: add v/c in zenith direction, renormalize
-        //   2. Polar motion + LAST rotation via Euler R = Ry(xp)×Rx(yp)×Rz(LAST)
-        //   3. Apply R^T and negate y to get (HA, Dec)
-        (APP, HADEC) => {
-            let gast = get_gast(frame, ctx)?;
-            let lon = get_longitude(frame)?;
-            let last = gast + lon;
-
-            // Diurnal aberration: shift in direction of (LAST, geocentric_lat)
-            let geo_lat = get_geocentric_latitude(frame)?;
-            let radius = get_geocentric_radius(frame)?;
-            let v_c = diurnal_aberration_factor(radius);
-            let aberr_dir = sofars::vm::s2c(last, geo_lat);
-            let shifted = [
-                cosines[0] + v_c * aberr_dir[0],
-                cosines[1] + v_c * aberr_dir[1],
-                cosines[2] + v_c * aberr_dir[2],
-            ];
-            let (_, unit) = sofars::vm::pn(&shifted);
-
-            // Polar motion + LAST rotation + y-negate via Euler matrix
-            // C++ uses: in *= R(xp, Ry, yp, Rx, LAST, Rz); in.y = -in.y
-            // which is: in = R^T * in, then negate y
-            let (_, ut2) = get_ut1_jd(frame, ctx)?;
-            let (xp, yp) = get_polar_motion_rad(frame, ut2)?;
-            let r = polar_motion_euler(-xp, -yp, last);
-            let result = rotate_t(&r, &unit);
-            Ok([result[0], -result[1], result[2]])
-        }
-
+        (APP, HADEC) => apparent_to_hadec(cosines, frame, ctx),
         // HADEC → APP (inverse of above)
-        (HADEC, APP) => {
-            let gast = get_gast(frame, ctx)?;
-            let lon = get_longitude(frame)?;
-            let last = gast + lon;
-
-            // applyPolarMotion: negate y, then apply R
-            let (_, ut2) = get_ut1_jd(frame, ctx)?;
-            let (xp, yp) = get_polar_motion_rad(frame, ut2)?;
-            let r = polar_motion_euler(-xp, -yp, last);
-            let negated = [cosines[0], -cosines[1], cosines[2]];
-            let rotated = rotate(&r, &negated);
-
-            // Undo diurnal aberration
-            let geo_lat = get_geocentric_latitude(frame)?;
-            let radius = get_geocentric_radius(frame)?;
-            let v_c = diurnal_aberration_factor(radius);
-            let aberr_dir = sofars::vm::s2c(last, geo_lat);
-            let unshifted = [
-                rotated[0] - v_c * aberr_dir[0],
-                rotated[1] - v_c * aberr_dir[1],
-                rotated[2] - v_c * aberr_dir[2],
-            ];
-            let (_, unit) = sofars::vm::pn(&unshifted);
-            Ok(unit)
-        }
+        (HADEC, APP) => hadec_to_apparent(cosines, frame, ctx),
 
         // HADEC ↔ AZEL (horizon coordinates using geocentric latitude)
         // C++ casacore uses geocentric latitude for AZEL (MeasMath::applyHADECtoAZEL
@@ -1992,60 +1890,196 @@ fn apply_hop(
         // HADEC → TOPO: apply diurnal aberration
         // Diurnal aberration is very small (~0.3" max) and is due to the
         // observer's velocity from Earth rotation.
-        (HADEC, TOPO) | (TOPO, HADEC) => {
-            // Diurnal aberration is small enough that we can use the simplified
-            // formula. For now, treat TOPO ≈ HADEC (identity), which is accurate
-            // to ~0.3 arcsec. This matches the precision of most casacore uses.
-            // A full implementation would need the observatory velocity vector
-            // projected onto the sky plane.
-            let pos = frame.position().ok_or(MeasureError::MissingFrameData {
-                what: "position (for diurnal aberration)",
-            })?;
-            let itrf = pos.as_itrf();
-            const OMEGA: f64 = 7.292_115e-5; // Earth angular velocity rad/s
-            // Observatory velocity in ITRF
-            let v_itrf = [-OMEGA * itrf[1], OMEGA * itrf[0], 0.0];
-
-            // Get GAST for rotation to equatorial (dispatches on IAU model)
-            let gast = get_gast(frame, ctx)?;
-            let lon = get_longitude(frame)?;
-            let last = gast + lon;
-
-            // Rotate velocity from ITRF to HADEC frame
-            let mut r = [[0.0; 3]; 3];
-            sofars::vm::ir(&mut r);
-            sofars::vm::rz(-last, &mut r);
-            let mut v_hadec = [0.0; 3];
-            sofars::vm::rxp(&r, &v_itrf, &mut v_hadec);
-
-            // Speed of light
-            const C: f64 = 299_792_458.0;
-
-            // Diurnal aberration: Δp = v/c - (p·v/c)p (first order)
-            let pdotv = sofars::vm::pdp(&cosines, &v_hadec) / C;
-
-            if from == HADEC {
-                // HADEC → TOPO: add aberration
-                let mut result = [0.0; 3];
-                for k in 0..3 {
-                    result[k] = cosines[k] + v_hadec[k] / C - pdotv * cosines[k];
-                }
-                let (_, unit) = sofars::vm::pn(&result);
-                Ok(unit)
-            } else {
-                // TOPO → HADEC: subtract aberration
-                let mut result = [0.0; 3];
-                for k in 0..3 {
-                    result[k] = cosines[k] - v_hadec[k] / C + pdotv * cosines[k];
-                }
-                let (_, unit) = sofars::vm::pn(&result);
-                Ok(unit)
-            }
-        }
+        (HADEC, TOPO) | (TOPO, HADEC) => hadec_topo_diurnal_aberration(cosines, from, frame, ctx),
 
         _ => Err(MeasureError::NotYetImplemented {
             route: format!("{from} → {to}"),
         }),
+    }
+}
+
+/// JTRUE → APP hop: apply annual aberration from the Earth's barycentric
+/// velocity, rotated into the true equatorial frame.
+fn apply_annual_aberration(
+    cosines: [f64; 3],
+    frame: &MeasFrame,
+    ctx: &ConvCtx,
+) -> Result<[f64; 3], MeasureError> {
+    let (v_au_day, sun_dist) = earth_velocity_au_per_day(frame, ctx)?;
+    // Convert velocity to units of c
+    let v = [
+        v_au_day[0] / C_AU_PER_DAY,
+        v_au_day[1] / C_AU_PER_DAY,
+        v_au_day[2] / C_AU_PER_DAY,
+    ];
+    // Rotate velocity to true equatorial frame
+    let (tt1, tt2) = get_tt_jd(frame, ctx)?;
+    let rbpn = bias_precession_nutation(frame, tt1, tt2);
+    let v_true = rotate(&rbpn, &v);
+    // Reciprocal of Lorentz factor: sqrt(1 - |v|²)
+    let v2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+    let bm1 = (1.0 - v2).sqrt();
+    Ok(sofars::astro::ab(&cosines, &v_true, sun_dist, bm1))
+}
+
+/// APP → JTRUE hop: remove annual aberration by fixed-point iteration on
+/// the forward transform of [`apply_annual_aberration`].
+fn remove_annual_aberration(
+    cosines: [f64; 3],
+    frame: &MeasFrame,
+    ctx: &ConvCtx,
+) -> Result<[f64; 3], MeasureError> {
+    let (v_au_day, sun_dist) = earth_velocity_au_per_day(frame, ctx)?;
+    let v = [
+        v_au_day[0] / C_AU_PER_DAY,
+        v_au_day[1] / C_AU_PER_DAY,
+        v_au_day[2] / C_AU_PER_DAY,
+    ];
+    let (tt1, tt2) = get_tt_jd(frame, ctx)?;
+    let rbpn = bias_precession_nutation(frame, tt1, tt2);
+    let v_true = rotate(&rbpn, &v);
+    let v2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+    let bm1 = (1.0 - v2).sqrt();
+
+    // Iterative removal: start with apparent as guess for natural
+    let mut pnat = cosines;
+    for _ in 0..5 {
+        let papp = sofars::astro::ab(&pnat, &v_true, sun_dist, bm1);
+        // Correct: pnat += (cosines - papp)
+        for k in 0..3 {
+            pnat[k] += cosines[k] - papp[k];
+        }
+        // Re-normalize
+        let (_, unit) = sofars::vm::pn(&pnat);
+        pnat = unit;
+    }
+    Ok(pnat)
+}
+
+/// APP → HADEC hop (sidereal time + diurnal aberration + polar motion).
+///
+/// Matches C++ casacore's TOPO→HADEC path (APP→TOPO is a no-op for
+/// unit-vector directions). The steps are:
+///   1. Diurnal aberration: add v/c in zenith direction, renormalize
+///   2. Polar motion + LAST rotation via Euler R = Ry(xp)×Rx(yp)×Rz(LAST)
+///   3. Apply R^T and negate y to get (HA, Dec)
+fn apparent_to_hadec(
+    cosines: [f64; 3],
+    frame: &MeasFrame,
+    ctx: &ConvCtx,
+) -> Result<[f64; 3], MeasureError> {
+    let gast = get_gast(frame, ctx)?;
+    let lon = get_longitude(frame)?;
+    let last = gast + lon;
+
+    // Diurnal aberration: shift in direction of (LAST, geocentric_lat)
+    let geo_lat = get_geocentric_latitude(frame)?;
+    let radius = get_geocentric_radius(frame)?;
+    let v_c = diurnal_aberration_factor(radius);
+    let aberr_dir = sofars::vm::s2c(last, geo_lat);
+    let shifted = [
+        cosines[0] + v_c * aberr_dir[0],
+        cosines[1] + v_c * aberr_dir[1],
+        cosines[2] + v_c * aberr_dir[2],
+    ];
+    let (_, unit) = sofars::vm::pn(&shifted);
+
+    // Polar motion + LAST rotation + y-negate via Euler matrix
+    // C++ uses: in *= R(xp, Ry, yp, Rx, LAST, Rz); in.y = -in.y
+    // which is: in = R^T * in, then negate y
+    let (_, ut2) = get_ut1_jd(frame, ctx)?;
+    let (xp, yp) = get_polar_motion_rad(frame, ut2)?;
+    let r = polar_motion_euler(-xp, -yp, last);
+    let result = rotate_t(&r, &unit);
+    Ok([result[0], -result[1], result[2]])
+}
+
+/// HADEC → APP hop: the inverse of [`apparent_to_hadec`].
+fn hadec_to_apparent(
+    cosines: [f64; 3],
+    frame: &MeasFrame,
+    ctx: &ConvCtx,
+) -> Result<[f64; 3], MeasureError> {
+    let gast = get_gast(frame, ctx)?;
+    let lon = get_longitude(frame)?;
+    let last = gast + lon;
+
+    // applyPolarMotion: negate y, then apply R
+    let (_, ut2) = get_ut1_jd(frame, ctx)?;
+    let (xp, yp) = get_polar_motion_rad(frame, ut2)?;
+    let r = polar_motion_euler(-xp, -yp, last);
+    let negated = [cosines[0], -cosines[1], cosines[2]];
+    let rotated = rotate(&r, &negated);
+
+    // Undo diurnal aberration
+    let geo_lat = get_geocentric_latitude(frame)?;
+    let radius = get_geocentric_radius(frame)?;
+    let v_c = diurnal_aberration_factor(radius);
+    let aberr_dir = sofars::vm::s2c(last, geo_lat);
+    let unshifted = [
+        rotated[0] - v_c * aberr_dir[0],
+        rotated[1] - v_c * aberr_dir[1],
+        rotated[2] - v_c * aberr_dir[2],
+    ];
+    let (_, unit) = sofars::vm::pn(&unshifted);
+    Ok(unit)
+}
+
+/// HADEC ↔ TOPO hop: add (from HADEC) or subtract (from TOPO) the
+/// first-order diurnal aberration of the observatory's rotation velocity.
+fn hadec_topo_diurnal_aberration(
+    cosines: [f64; 3],
+    from: DirectionRef,
+    frame: &MeasFrame,
+    ctx: &ConvCtx,
+) -> Result<[f64; 3], MeasureError> {
+    // Diurnal aberration is small enough that we can use the simplified
+    // formula. For now, treat TOPO ≈ HADEC (identity), which is accurate
+    // to ~0.3 arcsec. This matches the precision of most casacore uses.
+    // A full implementation would need the observatory velocity vector
+    // projected onto the sky plane.
+    let pos = frame.position().ok_or(MeasureError::MissingFrameData {
+        what: "position (for diurnal aberration)",
+    })?;
+    let itrf = pos.as_itrf();
+    const OMEGA: f64 = 7.292_115e-5; // Earth angular velocity rad/s
+    // Observatory velocity in ITRF
+    let v_itrf = [-OMEGA * itrf[1], OMEGA * itrf[0], 0.0];
+
+    // Get GAST for rotation to equatorial (dispatches on IAU model)
+    let gast = get_gast(frame, ctx)?;
+    let lon = get_longitude(frame)?;
+    let last = gast + lon;
+
+    // Rotate velocity from ITRF to HADEC frame
+    let mut r = [[0.0; 3]; 3];
+    sofars::vm::ir(&mut r);
+    sofars::vm::rz(-last, &mut r);
+    let mut v_hadec = [0.0; 3];
+    sofars::vm::rxp(&r, &v_itrf, &mut v_hadec);
+
+    // Speed of light
+    const C: f64 = 299_792_458.0;
+
+    // Diurnal aberration: Δp = v/c - (p·v/c)p (first order)
+    let pdotv = sofars::vm::pdp(&cosines, &v_hadec) / C;
+
+    if from == DirectionRef::HADEC {
+        // HADEC → TOPO: add aberration
+        let mut result = [0.0; 3];
+        for k in 0..3 {
+            result[k] = cosines[k] + v_hadec[k] / C - pdotv * cosines[k];
+        }
+        let (_, unit) = sofars::vm::pn(&result);
+        Ok(unit)
+    } else {
+        // TOPO → HADEC: subtract aberration
+        let mut result = [0.0; 3];
+        for k in 0..3 {
+            result[k] = cosines[k] - v_hadec[k] / C + pdotv * cosines[k];
+        }
+        let (_, unit) = sofars::vm::pn(&result);
+        Ok(unit)
     }
 }
 

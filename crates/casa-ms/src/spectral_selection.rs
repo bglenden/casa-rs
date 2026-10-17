@@ -1430,10 +1430,6 @@ fn optical_velocity_ms_from_axis_value(
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
 fn optical_velocity_output_centers(
     source_frequencies_in_output_frame_hz: &[f64],
     source_channel_widths_hz: &[f64],
@@ -1590,8 +1586,31 @@ fn optical_velocity_output_centers(
             * 2.0;
     }
 
-    let central_channel_width_hz = regrid_channel_width_hz;
+    let mut centers = optical_velocity_channel_centers(
+        the_regrid_center_hz,
+        the_regrid_bandwidth_hz,
+        regrid_channel_width_hz,
+        rest_frequency_hz,
+    );
+    if reverse_output {
+        centers.reverse();
+    }
+    Ok(centers)
+}
 
+/// Step channel bounds outward from `the_regrid_center_hz` in channels of
+/// equal optical-velocity width until they span `the_regrid_bandwidth_hz`,
+/// and return the channel centers in ascending frequency.
+///
+/// `central_channel_width_hz` is the frequency width of the channel at the
+/// center; an odd channel count centers that channel on the center
+/// frequency, an even one starts it there.
+fn optical_velocity_channel_centers(
+    the_regrid_center_hz: f64,
+    the_regrid_bandwidth_hz: f64,
+    central_channel_width_hz: f64,
+    rest_frequency_hz: f64,
+) -> Vec<f64> {
     let mut lo_fb_up = Vec::new();
     let mut hi_fb_up = Vec::new();
     let mut lo_fb_down = Vec::new();
@@ -1672,10 +1691,7 @@ fn optical_velocity_output_centers(
             .filter(|(index, _)| *index > 0)
             .map(|(_, (low_hz, high_hz))| (low_hz + high_hz) / 2.0),
     );
-    if reverse_output {
-        centers.reverse();
-    }
-    Ok(centers)
+    centers
 }
 
 fn required_rest_frequency_hz(

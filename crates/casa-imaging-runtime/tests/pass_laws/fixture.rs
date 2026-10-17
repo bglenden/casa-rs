@@ -49,11 +49,17 @@ pub struct Row {
     pub flags: Vec<bool>,
 }
 
-/// An in-memory source delivering the same rows in blocks of 37, recording
-/// whether each traversal was allowed to restrict its channels.
+/// The most rows a [`Rows`] block holds.
+const BLOCK_ROWS: usize = 37;
+
+/// An in-memory source delivering the same rows in blocks of 37, or of
+/// `block_rows` when a law sets fewer, recording whether each traversal was
+/// allowed to restrict its channels.
 pub struct Rows {
     pub rows: Vec<Row>,
     pub frequencies: Vec<f64>,
+    /// Rows per block, at most 37.
+    pub block_rows: usize,
     next: usize,
     pub restricted: Vec<bool>,
     /// What each traversal asked for; a flags-and-weights traversal
@@ -105,6 +111,7 @@ impl Rows {
         Self {
             rows,
             frequencies,
+            block_rows: BLOCK_ROWS,
             next: 0,
             restricted: Vec::new(),
             contents: Vec::new(),
@@ -217,7 +224,7 @@ impl BoundedSource for Rows {
         }
         let channels = (0..self.frequencies.len() as u32).collect::<Vec<_>>();
         block.reset(self.rows[0].projections.len(), &channels, &[0, 1]);
-        let end = (self.next + 37).min(self.rows.len());
+        let end = (self.next + self.block_rows.min(BLOCK_ROWS)).min(self.rows.len());
         let unread = self.contents.last() == Some(&SampleContent::FlagsAndWeights);
         for (index, row) in self.rows[self.next..end].iter().enumerate() {
             let zeros = vec![Complex32::default(); row.values.len()];
@@ -245,7 +252,7 @@ impl BoundedSource for Rows {
         let frequencies = &self.frequencies;
         let channels = frequencies.len();
         BlockShape {
-            rows: 37,
+            rows: BLOCK_ROWS,
             spectrum: RowSpectrum {
                 channels,
                 first_spacing_hz: if channels > 1 {

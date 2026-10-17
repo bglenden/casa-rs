@@ -9,6 +9,7 @@ use casa_provider_contracts::{
     ObjectSemanticContract, ObjectTypeContract, ProviderComponentSchemas,
     ProviderProjectionMetadata, ProviderSurfaceKind, merged_components,
 };
+use schemars::schema::RootSchema;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
@@ -278,10 +279,6 @@ pub struct DataObjectSchemaBundle {
 
 impl DataObjectSchemaBundle {
     /// Build the current object-surface schema bundle.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "predates the function-length limit; #705"
-    )]
     pub fn current() -> Self {
         let open_schema = schema_for!(OpenObjectRequest);
         let array_region_schema = schema_for!(ArrayRegionRequest);
@@ -398,32 +395,13 @@ impl DataObjectSchemaBundle {
                                 writable: false,
                             },
                         ],
-                        methods: vec![
-                            ObjectMethodDescriptor {
-                                name: "get_slice".to_string(),
-                                parameters_schema: array_region_schema.clone(),
-                                result_schema: Some(logical_array_schema.clone()),
-                                mutating: false,
-                            },
-                            ObjectMethodDescriptor {
-                                name: "put_slice".to_string(),
-                                parameters_schema: image_put_slice_schema.clone(),
-                                result_schema: None,
-                                mutating: true,
-                            },
-                            ObjectMethodDescriptor {
-                                name: "get_plane".to_string(),
-                                parameters_schema: plane_request_schema.clone(),
-                                result_schema: Some(logical_array_schema.clone()),
-                                mutating: false,
-                            },
-                            ObjectMethodDescriptor {
-                                name: "get_mask_slice".to_string(),
-                                parameters_schema: array_region_schema.clone(),
-                                result_schema: Some(optional_logical_array_schema),
-                                mutating: false,
-                            },
-                        ],
+                        methods: Self::image_methods(
+                            &array_region_schema,
+                            &image_put_slice_schema,
+                            &plane_request_schema,
+                            &logical_array_schema,
+                            optional_logical_array_schema,
+                        ),
                         lifecycle_operations: Vec::new(),
                     },
                     ObjectTypeContract {
@@ -495,44 +473,92 @@ impl DataObjectSchemaBundle {
                 ],
             },
             components,
-            annotations: json!({
-                "python": {
-                    "module": "casars.data",
-                    "notes": {
-                        "logical_arrays": "LogicalNdArray values project to numpy.ndarray instances in the direct Python binding; the schema captures dtype, shape, and CASA/Rust axis-order semantics rather than a transport encoding.",
-                        "records": "Record and keyword schemas map to nested dict[str, Any] values in Python.",
-                        "logical_values": "LogicalInputValue and LogicalOutputValue capture the recursive CASA scalar/array/record value model used by the Python binding, including complex numbers and non-JSON array payloads."
+            annotations: Self::python_annotations(),
+            projections: Self::python_projections(),
+        }
+    }
+
+    /// Method descriptors of the `Image` object: the slice, plane and mask
+    /// reads and the mutating slice write.
+    fn image_methods(
+        array_region_schema: &RootSchema,
+        image_put_slice_schema: &RootSchema,
+        plane_request_schema: &RootSchema,
+        logical_array_schema: &RootSchema,
+        optional_logical_array_schema: RootSchema,
+    ) -> Vec<ObjectMethodDescriptor> {
+        vec![
+            ObjectMethodDescriptor {
+                name: "get_slice".to_string(),
+                parameters_schema: array_region_schema.clone(),
+                result_schema: Some(logical_array_schema.clone()),
+                mutating: false,
+            },
+            ObjectMethodDescriptor {
+                name: "put_slice".to_string(),
+                parameters_schema: image_put_slice_schema.clone(),
+                result_schema: None,
+                mutating: true,
+            },
+            ObjectMethodDescriptor {
+                name: "get_plane".to_string(),
+                parameters_schema: plane_request_schema.clone(),
+                result_schema: Some(logical_array_schema.clone()),
+                mutating: false,
+            },
+            ObjectMethodDescriptor {
+                name: "get_mask_slice".to_string(),
+                parameters_schema: array_region_schema.clone(),
+                result_schema: Some(optional_logical_array_schema),
+                mutating: false,
+            },
+        ]
+    }
+
+    /// Python presentation annotations: the value-model notes and the Python
+    /// class and return types of each object.
+    fn python_annotations() -> JsonValue {
+        json!({
+            "python": {
+                "module": "casars.data",
+                "notes": {
+                    "logical_arrays": "LogicalNdArray values project to numpy.ndarray instances in the direct Python binding; the schema captures dtype, shape, and CASA/Rust axis-order semantics rather than a transport encoding.",
+                    "records": "Record and keyword schemas map to nested dict[str, Any] values in Python.",
+                    "logical_values": "LogicalInputValue and LogicalOutputValue capture the recursive CASA scalar/array/record value model used by the Python binding, including complex numbers and non-JSON array payloads."
+                },
+                "objects": {
+                    "Image": {
+                        "python_class": "casars.data.Image",
+                        "return_types": {
+                            "get_slice": "numpy.ndarray",
+                            "get_plane": "numpy.ndarray",
+                            "get_mask_slice": "numpy.ndarray | None"
+                        }
                     },
-                    "objects": {
-                        "Image": {
-                            "python_class": "casars.data.Image",
-                            "return_types": {
-                                "get_slice": "numpy.ndarray",
-                                "get_plane": "numpy.ndarray",
-                                "get_mask_slice": "numpy.ndarray | None"
-                            }
-                        },
-                        "Table": {
-                            "python_class": "casars.data.Table",
-                            "return_types": {
-                                "get_cell": "Any",
-                                "get_column": "numpy.ndarray | list[numpy.ndarray] | list[Any]",
-                                "column_keywords": "dict[str, Any] | None"
-                            }
+                    "Table": {
+                        "python_class": "casars.data.Table",
+                        "return_types": {
+                            "get_cell": "Any",
+                            "get_column": "numpy.ndarray | list[numpy.ndarray] | list[Any]",
+                            "column_keywords": "dict[str, Any] | None"
                         }
                     }
                 }
-            }),
-            projections: ProviderProjectionMetadata {
-                cli: None,
-                python: Some(json!({
-                    "module": "casars.data",
-                    "objects": [
-                        { "name": "Image", "class_name": "Image" },
-                        { "name": "Table", "class_name": "Table" }
-                    ]
-                })),
-            },
+            }
+        })
+    }
+
+    /// Projection metadata mapping each object to its `casars.data` class.
+    fn python_projections() -> ProviderProjectionMetadata {
+        ProviderProjectionMetadata {
+            cli: None,
+            python: Some(json!({
+                "module": "casars.data",
+                "objects": [
+                    { "name": "Image", "class_name": "Image" },
+                    { "name": "Table", "class_name": "Table" }
+                ]
+            })),
         }
     }
 

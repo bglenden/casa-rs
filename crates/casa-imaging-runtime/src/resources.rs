@@ -30,12 +30,30 @@ pub struct HostResources {
     pub metal: bool,
 }
 
-/// Why the host could not be detected.
+/// Why the host could not be detected: one variant per detector, each with
+/// what it reported.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum HostError {
-    /// A system query failed or reported something unreadable.
-    #[error("host detection: {0}")]
-    Detection(String),
+    /// `std::thread::available_parallelism` could not count the threads.
+    #[error("host detection: thread count: {0}")]
+    Threads(String),
+    /// macOS `vm_stat` did not run or its report had no page size.
+    #[error("host detection: vm_stat: {0}")]
+    VmStat(String),
+    /// Linux `/proc/meminfo` could not be read or has no `MemAvailable`.
+    #[error("host detection: /proc/meminfo: {0}")]
+    MemInfo(String),
+    /// macOS `sysctl` did not run or did not report a count for `name`.
+    #[error("host detection: sysctl {name}: {detail}")]
+    Sysctl {
+        /// The queried name.
+        name: String,
+        /// What went wrong.
+        detail: String,
+    },
+    /// This platform has no free-memory detector.
+    #[error("host detection: free memory is unknown on this platform")]
+    UnsupportedPlatform,
 }
 
 impl HostResources {
@@ -48,7 +66,7 @@ impl HostResources {
         static HOST: OnceLock<Result<HostResources, HostError>> = OnceLock::new();
         HOST.get_or_init(|| {
             let threads = std::thread::available_parallelism()
-                .map_err(|error| HostError::Detection(error.to_string()))?
+                .map_err(|error| HostError::Threads(error.to_string()))?
                 .get();
             Ok(Self {
                 threads,
@@ -243,6 +261,16 @@ impl Drop for Reservation {
     }
 }
 
+/// A value with the memory admitted for it: whoever keeps the value keeps
+/// its charge, until the reservation drops.
+#[derive(Debug)]
+pub struct Admitted<T> {
+    /// What the memory was admitted for.
+    pub value: T,
+    /// The memory.
+    pub reservation: Reservation,
+}
+
 /// Bytes held by the live reservations of this process. Only [`admit`]
 /// raises it, holding [`WINDOWS`]; releases lower it without the lock.
 static RESERVED: AtomicU64 = AtomicU64::new(0);
@@ -366,19 +394,19 @@ fn performance_cores() -> Option<u64> {
 fn available_memory() -> Result<u64, HostError> {
     let output = Command::new("/usr/bin/vm_stat")
         .output()
-        .map_err(|error| HostError::Detection(error.to_string()))?;
+        .map_err(|error| HostError::VmStat(error.to_string()))?;
     if !output.status.success() {
-        return Err(HostError::Detection("vm_stat failed".to_string()));
+        return Err(HostError::VmStat(format!("exited with {}", output.status)));
     }
-    let text = String::from_utf8(output.stdout)
-        .map_err(|error| HostError::Detection(error.to_string()))?;
+    let text =
+        String::from_utf8(output.stdout).map_err(|error| HostError::VmStat(error.to_string()))?;
     let page_size = text
         .lines()
         .next()
         .and_then(|line| line.split("page size of ").nth(1))
         .and_then(|value| value.split_ascii_whitespace().next())
         .and_then(|value| value.parse::<u64>().ok())
-        .ok_or_else(|| HostError::Detection("vm_stat reports no page size".to_string()))?;
+        .ok_or_else(|| HostError::VmStat("reports no page size".to_string()))?;
     let pages = ["Pages free", "Pages inactive", "Pages speculative"]
         .into_iter()
         .map(|name| {
@@ -396,7 +424,7 @@ fn available_memory() -> Result<u64, HostError> {
 #[cfg(target_os = "linux")]
 fn available_memory() -> Result<u64, HostError> {
     let contents = std::fs::read_to_string("/proc/meminfo")
-        .map_err(|error| HostError::Detection(error.to_string()))?;
+        .map_err(|error| HostError::MemInfo(error.to_string()))?;
     contents
         .lines()
         .find_map(|line| {
@@ -407,29 +435,31 @@ fn available_memory() -> Result<u64, HostError> {
                 .ok()
         })
         .map(|kib| kib.saturating_mul(1024))
-        .ok_or_else(|| HostError::Detection("/proc/meminfo has no MemAvailable".to_string()))
+        .ok_or_else(|| HostError::MemInfo("has no MemAvailable".to_string()))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn available_memory() -> Result<u64, HostError> {
-    Err(HostError::Detection(
-        "free memory is unknown on this platform".to_string(),
-    ))
+    Err(HostError::UnsupportedPlatform)
 }
 
 #[cfg(target_os = "macos")]
 fn sysctl_u64(name: &str) -> Result<u64, HostError> {
+    let failed = |detail: String| HostError::Sysctl {
+        name: name.to_string(),
+        detail,
+    };
     let output = Command::new("/usr/sbin/sysctl")
         .args(["-n", name])
         .output()
-        .map_err(|error| HostError::Detection(error.to_string()))?;
+        .map_err(|error| failed(error.to_string()))?;
     if !output.status.success() {
-        return Err(HostError::Detection(format!("sysctl {name} failed")));
+        return Err(failed(format!("exited with {}", output.status)));
     }
     String::from_utf8_lossy(&output.stdout)
         .trim()
         .parse()
-        .map_err(|_| HostError::Detection(format!("sysctl {name} is not a count")))
+        .map_err(|_| failed("is not a count".to_string()))
 }
 
 #[cfg(test)]

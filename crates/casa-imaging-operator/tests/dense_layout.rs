@@ -8,10 +8,10 @@ mod common;
 
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
-    Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend, GridPrecision,
-    ImageCorrection, KernelNormalisation, MeasurementOperator, Mode, ModeSet, ModelImages,
-    ModelPlane, ModelPrescale, MuellerRouting, Placement, PlaneRange, PolarizationRouting,
-    RowContext, SPHEROIDAL_OVERSAMPLING, Spheroidal, TapLayout, Work,
+    Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridAccumulator, GridBackend,
+    GridPrecision, ImageCorrection, KernelNormalisation, MeasurementOperator, Mode, ModeSet,
+    ModelImages, ModelPlane, ModelPrescale, MuellerRouting, Placement, PlaneRange,
+    PolarizationRouting, RowContext, SPHEROIDAL_OVERSAMPLING, Spheroidal, TapLayout, Work,
 };
 use common::{IMAGE, Rng, buffer, geometry, max_abs, placements, samples};
 use ndarray::Array2;
@@ -210,6 +210,128 @@ fn dirty_and_psf(operator: &MeasurementOperator, seed: u64) -> (Array2<f32>, Arr
         normal.psf(0, 0, 0).clone(),
         normal.psf_sumwt(0, 0, 0),
     )
+}
+
+/// `placed` gridded by `operator` in `mode` with `weights` per hand.
+fn gridded(
+    operator: &MeasurementOperator,
+    placed: &[Placement],
+    (values, weights): (&[Complex64], &[f64]),
+    mode: Mode,
+) -> GridAccumulator {
+    let block = buffer(placed, values, weights, 2);
+    let mut acc = operator.accumulator(PlaneRange::single(0), None, ModeSet::DATA_PSF);
+    CpuBackend::new()
+        .apply(
+            &block.block(),
+            operator.cf(),
+            Work::Grid {
+                mode,
+                acc: &mut acc,
+            },
+        )
+        .expect("grid");
+    acc
+}
+
+/// #718 (663bccf364): Stokes I takes both hands through one Mueller plane,
+/// so the gridder sums them and spreads once. That equals spreading each
+/// hand alone into its own accumulator and adding the two, on the separable
+/// and on the dense tap layout: the cells to a few ulp of the sample scale
+/// in f64 and in f32, and `sumwt` bitwise, the weights being exact in binary.
+#[test]
+fn spreading_both_hands_once_equals_spreading_each_alone() {
+    let geometry = geometry();
+    let polarization = PolarizationRouting::compile(&XX_YY, &STOKES_I).expect("routing");
+    let spheroidal = || Spheroidal::new(&geometry, &polarization);
+    let dense = || {
+        let template = spheroidal();
+        let mut hold = CellHold::new();
+        let TapLayout::SeparableReal {
+            rows,
+            support,
+            oversampling,
+        } = template.taps(CfKey::default(), &mut hold)
+        else {
+            panic!("spheroidal taps are separable");
+        };
+        DenseFromRows::new(rows, support, oversampling, &template, &polarization)
+    };
+    let mut rng = Rng::new(29);
+    let placed = placements(&geometry, 300, 1, &mut rng);
+    let (values, _) = samples(&placed, 2, &mut rng);
+    // Quarters from 1/4 to 2: every sum of them is exact.
+    let weights = (0..placed.len() * 2)
+        .map(|_| f64::from(1 + (rng.next_u64() % 8) as u32) / 4.0)
+        .collect::<Vec<_>>();
+    // Each hand alone: the other's weight is zero, so its row routes one.
+    let alone = |hand: usize| {
+        weights
+            .iter()
+            .enumerate()
+            .map(|(index, weight)| if index % 2 == hand { *weight } else { 0.0 })
+            .collect::<Vec<_>>()
+    };
+    let (xx, yy) = (alone(0), alone(1));
+    for precision in [GridPrecision::F64, GridPrecision::F32] {
+        let sets: [Box<dyn ConvolutionFunctionSet>; 2] =
+            [Box::new(spheroidal()), Box::new(dense())];
+        for (layout, set) in ["separable", "dense"].into_iter().zip(sets) {
+            let operator = MeasurementOperator::new(
+                geometry.clone(),
+                Basis::Constant,
+                polarization.clone(),
+                set,
+                precision,
+            );
+            for mode in [Mode::Data, Mode::Psf] {
+                let both = gridded(&operator, &placed, (&values, &weights), mode);
+                let mut each = gridded(&operator, &placed, (&values, &xx), mode);
+                each.merge_from(&gridded(&operator, &placed, (&values, &yy), mode))
+                    .expect("merge");
+                let label = format!("{precision:?} {layout} {mode:?}");
+                assert_eq!(both.sumwt(), each.sumwt(), "{label}: sumwt");
+                let (once, apart) = match precision {
+                    GridPrecision::F64 => (
+                        both.block::<f64>(0, 0, 0).to_vec(),
+                        each.block::<f64>(0, 0, 0).to_vec(),
+                    ),
+                    GridPrecision::F32 => (
+                        widened(both.block::<f32>(0, 0, 0)),
+                        widened(each.block::<f32>(0, 0, 0)),
+                    ),
+                };
+                if mode == Mode::Psf {
+                    // A PSF sample is its weight, so the sums are exact.
+                    assert!(once == apart, "{label}: cells");
+                    continue;
+                }
+                // The largest sample: two hands, a weight of 2 and the
+                // largest visibility.
+                let scale = 2.0 * 2.0 * values.iter().map(|v| v.norm()).fold(0.0, f64::max);
+                let ulp = match precision {
+                    GridPrecision::F64 => f64::EPSILON,
+                    GridPrecision::F32 => f64::from(f32::EPSILON),
+                } * scale;
+                let worst = once
+                    .iter()
+                    .zip(&apart)
+                    .map(|(a, b)| (a - b).norm())
+                    .fold(0.0_f64, f64::max);
+                assert!(
+                    worst <= ulp,
+                    "{label}: cells differ by {worst}, one ulp of the samples is {ulp}"
+                );
+            }
+        }
+    }
+}
+
+fn widened(cells: &[Complex32]) -> Vec<Complex64> {
+    cells
+        .iter()
+        .map(|cell| Complex64::new(f64::from(cell.re), f64::from(cell.im)))
+        .collect()
 }
 
 fn assert_images_agree(a: &Array2<f32>, b: &Array2<f32>, tolerance: f64) {
