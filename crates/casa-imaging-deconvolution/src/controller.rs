@@ -9,7 +9,7 @@
 //! cycles. [`PlaneControl`] is `SIMinorCycleController::majorCycleRequired`,
 //! applied to every plane after each solver step.
 
-use casa_imaging_model::ReconstructionControls;
+use casa_imaging_model::{CycleThresholdRule, ReconstructionControls};
 
 use crate::plane::{RobustNoise, Support, peak_magnitude, robust_noise};
 
@@ -236,13 +236,6 @@ impl CycleControls {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct CycleThresholdRule {
-    factor: f64,
-    minimum_psf_fraction: f64,
-    maximum_psf_fraction: f64,
-}
-
 /// The run-wide clean state between major cycles.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Controller {
@@ -275,28 +268,13 @@ impl Controller {
             .cycle_iteration_limit()
             .filter(|limit| *limit > 0)
             .map_or(niter, |limit| limit.min(niter));
-        let cycle_rule = match (
-            controls.cycle_factor(),
-            controls.minimum_psf_fraction(),
-            controls.maximum_psf_fraction(),
-        ) {
-            (Some(factor), Some(minimum_psf_fraction), Some(maximum_psf_fraction)) => {
-                Some(CycleThresholdRule {
-                    factor,
-                    minimum_psf_fraction,
-                    maximum_psf_fraction,
-                })
-            }
-            (None, None, None) => None,
-            _ => unreachable!("with_cycle_threshold sets the cycle factor and both fractions"),
-        };
         Self {
             niter,
             cycle_niter,
             gain: controls.gain(),
             threshold: controls.threshold_jy_per_beam(),
             nsigma: controls.noise_sigma().unwrap_or(0.0),
-            cycle_rule,
+            cycle_rule: controls.cycle_threshold_rule(),
             nmajor: controls.maximum_major_cycles(),
             iter_done: 0,
             major_done: 0,
