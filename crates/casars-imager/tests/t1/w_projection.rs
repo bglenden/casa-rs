@@ -50,12 +50,12 @@ fn setup() -> Setup {
         telescope: "VLA".to_string(),
         antennas,
         fields: Vec::new(),
-        spectral: SyntheticSpectralSetup {
+        spectral_windows: vec![SyntheticSpectralSetup {
             name: "t1-150mhz".to_string(),
             start_frequency_hz: FREQUENCY_HZ,
             channel_width_hz: 1.0e6,
             channel_count: 1,
-        },
+        }],
         geometry: GEOMETRY,
         noise_jy: NOISE_JY,
     }
