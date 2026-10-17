@@ -3,19 +3,19 @@
 //! cancellation and the point-source law.
 
 use casa_imaging_operator::{
-    Basis, DensityCellRule, DensityGridShape, GridPrecision, ModeSet, PlaneRange, SampleBuffer,
-    SpectralResampler, WeightingGeneration, build_density_grid,
+    Basis, DensityCellRule, DensityGridShape, GridPrecision, ModeSet, NormalImages, PlaneRange,
+    SampleBuffer, SpectralResampler, WeightingGeneration, build_density_grid,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, BlockShape, BoundedSource, Cancel, MajorCyclePass, NativeBlock, Partition,
-    PassDomain, PassError, Residency, SampleContent, SourceError, WeightCache, WorkerTeam,
-    run_density_pass, run_major_cycle,
+    BackendChoice, BlockShape, BoundedSource, Cancel, MajorCyclePass, ModelPreparation,
+    NativeBlock, Partition, PassDomain, PassError, Residency, SampleContent, SourceError,
+    VisibilitySink, WeightCache, WorkerTeam, run_density_pass, run_major_cycle,
 };
 use num_complex::Complex32;
 
 use crate::fixture::{
     CHANNELS, IMAGE, INCREMENT_RAD, Rows, Run, WIDTH_HZ, nearest_cube, operator, planes, run,
-    worst_relative,
+    sparse_model, window_of, worst_relative,
 };
 
 #[test]
@@ -153,6 +153,112 @@ fn kept_weights_grid_exactly_what_weighing_grids() {
         );
         assert_eq!(images, reference, "pass {pass}, {workers} workers");
         assert!(cache.filled(), "a complete pass fills the cache");
+    }
+}
+
+/// A residual pass of `prepare`'s model under `weighting`, reading or
+/// filling `weights`: its images, and the prediction it hands its sink for
+/// each physical row.
+fn writing_pass(
+    domains: &[PassDomain<'_>],
+    rows: &mut Rows,
+    (weighting, weights): (&WeightingGeneration, Option<&WeightCache>),
+    prepare: &ModelPreparation<'_>,
+    workers: usize,
+) -> (Vec<NormalImages>, Vec<Option<Vec<Complex32>>>) {
+    let pass = MajorCyclePass {
+        domains,
+        weighting,
+        modes: ModeSet::DATA,
+        model: Some(prepare),
+        residency: Residency::All,
+        native_spacing_hz: WIDTH_HZ,
+        backend: BackendChoice::Cpu,
+        metal_stage_timing: false,
+        weights,
+    };
+    let mut written = vec![None; rows.rows.len()];
+    let mut write = |block: &NativeBlock, predictions: &[Complex32]| {
+        let cells = block.channels() * block.correlations();
+        for index in 0..block.len() {
+            let row = block.header(index).address.physical_row as usize;
+            written[row] = Some(predictions[index * cells..(index + 1) * cells].to_vec());
+        }
+        Ok::<_, SourceError>(())
+    };
+    let mut sink = VisibilitySink {
+        predictions: true,
+        write: &mut write,
+    };
+    let mut images = Vec::new();
+    run_major_cycle(
+        &pass,
+        rows,
+        &WorkerTeam::new(workers).expect("team"),
+        &Cancel::new(),
+        &mut |_, wave| {
+            images.push(wave);
+            Ok(())
+        },
+        Some(&mut sink),
+    )
+    .expect("pass");
+    (images, written)
+}
+
+/// #718 (Astra gate answer 4): kept weights under density weighting grid
+/// what weighing grids, bit for bit, when the passes that read them meet
+/// the rows in other blocks than the pass that filled them, and with a
+/// model whose predictions the passes write: the sink receives the same
+/// prediction for every row.
+#[test]
+fn kept_density_weights_hold_across_blocks_and_model_writing() {
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let mut rows = Rows::random(300, 47, operator.geometry());
+    let shape = DensityGridShape {
+        width: IMAGE,
+        height: IMAGE,
+        planes: 1,
+        padding: 0,
+        increment_rad: INCREMENT_RAD,
+        rule: DensityCellRule::Standard,
+    };
+    let team = WorkerTeam::new(1).expect("team");
+    let grid = run_density_pass(
+        &operator,
+        &resampler,
+        shape,
+        &mut rows,
+        &team,
+        &Cancel::new(),
+    )
+    .expect("density pass");
+    let weighting = WeightingGeneration::density(grid, Some(0.5), None, None).expect("Briggs");
+    let model = sparse_model(IMAGE, 1, 53);
+    let prepare = |_: usize, planes: PlaneRange| -> Result<_, PassError> {
+        Ok(window_of(&operator, &model, planes))
+    };
+    let domains = [planes(&operator, &resampler, 1)];
+    let (reference, predicted) = writing_pass(&domains, &mut rows, (&weighting, None), &prepare, 1);
+    assert!(
+        predicted.iter().all(Option::is_some),
+        "every row is written"
+    );
+    let cache = WeightCache::new(rows.rows.len() * CHANNELS);
+    for (pass, block_rows, workers) in [(0, 37, 1), (1, 11, 3), (2, 23, 1)] {
+        rows.block_rows = block_rows;
+        let (images, written) = writing_pass(
+            &domains,
+            &mut rows,
+            (&weighting, Some(&cache)),
+            &prepare,
+            workers,
+        );
+        let label = format!("pass {pass}, blocks of {block_rows}, {workers} workers");
+        assert!(cache.filled(), "{label}: a complete pass fills the cache");
+        assert_eq!(images, reference, "{label}: images");
+        assert_eq!(written, predicted, "{label}: predictions");
     }
 }
 
