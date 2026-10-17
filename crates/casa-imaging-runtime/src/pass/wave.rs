@@ -28,6 +28,9 @@ struct Owner<'w> {
     acc: Option<GridAccumulator>,
     backend: OwnerBackend<'w>,
     images: Option<NormalImages>,
+    /// Time the owner spent accumulating in the wave, which a region pass
+    /// reports beside its strips (#736).
+    busy: std::time::Duration,
 }
 
 impl Owner<'_> {
@@ -392,6 +395,7 @@ impl<'w, 'p> Wave<'w, 'p> {
                                 ),
                                 backend: OwnerBackend::Cpu(CpuBackend::new()),
                                 images: None,
+                                busy: std::time::Duration::ZERO,
                             },
                             BackendChoice::Metal => {
                                 assert_eq!(
@@ -408,6 +412,7 @@ impl<'w, 'p> Wave<'w, 'p> {
                                             .with_deferred_grid_completion(),
                                     )),
                                     images: None,
+                                    busy: std::time::Duration::ZERO,
                                 }
                             }
                         })
@@ -686,6 +691,7 @@ impl<'w, 'p> Wave<'w, 'p> {
         });
         let weight_owner = router.weight_owner();
         team.for_each_mut(&mut domain.owners, |owner_index, owner| {
+            let started = std::time::Instant::now();
             let acc = owner
                 .acc
                 .as_mut()
@@ -734,6 +740,7 @@ impl<'w, 'p> Wave<'w, 'p> {
                     }
                 }
             }
+            owner.busy += started.elapsed();
             Ok::<_, PassError>(())
         })?;
         Ok(chunks.iter().map(|chunk| chunk.placed).sum())
@@ -908,7 +915,20 @@ impl<'w, 'p> Wave<'w, 'p> {
                                 .map(|owner| owner.images.expect("every owner finished")),
                         ))
                     }
-                    Partition::Regions { .. } => {
+                    Partition::Regions { regions, .. } => {
+                        // How evenly the strips shared the gridding (#736).
+                        tracing::info!(
+                            "region owners: rows {:?}, accumulating {:?} s",
+                            regions
+                                .iter()
+                                .map(|region| region.rows.clone())
+                                .collect::<Vec<_>>(),
+                            domain
+                                .owners
+                                .iter()
+                                .map(|owner| (owner.busy.as_secs_f64() * 10.0).round() / 10.0)
+                                .collect::<Vec<_>>(),
+                        );
                         let mut merged =
                             pass.summing(operator.accumulator(planes, None, pass.modes));
                         for owner in &domain.owners {
