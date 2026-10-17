@@ -60,10 +60,6 @@ use std::time::Duration;
 use casa_tables::{LockMode, LockOptions, LockType, Table, TableOptions};
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() < 3 {
@@ -90,10 +86,7 @@ fn main() {
                 LockType::Write
             };
 
-            let mut table = Table::open_with_lock(opts, lock_opts).unwrap_or_else(|e| {
-                eprintln!("open_with_lock failed: {e}");
-                process::exit(3);
-            });
+            let mut table = open_or_exit(opts, lock_opts);
             table.lock(lock_type, 1).unwrap_or_else(|e| {
                 eprintln!("lock failed: {e}");
                 process::exit(3);
@@ -122,10 +115,7 @@ fn main() {
             } else {
                 LockType::Write
             };
-            let mut table = Table::open_with_lock(opts, lock_opts).unwrap_or_else(|e| {
-                eprintln!("open_with_lock failed: {e}");
-                process::exit(3);
-            });
+            let mut table = open_or_exit(opts, lock_opts);
             let acquired = table.lock(lock_type, 1).unwrap_or_else(|e| {
                 eprintln!("lock failed: {e}");
                 process::exit(3);
@@ -146,10 +136,7 @@ fn main() {
             let id: i32 = args[3].parse().unwrap();
             let name = &args[4];
 
-            let mut table = Table::open_with_lock(opts, lock_opts).unwrap_or_else(|e| {
-                eprintln!("open_with_lock failed: {e}");
-                process::exit(3);
-            });
+            let mut table = open_or_exit(opts, lock_opts);
             table.lock(LockType::Write, 0).unwrap_or_else(|e| {
                 eprintln!("lock failed: {e}");
                 process::exit(3);
@@ -178,10 +165,7 @@ fn main() {
             let signal_file = &args[5];
             let wait_file = &args[6];
 
-            let mut table = Table::open_with_lock(opts, lock_opts).unwrap_or_else(|e| {
-                eprintln!("open_with_lock failed: {e}");
-                process::exit(3);
-            });
+            let mut table = open_or_exit(opts, lock_opts);
             table.lock(LockType::Write, 1).unwrap_or_else(|e| {
                 eprintln!("lock failed: {e}");
                 process::exit(3);
@@ -207,10 +191,7 @@ fn main() {
         }
 
         "read_row_count" => {
-            let mut table = Table::open_with_lock(opts, lock_opts).unwrap_or_else(|e| {
-                eprintln!("open_with_lock failed: {e}");
-                process::exit(3);
-            });
+            let mut table = open_or_exit(opts, lock_opts);
             table.lock(LockType::Read, 1).unwrap_or_else(|e| {
                 eprintln!("lock failed: {e}");
                 process::exit(3);
@@ -233,11 +214,7 @@ fn main() {
             let ready_file = &args[4];
             let go_file = &args[5];
 
-            let mut table = Table::open_with_lock(opts, LockOptions::new(LockMode::AutoLocking))
-                .unwrap_or_else(|e| {
-                    eprintln!("open_with_lock failed: {e}");
-                    process::exit(3);
-                });
+            let mut table = open_or_exit(opts, LockOptions::new(LockMode::AutoLocking));
             fs::write(ready_file, "read-locked").unwrap();
             for _ in 0..200 {
                 if Path::new(go_file).exists() {
@@ -255,53 +232,65 @@ fn main() {
         }
 
         "held_reader" => {
-            let mut table = Table::open_with_lock(opts, lock_opts).unwrap_or_else(|e| {
-                eprintln!("open_with_lock failed: {e}");
-                process::exit(3);
-            });
+            let mut table = open_or_exit(opts, lock_opts);
             println!("ready");
-            for line in std::io::stdin().lock().lines() {
-                let line = line.unwrap_or_else(|e| {
-                    eprintln!("read stdin failed: {e}");
-                    process::exit(3);
-                });
-                if line.trim() != "read" {
-                    eprintln!("unknown held_reader request {line:?}");
-                    process::exit(2);
-                }
-                match table.lock(LockType::Read, 1) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        eprintln!("read lock was not acquired");
-                        process::exit(3);
-                    }
-                    Err(e) => {
-                        eprintln!("lock failed: {e}");
-                        process::exit(3);
-                    }
-                }
-                let id = match table.cell_accessor(0, "id").and_then(|cell| cell.scalar()) {
-                    Ok(ScalarValue::Int32(id)) => *id,
-                    other => {
-                        eprintln!("row 0 has no Int32 id: {other:?}");
-                        process::exit(3);
-                    }
-                };
-                let counter = table.locked_modify_counter().unwrap_or_else(|e| {
-                    eprintln!("modify counter failed: {e}");
-                    process::exit(3);
-                });
-                table.unlock().unwrap_or_else(|e| {
-                    eprintln!("unlock failed: {e}");
-                    process::exit(3);
-                });
-                println!("id {id} counter {counter}");
-            }
+            serve_held_reader(&mut table);
         }
 
         _ => {
             eprintln!("Unknown command: {command}");
             process::exit(2);
         }
+    }
+}
+
+/// Open the table with the given locking, exiting with status 3 on failure.
+fn open_or_exit(opts: TableOptions, lock_opts: LockOptions) -> Table {
+    Table::open_with_lock(opts, lock_opts).unwrap_or_else(|e| {
+        eprintln!("open_with_lock failed: {e}");
+        process::exit(3);
+    })
+}
+
+/// Answer each `read` line on stdin for `held_reader`: take a read lock,
+/// read row 0's `id`, release the lock and print the id with the modify
+/// counter. Returns at end of input.
+fn serve_held_reader(table: &mut Table) {
+    for line in std::io::stdin().lock().lines() {
+        let line = line.unwrap_or_else(|e| {
+            eprintln!("read stdin failed: {e}");
+            process::exit(3);
+        });
+        if line.trim() != "read" {
+            eprintln!("unknown held_reader request {line:?}");
+            process::exit(2);
+        }
+        match table.lock(LockType::Read, 1) {
+            Ok(true) => {}
+            Ok(false) => {
+                eprintln!("read lock was not acquired");
+                process::exit(3);
+            }
+            Err(e) => {
+                eprintln!("lock failed: {e}");
+                process::exit(3);
+            }
+        }
+        let id = match table.cell_accessor(0, "id").and_then(|cell| cell.scalar()) {
+            Ok(ScalarValue::Int32(id)) => *id,
+            other => {
+                eprintln!("row 0 has no Int32 id: {other:?}");
+                process::exit(3);
+            }
+        };
+        let counter = table.locked_modify_counter().unwrap_or_else(|e| {
+            eprintln!("modify counter failed: {e}");
+            process::exit(3);
+        });
+        table.unlock().unwrap_or_else(|e| {
+            eprintln!("unlock failed: {e}");
+            process::exit(3);
+        });
+        println!("id {id} counter {counter}");
     }
 }
