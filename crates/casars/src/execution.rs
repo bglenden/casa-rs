@@ -6,9 +6,14 @@ use std::process::{Child, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::registry::ResolvedCommand;
+
+/// How long a cancelled child has to exit after SIGINT before it is
+/// killed: a cancelled imaging run stops within one block of a pass, or
+/// before its next phase (#677).
+const CANCEL_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub(crate) struct ExecutionPlan {
@@ -51,13 +56,72 @@ impl RunningProcess {
         self.receiver.try_recv()
     }
 
+    /// Stop the child: ask it with SIGINT, and kill it if it has not exited
+    /// within [`CANCEL_GRACE`]. `casars-imager` handles SIGINT by stopping
+    /// the run, removing its product staging and paged cube state and
+    /// exiting with status 130, none of which a kill allows (#677).
     pub(crate) fn cancel(&self) -> Result<(), String> {
-        self.child
-            .lock()
-            .map_err(|_| "failed to acquire child-process lock".to_string())?
-            .kill()
-            .map_err(|error| format!("terminate child process: {error}"))
+        self.cancel_within(CANCEL_GRACE)
     }
+
+    fn cancel_within(&self, grace: Duration) -> Result<(), String> {
+        let mut child = lock(&self.child)?;
+        if child
+            .try_wait()
+            .map_err(|error| format!("wait for child: {error}"))?
+            .is_some()
+        {
+            return Ok(());
+        }
+        if !interrupt(&child) {
+            return child
+                .kill()
+                .map_err(|error| format!("terminate child process: {error}"));
+        }
+        drop(child);
+        let child = Arc::clone(&self.child);
+        thread::spawn(move || {
+            let deadline = Instant::now() + grace;
+            loop {
+                let Ok(mut child) = lock(&child) else {
+                    return;
+                };
+                if !matches!(child.try_wait(), Ok(None)) {
+                    return;
+                }
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    return;
+                }
+                drop(child);
+                thread::sleep(Duration::from_millis(25));
+            }
+        });
+        Ok(())
+    }
+}
+
+fn lock(child: &Mutex<Child>) -> Result<std::sync::MutexGuard<'_, Child>, String> {
+    child
+        .lock()
+        .map_err(|_| "failed to acquire child-process lock".to_string())
+}
+
+/// Send SIGINT to `child`, which the caller holds unreaped, so its process
+/// id is still its own; whether the signal was sent.
+#[cfg(unix)]
+fn interrupt(child: &Child) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(child.id()) else {
+        return false;
+    };
+    // SAFETY: `kill` only sends a signal; the process id names our own
+    // child, which cannot be reaped while the caller holds its lock.
+    unsafe { libc::kill(pid, libc::SIGINT) == 0 }
+}
+
+#[cfg(not(unix))]
+fn interrupt(_child: &Child) -> bool {
+    false
 }
 
 pub(crate) fn spawn_process(plan: &ExecutionPlan) -> Result<RunningProcess, String> {
@@ -168,9 +232,7 @@ pub(crate) fn run_process_blocking(plan: &ExecutionPlan) -> Result<BlockingExecu
 
 fn wait_for_child_exit(child: &Arc<Mutex<Child>>) -> Result<ExitStatus, String> {
     loop {
-        let status = child
-            .lock()
-            .map_err(|_| "failed to acquire child-process lock".to_string())?
+        let status = lock(child)?
             .try_wait()
             .map_err(|error| format!("wait for child: {error}"))?;
         if let Some(status) = status {
@@ -277,6 +339,81 @@ mod tests {
         }
 
         assert!(!exit.expect("exit after cancel").success);
+    }
+
+    /// Spawn `script` under `sh` and wait for it to print `ready`, which it
+    /// does once its signal trap is set.
+    fn ready(script: &str) -> RunningProcess {
+        let plan = ExecutionPlan {
+            command: ResolvedCommand::direct("sh"),
+            arguments: vec!["-c".into(), script.into()],
+            stdin: None,
+            working_directory: PathBuf::from("."),
+            renderer: None,
+            file_output_path: None,
+        };
+        let process = spawn_process(&plan).expect("spawn process");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            match process.try_recv() {
+                Ok(ExecutionEvent::Stdout(chunk)) if chunk.contains("ready") => return process,
+                Ok(_) | Err(mpsc::TryRecvError::Empty) => thread::sleep(Duration::from_millis(10)),
+                Err(error) => panic!("unexpected channel error: {error}"),
+            }
+        }
+        panic!("the child never got ready");
+    }
+
+    /// The child's output after `ready` and its exit, within `timeout`.
+    fn finish(process: &RunningProcess, timeout: Duration) -> (String, ExecutionExit) {
+        let mut stdout = String::new();
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            match process.try_recv() {
+                Ok(ExecutionEvent::Stdout(chunk)) => stdout.push_str(&chunk),
+                Ok(ExecutionEvent::Exited(exit)) => return (stdout, exit),
+                Ok(ExecutionEvent::Stderr(_)) | Err(mpsc::TryRecvError::Empty) => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("unexpected channel error: {error}"),
+            }
+        }
+        panic!("the child did not exit within {timeout:?}");
+    }
+
+    /// #677: cancelling interrupts the child, which exits through its own
+    /// SIGINT handler (as `casars-imager` does, with status 130) rather
+    /// than being killed.
+    #[cfg(unix)]
+    #[test]
+    fn cancel_interrupts_the_child_before_killing_it() {
+        let process =
+            ready("trap 'echo stopped; exit 130' INT; echo ready; while :; do sleep 0.05; done");
+        let started = Instant::now();
+        process.cancel().expect("cancel process");
+        let (stdout, exit) = finish(&process, Duration::from_secs(10));
+        assert!(stdout.contains("stopped"), "the handler ran: {stdout:?}");
+        assert_eq!(exit.code, Some(130));
+        assert!(
+            started.elapsed() < CANCEL_GRACE,
+            "it stopped itself before the kill"
+        );
+    }
+
+    /// #677: a child that does not exit on SIGINT is killed once the grace
+    /// period ends.
+    #[cfg(unix)]
+    #[test]
+    fn cancel_kills_a_child_that_ignores_the_interrupt() {
+        // `exec`: the child that ignores the interrupt holds the output
+        // pipes itself, so its exit is reported once it is killed.
+        let process = ready("trap '' INT; echo ready; exec sleep 30");
+        process
+            .cancel_within(Duration::from_millis(200))
+            .expect("cancel process");
+        let (_, exit) = finish(&process, Duration::from_secs(10));
+        assert!(!exit.success);
+        assert_eq!(exit.code, None, "killed by a signal");
     }
 
     #[test]
