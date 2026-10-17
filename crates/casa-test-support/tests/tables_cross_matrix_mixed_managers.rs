@@ -4,20 +4,16 @@
 //!
 //! StandardStMan holds the first column, so StManAipsIO is not data manager
 //! 0: casacore checks a StManAipsIO file's sequence number against the
-//! table's (#698). A write-locked table unlocked or dropped with a pending
-//! change keeps every column in its manager (#697).
+//! table's (#698).
 #![cfg(feature = "cpp-interop-tests")]
 
 use std::path::Path;
 
-use casa_tables::{
-    ColumnBinding, ColumnSchema, DataManagerKind, LockMode, LockOptions, LockType, Table,
-    TableOptions, TableSchema,
-};
+use casa_tables::{ColumnBinding, ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
 use casa_test_support::table_interop::{
-    ManagerKind, MatrixCellResult, TableFixture, run_full_cross_matrix,
+    ManagerKind, MatrixCellResult, TableFixture, run_endian_cross_matrix, run_full_cross_matrix,
 };
-use casa_test_support::{CppTableFixture, TableOracle, casacore_oracle_available};
+use casa_test_support::{CppTableFixture, casacore_oracle_available};
 use casa_types::{
     ArrayValue, Complex32, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
@@ -123,23 +119,6 @@ fn rust_write(fixture: &TableFixture, path: &Path) {
         .expect("save with mixed managers");
 }
 
-/// Each column's manager type, in column order.
-fn managers(path: &Path) -> Vec<(String, String)> {
-    let table = Table::open(TableOptions::new(path)).expect("open");
-    let mut found = table
-        .data_manager_info()
-        .iter()
-        .flat_map(|manager| {
-            manager
-                .columns
-                .iter()
-                .map(|column| (column.clone(), manager.dm_type.clone()))
-        })
-        .collect::<Vec<_>>();
-    found.sort();
-    found
-}
-
 #[test]
 fn a_mixed_manager_table_crosses_between_rust_and_cpp() {
     let fixture = mixed_managers_fixture();
@@ -166,43 +145,15 @@ fn a_mixed_manager_table_crosses_between_rust_and_cpp() {
     assert_passed(&results);
 }
 
-/// Open `path` with user locking, take the write lock and rewrite one cell
-/// with its own value, leaving a change pending.
-fn locked_with_a_pending_change(path: &Path) -> Table {
-    let mut table = Table::open_with_lock(
-        TableOptions::new(path),
-        LockOptions::new(LockMode::UserLocking),
-    )
-    .expect("open with lock");
-    assert!(table.lock(LockType::Write, 1).expect("write lock"));
-    table
-        .row_accessor_mut()
-        .set_cell(0, "flux", Value::Scalar(ScalarValue::Float64(1.5)))
-        .expect("change a cell");
-    table
-}
-
+/// The same table written big- and little-endian. The other managers follow
+/// the table's byte order; StManAipsIO's main file, sequence number
+/// included, stays canonical (big-endian) either way, as casacore's AipsIO
+/// writes it.
 #[test]
-fn unlocking_or_dropping_a_locked_table_keeps_each_columns_manager() {
-    let fixture = mixed_managers_fixture();
-    for (label, unlock) in [("unlock", true), ("drop", false)] {
-        let dir = tempfile::tempdir().expect("temp dir");
-        let path = dir.path().join(label);
-        rust_write(&fixture, &path);
-        let before = managers(&path);
-        let mut table = locked_with_a_pending_change(&path);
-        if unlock {
-            table.unlock().expect("unlock");
-        }
-        drop(table);
-        assert_eq!(
-            managers(&path),
-            before,
-            "{label} changed the table's managers"
-        );
-        if casacore_oracle_available() {
-            TableOracle::table_verify(CppTableFixture::MixedManagers, &path)
-                .unwrap_or_else(|error| panic!("{label}: C++ verify failed: {error}"));
-        }
+fn a_mixed_manager_table_crosses_in_either_byte_order() {
+    let results = run_endian_cross_matrix(&mixed_managers_fixture(), ManagerKind::StandardStMan);
+    if casacore_oracle_available() {
+        assert_eq!(results.len(), 4, "RR and RC, big- and little-endian");
     }
+    assert_passed(&results);
 }

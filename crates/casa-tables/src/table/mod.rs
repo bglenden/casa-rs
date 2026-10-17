@@ -2471,7 +2471,7 @@ impl Drop for Table {
                             .with_endian_format(state.endian_format)
                     });
                     if let Some(save_opts) = save_opts {
-                        let _ = self.save_keeping_layout(save_opts);
+                        let _ = self.save(save_opts);
                     }
                 }
 

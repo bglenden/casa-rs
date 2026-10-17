@@ -800,41 +800,25 @@ pub(crate) fn tiled_2d_channel_tile_width(
     Ok((default_tile_shape.len() >= 3).then(|| default_tile_shape[1].max(1) as usize))
 }
 
-/// The default tile shape a tiled manager's header records, cell axes then
-/// the row axis.
-fn variant_default_tile_shape(variant: &TiledVariant) -> Vec<usize> {
-    let (TiledVariant::Column { default_tile_shape }
-    | TiledVariant::Shape {
-        default_tile_shape, ..
-    }
-    | TiledVariant::Cell { default_tile_shape }
-    | TiledVariant::Data {
-        default_tile_shape, ..
-    }) = variant;
-    default_tile_shape
-        .iter()
-        .map(|&extent| usize::try_from(extent).unwrap_or(0))
-        .collect()
-}
-
-/// The default tile shape of the tiled manager `dm_seq_nr`, cell axes then
-/// the row axis: what a save that keeps the manager's layout binds it with.
-pub(crate) fn tiled_default_tile_shape(
-    table_path: &Path,
-    dm_seq_nr: u32,
-) -> Result<Vec<usize>, StorageError> {
-    let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
-    let (variant, _) = read_tiled_header(&header_path)?;
-    Ok(variant_default_tile_shape(&variant))
-}
-
 /// Bytes of the largest bucket (tile) of the tiled manager `dm_seq_nr`,
 /// over its hypercubes and its default tile shape: what reading or writing
 /// one of its cells holds whole.
 pub(crate) fn tiled_bucket_bytes(table_path: &Path, dm_seq_nr: u32) -> Result<usize, StorageError> {
     let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
     let (variant, header) = read_tiled_header(&header_path)?;
-    let default_tile_shape = variant_default_tile_shape(&variant);
+    let default_tile_shape: Vec<usize> = match variant {
+        TiledVariant::Column { default_tile_shape }
+        | TiledVariant::Shape {
+            default_tile_shape, ..
+        }
+        | TiledVariant::Cell { default_tile_shape }
+        | TiledVariant::Data {
+            default_tile_shape, ..
+        } => default_tile_shape
+            .iter()
+            .map(|&extent| usize::try_from(extent).unwrap_or(0))
+            .collect(),
+    };
     Ok(header
         .cubes
         .iter()

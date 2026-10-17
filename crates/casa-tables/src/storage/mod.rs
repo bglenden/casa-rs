@@ -4,7 +4,6 @@
 pub(crate) mod canonical;
 pub(crate) mod data_type;
 pub(crate) mod incremental_stman;
-pub(crate) mod layout;
 mod selected_cells;
 pub(crate) mod standard_stman;
 pub(crate) mod stman_aipsio;

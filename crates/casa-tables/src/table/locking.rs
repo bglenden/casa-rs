@@ -247,39 +247,6 @@ impl Table {
         self.unlock_with_metadata_only_flush(true)
     }
 
-    /// Flush a locked table's changes to `options.path`, keeping each column
-    /// already on disk in the kind of data manager it is in
-    /// ([`persisted_column_bindings`](crate::storage::layout::persisted_column_bindings)),
-    /// as casacore's managers each flush their own columns. Columns added
-    /// under the lock take `options`' manager. Unlock and drop flush
-    /// through this rather than a one-manager save (#697).
-    ///
-    /// Columns already in `options`' kind of manager stay unbound, so they
-    /// keep manager 0, and a table with only that kind takes the plain
-    /// one-manager save. Otherwise, like the one-manager save, it rewrites
-    /// the whole table: every row is read into memory, the old data files
-    /// are removed so that none of a renumbered manager's is left behind,
-    /// and the table is written again.
-    #[cfg(unix)]
-    pub(crate) fn save_keeping_layout(&self, options: TableOptions) -> Result<(), TableError> {
-        let mut bindings = crate::storage::layout::persisted_column_bindings(&options.path)?;
-        let default = options.data_manager;
-        bindings.retain(|column, binding| {
-            self.inner
-                .schema()
-                .is_some_and(|schema| schema.contains_column(column))
-                && (binding.data_manager != default || binding.tile_shape.is_some())
-        });
-        if bindings.is_empty() {
-            return self.save(options);
-        }
-        self.validate()?;
-        self.inner.rows()?;
-        self.inner.undefined_cells()?;
-        crate::storage::layout::remove_data_files(&options.path)?;
-        self.persist_with_bindings(options, &bindings)
-    }
-
     #[cfg(unix)]
     fn unlock_with_metadata_only_flush(&mut self, metadata_only: bool) -> Result<(), TableError> {
         // Memory tables have no lock to release.
@@ -317,7 +284,7 @@ impl Table {
             if metadata_only {
                 self.save_metadata_only(save_opts)?;
             } else {
-                self.save_keeping_layout(save_opts)?;
+                self.save(save_opts)?;
             }
             let generation = self.inner.generation();
             let state = self.lock_state.as_mut().expect("lock_state present");
