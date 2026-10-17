@@ -11,17 +11,80 @@
 //! Float rounding before becoming beam metadata.
 
 use casa_numerics::{
-    EllipticalGaussian, common_enclosing_gaussian, deconvolving_gaussian,
+    EllipticalGaussian, EllipticalGaussianError, common_enclosing_gaussian, deconvolving_gaussian,
     solve_symmetric_ldlt_casacore,
 };
 use ndarray::Array2;
 
 use thiserror::Error;
 
-/// Exact reason a CASA-style PSF Gaussian fit could not be completed.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error("{0}")]
-pub struct PsfBeamFitError(String);
+/// Why a CASA restoring beam could not be formed or fitted from a PSF.
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+pub enum PsfBeamFitError {
+    /// A beam's axes are not finite and positive, or its minor axis exceeds
+    /// its major axis ([`RestoringBeam::new`]).
+    #[error("restoring beam requires finite positive major >= minor axes")]
+    InvalidBeam,
+    /// Beams could not be enclosed or deconvolved
+    /// ([`RestoringBeam::common_enclosing`], [`RestoringBeam::deconvolving_beam`]).
+    #[error(transparent)]
+    Gaussian(#[from] EllipticalGaussianError),
+    /// The PSF plane holds no samples.
+    #[error("PSF is empty")]
+    EmptyPsf,
+    /// The PSF payload's length is not the product of its shape.
+    #[error("PSF payload of {len} samples does not match its shape {shape:?}")]
+    ShapeMismatch {
+        /// Samples in the payload.
+        len: usize,
+        /// The plane's `[width, height]`.
+        shape: [usize; 2],
+    },
+    /// The PSF peak is not positive and finite.
+    #[error("PSF peak is not positive and finite ({peak})")]
+    PeakNotPositive {
+        /// The peak sample.
+        peak: f32,
+    },
+    /// No attempt, from `cutoff` down by factors of 1.5, fitted the main
+    /// lobe (`StokesImageUtil::FitGaussianPSF`).
+    #[error(
+        "beam fit failed after {attempts} attempts starting from psfcutoff={cutoff:.3}: {last}"
+    )]
+    NotFitted {
+        /// Attempts made.
+        attempts: usize,
+        /// The first attempt's main-lobe cutoff.
+        cutoff: f32,
+        /// Why the last attempt failed.
+        last: FitAttemptFailure,
+    },
+}
+
+/// Why one attempt of the PSF fit, at main-lobe cutoff `cutoff`, failed.
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+pub enum FitAttemptFailure {
+    /// No main-lobe region was isolated above the cutoff.
+    #[error("failed to isolate a main-lobe region at psfcutoff={cutoff:.6}")]
+    NoMainLobe {
+        /// The attempt's cutoff.
+        cutoff: f32,
+    },
+    /// Fewer than twelve samples lay above the cutoff.
+    #[error("found only {samples} fit samples at psfcutoff={cutoff:.6}")]
+    TooFewSamples {
+        /// Samples found.
+        samples: usize,
+        /// The attempt's cutoff.
+        cutoff: f32,
+    },
+    /// The Gaussian fit did not converge.
+    #[error("fit failed to converge at psfcutoff={cutoff:.6}")]
+    NotConverged {
+        /// The attempt's cutoff.
+        cutoff: f32,
+    },
+}
 
 const CASA_FWHM_TO_INTERNAL: f64 = 0.600_561_204_393_224_9;
 const MAX_FIT_ATTEMPTS: usize = 50;
@@ -91,8 +154,8 @@ impl RestoringBeam {
     ///
     /// # Errors
     ///
-    /// Returns [`PsfBeamFitError`] for non-finite, non-positive, or inverted
-    /// axes.
+    /// Returns [`PsfBeamFitError::InvalidBeam`] for non-finite,
+    /// non-positive, or inverted axes.
     pub fn new(
         major_fwhm_rad: f64,
         minor_fwhm_rad: f64,
@@ -105,9 +168,7 @@ impl RestoringBeam {
             || minor_fwhm_rad <= 0.0
             || major_fwhm_rad < minor_fwhm_rad
         {
-            return Err(PsfBeamFitError(
-                "restoring beam requires finite positive major >= minor axes".to_string(),
-            ));
+            return Err(PsfBeamFitError::InvalidBeam);
         }
         Ok(Self {
             major_fwhm_rad,
@@ -144,12 +205,12 @@ impl RestoringBeam {
     ///
     /// # Errors
     ///
-    /// Returns [`PsfBeamFitError`] when the set is empty or contains an
-    /// invalid beam.
+    /// Returns [`PsfBeamFitError::Gaussian`] when the set is empty or
+    /// contains an invalid beam.
     pub fn common_enclosing(beams: &[Self]) -> Result<Self, PsfBeamFitError> {
-        common_enclosing_gaussian(&beams.iter().copied().map(numeric_beam).collect::<Vec<_>>())
-            .map(restoring_beam)
-            .map_err(|error| PsfBeamFitError(error.to_string()))
+        Ok(restoring_beam(common_enclosing_gaussian(
+            &beams.iter().copied().map(numeric_beam).collect::<Vec<_>>(),
+        )?))
     }
 
     /// Compute the beam that convolves `source` to this target beam.
@@ -158,12 +219,10 @@ impl RestoringBeam {
     ///
     /// # Errors
     ///
-    /// Returns [`PsfBeamFitError`] when either beam is invalid or the target
-    /// is smaller than the source.
+    /// Returns [`PsfBeamFitError::Gaussian`] when either beam is invalid or
+    /// the target is smaller than the source.
     pub fn deconvolving_beam(self, source: Self) -> Result<Option<Self>, PsfBeamFitError> {
-        deconvolving_gaussian(numeric_beam(self), numeric_beam(source))
-            .map(|beam| beam.map(restoring_beam))
-            .map_err(|error| PsfBeamFitError(error.to_string()))
+        Ok(deconvolving_gaussian(numeric_beam(self), numeric_beam(source))?.map(restoring_beam))
     }
 }
 
@@ -192,49 +251,57 @@ fn restoring_beam(beam: EllipticalGaussian) -> RestoringBeam {
 ///
 /// # Errors
 ///
-/// Returns [`PsfBeamFitError`] when no attempt converges.
+/// Returns [`PsfBeamFitError::EmptyPsf`] or
+/// [`PsfBeamFitError::PeakNotPositive`] for a PSF without a positive peak,
+/// and [`PsfBeamFitError::NotFitted`] when no attempt converges.
 pub fn fit_restoring_beam(
     psf: &[f32],
     shape: [usize; 2],
     cell_size_rad: [f64; 2],
     cutoff: f32,
 ) -> Result<RestoringBeam, PsfBeamFitError> {
-    let Some((peak_index, peak)) = peak_flat(psf) else {
-        return Err(PsfBeamFitError("PSF is empty".to_string()));
-    };
-    if !(peak.is_finite() && peak > 0.0) {
-        return Err(PsfBeamFitError(format!(
-            "PSF peak is not positive and finite ({peak})"
-        )));
-    }
+    let (peak_index, peak) = positive_peak(psf)?;
     let mut active_cutoff = cutoff.clamp(0.01, 0.99);
-    let mut last_warning = String::new();
+    let mut last = FitAttemptFailure::NotConverged {
+        cutoff: active_cutoff,
+    };
     for _attempt in 1..=MAX_FIT_ATTEMPTS {
-        let Some((samples, _active)) =
-            extract_fit_samples(psf, shape, peak_index, peak, cell_size_rad, active_cutoff)
-        else {
-            last_warning =
-                format!("failed to isolate a main-lobe region at psfcutoff={active_cutoff:.6}");
-            active_cutoff /= 1.5;
-            continue;
-        };
-        if samples.len() < 12 {
-            last_warning = format!(
-                "found only {} fit samples at psfcutoff={active_cutoff:.6}",
-                samples.len()
-            );
-            active_cutoff /= 1.5;
-            continue;
-        }
-        if let Some(beam) = fit_gaussian_beam_casa(&samples, cell_size_rad) {
-            return Ok(beam);
-        }
-        last_warning = format!("fit failed to converge at psfcutoff={active_cutoff:.6}");
+        let failure =
+            match extract_fit_samples(psf, shape, peak_index, peak, cell_size_rad, active_cutoff) {
+                None => FitAttemptFailure::NoMainLobe {
+                    cutoff: active_cutoff,
+                },
+                Some((samples, _active)) if samples.len() < 12 => {
+                    FitAttemptFailure::TooFewSamples {
+                        samples: samples.len(),
+                        cutoff: active_cutoff,
+                    }
+                }
+                Some((samples, _active)) => match fit_gaussian_beam_casa(&samples, cell_size_rad) {
+                    Some(beam) => return Ok(beam),
+                    None => FitAttemptFailure::NotConverged {
+                        cutoff: active_cutoff,
+                    },
+                },
+            };
+        last = failure;
         active_cutoff /= 1.5;
     }
-    Err(PsfBeamFitError(format!(
-        "beam fit failed after {MAX_FIT_ATTEMPTS} attempts starting from psfcutoff={cutoff:.3}: {last_warning}"
-    )))
+    Err(PsfBeamFitError::NotFitted {
+        attempts: MAX_FIT_ATTEMPTS,
+        cutoff,
+        last,
+    })
+}
+
+/// The flat index and value of `psf`'s peak, which must be positive and
+/// finite.
+fn positive_peak(psf: &[f32]) -> Result<(usize, f32), PsfBeamFitError> {
+    let (peak_index, peak) = peak_flat(psf).ok_or(PsfBeamFitError::EmptyPsf)?;
+    if !(peak.is_finite() && peak > 0.0) {
+        return Err(PsfBeamFitError::PeakNotPositive { peak });
+    }
+    Ok((peak_index, peak))
 }
 
 /// The CASA cycle-threshold sidelobe fraction of a PSF whose main lobe was
@@ -250,18 +317,12 @@ pub(crate) fn fitted_psf_sidelobe_fraction_with_beam(
     beam: RestoringBeam,
 ) -> Result<f64, PsfBeamFitError> {
     if psf.len() != shape[0].saturating_mul(shape[1]) {
-        return Err(PsfBeamFitError(
-            "PSF payload length does not match its shape".to_string(),
-        ));
+        return Err(PsfBeamFitError::ShapeMismatch {
+            len: psf.len(),
+            shape,
+        });
     }
-    let Some((peak_index, peak)) = peak_flat(psf) else {
-        return Err(PsfBeamFitError("PSF is empty".to_string()));
-    };
-    if !(peak.is_finite() && peak > 0.0) {
-        return Err(PsfBeamFitError(format!(
-            "PSF peak is not positive and finite ({peak})"
-        )));
-    }
+    let (peak_index, peak) = positive_peak(psf)?;
     let peak_pixel = [peak_index / shape[1], peak_index % shape[1]];
     let sigma_major = beam.major_fwhm_rad() / 2.354_820_045_030_949_3;
     let sigma_minor = beam.minor_fwhm_rad() / 2.354_820_045_030_949_3;
@@ -1136,6 +1197,42 @@ mod tests {
         assert!((common.major_fwhm_rad() / arcsec - 7.116_149_425_836_256).abs() < 1.0e-6);
         assert!((common.minor_fwhm_rad() / arcsec - 5.640_938_804_984_346).abs() < 1.0e-6);
         assert!((common.position_angle_rad().to_degrees() - 23.593_728_922_728_804).abs() < 1.0e-6);
+    }
+
+    /// #674: each way a beam cannot be formed or fitted is its own variant.
+    #[test]
+    fn beam_failures_are_typed() {
+        let cell = [1.0e-5; 2];
+        assert_eq!(
+            fit_restoring_beam(&[], [0, 0], cell, DEFAULT_PSF_FIT_CUTOFF),
+            Err(PsfBeamFitError::EmptyPsf)
+        );
+        assert_eq!(
+            fit_restoring_beam(&[-1.0; 4], [2, 2], cell, DEFAULT_PSF_FIT_CUTOFF),
+            Err(PsfBeamFitError::PeakNotPositive { peak: -1.0 })
+        );
+        let beam = RestoringBeam::new(2.0e-5, 1.0e-5, 0.0).expect("beam");
+        assert_eq!(
+            fitted_psf_sidelobe_fraction_with_beam(&[1.0; 3], [2, 2], beam),
+            Err(PsfBeamFitError::ShapeMismatch {
+                len: 3,
+                shape: [2, 2]
+            })
+        );
+        assert_eq!(
+            RestoringBeam::new(1.0e-5, 2.0e-5, 0.0),
+            Err(PsfBeamFitError::InvalidBeam)
+        );
+        assert_eq!(
+            RestoringBeam::common_enclosing(&[]),
+            Err(PsfBeamFitError::Gaussian(EllipticalGaussianError::EmptySet))
+        );
+        assert_eq!(
+            beam.deconvolving_beam(RestoringBeam::new(4.0e-5, 3.0e-5, 0.0).expect("beam")),
+            Err(PsfBeamFitError::Gaussian(
+                EllipticalGaussianError::TargetSmallerThanSource
+            ))
+        );
     }
 
     #[test]
