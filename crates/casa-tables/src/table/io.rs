@@ -845,12 +845,15 @@ impl Table {
                         group_col_descs[0].data_manager_group.as_str()
                     };
                     let sparse_saved = if let Some(rows) = changed_rows.as_ref() {
+                        // A TiledDataStMan's scalar columns are its id columns,
+                        // held in the hypercube values records, not in its tiles.
                         if let Some(sparse_group_columns) =
                             collect_sparse_array_group_values_from_current_cells(
                                 self,
                                 rows,
                                 &group_col_descs,
                                 &group_changed_columns,
+                                group.dm_type == "TiledDataStMan",
                             )?
                         {
                             crate::storage::tiled_stman::save_tiled_columns_sparse_rows_in_place(
@@ -1970,13 +1973,19 @@ fn collect_sparse_array_group_values_from_current_cells(
     row_indices: &[usize],
     col_descs: &[crate::storage::table_control::ColumnDescContents],
     changed_columns: &std::collections::HashSet<&str>,
+    unchanged_scalars_allowed: bool,
 ) -> Result<Option<SparseArrayColumns>, TableError> {
     let mut columns = Vec::with_capacity(col_descs.len());
     for col_desc in col_descs {
+        let unchanged = !changed_columns.contains(col_desc.col_name.as_str());
         if !col_desc.is_array || col_desc.is_record() {
+            if unchanged_scalars_allowed && unchanged && !col_desc.is_record() {
+                columns.push(None);
+                continue;
+            }
             return Ok(None);
         }
-        if !changed_columns.contains(col_desc.col_name.as_str()) {
+        if unchanged {
             columns.push(None);
             continue;
         }

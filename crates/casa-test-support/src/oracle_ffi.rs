@@ -128,6 +128,22 @@ unsafe extern "C" {
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    pub(crate) fn cpp_table_write_tiled_data_stman(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_write_tiled_data_stman_big_endian(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_verify_tiled_data_stman(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_verify_tiled_data_stman_patched(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     pub(crate) fn cpp_table_write_columns_index_fixture(
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,

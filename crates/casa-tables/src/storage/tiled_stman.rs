@@ -369,6 +369,11 @@ use super::table_control::{
 };
 use super::{StorageError, StorageProfiler, TileLayoutPlanner};
 
+#[cfg(test)]
+mod casacore_tiled_data_tests;
+mod tile_columns;
+use tile_columns::tile_columns;
+
 // ---------------------------------------------------------------------------
 // Data structures
 // ---------------------------------------------------------------------------
@@ -429,13 +434,29 @@ enum TiledVariant {
     /// # C++ equivalent
     ///
     /// `TiledDataStMan` in `casacore/tables/DataMan/TiledDataStMan.h`.
+    /// Unlike the other variants it has no default tile shape: each
+    /// hypercube is added with its own.
     Data {
-        default_tile_shape: Vec<i32>,
         nrrow_last: u64,
         row_map: Vec<u64>,
         cube_map: Vec<u32>,
         pos_map: Vec<u32>,
     },
+}
+
+impl TiledVariant {
+    /// The manager's default tile shape; empty for `TiledDataStMan`, which
+    /// has none.
+    fn default_tile_shape(&self) -> &[i32] {
+        match self {
+            Self::Column { default_tile_shape }
+            | Self::Shape {
+                default_tile_shape, ..
+            }
+            | Self::Cell { default_tile_shape } => default_tile_shape,
+            Self::Data { .. } => &[],
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -562,15 +583,13 @@ impl TiledReadHeader {
                 )?
                 .checked_add(pos_map.capacity().checked_mul(std::mem::size_of::<u32>())?)?,
             TiledVariant::Data {
-                default_tile_shape,
                 row_map,
                 cube_map,
                 pos_map,
                 ..
-            } => default_tile_shape
+            } => row_map
                 .capacity()
-                .checked_mul(std::mem::size_of::<i32>())?
-                .checked_add(row_map.capacity().checked_mul(std::mem::size_of::<u64>())?)?
+                .checked_mul(std::mem::size_of::<u64>())?
                 .checked_add(
                     cube_map
                         .capacity()
@@ -745,23 +764,31 @@ fn read_tiled_header(path: &Path) -> Result<(TiledVariant, TiledStManHeader), St
             Ok((TiledVariant::Cell { default_tile_shape }, header))
         }
         "TiledDataStMan" => {
-            // TiledDataStMan (version 2): base class first, then
-            // default_tile_shape, nrrowLast, rowMap, cubeMap, posMap.
-            let header = read_tiled_stman_base(&mut io)?;
-            let default_tile_shape = read_iposition(&mut io)?;
-            let nrrow_last = if outer_version >= 2 {
-                io.get_u64()?
+            // TiledDataStMan::readHeader: the base class, then nrrowLast,
+            // rowMap, cubeMap and posMap; there is no default tile shape.
+            // Version 1 stored a used count before a uInt row map, and a
+            // uInt nrrowLast while its base header predated rownr_t.
+            let (header, base_version) = read_tiled_stman_base_versioned(&mut io)?;
+            let nrrow_last = if outer_version == 1 && base_version < 3 {
+                u64::from(io.get_u32()?)
             } else {
-                io.get_u32()? as u64
+                io.get_u64()?
             };
-            let row_map = read_block_u64(&mut io)?;
+            let row_map = if outer_version == 1 {
+                let _nused = io.get_u32()?;
+                read_block_u32(&mut io)?
+                    .into_iter()
+                    .map(u64::from)
+                    .collect()
+            } else {
+                read_block_u64(&mut io)?
+            };
             let cube_map = read_block_u32(&mut io)?;
             let pos_map = read_block_u32(&mut io)?;
             io.getend()?;
             io.close()?;
             Ok((
                 TiledVariant::Data {
-                    default_tile_shape,
                     nrrow_last,
                     row_map,
                     cube_map,
@@ -787,16 +814,7 @@ pub(crate) fn tiled_2d_channel_tile_width(
             return Ok(Some(cube.tile_shape[1].max(1)));
         }
     }
-    let default_tile_shape = match variant {
-        TiledVariant::Column { default_tile_shape }
-        | TiledVariant::Shape {
-            default_tile_shape, ..
-        }
-        | TiledVariant::Cell { default_tile_shape }
-        | TiledVariant::Data {
-            default_tile_shape, ..
-        } => default_tile_shape,
-    };
+    let default_tile_shape = variant.default_tile_shape();
     Ok((default_tile_shape.len() >= 3).then(|| default_tile_shape[1].max(1) as usize))
 }
 
@@ -806,19 +824,11 @@ pub(crate) fn tiled_2d_channel_tile_width(
 pub(crate) fn tiled_bucket_bytes(table_path: &Path, dm_seq_nr: u32) -> Result<usize, StorageError> {
     let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
     let (variant, header) = read_tiled_header(&header_path)?;
-    let default_tile_shape: Vec<usize> = match variant {
-        TiledVariant::Column { default_tile_shape }
-        | TiledVariant::Shape {
-            default_tile_shape, ..
-        }
-        | TiledVariant::Cell { default_tile_shape }
-        | TiledVariant::Data {
-            default_tile_shape, ..
-        } => default_tile_shape
-            .iter()
-            .map(|&extent| usize::try_from(extent).unwrap_or(0))
-            .collect(),
-    };
+    let default_tile_shape: Vec<usize> = variant
+        .default_tile_shape()
+        .iter()
+        .map(|&extent| usize::try_from(extent).unwrap_or(0))
+        .collect();
     Ok(header
         .cubes
         .iter()
@@ -834,6 +844,14 @@ pub(crate) fn tiled_bucket_bytes(table_path: &Path, dm_seq_nr: u32) -> Result<us
 /// Handles versions 1 (big-endian, 32-bit), 2 (explicit endian, 32-bit),
 /// and 3 (explicit endian, 64-bit).
 fn read_tiled_stman_base(io: &mut AipsIo) -> Result<TiledStManHeader, StorageError> {
+    Ok(read_tiled_stman_base_versioned(io)?.0)
+}
+
+/// [`read_tiled_stman_base`], also returning the `TiledStMan` object
+/// version, which `TiledDataStMan` version 1 needs to size `nrrowLast`.
+fn read_tiled_stman_base_versioned(
+    io: &mut AipsIo,
+) -> Result<(TiledStManHeader, u32), StorageError> {
     let version = io.getstart("TiledStMan")?;
 
     let big_endian = if version >= 2 {
@@ -901,17 +919,20 @@ fn read_tiled_stman_base(io: &mut AipsIo) -> Result<TiledStManHeader, StorageErr
 
     io.getend()?;
 
-    Ok(TiledStManHeader {
-        big_endian,
-        seq_nr,
-        nrrow,
-        col_data_types,
-        hypercolumn_name,
-        max_cache_size,
-        nrdim,
-        files,
-        cubes,
-    })
+    Ok((
+        TiledStManHeader {
+            big_endian,
+            seq_nr,
+            nrrow,
+            col_data_types,
+            hypercolumn_name,
+            max_cache_size,
+            nrdim,
+            files,
+            cubes,
+        },
+        version,
+    ))
 }
 
 /// Read inline TSMFile serialization (no AipsIO start/end wrapper).
@@ -1024,15 +1045,14 @@ fn write_tiled_header_contents(
             io.putend()?;
         }
         TiledVariant::Data {
-            default_tile_shape,
             nrrow_last,
             row_map,
             cube_map,
             pos_map,
         } => {
+            // TiledDataStMan::flush always writes version 2.
             io.putstart("TiledDataStMan", 2)?;
             write_tiled_stman_base(io, header)?;
-            write_iposition(io, default_tile_shape)?;
             io.put_u64(*nrrow_last)?;
             write_block_u64(io, row_map)?;
             write_block_u32(io, cube_map)?;
@@ -1760,7 +1780,7 @@ pub(crate) fn load_tiled_column_rows(
 ) -> Result<Vec<Option<ArrayValue>>, StorageError> {
     let header_path = table_path.join(format!("table.f{}", dm.seq_nr));
     let (variant, header) = read_tiled_header(&header_path)?;
-    let Some(target_col_idx) = bound_cols
+    let Some(bound_col_idx) = bound_cols
         .iter()
         .position(|(desc_idx, _)| *desc_idx == target_desc_idx)
     else {
@@ -1769,13 +1789,30 @@ pub(crate) fn load_tiled_column_rows(
             dm.seq_nr
         )));
     };
-    if target_col_idx >= header.col_data_types.len() {
+    if bound_col_idx >= header.col_data_types.len() {
         return Err(StorageError::FormatMismatch(format!(
-            "tiled column index {target_col_idx} out of range for data manager {}",
+            "tiled column index {bound_col_idx} out of range for data manager {}",
             dm.seq_nr
         )));
     }
     let col_desc = &all_col_descs[target_desc_idx];
+    // A TiledDataStMan's tiles hold its data columns only.
+    let (header, target_col_idx) = if matches!(variant, TiledVariant::Data { .. }) {
+        let bound: Vec<&ColumnDescContents> = bound_cols
+            .iter()
+            .map(|(desc_idx, _)| &all_col_descs[*desc_idx])
+            .collect();
+        let tiles = tile_columns(&header, &bound)?;
+        let Some(tile) = tiles.tile_index[bound_col_idx] else {
+            return Err(StorageError::FormatMismatch(format!(
+                "column '{}' is a TiledDataStMan id or coordinate column, not a data column",
+                col_desc.col_name
+            )));
+        };
+        (tiles.header, tile)
+    } else {
+        (header, bound_col_idx)
+    };
     let dt = header.col_data_types[target_col_idx];
     let elem_size = tile_element_size(dt);
     if elem_size == 0 {
@@ -2579,7 +2616,8 @@ fn load_tiled_column_rows_shape_variant(
 ///
 /// Uses binary search in `row_map` to find the chunk index for each row.
 /// `cube_map[chunk]` gives the hypercube and `pos_map[chunk]` gives the
-/// starting position in the last dimension.
+/// starting position in the last dimension. Data columns come from the
+/// tiles; an id column's cell is its hypercube's id value.
 ///
 /// # C++ equivalent
 ///
@@ -2597,6 +2635,9 @@ fn load_tiled_data_stman(
     cube_map: &[u32],
     pos_map: &[u32],
 ) -> Result<(), StorageError> {
+    let tiles = tile_columns(header, col_descs)?;
+    let tile_types = &tiles.header.col_data_types;
+
     // Pre-read all TSM data files and compute per-cube layouts.
     let mut file_cache: std::collections::HashMap<u32, Vec<u8>> = std::collections::HashMap::new();
 
@@ -2611,8 +2652,7 @@ fn load_tiled_data_stman(
             cube_layouts.push(None);
             continue;
         }
-        let (bucket_size, col_offsets) =
-            compute_tile_layout(&header.col_data_types, &cube.tile_shape);
+        let (bucket_size, col_offsets) = compute_tile_layout(tile_types, &cube.tile_shape);
         cube_layouts.push(Some(CubeLayout {
             bucket_size,
             col_offsets,
@@ -2628,7 +2668,7 @@ fn load_tiled_data_stman(
         }
     }
 
-    // Pre-reconstruct per-cube per-column data.
+    // Pre-reconstruct per-cube per-tile-column data.
     struct CubeColumnData {
         raw: Vec<u8>,
         cell_shape: Vec<usize>,
@@ -2638,10 +2678,10 @@ fn load_tiled_data_stman(
         Vec::with_capacity(header.cubes.len());
 
     for (cube_idx, cube) in header.cubes.iter().enumerate() {
-        let mut cols = Vec::with_capacity(col_descs.len());
+        let mut cols = Vec::with_capacity(tile_types.len());
         let layout = &cube_layouts[cube_idx];
         if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() || layout.is_none() {
-            for _ in col_descs {
+            for _ in tile_types {
                 cols.push(None);
             }
             cube_col_data.push(cols);
@@ -2654,12 +2694,7 @@ fn load_tiled_data_stman(
         let cell_shape: Vec<usize> = cube.cube_shape[..cell_ndim].to_vec();
         let cell_nelem: usize = cell_shape.iter().product();
 
-        for (col_idx, _) in col_descs.iter().enumerate() {
-            if col_idx >= header.col_data_types.len() {
-                cols.push(None);
-                continue;
-            }
-            let dt = header.col_data_types[col_idx];
+        for (col_idx, &dt) in tile_types.iter().enumerate() {
             let elem_size = tile_element_size(dt);
             if elem_size == 0 {
                 cols.push(None);
@@ -2710,8 +2745,14 @@ fn load_tiled_data_stman(
         }
 
         for (col_idx, col_desc) in col_descs.iter().enumerate() {
-            if let Some(ref ccd) = cube_col_data[cube_idx][col_idx] {
-                let dt = header.col_data_types[col_idx];
+            let Some(tile) = tiles.tile_index[col_idx] else {
+                let value =
+                    tile_columns::hypercube_cell(&header.cubes[cube_idx], &col_desc.col_name)?;
+                row.push(RecordField::new(col_desc.col_name.clone(), value));
+                continue;
+            };
+            if let Some(ref ccd) = cube_col_data[cube_idx][tile] {
+                let dt = tile_types[tile];
                 let elem_size = tile_element_size(dt);
                 let row_bytes = ccd.cell_nelem * elem_size;
                 let start = pos_in_cube * row_bytes;
@@ -4518,6 +4559,7 @@ fn save_tiled_column_group_rows_sparse_in_place(
         sparse_columns,
         header.big_endian,
         &header.col_data_types,
+        None,
         cube,
         &row_patches,
     )?;
@@ -4554,6 +4596,7 @@ fn save_tiled_cell_group_rows_sparse_in_place(
             sparse_columns,
             header.big_endian,
             &header.col_data_types,
+            None,
             &cube_with_row_axis,
             &[SparseTiledCubeRowPatch {
                 global_row_idx: row_idx,
@@ -4586,6 +4629,8 @@ fn save_tiled_data_group_rows_sparse_in_place(
     if header.col_data_types.len() != col_descs.len() || row_map.is_empty() {
         return Ok(false);
     }
+    let bound: Vec<&ColumnDescContents> = col_descs.iter().collect();
+    let tiles = tile_columns(&header, &bound)?;
 
     let mut patches_by_cube: std::collections::BTreeMap<usize, Vec<SparseTiledCubeRowPatch>> =
         std::collections::BTreeMap::new();
@@ -4628,7 +4673,8 @@ fn save_tiled_data_group_rows_sparse_in_place(
             col_descs,
             sparse_columns,
             header.big_endian,
-            &header.col_data_types,
+            &tiles.header.col_data_types,
+            Some(&tiles.tile_index),
             cube,
             &row_patches,
         )?;
@@ -4706,6 +4752,7 @@ fn save_tiled_shape_group_rows_sparse_in_place(
             sparse_columns,
             header.big_endian,
             &header.col_data_types,
+            None,
             cube,
             &row_patches,
         )?;
@@ -5005,6 +5052,11 @@ fn patch_single_column_tiled_cube_rows(
     Ok(())
 }
 
+/// Patch the changed rows of one hypercube in place.
+///
+/// `col_data_types` lists the tile columns in tile order. `tile_index` maps
+/// each bound column of `col_descs` and `sparse_columns` to its tile
+/// column; `None` means the bound columns are the tile columns.
 #[allow(clippy::too_many_arguments)]
 fn patch_tiled_cube_sparse_rows(
     table_path: &Path,
@@ -5013,6 +5065,7 @@ fn patch_tiled_cube_sparse_rows(
     sparse_columns: &[Option<SparseArrayRowValues>],
     big_endian: bool,
     col_data_types: &[CasacoreDataType],
+    tile_index: Option<&[Option<usize>]>,
     cube: &TsmCubeInfo,
     row_patches: &[SparseTiledCubeRowPatch],
 ) -> Result<(), StorageError> {
@@ -5063,10 +5116,23 @@ fn patch_tiled_cube_sparse_rows(
         let Some(sparse_values) = sparse_values else {
             continue;
         };
-        if col_idx >= col_descs.len() || col_idx >= col_data_types.len() {
+        let tile = match tile_index {
+            None => col_idx,
+            Some(tile_index) => match tile_index.get(col_idx) {
+                Some(Some(tile)) => *tile,
+                Some(None) => {
+                    return Err(StorageError::FormatMismatch(format!(
+                        "tiled sparse save cannot change id or coordinate column {}",
+                        col_descs[col_idx].col_name
+                    )));
+                }
+                None => return Ok(()),
+            },
+        };
+        if col_idx >= col_descs.len() || tile >= col_data_types.len() {
             return Ok(());
         }
-        let col_data_type = col_data_types[col_idx];
+        let col_data_type = col_data_types[tile];
         let elem_size = tile_element_size(col_data_type);
         if elem_size == 0 {
             return Err(StorageError::FormatMismatch(format!(
@@ -5112,7 +5178,7 @@ fn patch_tiled_cube_sparse_rows(
             expected_row_bytes,
             row_block_bytes: row_block_pixels * elem_size,
             tile_storage_len: tile_storage_bytes(col_data_type, nrpixels),
-            col_offset: col_offsets[col_idx],
+            col_offset: col_offsets[tile],
             encoded_rows,
         });
     }
@@ -9562,6 +9628,11 @@ fn load_streamed_column_tile(
     )
 }
 
+/// The byte order of a shared tile's pixels: [`load_shared_column_tile`]
+/// swaps a tile to the host's order as it reads it, so its pixels decode
+/// in that order, not the manager's.
+const SHARED_TILE_BIG_ENDIAN: bool = cfg!(target_endian = "big");
+
 #[allow(clippy::too_many_arguments)]
 fn load_shared_column_tile(
     table_path: &Path,
@@ -9746,7 +9817,7 @@ fn decode_selected_cube_row_from_shared_tiles(
             &tile[src_start..src_end],
             &cell_shape,
             dt,
-            header.big_endian,
+            SHARED_TILE_BIG_ENDIAN,
         )?;
         return match value {
             Value::Array(array) => Ok(Some(array)),
@@ -9806,7 +9877,7 @@ fn decode_selected_cube_row_from_shared_tiles(
         );
     }
 
-    match decode_array_value(&raw, &cell_shape, dt, header.big_endian)? {
+    match decode_array_value(&raw, &cell_shape, dt, SHARED_TILE_BIG_ENDIAN)? {
         Value::Array(array) => Ok(Some(array)),
         other => Err(StorageError::FormatMismatch(format!(
             "tiled array column {} decoded as non-array value {:?}",
@@ -9991,7 +10062,7 @@ fn decode_tiled_cell_from_shared_tiles(
         elem_size,
         session,
     )?;
-    match decode_array_value(&raw, &cube.cube_shape, dt, header.big_endian)? {
+    match decode_array_value(&raw, &cube.cube_shape, dt, SHARED_TILE_BIG_ENDIAN)? {
         Value::Array(array) => Ok(Some(array)),
         other => Err(StorageError::FormatMismatch(format!(
             "tiled cell row '{}' expected array value, found {:?}",
@@ -12673,8 +12744,6 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
 
-    use crate::storage::TABLE_CONTROL_FILE;
-    use crate::storage::table_control::{read_table_dat, write_table_dat};
     use crate::{ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema};
 
     fn make_bool_tile_pattern(base: usize) -> Vec<bool> {
@@ -14071,123 +14140,5 @@ mod tests {
                 assert_eq!(reconstructed[idx], cube_data[idx], "mismatch at ({i},{j})");
             }
         }
-    }
-
-    #[test]
-    fn sparse_partial_save_patches_tiled_data_rows_from_legacy_header() {
-        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
-            "data",
-            PrimitiveType::Float32,
-            vec![2, 2],
-        )])
-        .expect("schema");
-
-        let mut table = Table::with_schema(schema);
-        for row_idx in 0..4 {
-            table
-                .add_row(RecordValue::new(vec![RecordField::new(
-                    "data",
-                    Value::Array(ArrayValue::Float32(
-                        ArrayD::from_shape_vec(
-                            vec![2, 2],
-                            vec![
-                                row_idx as f32,
-                                row_idx as f32 + 10.0,
-                                row_idx as f32 + 20.0,
-                                row_idx as f32 + 30.0,
-                            ],
-                        )
-                        .expect("shape data"),
-                    )),
-                )]))
-                .expect("push row");
-        }
-
-        let dir = tempdir().expect("tempdir");
-        let table_path = dir.path().join("tiled-data-compat.table");
-        std::fs::create_dir_all(&table_path).expect("create table dir");
-        table
-            .save(
-                TableOptions::new(&table_path).with_data_manager(DataManagerKind::TiledColumnStMan),
-            )
-            .expect("save tiled-column table");
-
-        let control_path = table_path.join(TABLE_CONTROL_FILE);
-        let mut table_dat = read_table_dat(&control_path).expect("read table.dat");
-        for dm in &mut table_dat.column_set.data_managers {
-            if dm.type_name == "TiledColumnStMan" {
-                dm.type_name = "TiledDataStMan".to_string();
-            }
-        }
-        for desc in &mut table_dat.table_desc.columns {
-            if desc.data_manager_type == "TiledColumnStMan" {
-                desc.data_manager_type = "TiledDataStMan".to_string();
-            }
-        }
-        write_table_dat(&control_path, &table_dat).expect("rewrite table.dat");
-
-        let header_path = table_path.join("table.f0");
-        let (variant, header) = read_tiled_header(&header_path).expect("read tiled header");
-        let TiledVariant::Column { default_tile_shape } = variant else {
-            panic!("expected TiledColumnStMan header");
-        };
-        write_tiled_header(
-            &header_path,
-            &TiledVariant::Data {
-                default_tile_shape,
-                nrrow_last: header.nrrow,
-                row_map: vec![0],
-                cube_map: vec![0],
-                pos_map: vec![0],
-            },
-            &header,
-        )
-        .expect("rewrite TiledDataStMan header");
-
-        let mut reopened =
-            Table::open(TableOptions::new(&table_path)).expect("open tiled-data table");
-        assert_eq!(reopened.data_manager_info()[0].dm_type, "TiledDataStMan");
-
-        let mut row = reopened
-            .row_accessor_mut()
-            .prepare(&["data"])
-            .expect("prepare data row");
-        row.seek(2).expect("seek tiled-data row");
-        row.set_value_at(
-            0,
-            Value::Array(ArrayValue::Float32(
-                ArrayD::from_shape_vec(vec![2, 2], vec![402.0, 412.0, 422.0, 432.0])
-                    .expect("shape updated data"),
-            )),
-        )
-        .expect("set tiled-data array cell lazily");
-        row.flush().expect("flush tiled-data row");
-        drop(row);
-
-        reopened
-            .prepare_write()
-            .save_selected_rows(&["data"], &[2])
-            .expect("sparse tiled-data partial save");
-
-        let verify = Table::open(TableOptions::new(&table_path)).expect("reopen tiled-data table");
-        let data = verify.column_accessor("data").expect("data column");
-        assert_eq!(
-            data.array_cell(0).expect("data row 0"),
-            &ArrayValue::Float32(
-                ArrayD::from_shape_vec(vec![2, 2], vec![0.0, 10.0, 20.0, 30.0]).unwrap()
-            )
-        );
-        assert_eq!(
-            data.array_cell(2).expect("data row 2"),
-            &ArrayValue::Float32(
-                ArrayD::from_shape_vec(vec![2, 2], vec![402.0, 412.0, 422.0, 432.0]).unwrap()
-            )
-        );
-        assert_eq!(
-            data.array_cell(3).expect("data row 3"),
-            &ArrayValue::Float32(
-                ArrayD::from_shape_vec(vec![2, 2], vec![3.0, 13.0, 23.0, 33.0]).unwrap()
-            )
-        );
     }
 }
