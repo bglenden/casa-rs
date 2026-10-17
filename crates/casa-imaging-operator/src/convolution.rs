@@ -424,6 +424,23 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// `hold` and lends from it; resident sets lend their own storage.
     fn taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s>;
 
+    /// [`TapLayout::half_support`] of the imaging taps of `key`
+    /// ([`Self::taps`]), without lending them: a region router reads it for
+    /// every placement (#744). The default asks the taps, which a resident
+    /// set lends from its own storage; a set that pages its cells answers
+    /// from their metadata, so that routing neither loads a cell nor takes
+    /// the cache's lock.
+    fn gridding_half_support(&self, key: CfKey) -> [u16; 2] {
+        self.taps(key, &mut CellHold::new()).half_support()
+    }
+
+    /// [`TapLayout::oversampling`] of the imaging taps of `key`, without
+    /// lending them, as [`Self::gridding_half_support`]: placement reads it
+    /// at every change of a row's key.
+    fn gridding_oversampling(&self, key: CfKey) -> u16 {
+        self.taps(key, &mut CellHold::new()).oversampling()
+    }
+
     /// The largest [`TapLayout::half_support`] of any cell `key` can
     /// return, `[x, y]`: the halo a tile needs so that every sample anchored
     /// inside it keeps its whole support in the tile.
