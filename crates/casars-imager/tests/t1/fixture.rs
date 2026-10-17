@@ -82,8 +82,10 @@ pub struct Setup {
     /// Pointings `[ra, dec]` in radians observed round-robin per
     /// integration; empty for one field at [`PHASE_CENTER_RAD`].
     pub fields: Vec<[f64; 2]>,
-    /// The one spectral window.
-    pub spectral: SyntheticSpectralSetup,
+    /// The spectral windows, observed simultaneously. The observation's
+    /// channel, sample and noise helpers describe the first window, so
+    /// they hold for one window only.
+    pub spectral_windows: Vec<SyntheticSpectralSetup>,
     /// The geometry component offsets refer to and runs image.
     pub geometry: Geometry,
     /// Per-component (real and imaginary) visibility noise in Jy.
@@ -98,12 +100,12 @@ impl Setup {
             telescope: "VLA".to_string(),
             antennas: tutorial_vla_a_antennas(),
             fields: Vec::new(),
-            spectral: SyntheticSpectralSetup {
+            spectral_windows: vec![SyntheticSpectralSetup {
                 name: "t1-qband".to_string(),
                 start_frequency_hz: START_FREQUENCY_HZ,
                 channel_width_hz: CHANNEL_WIDTH_HZ,
                 channel_count: channels,
-            },
+            }],
             geometry: Geometry::DEFAULT,
             noise_jy: VISIBILITY_NOISE_JY,
         }
@@ -232,7 +234,7 @@ impl Observation {
             .collect();
         request.duration_seconds = DURATION_SECONDS;
         request.integration_seconds = INTEGRATION_SECONDS;
-        request.spectral_windows = vec![setup.spectral];
+        request.spectral_windows = setup.spectral_windows;
         request.model = Some(SyntheticSkyModel::AnalyticComponents {
             path: None,
             schema_version: Some(1),
