@@ -875,12 +875,20 @@ add personal workstation archives as implicit default-gate fallbacks.</p>
   <code>/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/&lt;work-item&gt;/</code>.</li>
 <li>NAS <code>storage</code> over Tailscale, mounted at <code>/Volumes/home</code>: large or
   long-lived artifacts under <code>/Volumes/home/casa-rs/</code>. Shared CASA test data is
-  at <code>/Volumes/home/casatestdata</code>.</li>
+  at <code>/Volumes/home/casatestdata</code>. The laptop mounts it at login and remounts
+  it when it drops (a user LaunchAgent; the login is in the Keychain).</li>
 <li>External disk <code>GLENDENNING</code> at <code>/Volumes/GLENDENNING/</code>: fast working space
-  for large datasets and runs. It has had repeated disconnects, so it is never
-  the only copy of anything that matters. Its preserved datasets are mirrored
-  at <code>/Volumes/home/casa-rs-glendenning-preserve/GLENDENNING/</code> (see
-  <code>/Volumes/GLENDENNING/README.md</code> for the path mapping).</li>
+  for large datasets and runs, never the only copy of anything that matters.
+  Since 2026-10-16 it is a 1 TB NVMe SSD (about 3 GB/s) that starts empty:
+  copy a run's inputs onto it from the NAS first, and never read a large
+  MeasurementSet over the network in place. Earlier GLENDENNING disks are
+  archived on the NAS:</li>
+<li>the SSD that failed on 2026-10-11, mirrored at
+    <code>/Volumes/home/casa-rs-glendenning-preserve/GLENDENNING/</code> (its
+    <code>README.md</code> maps the paths);</li>
+<li>the USB stick used from 2026-10-12 to 2026-10-16, whose data not already
+    on the NAS is in <code>/Volumes/home/casa-rs/glendenning-stick-20261016/</code>
+    (its <code>README.md</code> maps the paths).</li>
 </ul>
 <p>Keep an MS or large output only when it will be reused and would take hours to
 regenerate: a fixed timing input, or a long CASA run used as a correctness
@@ -927,27 +935,41 @@ merges do not run release/tag-only gates.</p>
 <p><code>TESTING.md</code> ("Imaging tiers and evidence") says what an evidence run must
 record. Locations on this workstation:</p>
 <ul>
-<li><strong>T1.5 harness</strong> (not in the repository): working copies under
+<li><strong>T1.5 harness</strong> (not in the repository): working copies at
   <code>/Volumes/GLENDENNING/casa-rs-evidence/if/IF-8/{refim,kernels}</code>, each with
-  <code>t15.py</code>, <code>casa_references.py</code> and its <code>data/</code>, <code>casa/</code> and <code>bin/</code> folders.
-  Run <code>T15_TAG=-&lt;commit&gt; /Applications/CASA.app/Contents/MacOS/python3
-  t15.py bin/casars-imager-&lt;commit&gt; [cases]</code> in each, with a binary built
-  from the committed state; about 15 minutes for both. Durable copies of the
-  scripts, the CASA 6.7.6 references and the results are on the NAS under
-  <code>/Volumes/home/casa-rs/if10/</code>; the inputs are the NAS casatestdata
-  (<code>measurementset/{vla,alma,evla}</code>, <code>unittest/tclean</code>). Check each case's
-  <code>image.summary.json</code> <code>backend</code> when a result jumps: a case that names no
-  backend runs on <code>auto</code>.</li>
+  <code>t15.py</code>, <code>casa_references.py</code> and its <code>data/</code>, <code>casa/</code> and <code>bin/</code> folders.</li>
+<li><strong>Staging:</strong> restage them on GLENDENNING from the NAS before a run:<ul>
+<li>the scripts and the CASA 6.7.6 references from the <code>t15-*.tar</code>
+  archives in <code>/Volumes/home/casa-rs/if10/</code>;</li>
+<li>the inputs from the NAS casatestdata (<code>measurementset/{vla,alma,evla}</code>,
+  <code>unittest/tclean</code>).</li>
+</ul>
+</li>
+<li><strong>Results:</strong> results up to 2026-10-12 are in <code>t15-results-20261012.tar</code>;
+    later ones are in <code>glendenning-stick-20261016/stick-records-20261016.tar</code>.</li>
+<li><strong>Running:</strong> run <code>T15_TAG=-&lt;commit&gt; /Applications/CASA.app/Contents/MacOS/python3
+    t15.py bin/casars-imager-&lt;commit&gt; [cases]</code> in each folder, with a binary
+    built from the committed state; both take about 15 minutes.</li>
+<li><strong>A jumped result:</strong> check the case's <code>image.summary.json</code> <code>backend</code>. A
+    case that names no backend runs on <code>auto</code>.</li>
 <li><strong>T2 matrix</strong>: <code>tools/perf/imager/run_workload.py</code> with
-  <code>CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance</code> and
-  <code>CASA_RS_CASA_PYTHON</code>; receipts under
-  <code>/Volumes/GLENDENNING/casa-rs-evidence/if/t2/</code>, durable copies on the NAS.</li>
+  <code>CASA_RS_IMPERF_DATA_ROOT</code> set to a staged copy of the inputs on
+  GLENDENNING (<code>casa-rs-imperformance</code>, from the NAS mirror above) and
+  <code>CASA_RS_CASA_PYTHON</code>.</li>
+<li><strong>Receipts:</strong> write them under <code>/Volumes/GLENDENNING/casa-rs-evidence/if/t2/</code>,
+    then archive them to the NAS.</li>
+<li><strong>CASA oracles:</strong> <code>casa-rs/if10/t2-oracles-20261013.tar</code> and
+    <code>casa-rs/glendenning-stick-20261016/casa-oracles-and-inputs-20261013-14.tar</code>.</li>
 <li><strong>Timed rows and large inputs</strong> (pilot, 512-plane cube, deep32, full
   cube, Wave3, #625): <code>~/SoftwareProjects/casa-rs-if10-data.noindex/</code> on
   this laptop, <code>~/ext/SoftwareProjects/casa-rs-data/</code> on the Mac mini, and
-  the NAS manifests under <code>/Volumes/home/casa-rs/if10/</code>. The pre-refactor
-  build <code>f38033668a</code> is the baseline for diagnosing a regression, not for
-  accepting a row.</li>
+  the NAS manifests under <code>/Volumes/home/casa-rs/if10/</code>.</li>
+<li><strong>Wave3:</strong> the MS that CASA's Wave3 reference was imaged on, regenerated
+    on 2026-10-13, is
+    <code>casa-rs/glendenning-stick-20261016/wave3-regenerated-ms-20261013.tar</code>.
+    The original in the NAS mirror differs from it.</li>
+<li><strong>Baseline:</strong> the pre-refactor build <code>f38033668a</code> is the baseline for
+    diagnosing a regression, not for accepting a row.</li>
 <li><strong>An explicit memory policy</strong>: production reads none from the
   environment. An evidence run that needs one (forced paging, a fixed
   budget) builds an evidence-only patch of <code>ImagingRequest::resource_policy</code>
