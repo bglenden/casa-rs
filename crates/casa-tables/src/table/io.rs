@@ -861,6 +861,7 @@ impl Table {
                                 group.seq_nr,
                                 &group.dm_type,
                                 &group_col_descs,
+                                &table_dat.table_desc,
                                 &sparse_group_columns,
                                 rows,
                             )?

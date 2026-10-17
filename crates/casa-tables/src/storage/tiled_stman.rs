@@ -364,15 +364,15 @@ impl TilePixel for Complex64 {
 use super::canonical::*;
 use super::data_type::CasacoreDataType;
 use super::table_control::{
-    ColumnDescContents, DataManagerEntry, read_iposition, read_record, write_iposition,
-    write_record,
+    ColumnDescContents, DataManagerEntry, PlainColumnEntry, TableDescContents, read_iposition,
+    read_record, write_iposition, write_record,
 };
 use super::{StorageError, StorageProfiler, TileLayoutPlanner};
 
 #[cfg(test)]
 mod casacore_tiled_data_tests;
 mod tile_columns;
-use tile_columns::tile_columns;
+use tile_columns::{TileColumns, in_tile_order, tile_columns, tile_target, untiled_column_error};
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -455,6 +455,16 @@ impl TiledVariant {
             }
             | Self::Cell { default_tile_shape } => default_tile_shape,
             Self::Data { .. } => &[],
+        }
+    }
+
+    /// The casacore class name of the manager.
+    fn manager_name(&self) -> &'static str {
+        match self {
+            Self::Column { .. } => "TiledColumnStMan",
+            Self::Shape { .. } => "TiledShapeStMan",
+            Self::Cell { .. } => "TiledCellStMan",
+            Self::Data { .. } => "TiledDataStMan",
         }
     }
 }
@@ -1695,8 +1705,8 @@ fn is_fortran_contiguous(shape: &[usize], strides: &[isize]) -> bool {
 pub(crate) fn load_tiled_columns(
     table_path: &Path,
     dm: &DataManagerEntry,
-    all_col_descs: &[ColumnDescContents],
-    bound_cols: &[(usize, &super::table_control::PlainColumnEntry)],
+    table_desc: &TableDescContents,
+    bound_cols: &[(usize, &PlainColumnEntry)],
     rows: &mut [RecordValue],
     undefined_cells: &mut [HashSet<String>],
     nrrow: usize,
@@ -1707,15 +1717,27 @@ pub(crate) fn load_tiled_columns(
     // Collect column descriptors for the bound columns.
     let col_descs: Vec<&ColumnDescContents> = bound_cols
         .iter()
-        .map(|(desc_idx, _)| &all_col_descs[*desc_idx])
+        .map(|(desc_idx, _)| &table_desc.columns[*desc_idx])
         .collect();
+    let tiles = tile_columns(&variant, Cow::Owned(header), &col_descs, table_desc)?;
+    // The managers other than TiledDataStMan index the header's types, the
+    // tile offsets and the descriptors alike, so they take all three in tile
+    // order, and every bound column must be a tile column.
+    let header = &*tiles.header;
+    let in_tiles = || match tiles.first_untiled(&col_descs) {
+        Some(untiled) => Err(untiled_column_error(
+            variant.manager_name(),
+            &untiled.col_name,
+        )),
+        None => Ok(in_tile_order(&tiles, &col_descs)),
+    };
 
     match variant {
         TiledVariant::Column { .. } => load_tiled_column_stman(
             table_path,
             dm.seq_nr,
-            &header,
-            &col_descs,
+            header,
+            &in_tiles()?,
             rows,
             undefined_cells,
             nrrow,
@@ -1729,8 +1751,8 @@ pub(crate) fn load_tiled_columns(
         } => load_tiled_shape_stman(
             table_path,
             dm.seq_nr,
-            &header,
-            &col_descs,
+            header,
+            &in_tiles()?,
             rows,
             undefined_cells,
             nrrow,
@@ -1744,8 +1766,8 @@ pub(crate) fn load_tiled_columns(
         TiledVariant::Cell { .. } => load_tiled_cell_stman(
             table_path,
             dm.seq_nr,
-            &header,
-            &col_descs,
+            header,
+            &in_tiles()?,
             rows,
             undefined_cells,
             nrrow,
@@ -1758,7 +1780,7 @@ pub(crate) fn load_tiled_columns(
         } => load_tiled_data_stman(
             table_path,
             dm.seq_nr,
-            &header,
+            &tiles,
             &col_descs,
             rows,
             undefined_cells,
@@ -1773,46 +1795,23 @@ pub(crate) fn load_tiled_columns(
 pub(crate) fn load_tiled_column_rows(
     table_path: &Path,
     dm: &DataManagerEntry,
-    all_col_descs: &[ColumnDescContents],
-    bound_cols: &[(usize, &super::table_control::PlainColumnEntry)],
+    table_desc: &TableDescContents,
+    bound_cols: &[(usize, &PlainColumnEntry)],
     target_desc_idx: usize,
     selected_rows: &[usize],
 ) -> Result<Vec<Option<ArrayValue>>, StorageError> {
     let header_path = table_path.join(format!("table.f{}", dm.seq_nr));
     let (variant, header) = read_tiled_header(&header_path)?;
-    let Some(bound_col_idx) = bound_cols
-        .iter()
-        .position(|(desc_idx, _)| *desc_idx == target_desc_idx)
-    else {
-        return Err(StorageError::FormatMismatch(format!(
-            "tiled column desc index {target_desc_idx} not bound to data manager {}",
-            dm.seq_nr
-        )));
-    };
-    if bound_col_idx >= header.col_data_types.len() {
-        return Err(StorageError::FormatMismatch(format!(
-            "tiled column index {bound_col_idx} out of range for data manager {}",
-            dm.seq_nr
-        )));
-    }
-    let col_desc = &all_col_descs[target_desc_idx];
-    // A TiledDataStMan's tiles hold its data columns only.
-    let (header, target_col_idx) = if matches!(variant, TiledVariant::Data { .. }) {
-        let bound: Vec<&ColumnDescContents> = bound_cols
-            .iter()
-            .map(|(desc_idx, _)| &all_col_descs[*desc_idx])
-            .collect();
-        let tiles = tile_columns(&header, &bound)?;
-        let Some(tile) = tiles.tile_index[bound_col_idx] else {
-            return Err(StorageError::FormatMismatch(format!(
-                "column '{}' is a TiledDataStMan id or coordinate column, not a data column",
-                col_desc.col_name
-            )));
-        };
-        (tiles.header, tile)
-    } else {
-        (header, bound_col_idx)
-    };
+    let (header, target_col_idx) = tile_target(
+        &variant,
+        Cow::Owned(header),
+        table_desc,
+        bound_cols,
+        target_desc_idx,
+        dm.seq_nr,
+    )?;
+    let header = &*header;
+    let col_desc = &table_desc.columns[target_desc_idx];
     let dt = header.col_data_types[target_col_idx];
     let elem_size = tile_element_size(dt);
     if elem_size == 0 {
@@ -1823,7 +1822,7 @@ pub(crate) fn load_tiled_column_rows(
         TiledVariant::Column { .. } => load_tiled_column_rows_column_variant(
             table_path,
             dm.seq_nr,
-            &header,
+            header,
             target_col_idx,
             col_desc,
             dt,
@@ -1839,7 +1838,7 @@ pub(crate) fn load_tiled_column_rows(
         } => load_tiled_column_rows_shape_variant(
             table_path,
             dm.seq_nr,
-            &header,
+            header,
             target_col_idx,
             col_desc,
             dt,
@@ -1855,7 +1854,7 @@ pub(crate) fn load_tiled_column_rows(
         TiledVariant::Cell { .. } => load_tiled_column_rows_cell_variant(
             table_path,
             dm.seq_nr,
-            &header,
+            header,
             target_col_idx,
             col_desc,
             dt,
@@ -1870,7 +1869,7 @@ pub(crate) fn load_tiled_column_rows(
         } => load_tiled_column_rows_data_variant(
             table_path,
             dm.seq_nr,
-            &header,
+            header,
             target_col_idx,
             col_desc,
             dt,
@@ -1888,30 +1887,24 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
     table_path: &Path,
     read_metadata: &TiledReadMetadata,
     dm: &DataManagerEntry,
-    all_col_descs: &[ColumnDescContents],
-    bound_cols: &[(usize, &super::table_control::PlainColumnEntry)],
+    table_desc: &TableDescContents,
+    bound_cols: &[(usize, &PlainColumnEntry)],
     target_desc_idx: usize,
     selected_rows: &[usize],
     channel_start: usize,
     channel_count: usize,
 ) -> Result<Option<SelectedArray2DCells>, StorageError> {
     let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
-    let Some(target_col_idx) = bound_cols
-        .iter()
-        .position(|(desc_idx, _)| *desc_idx == target_desc_idx)
-    else {
-        return Err(StorageError::FormatMismatch(format!(
-            "tiled column desc index {target_desc_idx} not bound to data manager {}",
-            dm.seq_nr
-        )));
-    };
-    if target_col_idx >= header.col_data_types.len() {
-        return Err(StorageError::FormatMismatch(format!(
-            "tiled column index {target_col_idx} out of range for data manager {}",
-            dm.seq_nr
-        )));
-    }
-    let col_desc = &all_col_descs[target_desc_idx];
+    let (tile_header, target_col_idx) = tile_target(
+        variant,
+        Cow::Borrowed(header),
+        table_desc,
+        bound_cols,
+        target_desc_idx,
+        dm.seq_nr,
+    )?;
+    let header = &*tile_header;
+    let col_desc = &table_desc.columns[target_desc_idx];
     let dt = header.col_data_types[target_col_idx];
     let elem_size = tile_element_size(dt);
     if elem_size == 0 {
@@ -1958,8 +1951,8 @@ pub(crate) fn fill_tiled_column_rows_2d_channel_range_typed(
     table_path: &Path,
     read_metadata: &TiledReadMetadata,
     dm: &DataManagerEntry,
-    all_col_descs: &[ColumnDescContents],
-    bound_cols: &[(usize, &super::table_control::PlainColumnEntry)],
+    table_desc: &TableDescContents,
+    bound_cols: &[(usize, &PlainColumnEntry)],
     target_desc_idx: usize,
     selected_rows: &[usize],
     channel_start: usize,
@@ -1967,22 +1960,16 @@ pub(crate) fn fill_tiled_column_rows_2d_channel_range_typed(
     destination: SelectedArray2DCellsMut<'_>,
 ) -> Result<Option<SelectedArray2DShape>, StorageError> {
     let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
-    let Some(target_col_idx) = bound_cols
-        .iter()
-        .position(|(desc_idx, _)| *desc_idx == target_desc_idx)
-    else {
-        return Err(StorageError::FormatMismatch(format!(
-            "tiled column desc index {target_desc_idx} not bound to data manager {}",
-            dm.seq_nr
-        )));
-    };
-    if target_col_idx >= header.col_data_types.len() {
-        return Err(StorageError::FormatMismatch(format!(
-            "tiled column index {target_col_idx} out of range for data manager {}",
-            dm.seq_nr
-        )));
-    }
-    let col_desc = &all_col_descs[target_desc_idx];
+    let (tile_header, target_col_idx) = tile_target(
+        variant,
+        Cow::Borrowed(header),
+        table_desc,
+        bound_cols,
+        target_desc_idx,
+        dm.seq_nr,
+    )?;
+    let header = &*tile_header;
+    let col_desc = &table_desc.columns[target_desc_idx];
     let dt = header.col_data_types[target_col_idx];
     let elem_size = tile_element_size(dt);
     if elem_size == 0 {
@@ -2029,28 +2016,22 @@ pub(crate) fn load_tiled_column_rows_1d_typed(
     table_path: &Path,
     read_metadata: &TiledReadMetadata,
     dm: &DataManagerEntry,
-    all_col_descs: &[ColumnDescContents],
-    bound_cols: &[(usize, &super::table_control::PlainColumnEntry)],
+    table_desc: &TableDescContents,
+    bound_cols: &[(usize, &PlainColumnEntry)],
     target_desc_idx: usize,
     selected_rows: &[usize],
 ) -> Result<SelectedArray1DCells, StorageError> {
     let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
-    let Some(target_col_idx) = bound_cols
-        .iter()
-        .position(|(desc_idx, _)| *desc_idx == target_desc_idx)
-    else {
-        return Err(StorageError::FormatMismatch(format!(
-            "tiled column desc index {target_desc_idx} not bound to data manager {}",
-            dm.seq_nr
-        )));
-    };
-    if target_col_idx >= header.col_data_types.len() {
-        return Err(StorageError::FormatMismatch(format!(
-            "tiled column index {target_col_idx} out of range for data manager {}",
-            dm.seq_nr
-        )));
-    }
-    let col_desc = &all_col_descs[target_desc_idx];
+    let (tile_header, target_col_idx) = tile_target(
+        variant,
+        Cow::Borrowed(header),
+        table_desc,
+        bound_cols,
+        target_desc_idx,
+        dm.seq_nr,
+    )?;
+    let header = &*tile_header;
+    let col_desc = &table_desc.columns[target_desc_idx];
     let dt = header.col_data_types[target_col_idx];
     let elem_size = tile_element_size(dt);
     if elem_size == 0 {
@@ -2126,29 +2107,23 @@ pub(crate) fn fill_tiled_column_rows_1d_typed(
     table_path: &Path,
     read_metadata: &TiledReadMetadata,
     dm: &DataManagerEntry,
-    all_col_descs: &[ColumnDescContents],
-    bound_cols: &[(usize, &super::table_control::PlainColumnEntry)],
+    table_desc: &TableDescContents,
+    bound_cols: &[(usize, &PlainColumnEntry)],
     target_desc_idx: usize,
     selected_rows: &[usize],
     destination: SelectedArray1DCellsMut<'_>,
 ) -> Result<SelectedArray1DShape, StorageError> {
     let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
-    let Some(target_col_idx) = bound_cols
-        .iter()
-        .position(|(desc_idx, _)| *desc_idx == target_desc_idx)
-    else {
-        return Err(StorageError::FormatMismatch(format!(
-            "tiled column desc index {target_desc_idx} not bound to data manager {}",
-            dm.seq_nr
-        )));
-    };
-    if target_col_idx >= header.col_data_types.len() {
-        return Err(StorageError::FormatMismatch(format!(
-            "tiled column index {target_col_idx} out of range for data manager {}",
-            dm.seq_nr
-        )));
-    }
-    let col_desc = &all_col_descs[target_desc_idx];
+    let (tile_header, target_col_idx) = tile_target(
+        variant,
+        Cow::Borrowed(header),
+        table_desc,
+        bound_cols,
+        target_desc_idx,
+        dm.seq_nr,
+    )?;
+    let header = &*tile_header;
+    let col_desc = &table_desc.columns[target_desc_idx];
     let dt = header.col_data_types[target_col_idx];
     let elem_size = tile_element_size(dt);
     if elem_size == 0 {
@@ -2626,7 +2601,7 @@ fn load_tiled_column_rows_shape_variant(
 fn load_tiled_data_stman(
     table_path: &Path,
     dm_seq_nr: u32,
-    header: &TiledStManHeader,
+    tiles: &TileColumns<'_>,
     col_descs: &[&ColumnDescContents],
     rows: &mut [RecordValue],
     _undefined_cells: &mut [HashSet<String>],
@@ -2635,8 +2610,8 @@ fn load_tiled_data_stman(
     cube_map: &[u32],
     pos_map: &[u32],
 ) -> Result<(), StorageError> {
-    let tiles = tile_columns(header, col_descs)?;
-    let tile_types = &tiles.header.col_data_types;
+    let header = &*tiles.header;
+    let tile_types = &header.col_data_types;
 
     // Pre-read all TSM data files and compute per-cube layouts.
     let mut file_cache: std::collections::HashMap<u32, Vec<u8>> = std::collections::HashMap::new();
@@ -3389,7 +3364,7 @@ fn fill_typed_selected_1d_rows<T: Copy>(
                         .saturating_add(axis0);
                     values[dst_elem] = decode(
                         &tile_row[src_byte..src_byte + plan.elem_size],
-                        plan.header.big_endian,
+                        SHARED_TILE_BIG_ENDIAN,
                     );
                 }
                 debug_assert!(shape.tile_axis0_count >= plan.axis0_count);
@@ -3999,7 +3974,7 @@ fn fill_typed_selected_2d_rows<T: Copy>(
                             let src_byte = src_elem * elem_size;
                             values[dst_elem] = decode(
                                 &tile_row[src_byte..src_byte + elem_size],
-                                header.big_endian,
+                                SHARED_TILE_BIG_ENDIAN,
                             );
                         }
                     }
@@ -4469,6 +4444,7 @@ pub(crate) fn save_tiled_columns_sparse_rows_in_place(
     dm_seq_nr: u32,
     dm_type_name: &str,
     col_descs: &[ColumnDescContents],
+    table_desc: &TableDescContents,
     sparse_columns: &[Option<SparseArrayRowValues>],
     changed_rows: &[usize],
 ) -> Result<bool, StorageError> {
@@ -4483,6 +4459,7 @@ pub(crate) fn save_tiled_columns_sparse_rows_in_place(
             table_path,
             dm_seq_nr,
             col_descs,
+            table_desc,
             sparse_columns,
             changed_rows,
         ),
@@ -4490,6 +4467,7 @@ pub(crate) fn save_tiled_columns_sparse_rows_in_place(
             table_path,
             dm_seq_nr,
             col_descs,
+            table_desc,
             sparse_columns,
             changed_rows,
         ),
@@ -4497,6 +4475,7 @@ pub(crate) fn save_tiled_columns_sparse_rows_in_place(
             table_path,
             dm_seq_nr,
             col_descs,
+            table_desc,
             sparse_columns,
             changed_rows,
         ),
@@ -4504,6 +4483,7 @@ pub(crate) fn save_tiled_columns_sparse_rows_in_place(
             table_path,
             dm_seq_nr,
             col_descs,
+            table_desc,
             sparse_columns,
             changed_rows,
         ),
@@ -4522,6 +4502,7 @@ fn save_tiled_column_group_rows_sparse_in_place(
     table_path: &Path,
     dm_seq_nr: u32,
     col_descs: &[ColumnDescContents],
+    table_desc: &TableDescContents,
     sparse_columns: &[Option<SparseArrayRowValues>],
     changed_rows: &[usize],
 ) -> Result<bool, StorageError> {
@@ -4552,14 +4533,16 @@ fn save_tiled_column_group_rows_sparse_in_place(
     if row_patches.is_empty() {
         return Ok(true);
     }
+    let bound: Vec<&ColumnDescContents> = col_descs.iter().collect();
+    let tiles = tile_columns(&variant, Cow::Borrowed(&header), &bound, table_desc)?;
     patch_tiled_cube_sparse_rows(
         table_path,
         dm_seq_nr,
         col_descs,
         sparse_columns,
         header.big_endian,
-        &header.col_data_types,
-        None,
+        &tiles.header.col_data_types,
+        &tiles.tile_index,
         cube,
         &row_patches,
     )?;
@@ -4570,6 +4553,7 @@ fn save_tiled_cell_group_rows_sparse_in_place(
     table_path: &Path,
     dm_seq_nr: u32,
     col_descs: &[ColumnDescContents],
+    table_desc: &TableDescContents,
     sparse_columns: &[Option<SparseArrayRowValues>],
     changed_rows: &[usize],
 ) -> Result<bool, StorageError> {
@@ -4580,6 +4564,8 @@ fn save_tiled_cell_group_rows_sparse_in_place(
     {
         return Ok(false);
     }
+    let bound: Vec<&ColumnDescContents> = col_descs.iter().collect();
+    let tiles = tile_columns(&variant, Cow::Borrowed(&header), &bound, table_desc)?;
 
     for &row_idx in changed_rows {
         let Some(cube) = header.cubes.get(row_idx) else {
@@ -4595,8 +4581,8 @@ fn save_tiled_cell_group_rows_sparse_in_place(
             col_descs,
             sparse_columns,
             header.big_endian,
-            &header.col_data_types,
-            None,
+            &tiles.header.col_data_types,
+            &tiles.tile_index,
             &cube_with_row_axis,
             &[SparseTiledCubeRowPatch {
                 global_row_idx: row_idx,
@@ -4612,11 +4598,17 @@ fn save_tiled_data_group_rows_sparse_in_place(
     table_path: &Path,
     dm_seq_nr: u32,
     col_descs: &[ColumnDescContents],
+    table_desc: &TableDescContents,
     sparse_columns: &[Option<SparseArrayRowValues>],
     changed_rows: &[usize],
 ) -> Result<bool, StorageError> {
     let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
     let (variant, header) = read_tiled_header(&header_path)?;
+    if header.col_data_types.len() != col_descs.len() {
+        return Ok(false);
+    }
+    let bound: Vec<&ColumnDescContents> = col_descs.iter().collect();
+    let tiles = tile_columns(&variant, Cow::Borrowed(&header), &bound, table_desc)?;
     let TiledVariant::Data {
         row_map,
         cube_map,
@@ -4626,11 +4618,9 @@ fn save_tiled_data_group_rows_sparse_in_place(
     else {
         return Ok(false);
     };
-    if header.col_data_types.len() != col_descs.len() || row_map.is_empty() {
+    if row_map.is_empty() {
         return Ok(false);
     }
-    let bound: Vec<&ColumnDescContents> = col_descs.iter().collect();
-    let tiles = tile_columns(&header, &bound)?;
 
     let mut patches_by_cube: std::collections::BTreeMap<usize, Vec<SparseTiledCubeRowPatch>> =
         std::collections::BTreeMap::new();
@@ -4674,7 +4664,7 @@ fn save_tiled_data_group_rows_sparse_in_place(
             sparse_columns,
             header.big_endian,
             &tiles.header.col_data_types,
-            Some(&tiles.tile_index),
+            &tiles.tile_index,
             cube,
             &row_patches,
         )?;
@@ -4687,11 +4677,17 @@ fn save_tiled_shape_group_rows_sparse_in_place(
     table_path: &Path,
     dm_seq_nr: u32,
     col_descs: &[ColumnDescContents],
+    table_desc: &TableDescContents,
     sparse_columns: &[Option<SparseArrayRowValues>],
     changed_rows: &[usize],
 ) -> Result<bool, StorageError> {
     let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
     let (variant, header) = read_tiled_header(&header_path)?;
+    if header.col_data_types.len() != col_descs.len() {
+        return Ok(false);
+    }
+    let bound: Vec<&ColumnDescContents> = col_descs.iter().collect();
+    let tiles = tile_columns(&variant, Cow::Borrowed(&header), &bound, table_desc)?;
     let TiledVariant::Shape {
         nr_used_row_map,
         row_map,
@@ -4702,9 +4698,6 @@ fn save_tiled_shape_group_rows_sparse_in_place(
     else {
         return Ok(false);
     };
-    if header.col_data_types.len() != col_descs.len() {
-        return Ok(false);
-    }
     let n_intervals = nr_used_row_map as usize;
     if n_intervals == 0 {
         return Ok(false);
@@ -4751,8 +4744,8 @@ fn save_tiled_shape_group_rows_sparse_in_place(
             col_descs,
             sparse_columns,
             header.big_endian,
-            &header.col_data_types,
-            None,
+            &tiles.header.col_data_types,
+            &tiles.tile_index,
             cube,
             &row_patches,
         )?;
@@ -5056,7 +5049,7 @@ fn patch_single_column_tiled_cube_rows(
 ///
 /// `col_data_types` lists the tile columns in tile order. `tile_index` maps
 /// each bound column of `col_descs` and `sparse_columns` to its tile
-/// column; `None` means the bound columns are the tile columns.
+/// column ([`TileColumns::tile_index`]).
 #[allow(clippy::too_many_arguments)]
 fn patch_tiled_cube_sparse_rows(
     table_path: &Path,
@@ -5065,7 +5058,7 @@ fn patch_tiled_cube_sparse_rows(
     sparse_columns: &[Option<SparseArrayRowValues>],
     big_endian: bool,
     col_data_types: &[CasacoreDataType],
-    tile_index: Option<&[Option<usize>]>,
+    tile_index: &[Option<usize>],
     cube: &TsmCubeInfo,
     row_patches: &[SparseTiledCubeRowPatch],
 ) -> Result<(), StorageError> {
@@ -5116,18 +5109,15 @@ fn patch_tiled_cube_sparse_rows(
         let Some(sparse_values) = sparse_values else {
             continue;
         };
-        let tile = match tile_index {
-            None => col_idx,
-            Some(tile_index) => match tile_index.get(col_idx) {
-                Some(Some(tile)) => *tile,
-                Some(None) => {
-                    return Err(StorageError::FormatMismatch(format!(
-                        "tiled sparse save cannot change id or coordinate column {}",
-                        col_descs[col_idx].col_name
-                    )));
-                }
-                None => return Ok(()),
-            },
+        let tile = match tile_index.get(col_idx) {
+            Some(Some(tile)) => *tile,
+            Some(None) => {
+                return Err(StorageError::FormatMismatch(format!(
+                    "tiled sparse save cannot change id or coordinate column {}",
+                    col_descs[col_idx].col_name
+                )));
+            }
+            None => return Ok(()),
         };
         if col_idx >= col_descs.len() || tile >= col_data_types.len() {
             return Ok(());
@@ -9629,8 +9619,8 @@ fn load_streamed_column_tile(
 }
 
 /// The byte order of a shared tile's pixels: [`load_shared_column_tile`]
-/// swaps a tile to the host's order as it reads it, so its pixels decode
-/// in that order, not the manager's.
+/// and [`load_streamed_column_tile`] swap a tile to the host's order as
+/// they read it, so its pixels decode in that order, not the manager's.
 const SHARED_TILE_BIG_ENDIAN: bool = cfg!(target_endian = "big");
 
 #[allow(clippy::too_many_arguments)]
