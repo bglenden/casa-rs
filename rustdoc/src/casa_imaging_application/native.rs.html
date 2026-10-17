@@ -14,7 +14,7 @@
 <a href=#14 id=14 data-nosnippet>14</a>};
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>casa_imaging_runtime::pass::{PassError, WorkerTeam, WorkerTeams};
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>casa_imaging_runtime::{
-<a href=#17 id=17 data-nosnippet>17</a>    Admission, Cancelled, Demand, Reservation, RunSummary, SourceAccessError, admit,
+<a href=#17 id=17 data-nosnippet>17</a>    Admission, Admitted, Cancelled, Demand, Reservation, RunSummary, SourceAccessError, admit,
 <a href=#18 id=18 data-nosnippet>18</a>    finalize_source_access, run_phase,
 <a href=#19 id=19 data-nosnippet>19</a>};
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>casa_ms::{ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest};
@@ -150,189 +150,192 @@
 <a href=#150 id=150 data-nosnippet>150</a>            })
 <a href=#151 id=151 data-nosnippet>151</a>        })
 <a href=#152 id=152 data-nosnippet>152</a>        .transpose()<span class="question-mark">?</span>;
-<a href=#153 id=153 data-nosnippet>153</a>    <span class="kw">let </span>(access, source) = finalize_source_access(
-<a href=#154 id=154 data-nosnippet>154</a>        problem,
-<a href=#155 id=155 data-nosnippet>155</a>        input.initial_access,
-<a href=#156 id=156 data-nosnippet>156</a>        imaging::row_samples(problem)<span class="question-mark">?</span>,
-<a href=#157 id=157 data-nosnippet>157</a>        <span class="kw-2">&amp;</span>runtime.host,
-<a href=#158 id=158 data-nosnippet>158</a>        <span class="kw-2">&amp;</span>runtime.resource_policy,
-<a href=#159 id=159 data-nosnippet>159</a>    )<span class="question-mark">?</span>;
-<a href=#160 id=160 data-nosnippet>160</a>    <span class="kw">let </span>cores = runtime.resource_policy.cores(<span class="kw-2">&amp;</span>runtime.host);
-<a href=#161 id=161 data-nosnippet>161</a>    <span class="macro">tracing::info!</span>(
-<a href=#162 id=162 data-nosnippet>162</a>        <span class="string">"workers: {} computing, {} streaming beside the source's producer"</span>,
-<a href=#163 id=163 data-nosnippet>163</a>        cores.workers,
-<a href=#164 id=164 data-nosnippet>164</a>        cores.streaming_workers
-<a href=#165 id=165 data-nosnippet>165</a>    );
-<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">let </span>teams = WorkerTeams::new(cores)<span class="question-mark">?</span>;
-<a href=#167 id=167 data-nosnippet>167</a>    <span class="prelude-val">Ok</span>(NativeRun {
-<a href=#168 id=168 data-nosnippet>168</a>        runtime,
-<a href=#169 id=169 data-nosnippet>169</a>        publication,
-<a href=#170 id=170 data-nosnippet>170</a>        aw_catalog,
-<a href=#171 id=171 data-nosnippet>171</a>        visibility_write,
-<a href=#172 id=172 data-nosnippet>172</a>        access,
-<a href=#173 id=173 data-nosnippet>173</a>        source,
-<a href=#174 id=174 data-nosnippet>174</a>        teams,
-<a href=#175 id=175 data-nosnippet>175</a>        masks: input.masks,
-<a href=#176 id=176 data-nosnippet>176</a>        image_response: input.minor_cycle_image_response,
-<a href=#177 id=177 data-nosnippet>177</a>    })
-<a href=#178 id=178 data-nosnippet>178</a>}
-<a href=#179 id=179 data-nosnippet>179</a>
-<a href=#180 id=180 data-nosnippet>180</a><span class="doccomment">/// Run the major-cycle passes, the minor cycles between them and any
-<a href=#181 id=181 data-nosnippet>181</a>/// visibility write, then publish the products. `summary` collects the
-<a href=#182 id=182 data-nosnippet>182</a>/// phases and totals as they end; a completed run's outcome takes it once
-<a href=#183 id=183 data-nosnippet>183</a>/// the caller has finished it.
-<a href=#184 id=184 data-nosnippet>184</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(
-<a href=#185 id=185 data-nosnippet>185</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#186 id=186 data-nosnippet>186</a>    run: NativeRun,
-<a href=#187 id=187 data-nosnippet>187</a>    summary: <span class="kw-2">&amp;mut </span>RunSummary,
-<a href=#188 id=188 data-nosnippet>188</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>FnOnce(RunSummary) -&gt; ImagingOutcome + <span class="kw">use</span>&lt;&gt;, NativeError&gt; {
-<a href=#189 id=189 data-nosnippet>189</a>    summary.workers = run.teams.compute().workers();
-<a href=#190 id=190 data-nosnippet>190</a>    <span class="kw">let </span>NativeRun {
-<a href=#191 id=191 data-nosnippet>191</a>        runtime,
-<a href=#192 id=192 data-nosnippet>192</a>        publication,
-<a href=#193 id=193 data-nosnippet>193</a>        aw_catalog,
-<a href=#194 id=194 data-nosnippet>194</a>        visibility_write,
-<a href=#195 id=195 data-nosnippet>195</a>        access,
-<a href=#196 id=196 data-nosnippet>196</a>        source,
-<a href=#197 id=197 data-nosnippet>197</a>        teams,
-<a href=#198 id=198 data-nosnippet>198</a>        masks,
-<a href=#199 id=199 data-nosnippet>199</a>        image_response,
-<a href=#200 id=200 data-nosnippet>200</a>    } = run;
-<a href=#201 id=201 data-nosnippet>201</a>    <span class="kw">let </span>outcome = imaging::run(
-<a href=#202 id=202 data-nosnippet>202</a>        imaging::ImagingInputs {
-<a href=#203 id=203 data-nosnippet>203</a>            problem,
-<a href=#204 id=204 data-nosnippet>204</a>            access,
-<a href=#205 id=205 data-nosnippet>205</a>            masks,
-<a href=#206 id=206 data-nosnippet>206</a>            image_response,
-<a href=#207 id=207 data-nosnippet>207</a>            visibility_write,
-<a href=#208 id=208 data-nosnippet>208</a>            host: runtime.host,
-<a href=#209 id=209 data-nosnippet>209</a>            policy: runtime.resource_policy,
-<a href=#210 id=210 data-nosnippet>210</a>            teams: <span class="kw-2">&amp;</span>teams,
-<a href=#211 id=211 data-nosnippet>211</a>            cancel: runtime.cancel.clone(),
-<a href=#212 id=212 data-nosnippet>212</a>            spill_directory: <span class="kw-2">&amp;</span>runtime.spill_directory,
-<a href=#213 id=213 data-nosnippet>213</a>            aw_catalog,
-<a href=#214 id=214 data-nosnippet>214</a>            backend: runtime.backend,
-<a href=#215 id=215 data-nosnippet>215</a>            grid_precision: runtime.grid_precision,
-<a href=#216 id=216 data-nosnippet>216</a>            diagnostics: runtime.diagnostics,
-<a href=#217 id=217 data-nosnippet>217</a>        },
-<a href=#218 id=218 data-nosnippet>218</a>        summary,
-<a href=#219 id=219 data-nosnippet>219</a>    )<span class="question-mark">?</span>;
-<a href=#220 id=220 data-nosnippet>220</a>    drop(source);
-<a href=#221 id=221 data-nosnippet>221</a>    <span class="kw">let </span><span class="kw-2">mut </span>published = Vec::new();
-<a href=#222 id=222 data-nosnippet>222</a>    <span class="kw">let </span>products = run_phase(
-<a href=#223 id=223 data-nosnippet>223</a>        <span class="string">"products"</span>,
-<a href=#224 id=224 data-nosnippet>224</a>        <span class="kw-2">&amp;</span>runtime.cancel,
-<a href=#225 id=225 data-nosnippet>225</a>        runtime.diagnostics,
-<a href=#226 id=226 data-nosnippet>226</a>        summary,
-<a href=#227 id=227 data-nosnippet>227</a>        || {
-<a href=#228 id=228 data-nosnippet>228</a>            publish_products(
-<a href=#229 id=229 data-nosnippet>229</a>                problem,
-<a href=#230 id=230 data-nosnippet>230</a>                ProductSource {
-<a href=#231 id=231 data-nosnippet>231</a>                    scientific: outcome.scientific,
-<a href=#232 id=232 data-nosnippet>232</a>                    masks: outcome.masks,
-<a href=#233 id=233 data-nosnippet>233</a>                    facet_sum_weights: outcome.facet_sum_weights,
-<a href=#234 id=234 data-nosnippet>234</a>                },
-<a href=#235 id=235 data-nosnippet>235</a>                <span class="kw-2">&amp;</span>runtime,
-<a href=#236 id=236 data-nosnippet>236</a>                publication,
-<a href=#237 id=237 data-nosnippet>237</a>                teams.compute(),
-<a href=#238 id=238 data-nosnippet>238</a>                <span class="kw-2">&amp;mut </span>published,
-<a href=#239 id=239 data-nosnippet>239</a>            )
-<a href=#240 id=240 data-nosnippet>240</a>        },
-<a href=#241 id=241 data-nosnippet>241</a>    );
-<a href=#242 id=242 data-nosnippet>242</a>    summary.products = published;
-<a href=#243 id=243 data-nosnippet>243</a>    <span class="kw">let </span>products = products<span class="question-mark">?</span>;
-<a href=#244 id=244 data-nosnippet>244</a>    <span class="kw">let </span>workers = teams.compute().workers();
-<a href=#245 id=245 data-nosnippet>245</a>    <span class="kw">let </span>problem = problem.clone();
-<a href=#246 id=246 data-nosnippet>246</a>    <span class="prelude-val">Ok</span>(<span class="kw">move </span>|summary| ImagingOutcome {
-<a href=#247 id=247 data-nosnippet>247</a>        problem,
-<a href=#248 id=248 data-nosnippet>248</a>        minor_cycles: outcome.minor_cycles,
-<a href=#249 id=249 data-nosnippet>249</a>        stop: outcome.stop,
-<a href=#250 id=250 data-nosnippet>250</a>        major_cycle_count: outcome.major_cycle_count,
-<a href=#251 id=251 data-nosnippet>251</a>        total_minor_iterations: outcome.total_minor_iterations,
-<a href=#252 id=252 data-nosnippet>252</a>        total_actual_minor_iterations: outcome.total_actual_minor_iterations,
-<a href=#253 id=253 data-nosnippet>253</a>        workers,
-<a href=#254 id=254 data-nosnippet>254</a>        planes_per_wave: outcome.planes_per_wave,
-<a href=#255 id=255 data-nosnippet>255</a>        visibility_products: outcome.visibility_products,
-<a href=#256 id=256 data-nosnippet>256</a>        summary,
-<a href=#257 id=257 data-nosnippet>257</a>        scientific: products.scientific,
-<a href=#258 id=258 data-nosnippet>258</a>        planned_products: products.planned,
-<a href=#259 id=259 data-nosnippet>259</a>        products: products.published,
-<a href=#260 id=260 data-nosnippet>260</a>        _retained: outcome.retained,
-<a href=#261 id=261 data-nosnippet>261</a>    })
-<a href=#262 id=262 data-nosnippet>262</a>}
-<a href=#263 id=263 data-nosnippet>263</a>
-<a href=#264 id=264 data-nosnippet>264</a><span class="doccomment">/// The products of a run and the state they were generated from.
-<a href=#265 id=265 data-nosnippet>265</a></span><span class="kw">struct </span>Products {
-<a href=#266 id=266 data-nosnippet>266</a>    planned: PlannedContinuumGeneration,
-<a href=#267 id=267 data-nosnippet>267</a>    scientific: MajorCycleCompletion,
-<a href=#268 id=268 data-nosnippet>268</a>    published: PublishedContinuumGeneration,
-<a href=#269 id=269 data-nosnippet>269</a>}
-<a href=#270 id=270 data-nosnippet>270</a>
-<a href=#271 id=271 data-nosnippet>271</a><span class="doccomment">/// What the products are formed from: the final completion, its
-<a href=#272 id=272 data-nosnippet>272</a>/// reconstruction masks and the faceted domains' facets' own sums of
-<a href=#273 id=273 data-nosnippet>273</a>/// weights.
-<a href=#274 id=274 data-nosnippet>274</a></span><span class="kw">struct </span>ProductSource {
-<a href=#275 id=275 data-nosnippet>275</a>    scientific: MajorCycleCompletion,
-<a href=#276 id=276 data-nosnippet>276</a>    masks: <span class="prelude-ty">Option</span>&lt;ReconstructionMaskSet&gt;,
-<a href=#277 id=277 data-nosnippet>277</a>    facet_sum_weights: FacetSumWeights,
-<a href=#278 id=278 data-nosnippet>278</a>}
-<a href=#279 id=279 data-nosnippet>279</a>
-<a href=#280 id=280 data-nosnippet>280</a><span class="doccomment">/// Generate every planned product member into the writer's private staging,
-<a href=#281 id=281 data-nosnippet>281</a>/// one output channel per window on the run's team, and publish them,
-<a href=#282 id=282 data-nosnippet>282</a>/// adding each image published to `published`; a cancelled run publishes
-<a href=#283 id=283 data-nosnippet>283</a>/// nothing.
-<a href=#284 id=284 data-nosnippet>284</a></span><span class="kw">fn </span>publish_products(
-<a href=#285 id=285 data-nosnippet>285</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#286 id=286 data-nosnippet>286</a>    source: ProductSource,
-<a href=#287 id=287 data-nosnippet>287</a>    runtime: <span class="kw-2">&amp;</span>ApplicationRuntime,
-<a href=#288 id=288 data-nosnippet>288</a>    publication: ApplicationPublication,
-<a href=#289 id=289 data-nosnippet>289</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#290 id=290 data-nosnippet>290</a>    published: <span class="kw-2">&amp;mut </span>Vec&lt;String&gt;,
-<a href=#291 id=291 data-nosnippet>291</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Products, NativeError&gt; {
-<a href=#292 id=292 data-nosnippet>292</a>    <span class="kw">let </span>ProductSource {
-<a href=#293 id=293 data-nosnippet>293</a>        scientific,
-<a href=#294 id=294 data-nosnippet>294</a>        masks: reconstruction_masks,
-<a href=#295 id=295 data-nosnippet>295</a>        facet_sum_weights,
-<a href=#296 id=296 data-nosnippet>296</a>    } = source;
-<a href=#297 id=297 data-nosnippet>297</a>    <span class="kw">let </span><span class="kw-2">mut </span>inputs = ContinuumProductInputs::from_major_cycle(problem, <span class="kw-2">&amp;</span>scientific);
-<a href=#298 id=298 data-nosnippet>298</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(masks) = reconstruction_masks.as_ref() {
-<a href=#299 id=299 data-nosnippet>299</a>        inputs = <span class="kw">match </span>masks {
-<a href=#300 id=300 data-nosnippet>300</a>            ReconstructionMaskSet::Shared(mask) =&gt; inputs.with_reconstruction_mask(mask),
-<a href=#301 id=301 data-nosnippet>301</a>            ReconstructionMaskSet::Domains(masks) =&gt; inputs.with_domain_reconstruction_masks(masks),
-<a href=#302 id=302 data-nosnippet>302</a>        };
-<a href=#303 id=303 data-nosnippet>303</a>    }
-<a href=#304 id=304 data-nosnippet>304</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(centres) = publication.primary_beam_centres.as_ref() {
-<a href=#305 id=305 data-nosnippet>305</a>        inputs = inputs.with_primary_beam_centres(centres);
+<a href=#153 id=153 data-nosnippet>153</a>    <span class="kw">let </span>Admitted {
+<a href=#154 id=154 data-nosnippet>154</a>        value: access,
+<a href=#155 id=155 data-nosnippet>155</a>        reservation: source,
+<a href=#156 id=156 data-nosnippet>156</a>    } = finalize_source_access(
+<a href=#157 id=157 data-nosnippet>157</a>        problem,
+<a href=#158 id=158 data-nosnippet>158</a>        input.initial_access,
+<a href=#159 id=159 data-nosnippet>159</a>        imaging::row_samples(problem)<span class="question-mark">?</span>,
+<a href=#160 id=160 data-nosnippet>160</a>        <span class="kw-2">&amp;</span>runtime.host,
+<a href=#161 id=161 data-nosnippet>161</a>        <span class="kw-2">&amp;</span>runtime.resource_policy,
+<a href=#162 id=162 data-nosnippet>162</a>    )<span class="question-mark">?</span>;
+<a href=#163 id=163 data-nosnippet>163</a>    <span class="kw">let </span>cores = runtime.resource_policy.cores(<span class="kw-2">&amp;</span>runtime.host);
+<a href=#164 id=164 data-nosnippet>164</a>    <span class="macro">tracing::info!</span>(
+<a href=#165 id=165 data-nosnippet>165</a>        <span class="string">"workers: {} computing, {} streaming beside the source's producer"</span>,
+<a href=#166 id=166 data-nosnippet>166</a>        cores.workers,
+<a href=#167 id=167 data-nosnippet>167</a>        cores.streaming_workers
+<a href=#168 id=168 data-nosnippet>168</a>    );
+<a href=#169 id=169 data-nosnippet>169</a>    <span class="kw">let </span>teams = WorkerTeams::new(cores)<span class="question-mark">?</span>;
+<a href=#170 id=170 data-nosnippet>170</a>    <span class="prelude-val">Ok</span>(NativeRun {
+<a href=#171 id=171 data-nosnippet>171</a>        runtime,
+<a href=#172 id=172 data-nosnippet>172</a>        publication,
+<a href=#173 id=173 data-nosnippet>173</a>        aw_catalog,
+<a href=#174 id=174 data-nosnippet>174</a>        visibility_write,
+<a href=#175 id=175 data-nosnippet>175</a>        access,
+<a href=#176 id=176 data-nosnippet>176</a>        source,
+<a href=#177 id=177 data-nosnippet>177</a>        teams,
+<a href=#178 id=178 data-nosnippet>178</a>        masks: input.masks,
+<a href=#179 id=179 data-nosnippet>179</a>        image_response: input.minor_cycle_image_response,
+<a href=#180 id=180 data-nosnippet>180</a>    })
+<a href=#181 id=181 data-nosnippet>181</a>}
+<a href=#182 id=182 data-nosnippet>182</a>
+<a href=#183 id=183 data-nosnippet>183</a><span class="doccomment">/// Run the major-cycle passes, the minor cycles between them and any
+<a href=#184 id=184 data-nosnippet>184</a>/// visibility write, then publish the products. `summary` collects the
+<a href=#185 id=185 data-nosnippet>185</a>/// phases and totals as they end; a completed run's outcome takes it once
+<a href=#186 id=186 data-nosnippet>186</a>/// the caller has finished it.
+<a href=#187 id=187 data-nosnippet>187</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>run(
+<a href=#188 id=188 data-nosnippet>188</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#189 id=189 data-nosnippet>189</a>    run: NativeRun,
+<a href=#190 id=190 data-nosnippet>190</a>    summary: <span class="kw-2">&amp;mut </span>RunSummary,
+<a href=#191 id=191 data-nosnippet>191</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>FnOnce(RunSummary) -&gt; ImagingOutcome + <span class="kw">use</span>&lt;&gt;, NativeError&gt; {
+<a href=#192 id=192 data-nosnippet>192</a>    summary.workers = run.teams.compute().workers();
+<a href=#193 id=193 data-nosnippet>193</a>    <span class="kw">let </span>NativeRun {
+<a href=#194 id=194 data-nosnippet>194</a>        runtime,
+<a href=#195 id=195 data-nosnippet>195</a>        publication,
+<a href=#196 id=196 data-nosnippet>196</a>        aw_catalog,
+<a href=#197 id=197 data-nosnippet>197</a>        visibility_write,
+<a href=#198 id=198 data-nosnippet>198</a>        access,
+<a href=#199 id=199 data-nosnippet>199</a>        source,
+<a href=#200 id=200 data-nosnippet>200</a>        teams,
+<a href=#201 id=201 data-nosnippet>201</a>        masks,
+<a href=#202 id=202 data-nosnippet>202</a>        image_response,
+<a href=#203 id=203 data-nosnippet>203</a>    } = run;
+<a href=#204 id=204 data-nosnippet>204</a>    <span class="kw">let </span>outcome = imaging::run(
+<a href=#205 id=205 data-nosnippet>205</a>        imaging::ImagingInputs {
+<a href=#206 id=206 data-nosnippet>206</a>            problem,
+<a href=#207 id=207 data-nosnippet>207</a>            access,
+<a href=#208 id=208 data-nosnippet>208</a>            masks,
+<a href=#209 id=209 data-nosnippet>209</a>            image_response,
+<a href=#210 id=210 data-nosnippet>210</a>            visibility_write,
+<a href=#211 id=211 data-nosnippet>211</a>            host: runtime.host,
+<a href=#212 id=212 data-nosnippet>212</a>            policy: runtime.resource_policy,
+<a href=#213 id=213 data-nosnippet>213</a>            teams: <span class="kw-2">&amp;</span>teams,
+<a href=#214 id=214 data-nosnippet>214</a>            cancel: runtime.cancel.clone(),
+<a href=#215 id=215 data-nosnippet>215</a>            spill_directory: <span class="kw-2">&amp;</span>runtime.spill_directory,
+<a href=#216 id=216 data-nosnippet>216</a>            aw_catalog,
+<a href=#217 id=217 data-nosnippet>217</a>            backend: runtime.backend,
+<a href=#218 id=218 data-nosnippet>218</a>            grid_precision: runtime.grid_precision,
+<a href=#219 id=219 data-nosnippet>219</a>            diagnostics: runtime.diagnostics,
+<a href=#220 id=220 data-nosnippet>220</a>        },
+<a href=#221 id=221 data-nosnippet>221</a>        summary,
+<a href=#222 id=222 data-nosnippet>222</a>    )<span class="question-mark">?</span>;
+<a href=#223 id=223 data-nosnippet>223</a>    drop(source);
+<a href=#224 id=224 data-nosnippet>224</a>    <span class="kw">let </span><span class="kw-2">mut </span>published = Vec::new();
+<a href=#225 id=225 data-nosnippet>225</a>    <span class="kw">let </span>products = run_phase(
+<a href=#226 id=226 data-nosnippet>226</a>        <span class="string">"products"</span>,
+<a href=#227 id=227 data-nosnippet>227</a>        <span class="kw-2">&amp;</span>runtime.cancel,
+<a href=#228 id=228 data-nosnippet>228</a>        runtime.diagnostics,
+<a href=#229 id=229 data-nosnippet>229</a>        summary,
+<a href=#230 id=230 data-nosnippet>230</a>        || {
+<a href=#231 id=231 data-nosnippet>231</a>            publish_products(
+<a href=#232 id=232 data-nosnippet>232</a>                problem,
+<a href=#233 id=233 data-nosnippet>233</a>                ProductSource {
+<a href=#234 id=234 data-nosnippet>234</a>                    scientific: outcome.scientific,
+<a href=#235 id=235 data-nosnippet>235</a>                    masks: outcome.masks,
+<a href=#236 id=236 data-nosnippet>236</a>                    facet_sum_weights: outcome.facet_sum_weights,
+<a href=#237 id=237 data-nosnippet>237</a>                },
+<a href=#238 id=238 data-nosnippet>238</a>                <span class="kw-2">&amp;</span>runtime,
+<a href=#239 id=239 data-nosnippet>239</a>                publication,
+<a href=#240 id=240 data-nosnippet>240</a>                teams.compute(),
+<a href=#241 id=241 data-nosnippet>241</a>                <span class="kw-2">&amp;mut </span>published,
+<a href=#242 id=242 data-nosnippet>242</a>            )
+<a href=#243 id=243 data-nosnippet>243</a>        },
+<a href=#244 id=244 data-nosnippet>244</a>    );
+<a href=#245 id=245 data-nosnippet>245</a>    summary.products = published;
+<a href=#246 id=246 data-nosnippet>246</a>    <span class="kw">let </span>products = products<span class="question-mark">?</span>;
+<a href=#247 id=247 data-nosnippet>247</a>    <span class="kw">let </span>workers = teams.compute().workers();
+<a href=#248 id=248 data-nosnippet>248</a>    <span class="kw">let </span>problem = problem.clone();
+<a href=#249 id=249 data-nosnippet>249</a>    <span class="prelude-val">Ok</span>(<span class="kw">move </span>|summary| ImagingOutcome {
+<a href=#250 id=250 data-nosnippet>250</a>        problem,
+<a href=#251 id=251 data-nosnippet>251</a>        minor_cycles: outcome.minor_cycles,
+<a href=#252 id=252 data-nosnippet>252</a>        stop: outcome.stop,
+<a href=#253 id=253 data-nosnippet>253</a>        major_cycle_count: outcome.major_cycle_count,
+<a href=#254 id=254 data-nosnippet>254</a>        total_minor_iterations: outcome.total_minor_iterations,
+<a href=#255 id=255 data-nosnippet>255</a>        total_actual_minor_iterations: outcome.total_actual_minor_iterations,
+<a href=#256 id=256 data-nosnippet>256</a>        workers,
+<a href=#257 id=257 data-nosnippet>257</a>        planes_per_wave: outcome.planes_per_wave,
+<a href=#258 id=258 data-nosnippet>258</a>        visibility_products: outcome.visibility_products,
+<a href=#259 id=259 data-nosnippet>259</a>        summary,
+<a href=#260 id=260 data-nosnippet>260</a>        scientific: products.scientific,
+<a href=#261 id=261 data-nosnippet>261</a>        planned_products: products.planned,
+<a href=#262 id=262 data-nosnippet>262</a>        products: products.published,
+<a href=#263 id=263 data-nosnippet>263</a>        _retained: outcome.retained,
+<a href=#264 id=264 data-nosnippet>264</a>    })
+<a href=#265 id=265 data-nosnippet>265</a>}
+<a href=#266 id=266 data-nosnippet>266</a>
+<a href=#267 id=267 data-nosnippet>267</a><span class="doccomment">/// The products of a run and the state they were generated from.
+<a href=#268 id=268 data-nosnippet>268</a></span><span class="kw">struct </span>Products {
+<a href=#269 id=269 data-nosnippet>269</a>    planned: PlannedContinuumGeneration,
+<a href=#270 id=270 data-nosnippet>270</a>    scientific: MajorCycleCompletion,
+<a href=#271 id=271 data-nosnippet>271</a>    published: PublishedContinuumGeneration,
+<a href=#272 id=272 data-nosnippet>272</a>}
+<a href=#273 id=273 data-nosnippet>273</a>
+<a href=#274 id=274 data-nosnippet>274</a><span class="doccomment">/// What the products are formed from: the final completion, its
+<a href=#275 id=275 data-nosnippet>275</a>/// reconstruction masks and the faceted domains' facets' own sums of
+<a href=#276 id=276 data-nosnippet>276</a>/// weights.
+<a href=#277 id=277 data-nosnippet>277</a></span><span class="kw">struct </span>ProductSource {
+<a href=#278 id=278 data-nosnippet>278</a>    scientific: MajorCycleCompletion,
+<a href=#279 id=279 data-nosnippet>279</a>    masks: <span class="prelude-ty">Option</span>&lt;ReconstructionMaskSet&gt;,
+<a href=#280 id=280 data-nosnippet>280</a>    facet_sum_weights: FacetSumWeights,
+<a href=#281 id=281 data-nosnippet>281</a>}
+<a href=#282 id=282 data-nosnippet>282</a>
+<a href=#283 id=283 data-nosnippet>283</a><span class="doccomment">/// Generate every planned product member into the writer's private staging,
+<a href=#284 id=284 data-nosnippet>284</a>/// one output channel per window on the run's team, and publish them,
+<a href=#285 id=285 data-nosnippet>285</a>/// adding each image published to `published`; a cancelled run publishes
+<a href=#286 id=286 data-nosnippet>286</a>/// nothing.
+<a href=#287 id=287 data-nosnippet>287</a></span><span class="kw">fn </span>publish_products(
+<a href=#288 id=288 data-nosnippet>288</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#289 id=289 data-nosnippet>289</a>    source: ProductSource,
+<a href=#290 id=290 data-nosnippet>290</a>    runtime: <span class="kw-2">&amp;</span>ApplicationRuntime,
+<a href=#291 id=291 data-nosnippet>291</a>    publication: ApplicationPublication,
+<a href=#292 id=292 data-nosnippet>292</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#293 id=293 data-nosnippet>293</a>    published: <span class="kw-2">&amp;mut </span>Vec&lt;String&gt;,
+<a href=#294 id=294 data-nosnippet>294</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Products, NativeError&gt; {
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="kw">let </span>ProductSource {
+<a href=#296 id=296 data-nosnippet>296</a>        scientific,
+<a href=#297 id=297 data-nosnippet>297</a>        masks: reconstruction_masks,
+<a href=#298 id=298 data-nosnippet>298</a>        facet_sum_weights,
+<a href=#299 id=299 data-nosnippet>299</a>    } = source;
+<a href=#300 id=300 data-nosnippet>300</a>    <span class="kw">let </span><span class="kw-2">mut </span>inputs = ContinuumProductInputs::from_major_cycle(problem, <span class="kw-2">&amp;</span>scientific);
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(masks) = reconstruction_masks.as_ref() {
+<a href=#302 id=302 data-nosnippet>302</a>        inputs = <span class="kw">match </span>masks {
+<a href=#303 id=303 data-nosnippet>303</a>            ReconstructionMaskSet::Shared(mask) =&gt; inputs.with_reconstruction_mask(mask),
+<a href=#304 id=304 data-nosnippet>304</a>            ReconstructionMaskSet::Domains(masks) =&gt; inputs.with_domain_reconstruction_masks(masks),
+<a href=#305 id=305 data-nosnippet>305</a>        };
 <a href=#306 id=306 data-nosnippet>306</a>    }
-<a href=#307 id=307 data-nosnippet>307</a>    <span class="kw">if </span>!facet_sum_weights.is_empty() {
-<a href=#308 id=308 data-nosnippet>308</a>        inputs = inputs.with_facet_sum_weights(<span class="kw-2">&amp;</span>facet_sum_weights);
+<a href=#307 id=307 data-nosnippet>307</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(centres) = publication.primary_beam_centres.as_ref() {
+<a href=#308 id=308 data-nosnippet>308</a>        inputs = inputs.with_primary_beam_centres(centres);
 <a href=#309 id=309 data-nosnippet>309</a>    }
-<a href=#310 id=310 data-nosnippet>310</a>    <span class="kw">let </span>planned = PlannedContinuumGeneration::new(<span class="kw-2">&amp;</span>inputs, <span class="kw-2">&amp;</span>publication.controls)<span class="question-mark">?</span>;
-<a href=#311 id=311 data-nosnippet>311</a>    <span class="kw">let </span>window = ProductStoragePlan::new(<span class="number">1</span>, team.workers())<span class="question-mark">?</span>;
-<a href=#312 id=312 data-nosnippet>312</a>    <span class="kw">let </span>demand = planned.demand(<span class="kw-2">&amp;</span>inputs, window, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>;
-<a href=#313 id=313 data-nosnippet>313</a>    <span class="kw">let </span>held = admit(
-<a href=#314 id=314 data-nosnippet>314</a>        <span class="kw-2">&amp;</span>runtime.host,
-<a href=#315 id=315 data-nosnippet>315</a>        <span class="kw-2">&amp;</span>runtime.resource_policy,
-<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw-2">&amp;</span>Demand {
-<a href=#317 id=317 data-nosnippet>317</a>            phase: <span class="string">"products"</span>,
-<a href=#318 id=318 data-nosnippet>318</a>            memory: demand.peak_residency_bytes(),
-<a href=#319 id=319 data-nosnippet>319</a>        },
-<a href=#320 id=320 data-nosnippet>320</a>    )<span class="question-mark">?</span>;
-<a href=#321 id=321 data-nosnippet>321</a>    <span class="kw">let </span>generation =
-<a href=#322 id=322 data-nosnippet>322</a>        produce_continuum_members(<span class="kw-2">&amp;</span>planned, <span class="kw-2">&amp;</span>inputs, window, team, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>;
-<a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">if </span>runtime.cancel.is_cancelled() {
-<a href=#324 id=324 data-nosnippet>324</a>        <span class="comment">// The staged members are removed when the writer drops.
-<a href=#325 id=325 data-nosnippet>325</a>        </span><span class="kw">return </span><span class="prelude-val">Err</span>(Cancelled.into());
-<a href=#326 id=326 data-nosnippet>326</a>    }
-<a href=#327 id=327 data-nosnippet>327</a>    publication
-<a href=#328 id=328 data-nosnippet>328</a>        .writer
-<a href=#329 id=329 data-nosnippet>329</a>        .publish(|image: <span class="kw-2">&amp;</span>Path| published.push(image.to_string_lossy().into_owned()))<span class="question-mark">?</span>;
-<a href=#330 id=330 data-nosnippet>330</a>    <span class="comment">// The charge covers the staged records until they are published.
-<a href=#331 id=331 data-nosnippet>331</a>    </span>drop(held);
-<a href=#332 id=332 data-nosnippet>332</a>    <span class="prelude-val">Ok</span>(Products {
-<a href=#333 id=333 data-nosnippet>333</a>        planned,
-<a href=#334 id=334 data-nosnippet>334</a>        scientific,
-<a href=#335 id=335 data-nosnippet>335</a>        published: generation,
-<a href=#336 id=336 data-nosnippet>336</a>    })
-<a href=#337 id=337 data-nosnippet>337</a>}
+<a href=#310 id=310 data-nosnippet>310</a>    <span class="kw">if </span>!facet_sum_weights.is_empty() {
+<a href=#311 id=311 data-nosnippet>311</a>        inputs = inputs.with_facet_sum_weights(<span class="kw-2">&amp;</span>facet_sum_weights);
+<a href=#312 id=312 data-nosnippet>312</a>    }
+<a href=#313 id=313 data-nosnippet>313</a>    <span class="kw">let </span>planned = PlannedContinuumGeneration::new(<span class="kw-2">&amp;</span>inputs, <span class="kw-2">&amp;</span>publication.controls)<span class="question-mark">?</span>;
+<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">let </span>window = ProductStoragePlan::new(<span class="number">1</span>, team.workers())<span class="question-mark">?</span>;
+<a href=#315 id=315 data-nosnippet>315</a>    <span class="kw">let </span>demand = planned.demand(<span class="kw-2">&amp;</span>inputs, window, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>;
+<a href=#316 id=316 data-nosnippet>316</a>    <span class="kw">let </span>held = admit(
+<a href=#317 id=317 data-nosnippet>317</a>        <span class="kw-2">&amp;</span>runtime.host,
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="kw-2">&amp;</span>runtime.resource_policy,
+<a href=#319 id=319 data-nosnippet>319</a>        <span class="kw-2">&amp;</span>Demand {
+<a href=#320 id=320 data-nosnippet>320</a>            phase: <span class="string">"products"</span>,
+<a href=#321 id=321 data-nosnippet>321</a>            memory: demand.peak_residency_bytes(),
+<a href=#322 id=322 data-nosnippet>322</a>        },
+<a href=#323 id=323 data-nosnippet>323</a>    )<span class="question-mark">?</span>;
+<a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">let </span>generation =
+<a href=#325 id=325 data-nosnippet>325</a>        produce_continuum_members(<span class="kw-2">&amp;</span>planned, <span class="kw-2">&amp;</span>inputs, window, team, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>;
+<a href=#326 id=326 data-nosnippet>326</a>    <span class="kw">if </span>runtime.cancel.is_cancelled() {
+<a href=#327 id=327 data-nosnippet>327</a>        <span class="comment">// The staged members are removed when the writer drops.
+<a href=#328 id=328 data-nosnippet>328</a>        </span><span class="kw">return </span><span class="prelude-val">Err</span>(Cancelled.into());
+<a href=#329 id=329 data-nosnippet>329</a>    }
+<a href=#330 id=330 data-nosnippet>330</a>    publication
+<a href=#331 id=331 data-nosnippet>331</a>        .writer
+<a href=#332 id=332 data-nosnippet>332</a>        .publish(|image: <span class="kw-2">&amp;</span>Path| published.push(image.to_string_lossy().into_owned()))<span class="question-mark">?</span>;
+<a href=#333 id=333 data-nosnippet>333</a>    <span class="comment">// The charge covers the staged records until they are published.
+<a href=#334 id=334 data-nosnippet>334</a>    </span>drop(held);
+<a href=#335 id=335 data-nosnippet>335</a>    <span class="prelude-val">Ok</span>(Products {
+<a href=#336 id=336 data-nosnippet>336</a>        planned,
+<a href=#337 id=337 data-nosnippet>337</a>        scientific,
+<a href=#338 id=338 data-nosnippet>338</a>        published: generation,
+<a href=#339 id=339 data-nosnippet>339</a>    })
+<a href=#340 id=340 data-nosnippet>340</a>}
 </code></pre></div></section></main></body></html>

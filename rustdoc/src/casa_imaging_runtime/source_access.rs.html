@@ -9,7 +9,7 @@
 <a href=#9 id=9 data-nosnippet>9</a>};
 <a href=#10 id=10 data-nosnippet>10</a>
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span><span class="kw">crate</span>::pass::{BlockShape, RowSamples, chunk_bytes_per_row, source_block_bytes};
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use crate</span>::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit, free_memory};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use crate</span>::{Admission, Admitted, Demand, HostResources, ResourcePolicy, admit, free_memory};
 <a href=#13 id=13 data-nosnippet>13</a>
 <a href=#14 id=14 data-nosnippet>14</a><span class="doccomment">/// Relative allowance for the Doppler factor between the frame of a
 <a href=#15 id=15 data-nosnippet>15</a>/// spectral window's stored `CHAN_FREQ` and the output frame rows reach the
@@ -134,7 +134,7 @@
 <a href=#134 id=134 data-nosnippet>134</a>    row: RowSamples,
 <a href=#135 id=135 data-nosnippet>135</a>    host: <span class="kw-2">&amp;</span>HostResources,
 <a href=#136 id=136 data-nosnippet>136</a>    policy: <span class="kw-2">&amp;</span>ResourcePolicy,
-<a href=#137 id=137 data-nosnippet>137</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(ResolvedSelectedObservationAccess, Reservation), SourceAccessError&gt; {
+<a href=#137 id=137 data-nosnippet>137</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Admitted&lt;ResolvedSelectedObservationAccess&gt;, SourceAccessError&gt; {
 <a href=#138 id=138 data-nosnippet>138</a>    <span class="kw">let </span>requirements = access.content_requirements(problem)<span class="question-mark">?</span>;
 <a href=#139 id=139 data-nosnippet>139</a>    <span class="kw">let </span>maximum_live_blocks = access
 <a href=#140 id=140 data-nosnippet>140</a>        .source_binding()
@@ -193,6 +193,9 @@
 <a href=#193 id=193 data-nosnippet>193</a>        maximum_live_blocks,
 <a href=#194 id=194 data-nosnippet>194</a>        requirements.maximum_pointing_polynomial_terms(),
 <a href=#195 id=195 data-nosnippet>195</a>    );
-<a href=#196 id=196 data-nosnippet>196</a>    <span class="prelude-val">Ok</span>((access.with_content_budget(budget), reservation))
-<a href=#197 id=197 data-nosnippet>197</a>}
+<a href=#196 id=196 data-nosnippet>196</a>    <span class="prelude-val">Ok</span>(Admitted {
+<a href=#197 id=197 data-nosnippet>197</a>        value: access.with_content_budget(budget),
+<a href=#198 id=198 data-nosnippet>198</a>        reservation,
+<a href=#199 id=199 data-nosnippet>199</a>    })
+<a href=#200 id=200 data-nosnippet>200</a>}
 </code></pre></div></section></main></body></html>
