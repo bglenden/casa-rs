@@ -238,13 +238,18 @@ fn a_spheroidal_set_holds_what_it_states() {
     }
 }
 
-/// Generate an AW catalog into `root` natively, as the `aw_laws` do: one
-/// parallactic angle, two frequencies, two w planes and two Mueller
-/// elements for a 64² image of 20″ cells, oversampled four times.
-fn aw_cache(root: &std::path::Path) {
+/// A native AW request as the `aw_laws` make: one parallactic angle, two
+/// frequencies, two w planes and two Mueller elements for an image of 20″
+/// cells, oversampled four times, on a working grid of `size` cells.
+fn aw_request(size: usize) -> NativeAwRequestInput {
+    aw_request_with(size, 2, 2)
+}
+
+/// [`aw_request`] with `frequencies` SPWs 10 MHz apart from 1.4 GHz and
+/// `w_planes` w planes: `frequencies × w_planes` groups of two cells.
+fn aw_request_with(size: usize, frequencies: usize, w_planes: usize) -> NativeAwRequestInput {
     const CELL_RAD: f64 = 1.0e-4;
     const OVERSAMPLING: usize = 4;
-    const W_PLANES: usize = 2;
     let surface = EvlaDishSurface::new(
         (0..=125)
             .map(|i| {
@@ -255,21 +260,23 @@ fn aw_cache(root: &std::path::Path) {
     )
     .expect("surface");
     let max_w = 1.0 / (CELL_RAD * 4.0);
-    let w_increment = f64::from(((W_PLANES - 1) * (W_PLANES - 1)) as f32) / max_w;
+    let w_increment = f64::from(((w_planes - 1) * (w_planes - 1)) as f32) / max_w;
     let working = CELL_RAD * OVERSAMPLING as f64;
-    let request = NativeAwRequestInput {
+    let spacing_hz = if frequencies == 2 { 2.0e8 } else { 1.0e7 };
+    NativeAwRequestInput {
         surface,
         antenna_diameter_m: 25.0,
-        frequencies: [1.4e9, 1.6e9]
-            .iter()
-            .enumerate()
-            .map(|(window, frequency)| NativeAwFrequencyGroup {
-                spectral_window: window as u32,
-                channel_frequencies_hz: vec![*frequency],
-                cf_frequency_hz: *frequency,
+        frequencies: (0..frequencies)
+            .map(|window| {
+                let frequency = 1.4e9 + window as f64 * spacing_hz;
+                NativeAwFrequencyGroup {
+                    spectral_window: window as u32,
+                    channel_frequencies_hz: vec![frequency],
+                    cf_frequency_hz: frequency,
+                }
             })
             .collect(),
-        w_values: (0..W_PLANES)
+        w_values: (0..w_planes)
             .map(|index| (index * index) as f64 / w_increment)
             .collect(),
         w_increment,
@@ -277,7 +284,7 @@ fn aw_cache(root: &std::path::Path) {
         mueller_elements: vec![0, 15],
         reference_frequency_hz: 1.5e9,
         grid: NativeAwGrid {
-            size: 64,
+            size,
             sky_increment_rad: [-working, working],
             oversampling: OVERSAMPLING,
         },
@@ -288,16 +295,50 @@ fn aw_cache(root: &std::path::Path) {
             wideband: true,
             conjugate_beams: false,
         },
-        maximum_cells: 64,
-    };
-    AwCatalog::generate_native(root, &request, false).expect("generate");
+        maximum_cells: 2 * frequencies * w_planes,
+    }
 }
 
+/// #738: native generation holds at most what the run admits for it
+/// ([`AwCatalog::generation_bytes`]), on two working grids.
+#[test]
+fn native_generation_holds_at_most_its_charge() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    for size in [64, 256] {
+        let request = aw_request(size);
+        let root = tempfile::tempdir().expect("cache directory");
+        let (peak, _, generated) =
+            measure(|| AwCatalog::generate_native(root.path(), &request, false));
+        generated.expect("generate");
+        let charge = AwCatalog::generation_bytes(&request);
+        eprintln!("working grid {size}: held {peak}, charged {charge}");
+        assert!(
+            peak <= charge,
+            "working grid {size}: generation held {peak}, charged {charge}"
+        );
+    }
+}
+
+/// Catalogs of 4, 64 and 512 groups (the last two the #745 review's
+/// probes), whose index and cache bookkeeping grow with the catalog.
 #[test]
 fn an_aw_catalog_holds_at_most_its_charge() {
     let _measurement = MEASUREMENT.lock().expect("measurement lock");
-    let root = tempfile::tempdir().expect("cache directory");
-    aw_cache(root.path());
+    for (frequencies, w_planes) in [(2, 2), (2, 32), (16, 32)] {
+        let root = tempfile::tempdir().expect("cache directory");
+        AwCatalog::generate_native(
+            root.path(),
+            &aw_request_with(64, frequencies, w_planes),
+            false,
+        )
+        .expect("generate");
+        catalog_holds_at_most_its_charge(root.path());
+    }
+}
+
+/// Open the catalog in `root` and fetch every group through one worker's
+/// holds, with a bound below one group and one above every group.
+fn catalog_holds_at_most_its_charge(root: &std::path::Path) {
     let geometry = geometry(64, 1.0e-4, GridPadding::None);
     let routing = PolarizationRouting::compile(
         &[CorrelationType::CircularRr, CorrelationType::CircularLl],
@@ -312,7 +353,7 @@ fn an_aw_catalog_holds_at_most_its_charge() {
     // through one worker's hold.
     let open_and_fetch = |bound: usize| {
         let catalog =
-            AwCatalog::open_casa(root.path(), indexing, &geometry, &routing, bound).expect("open");
+            AwCatalog::open_casa(root, indexing, &geometry, &routing, bound).expect("open");
         let mut hold = CellHold::new();
         for group in 0..catalog.groups() {
             let key = CfKey {
