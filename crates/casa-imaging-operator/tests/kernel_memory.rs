@@ -299,22 +299,23 @@ fn aw_request_with(size: usize, frequencies: usize, w_planes: usize) -> NativeAw
     }
 }
 
-/// #738: native generation holds at most what the run admits for it
-/// ([`AwCatalog::generation_bytes`]), on two working grids.
+/// #738, #708: native generation holds at most what the run admits for it
+/// ([`AwCatalog::generation_bytes`]), on two working grids, on one worker
+/// and on four, each of which generates one aperture's cells.
 #[test]
 fn native_generation_holds_at_most_its_charge() {
     let _measurement = MEASUREMENT.lock().expect("measurement lock");
-    for size in [64, 256] {
+    for (size, workers) in [(64, 1), (64, 4), (256, 1), (256, 4)] {
         let request = aw_request(size);
         let root = tempfile::tempdir().expect("cache directory");
         let (peak, _, generated) =
-            measure(|| AwCatalog::generate_native(root.path(), &request, false));
+            measure(|| AwCatalog::generate_native(root.path(), &request, false, workers));
         generated.expect("generate");
-        let charge = AwCatalog::generation_bytes(&request);
-        eprintln!("working grid {size}: held {peak}, charged {charge}");
+        let charge = AwCatalog::generation_bytes(&request, workers);
+        eprintln!("working grid {size}, {workers} workers: held {peak}, charged {charge}");
         assert!(
             peak <= charge,
-            "working grid {size}: generation held {peak}, charged {charge}"
+            "working grid {size}, {workers} workers: generation held {peak}, charged {charge}"
         );
     }
 }
@@ -330,6 +331,7 @@ fn an_aw_catalog_holds_at_most_its_charge() {
             root.path(),
             &aw_request_with(64, frequencies, w_planes),
             false,
+            4,
         )
         .expect("generate");
         catalog_holds_at_most_its_charge(root.path());

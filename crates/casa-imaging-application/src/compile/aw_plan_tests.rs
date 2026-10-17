@@ -106,7 +106,7 @@ fn plan_for(
 /// A cache directory generated for [`wide`].
 fn wide_cache() -> tempfile::TempDir {
     let root = tempfile::tempdir().expect("cache directory");
-    AwCatalog::generate_native(root.path(), &wide(), false).expect("generate");
+    AwCatalog::generate_native(root.path(), &wide(), false, 1).expect("generate");
     root
 }
 
@@ -136,7 +136,7 @@ fn reuse_only_refuses_a_cache_of_another_selection() {
 #[test]
 fn generate_missing_keeps_a_cache_of_this_request() {
     let root = tempfile::tempdir().expect("cache directory");
-    AwCatalog::generate_native(root.path(), &subset(), false).expect("generate");
+    AwCatalog::generate_native(root.path(), &subset(), false, 1).expect("generate");
     let cell = root.path().join("CFS_0_0_CF_0_0_0.im/table.dat");
     let written = std::fs::metadata(&cell)
         .expect("cell")
@@ -193,6 +193,32 @@ fn a_cache_in_use_is_not_regenerated_under_its_run() {
     );
 }
 
+/// #708: generation runs on the most workers whose workspaces fit the
+/// policy. Under a policy of four workers that holds two workspaces it is
+/// admitted on two, where four would be refused.
+#[test]
+fn native_generation_takes_the_workers_its_policy_fits() {
+    let root = tempfile::tempdir().expect("cache directory");
+    let host = HostResources {
+        threads: 4,
+        performance_cores: 4,
+        ..HOST
+    };
+    let two = ResourcePolicy::Explicit {
+        workers: 4,
+        memory: AwCatalog::generation_bytes(&subset(), 2),
+    };
+    assert!(AwCatalog::generation_bytes(&subset(), 4) > two.memory(&host));
+    plan(root.path(), NativeAwCachePolicy::GenerateMissing)
+        .deploy((&host, &two))
+        .expect("generated on two workers");
+    assert!(
+        AwCatalog::native_cache_state(root.path(), &subset())
+            .expect("state")
+            .reusable()
+    );
+}
+
 /// #738: native generation is admitted before it starts. Under a policy
 /// that cannot hold [`AwCatalog::generation_bytes`] it is refused, typed,
 /// and writes no cell.
@@ -201,7 +227,7 @@ fn native_generation_is_admitted_before_it_writes_a_cell() {
     let root = tempfile::tempdir().expect("cache directory");
     let tight = ResourcePolicy::Explicit {
         workers: 1,
-        memory: AwCatalog::generation_bytes(&subset()) - 1,
+        memory: AwCatalog::generation_bytes(&subset(), 1) - 1,
     };
     let Err(PrepareError::Admission(admission)) =
         plan(root.path(), NativeAwCachePolicy::GenerateMissing).deploy((&HOST, &tight))

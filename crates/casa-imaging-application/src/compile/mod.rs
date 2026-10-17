@@ -563,15 +563,31 @@ impl AwPlan {
         };
         drop(shared);
         let exclusive = NativeCacheLock::exclusive(root)?;
+        // The most workers, up to the policy's and one per cell, whose
+        // workspaces fit what the policy leaves free (#708); one when none
+        // does, which admission then refuses.
+        let cells = input.pa_values.len()
+            * input.frequencies.len()
+            * input.w_values.len()
+            * input.mueller_elements.len();
+        let free = casa_imaging_runtime::free_memory(host, resources);
+        let workers = (1..=resources.workers(host).min(cells))
+            .rev()
+            .find(|&workers| AwCatalog::generation_bytes(input, workers) <= free)
+            .unwrap_or(1);
         let generating = casa_imaging_runtime::admit(
             host,
             resources,
             &casa_imaging_runtime::Demand {
                 phase: "native AW generation",
-                memory: AwCatalog::generation_bytes(input),
+                memory: AwCatalog::generation_bytes(input, workers),
             },
         )?;
-        AwCatalog::generate_native(root, input, fill)?;
+        tracing::info!(
+            "generating {cells} native AW cells into {} on {workers} workers",
+            root.display()
+        );
+        AwCatalog::generate_native(root, input, fill, workers)?;
         drop(generating);
         drop(exclusive);
         let shared = NativeCacheLock::shared(root)?;
