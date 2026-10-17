@@ -75,7 +75,7 @@ pub use normal_state::{
 pub use normal_values::{NormalValues, SensitivityValues};
 
 pub use beam::{
-    DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_restoring_beam,
+    DEFAULT_PSF_FIT_CUTOFF, FitAttemptFailure, PsfBeamFitError, RestoringBeam, fit_restoring_beam,
     psf_fit_workspace_bytes,
 };
 pub use clark::{Clark, ClarkState};
