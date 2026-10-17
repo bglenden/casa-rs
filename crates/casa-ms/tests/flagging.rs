@@ -359,10 +359,12 @@ fn a_flag_version_open_elsewhere_is_neither_deleted_nor_renamed() {
         Err(casa_ms::FlaggingError::FlagVersionInUse {
             version,
             table: named,
+            holder,
             ..
         }) => {
             assert_eq!(version, "held");
             assert_eq!(std::path::Path::new(&named), std::path::Path::new(&table));
+            assert_eq!(holder, casa_tables::TableHolder::AnotherProcess);
         }
         other => panic!("expected the version to be in use, got {other:?}"),
     };
@@ -379,6 +381,83 @@ fn a_flag_version_open_elsewhere_is_neither_deleted_nor_renamed() {
     assert!(holder.wait().expect("the holder ends").success());
     rename_flag_version(&ms, "held", "moved", "moved").expect("rename once closed");
     delete_flag_version(&ms, "moved").expect("delete once closed");
+}
+
+/// #753: a flag version whose table a handle in this process has open is
+/// neither deleted nor renamed, as casacore's `TableUtil::canDeleteTable`
+/// refuses a table still open in this process; once it closes, both go
+/// ahead.
+#[cfg(unix)]
+#[test]
+fn a_flag_version_open_in_this_process_is_neither_deleted_nor_renamed() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let ms = MeasurementSet::open(&ms_path).expect("open MS");
+    save_flag_version(&ms, "held", "held here", FlagMerge::Replace).expect("save version");
+    let mut table = ms_path.clone().into_os_string();
+    table.push(".flagversions/flags.held");
+    let held = casa_tables::Table::open_with_lock(
+        casa_tables::TableOptions::new(&table),
+        casa_tables::LockOptions::new(casa_tables::LockMode::AutoLocking),
+    )
+    .expect("open the version's table");
+    let refused = |result: Result<(), casa_ms::FlaggingError>| match result {
+        Err(casa_ms::FlaggingError::FlagVersionInUse {
+            version, holder, ..
+        }) => {
+            assert_eq!(version, "held");
+            assert_eq!(holder, casa_tables::TableHolder::ThisProcess);
+        }
+        other => panic!("expected the version to be in use, got {other:?}"),
+    };
+    refused(delete_flag_version(&ms, "held"));
+    refused(rename_flag_version(&ms, "held", "moved", "moved"));
+    assert_eq!(
+        held.row_count(),
+        ms.main_table().row_count(),
+        "the held table is intact"
+    );
+    drop(held);
+    rename_flag_version(&ms, "held", "moved", "moved").expect("rename once closed");
+    delete_flag_version(&ms, "moved").expect("delete once closed");
+}
+
+/// Renaming a flag version onto another version's name is refused, leaving
+/// both; renaming one to its own name changes only its comment.
+#[test]
+fn renaming_onto_an_existing_flag_version_is_refused() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let mut ms = MeasurementSet::open(&ms_path).expect("open MS");
+    save_flag_version(&ms, "first", "first", FlagMerge::Replace).expect("save first");
+    save_flag_version(&ms, "second", "second", FlagMerge::Replace).expect("save second");
+    let error = rename_flag_version(&ms, "first", "second", "clash")
+        .expect_err("a rename onto an existing version");
+    assert!(
+        error.to_string().contains("\"second\" already exists"),
+        "{error}"
+    );
+    let comments = |ms: &MeasurementSet| {
+        list_flag_versions(ms)
+            .expect("list versions")
+            .into_iter()
+            .map(|entry| (entry.name, entry.comment))
+            .filter(|(name, _)| name != "main")
+            .collect::<Vec<_>>()
+    };
+    let both = vec![
+        ("first".to_string(), "first".to_string()),
+        ("second".to_string(), "second".to_string()),
+    ];
+    assert_eq!(comments(&ms), both);
+    restore_flag_version(&mut ms, "second", FlagMerge::Replace)
+        .expect("the second version's table is intact");
+
+    rename_flag_version(&ms, "first", "first", "recommented").expect("rename to itself");
+    assert_eq!(
+        comments(&ms)[0],
+        ("first".to_string(), "recommented".to_string())
+    );
 }
 
 #[test]
