@@ -313,10 +313,6 @@ impl CorpusIndex {
         )
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "predates the function-length limit; #705"
-    )]
     fn index_documents_internal(
         &self,
         documents: &[CorpusDocumentInput],
@@ -406,80 +402,19 @@ impl CorpusIndex {
             let content_sha256 = sha256(input.content.as_bytes());
             let chunks = chunk_content(&input.content);
             let first_citation_json = chunk_citation_json(&input.citation, &chunks[0])?;
-            let unchanged: Option<bool> = transaction
-                .query_row(
-                    "SELECT d.layer, d.title, d.source_identity, d.content_sha256,
-                            d.redistribution_cleared, c.citation_json
-                     FROM documents d
-                     JOIN chunks c ON c.document_id = d.id AND c.ordinal = 0
-                     WHERE d.id = ?1",
-                    [&input.id],
-                    |row| {
-                        let layer = row.get::<_, String>(0)?;
-                        let title = row.get::<_, String>(1)?;
-                        let source_identity = row.get::<_, String>(2)?;
-                        let stored_content_sha256 = row.get::<_, String>(3)?;
-                        let redistribution_cleared = row.get::<_, bool>(4)?;
-                        let citation_json = row.get::<_, String>(5)?;
-                        Ok(layer == layer_name(input.layer)
-                            && title == input.title
-                            && source_identity == input.source_identity
-                            && stored_content_sha256 == content_sha256
-                            && redistribution_cleared == input.redistribution_cleared
-                            && citation_json == first_citation_json)
-                    },
-                )
-                .optional()?;
+            let unchanged = stored_document_matches(
+                &transaction,
+                input,
+                &content_sha256,
+                &first_citation_json,
+            )?;
             if unchanged == Some(true) {
                 unchanged_documents += 1;
                 continue;
             }
 
             delete_document(&transaction, &input.id)?;
-            let project_source_path = (input.layer == CorpusLayer::ProjectDocument)
-                .then(|| {
-                    input
-                        .citation
-                        .source_path
-                        .as_ref()
-                        .map(|path| path.to_string_lossy().into_owned())
-                })
-                .flatten();
-            transaction.execute(
-                "INSERT INTO documents
-                 (id, layer, title, source_identity, content_sha256, redistribution_cleared,
-                  project_source_path)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    input.id,
-                    layer_name(input.layer),
-                    input.title,
-                    input.source_identity,
-                    content_sha256,
-                    input.redistribution_cleared,
-                    project_source_path,
-                ],
-            )?;
-            for (ordinal, chunk) in chunks.into_iter().enumerate() {
-                let chunk_id = format!("{}:{ordinal}", input.id);
-                let citation_json = chunk_citation_json(&input.citation, &chunk)?;
-                transaction.execute(
-                    "INSERT INTO chunks
-                     (id, document_id, ordinal, text, citation_json)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![
-                        chunk_id,
-                        input.id,
-                        ordinal as u64,
-                        chunk.text,
-                        citation_json
-                    ],
-                )?;
-                transaction.execute(
-                    "INSERT INTO chunks_fts (chunk_id, text) VALUES (?1, ?2)",
-                    params![chunk_id, chunk.text],
-                )?;
-            }
+            insert_document(&transaction, input, &content_sha256, chunks)?;
             indexed_documents += 1;
         }
 
@@ -962,6 +897,95 @@ fn delete_document(connection: &Connection, id: &str) -> Result<(), rusqlite::Er
         [id],
     )?;
     connection.execute("DELETE FROM documents WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// Whether the stored document `input.id` already has `input`'s layer, title,
+/// source identity, content digest, redistribution flag and first-chunk
+/// citation; `None` when no such document is stored.
+fn stored_document_matches(
+    connection: &Connection,
+    input: &CorpusDocumentInput,
+    content_sha256: &str,
+    first_citation_json: &str,
+) -> Result<Option<bool>, rusqlite::Error> {
+    connection
+        .query_row(
+            "SELECT d.layer, d.title, d.source_identity, d.content_sha256,
+                    d.redistribution_cleared, c.citation_json
+             FROM documents d
+             JOIN chunks c ON c.document_id = d.id AND c.ordinal = 0
+             WHERE d.id = ?1",
+            [&input.id],
+            |row| {
+                let layer = row.get::<_, String>(0)?;
+                let title = row.get::<_, String>(1)?;
+                let source_identity = row.get::<_, String>(2)?;
+                let stored_content_sha256 = row.get::<_, String>(3)?;
+                let redistribution_cleared = row.get::<_, bool>(4)?;
+                let citation_json = row.get::<_, String>(5)?;
+                Ok(layer == layer_name(input.layer)
+                    && title == input.title
+                    && source_identity == input.source_identity
+                    && stored_content_sha256 == content_sha256
+                    && redistribution_cleared == input.redistribution_cleared
+                    && citation_json == first_citation_json)
+            },
+        )
+        .optional()
+}
+
+/// Insert `input` with its chunks and their full-text index rows.
+fn insert_document(
+    connection: &Connection,
+    input: &CorpusDocumentInput,
+    content_sha256: &str,
+    chunks: Vec<TextChunk>,
+) -> Result<(), CorpusError> {
+    let project_source_path = (input.layer == CorpusLayer::ProjectDocument)
+        .then(|| {
+            input
+                .citation
+                .source_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned())
+        })
+        .flatten();
+    connection.execute(
+        "INSERT INTO documents
+         (id, layer, title, source_identity, content_sha256, redistribution_cleared,
+          project_source_path)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            input.id,
+            layer_name(input.layer),
+            input.title,
+            input.source_identity,
+            content_sha256,
+            input.redistribution_cleared,
+            project_source_path,
+        ],
+    )?;
+    for (ordinal, chunk) in chunks.into_iter().enumerate() {
+        let chunk_id = format!("{}:{ordinal}", input.id);
+        let citation_json = chunk_citation_json(&input.citation, &chunk)?;
+        connection.execute(
+            "INSERT INTO chunks
+             (id, document_id, ordinal, text, citation_json)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                chunk_id,
+                input.id,
+                ordinal as u64,
+                chunk.text,
+                citation_json
+            ],
+        )?;
+        connection.execute(
+            "INSERT INTO chunks_fts (chunk_id, text) VALUES (?1, ?2)",
+            params![chunk_id, chunk.text],
+        )?;
+    }
     Ok(())
 }
 

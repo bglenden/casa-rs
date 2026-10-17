@@ -1628,10 +1628,6 @@ impl MsPlotSpec {
         Ok(())
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "predates the function-length limit; #705"
-    )]
     fn validate_common(&self) -> Result<(), String> {
         if self.y_axes.is_empty() {
             return Err("msexplore requires at least one y axis per plot".to_string());
@@ -1668,70 +1664,7 @@ impl MsPlotSpec {
             );
         }
         if let Some(flag_edit) = &self.flag_edit {
-            if self.y_axes.len() > 1 {
-                return Err(
-                    "msexplore staged flag editing currently supports single-y scatter plots only"
-                        .to_string(),
-                );
-            }
-            if self.preset == Some(MsPlotPreset::AmplitudePhaseVsTimeStacked) {
-                return Err(
-                    "msexplore staged flag editing currently does not support stacked page presets"
-                        .to_string(),
-                );
-            }
-            if self.averaging.avgchannel.is_some() {
-                return Err(
-                    "msexplore staged flag editing currently requires unbinned channel samples"
-                        .to_string(),
-                );
-            }
-            if self.averaging.avgtime.is_some()
-                || self.averaging.avgscan
-                || self.averaging.avgfield
-                || self.averaging.avgbaseline
-                || self.averaging.avgantenna
-                || self.averaging.avgspw
-            {
-                return Err(
-                    "msexplore staged flag editing currently requires direct sample-resolved averaging controls"
-                        .to_string(),
-                );
-            }
-            if self.x_axis.uses_derived_geometry()
-                || self
-                    .y_axes
-                    .iter()
-                    .copied()
-                    .any(MsAxis::uses_derived_geometry)
-            {
-                return Err(
-                    "msexplore staged flag editing currently requires direct sample-resolved axes rather than deduplicated geometry axes".to_string(),
-                );
-            }
-            if !flag_edit.region.x_min.is_finite()
-                || !flag_edit.region.x_max.is_finite()
-                || !flag_edit.region.y_min.is_finite()
-                || !flag_edit.region.y_max.is_finite()
-            {
-                return Err(
-                    "msexplore staged flag editing requires finite region bounds".to_string(),
-                );
-            }
-            if self.iteration.iteraxis.is_none() && flag_edit.panel_key.is_some() {
-                return Err(
-                    "msexplore staged flag editing only accepts panel_key for iterated plots"
-                        .to_string(),
-                );
-            }
-            if self.preset != Some(MsPlotPreset::AmplitudePhaseVsTimeStacked)
-                && flag_edit.plot_index.is_some()
-            {
-                return Err(
-                    "msexplore staged flag editing only accepts plot_index for page payloads"
-                        .to_string(),
-                );
-            }
+            self.validate_flag_edit(flag_edit)?;
         }
         if self.averaging.avgscan && self.averaging.avgtime.is_none() {
             return Err("msexplore avgscan requires avgtime to be set".to_string());
@@ -1853,6 +1786,75 @@ impl MsPlotSpec {
                 .any(|axis| matches!(axis, MsAxis::Flag))
         {
             return Err("msexplore flag plots do not yet support avgchannel binning".to_string());
+        }
+        Ok(())
+    }
+
+    /// Check that a staged flag edit fits this plot: a single-y scatter plot
+    /// of direct, unaveraged samples, with finite region bounds and only the
+    /// panel/plot keys the plot shape can resolve.
+    fn validate_flag_edit(&self, flag_edit: &MsFlagEditSpec) -> Result<(), String> {
+        if self.y_axes.len() > 1 {
+            return Err(
+                "msexplore staged flag editing currently supports single-y scatter plots only"
+                    .to_string(),
+            );
+        }
+        if self.preset == Some(MsPlotPreset::AmplitudePhaseVsTimeStacked) {
+            return Err(
+                "msexplore staged flag editing currently does not support stacked page presets"
+                    .to_string(),
+            );
+        }
+        if self.averaging.avgchannel.is_some() {
+            return Err(
+                "msexplore staged flag editing currently requires unbinned channel samples"
+                    .to_string(),
+            );
+        }
+        if self.averaging.avgtime.is_some()
+            || self.averaging.avgscan
+            || self.averaging.avgfield
+            || self.averaging.avgbaseline
+            || self.averaging.avgantenna
+            || self.averaging.avgspw
+        {
+            return Err(
+                "msexplore staged flag editing currently requires direct sample-resolved averaging controls"
+                    .to_string(),
+            );
+        }
+        if self.x_axis.uses_derived_geometry()
+            || self
+                .y_axes
+                .iter()
+                .copied()
+                .any(MsAxis::uses_derived_geometry)
+        {
+            return Err(
+                "msexplore staged flag editing currently requires direct sample-resolved axes rather than deduplicated geometry axes".to_string(),
+            );
+        }
+        if !flag_edit.region.x_min.is_finite()
+            || !flag_edit.region.x_max.is_finite()
+            || !flag_edit.region.y_min.is_finite()
+            || !flag_edit.region.y_max.is_finite()
+        {
+            return Err("msexplore staged flag editing requires finite region bounds".to_string());
+        }
+        if self.iteration.iteraxis.is_none() && flag_edit.panel_key.is_some() {
+            return Err(
+                "msexplore staged flag editing only accepts panel_key for iterated plots"
+                    .to_string(),
+            );
+        }
+        if self.preset != Some(MsPlotPreset::AmplitudePhaseVsTimeStacked)
+            && flag_edit.plot_index.is_some()
+        {
+            return Err(
+                "msexplore staged flag editing only accepts plot_index for page payloads"
+                    .to_string(),
+            );
         }
         Ok(())
     }

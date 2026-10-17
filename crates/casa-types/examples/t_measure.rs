@@ -16,10 +16,6 @@ use casa_types::measures::{
     position_to_record, radial_velocity_from_record, radial_velocity_to_record,
 };
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
 fn main() {
     println!("=== Measures Demo ===");
     println!();
@@ -252,50 +248,13 @@ fn main() {
 
     // --- REST frequency with radial velocity ---
 
-    println!("--- REST frequency (with radial velocity) ---");
-
-    let rest_freq = MFrequency::new(1.42e9, FrequencyRef::REST);
-    let rv_for_freq = MRadialVelocity::new(50_000.0, RadialVelocityRef::LSRK);
-    let rest_frame = MeasFrame::new()
-        .with_direction(MDirection::from_angles(
-            10.68_f64.to_radians(),
-            41.27_f64.to_radians(),
-            DirectionRef::J2000,
-        ))
-        .with_radial_velocity(rv_for_freq);
-
-    let lsrk_freq = rest_freq
-        .convert_to(FrequencyRef::LSRK, &rest_frame)
-        .unwrap();
-    let shift_hz = lsrk_freq.hz() - rest_freq.hz();
-    println!("REST → LSRK (RV=50km/s): {lsrk_freq}  (shift = {shift_hz:.0} Hz)");
-
-    let back_rest = lsrk_freq
-        .convert_to(FrequencyRef::REST, &rest_frame)
-        .unwrap();
-    println!(
-        "LSRK→REST roundtrip error: {:.3e} Hz",
-        (back_rest.hz() - rest_freq.hz()).abs()
-    );
+    demo_rest_frequency();
 
     println!();
 
     // --- B1950 direction ---
 
-    println!("--- B1950 (FK4/FK5) direction ---");
-
-    let j2000_dir = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
-    let b1950 = j2000_dir.convert_to(DirectionRef::B1950, &frame).unwrap();
-    let (b_lon, b_lat) = b1950.as_angles();
-    println!("J2000 (1.0, 0.5) → B1950: ({:.6}, {:.6}) rad", b_lon, b_lat);
-
-    let back_j = b1950.convert_to(DirectionRef::J2000, &frame).unwrap();
-    let sep = angular_sep(&j2000_dir.cosines(), &back_j.cosines());
-    println!(
-        "B1950→J2000 roundtrip error: {:.3e} rad ({:.3e} arcsec)",
-        sep,
-        sep.to_degrees() * 3600.0
-    );
+    demo_b1950_direction(&frame);
 
     println!();
 
@@ -338,6 +297,54 @@ fn main() {
 
     println!();
     println!("=== Done ===");
+}
+
+/// REST → LSRK frequency conversion with a radial velocity in the frame,
+/// and back.
+fn demo_rest_frequency() {
+    println!("--- REST frequency (with radial velocity) ---");
+
+    let rest_freq = MFrequency::new(1.42e9, FrequencyRef::REST);
+    let rv_for_freq = MRadialVelocity::new(50_000.0, RadialVelocityRef::LSRK);
+    let rest_frame = MeasFrame::new()
+        .with_direction(MDirection::from_angles(
+            10.68_f64.to_radians(),
+            41.27_f64.to_radians(),
+            DirectionRef::J2000,
+        ))
+        .with_radial_velocity(rv_for_freq);
+
+    let lsrk_freq = rest_freq
+        .convert_to(FrequencyRef::LSRK, &rest_frame)
+        .unwrap();
+    let shift_hz = lsrk_freq.hz() - rest_freq.hz();
+    println!("REST → LSRK (RV=50km/s): {lsrk_freq}  (shift = {shift_hz:.0} Hz)");
+
+    let back_rest = lsrk_freq
+        .convert_to(FrequencyRef::REST, &rest_frame)
+        .unwrap();
+    println!(
+        "LSRK→REST roundtrip error: {:.3e} Hz",
+        (back_rest.hz() - rest_freq.hz()).abs()
+    );
+}
+
+/// J2000 → B1950 (FK4/FK5) direction conversion and its roundtrip error.
+fn demo_b1950_direction(frame: &MeasFrame) {
+    println!("--- B1950 (FK4/FK5) direction ---");
+
+    let j2000_dir = MDirection::from_angles(1.0, 0.5, DirectionRef::J2000);
+    let b1950 = j2000_dir.convert_to(DirectionRef::B1950, frame).unwrap();
+    let (b_lon, b_lat) = b1950.as_angles();
+    println!("J2000 (1.0, 0.5) → B1950: ({:.6}, {:.6}) rad", b_lon, b_lat);
+
+    let back_j = b1950.convert_to(DirectionRef::J2000, frame).unwrap();
+    let sep = angular_sep(&j2000_dir.cosines(), &back_j.cosines());
+    println!(
+        "B1950→J2000 roundtrip error: {:.3e} rad ({:.3e} arcsec)",
+        sep,
+        sep.to_degrees() * 3600.0
+    );
 }
 
 fn angular_sep(a: &[f64; 3], b: &[f64; 3]) -> f64 {
