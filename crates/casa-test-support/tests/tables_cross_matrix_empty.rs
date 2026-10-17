@@ -26,6 +26,7 @@ fn empty_table_fixture(cpp_fixture: CppTableFixture) -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(cpp_fixture),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 

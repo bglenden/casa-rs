@@ -60,6 +60,7 @@ fn ssm_scalar_primitives_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::SsmScalarPrimitives),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -117,6 +118,7 @@ fn ssm_fixed_array_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::SsmFixedArray),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -150,6 +152,7 @@ fn ssm_keywords_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::SsmKeywords),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -232,6 +235,7 @@ fn ssm_all_numeric_scalars_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::SsmAllNumericScalars),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -282,6 +286,7 @@ fn ssm_complex_scalars_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::SsmComplexScalars),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -404,6 +409,7 @@ fn ssm_typed_arrays_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::SsmTypedArrays),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -457,6 +463,7 @@ fn ssm_column_keywords_fixture() -> TableFixture {
         column_keywords,
         cpp_fixture: None,
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -593,6 +600,7 @@ fn ssm_unsigned_arrays_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::SsmUnsignedArrays),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -659,6 +667,7 @@ fn ssm_string_array_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::SsmStringArray),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -736,6 +745,7 @@ fn ssm_complex64_2d_array_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::SsmComplex64Array2D),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 

@@ -42,8 +42,8 @@ fn measures_frame() -> MeasFrame {
 #[ignore = "VLASS metadata diagnosis only"]
 fn vlass_mfs_frequency_converter_lifecycle_probe() {
     let frequency_hz = 4_012_000_000.0;
-    let direction_lon_rad = -2.746_631_494_525_407_1;
-    let direction_lat_rad = 0.295_309_709_400_346_68;
+    let direction_lon_rad = -2.746_631_494_525_407;
+    let direction_lat_rad = 0.295_309_709_400_346_7;
     let epoch_mjd = 5_060_832_843.375 / SECONDS_PER_DAY;
     let observatory_lon_rad = -1.878_288_434_411_257_6;
     let observatory_lat_rad = 0.594_787_741_027_755_8;

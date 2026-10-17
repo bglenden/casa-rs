@@ -1675,8 +1675,15 @@ fn extract_fixed_array_value(
 // Write path
 // ---------------------------------------------------------------------------
 
+/// Write a StManAipsIO data file holding `columns` of `rows`.
+///
+/// `seq_nr` is the manager's sequence number in `table.dat`: casacore's
+/// `StManAipsIO::open` refuses a file whose sequence number or column count
+/// differs from the table's, so a StManAipsIO beside other managers must
+/// carry its own number (#698).
 pub(crate) fn write_stman_file(
     path: &Path,
+    seq_nr: u32,
     columns: &[ColumnDescContents],
     rows: &[casa_types::RecordValue],
     byte_order: ByteOrder,
@@ -1710,7 +1717,7 @@ pub(crate) fn write_stman_file(
 
     // C++ casacore writes an empty stmanName for StManAipsIO v2
     io.put_string("")?; // stmanName
-    io.put_u32(0)?; // seqNr
+    io.put_u32(seq_nr)?;
     io.put_u32(0)?; // uniqNr
     io.put_u32(nrrow)?;
     io.put_u32(ncol)?;

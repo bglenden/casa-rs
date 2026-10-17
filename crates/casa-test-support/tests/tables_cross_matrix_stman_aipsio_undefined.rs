@@ -68,6 +68,7 @@ fn undefined_scalars_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::UndefinedScalars),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 

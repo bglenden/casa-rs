@@ -60,6 +60,7 @@ fn ism_scalar_primitives_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::IsmScalarPrimitives),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -96,6 +97,7 @@ fn ism_slowly_changing_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::IsmSlowlyChanging),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -212,6 +214,7 @@ fn ism_all_numeric_scalars_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: None,
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -336,6 +339,7 @@ fn ism_typed_arrays_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::IsmTypedArrays),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -434,6 +438,7 @@ fn ism_complex_arrays_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::IsmComplexArrays),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -489,6 +494,7 @@ fn ism_column_keywords_fixture() -> TableFixture {
         column_keywords,
         cpp_fixture: Some(CppTableFixture::IsmColumnKeywords),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -541,6 +547,7 @@ fn ism_complex_scalars_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::IsmComplexScalars),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
