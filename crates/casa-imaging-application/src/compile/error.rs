@@ -352,13 +352,16 @@ pub enum PrepareError {
         /// The requested megabytes.
         megabytes: usize,
     },
-    /// A reuse-only native AW cache lacks cells the request names.
-    #[error("native AW cache reuse found {present} of the {expected} cells the request names")]
-    AwCacheIncomplete {
-        /// Cells present.
-        present: usize,
-        /// Cells the request names.
-        expected: usize,
+    /// A reuse-only native AW cache cannot serve the request as it is: it
+    /// was generated for another request, lacks cells the request names, or
+    /// holds cells it does not name (#735).
+    #[error(
+        "native AW cache reuse refused: {state}; generate-missing or regenerate brings it to \
+         the request"
+    )]
+    AwCacheNotReusable {
+        /// How the directory stands against the request.
+        state: casa_imaging_operator::NativeCacheState,
     },
     /// The native AW cache could not be cleared or its cells generated.
     #[error(transparent)]

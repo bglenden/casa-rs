@@ -17,7 +17,7 @@ use num_complex::{Complex32, Complex64};
 
 use super::{
     AwCatalogError, CellFiles, CellHeader, Group, Loaded, MUELLER_ELEMENTS, NativeAwPlane,
-    cache_error,
+    STAGING_PREFIX, cache_error,
 };
 use crate::convolution::DenseCell;
 
@@ -312,7 +312,10 @@ pub(super) struct CellMisc {
 }
 
 /// Write one generated plane as a CASA cell image (`CFCell::makePersistent`
-/// with `SynthesisUtils::makeFTCoordSys`'s UU/VV coordinate).
+/// with `SynthesisUtils::makeFTCoordSys`'s UU/VV coordinate) at `path`.
+/// The image is built under [`STAGING_PREFIX`] beside it and renamed to
+/// `path` only once saved, so `path` names either nothing or a complete
+/// image, whenever the write stops (#739 review).
 pub(super) fn write_cell(
     path: &Path,
     plane: &NativeAwPlane<'_>,
@@ -324,10 +327,44 @@ pub(super) fn write_cell(
         path: path.to_path_buf(),
         detail,
     };
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string();
+    let staging = path.with_file_name(format!("{STAGING_PREFIX}{name}"));
+    if staging.exists() {
+        std::fs::remove_dir_all(&staging)
+            .map_err(|error| write_error(format!("cannot clear a staged image: {error}")))?;
+    }
+    build_cell(&staging, &name, plane, frequency_hz, grid, misc).map_err(write_error)?;
+    // A cell being replaced moves aside in one rename, so its name never
+    // names a half-removed image either.
+    let replaced = path.with_file_name(format!("{STAGING_PREFIX}replaced-{name}"));
     if path.exists() {
-        std::fs::remove_dir_all(path)
+        std::fs::rename(path, &replaced)
             .map_err(|error| write_error(format!("cannot replace: {error}")))?;
     }
+    std::fs::rename(&staging, path)
+        .map_err(|error| write_error(format!("cannot publish the staged image: {error}")))?;
+    if replaced.exists() {
+        std::fs::remove_dir_all(&replaced)
+            .map_err(|error| write_error(format!("cannot remove the replaced image: {error}")))?;
+    }
+    Ok(())
+}
+
+/// Build the cell image of [`write_cell`] at `path`, its misc info naming it
+/// `name`.
+fn build_cell(
+    path: &Path,
+    name: &str,
+    plane: &NativeAwPlane<'_>,
+    frequency_hz: f64,
+    grid: casa_imaging_model::NativeAwGrid,
+    misc: &CellMisc,
+) -> Result<(), String> {
+    let write_error = |detail: String| detail;
     let side = plane.size;
     // The uv increment of one oversampled pixel over the working field.
     let increment =
@@ -366,11 +403,6 @@ pub(super) fn write_cell(
     image
         .put_slice(&pixels, &[0, 0, 0, 0])
         .map_err(|error| write_error(format!("cannot write pixels: {error}")))?;
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default()
-        .to_string();
     let field = |name: &str, value: ScalarValue| RecordField::new(name, Value::Scalar(value));
     image
         .set_misc_info(RecordValue::new(vec![
@@ -381,7 +413,7 @@ pub(super) fn write_cell(
             field("MuellerElement", ScalarValue::Int32(misc.mueller as i32)),
             field("WValue", ScalarValue::Float64(misc.w_value)),
             field("WIncr", ScalarValue::Float64(misc.w_increment)),
-            field("Name", ScalarValue::String(name)),
+            field("Name", ScalarValue::String(name.to_string())),
             field("ConjFreq", ScalarValue::Float64(misc.conjugate_frequency)),
             field(
                 "ConjPoln",
