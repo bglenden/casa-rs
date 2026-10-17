@@ -58,50 +58,51 @@
 <a href=#58 id=58 data-nosnippet>58</a>};
 <a href=#59 id=59 data-nosnippet>59</a><span class="kw">pub use </span>aw::{
 <a href=#60 id=60 data-nosnippet>60</a>    AwCatalog, AwCatalogError, AwIndexing, EvlaApertureGrid, EvlaApertureModel, EvlaAwWorkspace,
-<a href=#61 id=61 data-nosnippet>61</a>    NativeAwGenerationError, NativeAwPair, NativeAwPlane,
-<a href=#62 id=62 data-nosnippet>62</a>};
-<a href=#63 id=63 data-nosnippet>63</a><span class="kw">pub use </span>backend::{GridBackend, PreparedModelGrids, Work};
-<a href=#64 id=64 data-nosnippet>64</a><span class="kw">pub use </span>continuum::{
-<a href=#65 id=65 data-nosnippet>65</a>    ContinuumFitError, ContinuumFitStatus, ContinuumRowInput, ContinuumRowResult, ContinuumSample,
-<a href=#66 id=66 data-nosnippet>66</a>    fit_and_subtract_continuum,
-<a href=#67 id=67 data-nosnippet>67</a>};
-<a href=#68 id=68 data-nosnippet>68</a><span class="kw">pub use </span>convolution::{
-<a href=#69 id=69 data-nosnippet>69</a>    CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
-<a href=#70 id=70 data-nosnippet>70</a>    MuellerRouting, RowContext, TapLayout,
-<a href=#71 id=71 data-nosnippet>71</a>};
-<a href=#72 id=72 data-nosnippet>72</a><span class="kw">pub use </span>cpu::CpuBackend;
-<a href=#73 id=73 data-nosnippet>73</a><span class="kw">pub use </span>error::{DeviceFailure, OperatorError};
-<a href=#74 id=74 data-nosnippet>74</a><span class="kw">pub use </span>geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent};
-<a href=#75 id=75 data-nosnippet>75</a><span class="kw">pub use </span>mosaic::{
-<a href=#76 id=76 data-nosnippet>76</a>    AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicScreens, MosaicWindow, pair_plane,
-<a href=#77 id=77 data-nosnippet>77</a>};
-<a href=#78 id=78 data-nosnippet>78</a><span class="kw">pub use </span>native::{DeviceNativeCells, NO_CELL, NativeModel, NativeSource, NativeTarget, NativeTerm};
-<a href=#79 id=79 data-nosnippet>79</a><span class="kw">pub use </span>operator::{
-<a href=#80 id=80 data-nosnippet>80</a>    Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, NormalPlane,
-<a href=#81 id=81 data-nosnippet>81</a>};
-<a href=#82 id=82 data-nosnippet>82</a><span class="kw">pub use </span>polarization::{FeedBasis, GridPolarization, PolarizationRouting};
-<a href=#83 id=83 data-nosnippet>83</a><span class="kw">pub use </span>resample::{
-<a href=#84 id=84 data-nosnippet>84</a>    NativeRow, PlacedRow, PredictionScratch, RowSpectrum, SpectralAxis, SpectralKernel,
-<a href=#85 id=85 data-nosnippet>85</a>    SpectralResampler, WeightSlots,
-<a href=#86 id=86 data-nosnippet>86</a>};
-<a href=#87 id=87 data-nosnippet>87</a><span class="kw">pub use </span>sample::{CfKey, Placement, SampleBlock, SampleBuffer};
-<a href=#88 id=88 data-nosnippet>88</a><span class="kw">pub use </span>spheroidal::{SPHEROIDAL_OVERSAMPLING, SPHEROIDAL_SUPPORT, Spheroidal, grdsf};
-<a href=#89 id=89 data-nosnippet>89</a><span class="kw">pub use </span>weighting::{
-<a href=#90 id=90 data-nosnippet>90</a>    BandwidthTaper, DensityCellRule, DensityGrid, DensityGridShape, DensityUv, RobustFactors,
-<a href=#91 id=91 data-nosnippet>91</a>    Taper, WeightingGeneration, build_density_grid,
-<a href=#92 id=92 data-nosnippet>92</a>};
-<a href=#93 id=93 data-nosnippet>93</a><span class="kw">pub use </span>wplanes::{WPlaneCount, WPlanes, WScreens};
-<a href=#94 id=94 data-nosnippet>94</a>
-<a href=#95 id=95 data-nosnippet>95</a><span class="doccomment">/// The C heap FFTW keeps for the plans the process caches
-<a href=#96 id=96 data-nosnippet>96</a>/// ([`casa_fft::PLAN_CACHE_BYTES`]), which every transform of the operator
-<a href=#97 id=97 data-nosnippet>97</a>/// and the minor cycle plans through.
-<a href=#98 id=98 data-nosnippet>98</a></span><span class="kw">pub const </span>FFT_PLAN_CACHE_BYTES: usize = casa_fft::PLAN_CACHE_BYTES;
-<a href=#99 id=99 data-nosnippet>99</a>
-<a href=#100 id=100 data-nosnippet>100</a><span class="doccomment">/// Heap bytes planning the operator's complex transform of `cells` grid
-<a href=#101 id=101 data-nosnippet>101</a>/// cells holds while FFTW plans it ([`casa_fft::planning_bytes`]). The
-<a href=#102 id=102 data-nosnippet>102</a>/// process plans one transform at a time.
-<a href=#103 id=103 data-nosnippet>103</a></span><span class="attr">#[must_use]
-<a href=#104 id=104 data-nosnippet>104</a></span><span class="kw">pub const fn </span>grid_planning_bytes(cells: usize) -&gt; u64 {
-<a href=#105 id=105 data-nosnippet>105</a>    casa_fft::planning_bytes::&lt;f64&gt;(cells)
-<a href=#106 id=106 data-nosnippet>106</a>}
+<a href=#61 id=61 data-nosnippet>61</a>    NativeAwGenerationError, NativeAwPair, NativeAwPlane, NativeCacheLock, NativeCacheState,
+<a href=#62 id=62 data-nosnippet>62</a>    NativeManifest,
+<a href=#63 id=63 data-nosnippet>63</a>};
+<a href=#64 id=64 data-nosnippet>64</a><span class="kw">pub use </span>backend::{GridBackend, PreparedModelGrids, Work};
+<a href=#65 id=65 data-nosnippet>65</a><span class="kw">pub use </span>continuum::{
+<a href=#66 id=66 data-nosnippet>66</a>    ContinuumFitError, ContinuumFitStatus, ContinuumRowInput, ContinuumRowResult, ContinuumSample,
+<a href=#67 id=67 data-nosnippet>67</a>    fit_and_subtract_continuum,
+<a href=#68 id=68 data-nosnippet>68</a>};
+<a href=#69 id=69 data-nosnippet>69</a><span class="kw">pub use </span>convolution::{
+<a href=#70 id=70 data-nosnippet>70</a>    CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
+<a href=#71 id=71 data-nosnippet>71</a>    MuellerRouting, RowContext, TapLayout,
+<a href=#72 id=72 data-nosnippet>72</a>};
+<a href=#73 id=73 data-nosnippet>73</a><span class="kw">pub use </span>cpu::CpuBackend;
+<a href=#74 id=74 data-nosnippet>74</a><span class="kw">pub use </span>error::{DeviceFailure, OperatorError};
+<a href=#75 id=75 data-nosnippet>75</a><span class="kw">pub use </span>geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent};
+<a href=#76 id=76 data-nosnippet>76</a><span class="kw">pub use </span>mosaic::{
+<a href=#77 id=77 data-nosnippet>77</a>    AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicScreens, MosaicWindow, pair_plane,
+<a href=#78 id=78 data-nosnippet>78</a>};
+<a href=#79 id=79 data-nosnippet>79</a><span class="kw">pub use </span>native::{DeviceNativeCells, NO_CELL, NativeModel, NativeSource, NativeTarget, NativeTerm};
+<a href=#80 id=80 data-nosnippet>80</a><span class="kw">pub use </span>operator::{
+<a href=#81 id=81 data-nosnippet>81</a>    Basis, MeasurementOperator, ModelImages, ModelPlane, ModelPrescale, NormalImages, NormalPlane,
+<a href=#82 id=82 data-nosnippet>82</a>};
+<a href=#83 id=83 data-nosnippet>83</a><span class="kw">pub use </span>polarization::{FeedBasis, GridPolarization, PolarizationRouting};
+<a href=#84 id=84 data-nosnippet>84</a><span class="kw">pub use </span>resample::{
+<a href=#85 id=85 data-nosnippet>85</a>    NativeRow, PlacedRow, PredictionScratch, RowSpectrum, SpectralAxis, SpectralKernel,
+<a href=#86 id=86 data-nosnippet>86</a>    SpectralResampler, WeightSlots,
+<a href=#87 id=87 data-nosnippet>87</a>};
+<a href=#88 id=88 data-nosnippet>88</a><span class="kw">pub use </span>sample::{CfKey, Placement, SampleBlock, SampleBuffer};
+<a href=#89 id=89 data-nosnippet>89</a><span class="kw">pub use </span>spheroidal::{SPHEROIDAL_OVERSAMPLING, SPHEROIDAL_SUPPORT, Spheroidal, grdsf};
+<a href=#90 id=90 data-nosnippet>90</a><span class="kw">pub use </span>weighting::{
+<a href=#91 id=91 data-nosnippet>91</a>    BandwidthTaper, DensityCellRule, DensityGrid, DensityGridShape, DensityUv, RobustFactors,
+<a href=#92 id=92 data-nosnippet>92</a>    Taper, WeightingGeneration, build_density_grid,
+<a href=#93 id=93 data-nosnippet>93</a>};
+<a href=#94 id=94 data-nosnippet>94</a><span class="kw">pub use </span>wplanes::{WPlaneCount, WPlanes, WScreens};
+<a href=#95 id=95 data-nosnippet>95</a>
+<a href=#96 id=96 data-nosnippet>96</a><span class="doccomment">/// The C heap FFTW keeps for the plans the process caches
+<a href=#97 id=97 data-nosnippet>97</a>/// ([`casa_fft::PLAN_CACHE_BYTES`]), which every transform of the operator
+<a href=#98 id=98 data-nosnippet>98</a>/// and the minor cycle plans through.
+<a href=#99 id=99 data-nosnippet>99</a></span><span class="kw">pub const </span>FFT_PLAN_CACHE_BYTES: usize = casa_fft::PLAN_CACHE_BYTES;
+<a href=#100 id=100 data-nosnippet>100</a>
+<a href=#101 id=101 data-nosnippet>101</a><span class="doccomment">/// Heap bytes planning the operator's complex transform of `cells` grid
+<a href=#102 id=102 data-nosnippet>102</a>/// cells holds while FFTW plans it ([`casa_fft::planning_bytes`]). The
+<a href=#103 id=103 data-nosnippet>103</a>/// process plans one transform at a time.
+<a href=#104 id=104 data-nosnippet>104</a></span><span class="attr">#[must_use]
+<a href=#105 id=105 data-nosnippet>105</a></span><span class="kw">pub const fn </span>grid_planning_bytes(cells: usize) -&gt; u64 {
+<a href=#106 id=106 data-nosnippet>106</a>    casa_fft::planning_bytes::&lt;f64&gt;(cells)
+<a href=#107 id=107 data-nosnippet>107</a>}
 </code></pre></div></section></main></body></html>
