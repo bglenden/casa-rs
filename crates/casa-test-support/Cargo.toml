@@ -202,6 +202,11 @@ path = "tests/tables_mixed_schema_interop.rs"
 required-features = ["cpp-interop-tests"]
 
 [[test]]
+name = "tables_cross_matrix_mixed_managers"
+path = "tests/tables_cross_matrix_mixed_managers.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
 name = "tables_perf_vs_cpp"
 path = "tests/tables_perf_vs_cpp.rs"
 required-features = ["performance-tests"]

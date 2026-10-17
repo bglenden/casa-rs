@@ -253,6 +253,14 @@ unsafe extern "C" {
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    pub(crate) fn cpp_table_write_mixed_managers(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    pub(crate) fn cpp_table_verify_mixed_managers(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
 
     pub(crate) fn cpp_table_write_aipsio_variable_array(
         path: *const std::ffi::c_char,

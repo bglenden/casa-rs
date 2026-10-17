@@ -94,6 +94,12 @@ pub enum CppTableFixture {
     /// (Float32 \[4\]), variable array (Float32 2-D), record column, table
     /// keywords (telescope, version), and column keywords (flux: unit="Jy").
     MixedSchema,
+    /// Mixed data managers, as a MeasurementSet has: antenna (Int) in
+    /// StandardStMan; flux (Double) and spectrum (variable Float 1-D) in
+    /// StManAipsIO, whose sequence number is not 0; time (Double) in
+    /// IncrementalStMan; data (variable Complex 2-D) in TiledShapeStMan.
+    /// The verifier also checks each column's manager.
+    MixedManagers,
     /// TableInfo metadata: 1-row table (id: Int) with TableInfo set to
     /// type="Measurement", subType="UVFITS". Tests `table.info` file interop.
     TableInfoMetadata,
@@ -241,6 +247,9 @@ pub(crate) fn cpp_table_write_unlocked(
             }
             CppTableFixture::MixedSchema => {
                 cpp_table_write_mixed_schema(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::MixedManagers => {
+                cpp_table_write_mixed_managers(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::TableInfoMetadata => {
                 cpp_table_write_table_info(c_path.as_ptr(), &mut error)
@@ -417,6 +426,9 @@ pub(crate) fn cpp_table_verify_unlocked(
             }
             CppTableFixture::MixedSchema => {
                 cpp_table_verify_mixed_schema(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::MixedManagers => {
+                cpp_table_verify_mixed_managers(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::TableInfoMetadata => {
                 cpp_table_verify_table_info(c_path.as_ptr(), &mut error)

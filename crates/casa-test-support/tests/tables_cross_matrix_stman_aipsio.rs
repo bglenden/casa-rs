@@ -59,6 +59,7 @@ fn scalar_primitives_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::ScalarPrimitives),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -116,6 +117,7 @@ fn fixed_array_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::FixedArray),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -149,6 +151,7 @@ fn keywords_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::Keywords),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -231,6 +234,7 @@ fn all_numeric_scalars_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::AipsioAllNumericScalars),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -281,6 +285,7 @@ fn complex_scalars_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::AipsioComplexScalars),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -394,6 +399,7 @@ fn typed_arrays_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::AipsioTypedArrays),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -447,6 +453,7 @@ fn column_keywords_fixture() -> TableFixture {
         column_keywords,
         cpp_fixture: Some(CppTableFixture::ColumnKeywords),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -629,6 +636,7 @@ fn unsigned_arrays_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::AipsioUnsignedArrays),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -695,6 +703,7 @@ fn string_array_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::AipsioStringArray),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -772,6 +781,7 @@ fn complex64_2d_array_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::AipsioComplex64Array2D),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -820,6 +830,7 @@ fn fixed_array_3d_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::Aipsio3DFixedArray),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -1067,6 +1078,7 @@ fn record_column_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::AipsIORecordColumn),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 

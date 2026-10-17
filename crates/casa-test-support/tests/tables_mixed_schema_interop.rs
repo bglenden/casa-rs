@@ -124,6 +124,7 @@ fn mixed_schema_fixture() -> TableFixture {
         column_keywords,
         cpp_fixture: Some(CppTableFixture::MixedSchema),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 

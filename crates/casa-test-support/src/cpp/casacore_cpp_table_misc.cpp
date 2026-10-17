@@ -3,6 +3,8 @@
 #include "casacore_cpp_common.h"
 #include <casacore/tables/DataMan/StManAipsIO.h>
 #include <casacore/tables/DataMan/StandardStMan.h>
+#include <casacore/tables/DataMan/IncrementalStMan.h>
+#include <casacore/tables/DataMan/TiledShapeStMan.h>
 #include <casacore/tables/Tables/ColumnsIndex.h>
 #include <casacore/casa/Containers/RecordField.h>
 #include <casacore/casa/Utilities/Sort.h>
@@ -531,9 +533,131 @@ void verify_log_table_impl(const std::string& path) {
     (void)objectId(0);
 }
 
+// ===== Mixed data managers =====
+// A MeasurementSet-like layout: each column in its own kind of manager.
+// StandardStMan holds the first column, so StManAipsIO's sequence number is
+// not 0, and StManAipsIO also holds a variable array in its indirect file.
+//   antenna  Int scalar             StandardStMan
+//   flux     Double scalar          StManAipsIO
+//   spectrum Float variable 1-D     StManAipsIO
+//   time     Double scalar          IncrementalStMan
+//   data     Complex variable 2-D   TiledShapeStMan ("TiledData", tile [2,3,2])
+// Three rows: antenna r, flux r + 1.5, spectrum r + 1 values r*10 + k,
+// time 100, 100, 110, data [2,3] with element k (Fortran order)
+// = Complex(r*10 + k, -k).
+
+void write_mixed_managers_impl(const std::string& path) {
+    casacore::TableDesc td("", casacore::TableDesc::Scratch);
+    td.addColumn(casacore::ScalarColumnDesc<casacore::Int>("antenna"));
+    td.addColumn(casacore::ScalarColumnDesc<casacore::Double>("flux"));
+    td.addColumn(casacore::ArrayColumnDesc<casacore::Float>("spectrum", 1));
+    td.addColumn(casacore::ScalarColumnDesc<casacore::Double>("time"));
+    td.addColumn(casacore::ArrayColumnDesc<casacore::Complex>("data", 2));
+    td.defineHypercolumn("TiledData", 3,
+        casacore::Vector<casacore::String>(1, "data"));
+
+    casacore::SetupNewTable setup(path, td, casacore::Table::New);
+    casacore::StandardStMan ssm;
+    casacore::StManAipsIO aipsio;
+    casacore::IncrementalStMan ism;
+    casacore::TiledShapeStMan tsm("TiledData", casacore::IPosition(3, 2, 3, 2));
+    setup.bindAll(ssm);
+    setup.bindColumn("flux", aipsio);
+    setup.bindColumn("spectrum", aipsio);
+    setup.bindColumn("time", ism);
+    setup.bindColumn("data", tsm);
+    casacore::Table table(setup, 3);
+
+    casacore::ScalarColumn<casacore::Int> antenna(table, "antenna");
+    casacore::ScalarColumn<casacore::Double> flux(table, "flux");
+    casacore::ArrayColumn<casacore::Float> spectrum(table, "spectrum");
+    casacore::ScalarColumn<casacore::Double> time(table, "time");
+    casacore::ArrayColumn<casacore::Complex> data(table, "data");
+    const double times[3] = {100.0, 100.0, 110.0};
+    for (int r = 0; r < 3; r++) {
+        antenna.put(r, r);
+        flux.put(r, r + 1.5);
+        casacore::Vector<casacore::Float> s(r + 1);
+        for (int k = 0; k <= r; k++) s(k) = static_cast<float>(r * 10 + k);
+        spectrum.put(r, s);
+        time.put(r, times[r]);
+        casacore::Array<casacore::Complex> d(casacore::IPosition(2, 2, 3));
+        casacore::Complex* cells = d.data();
+        for (int k = 0; k < 6; k++)
+            cells[k] = casacore::Complex(static_cast<float>(r * 10 + k), static_cast<float>(-k));
+        data.put(r, d);
+    }
+    table.flush();
+}
+
+// The manager type that stores `column`, from casacore's own description.
+std::string manager_of(const casacore::Table& table, const std::string& column) {
+    casacore::Record info = table.dataManagerInfo();
+    for (casacore::uInt i = 0; i < info.nfields(); i++) {
+        const casacore::Record& manager = info.subRecord(i);
+        casacore::Vector<casacore::String> columns(manager.asArrayString("COLUMNS"));
+        for (const casacore::String& name : columns) {
+            if (static_cast<const std::string&>(name) == column) return manager.asString("TYPE");
+        }
+    }
+    return "";
+}
+
+void verify_mixed_managers_impl(const std::string& path) {
+    casacore::Table table(path);
+    if (table.nrow() != 3)
+        throw std::runtime_error("expected 3 rows, got " + std::to_string(table.nrow()));
+    const std::pair<const char*, const char*> managers[] = {
+        {"antenna", "StandardStMan"}, {"flux", "StManAipsIO"}, {"spectrum", "StManAipsIO"},
+        {"time", "IncrementalStMan"}, {"data", "TiledShapeStMan"}};
+    for (const auto& [column, type] : managers) {
+        std::string found = manager_of(table, column);
+        if (found != type)
+            throw std::runtime_error(std::string(column) + " is stored by '" + found
+                                     + "', expected " + type);
+    }
+    casacore::ScalarColumn<casacore::Int> antenna(table, "antenna");
+    casacore::ScalarColumn<casacore::Double> flux(table, "flux");
+    casacore::ArrayColumn<casacore::Float> spectrum(table, "spectrum");
+    casacore::ScalarColumn<casacore::Double> time(table, "time");
+    casacore::ArrayColumn<casacore::Complex> data(table, "data");
+    const double times[3] = {100.0, 100.0, 110.0};
+    for (int r = 0; r < 3; r++) {
+        std::string row = " row " + std::to_string(r);
+        if (antenna(r) != r) throw std::runtime_error("antenna mismatch" + row);
+        if (flux(r) != r + 1.5) throw std::runtime_error("flux mismatch" + row);
+        casacore::Vector<casacore::Float> s(spectrum(r));
+        if (s.nelements() != static_cast<size_t>(r + 1))
+            throw std::runtime_error("spectrum length mismatch" + row);
+        for (int k = 0; k <= r; k++)
+            if (s(k) != static_cast<float>(r * 10 + k))
+                throw std::runtime_error("spectrum value mismatch" + row);
+        if (time(r) != times[r]) throw std::runtime_error("time mismatch" + row);
+        casacore::Array<casacore::Complex> d = data(r);
+        if (d.shape() != casacore::IPosition(2, 2, 3))
+            throw std::runtime_error("data shape mismatch" + row);
+        const casacore::Complex* cells = d.data();
+        for (int k = 0; k < 6; k++)
+            if (cells[k] != casacore::Complex(static_cast<float>(r * 10 + k), static_cast<float>(-k)))
+                throw std::runtime_error("data value mismatch" + row);
+    }
+}
+
 } // anonymous namespace
 
 extern "C" {
+
+// Mixed data managers
+int32_t cpp_table_write_mixed_managers(const char* path, char** out_error) {
+    try { write_mixed_managers_impl(path); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
+int32_t cpp_table_verify_mixed_managers(const char* path, char** out_error) {
+    try { verify_mixed_managers_impl(path); return 0;
+    } catch (const std::exception& e) { *out_error = make_error(e.what()); return -1;
+    } catch (...) { *out_error = make_error("unknown exception"); return -1; }
+}
 
 // Mutation verifiers
 int32_t cpp_table_verify_mutation_removed_column(const char* path, char** out_error) {

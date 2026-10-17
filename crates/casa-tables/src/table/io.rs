@@ -680,6 +680,7 @@ impl Table {
                         )?;
                         crate::storage::stman_aipsio::write_stman_file(
                             &data_path,
+                            group.seq_nr,
                             &group_col_descs,
                             &rows,
                             casa_aipsio::ByteOrder::BigEndian,

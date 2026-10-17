@@ -79,6 +79,7 @@ fn aipsio_variable_array_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::AipsIOVariableArray),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -97,6 +98,7 @@ fn ssm_variable_array_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::SsmVariableArray),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -204,6 +206,7 @@ fn aipsio_complex_variable_array_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::AipsIOComplexVariableArray),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 
@@ -222,6 +225,7 @@ fn ssm_complex_variable_array_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::SsmComplexVariableArray),
         tile_shape: None,
+        column_bindings: Vec::new(),
     }
 }
 

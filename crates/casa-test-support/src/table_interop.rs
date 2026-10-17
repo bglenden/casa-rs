@@ -2,7 +2,7 @@
 use crate::TableOracle;
 use std::path::Path;
 
-use casa_tables::{EndianFormat, Table, TableError, TableOptions, TableSchema};
+use casa_tables::{ColumnBinding, EndianFormat, Table, TableError, TableOptions, TableSchema};
 use casa_types::{RecordValue, Value};
 
 use crate::CppTableFixture;
@@ -23,6 +23,12 @@ pub enum ManagerKind {
 /// Column keywords are stored as `(column_name, RecordValue)` pairs.
 /// `cpp_fixture` maps this to the C++ shim fixture enum for interop tests.
 /// `tile_shape` is used for tiled storage managers.
+///
+/// `column_bindings` binds columns to their own storage managers, as a
+/// MeasurementSet does (DATA tiled, ANTENNA1 in `StandardStMan`, TIME in
+/// `IncrementalStMan`). Unbound columns use the matrix's manager. Every
+/// direction of the matrix saves with the bindings, and the Rust reads
+/// check that each bound column is stored by its manager.
 #[derive(Debug, Clone)]
 pub struct TableFixture {
     pub schema: TableSchema,
@@ -31,6 +37,7 @@ pub struct TableFixture {
     pub column_keywords: Vec<(String, RecordValue)>,
     pub cpp_fixture: Option<CppTableFixture>,
     pub tile_shape: Option<Vec<usize>>,
+    pub column_bindings: Vec<(String, ColumnBinding)>,
 }
 
 /// Result of one cell in the 2x2 interop matrix.
@@ -78,6 +85,20 @@ fn save_opts_endian(
     opts
 }
 
+/// Save `table` with `options` and the fixture's column bindings.
+fn save_fixture(
+    table: &Table,
+    fixture: &TableFixture,
+    options: TableOptions,
+) -> Result<(), TableError> {
+    if fixture.column_bindings.is_empty() {
+        table.save(options)
+    } else {
+        let bindings = fixture.column_bindings.iter().cloned().collect();
+        table.save_with_bindings(options, &bindings)
+    }
+}
+
 /// Write a table from the fixture using Rust, then read it back and compare.
 pub fn rust_write_rust_read(
     fixture: &TableFixture,
@@ -85,8 +106,7 @@ pub fn rust_write_rust_read(
     dir: &Path,
 ) -> Result<(), String> {
     let table = build_table_from_fixture(fixture).map_err(|e| format!("build table: {e}"))?;
-    table
-        .save(save_opts(fixture, manager, dir))
+    save_fixture(&table, fixture, save_opts(fixture, manager, dir))
         .map_err(|e| format!("save: {e}"))?;
 
     let reopened = Table::open(TableOptions::new(dir)).map_err(|e| format!("open: {e}"))?;
@@ -230,7 +250,11 @@ fn run_rr_with_endian(
         }
     };
 
-    if let Err(e) = table.save(save_opts_endian(fixture, manager, &table_path, endian)) {
+    if let Err(e) = save_fixture(
+        &table,
+        fixture,
+        save_opts_endian(fixture, manager, &table_path, endian),
+    ) {
         return MatrixCellResult {
             label: leak_label(label),
             passed: false,
@@ -287,7 +311,11 @@ fn run_rc_with_endian(
         }
     };
 
-    if let Err(e) = table.save(save_opts_endian(fixture, manager, &table_path, endian)) {
+    if let Err(e) = save_fixture(
+        &table,
+        fixture,
+        save_opts_endian(fixture, manager, &table_path, endian),
+    ) {
         return MatrixCellResult {
             label: leak_label(label),
             passed: false,
@@ -409,7 +437,7 @@ fn run_rc(
         }
     };
 
-    if let Err(e) = table.save(save_opts(fixture, manager, &table_path)) {
+    if let Err(e) = save_fixture(&table, fixture, save_opts(fixture, manager, &table_path)) {
         return MatrixCellResult {
             label: "RC",
             passed: false,
@@ -460,6 +488,22 @@ fn compare_table_to_fixture(table: &Table, fixture: &TableFixture) -> Result<(),
             "schema mismatch:\n  expected: {:?}\n  found:    {:?}",
             fixture.schema, schema
         ));
+    }
+
+    // Each bound column is stored by its manager; the Debug names of
+    // `DataManagerKind` are casacore's type names.
+    for (column, binding) in &fixture.column_bindings {
+        let expected = format!("{:?}", binding.data_manager);
+        let found = table
+            .data_manager_info()
+            .iter()
+            .find(|manager| manager.columns.iter().any(|name| name == column))
+            .map(|manager| manager.dm_type.as_str());
+        if found != Some(expected.as_str()) {
+            return Err(format!(
+                "column \"{column}\" is stored by {found:?}, expected {expected}"
+            ));
+        }
     }
 
     // Compare row count
@@ -604,6 +648,7 @@ mod tests {
             column_keywords,
             cpp_fixture: None,
             tile_shape: None,
+            column_bindings: Vec::new(),
         }
     }
 

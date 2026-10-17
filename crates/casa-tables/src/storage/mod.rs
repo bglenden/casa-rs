@@ -4,6 +4,7 @@
 pub(crate) mod canonical;
 pub(crate) mod data_type;
 pub(crate) mod incremental_stman;
+pub(crate) mod layout;
 mod selected_cells;
 pub(crate) mod standard_stman;
 pub(crate) mod stman_aipsio;
@@ -740,6 +741,7 @@ impl StorageManager for CompositeStorage {
                 // StManAipsIO always uses canonical (big-endian) AipsIO.
                 write_stman_file(
                     &data_path,
+                    0,
                     &stored_col_descs,
                     rows_for_data,
                     ByteOrder::BigEndian,
@@ -1019,6 +1021,7 @@ impl CompositeStorage {
                     .collect();
                 write_stman_file(
                     &data_path,
+                    0,
                     &stored_col_descs,
                     rows_for_data,
                     ByteOrder::BigEndian,
@@ -4392,6 +4395,7 @@ impl CompositeStorage {
                 DataManagerKind::StManAipsIO => {
                     write_stman_file(
                         &data_path,
+                        group.seq_nr,
                         &group_col_descs,
                         group_rows.as_ref().expect("row projection for StManAipsIO"),
                         ByteOrder::BigEndian,

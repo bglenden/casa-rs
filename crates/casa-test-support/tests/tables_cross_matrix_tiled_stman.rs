@@ -67,6 +67,7 @@ fn tiled_column_stman_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::TiledColumnStMan),
         tile_shape: Some(vec![2, 3, 2]),
+        column_bindings: Vec::new(),
     }
 }
 
@@ -136,6 +137,7 @@ fn tiled_shape_stman_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::TiledShapeStMan),
         tile_shape: Some(vec![2, 3, 2]),
+        column_bindings: Vec::new(),
     }
 }
 
@@ -194,6 +196,7 @@ fn tiled_cell_stman_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::TiledCellStMan),
         tile_shape: Some(vec![4, 4]),
+        column_bindings: Vec::new(),
     }
 }
 
@@ -243,6 +246,7 @@ fn tiled_column_3d_array_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: Some(CppTableFixture::TiledColumn3DArray),
         tile_shape: Some(vec![2, 3, 2, 2]),
+        column_bindings: Vec::new(),
     }
 }
 
@@ -460,6 +464,7 @@ fn tiled_all_numeric_arrays_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: None,
         tile_shape: Some(vec![4, 2]),
+        column_bindings: Vec::new(),
     }
 }
 
@@ -557,6 +562,7 @@ fn tiled_complex_arrays_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: None,
         tile_shape: Some(vec![2, 2]),
+        column_bindings: Vec::new(),
     }
 }
 
@@ -602,6 +608,7 @@ fn tiled_table_keywords_fixture() -> TableFixture {
         column_keywords: vec![],
         cpp_fixture: None,
         tile_shape: Some(vec![2, 2]),
+        column_bindings: Vec::new(),
     }
 }
 
@@ -693,6 +700,7 @@ fn tiled_column_keywords_fixture() -> TableFixture {
         column_keywords,
         cpp_fixture: None,
         tile_shape: Some(vec![4, 2]),
+        column_bindings: Vec::new(),
     }
 }
 
