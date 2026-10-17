@@ -885,6 +885,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Performance-preservation amendment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#retirement-of-both-landmarks-2026-10-16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Retirement of both landmarks (2026-10-16)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1495,7 +1512,35 @@ landmark capability remains in the candidate lineage until it is generalized,
 superseded by a faster same-landmark implementation, or explicitly retired by
 Brian. Branch restructuring, recovery selection, and experimental cleanup are
 not retirement decisions.</p>
-<p>The finite implementation sequence is:</p>
+<h3 id="retirement-of-both-landmarks-2026-10-16">Retirement of both landmarks (2026-10-16)<a class="headerlink" href="#retirement-of-both-landmarks-2026-10-16" title="Permanent link">&para;</a></h3>
+<p>Brian retired both landmarks explicitly on 2026-10-16 (#449). The historical
+figures above stay as history; neither landmark gates promotion any longer.
+The machine-readable record is each landmark row's <code>retirement</code> member.</p>
+<p>The retirement followed the prior-art study
+<code>docs/imaging-architecture/aw-prior-art-20261016.md</code>, which found:</p>
+<ul>
+<li>The landmark capabilities had already left the code twice, without a
+  retirement on record:</li>
+<li>the response cache, sparse MT-MFS state, radix statistics and resident
+    Metal replay went with the legacy <code>casa-imaging</code> crate at the August
+    ADR-0009 cutover (<code>27b9b602fe</code>, 2026-08-25);</li>
+<li>IF-2 then deleted #486's replay successor under the imaging foundation's
+    decision D1 (<code>e7d29c8e5b</code>, 2026-10-07).</li>
+<li>The four-SPW <code>126.7647x</code> compared casa-rs on the laptop with CASA 6.7.5.18
+  on the Mac mini. The same-host figure on the mini was 46.14 s, <code>78.7x</code>.</li>
+<li>The mechanism behind it was gated by an environment variable and admitted
+  only a single pending model-delta position. It was never admitted on the
+  63-field trajectory.</li>
+</ul>
+<p>The 10x programme now measures progress against CASA on the benchmark set in
+<code>docs/imaging-architecture/imaging-mode-taxonomy-20261016.md</code> §5. Row B1 is
+the four-SPW landmark's workload, compared with its frozen CASA time
+(3,631.8 s) and not with the retired casa-rs figure. The retirement policy
+itself is unchanged: any landmark adopted later can leave the lineage only on
+the record.</p>
+<p>The finite implementation sequence below is superseded by that programme. It
+is kept as history.</p>
+<p>The finite implementation sequence was:</p>
 <ol>
 <li>revalidate the two landmark rows with one frozen release executable;</li>
 <li>run the already-available model-delta census on the real <code>4,096</code>-square,
