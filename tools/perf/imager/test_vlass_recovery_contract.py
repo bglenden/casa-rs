@@ -259,6 +259,34 @@ class RecoveryContractTests(unittest.TestCase):
         self.assertIs(False, retirement["silent_retirement_allowed"])
         self.assertTrue(retirement["landmark_capabilities_remain_in_candidate_lineage"])
 
+    def test_a_retired_landmark_records_who_retired_it_and_why(self) -> None:
+        preservation = self.contract["performance_preservation"]
+        assert isinstance(preservation, dict)
+        allowed = preservation["retirement_policy"]["allowed_retirement_reasons"]
+        retired = [row for row in preservation["landmark_rows"] if "retirement" in row]
+        # Brian retired both single-field landmarks on 2026-10-16 (#449).
+        self.assertEqual(
+            [
+                "VLASS-LANDMARK-SINGLE-4096-4SPW-CLEAN-N2000-v1",
+                "VLASS-LANDMARK-SINGLE-4096-16SPW-CLEAN-N2000-v1",
+            ],
+            [row["id"] for row in retired],
+        )
+        for row in retired:
+            retirement = row["retirement"]
+            with self.subTest(landmark=row["id"]):
+                self.assertIs(True, retirement["retired"])
+                self.assertIn(retirement["reason"], allowed)
+                if retirement["reason"] == "retired with explicit Brian Glendenning approval":
+                    self.assertEqual("Brian Glendenning", retirement["approved_by"])
+                self.assertRegex(retirement["approved_date"], r"^\d{4}-\d{2}-\d{2}$")
+                self.assertTrue(
+                    retirement["record"].startswith(
+                        "https://github.com/bglenden/casa-rs/issues/"
+                    )
+                )
+                self.assertTrue(retirement["note"])
+
     def test_launch_ledger_cannot_exceed_the_contract(self) -> None:
         self.assertEqual(self.contract["id"], self.ledger["contract_id"])
         entries = self.ledger["entries"]
