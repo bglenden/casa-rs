@@ -855,136 +855,145 @@
 <a href=#855 id=855 data-nosnippet>855</a>                        ))
 <a href=#856 id=856 data-nosnippet>856</a>                    }
 <a href=#857 id=857 data-nosnippet>857</a>                    Partition::Regions { .. } =&gt; {
-<a href=#858 id=858 data-nosnippet>858</a>                        <span class="kw">let </span><span class="kw-2">mut </span>merged =
-<a href=#859 id=859 data-nosnippet>859</a>                            pass.summing(operator.accumulator(planes, <span class="prelude-val">None</span>, pass.modes));
-<a href=#860 id=860 data-nosnippet>860</a>                        <span class="kw">for </span>owner <span class="kw">in </span><span class="kw-2">&amp;</span>domain.owners {
-<a href=#861 id=861 data-nosnippet>861</a>                            merged
-<a href=#862 id=862 data-nosnippet>862</a>                                .merge_from(owner.acc.as_ref().expect(<span class="string">"owners hold their tiles"</span>))<span class="question-mark">?</span>;
-<a href=#863 id=863 data-nosnippet>863</a>                        }
-<a href=#864 id=864 data-nosnippet>864</a>                        drop(domain.owners);
-<a href=#865 id=865 data-nosnippet>865</a>                        <span class="prelude-val">Ok</span>(operator.finish(merged)<span class="question-mark">?</span>)
-<a href=#866 id=866 data-nosnippet>866</a>                    }
-<a href=#867 id=867 data-nosnippet>867</a>                }
-<a href=#868 id=868 data-nosnippet>868</a>            })
-<a href=#869 id=869 data-nosnippet>869</a>            .collect()
-<a href=#870 id=870 data-nosnippet>870</a>    }
-<a href=#871 id=871 data-nosnippet>871</a>}
-<a href=#872 id=872 data-nosnippet>872</a>
-<a href=#873 id=873 data-nosnippet>873</a><span class="doccomment">/// The row at `position`: of the block's locality order when `ordered`
-<a href=#874 id=874 data-nosnippet>874</a>/// ([`NativeBlock::ordered_row`]), else the row itself.
-<a href=#875 id=875 data-nosnippet>875</a></span><span class="kw">fn </span>row_at(block: <span class="kw-2">&amp;</span>NativeBlock, ordered: bool, position: usize) -&gt; usize {
-<a href=#876 id=876 data-nosnippet>876</a>    <span class="kw">if </span>ordered {
-<a href=#877 id=877 data-nosnippet>877</a>        block.ordered_row(position)
-<a href=#878 id=878 data-nosnippet>878</a>    } <span class="kw">else </span>{
-<a href=#879 id=879 data-nosnippet>879</a>        position
-<a href=#880 id=880 data-nosnippet>880</a>    }
-<a href=#881 id=881 data-nosnippet>881</a>}
-<a href=#882 id=882 data-nosnippet>882</a>
-<a href=#883 id=883 data-nosnippet>883</a><span class="doccomment">/// One chunk's share of the wave's model store while it predicts.
-<a href=#884 id=884 data-nosnippet>884</a></span><span class="kw">enum </span>ChunkCells&lt;<span class="lifetime">'c</span>&gt; {
-<a href=#885 id=885 data-nosnippet>885</a>    <span class="doccomment">/// The chunk's rows' host cells.
-<a href=#886 id=886 data-nosnippet>886</a>    </span>Host(<span class="kw-2">&amp;</span><span class="lifetime">'c </span><span class="kw-2">mut </span>[Complex32]),
-<a href=#887 id=887 data-nosnippet>887</a>    <span class="doccomment">/// The device cells of the whole block.
-<a href=#888 id=888 data-nosnippet>888</a>    </span>Device(<span class="kw-2">&amp;</span><span class="lifetime">'c </span>DeviceNativeCells),
-<a href=#889 id=889 data-nosnippet>889</a>}
-<a href=#890 id=890 data-nosnippet>890</a>
-<a href=#891 id=891 data-nosnippet>891</a><span class="doccomment">/// The first native cell of the row at `position` of a block of `channels`
-<a href=#892 id=892 data-nosnippet>892</a>/// channels.
-<a href=#893 id=893 data-nosnippet>893</a></span><span class="kw">fn </span>cell_of(position: usize, channels: usize) -&gt; u32 {
-<a href=#894 id=894 data-nosnippet>894</a>    u32::try_from(position * channels).expect(<span class="string">"a block's native cells fit u32 indices"</span>)
-<a href=#895 id=895 data-nosnippet>895</a>}
-<a href=#896 id=896 data-nosnippet>896</a>
-<a href=#897 id=897 data-nosnippet>897</a><span class="doccomment">/// What an owner subtracts from its data terms: the domain's model at each
-<a href=#898 id=898 data-nosnippet>898</a>/// placed sample, the model at the samples' native endpoints, or nothing.
-<a href=#899 id=899 data-nosnippet>899</a></span><span class="attr">#[derive(Clone, Copy)]
-<a href=#900 id=900 data-nosnippet>900</a></span><span class="kw">struct </span>Subtract&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#901 id=901 data-nosnippet>901</a>    model: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>PreparedModelGrids&gt;,
-<a href=#902 id=902 data-nosnippet>902</a>    native: <span class="prelude-ty">Option</span>&lt;NativeModel&lt;<span class="lifetime">'a</span>&gt;&gt;,
-<a href=#903 id=903 data-nosnippet>903</a>}
-<a href=#904 id=904 data-nosnippet>904</a>
-<a href=#905 id=905 data-nosnippet>905</a><span class="doccomment">/// Grid one owner's share of a slice, through `apply`, in every mode the
-<a href=#906 id=906 data-nosnippet>906</a>/// pass holds; the data terms receive the residual of what `subtract`
-<a href=#907 id=907 data-nosnippet>907</a>/// names.
-<a href=#908 id=908 data-nosnippet>908</a></span><span class="kw">fn </span>accumulate(
-<a href=#909 id=909 data-nosnippet>909</a>    pass: <span class="kw-2">&amp;</span>MajorCyclePass&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#910 id=910 data-nosnippet>910</a>    apply: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>FnMut(Work&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), casa_imaging_operator::OperatorError&gt;,
-<a href=#911 id=911 data-nosnippet>911</a>    subtract: Subtract&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#912 id=912 data-nosnippet>912</a>    acc: <span class="kw-2">&amp;mut </span>GridAccumulator,
-<a href=#913 id=913 data-nosnippet>913</a>    weight: bool,
-<a href=#914 id=914 data-nosnippet>914</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), PassError&gt; {
-<a href=#915 id=915 data-nosnippet>915</a>    <span class="kw">if </span>pass.modes.data {
-<a href=#916 id=916 data-nosnippet>916</a>        <span class="kw">let </span>work = <span class="kw">match </span>subtract {
-<a href=#917 id=917 data-nosnippet>917</a>            Subtract {
-<a href=#918 id=918 data-nosnippet>918</a>                native: <span class="prelude-val">Some</span>(model),
-<a href=#919 id=919 data-nosnippet>919</a>                ..
-<a href=#920 id=920 data-nosnippet>920</a>            } =&gt; Work::NativeResidualGrid { model, acc },
-<a href=#921 id=921 data-nosnippet>921</a>            Subtract {
-<a href=#922 id=922 data-nosnippet>922</a>                model: <span class="prelude-val">Some</span>(model), ..
-<a href=#923 id=923 data-nosnippet>923</a>            } =&gt; Work::ResidualGrid {
-<a href=#924 id=924 data-nosnippet>924</a>                model,
-<a href=#925 id=925 data-nosnippet>925</a>                acc,
-<a href=#926 id=926 data-nosnippet>926</a>                residual_out: <span class="prelude-val">None</span>,
-<a href=#927 id=927 data-nosnippet>927</a>            },
-<a href=#928 id=928 data-nosnippet>928</a>            Subtract { .. } =&gt; Work::Grid {
-<a href=#929 id=929 data-nosnippet>929</a>                mode: Mode::Data,
-<a href=#930 id=930 data-nosnippet>930</a>                acc,
-<a href=#931 id=931 data-nosnippet>931</a>            },
-<a href=#932 id=932 data-nosnippet>932</a>        };
-<a href=#933 id=933 data-nosnippet>933</a>        apply(work)<span class="question-mark">?</span>;
-<a href=#934 id=934 data-nosnippet>934</a>    }
-<a href=#935 id=935 data-nosnippet>935</a>    <span class="kw">if </span>pass.modes.psf {
-<a href=#936 id=936 data-nosnippet>936</a>        apply(Work::Grid {
-<a href=#937 id=937 data-nosnippet>937</a>            mode: Mode::Psf,
-<a href=#938 id=938 data-nosnippet>938</a>            acc,
-<a href=#939 id=939 data-nosnippet>939</a>        })<span class="question-mark">?</span>;
-<a href=#940 id=940 data-nosnippet>940</a>    }
-<a href=#941 id=941 data-nosnippet>941</a>    <span class="kw">if </span>pass.modes.weight &amp;&amp; weight {
-<a href=#942 id=942 data-nosnippet>942</a>        apply(Work::Grid {
-<a href=#943 id=943 data-nosnippet>943</a>            mode: Mode::Weight,
-<a href=#944 id=944 data-nosnippet>944</a>            acc,
-<a href=#945 id=945 data-nosnippet>945</a>        })<span class="question-mark">?</span>;
-<a href=#946 id=946 data-nosnippet>946</a>    }
-<a href=#947 id=947 data-nosnippet>947</a>    <span class="prelude-val">Ok</span>(())
-<a href=#948 id=948 data-nosnippet>948</a>}
-<a href=#949 id=949 data-nosnippet>949</a>
-<a href=#950 id=950 data-nosnippet>950</a><span class="doccomment">/// Join per-owner images of consecutive plane ranges.
-<a href=#951 id=951 data-nosnippet>951</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>concatenate(parts: <span class="kw">impl </span>IntoIterator&lt;Item = NormalImages&gt;) -&gt; NormalImages {
-<a href=#952 id=952 data-nosnippet>952</a>    <span class="kw">let </span><span class="kw-2">mut </span>parts = parts.into_iter();
-<a href=#953 id=953 data-nosnippet>953</a>    <span class="kw">let </span><span class="kw-2">mut </span>joined = parts.next().expect(<span class="string">"a wave has at least one owner"</span>);
-<a href=#954 id=954 data-nosnippet>954</a>    <span class="kw">for </span>part <span class="kw">in </span>parts {
-<a href=#955 id=955 data-nosnippet>955</a>        <span class="macro">assert!</span>(
-<a href=#956 id=956 data-nosnippet>956</a>            part.pols == joined.pols
-<a href=#957 id=957 data-nosnippet>957</a>                &amp;&amp; part.data_terms == joined.data_terms
-<a href=#958 id=958 data-nosnippet>958</a>                &amp;&amp; part.psf_terms == joined.psf_terms
-<a href=#959 id=959 data-nosnippet>959</a>                &amp;&amp; part.first_plane == joined.first_plane + joined.planes.len() <span class="kw">as </span>u32,
-<a href=#960 id=960 data-nosnippet>960</a>            <span class="string">"owner images must continue the plane sequence with the same layout"
-<a href=#961 id=961 data-nosnippet>961</a>        </span>);
-<a href=#962 id=962 data-nosnippet>962</a>        joined.planes.extend(part.planes);
-<a href=#963 id=963 data-nosnippet>963</a>    }
-<a href=#964 id=964 data-nosnippet>964</a>    joined
-<a href=#965 id=965 data-nosnippet>965</a>}
-<a href=#966 id=966 data-nosnippet>966</a>
-<a href=#967 id=967 data-nosnippet>967</a><span class="attr">#[cfg(test)]
-<a href=#968 id=968 data-nosnippet>968</a></span><span class="kw">mod </span>tests {
-<a href=#969 id=969 data-nosnippet>969</a>    <span class="kw">use super</span>::{CHUNKS_PER_WORKER, chunk_placements, chunks};
-<a href=#970 id=970 data-nosnippet>970</a>
-<a href=#971 id=971 data-nosnippet>971</a>    <span class="doccomment">/// Every owner's buffer in a chunk can take all of the chunk's
-<a href=#972 id=972 data-nosnippet>972</a>    /// placements, and a pass has four chunks per worker and up to one
-<a href=#973 id=973 data-nosnippet>973</a>    /// owner per worker; past four owners a chunk takes proportionally
-<a href=#974 id=974 data-nosnippet>974</a>    /// fewer, so the chunks' storage grows linearly with the workers, and up
-<a href=#975 id=975 data-nosnippet>975</a>    /// to four a chunk takes the full cap.
-<a href=#976 id=976 data-nosnippet>976</a>    </span><span class="attr">#[test]
-<a href=#977 id=977 data-nosnippet>977</a>    </span><span class="kw">fn </span>chunk_storage_grows_linearly_with_workers() {
-<a href=#978 id=978 data-nosnippet>978</a>        <span class="kw">let </span>full = chunk_placements(<span class="number">1</span>);
-<a href=#979 id=979 data-nosnippet>979</a>        <span class="kw">for </span>workers <span class="kw">in </span><span class="number">1</span>..=<span class="number">128 </span>{
-<a href=#980 id=980 data-nosnippet>980</a>            <span class="kw">let </span>owners = workers;
-<a href=#981 id=981 data-nosnippet>981</a>            <span class="kw">let </span>storage = chunks(workers) * owners * chunk_placements(owners);
-<a href=#982 id=982 data-nosnippet>982</a>            <span class="macro">assert!</span>(
-<a href=#983 id=983 data-nosnippet>983</a>                storage &lt;= CHUNKS_PER_WORKER * <span class="number">4 </span>* full * workers,
-<a href=#984 id=984 data-nosnippet>984</a>                <span class="string">"{workers} workers place into {storage} placements of storage"
-<a href=#985 id=985 data-nosnippet>985</a>            </span>);
-<a href=#986 id=986 data-nosnippet>986</a>        }
-<a href=#987 id=987 data-nosnippet>987</a>        <span class="macro">assert_eq!</span>(chunk_placements(<span class="number">4</span>), full);
-<a href=#988 id=988 data-nosnippet>988</a>    }
-<a href=#989 id=989 data-nosnippet>989</a>}
+<a href=#858 id=858 data-nosnippet>858</a>                        <span class="comment">// One owner's tile is the whole grid (`Partition::regions`
+<a href=#859 id=859 data-nosnippet>859</a>                        // gives a lone region every row): it is the sum, and
+<a href=#860 id=860 data-nosnippet>860</a>                        // `finish` refuses a tile. The charge keys on the same
+<a href=#861 id=861 data-nosnippet>861</a>                        // count (`DomainStages`).
+<a href=#862 id=862 data-nosnippet>862</a>                        </span><span class="kw">if let </span>[owner] = domain.owners.as_mut_slice() {
+<a href=#863 id=863 data-nosnippet>863</a>                            <span class="kw">let </span>acc = owner.acc.take().expect(<span class="string">"each owner finishes once"</span>);
+<a href=#864 id=864 data-nosnippet>864</a>                            drop(domain.owners);
+<a href=#865 id=865 data-nosnippet>865</a>                            <span class="kw">return </span><span class="prelude-val">Ok</span>(operator.finish(acc)<span class="question-mark">?</span>);
+<a href=#866 id=866 data-nosnippet>866</a>                        }
+<a href=#867 id=867 data-nosnippet>867</a>                        <span class="kw">let </span><span class="kw-2">mut </span>merged =
+<a href=#868 id=868 data-nosnippet>868</a>                            pass.summing(operator.accumulator(planes, <span class="prelude-val">None</span>, pass.modes));
+<a href=#869 id=869 data-nosnippet>869</a>                        <span class="kw">for </span>owner <span class="kw">in </span><span class="kw-2">&amp;</span>domain.owners {
+<a href=#870 id=870 data-nosnippet>870</a>                            merged
+<a href=#871 id=871 data-nosnippet>871</a>                                .merge_from(owner.acc.as_ref().expect(<span class="string">"owners hold their tiles"</span>))<span class="question-mark">?</span>;
+<a href=#872 id=872 data-nosnippet>872</a>                        }
+<a href=#873 id=873 data-nosnippet>873</a>                        drop(domain.owners);
+<a href=#874 id=874 data-nosnippet>874</a>                        <span class="prelude-val">Ok</span>(operator.finish(merged)<span class="question-mark">?</span>)
+<a href=#875 id=875 data-nosnippet>875</a>                    }
+<a href=#876 id=876 data-nosnippet>876</a>                }
+<a href=#877 id=877 data-nosnippet>877</a>            })
+<a href=#878 id=878 data-nosnippet>878</a>            .collect()
+<a href=#879 id=879 data-nosnippet>879</a>    }
+<a href=#880 id=880 data-nosnippet>880</a>}
+<a href=#881 id=881 data-nosnippet>881</a>
+<a href=#882 id=882 data-nosnippet>882</a><span class="doccomment">/// The row at `position`: of the block's locality order when `ordered`
+<a href=#883 id=883 data-nosnippet>883</a>/// ([`NativeBlock::ordered_row`]), else the row itself.
+<a href=#884 id=884 data-nosnippet>884</a></span><span class="kw">fn </span>row_at(block: <span class="kw-2">&amp;</span>NativeBlock, ordered: bool, position: usize) -&gt; usize {
+<a href=#885 id=885 data-nosnippet>885</a>    <span class="kw">if </span>ordered {
+<a href=#886 id=886 data-nosnippet>886</a>        block.ordered_row(position)
+<a href=#887 id=887 data-nosnippet>887</a>    } <span class="kw">else </span>{
+<a href=#888 id=888 data-nosnippet>888</a>        position
+<a href=#889 id=889 data-nosnippet>889</a>    }
+<a href=#890 id=890 data-nosnippet>890</a>}
+<a href=#891 id=891 data-nosnippet>891</a>
+<a href=#892 id=892 data-nosnippet>892</a><span class="doccomment">/// One chunk's share of the wave's model store while it predicts.
+<a href=#893 id=893 data-nosnippet>893</a></span><span class="kw">enum </span>ChunkCells&lt;<span class="lifetime">'c</span>&gt; {
+<a href=#894 id=894 data-nosnippet>894</a>    <span class="doccomment">/// The chunk's rows' host cells.
+<a href=#895 id=895 data-nosnippet>895</a>    </span>Host(<span class="kw-2">&amp;</span><span class="lifetime">'c </span><span class="kw-2">mut </span>[Complex32]),
+<a href=#896 id=896 data-nosnippet>896</a>    <span class="doccomment">/// The device cells of the whole block.
+<a href=#897 id=897 data-nosnippet>897</a>    </span>Device(<span class="kw-2">&amp;</span><span class="lifetime">'c </span>DeviceNativeCells),
+<a href=#898 id=898 data-nosnippet>898</a>}
+<a href=#899 id=899 data-nosnippet>899</a>
+<a href=#900 id=900 data-nosnippet>900</a><span class="doccomment">/// The first native cell of the row at `position` of a block of `channels`
+<a href=#901 id=901 data-nosnippet>901</a>/// channels.
+<a href=#902 id=902 data-nosnippet>902</a></span><span class="kw">fn </span>cell_of(position: usize, channels: usize) -&gt; u32 {
+<a href=#903 id=903 data-nosnippet>903</a>    u32::try_from(position * channels).expect(<span class="string">"a block's native cells fit u32 indices"</span>)
+<a href=#904 id=904 data-nosnippet>904</a>}
+<a href=#905 id=905 data-nosnippet>905</a>
+<a href=#906 id=906 data-nosnippet>906</a><span class="doccomment">/// What an owner subtracts from its data terms: the domain's model at each
+<a href=#907 id=907 data-nosnippet>907</a>/// placed sample, the model at the samples' native endpoints, or nothing.
+<a href=#908 id=908 data-nosnippet>908</a></span><span class="attr">#[derive(Clone, Copy)]
+<a href=#909 id=909 data-nosnippet>909</a></span><span class="kw">struct </span>Subtract&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#910 id=910 data-nosnippet>910</a>    model: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>PreparedModelGrids&gt;,
+<a href=#911 id=911 data-nosnippet>911</a>    native: <span class="prelude-ty">Option</span>&lt;NativeModel&lt;<span class="lifetime">'a</span>&gt;&gt;,
+<a href=#912 id=912 data-nosnippet>912</a>}
+<a href=#913 id=913 data-nosnippet>913</a>
+<a href=#914 id=914 data-nosnippet>914</a><span class="doccomment">/// Grid one owner's share of a slice, through `apply`, in every mode the
+<a href=#915 id=915 data-nosnippet>915</a>/// pass holds; the data terms receive the residual of what `subtract`
+<a href=#916 id=916 data-nosnippet>916</a>/// names.
+<a href=#917 id=917 data-nosnippet>917</a></span><span class="kw">fn </span>accumulate(
+<a href=#918 id=918 data-nosnippet>918</a>    pass: <span class="kw-2">&amp;</span>MajorCyclePass&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#919 id=919 data-nosnippet>919</a>    apply: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>FnMut(Work&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), casa_imaging_operator::OperatorError&gt;,
+<a href=#920 id=920 data-nosnippet>920</a>    subtract: Subtract&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#921 id=921 data-nosnippet>921</a>    acc: <span class="kw-2">&amp;mut </span>GridAccumulator,
+<a href=#922 id=922 data-nosnippet>922</a>    weight: bool,
+<a href=#923 id=923 data-nosnippet>923</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), PassError&gt; {
+<a href=#924 id=924 data-nosnippet>924</a>    <span class="kw">if </span>pass.modes.data {
+<a href=#925 id=925 data-nosnippet>925</a>        <span class="kw">let </span>work = <span class="kw">match </span>subtract {
+<a href=#926 id=926 data-nosnippet>926</a>            Subtract {
+<a href=#927 id=927 data-nosnippet>927</a>                native: <span class="prelude-val">Some</span>(model),
+<a href=#928 id=928 data-nosnippet>928</a>                ..
+<a href=#929 id=929 data-nosnippet>929</a>            } =&gt; Work::NativeResidualGrid { model, acc },
+<a href=#930 id=930 data-nosnippet>930</a>            Subtract {
+<a href=#931 id=931 data-nosnippet>931</a>                model: <span class="prelude-val">Some</span>(model), ..
+<a href=#932 id=932 data-nosnippet>932</a>            } =&gt; Work::ResidualGrid {
+<a href=#933 id=933 data-nosnippet>933</a>                model,
+<a href=#934 id=934 data-nosnippet>934</a>                acc,
+<a href=#935 id=935 data-nosnippet>935</a>                residual_out: <span class="prelude-val">None</span>,
+<a href=#936 id=936 data-nosnippet>936</a>            },
+<a href=#937 id=937 data-nosnippet>937</a>            Subtract { .. } =&gt; Work::Grid {
+<a href=#938 id=938 data-nosnippet>938</a>                mode: Mode::Data,
+<a href=#939 id=939 data-nosnippet>939</a>                acc,
+<a href=#940 id=940 data-nosnippet>940</a>            },
+<a href=#941 id=941 data-nosnippet>941</a>        };
+<a href=#942 id=942 data-nosnippet>942</a>        apply(work)<span class="question-mark">?</span>;
+<a href=#943 id=943 data-nosnippet>943</a>    }
+<a href=#944 id=944 data-nosnippet>944</a>    <span class="kw">if </span>pass.modes.psf {
+<a href=#945 id=945 data-nosnippet>945</a>        apply(Work::Grid {
+<a href=#946 id=946 data-nosnippet>946</a>            mode: Mode::Psf,
+<a href=#947 id=947 data-nosnippet>947</a>            acc,
+<a href=#948 id=948 data-nosnippet>948</a>        })<span class="question-mark">?</span>;
+<a href=#949 id=949 data-nosnippet>949</a>    }
+<a href=#950 id=950 data-nosnippet>950</a>    <span class="kw">if </span>pass.modes.weight &amp;&amp; weight {
+<a href=#951 id=951 data-nosnippet>951</a>        apply(Work::Grid {
+<a href=#952 id=952 data-nosnippet>952</a>            mode: Mode::Weight,
+<a href=#953 id=953 data-nosnippet>953</a>            acc,
+<a href=#954 id=954 data-nosnippet>954</a>        })<span class="question-mark">?</span>;
+<a href=#955 id=955 data-nosnippet>955</a>    }
+<a href=#956 id=956 data-nosnippet>956</a>    <span class="prelude-val">Ok</span>(())
+<a href=#957 id=957 data-nosnippet>957</a>}
+<a href=#958 id=958 data-nosnippet>958</a>
+<a href=#959 id=959 data-nosnippet>959</a><span class="doccomment">/// Join per-owner images of consecutive plane ranges.
+<a href=#960 id=960 data-nosnippet>960</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>concatenate(parts: <span class="kw">impl </span>IntoIterator&lt;Item = NormalImages&gt;) -&gt; NormalImages {
+<a href=#961 id=961 data-nosnippet>961</a>    <span class="kw">let </span><span class="kw-2">mut </span>parts = parts.into_iter();
+<a href=#962 id=962 data-nosnippet>962</a>    <span class="kw">let </span><span class="kw-2">mut </span>joined = parts.next().expect(<span class="string">"a wave has at least one owner"</span>);
+<a href=#963 id=963 data-nosnippet>963</a>    <span class="kw">for </span>part <span class="kw">in </span>parts {
+<a href=#964 id=964 data-nosnippet>964</a>        <span class="macro">assert!</span>(
+<a href=#965 id=965 data-nosnippet>965</a>            part.pols == joined.pols
+<a href=#966 id=966 data-nosnippet>966</a>                &amp;&amp; part.data_terms == joined.data_terms
+<a href=#967 id=967 data-nosnippet>967</a>                &amp;&amp; part.psf_terms == joined.psf_terms
+<a href=#968 id=968 data-nosnippet>968</a>                &amp;&amp; part.first_plane == joined.first_plane + joined.planes.len() <span class="kw">as </span>u32,
+<a href=#969 id=969 data-nosnippet>969</a>            <span class="string">"owner images must continue the plane sequence with the same layout"
+<a href=#970 id=970 data-nosnippet>970</a>        </span>);
+<a href=#971 id=971 data-nosnippet>971</a>        joined.planes.extend(part.planes);
+<a href=#972 id=972 data-nosnippet>972</a>    }
+<a href=#973 id=973 data-nosnippet>973</a>    joined
+<a href=#974 id=974 data-nosnippet>974</a>}
+<a href=#975 id=975 data-nosnippet>975</a>
+<a href=#976 id=976 data-nosnippet>976</a><span class="attr">#[cfg(test)]
+<a href=#977 id=977 data-nosnippet>977</a></span><span class="kw">mod </span>tests {
+<a href=#978 id=978 data-nosnippet>978</a>    <span class="kw">use super</span>::{CHUNKS_PER_WORKER, chunk_placements, chunks};
+<a href=#979 id=979 data-nosnippet>979</a>
+<a href=#980 id=980 data-nosnippet>980</a>    <span class="doccomment">/// Every owner's buffer in a chunk can take all of the chunk's
+<a href=#981 id=981 data-nosnippet>981</a>    /// placements, and a pass has four chunks per worker and up to one
+<a href=#982 id=982 data-nosnippet>982</a>    /// owner per worker; past four owners a chunk takes proportionally
+<a href=#983 id=983 data-nosnippet>983</a>    /// fewer, so the chunks' storage grows linearly with the workers, and up
+<a href=#984 id=984 data-nosnippet>984</a>    /// to four a chunk takes the full cap.
+<a href=#985 id=985 data-nosnippet>985</a>    </span><span class="attr">#[test]
+<a href=#986 id=986 data-nosnippet>986</a>    </span><span class="kw">fn </span>chunk_storage_grows_linearly_with_workers() {
+<a href=#987 id=987 data-nosnippet>987</a>        <span class="kw">let </span>full = chunk_placements(<span class="number">1</span>);
+<a href=#988 id=988 data-nosnippet>988</a>        <span class="kw">for </span>workers <span class="kw">in </span><span class="number">1</span>..=<span class="number">128 </span>{
+<a href=#989 id=989 data-nosnippet>989</a>            <span class="kw">let </span>owners = workers;
+<a href=#990 id=990 data-nosnippet>990</a>            <span class="kw">let </span>storage = chunks(workers) * owners * chunk_placements(owners);
+<a href=#991 id=991 data-nosnippet>991</a>            <span class="macro">assert!</span>(
+<a href=#992 id=992 data-nosnippet>992</a>                storage &lt;= CHUNKS_PER_WORKER * <span class="number">4 </span>* full * workers,
+<a href=#993 id=993 data-nosnippet>993</a>                <span class="string">"{workers} workers place into {storage} placements of storage"
+<a href=#994 id=994 data-nosnippet>994</a>            </span>);
+<a href=#995 id=995 data-nosnippet>995</a>        }
+<a href=#996 id=996 data-nosnippet>996</a>        <span class="macro">assert_eq!</span>(chunk_placements(<span class="number">4</span>), full);
+<a href=#997 id=997 data-nosnippet>997</a>    }
+<a href=#998 id=998 data-nosnippet>998</a>}
 </code></pre></div></section></main></body></html>
