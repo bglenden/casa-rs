@@ -2882,10 +2882,6 @@ fn write_cell_to_bucket(
 }
 
 /// Write a scalar or array value in the specified byte order.
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
 fn write_value_canonical(
     dst: &mut [u8],
     data_type: CasacoreDataType,
@@ -3046,6 +3042,25 @@ fn write_value_canonical(
                 }
             }
         }
+        CasacoreDataType::TpComplex | CasacoreDataType::TpDComplex => {
+            write_complex_canonical(dst, data_type, nrelem, value, big_endian);
+        }
+        _ => {}
+    }
+}
+
+/// Write a `TpComplex` or `TpDComplex` value as (re, im) pairs in the
+/// specified byte order; the complex half of [`write_value_canonical`].
+fn write_complex_canonical(
+    dst: &mut [u8],
+    data_type: CasacoreDataType,
+    nrelem: usize,
+    value: Option<&casa_types::Value>,
+    big_endian: bool,
+) {
+    use casa_types::{ArrayValue, ScalarValue, Value};
+
+    match data_type {
         CasacoreDataType::TpComplex => {
             if nrelem == 1 {
                 let (re, im) = match value {

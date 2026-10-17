@@ -3586,11 +3586,7 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "predates the function-length limit; #705"
-    )]
-    fn direct_trait_ops_cover_remaining_complex_impls() {
+    fn direct_trait_ops_cover_remaining_complex32_impls() {
         let c32 = Complex32::new(1.25, -0.75);
         assert!((<Complex32 as ImageExprValue>::expr_exp(c32) - c32.exp()).norm() < 1e-5);
         assert!((<Complex32 as ImageExprValue>::expr_sin(c32) - c32.sin()).norm() < 1e-5);
@@ -3694,7 +3690,10 @@ mod tests {
             Complex32::new(2.0, 0.0),
             ImageExprCompareOp::NotEqual
         ));
+    }
 
+    #[test]
+    fn direct_trait_ops_cover_remaining_complex64_impls() {
         let c64 = Complex64::new(-1.5, 0.25);
         assert!((<Complex64 as ImageExprValue>::expr_exp(c64) - c64.exp()).norm() < 1e-12);
         assert!((<Complex64 as ImageExprValue>::expr_sin(c64) - c64.sin()).norm() < 1e-12);

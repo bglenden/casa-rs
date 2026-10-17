@@ -9,15 +9,22 @@
 //! back in place and PB-corrected (IF-3, #652). The simulator's beam is an
 //! unblocked 25 m Airy disc, the catalog's is BeamCalc's illumination of
 //! the paraboloid, so off axis the two agree only to several per cent;
-//! T1.5 `refim_mawproject` carries the CASA parity.
+//! T1.5 `refim_mawproject` carries the CASA parity. A two-window track
+//! checks that a native cache generated for another SPW selection is
+//! regenerated, not reused (#735, #741).
 
+use std::path::Path;
+use std::sync::Arc;
+
+use casa_logging::{CasaLogLayer, CasaPriority, MemorySink};
 use casa_ms::{SyntheticAntenna, SyntheticSpectralSetup, tutorial_vla_a_antennas};
 use casa_simulation_synthesis::{AiryPrimaryBeam, AiryVoltagePattern};
 use ndarray::Array2;
-use serde_json::json;
+use serde_json::{Value, json};
+use tracing_subscriber::layer::SubscriberExt;
 
 use super::fixture::{
-    Component, Geometry, Observation, ProductContract, Setup, SpectralAxis, box_sum, peak,
+    Component, Geometry, Observation, ProductContract, Products, Setup, SpectralAxis, box_sum, peak,
 };
 
 /// L band, inside the native EVLA model's 0.9–8 GHz bands.
@@ -90,14 +97,19 @@ fn setup() -> Setup {
         telescope: "EVLA".to_string(),
         antennas: compact_evla_antennas(),
         fields: Vec::new(),
-        spectral: SyntheticSpectralSetup {
-            name: "t1-lband".to_string(),
-            start_frequency_hz: FREQUENCY_HZ,
-            channel_width_hz: 8.0e6,
-            channel_count: 1,
-        },
+        spectral_windows: vec![lband_window("t1-lband", FREQUENCY_HZ)],
         geometry: GEOMETRY,
         noise_jy: NOISE_JY,
+    }
+}
+
+/// One 8 MHz channel at `frequency_hz`.
+fn lband_window(name: &str, frequency_hz: f64) -> SyntheticSpectralSetup {
+    SyntheticSpectralSetup {
+        name: name.to_string(),
+        start_frequency_hz: frequency_hz,
+        channel_width_hz: 8.0e6,
+        channel_count: 1,
     }
 }
 
@@ -121,9 +133,8 @@ fn local_peak(
 /// The off-axis point's flux as the simulator attenuates it: the injected
 /// flux times the power of the unblocked 25 m Airy disc an `EVLA`
 /// observation gets (`AiryVoltagePattern`). A standard-gridder control run
-/// measures the same value, but the production resource authority binds
-/// one storage profile per process and an A-projection request needs its
-/// own, so the control cannot share this test's process.
+/// in this test's process measured the same value to 0.6 % (#741); the
+/// analytic value saves that run.
 fn attenuated_off_axis_jy() -> f64 {
     let [l_rad, m_rad] = OFF_AXIS.direction_cosines(GEOMETRY);
     let voltage = AiryVoltagePattern::new(AiryPrimaryBeam {
@@ -286,4 +297,144 @@ fn aw_projection_generates_its_catalog_and_recovers_the_sky() {
         "off-axis PB-corrected peak {off_axis_peak} Jy, injected {} Jy",
         OFF_AXIS.flux_jy
     );
+}
+
+/// The two-window track's geometry: the same 10″ cell over three primary
+/// beams, half the side of [`GEOMETRY`].
+const TWO_WINDOW_GEOMETRY: Geometry = Geometry {
+    image_size: 512,
+    cell_arcsec: 10.0,
+};
+
+/// [`setup`] observing two L-band windows, 1.4 and 1.6 GHz, on the
+/// smaller [`TWO_WINDOW_GEOMETRY`].
+fn two_window_setup() -> Setup {
+    Setup {
+        spectral_windows: vec![
+            lband_window("t1-lband-low", 1.4e9),
+            lband_window("t1-lband-high", 1.6e9),
+        ],
+        geometry: TWO_WINDOW_GEOMETRY,
+        ..setup()
+    }
+}
+
+/// A short native-AW Högbom clean of the SPWs `spw` with its cells in
+/// `cache`, generated when it lacks them.
+fn cached_clean(spw: &str, cache: &Path, surface: &Path) -> Value {
+    json!({
+        "spw": spw,
+        "weighting": "natural",
+        "deconvolver": "hogbom",
+        "niter": 50,
+        "threshold": format!("{THRESHOLD_JY}Jy"),
+        "gridder": "awproject",
+        "wprojplanes": W_PLANES,
+        "aw_cf_source": "native-evla",
+        "native_cf_cache": cache,
+        "evla_surface": surface,
+        "native_cf_policy": "generate-missing",
+        "native_cf_working_size": 1024,
+        "native_cf_oversampling": 4,
+        "native_cf_cache_bytes": 2_147_483_648_u64,
+        "native_cf_maximum_cells": 256,
+        "cf_resident_mb": 512,
+        "normtype": "flatnoise",
+        "pbcor": true,
+        "write_pb": true,
+    })
+}
+
+/// The entries of a cache directory, sorted.
+fn entries(cache: &Path) -> Vec<String> {
+    let mut names = std::fs::read_dir(cache)
+        .expect("read the cache directory")
+        .map(|entry| {
+            entry
+                .expect("cache entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+/// `products` and `fresh` publish the same members with the same values,
+/// to rounding.
+fn assert_same_products(products: &Products, fresh: &Products) {
+    assert_eq!(products.suffixes(), fresh.suffixes(), "inventory");
+    for suffix in fresh.suffixes() {
+        let (values, expected) = (products.get(&suffix).values(), fresh.get(&suffix).values());
+        assert_eq!(values.shape(), expected.shape(), "{suffix} shape");
+        let scale = expected
+            .iter()
+            .fold(0.0_f32, |peak, value| peak.max(value.abs()));
+        let worst = values
+            .iter()
+            .zip(&expected)
+            .fold(0.0_f32, |worst, (value, expected)| {
+                worst.max((value - expected).abs())
+            });
+        assert!(
+            worst <= 1.0e-6 * scale,
+            "{suffix}: differs from a fresh cache's by {worst} (peak {scale})"
+        );
+    }
+}
+
+/// #735 end to end: a cell's conjugate beam and its lookup depend on the
+/// whole selected frequency list, so a native cache generated for two SPWs
+/// does not serve a run of one. Run A images both windows into the cache,
+/// run B images the lower window with the same cache and `generate-missing`,
+/// run C images it into a fresh cache. B warns that the cache belongs to
+/// another request, regenerates it to exactly C's cells, and publishes C's
+/// products.
+#[test]
+fn a_native_cache_reused_across_an_spw_selection_change_gives_a_fresh_caches_products() {
+    let observation = Observation::synthesise_setup(
+        two_window_setup(),
+        &[("centre", CENTRE), ("off-axis", OFF_AXIS)],
+    );
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let (shared, fresh_cache) = (
+        observation.scratch("shared-cf"),
+        observation.scratch("fresh-cf"),
+    );
+
+    let (_, wide) = observation.image("aw-wide", cached_clean("0,1", &shared, &surface));
+    let wide_entries = entries(&shared);
+
+    let warnings = Arc::new(MemorySink::new(CasaPriority::Warn));
+    let subscriber = tracing_subscriber::registry().with(CasaLogLayer::filtered(warnings.clone()));
+    let (_, reused) = tracing::subscriber::with_default(subscriber, || {
+        observation.image("aw-reused", cached_clean("0", &shared, &surface))
+    });
+    let (_, fresh) = observation.image("aw-fresh", cached_clean("0", &fresh_cache, &surface));
+
+    let regenerations = warnings
+        .records()
+        .expect("captured warnings")
+        .into_iter()
+        .filter(|record| {
+            record.message.contains("does not belong to this request")
+                && record.message.contains("regenerating it")
+        })
+        .count();
+    assert_eq!(
+        regenerations, 1,
+        "B warns once that it regenerates the cache"
+    );
+    // A's cache held both windows' cells; B left exactly the cells a fresh
+    // cache of the one window holds.
+    assert_eq!(entries(&shared), entries(&fresh_cache));
+    assert_ne!(wide_entries, entries(&fresh_cache), "A's cache was wider");
+    assert_ne!(
+        wide.get(".image").values(),
+        fresh.get(".image").values(),
+        "A images both windows"
+    );
+    assert_same_products(&reused, &fresh);
 }

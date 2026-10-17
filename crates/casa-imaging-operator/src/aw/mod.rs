@@ -9,6 +9,7 @@
 mod cell_image;
 mod evla;
 mod native;
+mod native_cache;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -20,10 +21,12 @@ use thiserror::Error;
 
 pub use evla::{EvlaApertureGrid, EvlaApertureModel};
 pub use native::{EvlaAwWorkspace, NativeAwPair, NativeAwPlane};
+pub use native_cache::{NativeCacheLock, NativeCacheState, NativeManifest};
 
 use cell_image::{CellMisc, load_group, read_header, write_cell};
 #[cfg(test)]
 use cell_image::{cf_area, dense_cell_padded};
+use native_cache::{STAGING_PREFIX, cell_suffix, write_manifest};
 
 use crate::convolution::{
     CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
@@ -482,18 +485,40 @@ impl AwCatalog {
 
     /// Generate every cell of `input` natively into `root` as CASA-format
     /// images (`CFS_<pa>_0_CF_<f>_<w>_<m>.im` and the `WTCFS_` partner, one
-    /// baseline type) so [`AwCatalog::open_casa`] serves them. Existing
-    /// cells of the same names are replaced.
+    /// baseline type) so [`AwCatalog::open_casa`] serves them, and record
+    /// `input` in the directory's request manifest
+    /// ([`AwCatalog::native_cache_state`]).
+    ///
+    /// Without `only_missing` the directory is cleared first
+    /// ([`AwCatalog::clear_native`]). With it, the cells already present
+    /// are kept, and the directory must hold nothing of another request
+    /// ([`NativeCacheState::fillable`]). Each cell image is published only
+    /// once complete, and the manifest is written last, so generation that
+    /// fails or stops part way never leaves a directory that claims a
+    /// request it does not hold (#739 review). The caller holds the
+    /// exclusive [`NativeCacheLock`].
     ///
     /// # Errors
     ///
-    /// Generation fails or an image cannot be written.
+    /// Generation fails or an image cannot be written, or `only_missing`
+    /// is asked of a directory that holds cells of another request.
     pub fn generate_native(
         root: impl AsRef<Path>,
         input: &NativeAwRequestInput,
         only_missing: bool,
     ) -> Result<(), AwCatalogError> {
         let root = root.as_ref();
+        if only_missing {
+            let state = Self::native_cache_state(root, input)?;
+            if !state.fillable() {
+                return Err(cache_error(
+                    root,
+                    format!("cannot fill in a cache of another request: {state}"),
+                ));
+            }
+        } else {
+            Self::clear_native(root)?;
+        }
         std::fs::create_dir_all(root)
             .map_err(|error| cache_error(root, format!("cannot create: {error}")))?;
         let model = EvlaApertureModel::new(input.surface.clone());
@@ -523,7 +548,7 @@ impl AwCatalog {
                 // cell are formed once per (PA, frequency, Mueller element).
                 for (im, &mueller) in input.mueller_elements.iter().enumerate() {
                     for (iw, &w) in input.w_values.iter().enumerate() {
-                        let suffix = format!("{ipa}_0_CF_{inu}_{iw}_{im}.im");
+                        let suffix = cell_suffix(ipa, inu, iw, im);
                         let imaging_path = root.join(format!("{IMAGING_PREFIX}{suffix}"));
                         let weight_path = root.join(format!("{WEIGHT_PREFIX}{suffix}"));
                         if only_missing && imaging_path.is_dir() && weight_path.is_dir() {
@@ -565,59 +590,7 @@ impl AwCatalog {
                 }
             }
         }
-        Ok(())
-    }
-
-    /// How many of the cells `input` names exist under `root` (both the
-    /// `CFS_` and `WTCFS_` images), and how many it names.
-    pub fn native_cells_present(
-        root: impl AsRef<Path>,
-        input: &NativeAwRequestInput,
-    ) -> (usize, usize) {
-        let root = root.as_ref();
-        let mut present = 0;
-        let mut expected = 0;
-        for ipa in 0..input.pa_values.len() {
-            for inu in 0..input.frequencies.len() {
-                for iw in 0..input.w_values.len() {
-                    for im in 0..input.mueller_elements.len() {
-                        let suffix = format!("{ipa}_0_CF_{inu}_{iw}_{im}.im");
-                        expected += 1;
-                        if root.join(format!("{IMAGING_PREFIX}{suffix}")).is_dir()
-                            && root.join(format!("{WEIGHT_PREFIX}{suffix}")).is_dir()
-                        {
-                            present += 1;
-                        }
-                    }
-                }
-            }
-        }
-        (present, expected)
-    }
-
-    /// Remove every `CFS_` and `WTCFS_` cell under `root`, so a regenerated
-    /// catalog carries no member of an earlier request.
-    pub fn clear_native(root: impl AsRef<Path>) -> Result<(), AwCatalogError> {
-        let root = root.as_ref();
-        if !root.is_dir() {
-            return Ok(());
-        }
-        let entries = std::fs::read_dir(root)
-            .map_err(|error| cache_error(root, format!("cannot list: {error}")))?;
-        for entry in entries {
-            let entry =
-                entry.map_err(|error| cache_error(root, format!("cannot list: {error}")))?;
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                continue;
-            };
-            if name.starts_with(IMAGING_PREFIX) || name.starts_with(WEIGHT_PREFIX) {
-                std::fs::remove_dir_all(entry.path()).map_err(|error| {
-                    cache_error(entry.path(), format!("cannot remove: {error}"))
-                })?;
-            }
-        }
-        Ok(())
+        write_manifest(root, input)
     }
 
     /// The cache directory.

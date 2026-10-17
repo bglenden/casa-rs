@@ -9,6 +9,8 @@
 //! directories, the AW cache) wait for [`Deployment::deploy`], after the
 //! availability check.
 
+#[cfg(test)]
+mod aw_plan_tests;
 mod direction;
 mod domains;
 mod error;
@@ -29,7 +31,7 @@ use casa_imaging_model::{
     NumericPrecision, ProblemSpecification, SequentialContinuumTransform, UvwCoordinateLaw,
     WeightColumn as OwnerWeightColumn,
 };
-use casa_imaging_operator::{AwCatalog, AwIndexing};
+use casa_imaging_operator::{AwCatalog, AwIndexing, NativeCacheLock};
 use casa_imaging_products::{
     AnalyticPrimaryBeamModel, CasaImageWriter, ContinuumProductControls, MinorCycleImageResponse,
     PrimaryBeamCentres,
@@ -496,34 +498,72 @@ impl Deployment {
 }
 
 impl AwPlan {
-    /// Under every policy the request's cells are compared with the
-    /// directory: reuse needs every one, generation fills in the absent
-    /// ones, regeneration clears the cache first; the loader then checks
-    /// each cell's sky increment against the image (plan section 5.6).
+    /// Under every policy the directory is compared with the request: its
+    /// request manifest, the cells the request names, and any it does not
+    /// (#735: a cell's conjugate beam and its lookup depend on the whole
+    /// frequency list). Reuse needs a directory generated for this request,
+    /// complete and holding nothing else. Generation fills in the absent
+    /// cells of such a directory, and clears and regenerates any other.
+    /// Regeneration clears the cache first. The loader then checks each
+    /// cell's sky increment against the image (plan section 5.6).
+    ///
+    /// The run reads a native cache under its shared [`NativeCacheLock`],
+    /// held in the deployment for as long as the run lives, since cells load
+    /// lazily. It writes one only under the exclusive lock, which it cannot
+    /// take while another run reads the cache. After writing, it takes the
+    /// shared lock again and checks the directory once more before it keeps
+    /// it (#739 review).
     fn deploy(self) -> Result<AwCatalogDeployment, PrepareError> {
-        if let Some((policy, input)) = &self.native {
-            let (present, expected) = AwCatalog::native_cells_present(&self.root, input);
-            match policy {
-                NativeAwCachePolicy::ReuseOnly if present != expected => {
-                    return Err(PrepareError::AwCacheIncomplete { present, expected });
-                }
-                NativeAwCachePolicy::ReuseOnly => {}
-                NativeAwCachePolicy::GenerateMissing => {
-                    if present != expected {
-                        AwCatalog::generate_native(&self.root, input, true)?;
-                    }
-                }
-                NativeAwCachePolicy::Regenerate => {
-                    AwCatalog::clear_native(&self.root)?;
-                    AwCatalog::generate_native(&self.root, input, false)?;
-                }
-            }
-        }
+        let lock = match &self.native {
+            Some((policy, input)) => Some(Arc::new(self.bring_native(*policy, input)?)),
+            None => None,
+        };
         Ok(AwCatalogDeployment {
             root: self.root,
             indexing: self.indexing,
             resident_bytes: self.resident_bytes,
+            _lock: lock,
         })
+    }
+
+    /// Bring the native cache to `policy` for `input` and return the shared
+    /// lock the run keeps while it reads it ([`Self::deploy`]).
+    fn bring_native(
+        &self,
+        policy: NativeAwCachePolicy,
+        input: &NativeAwRequestInput,
+    ) -> Result<NativeCacheLock, PrepareError> {
+        let root = &self.root;
+        let shared = NativeCacheLock::shared(root)?;
+        let state = AwCatalog::native_cache_state(root, input)?;
+        let fill = match policy {
+            NativeAwCachePolicy::ReuseOnly if state.reusable() => return Ok(shared),
+            NativeAwCachePolicy::ReuseOnly => {
+                return Err(PrepareError::AwCacheNotReusable { state });
+            }
+            NativeAwCachePolicy::GenerateMissing if state.reusable() => return Ok(shared),
+            NativeAwCachePolicy::GenerateMissing if state.fillable() => true,
+            NativeAwCachePolicy::GenerateMissing => {
+                tracing::warn!(
+                    "native AW cache {} does not belong to this request ({state}); \
+                     regenerating it",
+                    root.display()
+                );
+                false
+            }
+            NativeAwCachePolicy::Regenerate => false,
+        };
+        drop(shared);
+        let exclusive = NativeCacheLock::exclusive(root)?;
+        AwCatalog::generate_native(root, input, fill)?;
+        drop(exclusive);
+        let shared = NativeCacheLock::shared(root)?;
+        let state = AwCatalog::native_cache_state(root, input)?;
+        if !state.reusable() {
+            // Another run replaced the cache between our write and our read.
+            return Err(PrepareError::AwCacheNotReusable { state });
+        }
+        Ok(shared)
     }
 }
 

@@ -546,40 +546,7 @@ fn parse_apply_args(args: &[OsString], managed_output: bool) -> Result<CliAction
                 output = Some(PathBuf::from(value));
             }
             "--overwrite" => overwrite = true,
-            "--selectdata" => selection.selectdata = true,
-            "--no-selectdata" => selection.selectdata = false,
-            "--field" => {
-                index += 1;
-                selection.field = Some(take_string_value(index, args, "--field")?);
-            }
-            "--spw" => {
-                index += 1;
-                selection.spw = Some(take_string_value(index, args, "--spw")?);
-            }
-            "--antenna" => {
-                index += 1;
-                selection.antenna = Some(take_string_value(index, args, "--antenna")?);
-            }
-            "--scan" => {
-                index += 1;
-                selection.scan = Some(take_string_value(index, args, "--scan")?);
-            }
-            "--observation" => {
-                index += 1;
-                selection.observation = Some(take_string_value(index, args, "--observation")?);
-            }
-            "--array" => {
-                index += 1;
-                selection.array = Some(take_string_value(index, args, "--array")?);
-            }
-            "--timerange" => {
-                index += 1;
-                selection.timerange = Some(take_string_value(index, args, "--timerange")?);
-            }
-            "--msselect" => {
-                index += 1;
-                selection.msselect = Some(take_string_value(index, args, "--msselect")?);
-            }
+            _ if parse_selection_arg(raw, &mut index, args, &mut selection)? => {}
             _ if raw.starts_with('-') => return Err(format!("unsupported argument {raw:?}")),
             _ => {
                 if measurement_set.is_none() {
@@ -742,40 +709,7 @@ fn parse_apply_plan_args(args: &[OsString], managed_output: bool) -> Result<CliA
                 output = Some(PathBuf::from(value));
             }
             "--overwrite" => overwrite = true,
-            "--selectdata" => selection.selectdata = true,
-            "--no-selectdata" => selection.selectdata = false,
-            "--field" => {
-                index += 1;
-                selection.field = Some(take_string_value(index, args, "--field")?);
-            }
-            "--spw" => {
-                index += 1;
-                selection.spw = Some(take_string_value(index, args, "--spw")?);
-            }
-            "--antenna" => {
-                index += 1;
-                selection.antenna = Some(take_string_value(index, args, "--antenna")?);
-            }
-            "--scan" => {
-                index += 1;
-                selection.scan = Some(take_string_value(index, args, "--scan")?);
-            }
-            "--observation" => {
-                index += 1;
-                selection.observation = Some(take_string_value(index, args, "--observation")?);
-            }
-            "--array" => {
-                index += 1;
-                selection.array = Some(take_string_value(index, args, "--array")?);
-            }
-            "--timerange" => {
-                index += 1;
-                selection.timerange = Some(take_string_value(index, args, "--timerange")?);
-            }
-            "--msselect" => {
-                index += 1;
-                selection.msselect = Some(take_string_value(index, args, "--msselect")?);
-            }
+            _ if parse_selection_arg(raw, &mut index, args, &mut selection)? => {}
             _ if raw.starts_with('-') => return Err(format!("unsupported argument {raw:?}")),
             _ => calibration_table_paths.push(PathBuf::from(&args[index])),
         }
@@ -923,40 +857,7 @@ fn parse_export_corrected_data_args(
                 ));
             }
             "--overwrite" => overwrite = true,
-            "--selectdata" => selection.selectdata = true,
-            "--no-selectdata" => selection.selectdata = false,
-            "--field" => {
-                index += 1;
-                selection.field = Some(take_string_value(index, args, "--field")?);
-            }
-            "--spw" => {
-                index += 1;
-                selection.spw = Some(take_string_value(index, args, "--spw")?);
-            }
-            "--antenna" => {
-                index += 1;
-                selection.antenna = Some(take_string_value(index, args, "--antenna")?);
-            }
-            "--scan" => {
-                index += 1;
-                selection.scan = Some(take_string_value(index, args, "--scan")?);
-            }
-            "--observation" => {
-                index += 1;
-                selection.observation = Some(take_string_value(index, args, "--observation")?);
-            }
-            "--array" => {
-                index += 1;
-                selection.array = Some(take_string_value(index, args, "--array")?);
-            }
-            "--timerange" => {
-                index += 1;
-                selection.timerange = Some(take_string_value(index, args, "--timerange")?);
-            }
-            "--msselect" => {
-                index += 1;
-                selection.msselect = Some(take_string_value(index, args, "--msselect")?);
-            }
+            _ if parse_selection_arg(raw, &mut index, args, &mut selection)? => {}
             _ if raw.starts_with('-') => return Err(format!("unsupported argument {raw:?}")),
             _ => return Err(format!("unexpected positional argument {raw:?}")),
         }
@@ -981,10 +882,6 @@ fn parse_export_corrected_data_args(
     })))
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
 fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliAction, String> {
     let mut measurement_set = None;
     let mut output_table = None;
@@ -1126,40 +1023,7 @@ fn parse_solve_gain_args(args: &[OsString], managed_output: bool) -> Result<CliA
                 ));
             }
             "--overwrite" => overwrite = true,
-            "--selectdata" => selection.selectdata = true,
-            "--no-selectdata" => selection.selectdata = false,
-            "--field" => {
-                index += 1;
-                selection.field = Some(take_string_value(index, args, "--field")?);
-            }
-            "--spw" => {
-                index += 1;
-                selection.spw = Some(take_string_value(index, args, "--spw")?);
-            }
-            "--antenna" => {
-                index += 1;
-                selection.antenna = Some(take_string_value(index, args, "--antenna")?);
-            }
-            "--scan" => {
-                index += 1;
-                selection.scan = Some(take_string_value(index, args, "--scan")?);
-            }
-            "--observation" => {
-                index += 1;
-                selection.observation = Some(take_string_value(index, args, "--observation")?);
-            }
-            "--array" => {
-                index += 1;
-                selection.array = Some(take_string_value(index, args, "--array")?);
-            }
-            "--timerange" => {
-                index += 1;
-                selection.timerange = Some(take_string_value(index, args, "--timerange")?);
-            }
-            "--msselect" => {
-                index += 1;
-                selection.msselect = Some(take_string_value(index, args, "--msselect")?);
-            }
+            _ if parse_selection_arg(raw, &mut index, args, &mut selection)? => {}
             _ if raw.starts_with('-') => return Err(format!("unsupported argument {raw:?}")),
             _ => return Err(format!("unexpected positional argument {raw:?}")),
         }
@@ -1320,40 +1184,7 @@ fn parse_solve_bandpass_args(args: &[OsString], managed_output: bool) -> Result<
                 ));
             }
             "--overwrite" => overwrite = true,
-            "--selectdata" => selection.selectdata = true,
-            "--no-selectdata" => selection.selectdata = false,
-            "--field" => {
-                index += 1;
-                selection.field = Some(take_string_value(index, args, "--field")?);
-            }
-            "--spw" => {
-                index += 1;
-                selection.spw = Some(take_string_value(index, args, "--spw")?);
-            }
-            "--antenna" => {
-                index += 1;
-                selection.antenna = Some(take_string_value(index, args, "--antenna")?);
-            }
-            "--scan" => {
-                index += 1;
-                selection.scan = Some(take_string_value(index, args, "--scan")?);
-            }
-            "--observation" => {
-                index += 1;
-                selection.observation = Some(take_string_value(index, args, "--observation")?);
-            }
-            "--array" => {
-                index += 1;
-                selection.array = Some(take_string_value(index, args, "--array")?);
-            }
-            "--timerange" => {
-                index += 1;
-                selection.timerange = Some(take_string_value(index, args, "--timerange")?);
-            }
-            "--msselect" => {
-                index += 1;
-                selection.msselect = Some(take_string_value(index, args, "--msselect")?);
-            }
+            _ if parse_selection_arg(raw, &mut index, args, &mut selection)? => {}
             _ if raw.starts_with('-') => return Err(format!("unsupported argument {raw:?}")),
             _ => return Err(format!("unexpected positional argument {raw:?}")),
         }
@@ -1743,6 +1574,37 @@ fn parse_refant_selector(value: &str) -> RefAntSelector {
         Ok(id) => RefAntSelector::AntennaId(id),
         Err(_) => RefAntSelector::AntennaName(value.to_string()),
     }
+}
+
+/// Apply `raw` if it is one of the MeasurementSet data-selection flags the
+/// MS-reading commands share (`--selectdata`, `--no-selectdata`, `--field`,
+/// `--spw`, `--antenna`, `--scan`, `--observation`, `--array`, `--timerange`,
+/// `--msselect`), advancing `index` past a flag's value. Returns `Ok(false)`
+/// when `raw` is not a selection flag.
+fn parse_selection_arg(
+    raw: &str,
+    index: &mut usize,
+    args: &[OsString],
+    selection: &mut SelectionOptions,
+) -> Result<bool, String> {
+    let value = match raw {
+        "--selectdata" | "--no-selectdata" => {
+            selection.selectdata = raw == "--selectdata";
+            return Ok(true);
+        }
+        "--field" => &mut selection.field,
+        "--spw" => &mut selection.spw,
+        "--antenna" => &mut selection.antenna,
+        "--scan" => &mut selection.scan,
+        "--observation" => &mut selection.observation,
+        "--array" => &mut selection.array,
+        "--timerange" => &mut selection.timerange,
+        "--msselect" => &mut selection.msselect,
+        _ => return Ok(false),
+    };
+    *index += 1;
+    *value = Some(take_string_value(*index, args, raw)?);
+    Ok(true)
 }
 
 fn take_string_value(index: usize, args: &[OsString], flag: &str) -> Result<String, String> {

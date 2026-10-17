@@ -33,6 +33,7 @@ casa-types = { path = "../casa-types" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 ndarray.workspace = true
 tempfile = "3"
+tracing-subscriber.workspace = true
 
 [[bin]]
 name = "casars-imager"
