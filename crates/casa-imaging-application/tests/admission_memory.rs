@@ -822,10 +822,9 @@ const FIXED_ALLOWANCE: u64 = 64 << 20;
 const OVER_CHARGE: f64 = 1.2;
 
 /// Why `measured` broke the over-charge bound, if it did: its largest
-/// reservation, or that of one of its passes, minor-cycle preparations or
-/// minor cycles, stood more than [`OVER_CHARGE`] times above the most the
-/// run held, beyond [`FIXED_ALLOWANCE`]. The products phase is not bound:
-/// its Taylor charge stands about 1.4 times above what it holds (#738).
+/// reservation, or that of one of its passes, minor-cycle preparations,
+/// minor cycles or its products, stood more than [`OVER_CHARGE`] times
+/// above the most the run held, beyond [`FIXED_ALLOWANCE`].
 fn over_charge(label: &str, measured: &Measured) -> Vec<String> {
     let bound = |peak: i64| (OVER_CHARGE * peak.max(0) as f64) as u64 + FIXED_ALLOWANCE;
     let mut breaches = Vec::new();
@@ -839,9 +838,14 @@ fn over_charge(label: &str, measured: &Measured) -> Vec<String> {
         ));
     }
     for phase in &measured.phases {
-        let bounded = ["major cycle", "minor-cycle preparation", "minor cycle"]
-            .iter()
-            .any(|prefix| phase.name.starts_with(prefix));
+        let bounded = [
+            "major cycle",
+            "minor-cycle preparation",
+            "minor cycle",
+            "products",
+        ]
+        .iter()
+        .any(|prefix| phase.name.starts_with(prefix));
         if bounded && phase.reserved > bound(phase.peak) {
             breaches.push(format!(
                 "{label} {}: reserved {} bytes for a peak of {}",
