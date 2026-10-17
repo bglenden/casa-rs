@@ -841,7 +841,7 @@ fn payload_to_value(
             }
             PrimitiveType::UInt8 => ArrayValue::from_u8_vec(payload.to_vec()),
             PrimitiveType::UInt16 => {
-                if payload.len() % 2 != 0 {
+                if !payload.len().is_multiple_of(2) {
                     return Err("invalid uint16 payload length".to_string());
                 }
                 let values = (0..payload.len() / 2)
@@ -850,7 +850,7 @@ fn payload_to_value(
                 ArrayValue::from_u16_vec(values)
             }
             PrimitiveType::UInt32 => {
-                if payload.len() % 4 != 0 {
+                if !payload.len().is_multiple_of(4) {
                     return Err("invalid uint32 payload length".to_string());
                 }
                 let values = (0..payload.len() / 4)
@@ -866,7 +866,7 @@ fn payload_to_value(
                 ArrayValue::from_u32_vec(values)
             }
             PrimitiveType::Int16 => {
-                if payload.len() % 2 != 0 {
+                if !payload.len().is_multiple_of(2) {
                     return Err("invalid int16 payload length".to_string());
                 }
                 let values = (0..payload.len() / 2)
@@ -875,7 +875,7 @@ fn payload_to_value(
                 ArrayValue::from_i16_vec(values)
             }
             PrimitiveType::Int32 => {
-                if payload.len() % 4 != 0 {
+                if !payload.len().is_multiple_of(4) {
                     return Err("invalid int32 payload length".to_string());
                 }
                 let values = (0..payload.len() / 4)
@@ -891,7 +891,7 @@ fn payload_to_value(
                 ArrayValue::from_i32_vec(values)
             }
             PrimitiveType::Int64 => {
-                if payload.len() % 8 != 0 {
+                if !payload.len().is_multiple_of(8) {
                     return Err("invalid int64 payload length".to_string());
                 }
                 let values = (0..payload.len() / 8)
@@ -911,7 +911,7 @@ fn payload_to_value(
                 ArrayValue::from_i64_vec(values)
             }
             PrimitiveType::Float32 => {
-                if payload.len() % 4 != 0 {
+                if !payload.len().is_multiple_of(4) {
                     return Err("invalid float32 payload length".to_string());
                 }
                 let values = (0..payload.len() / 4)
@@ -927,7 +927,7 @@ fn payload_to_value(
                 ArrayValue::from_f32_vec(values)
             }
             PrimitiveType::Float64 => {
-                if payload.len() % 8 != 0 {
+                if !payload.len().is_multiple_of(8) {
                     return Err("invalid float64 payload length".to_string());
                 }
                 let values = (0..payload.len() / 8)
@@ -947,7 +947,7 @@ fn payload_to_value(
                 ArrayValue::from_f64_vec(values)
             }
             PrimitiveType::Complex32 => {
-                if payload.len() % 8 != 0 {
+                if !payload.len().is_multiple_of(8) {
                     return Err("invalid complex32 payload length".to_string());
                 }
                 let values = (0..payload.len() / 8)
@@ -970,7 +970,7 @@ fn payload_to_value(
                 ArrayValue::from_complex32_vec(values)
             }
             PrimitiveType::Complex64 => {
-                if payload.len() % 16 != 0 {
+                if !payload.len().is_multiple_of(16) {
                     return Err("invalid complex64 payload length".to_string());
                 }
                 let values = (0..payload.len() / 16)
