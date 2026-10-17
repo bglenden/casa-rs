@@ -1,0 +1,2914 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>A taxonomy of interferometric imaging modes for casa-rs performance work - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#a-taxonomy-of-interferometric-imaging-modes-for-casa-rs-performance-work" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              A taxonomy of interferometric imaging modes for casa-rs performance work
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#0-vocabulary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. Vocabulary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-axes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Axes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Axes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#11-spectral-treatment-s" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.1 Spectral treatment (S)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-visibility-to-grid-operator-k" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.2 Visibility-to-grid operator (K)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#13-sky-geometry-g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.3 Sky geometry (G)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#14-polarisation-products-p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.4 Polarisation products (P)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#15-weighting-w" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.5 Weighting (W)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#16-deconvolution-algorithm-and-cycle-control-d" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.6 Deconvolution algorithm and cycle control (D)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#17-normalisation-and-primary-beam-handling-n" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.7 Normalisation and primary-beam handling (N)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#18-masking-m" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.8 Masking (M)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#19-visibility-side-effects-x" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.9 Visibility side effects (X)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#110-size-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.10 Size parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#111-where-the-axes-are-not-orthogonal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1.11 Where the axes are not orthogonal
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-cost-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Cost model
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Cost model">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-cost-terms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 Cost terms
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-what-each-axis-value-does-to-the-terms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 What each axis value does to the terms
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-cost-regimes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 Cost regimes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#24-scaling-the-regimes-to-the-12150-pixel-vlass-target" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.4 Scaling the regimes to the 12,150-pixel VLASS target
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-mode-signature" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Mode signature
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-placement-of-the-current-benchmark-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Placement of the current benchmark rows
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Placement of the current benchmark rows">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-large-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 Large rows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-small-rows-5122-63-m-samples-unless-stated-r6-for-all" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Small rows (512², 6.3 M samples unless stated; R6 for all)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-frozen-casa-references-without-a-current-casa-rs-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 Frozen CASA references without a current casa-rs time
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-coverage-matrix" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 Coverage matrix
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-a-minimal-representative-benchmark-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. A minimal representative benchmark set
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-open-questions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Open questions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-source-ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appendix: source ids
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="a-taxonomy-of-interferometric-imaging-modes-for-casa-rs-performance-work">A taxonomy of interferometric imaging modes for casa-rs performance work<a class="headerlink" href="#a-taxonomy-of-interferometric-imaging-modes-for-casa-rs-performance-work" title="Permanent link">&para;</a></h1>
+<p>Truth class: non-normative research
+Date: 2026-10-16
+Work issue: #449 (the 10x programme); the slower modes it identifies are
+tracked in their own issues.</p>
+<p>Written 2026-10-16 from the Radio Astronomy Oracle corpus, the casa-rs
+imaging foundation (plan of 2026-10-07 as landed by IF-11), the imager
+parameter catalog, and CASA's <code>tclean</code> definition. No code was changed and
+no runs were made for it. Speedups quoted in sections 4 and 5 are the
+measurements on record on that date (the #648 evidence table and the run
+receipts); later measurements are recorded on #449, not here.</p>
+<p>Purpose: replace labels like "standard MFS Clark" with a small set of
+independent axes, so that (a) measured speedups against CASA sit on a grid,
+(b) each mode's cost drivers are explicit, and (c) a short benchmark set can be
+chosen for the 10x programme whose target is VLASS-style AW-projection MT-MFS
+at 12,150 pixels square.</p>
+<p>Citation conventions. Corpus items are cited as <code>File.pdf, slide N</code> or
+<code>File.pdf, p. N</code> (PDF page, as the corpus registry numbers them). casa-rs is
+cited by file and section or line (<code>plan §5.3</code> is
+<code>docs/imaging-architecture/imaging-foundation-plan-20261007.md</code>;
+<code>ARCHITECTURE.md L567</code> is a line in that file; <code>catalog:parameter.x</code> is an id
+in <code>crates/casa-provider-contracts/resources/parameter-catalog.json</code>). CASA is
+cited as <code>tclean.xml L123</code> (<code>casatasks/xml/tclean.xml</code>) or a C++ file and
+line. Where a number is my own derivation from a cited relation, it says so.</p>
+<h2 id="0-vocabulary">0. Vocabulary<a class="headerlink" href="#0-vocabulary" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Sample</strong>: one selected row x channel x correlation before flagging
+  (<code>N_s</code>). casa-rs grids one <code>Placement</code> per sample after flagging and
+  routing (plan §5.3).</li>
+<li><strong>Pass</strong> (major cycle): one traversal of the samples that grids <code>V</code> or
+  <code>V − A·m</code> into every image domain, followed by the FFT and normalisation
+  (ARCHITECTURE.md L567-586; Synthesis-Imaging-II-1998.pdf, p. 179).</li>
+<li><strong>Minor cycle</strong>: image-plane component search and PSF subtraction between
+  passes (Marvil_Imaging2026.pdf, slide 30).</li>
+<li><strong>Kernel support</strong> <code>N_sup</code>: the width in uv cells of the convolution
+  function one sample touches; the cost per sample is <code>N_sup²</code>
+  (Jagannathan-Widefield.pdf, slide 33, 35).</li>
+<li><strong>Convolution function (CF) cell</strong>: one stored kernel for one (w-plane,
+  frequency, parallactic angle, antenna pair, Mueller row) key (plan §5.3
+  <code>CfKey</code>, §5.6).</li>
+<li><strong>Plane</strong>: one output spectral channel's grid; <strong>term</strong>: one Taylor
+  coefficient grid (plan §5.1).</li>
+<li><strong>Image domain</strong>: a main image, an outlier field or a facet, each with its
+  own grid (ARCHITECTURE.md L573-575, L646-655).</li>
+<li><strong>PB</strong>: primary beam; <strong>flat noise</strong> divides the image by one PB, <strong>flat
+  sky</strong> by PB² (Jagannathan-Widefield.pdf, slide 29; tclean.xml L1275).</li>
+<li><code>N_pix</code> image pixels per plane, <code>N_pl</code> planes, <code>N_t</code> Taylor terms, <code>N_maj</code>
+  passes after the initial one, <code>N_iter</code> minor-cycle components.</li>
+</ul>
+<h2 id="1-axes">1. Axes<a class="headerlink" href="#1-axes" title="Permanent link">&para;</a></h2>
+<p>Nine axes describe a run. Sizes (samples, pixels, planes, terms, iterations)
+are not axes; they are the numbers each axis value multiplies (section 2).</p>
+<h3 id="11-spectral-treatment-s">1.1 Spectral treatment (S)<a class="headerlink" href="#11-spectral-treatment-s" title="Permanent link">&para;</a></h3>
+<p>What one grid plane means along frequency.</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Physics</th>
+<th>tclean</th>
+<th>casa-rs</th>
+<th>Cost terms it changes</th>
+<th>Sources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mfs</code></td>
+<td>All channels on one grid; flat-spectrum sky assumed. Residual spectral structure leaves artefacts whose level scales with dynamic range</td>
+<td><code>specmode='mfs'</code>, <code>deconvolver</code> ≠ <code>mtmfs</code> or <code>nterms=1</code></td>
+<td><code>specmode=mfs</code>, <code>nterms=1</code>; <code>Basis::Constant</code></td>
+<td>Baseline: 1 plane, 1 term</td>
+<td>URV_Wideband_Imaging_SIW2026.pdf, slide 10, 13; Marvil_Wideband2024.pdf, slide 12</td>
+</tr>
+<tr>
+<td><code>mtN</code></td>
+<td>MT-MFS: each component has a Taylor polynomial in <code>(ν−ν0)/ν0</code>; the pass grids each sample into <code>N_t</code> term grids weighted by <code>s^t</code> and forms <code>2N_t−1</code> PSFs; the minor cycle solves an <code>N_t×N_t</code> system per component; alpha and curvature products follow</td>
+<td><code>specmode='mfs'</code>, <code>deconvolver='mtmfs'</code>, <code>nterms=N</code>, <code>reffreq</code></td>
+<td><code>deconvolver=mtmfs</code>, <code>nterms</code>; <code>Basis::Taylor</code>; Stokes I and one image domain only</td>
+<td>Gridding x<code>N_t</code>, PSF grids <code>2N_t−1</code> on the first pass, FFTs x terms, minor cycle x<code>N_t²</code>, products (alpha, error)</td>
+<td>Marvil_Wideband2024.pdf, slide 20-21; URV_Wideband_Imaging_SIW2026.pdf, slide 17-18; plan §5.1 table, §5.3 kernel contract; <code>availability.rs</code> L23-27</td>
+</tr>
+<tr>
+<td><code>cubeN</code></td>
+<td>One plane per output channel; each plane is an independent narrow-band image with its own PSF and beam; samples route to planes by <code>chanMap</code> with nearest or linear interpolation</td>
+<td><code>specmode='cube'</code>/<code>'cubedata'</code>, <code>nchan</code>, <code>start</code>, <code>width</code>, <code>interpolation</code></td>
+<td><code>specmode=cube|cubedata</code>, <code>interpolation</code>; <code>Basis::ChannelLocal</code>; <code>Partition::Planes</code>; waves when planes do not fit</td>
+<td>FFTs x<code>N_pl</code>, grid memory x<code>N_pl</code>, minor cycle x<code>N_pl</code> (independent planes), per-plane beams; density grid x<code>N_pl</code> with <code>perchanweightdensity</code></td>
+<td>Synthesis-Imaging-II-1998.pdf, p. 243; URV_Wideband_Imaging_SIW2026.pdf, slide 7-8; plan §5.4; ARCHITECTURE.md L588-603</td>
+</tr>
+<tr>
+<td><code>cubeCS</code></td>
+<td>Cube after a visibility-domain polynomial fit to line-free channels, subtracted from every channel (UVLIN). Fast; valid only near the phase centre; most channels then clean quickly</td>
+<td><code>uvcontsub</code> task; in casa-rs the imager's <code>fitspw</code>, <code>fitorder</code></td>
+<td><code>fitspw</code>, <code>fitorder</code>, writes <code>CORRECTED_DATA</code> (plan §5.3 "visibility-domain continuum fit")</td>
+<td>Adds one per-row, per-correlation polynomial fit over channels and a column write</td>
+<td>Pihlstrom-SpectralLines2024.pdf, slide 44, 46; Svoboda_Spectral_Lines.pdf, slide 36, 38; Synthesis-Imaging-II-1998.pdf, p. 269</td>
+</tr>
+<tr>
+<td><code>cubeE</code></td>
+<td>Ephemeris (moving) source: phase centre follows the body; background sources smear</td>
+<td><code>specmode='cubesource'</code>, <code>phasecenter=</code> ephemeris or <code>TRACKFIELD</code></td>
+<td><code>specmode=cubesource</code></td>
+<td>Per-row phase-centre shift per time; same per-sample order as a fixed shift</td>
+<td>tclean.xml L304; Synthesis-Imaging-II-1998.pdf, p. 657; catalog:parameter.specmode</td>
+</tr>
+<tr>
+<td><code>mvc</code></td>
+<td>MT-MFS via cube: coarse cube major cycles (5-10 intervals), per-channel PB correction, then Taylor collapse; the recommended path for wideband mosaics</td>
+<td><code>specmode='mvc'</code></td>
+<td>Not in the catalog</td>
+<td>Cube-like passes, MT-MFS minor cycle</td>
+<td>Marvil_Wideband2024.pdf, slide 22-23; URV_Wideband_Imaging_SIW2026.pdf, slide 23, 25; tclean.xml L456; ARCHITECTURE.md L657-658</td>
+</tr>
+</tbody>
+</table>
+<p><code>mtN</code> ties this axis to the deconvolver (section 1.11).</p>
+<h3 id="12-visibility-to-grid-operator-k">1.2 Visibility-to-grid operator (K)<a class="headerlink" href="#12-visibility-to-grid-operator-k" title="Permanent link">&para;</a></h3>
+<p>Which convolution function places a sample. The per-sample cost is
+<code>N_sup²</code> taps (Jagannathan-Widefield.pdf, slide 33), and "gridding
+(degridding) runtime will rise in proportion to the support size" (tclean.xml
+L744-745).</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Physics</th>
+<th>tclean</th>
+<th>casa-rs</th>
+<th><code>N_sup</code> and CF count</th>
+<th>Sources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>S</code> standard</td>
+<td>Prolate spheroidal anti-aliasing kernel; real, separable; 2-D FFT of a flat sky</td>
+<td><code>gridder='standard'</code></td>
+<td><code>Spheroidal</code>: half-support 3 (7 taps), oversampling 100; one kernel</td>
+<td>7x7 = 49 taps; 1 CF</td>
+<td>tclean.xml L747; plan §5.1 table, §5.3 "seven-tap separable path"; Synthesis-Imaging-II-1998.pdf, p. 167 (<code>O(Mm²)</code>, spheroidal optimal)</td>
+</tr>
+<tr>
+<td><code>Wn</code> W-projection</td>
+<td>Fresnel kernel <code>FT[e^{2πi w(n−1)}]</code> folded into the gridding kernel, one per w-plane; one grid, one FFT; support grows with <code>|w|</code> and with the field of view</td>
+<td><code>gridder='wproject'</code>, <code>wprojplanes=n</code> (<code>-1</code> automatic)</td>
+<td><code>WPlanes</code>; <code>wprojplanes</code></td>
+<td>Support "5x5 to few 100 x few 100"; CASA's auto count is <code>≈ 1.05·w_max · sin(cell·N/2)</code> planes</td>
+<td>Jagannathan-Widefield.pdf, slide 16-17; tclean.xml L757, L984; <code>WPConvFunc.cc</code> L174-176; Interferometry and Synthesis in Radio Astronomy.pdf, p. 623-624</td>
+</tr>
+<tr>
+<td><code>Fn</code> facets</td>
+<td><code>n×n</code> tangent planes, each gridded about its own centre with the standard kernel so <code>w</code> can be ignored inside a facet; one PSF from a reference facet; <code>N_poly ≈ 2Bλ/(f D²)</code> facets for full-beam imaging</td>
+<td><code>gridder='widefield'</code>/<code>facets=n</code></td>
+<td><code>facets=n</code>; standard kernel and constant basis only; each facet is a pass domain</td>
+<td>49 taps x <code>n²</code> domains; <code>n²</code> FFTs</td>
+<td>Perley-Geometry-SIW2026.pdf, slide 13; Synthesis-Imaging-II-1998.pdf, p. 419-420; tclean.xml L925; ARCHITECTURE.md L646-655; plan §5.7</td>
+</tr>
+<tr>
+<td><code>M</code> mosaic</td>
+<td>Kernel = <code>FT[PB]</code> per antenna-class pair and frequency, re-phased per pointing by <code>e^{2πi(uΔl+vΔm)}</code>; a weight image from <code>FT[PB²]</code>; azimuthally symmetric beams, no squint or rotation</td>
+<td><code>gridder='mosaic'</code>, <code>mosweight</code></td>
+<td><code>MosaicPb</code>: per (frequency, antenna-class pair), Lanczos oversampling 10, cached per pointing pair</td>
+<td>Support "between 7 and 50"; CFs = pointings x frequency buckets x antenna-class pairs</td>
+<td>tclean.xml L791 and gridder text; Jagannathan-Widefield.pdf, slide 45; plan §5.1 table, §5.3 L470-474</td>
+</tr>
+<tr>
+<td><code>AWn[pcb]</code> AW-projection</td>
+<td>Kernel = <code>FT[A_i ⊗ A_j*]</code> from ray-traced apertures (feed legs, squint), times the W kernel per plane; <code>p</code> = pointing-table offsets as phase gradients, <code>c</code> = conjugate-frequency beams <code>√(2ν0²−ν²)</code>, <code>b</code> = wideband (frequency-scaled) A-terms. Image divided by the PB afterwards</td>
+<td><code>gridder='awproject'</code>, <code>wprojplanes</code>, <code>usepointing</code>, <code>pointingoffsetsigdev</code>, <code>conjbeams</code>, <code>wbawp</code>, <code>aterm</code>, <code>psterm</code>, <code>cfcache</code>, <code>computepastep</code>, <code>rotatepastep</code></td>
+<td><code>AwCatalog</code> (CASA import or native EVLA), <code>cf_resident_mb</code>, <code>usepointing</code>, <code>pointingoffsetsigdev</code>, <code>aw_cf_source</code>; CPU only; cubes refused (#719)</td>
+<td>Support "7 to 50", "significantly larger" with W; CFs = w-planes x frequency cells x PA cells x antenna-type pairs x Mueller rows</td>
+<td>tclean.xml L814-817, L1064, L1073, L1099, L1121; Jagannathan-Widefield.pdf, slide 23, 26, 29; plan §5.1 table, §5.6; ARCHITECTURE.md L644-645, L691-692</td>
+</tr>
+</tbody>
+</table>
+<p>Not in casa-rs and not in CASA's <code>tclean</code>: w-stacking and w-snapshots
+(Jagannathan-Widefield.pdf, slide 16, 20-21). They are listed for
+completeness; w-stacking's memory is one image per w-layer (slide 21).</p>
+<p>When each correction is needed: the w-term matters for baselines beyond
+<code>B_thresh = D²/(πλ)</code> (about 950 m for the VLA at L band; nearly every MeerKAT
+baseline) (Jagannathan-Widefield.pdf, slide 13; Perley-Geometry-SIW2026.pdf,
+slide 12 gives the equivalent Clark condition <code>λB/D² &lt; 1</code>). The A-term matters
+when sources sit where the beam varies with frequency (beam scales as λ,
+spectral index about −1.4 at the half-power point), with time (parallactic
+angle rotates the feed-leg shadows) or polarisation (squint)
+(Jagannathan-Widefield.pdf, slide 23-26; URV_Wideband_Imaging_SIW2026.pdf,
+slide 22; Synthesis-Imaging-II-1998.pdf, p. 132).</p>
+<h3 id="13-sky-geometry-g">1.3 Sky geometry (G)<a class="headerlink" href="#13-sky-geometry-g" title="Permanent link">&para;</a></h3>
+<p>How many image domains and pointings a run holds.</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Physics</th>
+<th>tclean</th>
+<th>casa-rs</th>
+<th>Cost</th>
+<th>Sources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>1f</code></td>
+<td>One pointing, one image</td>
+<td><code>field=</code></td>
+<td>selection</td>
+<td>Baseline</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>Kf</code> joint mosaic</td>
+<td><code>K</code> pointings gridded onto one uv grid with a phase ramp per pointing; coupled through overlapping PBs; one PSF across the mosaic; noise <code>σ²/Z(l,m)</code> with <code>Z = Σ PB²</code></td>
+<td><code>field=</code> many, <code>gridder='mosaic'</code> or <code>'awproject'</code>, <code>mosweight</code></td>
+<td>Many fields with <code>M</code> or <code>AW</code>; per-row pointing offset in <code>Placement.gradient</code>/phase</td>
+<td>Samples grow with <code>K</code>; CFs re-phased per pointing (<code>M</code>) or per pointing group (<code>AW</code> with <code>p</code>); density grid per field when <code>mosweight</code></td>
+<td>Jagannathan-Widefield.pdf, slide 38, 41, 45, 53; Plunket-Mosaicking2024.pdf, slide 29, 33-34; tclean.xml L1023</td>
+</tr>
+<tr>
+<td>OTF raster</td>
+<td>On-the-fly: continuous scanning, many phase centres, high data rate; VLASS</td>
+<td><code>usepointing=True</code> with <code>awproject</code></td>
+<td><code>usepointing</code>, <code>pointingoffsetsigdev</code></td>
+<td>As <code>Kf</code> plus per-row pointing phase gradients and antenna grouping</td>
+<td>Plunket-Mosaicking2024.pdf, slide 27; Jagannathan-Widefield.pdf, slide 43; tclean.xml L1121</td>
+</tr>
+<tr>
+<td><code>+o</code> outliers</td>
+<td>Extra small image domains at bright sources outside the main field; all domains share each pass (Cotton–Schwab); their models are summed before the residual is formed</td>
+<td><code>outlierfile</code></td>
+<td><code>outlierfile</code>; MFS single-term only; residual at native channels</td>
+<td>Each sample placed on every domain: gridding x domains; FFTs x domains</td>
+<td>Synthesis-Imaging-II-1998.pdf, p. 179; Jagannathan-Widefield.pdf, slide 18; tclean.xml L1625; ARCHITECTURE.md L573-582; catalog:parameter.outlierfile</td>
+</tr>
+<tr>
+<td><code>shift</code></td>
+<td>Phase-centre shift: a per-row phasor</td>
+<td><code>phasecenter</code></td>
+<td><code>phasecenter</code>; <code>Placement.phase</code></td>
+<td>One complex multiply per sample</td>
+<td>plan §5.3 <code>SampleBlock</code></td>
+</tr>
+<tr>
+<td>Linear mosaic</td>
+<td>Deconvolve pointings independently, divide by PB, co-add. Shallower; not a joint operator</td>
+<td>separate <code>tclean</code> runs plus <code>linearmosaic</code></td>
+<td>not an imager mode</td>
+<td><code>K</code> independent runs</td>
+<td>Plunket-Mosaicking2024.pdf, slide 29, 32; Jagannathan-Widefield.pdf, slide 44</td>
+</tr>
+</tbody>
+</table>
+<h3 id="14-polarisation-products-p">1.4 Polarisation products (P)<a class="headerlink" href="#14-polarisation-products-p" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Physics</th>
+<th>tclean</th>
+<th>casa-rs</th>
+<th>Cost</th>
+<th>Sources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>I</code></td>
+<td>Stokes I from the parallel hands (<code>RR+LL</code> or <code>XX+YY</code>)</td>
+<td><code>stokes='I'</code></td>
+<td><code>polarization=I</code></td>
+<td>2 correlations per sample feed 1 grid polarisation</td>
+<td>Plant-Correlators.pptx, slide 64</td>
+</tr>
+<tr>
+<td><code>IQUV</code> / <code>IV</code> / <code>QU</code></td>
+<td>All four correlations needed; Q, U, V may be negative so positivity cannot constrain CLEAN; Stokes conversion is CASA's <code>½·Sᴴ</code></td>
+<td><code>stokes='IQUV'</code> etc.</td>
+<td>4 grid polarisations; Taylor basis is Stokes I only; Metal auto is Stokes I only</td>
+<td>Grids x4, FFTs x4, minor cycle x4 (Clark picks <code>max(I²+Q²+U²+V²)</code>), samples x2 (4 correlations)</td>
+<td>Synthesis-Imaging-II-1998.pdf, p. 148; Marvil_Imaging2026.pdf, slide 36; tclean.xml L324, L1316-1319; plan §5.3 adjoint law; <code>availability.rs</code> L23-24, L143-146</td>
+</tr>
+<tr>
+<td><code>RR</code>, <code>LL</code>, <code>XX</code>, <code>YY</code>, <code>RRLL</code></td>
+<td>Raw correlation planes</td>
+<td><code>stokes='RR'</code> ...</td>
+<td><code>polarization=RR|LL|XX|YY</code></td>
+<td>As the count of planes</td>
+<td>tclean.xml L324</td>
+</tr>
+<tr>
+<td>Full-Mueller</td>
+<td>A-projection with the 4x4 Mueller beam corrects direction-dependent leakage and squint; otherwise an unpolarised sky produces apparent polarisation off axis</td>
+<td><code>awproject</code> with <code>stokes='IQUV'</code></td>
+<td><code>MuellerRouting</code> exists; polarised Taylor basis refused</td>
+<td>CF Mueller planes x (routed pairs); not I-only</td>
+<td>Jagannathan-Widefield.pdf, slide 23, 28-29, 31; Perley-Polarization-SIW2026.pdf, slide 46; plan §5.3</td>
+</tr>
+</tbody>
+</table>
+<h3 id="15-weighting-w">1.5 Weighting (W)<a class="headerlink" href="#15-weighting-w" title="Permanent link">&para;</a></h3>
+<p>The PSF is the inverse FFT of the gridded weights; weighting trades
+sensitivity for sidelobes and resolution (Marvil_Imaging2026.pdf, slide 22-23;
+Synthesis-Imaging-II-1998.pdf, p. 158).</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Physics</th>
+<th>tclean</th>
+<th>casa-rs</th>
+<th>Cost</th>
+<th>Sources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nat</code></td>
+<td>Data weights as they are; best point-source sensitivity, broadest beam</td>
+<td><code>weighting='natural'</code></td>
+<td><code>WeightingGeneration::Natural</code></td>
+<td>No density pass</td>
+<td>Marvil_Imaging2026.pdf, slide 22</td>
+</tr>
+<tr>
+<td><code>uni</code></td>
+<td>Weight ÷ local sample density per uv cell; sharper beam, more noise</td>
+<td><code>weighting='uniform'</code></td>
+<td><code>Density { robust: None }</code></td>
+<td>One extra traversal reading flags and weights only, plus a density grid of <code>N_pix</code> cells</td>
+<td>Synthesis-Imaging-II-1998.pdf, p. 158; ARCHITECTURE.md L569-571, L605-608</td>
+</tr>
+<tr>
+<td><code>brR</code></td>
+<td>Briggs robust <code>R</code> in [−2, 2]: <code>−2</code> uniform, <code>+2</code> natural; the "knee" compromise</td>
+<td><code>weighting='briggs'</code>, <code>robust=R</code></td>
+<td><code>robust</code></td>
+<td>As <code>uni</code></td>
+<td>Synthesis-Imaging-II-1998.pdf, p. 158; ALMA-Manual-Imaging-Tutorial_SISS-2026.pdf, slide 34; tclean.xml <code>robust</code></td>
+</tr>
+<tr>
+<td><code>brbwR</code></td>
+<td>Briggs with a bandwidth taper for cubes (CASA <code>briggsbwtaper</code>)</td>
+<td><code>weighting='briggsbwtaper'</code></td>
+<td><code>briggsbwtaper</code></td>
+<td>As <code>uni</code></td>
+<td>Plunket-Mosaicking2024.pdf, slide 34; plan §5.3 <code>bandwidth</code></td>
+</tr>
+<tr>
+<td><code>+pcwd</code></td>
+<td>Per-channel weight density for cubes (CASA default for <code>specmode='cube'</code>)</td>
+<td><code>perchanweightdensity</code></td>
+<td><code>perchanweightdensity</code>; CASA's rotated/unrotated lookup bug recorded</td>
+<td>Density grid x<code>N_pl</code></td>
+<td>tclean.xml <code>perchanweightdensity</code>; catalog:parameter.perchanweightdensity; plan §5.3 L640-643</td>
+</tr>
+<tr>
+<td><code>+mosw</code></td>
+<td>Density per field for mosaics</td>
+<td><code>mosweight=True</code> (default)</td>
+<td>not a catalog entry</td>
+<td>Density grid x fields</td>
+<td>tclean.xml L1023; Plunket-Mosaicking2024.pdf, slide 34</td>
+</tr>
+<tr>
+<td><code>+tap</code></td>
+<td>Gaussian uv taper; equivalent to smoothing the PSF</td>
+<td><code>uvtaper</code></td>
+<td><code>Taper</code></td>
+<td>Per-sample multiply</td>
+<td>Synthesis-Imaging-II-1998.pdf, p. 208-209; Marvil_Imaging2026.pdf, slide 22</td>
+</tr>
+</tbody>
+</table>
+<h3 id="16-deconvolution-algorithm-and-cycle-control-d">1.6 Deconvolution algorithm and cycle control (D)<a class="headerlink" href="#16-deconvolution-algorithm-and-cycle-control-d" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Physics</th>
+<th>tclean</th>
+<th>casa-rs</th>
+<th>Cost per component / per cycle</th>
+<th>Sources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dirty</code></td>
+<td>No minor cycle: PSF, dirty image, weight image only</td>
+<td><code>niter=0</code></td>
+<td><code>dirty_only</code> or <code>niter=0</code></td>
+<td>One pass</td>
+<td>tclean.xml <code>niter</code></td>
+</tr>
+<tr>
+<td><code>hog</code> Högbom</td>
+<td>Find the peak, subtract a shifted full-size PSF, repeat; one major cycle in the original algorithm; CASA runs it inside Cotton–Schwab passes</td>
+<td><code>deconvolver='hogbom'</code></td>
+<td><code>Hogbom</code> with CASA's inclusive loop</td>
+<td>Per component: <code>O(N_pix)</code> (PSF of image size)</td>
+<td>Marvil_Imaging2026.pdf, slide 28, 30; tclean.xml L1309-1312</td>
+</tr>
+<tr>
+<td><code>clk</code> Clark</td>
+<td>Minor cycle on a list of pixels above the highest exterior sidelobe using a PSF patch; a Clark major cycle refreshes the residual by FFT</td>
+<td><code>deconvolver='clark'</code></td>
+<td><code>Clark</code>: active list, exact refresh by FFT or direct sparse sums, whichever is cheaper</td>
+<td>Per component <code>O(patch²)</code>; per Clark cycle one FFT pair of <code>N_pix</code> or a sparse sum</td>
+<td>Synthesis-Imaging-II-1998.pdf, p. 179; Interferometry and Synthesis in Radio Astronomy.pdf, p. 595; tclean.xml L1316-1319; plan §5.5</td>
+</tr>
+<tr>
+<td><code>ms[s…]</code> multiscale</td>
+<td>Components are deltas and paraboloids/Gaussians of the listed scales (pixels); residual smoothed per scale; peak over scales with <code>smallscalebias</code></td>
+<td><code>deconvolver='multiscale'</code>, <code>scales</code>, <code>smallscalebias</code></td>
+<td><code>Multiscale</code> with a <code>ScaleBank</code></td>
+<td>Per cycle <code>N_scales</code> smoothings of <code>N_pix</code>; per component patch x scales</td>
+<td>Svoboda_Spectral_Lines.pdf, slide 41; Marvil_Imaging2026.pdf, slide 30; tclean.xml L1335; plan §5.5</td>
+</tr>
+<tr>
+<td><code>mt-ms[s…]</code></td>
+<td>MT-MFS multiscale: <code>N_t</code> residual terms, <code>2N_t−1</code> PSF terms, per-scale <code>N_t×N_t</code> Hessian solve per component</td>
+<td><code>deconvolver='mtmfs'</code>, <code>scales</code>, <code>nterms</code></td>
+<td><code>Taylor</code> solver</td>
+<td>As <code>ms</code> x <code>N_t²</code></td>
+<td>Marvil_Wideband2024.pdf, slide 20-21; tclean.xml L1343-1352; plan §5.5</td>
+</tr>
+<tr>
+<td><code>asp</code>, <code>mem</code>, <code>clarkstokes</code></td>
+<td>Adaptive-scale pixels; maximum entropy; Clark on Stokes planes</td>
+<td><code>deconvolver='asp'|'mem'|'clarkstokes'</code></td>
+<td>not in the catalog (<code>asp</code> reserved by <code>Candidate</code>)</td>
+<td>—</td>
+<td>Svoboda_Spectral_Lines.pdf, slide 42; tclean.xml L1309; plan §5.5</td>
+</tr>
+<tr>
+<td>Cycle control</td>
+<td><code>cyclethreshold = max(peak · clamp(sidelobe · cyclefactor, minpsffraction, maxpsffraction), threshold, nsigma·rms)</code>; <code>cycleniter</code> per plane; <code>nmajor</code>; a cycle ends when its threshold or iteration cap is reached. Divergence is answered by more frequent major cycles</td>
+<td><code>niter</code>, <code>threshold</code>, <code>nsigma</code>, <code>cyclefactor</code>, <code>cycleniter</code>, <code>minpsffraction</code>, <code>maxpsffraction</code>, <code>nmajor</code>, <code>gain</code></td>
+<td>same names; <code>Controller</code> (SIIterBot) and per-plane <code>PlaneControl</code></td>
+<td>Sets <code>N_maj</code> and <code>N_iter</code>, hence every repeated term</td>
+<td>tclean.xml L1949-1952, L1969, <code>cycleniter</code>; Butterfield-ErrorRecognition-SIW2026.pptx, slide 37; plan §5.5 L833-840</td>
+</tr>
+</tbody>
+</table>
+<p>Cotton–Schwab (subtract components from the ungridded data every major
+cycle) is what every CASA and casa-rs clean does; it is "often faster than
+the Clark CLEAN, the major exception occurring for data sets with a large
+number of visibility samples, where gridding over and over again becomes
+prohibitively expensive" (Synthesis-Imaging-II-1998.pdf, p. 179-180). That
+sentence is the whole reason <code>N_maj</code> is a cost axis.</p>
+<h3 id="17-normalisation-and-primary-beam-handling-n">1.7 Normalisation and primary-beam handling (N)<a class="headerlink" href="#17-normalisation-and-primary-beam-handling-n" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Physics</th>
+<th>tclean</th>
+<th>casa-rs</th>
+<th>Cost</th>
+<th>Sources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fn</code> flat noise</td>
+<td>Residual ÷ <code>pbmax·√weight</code> where above <code>pblimit·pbmax²</code>; the minor cycle sees sky x PB; noise flat</td>
+<td><code>normtype='flatnoise'</code> (default)</td>
+<td><code>normtype=flatnoise</code>; model x PB before degridding, ÷ PB after the solve</td>
+<td>Per-pixel divides per pass; one weight-image grid (<code>FT[PB²]</code>) in the first pass</td>
+<td>tclean.xml L1275; plan §5.7 table; Jagannathan-Widefield.pdf, slide 29</td>
+</tr>
+<tr>
+<td><code>fs</code> flat sky</td>
+<td>Residual ÷ weight; noise rises at the PB edge; Taylor family uses the flat-noise cutoff (recorded CASA quirk)</td>
+<td><code>normtype='flatsky'</code></td>
+<td><code>normtype=flatsky</code></td>
+<td>As <code>fn</code></td>
+<td>tclean.xml L1275; plan §5.7 L883-890</td>
+</tr>
+<tr>
+<td><code>pbsq</code></td>
+<td>No normalisation; minor cycle sees sky x PB²</td>
+<td><code>normtype='pbsquare'</code></td>
+<td>not in the catalog</td>
+<td>—</td>
+<td>tclean.xml L1275</td>
+</tr>
+<tr>
+<td><code>pblX</code></td>
+<td>PB cutoff <code>X</code> for divides and the T/F mask; negative leaves uncorrected products unmasked</td>
+<td><code>pblimit</code></td>
+<td><code>pblimit</code></td>
+<td>Per pixel</td>
+<td>tclean.xml <code>pblimit</code>; catalog:parameter.pblimit</td>
+</tr>
+<tr>
+<td><code>pbc</code></td>
+<td><code>.image.pbcor = .image ÷ .pb</code> above <code>pblimit</code></td>
+<td><code>pbcor=True</code></td>
+<td><code>pbcor</code>, <code>write_pb</code></td>
+<td>One extra product of <code>N_pix × N_pl</code></td>
+<td>tclean.xml L1575-1576; plan §5.7</td>
+</tr>
+<tr>
+<td>Wideband PB</td>
+<td>PB spectral index (about −1.4 at the half-power point) must be undone before a wideband sky model: <code>conjbeams</code> during gridding, <code>mvc</code>, or <code>widebandpbcor</code> afterwards</td>
+<td><code>conjbeams</code>, <code>specmode='mvc'</code>, <code>widebandpbcor</code></td>
+<td><code>conjbeams</code> through the AW catalog; <code>widebandpbcor</code> task</td>
+<td>CF frequency cells x2 (conjugate map)</td>
+<td>URV_Wideband_Imaging_SIW2026.pdf, slide 22-25; Synthesis-Imaging-II-1998.pdf, p. 455; plan §5.6</td>
+</tr>
+</tbody>
+</table>
+<p>Standard and W-projection runs have no PB in the operator; they normalise by
+<code>sumwt</code> only (plan §5.7 row "dirty/residual (standard)"). So this axis is
+live only for <code>M</code> and <code>AW</code>, and for <code>pbc</code>/<code>write_pb</code> on the others.</p>
+<h3 id="18-masking-m">1.8 Masking (M)<a class="headerlink" href="#18-masking-m" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Physics</th>
+<th>tclean</th>
+<th>casa-rs</th>
+<th>Cost</th>
+<th>Sources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>m0</code></td>
+<td>Whole image is the support</td>
+<td><code>usemask='user'</code>, <code>mask=''</code></td>
+<td><code>mask=''</code></td>
+<td>—</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>mu</code></td>
+<td>User box, region, or mask image; constrains where components are picked</td>
+<td><code>usemask='user'</code>, <code>mask=</code></td>
+<td><code>usemask=user</code>, <code>mask</code>, <code>mask_box</code>, <code>mask_image</code></td>
+<td>Peak search over the mask only</td>
+<td>Marvil_Imaging2026.pdf, slide 30; tclean.xml <code>usemask</code></td>
+</tr>
+<tr>
+<td><code>ma</code></td>
+<td>Auto-multithresh: mask grown from sidelobe and S/N thresholds, pruned by <code>minbeamfrac</code>, dilated to <code>lownoisethreshold</code>; recomputed every major cycle; needs a robust noise estimate (<code>fastnoise</code>)</td>
+<td><code>usemask='auto-multithresh'</code>, <code>noisethreshold</code>, <code>sidelobethreshold</code>, <code>lownoisethreshold</code>, <code>negativethreshold</code>, <code>minbeamfrac</code>, <code>fastnoise</code></td>
+<td>same names</td>
+<td>Per major cycle: smoothing, thresholding, pruning and dilation over <code>N_pix × N_pl</code>, plus image statistics</td>
+<td>Svoboda_Spectral_Lines.pdf, slide 44-46, 49; ALMA-Manual-Imaging-Tutorial_SISS-2026.pdf, slide 38; tclean.xml <code>fastnoise</code></td>
+</tr>
+<tr>
+<td><code>mpb</code></td>
+<td>PB mask at a gain level</td>
+<td><code>usemask='pb'</code>, <code>pbmask</code></td>
+<td>not in the catalog</td>
+<td>—</td>
+<td>tclean.xml <code>usemask</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="19-visibility-side-effects-x">1.9 Visibility side effects (X)<a class="headerlink" href="#19-visibility-side-effects-x" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Physics</th>
+<th>tclean</th>
+<th>casa-rs</th>
+<th>Cost</th>
+<th>Sources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-</code></td>
+<td>MS opened read-only</td>
+<td><code>savemodel='none'</code></td>
+<td>default</td>
+<td>—</td>
+<td>tclean.xml <code>savemodel</code></td>
+</tr>
+<tr>
+<td><code>wM</code></td>
+<td>Final pass predicts the model at native channels and writes <code>MODEL_DATA</code> (for self-calibration)</td>
+<td><code>savemodel='modelcolumn'</code></td>
+<td><code>savemodel=modelcolumn</code>; every plane must be resident in the final pass; excludes Metal <code>auto</code></td>
+<td>One extra prediction pass plus a column write of <code>N_s × 8</code> bytes</td>
+<td>tclean.xml <code>savemodel</code>; ARCHITECTURE.md L570-571, L601-603, L663-666; MarvilSelfcal2026.pdf, slide 7</td>
+</tr>
+<tr>
+<td><code>wC</code></td>
+<td>Continuum-subtracted <code>CORRECTED_DATA</code> written by the fit of 1.1</td>
+<td><code>uvcontsub</code></td>
+<td><code>fitspw</code>/<code>fitorder</code> write-back</td>
+<td>Column write of <code>N_s × 8</code> bytes plus the fit</td>
+<td>plan §5.3 L651-652; Svoboda_Spectral_Lines.pdf, slide 36</td>
+</tr>
+<tr>
+<td>virtual model</td>
+<td>Store the model and gridder state in the MS, degrid on demand</td>
+<td><code>savemodel='virtual'</code></td>
+<td>not in the catalog</td>
+<td>—</td>
+<td>tclean.xml <code>savemodel</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="110-size-parameters">1.10 Size parameters<a class="headerlink" href="#110-size-parameters" title="Permanent link">&para;</a></h3>
+<p>These are not modes but they decide which cost term wins (section 2.3).</p>
+<ul>
+<li><code>N_s</code>: rows x channels x correlations selected. VLA: "351 baselines, 1000+
+  channels every 2-5 seconds = 200M samples/hour" (Marvil_Imaging2026.pdf,
+  slide 5). Channel averaging is bounded by bandwidth smearing,
+  <code>δν &lt; ν0·D/b_max</code> (1 MHz for VLA A, 30 MHz for D)
+  (URV_Wideband_Imaging_SIW2026.pdf, slide 41), so <code>N_s</code> is set by the
+  science, not by the imager.</li>
+<li><code>N_pix</code>: image pixels per plane. Cell oversamples the synthesised beam by
+  4-5 (Marvil_Imaging2026.pdf, slide 14) or 5-7
+  (Butterfield-ErrorRecognition-SIW2026.pptx, slide 41); the field is the
+  full primary beam, or the mosaic. The uv cell is <code>1/(N·Δl)</code>
+  (Marvil_Imaging2026.pdf, slide 15), so for a fixed cell a larger image means
+  finer uv cells and wider kernels in cells (section 2.1).</li>
+<li><code>N_pl</code>, <code>N_t</code>, <code>N_dom</code> (image domains), <code>N_pol</code>.</li>
+<li><code>N_maj</code> and <code>N_iter</code>: outputs of the cycle controller, inputs to cost.</li>
+</ul>
+<h3 id="111-where-the-axes-are-not-orthogonal">1.11 Where the axes are not orthogonal<a class="headerlink" href="#111-where-the-axes-are-not-orthogonal" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Coupling</th>
+<th>What it does</th>
+<th>Source</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mtN</code> ties S to D</td>
+<td><code>deconvolver='mtmfs'</code> is both the spectral model and the minor-cycle algorithm; <code>nterms</code> sets the number of grids on both sides</td>
+<td>tclean.xml L1343; plan §5.1</td>
+</tr>
+<tr>
+<td><code>AW</code>/<code>M</code> tie K to N and G</td>
+<td>Only PB-aware kernels produce a weight image, so <code>flatnoise</code>/<code>flatsky</code>/<code>pblimit</code> are live only for them; a joint mosaic needs one of them; the weight image is itself one more grid in the first pass</td>
+<td>plan §5.1 table, §5.7; Plunket-Mosaicking2024.pdf, slide 34</td>
+</tr>
+<tr>
+<td><code>AW</code> + <code>mt2</code> + <code>conjbeams</code></td>
+<td>The conjugate beam removes the PB's spectral index so the Taylor terms model the sky only; without it <code>alpha</code> carries the PB's −1.4</td>
+<td>URV_Wideband_Imaging_SIW2026.pdf, slide 22-23; tclean.xml L1073</td>
+</tr>
+<tr>
+<td><code>cube</code> + <code>uni</code>/<code>br</code> + <code>+pcwd</code></td>
+<td>Per-channel density changes the weighting from one density grid to <code>N_pl</code></td>
+<td>tclean.xml <code>perchanweightdensity</code></td>
+</tr>
+<tr>
+<td><code>Kf</code> + <code>br</code> + <code>+mosw</code></td>
+<td>Per-field density grids</td>
+<td>tclean.xml L1023</td>
+</tr>
+<tr>
+<td><code>F</code> restricted</td>
+<td>Facets: standard kernel and constant basis only in casa-rs; CASA refuses AW and mosaic facets</td>
+<td>ARCHITECTURE.md L655-657; <code>availability.rs</code> L35-40</td>
+</tr>
+<tr>
+<td><code>AW</code> + <code>cube</code></td>
+<td>Refused in casa-rs until per-plane weights have a CASA comparison</td>
+<td>ARCHITECTURE.md L644-645</td>
+</tr>
+<tr>
+<td>Backend</td>
+<td>Metal grids the standard kernel set only, Stokes I, one domain, no visibility write; <code>gridprecision</code> f64 on CPU by default</td>
+<td>ARCHITECTURE.md L660-692</td>
+</tr>
+<tr>
+<td>D and S</td>
+<td>Planes are independent in cubes (one thread each); Taylor terms are solved jointly; a Clark minor cycle on one plane is spread across the team instead</td>
+<td>plan §5.5 L826-829</td>
+</tr>
+<tr>
+<td><code>wM</code> and residency</td>
+<td>Writing visibilities forces every plane resident in the final pass</td>
+<td>ARCHITECTURE.md L601-603</td>
+</tr>
+</tbody>
+</table>
+<h2 id="2-cost-model">2. Cost model<a class="headerlink" href="#2-cost-model" title="Permanent link">&para;</a></h2>
+<h3 id="21-cost-terms">2.1 Cost terms<a class="headerlink" href="#21-cost-terms" title="Permanent link">&para;</a></h3>
+<p>Symbols: <code>N_s</code> samples after flagging, <code>N_sup</code> kernel width in cells,
+<code>N_mu</code> Mueller planes routed per sample (1 for Stokes I), <code>N_t</code> terms,
+<code>N_pix</code>, <code>N_pl</code>, <code>N_dom</code>, <code>N_pol</code>, <code>N_maj</code> residual passes, <code>N_iter</code>
+components, <code>N_sc</code> scales, <code>N_cf</code> distinct CF cells.</p>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Scaling</th>
+<th>Notes and sources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>G</strong> gridding and degridding</td>
+<td><code>N_s · N_sup² · N_mu · N_dom · (N_t grid + N_t degrid) · (1 + N_maj)</code>; the first pass also grids <code>2N_t−1</code> PSF terms and, for <code>M</code>/<code>AW</code>, one weight grid</td>
+<td>Gridding cost <code>∝ N_vis × N_sup²</code>: prolate spheroidal 3x3 to 7x7, A-term about 9x9, W-term up to 200x200 (4000x the spheroidal); "approximately 80% of total imaging cost" (Jagannathan-Widefield.pdf, slide 35-36; Jagannathan-Widefield2024.pdf, slide 26); <code>O(Mm²)</code> (Synthesis-Imaging-II-1998.pdf, p. 167); casa-rs kernel contract (plan §5.3)</td>
+</tr>
+<tr>
+<td><strong>W-kernel support</strong></td>
+<td><code>N_sup(W) ≈ w · θ_FoV²</code> cells (my derivation: the Fresnel phase <code>≈ π w θ²</code> (Jagannathan-Widefield.pdf, slide 13) has local uv frequency <code>w·θ</code>, so the kernel spans <code>w·θ_FoV</code> wavelengths, and a uv cell is <code>1/θ_FoV</code> (Marvil_Imaging2026.pdf, slide 15))</td>
+<td>For a fixed cell size, going from 4,096 to 12,150 pixels multiplies <code>θ_FoV</code> by 2.97 and <code>N_sup(W)</code> by 8.8, so <code>N_sup²</code> by about 78 for samples whose kernel is W-dominated. "Kernel support scales with <code>w_max</code>" (Jagannathan-Widefield.pdf, slide 16)</td>
+</tr>
+<tr>
+<td><strong>A-kernel support</strong></td>
+<td><code>N_sup(A) ≈ (2D/λ) · θ_FoV</code> cells (aperture autocorrelation diameter over the uv cell)</td>
+<td>Grows linearly with image side at fixed cell: x2.97 from 4,096 to 12,150 pixels, <code>N_sup²</code> x8.8. "Support size is set by how far out in the primary beam you need to go" (Jagannathan-Widefield.pdf, slide 35)</td>
+</tr>
+<tr>
+<td><strong>C</strong> CF generation and storage</td>
+<td>Generation <code>∝ N_cf · N_sup² · oversampling²</code> (FFT of the aperture or PB screen per cell); storage <code>N_cf · N_sup² · oversampling² · 8</code> bytes; load cost per cell miss</td>
+<td>CASA fills the cache at the start of a run and warns it "can be time consuming" (tclean.xml L1099); <code>N_cf</code> = w-planes x frequency cells x PA cells (<code>computepastep</code>, <code>rotatepastep</code>) x antenna-type pairs x Mueller rows (plan §5.6; tclean.xml L1127-1128); casa-rs keeps an in-memory LRU bounded by <code>cf_resident_mb</code> and walks one DATA_DESCRIPTION at a time so one CF group is resident (plan §5.6; catalog:parameter.cf_resident_mb). Mosaic: <code>MosaicPb</code> builds per (frequency, antenna-class pair) at Lanczos oversampling 10 and re-phases per pointing pair (plan §5.3 L472-474)</td>
+</tr>
+<tr>
+<td><strong>F</strong> FFTs</td>
+<td><code>(1 + N_maj) · N_dom · N_pol · N_pl · N_t · 2 · c · N_pix log₂ N_pix</code>, plus <code>2N_t−1</code> PSF FFTs once; "a few times <code>N² log₂ N</code>" per transform</td>
+<td>Synthesis-Imaging-II-1998.pdf, p. 153; Marvil_Imaging2026.pdf, slide 13; casa-rs: per-plane FFTs run single-threaded on each worker, FFTW only (ARCHITECTURE.md L593, L641)</td>
+</tr>
+<tr>
+<td><strong>D</strong> minor cycles</td>
+<td>Högbom <code>N_iter · N_pix</code>; Clark <code>N_iter · patch² + N_cyc · F(N_pix)</code>; multiscale adds <code>N_sc</code> smoothings of <code>N_pix</code> per cycle and <code>N_sc</code> candidates per step; MT-MFS multiplies by <code>N_t²</code> and keeps <code>2N_t−1</code> PSF terms; cubes multiply by <code>N_pl</code> (independent planes)</td>
+<td>tclean.xml L1309-1352; Synthesis-Imaging-II-1998.pdf, p. 179; plan §5.5. Peak search over the mask is <code>O(N_pix)</code> per step unless incremental, which at <code>1.5e8</code> pixels and <code>2e4</code> components is <code>3e12</code> compares, the same order as gridding (my arithmetic; see 2.4)</td>
+</tr>
+<tr>
+<td><strong>P</strong> normalisation, masks, products</td>
+<td>Per pass: divides over <code>N_pix · N_pl · N_pol</code>; weight/PB images; <code>ma</code> costs smoothing, thresholding, dilation per major cycle; restoration one convolution per plane; writers <code>N_pix · N_pl · 4</code> bytes per product (19 products for the VLASS recipe)</td>
+<td>plan §5.7; Svoboda_Spectral_Lines.pdf, slide 44-49; <code>vlass-imaging-recovery-contract.md</code> ("exact 19-product inventory")</td>
+</tr>
+<tr>
+<td><strong>I</strong> I/O and memory</td>
+<td>MS read: <code>N_s · (8 data + 4 weight + 1 flag)</code> bytes per traversal, <code>(1 + N_maj + density pass)</code> traversals; column writes <code>N_s · 8</code>; grid memory <code>N_pix · N_pl · N_pol · N_t · (8 or 16) · N_workers_regions</code> bytes; cube state paged when it does not fit; CASA at 12,150² peaked at 12.8-13.8 GB RSS and swapped hundreds of GB cumulatively</td>
+<td>ARCHITECTURE.md L567-603 (two-slot stream, waves, residency); plan §5.4; <code>vlass-imaging-recovery-contract.md</code> L263-269, L318-323</td>
+</tr>
+</tbody>
+</table>
+<p>Per-sample fixed costs that no axis removes: flag test, phase shift, Stokes
+routing, weight lookup, placement rounding (plan §5.3 <code>Placement</code>,
+<code>SampleBlock</code>). They set the floor for <code>S</code> kernels and are what the Wave3 row
+measures.</p>
+<h3 id="22-what-each-axis-value-does-to-the-terms">2.2 What each axis value does to the terms<a class="headerlink" href="#22-what-each-axis-value-does-to-the-terms" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Axis value</th>
+<th>G</th>
+<th>C</th>
+<th>F</th>
+<th>D</th>
+<th>P</th>
+<th>I</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mfs</code> → <code>mtN</code></td>
+<td>x<code>N_t</code> (grid and degrid), first pass <code>2N_t−1</code> PSFs</td>
+<td>CF unchanged; conjugate frequency map doubles frequency cells with <code>c</code></td>
+<td>x<code>N_t</code> (+PSF terms once)</td>
+<td>x<code>N_t²</code> per component; <code>N_t</code> residual, <code>2N_t−1</code> PSF planes resident</td>
+<td>alpha, error, tt products</td>
+<td>grids x<code>N_t</code></td>
+</tr>
+<tr>
+<td><code>mfs</code> → <code>cubeN</code></td>
+<td>same per sample; samples route to planes</td>
+<td><code>M</code>/<code>AW</code> kernels per frequency already</td>
+<td>x<code>N_pl</code></td>
+<td>x<code>N_pl</code> independent</td>
+<td>per-plane beams; x<code>N_pl</code> products</td>
+<td>grids x<code>N_pl</code>; waves and paging when over budget</td>
+</tr>
+<tr>
+<td><code>cube</code> → <code>cubeCS</code></td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>fewer components (most channels empty)</td>
+<td>—</td>
+<td>fit per row; <code>CORRECTED_DATA</code> write</td>
+</tr>
+<tr>
+<td><code>S</code> → <code>Wn</code></td>
+<td>x<code>(N_sup(W)/7)²</code>, complex taps</td>
+<td><code>n</code> kernels of growing support</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>CF memory</td>
+</tr>
+<tr>
+<td><code>S</code> → <code>Fn</code></td>
+<td>x<code>n²</code> domains at 49 taps</td>
+<td>—</td>
+<td>x<code>n²</code> smaller FFTs</td>
+<td>one joint image</td>
+<td>stitch by <code>sumwt</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>S</code> → <code>M</code></td>
+<td>x<code>(N_sup/7)²</code>, complex; plus weight grid once</td>
+<td>per (frequency, antenna-class pair) x pointings</td>
+<td>+1 weight FFT</td>
+<td>—</td>
+<td>PB normalisation, <code>.pb</code>, <code>.weight</code></td>
+<td>CF cache</td>
+</tr>
+<tr>
+<td><code>S</code> → <code>AWn[pcb]</code></td>
+<td>x<code>(N_sup/7)² · N_mu</code>; weight grid once</td>
+<td><code>N_cf</code> = planes x frequency cells x PA cells x pairs x Mueller; generation or import; LRU misses</td>
+<td>+1 weight FFT</td>
+<td>—</td>
+<td>PB normalisation</td>
+<td>CF cache bytes; CPU only</td>
+</tr>
+<tr>
+<td><code>1f</code> → <code>Kf</code></td>
+<td><code>N_s</code> grows with pointings</td>
+<td>re-phased kernels per pointing (<code>M</code>) / pointing groups (<code>AW</code> <code>p</code>)</td>
+<td>one grid</td>
+<td>one image</td>
+<td>—</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>+o</code></td>
+<td>x<code>N_dom</code></td>
+<td>—</td>
+<td>x<code>N_dom</code></td>
+<td>per domain</td>
+<td>per domain</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>I</code> → <code>IQUV</code></td>
+<td>x2 samples (4 correlations), x4 grid pols</td>
+<td>Mueller planes</td>
+<td>x4</td>
+<td>x4 (joint Clark peak)</td>
+<td>x4</td>
+<td>x4</td>
+</tr>
+<tr>
+<td><code>nat</code> → <code>uni</code>/<code>br</code></td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>+1 traversal (flags and weights only), density grid <code>N_pix</code> (x<code>N_pl</code> with <code>+pcwd</code>, x fields with <code>+mosw</code>)</td>
+</tr>
+<tr>
+<td><code>dirty</code> → <code>hog</code>/<code>clk</code>/<code>ms</code></td>
+<td>repeated <code>N_maj</code> times</td>
+<td>—</td>
+<td>repeated</td>
+<td>as 2.1</td>
+<td>restoration</td>
+<td>repeated MS reads</td>
+</tr>
+<tr>
+<td><code>fn</code> ↔ <code>fs</code></td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>same order</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>m0</code> → <code>ma</code></td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>smaller search</td>
+<td>per-cycle image ops</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>-</code> → <code>wM</code>/<code>wC</code></td>
+<td>+1 prediction pass (degrid only)</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>—</td>
+<td>column write; all planes resident</td>
+</tr>
+</tbody>
+</table>
+<h3 id="23-cost-regimes">2.3 Cost regimes<a class="headerlink" href="#23-cost-regimes" title="Permanent link">&para;</a></h3>
+<p>Six regimes cover the combinations that matter. Each is recognised from
+numbers a run summary already has: samples, pixels, planes, terms, kernel
+width, passes, iterations.</p>
+<table>
+<thead>
+<tr>
+<th>Regime</th>
+<th>Dominant term</th>
+<th>Recognise it when</th>
+<th>Levers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>R1 sample-dominated, narrow kernel</strong></td>
+<td>G with <code>N_sup = 7</code></td>
+<td><code>N_s · 49 · (1+N_maj)</code> ≫ <code>50 · N_pix log N_pix · N_pl · (1+N_maj)</code>, i.e. samples per output pixel per pass ≳ 20 and <code>K = S</code></td>
+<td>Per-sample fixed costs, memory bandwidth of grid updates, worker partition (planes vs regions), Metal</td>
+</tr>
+<tr>
+<td><strong>R2 kernel/CF-dominated</strong></td>
+<td>G with <code>N_sup ≥ 15</code>, plus C</td>
+<td><code>K ∈ {W, M, AW}</code> and a large field: <code>N_sup²</code> of 200-40,000; or <code>N_cf</code> large relative to samples per cell (cache misses)</td>
+<td>Kernel storage layout, tap loop, CF residency, dropping Mueller planes not routed, pass order by CF group</td>
+</tr>
+<tr>
+<td><strong>R3 pixel-dominated</strong></td>
+<td>F and P</td>
+<td>samples per pixel per pass ≲ 10 and <code>N_pix ≥ 1.7e7</code>; cost roughly constant when <code>N_s</code> changes (the pilot rows: x4 samples gave 44.8 → 46.5 s)</td>
+<td>FFT plan, normalisation passes, product writers, f32 vs f64 grids</td>
+</tr>
+<tr>
+<td><strong>R4 deconvolution-dominated</strong></td>
+<td>D</td>
+<td><code>N_iter ≥ 1e4</code>, or <code>N_iter · N_pix · N_sc</code> comparable to G; many Clark cycles each refreshing by FFT; deep thresholds</td>
+<td>Active lists, incremental peak search, patch size, cycle control, threads per plane</td>
+</tr>
+<tr>
+<td><strong>R5 memory/I/O-bound</strong></td>
+<td>I</td>
+<td><code>N_pix · N_pl · N_t · N_pol · bytes</code> above about a quarter of RAM (waves, paging, swap); or <code>wM</code>/<code>wC</code>; or <code>N_s · 13 B · traversals</code> beyond disk bandwidth x wall</td>
+<td>Residency plan, grid precision, column write path, read-ahead</td>
+</tr>
+<tr>
+<td><strong>R6 fixed-cost/startup-dominated</strong></td>
+<td>process start, table open, CF generation, plan time</td>
+<td>wall under about 30 s; ratios vary run to run by 2x</td>
+<td>Not usable for speedup claims; diagnostic only</td>
+</tr>
+</tbody>
+</table>
+<p>Worked recognition on the current large rows (numbers from the brief;
+arithmetic mine):</p>
+<table>
+<thead>
+<tr>
+<th>Row</th>
+<th><code>N_s</code></th>
+<th><code>N_pix · N_pl</code></th>
+<th>samples/pixel/pass</th>
+<th>passes</th>
+<th>G tap-updates (<code>N_s·N_sup²·passes</code>)</th>
+<th>Regime</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Cube 512 x 1024², Clark natural</td>
+<td>4.19e9</td>
+<td>5.37e8</td>
+<td>7.8</td>
+<td>18</td>
+<td>3.7e12 (real, separable)</td>
+<td>R1 with R5 pressure (4.3 GB of f32 grids per set; <code>Partition::Planes</code>)</td>
+</tr>
+<tr>
+<td>Wave3 MFS 4096², Clark uniform</td>
+<td>4.31e9</td>
+<td>1.68e7</td>
+<td>257</td>
+<td>25 (incl. density)</td>
+<td>5.1e12</td>
+<td>R1, pure: one plane, all workers on one grid (<code>Partition::Regions</code>)</td>
+</tr>
+<tr>
+<td>Pilot 4 SPW MFS 4096², Clark uniform</td>
+<td>6.47e7</td>
+<td>1.68e7</td>
+<td>3.9</td>
+<td>~10</td>
+<td>3.2e10</td>
+<td>R3/R4: pixels and 10,000 components, not samples</td>
+</tr>
+<tr>
+<td>Pilot 16 SPW, 5 mJy</td>
+<td>2.59e8</td>
+<td>1.68e7</td>
+<td>15</td>
+<td>fewer</td>
+<td>1.3e11</td>
+<td>R3/R4 (casa-rs 46.5 s vs 44.8 s with 4x samples)</td>
+</tr>
+<tr>
+<td>VLASS 63 fields 16 SPW AW MT-MFS 4096²</td>
+<td>1.68e8</td>
+<td>1.68e7</td>
+<td>10</td>
+<td>~13 (the 4-SPW rows ran 11-12 majors; this row's count is not in the brief)</td>
+<td>1.68e8 · N_sup² · 2 terms · 13 ≈ 4.4e9 · N_sup² → 1e12–4e12 for <code>N_sup</code> 15–30</td>
+<td>R2 (AW kernels, 32 planes, 16 SPW x 64 channel frequency cells), CPU, 1 worker</td>
+</tr>
+</tbody>
+</table>
+<h3 id="24-scaling-the-regimes-to-the-12150-pixel-vlass-target">2.4 Scaling the regimes to the 12,150-pixel VLASS target<a class="headerlink" href="#24-scaling-the-regimes-to-the-12150-pixel-vlass-target" title="Permanent link">&para;</a></h3>
+<p>Same data (167.7 M samples), same cell (0.6"), 2.97x the image side:</p>
+<ul>
+<li><strong>F, P, I</strong>: <code>N_pix</code> x8.8, <code>N_pix log N_pix</code> x9.9. One complex f64 grid
+  plane is 2.36 GB; an MT-MFS first pass holds 2 data + 3 PSF + 1 weight
+  grids, so 14 GB in f64 or 7 GB in f32 for one worker, before images,
+  FFT scratch and CF cells. On a 32 GB laptop this is R5 territory;
+  <code>gridprecision</code> and the number of region workers decide whether the first
+  pass fits (ARCHITECTURE.md L667-670; plan §5.4). CASA's own 12,150² runs
+  peaked at 12.8-13.8 GB RSS with 361-411 GB of swap-in
+  (<code>vlass-imaging-recovery-contract.md</code> L263-269, L318-323).</li>
+<li><strong>G</strong>: the A-term support grows x2.97 (so <code>N_sup²</code> x8.8); W-dominated
+  kernels grow x8.8 in width (<code>N_sup²</code> x78). The per-sample kernel cost
+  therefore rises between 9x and 78x depending on how many samples are
+  W-dominated at 12,150². CASA's own ratio between its 4096² and 12,150²
+  63-field clean references is 82,352 / 9,074 = 9.1, which matches the
+  pixel-count and A-term scalings and not the W-term extreme; whether that is
+  because few samples are W-dominated or because CASA is pixel-bound there is
+  open (section 6). Reading the frozen CF cache headers (support per cell,
+  which <code>AwCatalog::open_casa</code> reads at open; plan §5.6) would settle the
+  kernel widths without a run.</li>
+<li><strong>D</strong>: <code>niter</code> 20,000 (casa-b) on 1.48e8 pixels with 3 scales and 2
+  terms: a non-incremental peak search is <code>2e4 · 1.5e8 · 3 ≈ 9e12</code>
+  compares, more than the gridding. CASA's casa-b selected only 444
+  components across eight minor cycles before its n-sigma stop
+  (<code>vlass-imaging-recovery-contract.md</code> L231-233), so in CASA's run D was
+  small; a casa-rs run that cleans deeper would move into R4.</li>
+<li><strong>C</strong>: <code>N_cf</code> is unchanged (same planes, frequency cells, PA cells) but
+  each cell is <code>N_sup²·oversampling²</code> larger: 9-78x the bytes, so the
+  resident set under <code>cf_resident_mb</code> shrinks and misses rise.</li>
+</ul>
+<p>So the 12,150² rows are R2 with R5 pressure and a possible R4 tail; the
+4096² rows are R2 alone. A benchmark set for the 10x goal must therefore
+measure the kernel width growth (R2), the first-pass memory plan (R5) and the
+minor cycle at <code>1.5e8</code> pixels (R4) separately.</p>
+<h2 id="3-mode-signature">3. Mode signature<a class="headerlink" href="#3-mode-signature" title="Permanent link">&para;</a></h2>
+<p>A signature is nine slash-separated fields in axis order, then a size tag:</p>
+<div class="codehilite"><pre><span></span><code>S / K / G / P / W / D / N / M / X  @ side²·cell · samples · planes
+</code></pre></div>
+
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Tokens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>S</td>
+<td><code>mfs</code>, <code>mtN</code> (Taylor terms), <code>cubeN</code> (planes), <code>cubeCS</code> (continuum-subtracted), <code>cubeE</code> (ephemeris), <code>mvc</code></td>
+</tr>
+<tr>
+<td>K</td>
+<td><code>S</code>, <code>Wn</code> (w-planes; <code>Wa</code> automatic), <code>Fn</code> (n x n facets), <code>M</code>, <code>AWn</code> + flags <code>p</code> (pointing table), <code>c</code> (conjugate beams), <code>b</code> (wideband A)</td>
+</tr>
+<tr>
+<td>G</td>
+<td><code>1f</code>, <code>Kf</code> (K joint pointings), <code>+o</code> (outliers), <code>+sh</code> (phase-centre shift)</td>
+</tr>
+<tr>
+<td>P</td>
+<td><code>I</code>, <code>IQUV</code>, <code>IV</code>, <code>QU</code>, <code>RR</code>, <code>RRLL</code>, <code>XX</code>, ...</td>
+</tr>
+<tr>
+<td>W</td>
+<td><code>nat</code>, <code>uni</code>, <code>brR</code> (robust R), <code>brbwR</code>, flags <code>+pcwd</code>, <code>+mosw</code>, <code>+tap</code></td>
+</tr>
+<tr>
+<td>D</td>
+<td><code>dirty</code>, <code>hog</code>, <code>clk</code>, <code>ms[s1,s2,…]</code>, <code>mt-ms[s…]</code>; then <code>nN</code> (niter), <code>tX</code> (threshold), <code>σN</code> (nsigma), <code>MN</code> (major cycles actually run)</td>
+</tr>
+<tr>
+<td>N</td>
+<td><code>fn</code>, <code>fs</code>, <code>pbsq</code>; <code>pblX</code>; <code>pbc</code></td>
+</tr>
+<tr>
+<td>M</td>
+<td><code>m0</code>, <code>mu</code>, <code>ma</code>, <code>mpb</code></td>
+</tr>
+<tr>
+<td>X</td>
+<td><code>-</code>, <code>wM</code>, <code>wC</code></td>
+</tr>
+<tr>
+<td>size</td>
+<td><code>@4096²·0.6"·168M·1pl</code>; <code>·Wk</code> workers and <code>·cpu|gpu</code> when timing</td>
+</tr>
+</tbody>
+</table>
+<p>Defaults may be dropped: <code>1f</code>, <code>I</code>, <code>fn</code>, <code>m0</code>, <code>-</code>. Pixel count and
+samples stay, because they decide the regime.</p>
+<p>Examples:</p>
+<ul>
+<li><code>mt2/AW32pcb/63f/br1/mt-ms[0,5,12] n2000/mu @4096²·0.6"·168M·cpu W1</code>
+  — the 1.90x VLASS row.</li>
+<li><code>cube512/S/nat/clk t0.5mJy M17 @1024²·4.19G·512pl·gpu W4</code> — the 5.22x cube.</li>
+<li><code>mfs/S/uni/clk n10000 t5mJy M23 @4096²·0.8"·4.31G·gpu W4</code> — Wave3.</li>
+<li><code>cube256CS/S/nat/dirty @512²·1.2M·256pl/wC</code> — the ALMA continuum-subtracted
+  row (the <code>wC</code> is implied by <code>cubeCS</code> and may be dropped).</li>
+<li><code>cube18/W8/2f/nat/dirty @512²·6.1M·18pl</code> — the small W-projection cube
+  with two fields sharing a phase centre.</li>
+<li><code>mfs/M/7f/br0.5/dirty/fn pbl0.2 @512²·8.4M</code> — ALMA mosaic dirty.</li>
+</ul>
+<h2 id="4-placement-of-the-current-benchmark-rows">4. Placement of the current benchmark rows<a class="headerlink" href="#4-placement-of-the-current-benchmark-rows" title="Permanent link">&para;</a></h2>
+<p>Speedup = CASA wall / casa-rs wall. "Equal work" notes where the two ran
+different numbers of major cycles; TESTING.md L509-512 asks for <code>--nmajor</code>
+caps in that case.</p>
+<h3 id="41-large-rows">4.1 Large rows<a class="headerlink" href="#41-large-rows" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Signature</th>
+<th><code>N_s</code></th>
+<th><code>N_pix</code>·planes</th>
+<th>Regime</th>
+<th>Speedup</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>L1</td>
+<td><code>cube512/S/nat/clk t0.5mJy M17 @1024²·4.19G·512pl·gpu W4</code></td>
+<td>4.19e9</td>
+<td>1.05e6 x 512</td>
+<td>R1 (+R5)</td>
+<td>5.22x (4,144 vs 21,623 s)</td>
+<td>Per-plane partition, no merge; 4.3 GB f32 grids per set</td>
+</tr>
+<tr>
+<td>L2</td>
+<td><code>mfs/S/uni/clk n10000 t0.5mJy @4096²·0.05"·64.7M·cpu W1</code></td>
+<td>6.47e7</td>
+<td>1.68e7</td>
+<td>R3/R4</td>
+<td>5.49x (44.8 vs 246 s)</td>
+<td>3.9 samples per pixel; density pass</td>
+</tr>
+<tr>
+<td>L3</td>
+<td><code>mfs/S/uni/clk n10000 t5mJy @4096²·0.05"·259M·cpu W1</code></td>
+<td>2.59e8</td>
+<td>1.68e7</td>
+<td>R3/R4</td>
+<td>2.88x (46.5 vs 134 s)</td>
+<td>casa-rs +4%, CASA −46% for 4x samples and a 10x shallower threshold: casa-rs is pixel-bound here, CASA was cycle-bound</td>
+</tr>
+<tr>
+<td>L4</td>
+<td><code>mfs/S/uni/clk n10000 t5mJy M23 @4096²·0.8"·4.31G·gpu W4</code></td>
+<td>4.31e9</td>
+<td>1.68e7</td>
+<td>R1</td>
+<td>1.71x (4,654 vs 7,945 s)</td>
+<td>Not equal work: 23 vs 15 majors; dividing by majors + 1 gives casa-rs 194 s and CASA 497 s per pass (about 2.6x, my arithmetic). The weakest large standard-kernel row</td>
+</tr>
+<tr>
+<td>L5</td>
+<td><code>mt2/AW32pcb/63f/br1/mt-ms[0,5,12] n2000/mu @4096²·0.6"·168M·cpu W1</code></td>
+<td>1.68e8</td>
+<td>1.68e7</td>
+<td>R2</td>
+<td>1.90x (4,765 vs 9,074 s)</td>
+<td>AW on CPU only; one worker</td>
+</tr>
+</tbody>
+</table>
+<h3 id="42-small-rows-5122-63-m-samples-unless-stated-r6-for-all">4.2 Small rows (512², 6.3 M samples unless stated; R6 for all)<a class="headerlink" href="#42-small-rows-5122-63-m-samples-unless-stated-r6-for-all" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Signature</th>
+<th>Speedup</th>
+<th>Reading</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mfs/S/nat/dirty</code></td>
+<td>1.9x</td>
+<td>fixed-cost floor</td>
+</tr>
+<tr>
+<td><code>mfs/S/br0.5/hog n25/mu</code></td>
+<td>2.1x</td>
+<td></td>
+</tr>
+<tr>
+<td><code>mfs/S/br0.5/clk n25/mu</code></td>
+<td>2.3x</td>
+<td></td>
+</tr>
+<tr>
+<td><code>mfs/S/br0.5/ms n25/mu</code></td>
+<td>2.1x</td>
+<td></td>
+</tr>
+<tr>
+<td><code>mfs/S/br0.5/hog n25/mu(box)</code></td>
+<td>2.1x</td>
+<td></td>
+</tr>
+<tr>
+<td><code>mfs/S/br0.5/hog n25/ma</code></td>
+<td>1.7x</td>
+<td>automask per cycle costs more in casa-rs at this size</td>
+</tr>
+<tr>
+<td><code>mfs/S/br0.5/hog n25/mu/wM ·W4</code></td>
+<td>0.67x</td>
+<td>R5: column write; slower than CASA</td>
+</tr>
+<tr>
+<td><code>cube24/S/nat/dirty ·24pl</code></td>
+<td>2.3x</td>
+<td></td>
+</tr>
+<tr>
+<td><code>cube24/S/nat/hog n2 ·24pl</code></td>
+<td>2.1x</td>
+<td></td>
+</tr>
+<tr>
+<td><code>mfs/Wa/nat/dirty</code></td>
+<td>1.1x</td>
+<td>CF generation dominates at this size</td>
+</tr>
+<tr>
+<td><code>mfs/Wa/nat/hog/mu/wM</code></td>
+<td>0.63x</td>
+<td>R5 + CF</td>
+</tr>
+<tr>
+<td><code>mfs/F2/nat/dirty</code> and <code>.../hog</code></td>
+<td>1.7x / 2.1x</td>
+<td></td>
+</tr>
+<tr>
+<td><code>cube18/W8/2f/nat/dirty @512²·6.1M·18pl</code></td>
+<td>1.7x</td>
+<td>two fields sharing a phase centre</td>
+</tr>
+<tr>
+<td><code>cube256CS/S/nat/dirty @512²·1.2M·256pl</code> (ALMA)</td>
+<td>3.8x</td>
+<td>fit + <code>CORRECTED_DATA</code></td>
+</tr>
+<tr>
+<td><code>mfs/M/7f/br/dirty @512²·8.4M</code> (ALMA)</td>
+<td>0.51x</td>
+<td>R2/R6: mosaic CF generation per (frequency, antenna pair, pointing) dominates; casa-rs slower</td>
+</tr>
+<tr>
+<td><code>cube16/M/7f/br/dirty @512²·16pl</code> (ALMA)</td>
+<td>0.76x</td>
+<td>same</td>
+</tr>
+<tr>
+<td><code>mt2/AW32pcb/9f/br1/dirty @512²·6.0M</code></td>
+<td>45x</td>
+<td>casa-rs cache warm, CASA cache state unrecorded: not a comparison</td>
+</tr>
+<tr>
+<td><code>mt2/AW32pcb/9f/br1/mt-ms n30/mu @512²·6.0M</code></td>
+<td>19x</td>
+<td>same caveat; the drop from 45x says the minor cycle share is large in casa-rs</td>
+</tr>
+</tbody>
+</table>
+<h3 id="43-frozen-casa-references-without-a-current-casa-rs-time">4.3 Frozen CASA references without a current casa-rs time<a class="headerlink" href="#43-frozen-casa-references-without-a-current-casa-rs-time" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Signature</th>
+<th>CASA wall</th>
+<th>casa-rs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>casa-c</td>
+<td><code>mt2/AW32pcb/63f/br1/dirty @4096²·0.6"·41.9M</code></td>
+<td>541 s</td>
+<td>225 s on an old build (2.4x; contract L339-351); not rerun on the IF build</td>
+</tr>
+<tr>
+<td>casa-d</td>
+<td><code>mt2/AW32pcb/63f/br1/mt-ms[0,5,12] n2000 M11/mu @4096²·41.9M</code></td>
+<td>3,470 s</td>
+<td>257 s on a retired Metal replay build (13.5x; contract L624-628); not rerun</td>
+</tr>
+<tr>
+<td>casa-g</td>
+<td>as L5</td>
+<td>9,074 s</td>
+<td>4,765 s (L5)</td>
+</tr>
+<tr>
+<td>casa-a</td>
+<td><code>mt2/AW32pcb/1f/br1/mt-ms[0,5,12] n2000 M9/mu @12150²·0.6"·2.7M</code></td>
+<td>3,798 s</td>
+<td>none</td>
+</tr>
+<tr>
+<td>casa-b</td>
+<td><code>mt2/AW32pcb/63f/br1/mt-ms[0,5,12] n20000 M?/mu @12150²·168M</code></td>
+<td>82,352 s</td>
+<td>none</td>
+</tr>
+<tr>
+<td>landmark</td>
+<td><code>mt2/AW32pcb/1f/br1/mt-ms[0,5,12] n2000/mu @4096²·0.67M (4 SPW)</code></td>
+<td>3,631.8 s (contract L550-552)</td>
+<td>28.65 s on the retired build</td>
+</tr>
+</tbody>
+</table>
+<p>The contract's four acceptance rows are single-field and 63-field, dirty and
+clean, at 12,150²; only the two clean ones have frozen CASA times.</p>
+<h3 id="44-coverage-matrix">4.4 Coverage matrix<a class="headerlink" href="#44-coverage-matrix" title="Permanent link">&para;</a></h3>
+<p>"Large" = a measured speedup on a row in regimes R1-R5; "small" = 512² only
+(R6); "none" = no timed comparison.</p>
+<table>
+<thead>
+<tr>
+<th>Axis</th>
+<th>Value</th>
+<th>Coverage</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>S</td>
+<td><code>mfs</code></td>
+<td>large (L2-L4)</td>
+</tr>
+<tr>
+<td>S</td>
+<td><code>mt2</code></td>
+<td>large (L5)</td>
+</tr>
+<tr>
+<td>S</td>
+<td><code>mtN&gt;2</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td>S</td>
+<td><code>cubeN</code></td>
+<td>large (L1, natural, Clark, standard)</td>
+</tr>
+<tr>
+<td>S</td>
+<td><code>cubeCS</code></td>
+<td>small (ALMA 256 ch)</td>
+</tr>
+<tr>
+<td>S</td>
+<td><code>cubeE</code></td>
+<td>none timed (T2 row <code>moving-source-cube-alma</code> exists for correctness)</td>
+</tr>
+<tr>
+<td>K</td>
+<td><code>S</code></td>
+<td>large</td>
+</tr>
+<tr>
+<td>K</td>
+<td><code>Wn</code></td>
+<td>small only (dirty, clean, cube); casa-rs ≤ 1.1x</td>
+</tr>
+<tr>
+<td>K</td>
+<td><code>Fn</code></td>
+<td>small only</td>
+</tr>
+<tr>
+<td>K</td>
+<td><code>M</code></td>
+<td>small only; casa-rs slower (0.51x, 0.76x)</td>
+</tr>
+<tr>
+<td>K</td>
+<td><code>AW32pcb</code></td>
+<td>large (L5; CPU, 1 worker); dirty and single-field only on old builds</td>
+</tr>
+<tr>
+<td>G</td>
+<td><code>1f</code></td>
+<td>large</td>
+</tr>
+<tr>
+<td>G</td>
+<td><code>63f</code> OTF</td>
+<td>large (L5)</td>
+</tr>
+<tr>
+<td>G</td>
+<td><code>+o</code></td>
+<td>none timed (T2 <code>multidomain-outlier-vla</code> correctness only)</td>
+</tr>
+<tr>
+<td>P</td>
+<td><code>I</code></td>
+<td>large</td>
+</tr>
+<tr>
+<td>P</td>
+<td><code>IQUV</code></td>
+<td>none timed (T2 <code>full-stokes-alma</code> correctness only)</td>
+</tr>
+<tr>
+<td>W</td>
+<td><code>nat</code></td>
+<td>large (L1)</td>
+</tr>
+<tr>
+<td>W</td>
+<td><code>uni</code></td>
+<td>large (L2-L4)</td>
+</tr>
+<tr>
+<td>W</td>
+<td><code>br</code></td>
+<td>large (L5), small (0.5)</td>
+</tr>
+<tr>
+<td>W</td>
+<td><code>+pcwd</code>, <code>brbw</code>, <code>+tap</code>, <code>+mosw</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td>D</td>
+<td><code>dirty</code></td>
+<td>small; large only through casa-c on an old build</td>
+</tr>
+<tr>
+<td>D</td>
+<td><code>hog</code></td>
+<td>small</td>
+</tr>
+<tr>
+<td>D</td>
+<td><code>clk</code></td>
+<td>large (L1-L4)</td>
+</tr>
+<tr>
+<td>D</td>
+<td><code>ms</code></td>
+<td>small</td>
+</tr>
+<tr>
+<td>D</td>
+<td><code>mt-ms</code></td>
+<td>large (L5)</td>
+</tr>
+<tr>
+<td>N</td>
+<td><code>fn</code></td>
+<td>large (L5)</td>
+</tr>
+<tr>
+<td>N</td>
+<td><code>fs</code>, <code>pbc</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td>M</td>
+<td><code>m0</code></td>
+<td>large (L1-L4)</td>
+</tr>
+<tr>
+<td>M</td>
+<td><code>mu</code></td>
+<td>large (L5)</td>
+</tr>
+<tr>
+<td>M</td>
+<td><code>ma</code></td>
+<td>small (1.7x)</td>
+</tr>
+<tr>
+<td>X</td>
+<td><code>-</code></td>
+<td>large</td>
+</tr>
+<tr>
+<td>X</td>
+<td><code>wM</code></td>
+<td>small; casa-rs slower (0.63-0.67x)</td>
+</tr>
+<tr>
+<td>X</td>
+<td><code>wC</code></td>
+<td>small (3.8x)</td>
+</tr>
+<tr>
+<td>Backend</td>
+<td>Metal W4</td>
+<td>L1, L4 (standard only)</td>
+</tr>
+<tr>
+<td>Backend</td>
+<td>CPU W1</td>
+<td>L2, L3, L5</td>
+</tr>
+<tr>
+<td>Backend</td>
+<td>CPU W&gt;1</td>
+<td>none on a large row</td>
+</tr>
+</tbody>
+</table>
+<p>By regime: R1 has L1 and L4 (both Metal); R2 has L5 only (CPU, 1 worker,
+4096²); R3/R4 have L2-L3; R5 has nothing but the small <code>wM</code> rows and the
+cube's paging inside L1; R6 is the whole small set. Nothing measures the
+12,150² geometry, the W-kernel growth, or an AW first pass on the current
+build.</p>
+<h2 id="5-a-minimal-representative-benchmark-set">5. A minimal representative benchmark set<a class="headerlink" href="#5-a-minimal-representative-benchmark-set" title="Permanent link">&para;</a></h2>
+<p>Constraints: each row runs in minutes on a 32 GB Apple laptop; prefer the
+datasets and frozen CASA references that exist; every row names its backend,
+precision, workers and cache state (TESTING.md L493-507). AW rows are CPU
+(ARCHITECTURE.md L691-692). "Needs CASA" marks rows whose reference must be
+frozen once; CASA's own time for each is estimated from the frozen neighbours.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Signature</th>
+<th>Data and selection</th>
+<th>Why it is in the set</th>
+<th>Regime</th>
+<th>What it predicts for 12,150²</th>
+<th>CASA reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>B1</td>
+<td><code>mt2/AW32pcb/1f/br1/mt-ms[0,5,12] n2000/mu @4096²·0.6"·0.67M·cpu W1</code></td>
+<td>VLASS fragment, field 1525, SPWs 2,7,12,17</td>
+<td>Few samples, so G is small: isolates CF generation and loading (C), the MT-MFS first pass (F) and the minor cycle (D) at 4096²; the contract's preserved landmark</td>
+<td>R2 (C) + R4</td>
+<td>The sample-independent part of the single-field 12,150² rows; with B3, the C share</td>
+<td>frozen: 3,631.8 s (contract L550-552)</td>
+</tr>
+<tr>
+<td>B2</td>
+<td><code>mt2/AW32pcb/63f/br1/dirty @4096²·0.6"·41.9M·cpu W1</code></td>
+<td>VLASS fragment, 63 fields, SPWs 2,7,12,17</td>
+<td>The AW first pass alone: 2 data + 3 PSF + weight grids, every CF group touched once, pointing groups; 42 M samples</td>
+<td>R2</td>
+<td>The first-pass term of casa-b and the dirty acceptance rows; its CF-miss count scales with cell bytes (x9-78)</td>
+<td>frozen casa-c: 541 s</td>
+</tr>
+<tr>
+<td>B3</td>
+<td><code>mt2/AW32pcb/63f/br1/mt-ms[0,5,12] n2000 M11/mu @4096²·41.9M·cpu W1</code></td>
+<td>same</td>
+<td>The central VLASS proxy: 11-12 residual passes; per-pass cost = G(AW) + F + P; divided by B2 gives the residual-pass cost</td>
+<td>R2</td>
+<td>Per-pass AW gridding at 4096² kernel widths; multiply by the measured support growth to predict casa-b's passes</td>
+<td>frozen casa-d: 3,470 s. Expect casa-rs about 1,000-1,500 s on W1 (a quarter of L5's samples): the longest row here; cap <code>--nmajor 3</code> for iteration, full row for the record</td>
+</tr>
+<tr>
+<td>B4</td>
+<td><code>mt2/AW32pcb/1f/br1/dirty @12150²·0.6"·2.7M·cpu W1</code></td>
+<td>VLASS fragment, field 1525, SPWs 2-17</td>
+<td>The only full-geometry row that fits in minutes: measures the 12,150² kernel widths (read from the CF headers and from stage timing), the 6-grid first-pass memory plan and the 1.5e8-pixel FFTs with few samples</td>
+<td>R2 + R5</td>
+<td>Directly: the first-pass term of the two single-field acceptance rows and the memory plan for the 63-field ones</td>
+<td><strong>none</strong>; a CASA dirty run is bounded above by casa-a's 3,798 s, so freezing one is an hour. Gap</td>
+</tr>
+<tr>
+<td>B5</td>
+<td><code>mt2/AW32pcb/1f/br1/mt-ms[0,5,12] n2000 M9/mu @12150²·2.7M·cpu W1</code></td>
+<td>same</td>
+<td>The one full-geometry clean row with a frozen CASA time that a laptop can run; measures the 12,150² minor cycle (D at 1.5e8 pixels, 3 scales, 2 terms) and nine residual passes</td>
+<td>R2 + R4 + R5</td>
+<td>It is an acceptance row</td>
+<td>frozen casa-a: 3,798 s. casa-rs time unknown on the IF build; it may exceed "minutes" — run it last</td>
+</tr>
+<tr>
+<td>B6</td>
+<td><code>mt2/W32/1f/br1/dirty @4096²·0.6"·2.7M·cpu W1</code></td>
+<td>VLASS field 1525, SPWs 2-17, <code>gridder=wproject</code>, <code>wprojplanes=32</code></td>
+<td>W-projection on the same data, image and planes as B1/B4 but without the A-term or the CF cache: the difference to the AW dirty row at the same size is the A-term and cache cost; rerun at 12,150² gives the W-kernel growth alone</td>
+<td>R2 (W only)</td>
+<td>Separates <code>N_sup(W) ∝ θ²</code> from <code>N_sup(A) ∝ θ</code> in the 12,150² prediction</td>
+<td><strong>none</strong>; CASA minutes. Gap</td>
+</tr>
+<tr>
+<td>B7</td>
+<td><code>mfs/S/uni/clk n10000 t0.5mJy @4096²·0.05"·64.7M·cpu W1</code></td>
+<td>EVLA pilot, 4 of 32 SPWs</td>
+<td>Existing 5.49x row; the standard-kernel control for F, P and the Clark minor cycle at 4096²; no CF cost</td>
+<td>R3/R4</td>
+<td>The pixel-bound floor: scale by <code>N_pix log N_pix</code> (x9.9) for the FFT and normalisation share of every 12,150² pass</td>
+<td>frozen: 246 s</td>
+</tr>
+<tr>
+<td>B8</td>
+<td><code>mfs/S/uni/clk n10000 t5mJy @4096²·0.8"·0.54G·{cpu W1, gpu W4}</code></td>
+<td>Wave3 MS, 64 of 512 channels</td>
+<td>Sample-dominated standard gridding in minutes (an eighth of L4): per-sample throughput and the W1-vs-W4 serial check the owner asks for; L4 itself is 78 minutes</td>
+<td>R1</td>
+<td>The per-sample fixed cost that AW kernels multiply; a ceiling on what narrowing kernels could buy</td>
+<td><strong>none</strong> (L4's reference is the full MS). CASA about 15-20 min. Gap</td>
+</tr>
+<tr>
+<td>B9</td>
+<td><code>cube128/S/nat/clk t0.5mJy @1024²·1.05G·128pl·gpu W4</code></td>
+<td>the 512-channel VLA C-array MS, 128 channels</td>
+<td>Cube residency and per-plane partition at a quarter of L1 (L1 is 69 minutes); the only R5 row that is not a column write</td>
+<td>R1 + R5</td>
+<td>Not VLASS; keeps the other large workload class honest while AW work proceeds</td>
+<td><strong>none</strong> (L1's reference is 512 channels). CASA about 1.5 h. Gap</td>
+</tr>
+<tr>
+<td>B10</td>
+<td><code>mfs/M/7f/br0.5/hog n500/fn pbl0.2 @1024²·8.4M·cpu W1</code></td>
+<td>ALMA 7-field mosaic MS (the 0.51x row's data)</td>
+<td>Mosaic PB kernels share the <code>FT[PB]</code>, weight-image and flat-noise machinery with AW; the 512² row is slower than CASA and the cause (CF generation vs fixed cost) is unknown; 1024² moves it out of R6</td>
+<td>R2 (M)</td>
+<td>Whether the PB-kernel generation cost seen at 512² is fixed or per sample; a smaller analogue of the AW C term</td>
+<td><strong>none</strong>; CASA a few minutes. Gap</td>
+</tr>
+</tbody>
+</table>
+<p>Optional eleventh row, outside the VLASS path but a known regression:
+<code>mfs/S/uni/clk n10000/wM @4096²·64.7M</code> (B7 plus <code>savemodel=modelcolumn</code>),
+to find whether the 0.63-0.67x small-row result is the column write or the
+extra prediction pass (R5). CASA: B7 plus the write.</p>
+<p>Reading the set against the target:</p>
+<ul>
+<li>B2 → B3 gives first-pass versus residual-pass AW cost at 4096²; B4 gives
+  the first pass at 12,150² with few samples; B6 at both sizes gives the W
+  share. Together they predict casa-b's per-pass cost as
+  <code>pass(4096²) × support growth</code>, where the growth is measured, not assumed.</li>
+<li>B1 and B5 bracket the minor cycle at the two sizes with the same <code>niter</code>.</li>
+<li>B7 and B8 give the standard-kernel floors (pixel-bound and sample-bound)
+  that any AW improvement cannot pass.</li>
+<li>B9 and B10 keep the cube and mosaic regimes measured without long runs.</li>
+</ul>
+<p>Gaps: no frozen CASA time for the single-field or 63-field dirty 12,150²
+rows (two of the four acceptance rows), for B6, B8, B9 or B10; the 63-field
+12,150² rows cannot be made minutes-long on a laptop by any selection that
+keeps the geometry (casa-b took CASA 22.9 h); no dataset in casatestdata gives
+a W-projection or AW row above R6 (the <code>refim_*</code> MSs are 1-183 MB), so the
+VLASS fragment is the only wide-field source at scale; <code>vla_wideband_2ptg_w_squint.ms</code>
+and <code>refim_mawproject.ms</code> are 1 KB stubs on the NAS copy and need the real
+files before they can seed anything.</p>
+<h2 id="6-open-questions">6. Open questions<a class="headerlink" href="#6-open-questions" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Kernel widths at 12,150².</strong> The sources give ranges (7-50 cells for A
+   and mosaic kernels, "significantly larger" with W, up to 200x200;
+   tclean.xml L791-817; Jagannathan-Widefield.pdf, slide 36) and one scaling
+   statement ("support scales with <code>w_max</code>", slide 16). The <code>θ²</code> growth of
+   the W kernel is my derivation from the slide-13 phase; it predicts a 9x to
+   78x kernel-cost increase from 4096² to 12,150², while CASA's own clean
+   references scale by 9.1x. Either most VLASS samples are not W-dominated at
+   12,150², or CASA is pixel-bound there. The frozen CF cache headers answer
+   the first half without a run.</li>
+<li><strong>CASA's single-field time is nearly size-independent</strong>: 3,631.8 s at
+   4096² with 4 SPWs against 3,798 s at 12,150² with 16 SPWs (4x samples,
+   8.8x pixels). Something fixed dominates CASA's single-field AW runs (CF
+   cache fill, restoration of 19 products, or its minor cycle); the recovery
+   contract does not record the cache state of the 4096² reference. CASA's
+   stage timers for both runs would show it. Until then a single-field
+   speedup says little about the 63-field one, which the contract already
+   forbids inferring (<code>vlass-imaging-recovery-contract.md</code> L519-522).</li>
+<li><strong>Where the MT-MFS minor cycle sits at 1.5e8 pixels.</strong> The corpus gives
+   the algorithm (Marvil_Wideband2024.pdf, slide 20-21) but no cost model;
+   casa-rs's <code>Taylor</code> solver (plan §5.5) does not state whether its peak
+   search is incremental. The small AW rows (45x dirty, 19x clean) suggest
+   casa-rs's minor cycle share is larger than CASA's. B1 versus B5 measures
+   it.</li>
+<li><strong>Mosaic and W-projection slower than CASA at 512²</strong> (0.51x, 0.76x, 1.1x).
+   Whether <code>MosaicPb</code> kernel generation (Lanczos oversampling 10 per
+   frequency, antenna-class pair and pointing) or <code>WPlanes</code> generation is a
+   fixed cost or grows with samples is unmeasured above R6. B10 and B6 answer
+   it.</li>
+<li><strong><code>MODEL_DATA</code> writes at 0.63-0.67x.</strong> Column write or prediction pass:
+   the optional row separates them.</li>
+<li><strong>Equal-work comparisons.</strong> L4 ran 23 major cycles against CASA's 15, and
+   L1 17 against an unrecorded CASA count; the speedups mix cycle control with
+   throughput. TESTING.md L509-512 asks for <code>--nmajor</code> caps; the per-pass
+   figures in 4.1 are my division, not a measurement.</li>
+<li><strong>Standard kernel width.</strong> The corpus says 3x3 (Jagannathan-Widefield.pdf,
+   slide 34-35), the book says <code>m = 6</code> cells (Synthesis-Imaging-II-1998.pdf,
+   p. 167), CASA says 7x7 (tclean.xml L747), casa-rs half-support 3 (plan
+   §5.1). These are the same kernel described by half-width, width and tap
+   count; cost models should use 49 taps.</li>
+<li><strong>Which recipe is "the" wideband mosaic.</strong> CASA's own guidance is
+   <code>specmode='mvc'</code> for wideband mosaics (URV_Wideband_Imaging_SIW2026.pdf,
+   slide 23, 25); the VLASS recipe under test is <code>mfs</code> + AW + <code>conjbeams</code>,
+   and <code>mvc</code> is not in the casa-rs catalog (ARCHITECTURE.md L657-658). The
+   10x target is defined on the VLASS recipe; a future <code>mvc</code> would be a
+   different signature (<code>mvc/AW…</code>) and a different regime (cube passes).</li>
+<li><strong>AW on more than one CPU worker.</strong> L5 ran one worker; no large AW row
+   records W4, so the <code>Partition::Regions</code> scaling of wide kernels (halo
+   size grows with <code>N_sup</code>) is unknown. B3 at W1 and W4 would show it.</li>
+<li><strong>Cube weighting.</strong> <code>perchanweightdensity</code> and <code>briggsbwtaper</code> are
+    recommended for cubes (Plunket-Mosaicking2024.pdf, slide 34) and multiply
+    the density grid by <code>N_pl</code>, but no cube row uses them; L1 is natural.</li>
+<li><strong>The sources are silent on CF-cache cost models.</strong> CASA says only that
+    filling the cache "can be time consuming" (tclean.xml L1099). The count
+    <code>N_cf</code> and the per-cell bytes above are from casa-rs's index rules (plan
+    §5.6) and my arithmetic; no corpus document quantifies A-projection
+    kernel generation.</li>
+</ol>
+<h2 id="appendix-source-ids">Appendix: source ids<a class="headerlink" href="#appendix-source-ids" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Citation file</th>
+<th>Corpus id</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Jagannathan-Widefield.pdf (2026)</td>
+<td>jagannathan-widefield-3b281d7d14f6</td>
+</tr>
+<tr>
+<td>Jagannathan-Widefield2024.pdf</td>
+<td>jagannathan-widefield2024-8d1bffb6beec</td>
+</tr>
+<tr>
+<td>URV_Wideband_Imaging_SIW2026.pdf</td>
+<td>urv-wideband-imaging-siw2026-646f8466fba1</td>
+</tr>
+<tr>
+<td>Marvil_Wideband2024.pdf</td>
+<td>marvil-wideband2024-6142f23151c0</td>
+</tr>
+<tr>
+<td>Marvil_Imaging2026.pdf</td>
+<td>marvil-imaging2026-57343c49c331</td>
+</tr>
+<tr>
+<td>Plunket-Mosaicking2024.pdf</td>
+<td>plunket-mosaicking2024-35d7af5d3a90</td>
+</tr>
+<tr>
+<td>Svoboda_Spectral_Lines.pdf (2026)</td>
+<td>svoboda-spectral-lines-52967ab30fd7</td>
+</tr>
+<tr>
+<td>Pihlstrom-SpectralLines2024.pdf</td>
+<td>pihlstrom-spectrallines2024-36c108be0ab7</td>
+</tr>
+<tr>
+<td>Perley-Geometry-SIW2026.pdf</td>
+<td>perley-geometry-siw2026-63fb00084c9e</td>
+</tr>
+<tr>
+<td>Perley-Polarization-SIW2026.pdf</td>
+<td>perley-polarization-siw2026-5b17d117b65b</td>
+</tr>
+<tr>
+<td>Butterfield-ErrorRecognition-SIW2026.pptx</td>
+<td>butterfield-errorrecognition-siw2026-e10a7be06702</td>
+</tr>
+<tr>
+<td>ALMA-Manual-Imaging-Tutorial_SISS-2026.pdf</td>
+<td>alma-manual-imaging-tutorial-siss-2026-981b33dcf769</td>
+</tr>
+<tr>
+<td>Plant-Correlators.pptx</td>
+<td>plant-correlators-dbd92a0312c8</td>
+</tr>
+<tr>
+<td>MarvilSelfcal2026.pdf</td>
+<td>marvilselfcal2026-f6c9c563d8fd</td>
+</tr>
+<tr>
+<td>Synthesis-Imaging-II-1998.pdf</td>
+<td>synthesis-imaging-ii-1998-f739aa16ac0a</td>
+</tr>
+<tr>
+<td>Interferometry and Synthesis in Radio Astronomy.pdf</td>
+<td>interferometry-and-synthesis-in-radio-astronomy-855e570763d3</td>
+</tr>
+</tbody>
+</table>
+<p>casa-rs files: <code>docs/imaging-architecture/imaging-foundation-plan-20261007.md</code>
+(§5.1-5.8), <code>ARCHITECTURE.md</code> (L524-694), <code>TESTING.md</code> (L451-512),
+<code>crates/casa-imaging-application/src/availability.rs</code>,
+<code>crates/casa-provider-contracts/resources/parameter-catalog.json</code>,
+<code>docs/tutorial-parity/vlass-imaging-recovery-contract.md</code>,
+<code>resources/imaging-architecture/representative-science-matrix.json</code>. CASA:
+<code>casatasks/xml/tclean.xml</code>,
+<code>casatools/src/code/synthesis/TransformMachines2/WPConvFunc.cc</code>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
