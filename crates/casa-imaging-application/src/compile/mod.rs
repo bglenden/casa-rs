@@ -492,7 +492,10 @@ impl Deployment {
                 diagnostics,
             },
             publication: self.publication,
-            aw_catalog: self.aw.map(AwPlan::deploy).transpose()?,
+            aw_catalog: self
+                .aw
+                .map(|aw| aw.deploy((&host, &resource_policy)))
+                .transpose()?,
         })
     }
 }
@@ -512,10 +515,14 @@ impl AwPlan {
     /// lazily. It writes one only under the exclusive lock, which it cannot
     /// take while another run reads the cache. After writing, it takes the
     /// shared lock again and checks the directory once more before it keeps
-    /// it (#739 review).
-    fn deploy(self) -> Result<AwCatalogDeployment, PrepareError> {
+    /// it (#739 review). Generation is admitted on `admission`'s host and
+    /// policy before it starts and released when it ends (#738).
+    fn deploy(
+        self,
+        admission: (&crate::HostResources, &crate::ResourcePolicy),
+    ) -> Result<AwCatalogDeployment, PrepareError> {
         let lock = match &self.native {
-            Some((policy, input)) => Some(Arc::new(self.bring_native(*policy, input)?)),
+            Some((policy, input)) => Some(Arc::new(self.bring_native(*policy, input, admission)?)),
             None => None,
         };
         Ok(AwCatalogDeployment {
@@ -532,6 +539,7 @@ impl AwPlan {
         &self,
         policy: NativeAwCachePolicy,
         input: &NativeAwRequestInput,
+        (host, resources): (&crate::HostResources, &crate::ResourcePolicy),
     ) -> Result<NativeCacheLock, PrepareError> {
         let root = &self.root;
         let shared = NativeCacheLock::shared(root)?;
@@ -555,7 +563,16 @@ impl AwPlan {
         };
         drop(shared);
         let exclusive = NativeCacheLock::exclusive(root)?;
+        let generating = casa_imaging_runtime::admit(
+            host,
+            resources,
+            &casa_imaging_runtime::Demand {
+                phase: "native AW generation",
+                memory: AwCatalog::generation_bytes(input),
+            },
+        )?;
         AwCatalog::generate_native(root, input, fill)?;
+        drop(generating);
         drop(exclusive);
         let shared = NativeCacheLock::shared(root)?;
         let state = AwCatalog::native_cache_state(root, input)?;
