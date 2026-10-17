@@ -473,10 +473,6 @@ where
 /// Produce values from traversal cursors and consume them in traversal order
 /// while allowing the mapping stage to run serially, pipelined, or in parallel.
 #[doc(hidden)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
 pub fn try_map_traversal_cursors_ordered_with_strategy<Out, State, Init, Map, Consume>(
     full_shape: &[usize],
     cursor_shape: &[usize],
@@ -512,22 +508,12 @@ where
                 let cancelled_consumer = Arc::clone(&cancelled);
                 let first_error_consumer = Arc::clone(&first_error);
                 let consumer = scope.spawn(move || {
-                    let mut next_index = 0usize;
-                    let mut pending = BTreeMap::new();
-                    while let Ok((index, item)) = task_rx.recv() {
-                        if cancelled_consumer.load(Ordering::Relaxed) {
-                            break;
-                        }
-                        pending.insert(index, item);
-                        while let Some(item) = pending.remove(&next_index) {
-                            if let Err(err) = consume(item) {
-                                store_first_error(first_error_consumer.as_ref(), err);
-                                cancelled_consumer.store(true, Ordering::Relaxed);
-                                return;
-                            }
-                            next_index += 1;
-                        }
-                    }
+                    consume_in_index_order(
+                        task_rx,
+                        consume,
+                        &cancelled_consumer,
+                        &first_error_consumer,
+                    );
                 });
 
                 let mut state = init_state();
@@ -596,22 +582,12 @@ where
                 let cancelled_writer = Arc::clone(&cancelled);
                 let first_error_writer = Arc::clone(&first_error);
                 let writer = scope.spawn(move || {
-                    let mut next_index = 0usize;
-                    let mut pending = BTreeMap::new();
-                    while let Ok((index, item)) = result_rx.recv() {
-                        if cancelled_writer.load(Ordering::Relaxed) {
-                            break;
-                        }
-                        pending.insert(index, item);
-                        while let Some(item) = pending.remove(&next_index) {
-                            if let Err(err) = consume(item) {
-                                store_first_error(first_error_writer.as_ref(), err);
-                                cancelled_writer.store(true, Ordering::Relaxed);
-                                return;
-                            }
-                            next_index += 1;
-                        }
-                    }
+                    consume_in_index_order(
+                        result_rx,
+                        consume,
+                        &cancelled_writer,
+                        &first_error_writer,
+                    );
                 });
 
                 let mut handles = Vec::with_capacity(workers);
@@ -920,6 +896,37 @@ where
                     Ok(reduced)
                 }
             })
+        }
+    }
+}
+
+/// Feed `(index, item)` pairs from `rx` to `consume` in index order, holding
+/// items that arrive early until their predecessors are consumed.
+///
+/// Stops when the channel closes or `cancelled` is set; the first consume
+/// error is recorded in `first_error` and cancels the traversal.
+fn consume_in_index_order<Out, Consume>(
+    rx: crossbeam_channel::Receiver<(usize, Out)>,
+    mut consume: Consume,
+    cancelled: &AtomicBool,
+    first_error: &Mutex<Option<LatticeError>>,
+) where
+    Consume: FnMut(Out) -> Result<(), LatticeError>,
+{
+    let mut next_index = 0usize;
+    let mut pending = BTreeMap::new();
+    while let Ok((index, item)) = rx.recv() {
+        if cancelled.load(Ordering::Relaxed) {
+            break;
+        }
+        pending.insert(index, item);
+        while let Some(item) = pending.remove(&next_index) {
+            if let Err(err) = consume(item) {
+                store_first_error(first_error, err);
+                cancelled.store(true, Ordering::Relaxed);
+                return;
+            }
+            next_index += 1;
         }
     }
 }

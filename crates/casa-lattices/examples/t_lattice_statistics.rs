@@ -330,10 +330,6 @@ fn demo_2d_axis_stats() {
 // With axes=[0,1] (collapse spatial axes) each of the 64/256 "channel"
 // positions sorts a 512² or 1024² vector — the sort is the bottleneck.
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
 fn demo_performance() {
     let perf_shape = perf_shape();
     println!("\n=== Performance timing: shape={perf_shape:?}, axes=[0,1] ===");
@@ -357,17 +353,9 @@ fn demo_performance() {
     let n_chan = perf_shape[2];
     let axes = [0usize, 1usize];
 
-    let t_baseline_basic = Instant::now();
-    let baseline_npts = baseline_axis_stat(data.view(), &axes, Statistic::Npts);
-    let baseline_mean = baseline_axis_stat(data.view(), &axes, Statistic::Mean);
-    let baseline_sigma = baseline_axis_stat(data.view(), &axes, Statistic::Sigma);
-    let baseline_basic = t_baseline_basic.elapsed();
-
-    let t_baseline_order = Instant::now();
-    let baseline_median = baseline_axis_stat(data.view(), &axes, Statistic::Median);
-    let baseline_q1 = baseline_axis_stat(data.view(), &axes, Statistic::Q1);
-    let baseline_q3 = baseline_axis_stat(data.view(), &axes, Statistic::Q3);
-    let baseline_order = t_baseline_order.elapsed();
+    let baseline = axis_baseline(data.view(), &axes);
+    let baseline_basic = baseline.basic_time;
+    let baseline_order = baseline.order_time;
 
     let lat = ArrayLattice::new(data.clone());
     let mut stats = LatticeStatistics::new(&lat);
@@ -381,21 +369,8 @@ fn demo_performance() {
     let t_basic = t0.elapsed();
 
     assert_eq!(npts_arr.shape(), &[n_chan]);
-    assert_eq!(npts_arr, baseline_npts);
-    for channel in 0..n_chan {
-        assert_near(
-            mean_arr[IxDyn(&[channel])],
-            baseline_mean[IxDyn(&[channel])],
-            1e-8,
-            &format!("baseline mean[{channel}]"),
-        );
-        assert_near(
-            sigma_arr[IxDyn(&[channel])],
-            baseline_sigma[IxDyn(&[channel])],
-            1e-8,
-            &format!("baseline sigma[{channel}]"),
-        );
-    }
+    assert_eq!(npts_arr, baseline.npts);
+    assert_basic_near_baseline("baseline", &mean_arr, &sigma_arr, &baseline);
     // Each channel has exactly `spatial` valid pixels.
     assert_near(npts_arr[IxDyn(&[0])], spatial as f64, 1e-10, "perf npts[0]");
     // Channel c: pixels = c*spatial, c*spatial+1, …, c*spatial+(spatial-1)
@@ -426,9 +401,9 @@ fn demo_performance() {
     let t_order = t1.elapsed();
 
     assert_eq!(median_arr.shape(), &[n_chan]);
-    assert_eq!(median_arr, baseline_median);
-    assert_eq!(q1_arr, baseline_q1);
-    assert_eq!(q3_arr, baseline_q3);
+    assert_eq!(median_arr, baseline.median);
+    assert_eq!(q1_arr, baseline.q1);
+    assert_eq!(q3_arr, baseline.q3);
     // Channel 0: sort 0..spatial-1, median = floor((spatial-1)·0.5+0.01)
     //   For spatial=1024*1024=1048576:
     //   C++ median n2 = (1048576-1)/2 = 524287 (odd n, so single value)
@@ -471,21 +446,8 @@ fn demo_performance() {
     let paged_sigma = paged_stats.get_statistic(Statistic::Sigma).unwrap();
     let t_paged_basic = t2.elapsed();
 
-    assert_eq!(paged_npts, baseline_npts);
-    for channel in 0..n_chan {
-        assert_near(
-            paged_mean[IxDyn(&[channel])],
-            baseline_mean[IxDyn(&[channel])],
-            1e-8,
-            &format!("paged mean[{channel}]"),
-        );
-        assert_near(
-            paged_sigma[IxDyn(&[channel])],
-            baseline_sigma[IxDyn(&[channel])],
-            1e-8,
-            &format!("paged sigma[{channel}]"),
-        );
-    }
+    assert_eq!(paged_npts, baseline.npts);
+    assert_basic_near_baseline("paged", &paged_mean, &paged_sigma, &baseline);
 
     println!(
         "  TempLattice basic stats: traversal={t_paged_basic:.2?}, baseline={baseline_basic:.2?}, ratio={:.2}x  |  \
@@ -501,9 +463,9 @@ fn demo_performance() {
     let paged_q3 = paged_stats.get_statistic(Statistic::Q3).unwrap();
     let t_paged_order = t3.elapsed();
 
-    assert_eq!(paged_median, baseline_median);
-    assert_eq!(paged_q1, baseline_q1);
-    assert_eq!(paged_q3, baseline_q3);
+    assert_eq!(paged_median, baseline.median);
+    assert_eq!(paged_q1, baseline.q1);
+    assert_eq!(paged_q3, baseline.q3);
 
     println!(
         "  TempLattice order stats: traversal={t_paged_order:.2?}, baseline={baseline_order:.2?}, ratio={:.2}x  |  \
@@ -536,20 +498,7 @@ fn demo_performance() {
         let forced_sigma = forced_stats.get_statistic(Statistic::Sigma).unwrap();
         let t_forced_basic = t4.elapsed();
 
-        for channel in 0..n_chan {
-            assert_near(
-                forced_mean[IxDyn(&[channel])],
-                baseline_mean[IxDyn(&[channel])],
-                1e-8,
-                &format!("forced mean[{channel}]"),
-            );
-            assert_near(
-                forced_sigma[IxDyn(&[channel])],
-                baseline_sigma[IxDyn(&[channel])],
-                1e-8,
-                &format!("forced sigma[{channel}]"),
-            );
-        }
+        assert_basic_near_baseline("forced", &forced_mean, &forced_sigma, &baseline);
 
         println!(
             "  TempLattice forced-I/O basic stats: traversal={t_forced_basic:.2?}, baseline={baseline_basic:.2?}, ratio={:.2}x  |  \
@@ -565,9 +514,9 @@ fn demo_performance() {
         let forced_q3 = forced_stats.get_statistic(Statistic::Q3).unwrap();
         let t_forced_order = t5.elapsed();
 
-        assert_eq!(forced_median, baseline_median);
-        assert_eq!(forced_q1, baseline_q1);
-        assert_eq!(forced_q3, baseline_q3);
+        assert_eq!(forced_median, baseline.median);
+        assert_eq!(forced_q1, baseline.q1);
+        assert_eq!(forced_q3, baseline.q3);
 
         println!(
             "  TempLattice forced-I/O order stats: traversal={t_forced_order:.2?}, baseline={baseline_order:.2?}, ratio={:.2}x  |  \
@@ -631,6 +580,70 @@ fn duration_ratio(new_time: std::time::Duration, baseline: std::time::Duration) 
         f64::INFINITY
     } else {
         new_time.as_secs_f64() / baseline.as_secs_f64()
+    }
+}
+
+/// Brute-force axis statistics the lattice results are checked against,
+/// with the time each group of statistics took.
+struct AxisBaseline {
+    npts: ArrayD<f64>,
+    mean: ArrayD<f64>,
+    sigma: ArrayD<f64>,
+    median: ArrayD<f64>,
+    q1: ArrayD<f64>,
+    q3: ArrayD<f64>,
+    basic_time: std::time::Duration,
+    order_time: std::time::Duration,
+}
+
+/// Compute the baseline basic (npts, mean, sigma) and order (median, Q1, Q3)
+/// statistics over `axes`, timing each group.
+fn axis_baseline(data: ArrayViewD<'_, f32>, axes: &[usize]) -> AxisBaseline {
+    let t_basic = Instant::now();
+    let npts = baseline_axis_stat(data.view(), axes, Statistic::Npts);
+    let mean = baseline_axis_stat(data.view(), axes, Statistic::Mean);
+    let sigma = baseline_axis_stat(data.view(), axes, Statistic::Sigma);
+    let basic_time = t_basic.elapsed();
+
+    let t_order = Instant::now();
+    let median = baseline_axis_stat(data.view(), axes, Statistic::Median);
+    let q1 = baseline_axis_stat(data.view(), axes, Statistic::Q1);
+    let q3 = baseline_axis_stat(data.view(), axes, Statistic::Q3);
+    let order_time = t_order.elapsed();
+
+    AxisBaseline {
+        npts,
+        mean,
+        sigma,
+        median,
+        q1,
+        q3,
+        basic_time,
+        order_time,
+    }
+}
+
+/// Assert per-channel mean and sigma agree with the baseline, labelling
+/// failures with `label`.
+fn assert_basic_near_baseline(
+    label: &str,
+    mean: &ArrayD<f64>,
+    sigma: &ArrayD<f64>,
+    baseline: &AxisBaseline,
+) {
+    for channel in 0..baseline.mean.len() {
+        assert_near(
+            mean[IxDyn(&[channel])],
+            baseline.mean[IxDyn(&[channel])],
+            1e-8,
+            &format!("{label} mean[{channel}]"),
+        );
+        assert_near(
+            sigma[IxDyn(&[channel])],
+            baseline.sigma[IxDyn(&[channel])],
+            1e-8,
+            &format!("{label} sigma[{channel}]"),
+        );
     }
 }
 
