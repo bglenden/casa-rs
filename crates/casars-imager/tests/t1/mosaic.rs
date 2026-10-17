@@ -113,12 +113,12 @@ fn setup() -> Setup {
             Setup::pointing([0.0, 0.0]),
             Setup::pointing([spacing_rad, 0.0]),
         ],
-        spectral: casa_ms::SyntheticSpectralSetup {
+        spectral_windows: vec![casa_ms::SyntheticSpectralSetup {
             name: "t1-50ghz".to_string(),
             start_frequency_hz: FREQUENCY_HZ,
             channel_width_hz: 2.0e9,
             channel_count: 1,
-        },
+        }],
         geometry: GEOMETRY,
         noise_jy: NOISE_JY,
     }
@@ -263,12 +263,12 @@ fn mosaic_recovers_the_sky_under_the_summed_beams() {
 #[test]
 fn a_mosaic_cube_keeps_each_channels_weight_image() {
     let mut setup = setup();
-    setup.spectral = casa_ms::SyntheticSpectralSetup {
+    setup.spectral_windows = vec![casa_ms::SyntheticSpectralSetup {
         name: "t1-50-75ghz".to_string(),
         start_frequency_hz: FREQUENCY_HZ,
         channel_width_hz: 25.0e9,
         channel_count: 2,
-    };
+    }];
     let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE), ("east", EAST)]);
     let (summary, products) = observation.image(
         "mosaic-cube",
