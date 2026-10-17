@@ -841,7 +841,7 @@
 <a href=#841 id=841 data-nosnippet>841</a>            }
 <a href=#842 id=842 data-nosnippet>842</a>            PrimitiveType::UInt8 =&gt; ArrayValue::from_u8_vec(payload.to_vec()),
 <a href=#843 id=843 data-nosnippet>843</a>            PrimitiveType::UInt16 =&gt; {
-<a href=#844 id=844 data-nosnippet>844</a>                <span class="kw">if </span>payload.len() % <span class="number">2 </span>!= <span class="number">0 </span>{
+<a href=#844 id=844 data-nosnippet>844</a>                <span class="kw">if </span>!payload.len().is_multiple_of(<span class="number">2</span>) {
 <a href=#845 id=845 data-nosnippet>845</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"invalid uint16 payload length"</span>.to_string());
 <a href=#846 id=846 data-nosnippet>846</a>                }
 <a href=#847 id=847 data-nosnippet>847</a>                <span class="kw">let </span>values = (<span class="number">0</span>..payload.len() / <span class="number">2</span>)
@@ -850,7 +850,7 @@
 <a href=#850 id=850 data-nosnippet>850</a>                ArrayValue::from_u16_vec(values)
 <a href=#851 id=851 data-nosnippet>851</a>            }
 <a href=#852 id=852 data-nosnippet>852</a>            PrimitiveType::UInt32 =&gt; {
-<a href=#853 id=853 data-nosnippet>853</a>                <span class="kw">if </span>payload.len() % <span class="number">4 </span>!= <span class="number">0 </span>{
+<a href=#853 id=853 data-nosnippet>853</a>                <span class="kw">if </span>!payload.len().is_multiple_of(<span class="number">4</span>) {
 <a href=#854 id=854 data-nosnippet>854</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"invalid uint32 payload length"</span>.to_string());
 <a href=#855 id=855 data-nosnippet>855</a>                }
 <a href=#856 id=856 data-nosnippet>856</a>                <span class="kw">let </span>values = (<span class="number">0</span>..payload.len() / <span class="number">4</span>)
@@ -866,7 +866,7 @@
 <a href=#866 id=866 data-nosnippet>866</a>                ArrayValue::from_u32_vec(values)
 <a href=#867 id=867 data-nosnippet>867</a>            }
 <a href=#868 id=868 data-nosnippet>868</a>            PrimitiveType::Int16 =&gt; {
-<a href=#869 id=869 data-nosnippet>869</a>                <span class="kw">if </span>payload.len() % <span class="number">2 </span>!= <span class="number">0 </span>{
+<a href=#869 id=869 data-nosnippet>869</a>                <span class="kw">if </span>!payload.len().is_multiple_of(<span class="number">2</span>) {
 <a href=#870 id=870 data-nosnippet>870</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"invalid int16 payload length"</span>.to_string());
 <a href=#871 id=871 data-nosnippet>871</a>                }
 <a href=#872 id=872 data-nosnippet>872</a>                <span class="kw">let </span>values = (<span class="number">0</span>..payload.len() / <span class="number">2</span>)
@@ -875,7 +875,7 @@
 <a href=#875 id=875 data-nosnippet>875</a>                ArrayValue::from_i16_vec(values)
 <a href=#876 id=876 data-nosnippet>876</a>            }
 <a href=#877 id=877 data-nosnippet>877</a>            PrimitiveType::Int32 =&gt; {
-<a href=#878 id=878 data-nosnippet>878</a>                <span class="kw">if </span>payload.len() % <span class="number">4 </span>!= <span class="number">0 </span>{
+<a href=#878 id=878 data-nosnippet>878</a>                <span class="kw">if </span>!payload.len().is_multiple_of(<span class="number">4</span>) {
 <a href=#879 id=879 data-nosnippet>879</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"invalid int32 payload length"</span>.to_string());
 <a href=#880 id=880 data-nosnippet>880</a>                }
 <a href=#881 id=881 data-nosnippet>881</a>                <span class="kw">let </span>values = (<span class="number">0</span>..payload.len() / <span class="number">4</span>)
@@ -891,7 +891,7 @@
 <a href=#891 id=891 data-nosnippet>891</a>                ArrayValue::from_i32_vec(values)
 <a href=#892 id=892 data-nosnippet>892</a>            }
 <a href=#893 id=893 data-nosnippet>893</a>            PrimitiveType::Int64 =&gt; {
-<a href=#894 id=894 data-nosnippet>894</a>                <span class="kw">if </span>payload.len() % <span class="number">8 </span>!= <span class="number">0 </span>{
+<a href=#894 id=894 data-nosnippet>894</a>                <span class="kw">if </span>!payload.len().is_multiple_of(<span class="number">8</span>) {
 <a href=#895 id=895 data-nosnippet>895</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"invalid int64 payload length"</span>.to_string());
 <a href=#896 id=896 data-nosnippet>896</a>                }
 <a href=#897 id=897 data-nosnippet>897</a>                <span class="kw">let </span>values = (<span class="number">0</span>..payload.len() / <span class="number">8</span>)
@@ -911,7 +911,7 @@
 <a href=#911 id=911 data-nosnippet>911</a>                ArrayValue::from_i64_vec(values)
 <a href=#912 id=912 data-nosnippet>912</a>            }
 <a href=#913 id=913 data-nosnippet>913</a>            PrimitiveType::Float32 =&gt; {
-<a href=#914 id=914 data-nosnippet>914</a>                <span class="kw">if </span>payload.len() % <span class="number">4 </span>!= <span class="number">0 </span>{
+<a href=#914 id=914 data-nosnippet>914</a>                <span class="kw">if </span>!payload.len().is_multiple_of(<span class="number">4</span>) {
 <a href=#915 id=915 data-nosnippet>915</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"invalid float32 payload length"</span>.to_string());
 <a href=#916 id=916 data-nosnippet>916</a>                }
 <a href=#917 id=917 data-nosnippet>917</a>                <span class="kw">let </span>values = (<span class="number">0</span>..payload.len() / <span class="number">4</span>)
@@ -927,7 +927,7 @@
 <a href=#927 id=927 data-nosnippet>927</a>                ArrayValue::from_f32_vec(values)
 <a href=#928 id=928 data-nosnippet>928</a>            }
 <a href=#929 id=929 data-nosnippet>929</a>            PrimitiveType::Float64 =&gt; {
-<a href=#930 id=930 data-nosnippet>930</a>                <span class="kw">if </span>payload.len() % <span class="number">8 </span>!= <span class="number">0 </span>{
+<a href=#930 id=930 data-nosnippet>930</a>                <span class="kw">if </span>!payload.len().is_multiple_of(<span class="number">8</span>) {
 <a href=#931 id=931 data-nosnippet>931</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"invalid float64 payload length"</span>.to_string());
 <a href=#932 id=932 data-nosnippet>932</a>                }
 <a href=#933 id=933 data-nosnippet>933</a>                <span class="kw">let </span>values = (<span class="number">0</span>..payload.len() / <span class="number">8</span>)
@@ -947,7 +947,7 @@
 <a href=#947 id=947 data-nosnippet>947</a>                ArrayValue::from_f64_vec(values)
 <a href=#948 id=948 data-nosnippet>948</a>            }
 <a href=#949 id=949 data-nosnippet>949</a>            PrimitiveType::Complex32 =&gt; {
-<a href=#950 id=950 data-nosnippet>950</a>                <span class="kw">if </span>payload.len() % <span class="number">8 </span>!= <span class="number">0 </span>{
+<a href=#950 id=950 data-nosnippet>950</a>                <span class="kw">if </span>!payload.len().is_multiple_of(<span class="number">8</span>) {
 <a href=#951 id=951 data-nosnippet>951</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"invalid complex32 payload length"</span>.to_string());
 <a href=#952 id=952 data-nosnippet>952</a>                }
 <a href=#953 id=953 data-nosnippet>953</a>                <span class="kw">let </span>values = (<span class="number">0</span>..payload.len() / <span class="number">8</span>)
@@ -970,7 +970,7 @@
 <a href=#970 id=970 data-nosnippet>970</a>                ArrayValue::from_complex32_vec(values)
 <a href=#971 id=971 data-nosnippet>971</a>            }
 <a href=#972 id=972 data-nosnippet>972</a>            PrimitiveType::Complex64 =&gt; {
-<a href=#973 id=973 data-nosnippet>973</a>                <span class="kw">if </span>payload.len() % <span class="number">16 </span>!= <span class="number">0 </span>{
+<a href=#973 id=973 data-nosnippet>973</a>                <span class="kw">if </span>!payload.len().is_multiple_of(<span class="number">16</span>) {
 <a href=#974 id=974 data-nosnippet>974</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"invalid complex64 payload length"</span>.to_string());
 <a href=#975 id=975 data-nosnippet>975</a>                }
 <a href=#976 id=976 data-nosnippet>976</a>                <span class="kw">let </span>values = (<span class="number">0</span>..payload.len() / <span class="number">16</span>)
