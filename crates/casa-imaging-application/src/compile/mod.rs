@@ -9,6 +9,8 @@
 //! directories, the AW cache) wait for [`Deployment::deploy`], after the
 //! availability check.
 
+#[cfg(test)]
+mod aw_plan_tests;
 mod direction;
 mod domains;
 mod error;
@@ -496,22 +498,34 @@ impl Deployment {
 }
 
 impl AwPlan {
-    /// Under every policy the request's cells are compared with the
-    /// directory: reuse needs every one, generation fills in the absent
-    /// ones, regeneration clears the cache first; the loader then checks
-    /// each cell's sky increment against the image (plan section 5.6).
+    /// Under every policy the directory is compared with the request: its
+    /// request manifest, the cells the request names, and any it does not
+    /// (#735: a cell's conjugate beam and its lookup depend on the whole
+    /// frequency list). Reuse needs a directory generated for this request,
+    /// complete and holding nothing else. Generation fills in the absent
+    /// cells of such a directory, and clears and regenerates any other.
+    /// Regeneration clears the cache first. The loader then checks each
+    /// cell's sky increment against the image (plan section 5.6).
     fn deploy(self) -> Result<AwCatalogDeployment, PrepareError> {
         if let Some((policy, input)) = &self.native {
-            let (present, expected) = AwCatalog::native_cells_present(&self.root, input);
+            let state = AwCatalog::native_cache_state(&self.root, input)?;
             match policy {
-                NativeAwCachePolicy::ReuseOnly if present != expected => {
-                    return Err(PrepareError::AwCacheIncomplete { present, expected });
+                NativeAwCachePolicy::ReuseOnly if !state.reusable() => {
+                    return Err(PrepareError::AwCacheNotReusable { state });
                 }
                 NativeAwCachePolicy::ReuseOnly => {}
+                NativeAwCachePolicy::GenerateMissing if state.reusable() => {}
+                NativeAwCachePolicy::GenerateMissing if state.fillable() => {
+                    AwCatalog::generate_native(&self.root, input, true)?;
+                }
                 NativeAwCachePolicy::GenerateMissing => {
-                    if present != expected {
-                        AwCatalog::generate_native(&self.root, input, true)?;
-                    }
+                    tracing::warn!(
+                        "native AW cache {} does not belong to this request ({state}); \
+                         regenerating it",
+                        self.root.display()
+                    );
+                    AwCatalog::clear_native(&self.root)?;
+                    AwCatalog::generate_native(&self.root, input, false)?;
                 }
                 NativeAwCachePolicy::Regenerate => {
                     AwCatalog::clear_native(&self.root)?;

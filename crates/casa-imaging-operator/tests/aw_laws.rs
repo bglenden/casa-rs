@@ -15,9 +15,9 @@ use casa_imaging_model::{
 use casa_imaging_operator::{
     AwCatalog, AwIndexing, Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend,
     GridGeometry, GridPadding, GridPrecision, GridScalar, ImageExtent, KernelNormalisation,
-    MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane, ModelPrescale, NativeRow,
-    Placement, PlaneRange, PolarizationRouting, RowContext, SampleBuffer, SpectralResampler,
-    TapLayout, WeightingGeneration, Work,
+    MeasurementOperator, Mode, ModeSet, ModelImages, ModelPlane, ModelPrescale, NativeCacheState,
+    NativeManifest, NativeRow, Placement, PlaneRange, PolarizationRouting, RowContext,
+    SampleBuffer, SpectralResampler, TapLayout, WeightingGeneration, Work,
 };
 use common::{IMAGE, Rng, buffer, placements, samples};
 use ndarray::Array2;
@@ -865,4 +865,123 @@ fn an_aw_taylor_weight_moment_publishes_its_magnitude() {
             "moment 1 {first}, |s| × moment 0 {expected}"
         );
     }
+}
+
+/// [`request`] with only its first frequency group: a subset selection.
+fn subset_request() -> NativeAwRequestInput {
+    let mut subset = request(true);
+    subset.frequencies.truncate(1);
+    subset
+}
+
+/// Every group's imaging and weight taps.
+fn all_taps(catalog: &AwCatalog) -> Vec<(Vec<Complex32>, Vec<Complex32>)> {
+    let dense = |taps: TapLayout<'_>| match taps {
+        TapLayout::Dense { data, .. } => data.to_vec(),
+        TapLayout::SeparableReal { .. } => panic!("AW cells are dense"),
+    };
+    (0..catalog.groups())
+        .map(|group| {
+            let key = CfKey {
+                group: group as u16,
+                cube: group as u16,
+            };
+            let (mut a, mut b) = (CellHold::new(), CellHold::new());
+            (
+                dense(catalog.taps(key, &mut a)),
+                dense(catalog.weight_taps(key, &mut b).expect("weight cell")),
+            )
+        })
+        .collect()
+}
+
+fn open(root: &std::path::Path) -> AwCatalog {
+    AwCatalog::open_casa(root, indexing(true), &geometry(), &routing(), usize::MAX).expect("open")
+}
+
+/// #735: a cell's conjugate beam is the request's listed frequency nearest
+/// `√(2f₀² − f²)`, so a cache generated for a wider SPW selection names the
+/// subset's cells and holds different ones. It is neither reusable nor
+/// fillable for the subset. Regenerated, it serves exactly what a fresh
+/// cache does.
+#[test]
+fn a_cache_of_another_frequency_list_is_regenerated_not_reused() {
+    let root = tempfile::tempdir().expect("cache directory");
+    AwCatalog::generate_native(root.path(), &request(true), false).expect("generate");
+    let subset = subset_request();
+    let state = AwCatalog::native_cache_state(root.path(), &subset).expect("state");
+    // 1 PA × 2 w × 2 Mueller cells for the subset's one frequency, and as
+    // many cells (two images each) of the other frequency.
+    assert_eq!(
+        state,
+        NativeCacheState {
+            manifest: NativeManifest::Differs,
+            present: 4,
+            expected: 4,
+            foreign: 8,
+        }
+    );
+    assert!(!state.reusable() && !state.fillable());
+    assert!(AwCatalog::generate_native(root.path(), &subset, true).is_err());
+
+    // The hazard is real: the 1.4 GHz cell's conjugate beam is 1.6 GHz in
+    // the wide cache and 1.4 GHz in the subset's.
+    let wide = all_taps(&open(root.path()));
+    let fresh_root = tempfile::tempdir().expect("cache directory");
+    AwCatalog::generate_native(fresh_root.path(), &subset, false).expect("generate");
+    let fresh = all_taps(&open(fresh_root.path()));
+    assert_ne!(wide[0].1, fresh[0].1, "the reused weight cell differs");
+
+    AwCatalog::clear_native(root.path()).expect("clear");
+    AwCatalog::generate_native(root.path(), &subset, false).expect("regenerate");
+    let state = AwCatalog::native_cache_state(root.path(), &subset).expect("state");
+    assert!(state.reusable(), "{state}");
+    let catalog = open(root.path());
+    assert_eq!(
+        catalog.frequencies_hz(),
+        open(fresh_root.path()).frequencies_hz()
+    );
+    assert_eq!(all_taps(&catalog), fresh);
+}
+
+/// A directory without a request manifest is reused or filled in only when
+/// it holds no cell: cells of unknown provenance are regenerated.
+#[test]
+fn only_an_empty_directory_without_a_manifest_is_filled_in() {
+    let subset = subset_request();
+    let root = tempfile::tempdir().expect("cache directory");
+    let empty = AwCatalog::native_cache_state(root.path(), &subset).expect("state");
+    assert_eq!(empty.manifest, NativeManifest::Absent);
+    assert!(empty.fillable() && !empty.reusable());
+    AwCatalog::generate_native(root.path(), &subset, true).expect("fill an empty directory");
+    assert!(
+        AwCatalog::native_cache_state(root.path(), &subset)
+            .expect("state")
+            .reusable()
+    );
+
+    std::fs::remove_file(root.path().join("CasaRsNativeRequest.txt")).expect("drop manifest");
+    let unknown = AwCatalog::native_cache_state(root.path(), &subset).expect("state");
+    assert_eq!(unknown.manifest, NativeManifest::Absent);
+    assert_eq!(unknown.present, unknown.expected);
+    assert!(!unknown.reusable() && !unknown.fillable());
+}
+
+/// Every input that enters a cell is in the manifest: here the
+/// conjugate-beam switch and the image reference frequency.
+#[test]
+fn the_manifest_records_the_terms_and_the_reference_frequency() {
+    let root = tempfile::tempdir().expect("cache directory");
+    AwCatalog::generate_native(root.path(), &request(true), false).expect("generate");
+    let manifest = |input: &NativeAwRequestInput| {
+        AwCatalog::native_cache_state(root.path(), input)
+            .expect("state")
+            .manifest
+    };
+    assert_eq!(manifest(&request(true)), NativeManifest::Matches);
+    assert_eq!(manifest(&request(false)), NativeManifest::Differs);
+    let mut shifted = request(true);
+    // One unit in the last place.
+    shifted.reference_frequency_hz = f64::from_bits(shifted.reference_frequency_hz.to_bits() + 1);
+    assert_eq!(manifest(&shifted), NativeManifest::Differs);
 }

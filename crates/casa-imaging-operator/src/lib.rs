@@ -58,7 +58,7 @@ pub use accumulator::{
 };
 pub use aw::{
     AwCatalog, AwCatalogError, AwIndexing, EvlaApertureGrid, EvlaApertureModel, EvlaAwWorkspace,
-    NativeAwGenerationError, NativeAwPair, NativeAwPlane,
+    NativeAwGenerationError, NativeAwPair, NativeAwPlane, NativeCacheState, NativeManifest,
 };
 pub use backend::{GridBackend, PreparedModelGrids, Work};
 pub use continuum::{
