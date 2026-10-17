@@ -435,7 +435,8 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     }
 
     /// [`TapLayout::oversampling`] of the imaging taps of `key`, without
-    /// lending them, as [`Self::gridding_half_support`].
+    /// lending them, as [`Self::gridding_half_support`]: placement reads it
+    /// at every change of a row's key.
     fn gridding_oversampling(&self, key: CfKey) -> u16 {
         self.taps(key, &mut CellHold::new()).oversampling()
     }

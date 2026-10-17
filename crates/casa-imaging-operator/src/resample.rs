@@ -495,7 +495,7 @@ fn locate_sample(
     };
     if placing.key != Some(key) {
         placing.key = Some(key);
-        placing.oversampling = cf.taps(key, &mut placing.hold).oversampling();
+        placing.oversampling = cf.gridding_oversampling(key);
         placing.half_support = cf.placement_half_support(key, &mut placing.hold);
     }
     let (u, v) = (row.uvw_m[0] * scale, row.uvw_m[1] * scale);

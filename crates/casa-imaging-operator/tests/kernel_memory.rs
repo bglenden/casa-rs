@@ -293,12 +293,9 @@ fn aw_cache(root: &std::path::Path) {
     AwCatalog::generate_native(root, &request, false).expect("generate");
 }
 
-#[test]
-fn an_aw_catalog_holds_at_most_its_charge() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
-    let root = tempfile::tempdir().expect("cache directory");
-    aw_cache(root.path());
-    let geometry = geometry(64, 1.0e-4, GridPadding::None);
+/// Open the catalog [`aw_cache`] wrote into `root`, at most `bound` bytes
+/// of cells resident.
+fn aw_open(root: &std::path::Path, bound: usize) -> AwCatalog {
     let routing = PolarizationRouting::compile(
         &[CorrelationType::CircularRr, CorrelationType::CircularLl],
         &[PolarizationCoordinate::StokesI],
@@ -308,20 +305,33 @@ fn an_aw_catalog_holds_at_most_its_charge() {
         conjugate_beams: false,
         image_reference_hz: 1.5e9,
     };
+    let geometry = geometry(64, 1.0e-4, GridPadding::None);
+    AwCatalog::open_casa(root, indexing, &geometry, &routing, bound).expect("open")
+}
+
+/// Fetch group `group`'s imaging and weight cells through `holds`.
+fn fetch(catalog: &AwCatalog, group: usize, holds: &mut [CellHold; 2]) {
+    let key = CfKey {
+        group: group as u16,
+        cube: group as u16,
+    };
+    let [imaging, weight] = holds;
+    assert!(catalog.taps(key, imaging).half_support()[0] > 0);
+    assert!(catalog.weight_taps(key, weight).is_some());
+}
+
+#[test]
+fn an_aw_catalog_holds_at_most_its_charge() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let root = tempfile::tempdir().expect("cache directory");
+    aw_cache(root.path());
     // Open the catalog and fetch every group's imaging and weight cells
-    // through one worker's hold.
+    // through one worker's holds.
     let open_and_fetch = |bound: usize| {
-        let catalog =
-            AwCatalog::open_casa(root.path(), indexing, &geometry, &routing, bound).expect("open");
-        let mut hold = CellHold::new();
+        let catalog = aw_open(root.path(), bound);
+        let mut holds = [CellHold::new(), CellHold::new()];
         for group in 0..catalog.groups() {
-            let key = CfKey {
-                group: group as u16,
-                cube: group as u16,
-            };
-            assert!(catalog.taps(key, &mut hold).half_support()[0] > 0);
-            let mut weight_hold = CellHold::new();
-            assert!(catalog.weight_taps(key, &mut weight_hold).is_some());
+            fetch(&catalog, group, &mut holds);
         }
         catalog
     };
@@ -339,4 +349,51 @@ fn an_aw_catalog_holds_at_most_its_charge() {
             "bound {bound}: opening and fetching held {peak}, charged {charge}"
         );
     }
+}
+
+/// #744: workers that load different groups at once, outside the cache
+/// lock, each keeping the cells it fetched last after a cache below one
+/// group has evicted them, hold at most the charge for that many holders.
+#[test]
+fn concurrent_holders_hold_at_most_their_charge() {
+    const WORKERS: usize = 4;
+    const ROUNDS: usize = 64;
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let root = tempfile::tempdir().expect("cache directory");
+    aw_cache(root.path());
+    // Warm the process-wide tile cache, as above.
+    let warm = aw_open(root.path(), usize::MAX);
+    for group in 0..warm.groups() {
+        fetch(&warm, group, &mut [CellHold::new(), CellHold::new()]);
+    }
+    drop(warm);
+    let (peak, _, (loads, charge)) = measure(|| {
+        let catalog = aw_open(root.path(), 1);
+        let groups = catalog.groups();
+        assert!(groups >= WORKERS, "every worker loads its own group");
+        // Every round, each worker fetches a group no other worker does.
+        let round = std::sync::Barrier::new(WORKERS);
+        std::thread::scope(|scope| {
+            for worker in 0..WORKERS {
+                let (catalog, round) = (&catalog, &round);
+                scope.spawn(move || {
+                    let mut holds = [CellHold::new(), CellHold::new()];
+                    for step in 0..ROUNDS {
+                        round.wait();
+                        fetch(catalog, (worker + step) % groups, &mut holds);
+                    }
+                });
+            }
+        });
+        (catalog.loads(), catalog.charge_bytes(WORKERS))
+    });
+    eprintln!("{WORKERS} workers, {loads} loads: held {peak}, charged {charge}");
+    assert!(
+        loads > ROUNDS as u64,
+        "the workers loaded groups beside each other"
+    );
+    assert!(
+        peak <= charge,
+        "{WORKERS} workers held {peak}, charged {charge}"
+    );
 }
