@@ -94,11 +94,14 @@ pub fn run_row_work_pass(
                 team.for_each_mut(&mut chunks[..used], |_, (range, work)| {
                     work.clear();
                     work.resize(rows, 0);
-                    for row in range.clone() {
+                    // In the block's locality order, as a pass places them:
+                    // a baseline's rows share kernel cells, which a set that
+                    // pages its cells (AW) would otherwise reload row by row.
+                    for position in range.clone() {
                         domain.resampler.place_each(
                             domain.operator,
                             weighting,
-                            &block.row(index, row),
+                            &block.row(index, block.ordered_row(position)),
                             None,
                             |placement, _, _| {
                                 if !planes.contains(placement.plane) {
