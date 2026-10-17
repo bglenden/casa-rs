@@ -44,6 +44,10 @@ const IMAGING_PREFIX: &str = "CFS_";
 const WEIGHT_PREFIX: &str = "WTCFS_";
 /// `AWProjectFT`: Mueller elements of a 4 × 4 matrix, `element = 4·i + j`.
 const MUELLER_ELEMENTS: u32 = 16;
+/// Heap bytes writing one cell image holds besides its pixels: its table's
+/// description, coordinate and misc-info records. The `kernel_memory` law
+/// measures about 3 KiB.
+const CELL_IMAGE_RECORD_BYTES: usize = 16 << 10;
 
 /// A native A/W request or numerical calculation could not be completed.
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
@@ -471,6 +475,20 @@ impl AwCatalog {
         })
     }
 
+    /// Heap bytes [`Self::generate_native`] holds at most for `input`
+    /// (#738): the working grid ([`EvlaAwWorkspace::bytes`]), planning its
+    /// transform, and the cell image being written: a crop of the working
+    /// grid at most as wide, as its pixel array and the copy the image
+    /// takes of it, and the image's table and records (16 KiB).
+    #[must_use]
+    pub const fn generation_bytes(input: &NativeAwRequestInput) -> u64 {
+        let cells = input.grid.size * input.grid.size;
+        (EvlaAwWorkspace::bytes(input.grid.size)
+            + 2 * cells * size_of::<Complex32>()
+            + CELL_IMAGE_RECORD_BYTES) as u64
+            + casa_fft::planning_bytes::<f32>(cells)
+    }
+
     /// Generate every cell of `input` natively into `root` as CASA-format
     /// images (`CFS_<pa>_0_CF_<f>_<w>_<m>.im` and the `WTCFS_` partner, one
     /// baseline type) so [`AwCatalog::open_casa`] serves them, and record
@@ -636,11 +654,14 @@ impl AwCatalog {
     }
 
     /// Bytes the catalog holds at most while it lives with `holders`
-    /// workers fetching cells: its index and corrections; the cache's bound
-    /// and one group past it, which a fetch inserts before the cache
-    /// evicts; and for each holder the largest group, which its
-    /// [`CellHold`] keeps alive after eviction, and the planes it reads to
-    /// build one (each read as an image array and its copy).
+    /// workers fetching cells: its index and corrections; its cells; and for
+    /// each holder the planes it reads to build one group (each read as an
+    /// image array and its copy). When every group fits the cache's bound
+    /// nothing is evicted and each group is loaded once, so the cells are at
+    /// most every group (#738). Otherwise they are the bound and one group
+    /// past it, which a fetch inserts before the cache evicts, and for each
+    /// holder the largest group, which its [`CellHold`] keeps alive after
+    /// eviction.
     #[must_use]
     pub fn charge_bytes(&self, holders: usize) -> u64 {
         let header = |header: &CellHeader| size_of::<CellHeader>() + header.path.as_os_str().len();
@@ -674,13 +695,15 @@ impl AwCatalog {
             (2 * imaging.max(weight) * size_of::<Complex32>()) as u64
         };
         let largest = self.groups.iter().map(group).max().unwrap_or(0);
+        let every = self.groups.iter().map(group).sum::<u64>();
         let reading = self.groups.iter().map(read).max().unwrap_or(0);
         let bound = self.lru.lock().expect("cache lock").bound as u64;
-        index as u64
-            + self.correction.resident_bytes()
-            + bound
-            + (holders as u64 + 1) * largest
-            + holders as u64 * reading
+        let cells = if every <= bound {
+            every
+        } else {
+            bound + (holders as u64 + 1) * largest
+        };
+        index as u64 + self.correction.resident_bytes() + cells + holders as u64 * reading
     }
 
     /// The parallactic-angle cell of `pa_deg`: the nearest listed angle on

@@ -125,95 +125,157 @@ impl WaveDemand<'_> {
             .map_or(0, |domain| domain.operator.basis().planes())
     }
 
-    /// Bytes a wave of `planes` planes holds. Per image domain and plane:
-    /// its accumulator holding `modes`; the operator's `f32` images; and, for
-    /// a basis whose normal state is resident, that state's copy at its
-    /// stored size ([`casa_imaging_deconvolution::resident_bytes_per_cell`]):
-    /// a channel-local state is paged, under its cube cache's charge. With a
-    /// model, the prepared grids of the wave's planes and of its model halo on
-    /// each side. Per worker: one
-    /// transform plane and one image per grid polarization of the largest
-    /// domain. On Metal the accumulators are device memory and cost nothing
-    /// more; each owner adds its ring ([`casa_imaging_metal::ring_bytes`]),
-    /// and a pass with a model adds the device copy of the model grids,
-    /// which the device degrids. Per pass, whatever the wave: the row chunks
-    /// it places [`Self::block`]'s rows with, and planning one grid
-    /// transform ([`grid_planning_bytes`]), which the process does one at a
-    /// time. What grows with the source's block is the source's
+    /// Bytes a wave of `planes` planes holds: the largest of its stages
+    /// (#738), beside what it holds throughout.
+    ///
+    /// Throughout the wave, each domain's prepared model grids, with a
+    /// model, for the wave's planes and its model halo on each side; on
+    /// Metal, their device copy, which the device degrids, and each owner's
+    /// ring ([`casa_imaging_metal::ring_bytes`]). The stages, summed over
+    /// image domains, since a domain finishes and appends while the others
+    /// hold their tiles or images:
+    /// - gridding: the owners' tiles of the wave's planes, beside the row
+    ///   chunks the wave places [`Self::block`]'s rows with;
+    /// - finishing, beside the chunks: a region pass's tiles and the merged
+    ///   accumulator they are added into, which one owner's whole-grid tile
+    ///   needs none of; then the accumulator beside its `f32` images; and
+    ///   for the transforms, one transform plane and one image per grid
+    ///   polarization of the largest domain per worker, and planning one
+    ///   grid transform ([`grid_planning_bytes`]), which the process does
+    ///   one at a time;
+    /// - appending: the images, the copy the normal state takes of them and,
+    ///   for a basis whose normal state is resident, that state at its
+    ///   stored size ([`casa_imaging_deconvolution::resident_bytes_per_cell`]);
+    ///   a channel-local state is paged, under its cube cache's charge.
+    ///
+    /// On Metal the accumulators are device memory and cost what a host
+    /// one does. What grows with the source's block is the source's
     /// ([`super::source_block_bytes`]).
     #[must_use]
     pub fn bytes(&self, planes: u32) -> u64 {
-        let total = self.planes();
-        let one = PlaneRange::single(0);
-        let mut bytes = 0_u64;
+        let mut stages = DomainStages::default();
         let mut per_worker = 0_u64;
         let mut planning = 0_u64;
         for domain in self.domains {
+            stages.add(self.domain_stages(domain, planes));
             let operator = domain.operator;
-            let precision = operator.precision();
-            let mut per_plane = operator
-                .accumulator_layout(one, None, self.modes)
-                .bytes(precision) as u64;
             let [width, height] = operator.geometry().image().shape;
             let image_cells = (width * height) as u64;
-            let basis = operator.basis();
-            let pols = operator.polarization().requested().len() as u64;
-            // The weight image has the PSF's terms (`AccumulatorLayout`).
-            let images = (basis.data_terms()
-                + if self.modes.psf { basis.psf_terms() } else { 0 }
-                + if self.modes.weight {
-                    basis.psf_terms()
-                } else {
-                    0
-                }) as u64;
-            per_plane += images * pols * image_cells * size_of::<f32>() as u64;
-            if !matches!(basis, Basis::ChannelLocal { .. }) {
-                per_plane += pols
-                    * image_cells
-                    * resident_bytes_per_cell(
-                        basis.data_terms(),
-                        basis.psf_terms(),
-                        self.modes.psf,
-                    );
-            }
-            bytes += per_plane * u64::from(planes);
-            if self.with_model {
-                let model_planes = planes
-                    .saturating_add(2 * domain.resampler.model_halo(self.native_spacing_hz))
-                    .min(total);
-                // Metal degrids the model on the device, fused into the
-                // residual or in the chunks' prediction batches.
-                let copies = if self.backend == BackendChoice::Metal {
-                    2
-                } else {
-                    1
-                };
-                bytes += copies
-                    * operator
-                        .accumulator_layout(one, None, ModeSet::DATA)
-                        .bytes(precision) as u64
-                    * u64::from(model_planes);
-            }
-            if self.backend == BackendChoice::Metal {
-                let npol = operator.polarization().correlations().len();
-                bytes += domain.partition.owners() as u64 * casa_imaging_metal::ring_bytes(npol);
-            }
             let grid_cells = operator.geometry().cells() as u64;
             let gpols = operator.polarization().grid_pols() as u64;
             per_worker = per_worker.max(grid_cells * 16 + gpols * image_cells * 16);
             planning = planning.max(grid_planning_bytes(operator.geometry().cells()));
         }
-        bytes
-            + planning
-            + self.workers as u64 * per_worker
-            + super::wave::chunk_bytes(
-                self.domains,
-                self.backend,
-                self.block,
-                self.workers,
-                self.modes.weight,
-                self.with_model,
-            )
+        let chunks = super::wave::chunk_bytes(
+            self.domains,
+            self.backend,
+            self.block,
+            self.workers,
+            self.modes.weight,
+            self.with_model,
+        );
+        let transforms = planning + self.workers as u64 * per_worker;
+        stages.held
+            + (stages.gridding + chunks)
+                .max(stages.finishing + chunks + transforms)
+                .max(stages.appending)
+    }
+
+    /// What `domain` holds at each stage of a wave of `planes` planes
+    /// ([`Self::bytes`]).
+    fn domain_stages(&self, domain: &PassDomain<'_>, planes: u32) -> DomainStages {
+        let operator = domain.operator;
+        let precision = operator.precision();
+        let one = PlaneRange::single(0);
+        let planes_u64 = u64::from(planes);
+        let layout = |tile: Option<Tile>, modes: ModeSet| {
+            operator
+                .accumulator_layout(one, tile, modes)
+                .bytes(precision) as u64
+        };
+        let accumulator = layout(None, self.modes) * planes_u64;
+        let (tiles, merging) = match &domain.partition {
+            Partition::Planes { .. } => (accumulator, accumulator),
+            Partition::Regions { regions, .. } => {
+                let tiles = regions
+                    .iter()
+                    .map(|region| layout(Some(region.tile), self.modes))
+                    .sum::<u64>()
+                    * planes_u64;
+                // One owner's tile is the whole grid, which the wave
+                // finishes as it is.
+                let merged = if regions.len() > 1 { accumulator } else { 0 };
+                (tiles, tiles + merged)
+            }
+        };
+        let [width, height] = operator.geometry().image().shape;
+        let image_cells = (width * height) as u64;
+        let basis = operator.basis();
+        let pols = operator.polarization().requested().len() as u64;
+        // The weight image has the PSF's terms (`AccumulatorLayout`).
+        let terms = (basis.data_terms()
+            + if self.modes.psf { basis.psf_terms() } else { 0 }
+            + if self.modes.weight {
+                basis.psf_terms()
+            } else {
+                0
+            }) as u64;
+        let images = terms * pols * image_cells * size_of::<f32>() as u64 * planes_u64;
+        let normal = if matches!(basis, Basis::ChannelLocal { .. }) {
+            0
+        } else {
+            pols * image_cells
+                * resident_bytes_per_cell(basis.data_terms(), basis.psf_terms(), self.modes.psf)
+                * planes_u64
+        };
+        let mut held = 0;
+        if self.with_model {
+            let model_planes = planes
+                .saturating_add(2 * domain.resampler.model_halo(self.native_spacing_hz))
+                .min(self.planes());
+            // Metal degrids the model on the device, fused into the
+            // residual or in the chunks' prediction batches.
+            let copies = if self.backend == BackendChoice::Metal {
+                2
+            } else {
+                1
+            };
+            held += copies * layout(None, ModeSet::DATA) * u64::from(model_planes);
+        }
+        if self.backend == BackendChoice::Metal {
+            let npol = operator.polarization().correlations().len();
+            held += domain.partition.owners() as u64 * casa_imaging_metal::ring_bytes(npol);
+        }
+        DomainStages {
+            held,
+            gridding: tiles,
+            finishing: merging.max(accumulator + images),
+            appending: 2 * images + normal,
+        }
+    }
+}
+
+/// What a wave holds at each of its stages ([`WaveDemand::bytes`]), summed
+/// over image domains: a domain finishes and appends while the others
+/// hold their tiles or images, so the sums bound every moment.
+#[derive(Clone, Copy, Default)]
+struct DomainStages {
+    /// Held through every stage.
+    held: u64,
+    /// The owners' tiles.
+    gridding: u64,
+    /// The merge, then the accumulator beside its images.
+    finishing: u64,
+    /// The images, their copy and the normal state.
+    appending: u64,
+}
+
+impl DomainStages {
+    fn add(&mut self, other: Self) {
+        self.held += other.held;
+        self.gridding += other.gridding;
+        self.finishing += other.finishing;
+        self.appending += other.appending;
     }
 }
 

@@ -855,6 +855,17 @@ impl<'w, 'p> Wave<'w, 'p> {
                         ))
                     }
                     Partition::Regions { .. } => {
+                        // One owner's tile is the whole grid: it is the sum.
+                        if let [owner] = domain.owners.as_mut_slice()
+                            && owner
+                                .acc
+                                .as_ref()
+                                .is_some_and(|acc| acc.layout().is_full_grid())
+                        {
+                            let acc = owner.acc.take().expect("each owner finishes once");
+                            drop(domain.owners);
+                            return Ok(operator.finish(acc)?);
+                        }
                         let mut merged =
                             pass.summing(operator.accumulator(planes, None, pass.modes));
                         for owner in &domain.owners {

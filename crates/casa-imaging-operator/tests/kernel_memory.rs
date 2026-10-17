@@ -238,10 +238,16 @@ fn a_spheroidal_set_holds_what_it_states() {
     }
 }
 
-/// Generate an AW catalog into `root` natively, as the `aw_laws` do: one
-/// parallactic angle, two frequencies, two w planes and two Mueller
-/// elements for a 64² image of 20″ cells, oversampled four times.
+/// Generate an AW catalog into `root` natively, as the `aw_laws` do
+/// ([`aw_request`] on a 64-cell working grid).
 fn aw_cache(root: &std::path::Path) {
+    AwCatalog::generate_native(root, &aw_request(64), false).expect("generate");
+}
+
+/// A native AW request as the `aw_laws` make: one parallactic angle, two
+/// frequencies, two w planes and two Mueller elements for an image of 20″
+/// cells, oversampled four times, on a working grid of `size` cells.
+fn aw_request(size: usize) -> NativeAwRequestInput {
     const CELL_RAD: f64 = 1.0e-4;
     const OVERSAMPLING: usize = 4;
     const W_PLANES: usize = 2;
@@ -257,7 +263,7 @@ fn aw_cache(root: &std::path::Path) {
     let max_w = 1.0 / (CELL_RAD * 4.0);
     let w_increment = f64::from(((W_PLANES - 1) * (W_PLANES - 1)) as f32) / max_w;
     let working = CELL_RAD * OVERSAMPLING as f64;
-    let request = NativeAwRequestInput {
+    NativeAwRequestInput {
         surface,
         antenna_diameter_m: 25.0,
         frequencies: [1.4e9, 1.6e9]
@@ -277,7 +283,7 @@ fn aw_cache(root: &std::path::Path) {
         mueller_elements: vec![0, 15],
         reference_frequency_hz: 1.5e9,
         grid: NativeAwGrid {
-            size: 64,
+            size,
             sky_increment_rad: [-working, working],
             oversampling: OVERSAMPLING,
         },
@@ -289,8 +295,27 @@ fn aw_cache(root: &std::path::Path) {
             conjugate_beams: false,
         },
         maximum_cells: 64,
-    };
-    AwCatalog::generate_native(root, &request, false).expect("generate");
+    }
+}
+
+/// #738: native generation holds at most what the run admits for it
+/// ([`AwCatalog::generation_bytes`]), on two working grids.
+#[test]
+fn native_generation_holds_at_most_its_charge() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    for size in [64, 256] {
+        let request = aw_request(size);
+        let root = tempfile::tempdir().expect("cache directory");
+        let (peak, _, generated) =
+            measure(|| AwCatalog::generate_native(root.path(), &request, false));
+        generated.expect("generate");
+        let charge = AwCatalog::generation_bytes(&request);
+        eprintln!("working grid {size}: held {peak}, charged {charge}");
+        assert!(
+            peak <= charge,
+            "working grid {size}: generation held {peak}, charged {charge}"
+        );
+    }
 }
 
 #[test]

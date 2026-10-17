@@ -173,6 +173,8 @@ impl Solver for Taylor {
                 }
             }
         }
+        // The spectra served only the Hessian ([`Solver::working_bytes`]).
+        drop(psf_spectra);
         let rhs = residual
             .iter()
             .map(|term| {
@@ -344,23 +346,39 @@ impl Solver for Taylor {
         Ok(StepEnd { peak, refreshes: 0 })
     }
 
-    /// The bank, the `2T−1` PSF spectra, the Hessian patches, `2·T·S`
-    /// right-hand-side and coefficient planes, `S` work planes and masks,
-    /// and the largest transient: a convolution beside one residual term's
-    /// spectrum, or the masks' construction.
+    /// The largest of the stages [`Solver::initialize`] passes through, of
+    /// which the last is what each step keeps (#738):
+    /// - building the bank (`ScaleBank::bytes`);
+    /// - cutting the Hessian patches: the bank, the `2T−1` PSF spectra and
+    ///   one convolution;
+    /// - the `T·S` right-hand sides: the bank and the Hessian beside the
+    ///   last residual term's spectrum and its convolution's product;
+    /// - the `S` masks: the bank, the Hessian and the right-hand sides
+    ///   beside the masks' construction;
+    /// - the step: the bank, the Hessian, the masks, and `2·T·S + S`
+    ///   right-hand-side, coefficient and work planes.
     fn working_bytes(&self, shape: PlaneShape, terms: usize) -> u64 {
         let sizes = self.sizes(shape);
         let (scales, terms) = (sizes.len() as u64, terms as u64);
         let patch = sizes
             .last()
             .map_or(0, |largest| beam_patch(*largest, shape)) as u64;
-        let hessian = terms * (terms + 1) / 2 * scales * (scales + 1) / 2 * patch * patch;
-        ScaleBank::bytes(&sizes, shape)
-            + (2 * terms).saturating_sub(1) * spectrum_bytes(shape)
-            + hessian * size_of::<f64>() as u64
-            + (2 * terms * scales + scales) * plane_bytes(shape)
-            + scales * shape.len() as u64
-            + (convolve_bytes(shape) + spectrum_bytes(shape)).max(ScaleBank::masks_bytes(shape))
+        let patches = terms * (terms + 1) / 2 * scales * (scales + 1) / 2;
+        let hessian = patches * patch * patch * size_of::<f64>() as u64;
+        let (plane, spectrum) = (plane_bytes(shape), spectrum_bytes(shape));
+        let bank = ScaleBank::resident_bytes(&sizes, shape);
+        let masks = scales * shape.len() as u64;
+        let held = bank + hessian;
+        [
+            ScaleBank::bytes(&sizes, shape),
+            bank + (2 * terms).saturating_sub(1) * spectrum + hessian + convolve_bytes(shape),
+            held + terms * scales * plane + 2 * spectrum,
+            held + terms * scales * plane + ScaleBank::masks_bytes(shape) + masks,
+            held + masks + (2 * terms * scales + scales) * plane,
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or(0)
     }
 
     /// The largest scale's support.

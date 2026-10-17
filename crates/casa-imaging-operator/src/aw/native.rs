@@ -111,9 +111,18 @@ impl EvlaAwWorkspace {
     /// Bytes of the working planes and tables.
     #[must_use]
     pub fn resident_bytes(&self) -> usize {
-        let quadrant = (self.size / 2 + 1) * (self.size / 2 + 1);
-        7 * self.size * self.size * size_of::<Complex32>()
-            + self.size * self.size * size_of::<u16>()
+        Self::bytes(self.size)
+    }
+
+    /// Bytes of the working planes and tables of a workspace of `size`
+    /// ([`Self::new`]): the four Jones planes, the aperture, imaging and
+    /// weight planes, the ring table, and the W screen's depth and phases
+    /// over one quadrant.
+    #[must_use]
+    pub const fn bytes(size: usize) -> usize {
+        let quadrant = (size / 2 + 1) * (size / 2 + 1);
+        7 * size * size * size_of::<Complex32>()
+            + size * size * size_of::<u16>()
             + quadrant * (size_of::<f64>() + size_of::<Complex32>())
     }
 

@@ -16,6 +16,12 @@
 //! unspent of the fixed charges is then the Measures catalogs' (16 MiB,
 //! of which a run holds 3.3 MB to 10.6 MB) and that allowance: the law
 //! resolves a missing charge of about 15 MB, two 1024² `f64` planes.
+//!
+//! The converse law bounds the over-charge (#738): for MT-MFS runs, with
+//! and without A-projection, the largest reservation of the run and of
+//! each pass and minor cycle stays within a proportion of what the run
+//! held at that point ([`over_charge`]). Each phase's measurement runs from
+//! the end of the phase before it to its `stage_timing` event.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::{Path, PathBuf};
@@ -62,6 +68,10 @@ static FIXED: AtomicU64 = AtomicU64::new(0);
 static ALLOWANCE: AtomicU64 = AtomicU64::new(0);
 /// Nanoseconds into the run when `EXCESS` was last raised.
 static EXCESS_AT: AtomicU64 = AtomicU64::new(0);
+/// The largest `LIVE − BASELINE` since the current phase began.
+static PHASE_PEAK: AtomicI64 = AtomicI64::new(0);
+/// The largest reserved total since the current phase began.
+static PHASE_RESERVED: AtomicU64 = AtomicU64::new(0);
 /// When the measured run started.
 static STARTED: OnceLock<Instant> = OnceLock::new();
 
@@ -140,9 +150,11 @@ fn observe(live: u64) {
     }
     let reserved = held_by_process().saturating_sub(FIXED.load(Ordering::Relaxed));
     RESERVED_PEAK.fetch_max(reserved, Ordering::Relaxed);
+    PHASE_RESERVED.fetch_max(reserved, Ordering::Relaxed);
     let reserved = reserved as i64;
     let used = live as i64 - BASELINE.load(Ordering::Relaxed) as i64;
     PEAK.fetch_max(used, Ordering::Relaxed);
+    PHASE_PEAK.fetch_max(used, Ordering::Relaxed);
     let at = STARTED
         .get()
         .map_or(0, |started| started.elapsed().as_nanos() as u64);
@@ -178,6 +190,55 @@ struct Measured {
     excess: i64,
     /// Largest admitted total.
     reserved: u64,
+    /// Each phase the run logged with `stage_timing`, in order.
+    phases: Vec<PhaseMeasure>,
+}
+
+/// What a run held during one phase: from the end of the phase before it
+/// to the phase's `stage_timing` event.
+#[derive(Clone, Debug)]
+struct PhaseMeasure {
+    /// The phase's name in the run summary.
+    name: String,
+    /// The largest live heap beyond the run's baseline.
+    peak: i64,
+    /// The largest admitted total, as the run's other reservations count.
+    reserved: u64,
+}
+
+/// Records a [`PhaseMeasure`] at each `stage_timing` event and starts the
+/// next phase's.
+struct PhaseRecorder {
+    phases: std::sync::Arc<Mutex<Vec<PhaseMeasure>>>,
+}
+
+/// The `phase` field of a `stage_timing` event, without its quotes.
+struct PhaseName(Option<String>);
+
+impl tracing::field::Visit for PhaseName {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "phase" {
+            self.0 = Some(format!("{value:?}").trim_matches('"').to_string());
+        }
+    }
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for PhaseRecorder {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        if event.metadata().target() != casa_imaging_runtime::STAGE_TIMING {
+            return;
+        }
+        let mut name = PhaseName(None);
+        event.record(&mut name);
+        let used = LIVE.load(Ordering::Relaxed) as i64 - BASELINE.load(Ordering::Relaxed) as i64;
+        let reserved = held_by_process().saturating_sub(FIXED.load(Ordering::Relaxed));
+        let measure = PhaseMeasure {
+            name: name.0.unwrap_or_default(),
+            peak: PHASE_PEAK.swap(used, Ordering::Relaxed),
+            reserved: PHASE_RESERVED.swap(reserved, Ordering::Relaxed),
+        };
+        self.phases.lock().expect("phases").push(measure);
+    }
 }
 
 /// Run `request` on `workers` workers under a `ceiling`-byte policy,
@@ -210,15 +271,28 @@ fn measure(request: &ImagingRequest, workers: usize, ceiling: u64) -> Measured {
         })
     };
     let offset = started.elapsed().as_nanos() as i64;
+    let phases = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let recorder = tracing_subscriber::layer::SubscriberExt::with(
+        tracing_subscriber::registry(),
+        PhaseRecorder {
+            phases: phases.clone(),
+        },
+    );
+    PHASE_PEAK.store(0, Ordering::Relaxed);
+    PHASE_RESERVED.store(0, Ordering::Relaxed);
     BASELINE.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
     MEASURING.store(true, Ordering::Relaxed);
-    let outcome = casa_imaging_application::execute(request, context);
+    let outcome = tracing::subscriber::with_default(recorder, || {
+        casa_imaging_application::execute(request, context)
+    });
     MEASURING.store(false, Ordering::Relaxed);
+    let phases = phases.lock().expect("phases").clone();
     let measured = Measured {
         peak: PEAK.load(Ordering::Relaxed),
         excess: EXCESS.load(Ordering::Relaxed),
         reserved: RESERVED_PEAK.load(Ordering::Relaxed),
         outcome,
+        phases,
     };
     report(&measured, offset);
     measured
@@ -288,6 +362,14 @@ fn report(measured: &Measured, offset: i64) {
         for phase in &outcome.summary.phases {
             eprintln!("  phase {:>24} {:.3} s", phase.name, phase.seconds);
         }
+    }
+    for phase in &measured.phases {
+        eprintln!(
+            "  held {:>28} peak {:>9.3} reserved {:>9.3} MB",
+            phase.name,
+            mb(phase.peak),
+            mb(phase.reserved as i64)
+        );
     }
     let recorded = RECORDED.load(Ordering::Relaxed).min(SAMPLES);
     for sample in &TIMELINE[..recorded] {
@@ -728,5 +810,214 @@ fn kernel_sets_and_sparse_selections_stay_within_their_admission() {
         2,
         2 << 30,
     );
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// The fixed charges a run makes whatever its size, which the over-charge
+/// bound allows beside its proportion: the Measures catalogs (16 MiB), the
+/// walks and envelope of the MeasurementSet, a kernel set's index.
+const FIXED_ALLOWANCE: u64 = 64 << 20;
+/// How far a run's reservations may stand above what it holds, beyond
+/// [`FIXED_ALLOWANCE`] (#738).
+const OVER_CHARGE: f64 = 1.2;
+
+/// Why `measured` broke the over-charge bound, if it did: its largest
+/// reservation, or that of one of its passes, minor-cycle preparations or
+/// minor cycles, stood more than [`OVER_CHARGE`] times above the most the
+/// run held, beyond [`FIXED_ALLOWANCE`]. The products phase is not bound:
+/// its Taylor charge stands about 1.4 times above what it holds (#738).
+fn over_charge(label: &str, measured: &Measured) -> Vec<String> {
+    let bound = |peak: i64| (OVER_CHARGE * peak.max(0) as f64) as u64 + FIXED_ALLOWANCE;
+    let mut breaches = Vec::new();
+    if measured.phases.is_empty() {
+        breaches.push(format!("{label}: no phase was measured"));
+    }
+    if measured.reserved > bound(measured.peak) {
+        breaches.push(format!(
+            "{label}: reserved {} bytes for a peak of {}",
+            measured.reserved, measured.peak
+        ));
+    }
+    for phase in &measured.phases {
+        let bounded = ["major cycle", "minor-cycle preparation", "minor cycle"]
+            .iter()
+            .any(|prefix| phase.name.starts_with(prefix));
+        if bounded && phase.reserved > bound(phase.peak) {
+            breaches.push(format!(
+                "{label} {}: reserved {} bytes for a peak of {}",
+                phase.name, phase.reserved, phase.peak
+            ));
+        }
+    }
+    breaches
+}
+
+/// #738's deconvolver: MT-MFS of two Taylor terms on scales of 0, 5 and 12
+/// pixels, each phase logged so that it is measured.
+fn mtmfs_controls() -> Value {
+    json!({
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "scales": "0,5,12",
+        "stage_timing": true,
+    })
+}
+
+/// #738: MT-MFS at one worker, at 1024² and 2048², is admitted close to
+/// what it holds. Before the charges followed their owners' footprints the
+/// 2048² run reserved 2.25 GB for a peak of 1.57 GB: the minor cycle
+/// charged the plane loads and the Taylor solver's transients as if they
+/// all coexisted, and the first pass its stages' sum.
+#[test]
+fn mtmfs_is_admitted_close_to_what_it_holds() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), 4);
+    warm(&measurement_set, root.path());
+    let mut breaches = Vec::new();
+    for imsize in [1024, 2048] {
+        let label = format!("mtmfs {imsize}");
+        let measured = check(
+            &mut breaches,
+            &label,
+            &request(
+                &measurement_set,
+                &root.path().join(format!("mtmfs-{imsize}")),
+                imsize,
+                mtmfs_controls(),
+            ),
+            1,
+            AMPLE,
+        );
+        breaches.extend(over_charge(&label, &measured));
+    }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// An EVLA track at L band for native A-projection, as T1's: the VLA-A
+/// pads drawn 35 times towards their centroid (a 41″ beam), a 1 Jy point
+/// at the phase centre, two 8 MHz channels at 1.5 GHz over an hour.
+fn evla_observation(root: &Path) -> PathBuf {
+    let measurement_set = root.join("admission-EVLA.ms");
+    let mut antennas = tutorial_vla_a_antennas();
+    let count = antennas.len() as f64;
+    let centroid = antennas.iter().fold([0.0; 3], |sum, antenna| {
+        [
+            sum[0] + antenna.position_m[0] / count,
+            sum[1] + antenna.position_m[1] / count,
+            sum[2] + antenna.position_m[2] / count,
+        ]
+    });
+    for antenna in &mut antennas {
+        for (position, centre) in antenna.position_m.iter_mut().zip(centroid) {
+            *position = centre + (*position - centre) / 35.0;
+        }
+    }
+    let mut request = SyntheticObservationRequest::vla_ppdisk(
+        root.join("unused.fits"),
+        &measurement_set,
+        antennas,
+    );
+    request.telescope_name = "EVLA".to_string();
+    request.duration_seconds = 3_600.0;
+    request.integration_seconds = 60.0;
+    request.spectral_windows = vec![SyntheticSpectralSetup {
+        name: "admission-lband".to_string(),
+        start_frequency_hz: 1.5e9,
+        channel_width_hz: 8.0e6,
+        channel_count: 2,
+    }];
+    request.model = Some(SyntheticSkyModel::AnalyticComponents {
+        path: None,
+        schema_version: Some(1),
+        name: Some("admission-aw".to_string()),
+        components: vec![SyntheticAnalyticComponent::Point {
+            name: Some("point".to_string()),
+            l_rad: 0.0,
+            m_rad: 0.0,
+            spectrum: SyntheticAnalyticSpectrum {
+                flux_jy: 1.0,
+                spectral_index: -0.7,
+                reference_frequency_hz: Some(1.5e9),
+                line_peak_jy: 0.0,
+                line_center_fraction: 0.5,
+                line_sigma_fraction: 0.1,
+                absorption_peak_jy: 0.0,
+                absorption_center_fraction: 0.5,
+                absorption_sigma_fraction: 0.1,
+            },
+        }],
+    });
+    generate_synthetic_observation_ms(&request).expect("synthesise the EVLA MS");
+    measurement_set
+}
+
+/// A paraboloid EVLA dish surface in the radius/height/slope text format,
+/// 12.5 m sampled every centimetre, written under `root`.
+fn evla_surface(root: &Path) -> PathBuf {
+    let path = root.join("evla.surface");
+    let text = (0..=1250)
+        .map(|index| {
+            let radius = f64::from(index) / 100.0;
+            format!(
+                "{radius:.2} {:.8} {:.8}\n",
+                0.028 * radius * radius,
+                0.056 * radius
+            )
+        })
+        .collect::<String>();
+    std::fs::write(&path, text).expect("write the EVLA surface");
+    path
+}
+
+/// #738: native A-projection MT-MFS at 1024², generating its catalog and
+/// then reusing it, is admitted close to what it holds. Generation is
+/// admitted before it starts: uncharged, it held 274 MB beyond the
+/// admitted memory. A catalog whose groups all fit its bound is charged
+/// those groups: charged the bound of `cf_resident_mb = 512`, the run
+/// reserved 974 MB for a peak of 398 MB.
+#[test]
+fn aw_mtmfs_is_admitted_close_to_what_it_holds() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = evla_observation(root.path());
+    let surface = evla_surface(root.path());
+    warm(&measurement_set, root.path());
+    let cache = root.path().join("native-cf");
+    let mut breaches = Vec::new();
+    for label in ["aw generating", "aw reusing"] {
+        let mut values = json!({
+            "vis": measurement_set,
+            "imagename": root.path().join(label.replace(' ', "-")),
+            "imsize": 1024,
+            "cell": "10arcsec",
+            "weighting": "natural",
+            "niter": 200,
+            "minor_cycle_length": 50,
+            "gain": 0.2,
+            "threshold": "1mJy",
+            "gridder": "awproject",
+            "wprojplanes": 32,
+            "aw_cf_source": "native-evla",
+            "native_cf_cache": cache,
+            "evla_surface": surface,
+            "native_cf_policy": "generate-missing",
+            "native_cf_working_size": 2048,
+            "native_cf_oversampling": 4,
+            "native_cf_cache_bytes": 2_147_483_648_u64,
+            "native_cf_maximum_cells": 128,
+            "cf_resident_mb": 512,
+            "normtype": "flatnoise",
+            "pbcor": true,
+        });
+        values.as_object_mut().expect("AW controls").extend(
+            mtmfs_controls()
+                .as_object()
+                .expect("MT-MFS controls")
+                .clone(),
+        );
+        let measured = check(&mut breaches, label, &imaging::request(values), 1, AMPLE);
+        breaches.extend(over_charge(label, &measured));
+    }
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
