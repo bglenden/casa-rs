@@ -1,0 +1,1631 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>AW-projection prior art: what made the pre-refactor VLASS rows fast, and what happened to it - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#aw-projection-prior-art-what-made-the-pre-refactor-vlass-rows-fast-and-what-happened-to-it" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              AW-projection prior art: what made the pre-refactor VLASS rows fast, and what happened to it
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#0-the-most-important-finding-two-deletions-not-one" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. The most important finding: two deletions, not one
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-the-three-historical-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The three historical results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. The three historical results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1a-casa-c-63-fields-spws-271217-40962-dirty-22510-s-against-54135-s-2405" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1a. casa-c: 63 fields, SPWs 2/7/12/17, 4096², dirty: 225.10 s against 541.35 s (2.405×)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1b-casa-d-63-fields-spws-271217-40962-niter-2000-25740-s-against-3470197-s-1348" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1b. casa-d: 63 fields, SPWs 2/7/12/17, 4096², niter 2000: 257.40 s against 3,470.197 s (13.48×)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1c-single-field-landmarks-field-1525-40962-niter-2000" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1c. Single-field landmarks: field 1525, 4096², niter 2000
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1c. Single-field landmarks: field 1525, 4096², niter 2000">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#four-spws-271217-2865-s-against-363181-s-nominally-12676" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Four SPWs (2/7/12/17): 28.65 s against 3,631.81 s, "nominally 126.76×"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#all-16-spws-101646-s" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        All 16 SPWs: 101.646 s
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1d-related-rows-that-bear-on-the-625-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1d. Related rows that bear on the #625 shape
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1e-was-anything-precomputed-outside-the-timed-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1e. Was anything precomputed outside the timed run?
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-mechanisms-that-made-those-rows-fast" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Mechanisms that made those rows fast
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-fate-of-each-mechanism" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Fate of each mechanism
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-assessment-what-could-come-back-and-what-it-might-buy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Assessment: what could come back, and what it might buy
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="aw-projection-prior-art-what-made-the-pre-refactor-vlass-rows-fast-and-what-happened-to-it">AW-projection prior art: what made the pre-refactor VLASS rows fast, and what happened to it<a class="headerlink" href="#aw-projection-prior-art-what-made-the-pre-refactor-vlass-rows-fast-and-what-happened-to-it" title="Permanent link">&para;</a></h1>
+<p>Truth class: non-normative primary-source research
+Date: 2026-10-16
+Work issue: #449 (the 10x programme)</p>
+<p>Research notes, 2026-10-16. A read-only study of the casa-rs repository at
+<code>6a9e83f36b</code> and its GitHub issues. Nothing was built or run.</p>
+<p>The figures in section 4 are the study's own estimates, not measurements. The
+open owner decisions this raises are recorded on #449: whether the recovery
+contract's landmarks are retired, and how ADR-0016 decision 2 treats a tap-plan
+cache.</p>
+<p>Abbreviations:
+- <strong>HP</strong> is the historical VLASS plan <code>docs/tutorial-parity/vlass-imaging-optimization-plan.md</code>
+  as it stood at <code>873776457e^</code>. It is 8,341 lines and was deleted by <code>873776457e</code> on
+  2026-08-13. Line numbers below refer to that version.
+- <strong>RC</strong> is <code>docs/tutorial-parity/vlass-imaging-recovery-contract.md</code> at HEAD.
+- <strong>FP</strong> is <code>docs/imaging-architecture/imaging-foundation-plan-20261007.md</code> at HEAD.
+- <strong>L</strong> is <code>crates/casa-imaging/src/lib.rs</code> at <code>d2d0c0dad5</code>, the last August
+  production commit before the main merge. The crate is 86,874 lines; the same
+  symbols are still present in 96,376 lines at the main merge <code>ba0354ef93</code>.</p>
+<h2 id="0-the-most-important-finding-two-deletions-not-one">0. The most important finding: two deletions, not one<a class="headerlink" href="#0-the-most-important-finding-two-deletions-not-one" title="Permanent link">&para;</a></h2>
+<p>The fast VLASS mechanisms were not removed by the imaging-foundation refactor.</p>
+<p><strong>Lineage.</strong> These are verified with <code>git merge-base --is-ancestor</code>:</p>
+<p><code>41caf8cd0a</code> (07-29 work, pushed 08-02) → <code>8667b5760d</code> (casa-c) → <code>388161fd29</code> →
+<code>f2abbb98bd</code> → <code>4d787cb1fb</code> (casa-d checkpoint) → <code>d2d0c0dad5</code> → <code>ba0354ef93</code>
+(main merge, 2026-08-13).</p>
+<p><strong>First deletion: the August ADR-0009 cutover.</strong>
+- Two commits deleted the whole legacy <code>casa-imaging</code> crate (96,750 lines) and the
+  <code>casars-imager</code> monolith (82,961 lines):
+  - <code>fff9c2d553</code>, "complete native continuum cutover", 2026-08-25;
+  - <code>27b9b602fe</code>, "complete final-owner cutover", 2026-08-25.
+- The programme behind them was the #486 imaging-architecture programme, with its
+  migration matrix and "transfer ratchet".
+- At that cutover the migration matrix marked AW as "typed unavailable boundary; no
+  production implementation". AW was rebuilt later in T50–T53 (#536–#539). The
+  matrix is at <code>27b9b602fe:resources/imaging-architecture/migration-matrix.json</code>.
+- What went with the crate:
+  - the frozen-base image-response cache;
+  - the compact replay cache;
+  - Metal resident/global/grouped replay;
+  - the sparse MT-MFS right-hand side (RHS);
+  - radix MADFM;
+  - the NEON 2×2 sparse initial grid;
+  - compensated Metal AW gridding.
+- <code>git log -S'struct AwProjectImageResponseCache'</code> shows the struct was added by
+  <code>41caf8cd0a</code> and removed by <code>27b9b602fe</code>.</p>
+<p><strong>What #486 re-implemented.</strong>
+- A generic gridded-normal replay:
+  - <code>crates/casa-imaging-reconstruction/src/gridded_normal_operator.rs</code>, added by
+    <code>712b399f8e</code> (2026-08-24) and <code>e413729fa8</code> (2026-08-28);
+  - 40-byte scalar records and 96-byte AW records
+    (<code>AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES</code>, <code>e714fd2339</code> version, around line 85);
+  - <code>crates/casa-imaging-runtime/src/complete_data_operator.rs</code>.
+- <code>complete_data_operator/metal_normal.rs</code> (<code>565b79a54d</code>, 2026-10-04, standard MFS).</p>
+<p><strong>Second deletion: IF-2 under D1.</strong>
+- <code>e7d29c8e5b</code> (IF-2, 2026-10-07, "run every request through the major-cycle pass and
+  delete the old drivers") deleted the gridded-normal replay and <code>metal_normal.rs</code>.
+- <code>reconstruction/src/image_response.rs</code> at <code>e714fd2339</code> is <strong>not</strong> the response cache.
+  It is the flat-noise/flat-sky PB normalisation (<code>MinorCycleImageResponse</code>). It moved
+  to products in <code>e83759240d</code>.</p>
+<p><strong>When the fast path was last production.</strong>
+- The August production freeze (PR #464, merged 2026-08-13) had already chosen
+  "role-segmented source-major Metal initial gridding with CPU residual refresh" for
+  full geometry.
+- The VLASS recovery retrospective (<code>4a29cc1d52:docs/tutorial-parity/vlass-imaging-recovery-retrospective.md</code>)
+  says the CPU residual backend "produced a scientifically accepted result after
+  compressed and Metal-residual candidates failed".
+- The accepted 12,150² all-63-field, 16-SPW clean took about 40,412 s against
+  CASA-B's 82,351.8 s, about 2.0×. The no-new-swap guard was waived (PR #464; TESTING.md at <code>6ce6fad837</code>).</p>
+<p><strong>No pre-IF build ever ran the #625 row (63 fields, 16 SPWs, 4096², niter 2000) for
+time.</strong>
+- #625 was queued and never activated.
+- An August cleaned 4096²/16-SPW/63-field run (r22) passed science (PR #464), but no
+  wall time is recorded in the repository, PR #464 or the #454 comments.
+- The run logs (r22, v24, the 28.65 s log, casa-c) are not available:
+  - <code>/Volumes/GLENDENNING/casa-rs-vlass/issue-446/</code> now holds only <code>data</code> and <code>masks</code>;
+  - the NAS preservation copy
+    <code>/Volumes/home/casa-rs-glendenning-preserve/GLENDENNING/casa-rs-vlass/issue-446/</code>
+    holds only input tars (<code>casa-reduced-clean</code>, <code>cf-cache*</code>, <code>data*</code>, <code>masks</code>,
+    <code>recovery-references</code>, <code>t51…</code>), no <code>receipts/runs</code> or <code>recovery-candidates</code>.
+  - Everything below therefore rests on repository and issue text.</p>
+<p><strong>Governance finding.</strong>
+- RC lines 530–569 still require that the single-field landmarks be preserved, and say
+  a landmark capability may leave the lineage only when generalised, superseded on the
+  same landmark, or "explicitly retired by Brian" (RC:563–568).
+- The capability was deleted twice: at the August cutover and by IF-2.
+- I found no retirement record in:
+  - #445, #454, #486 or #487 (bodies and comments, searched for landmark, 28.65,
+    retire, response cache and preservation);
+  - the cutover migration matrix;
+  - HEAD docs.
+- RC at HEAD is therefore stale against the code.</p>
+<h2 id="1-the-three-historical-results">1. The three historical results<a class="headerlink" href="#1-the-three-historical-results" title="Permanent link">&para;</a></h2>
+<h3 id="1a-casa-c-63-fields-spws-271217-40962-dirty-22510-s-against-54135-s-2405">1a. casa-c: 63 fields, SPWs 2/7/12/17, 4096², dirty: 225.10 s against 541.35 s (2.405×)<a class="headerlink" href="#1a-casa-c-63-fields-spws-271217-40962-dirty-22510-s-against-54135-s-2405" title="Permanent link">&para;</a></h3>
+<p><strong>Build.</strong> <code>8667b5760d</code> ("fix(imager): align dirty VLASS product metadata"). The
+binary's SHA-256 is <code>3a8d671a…</code>.
+- Source: RC lines 339–351; <code>tools/perf/imager/vlass_recovery_launch_ledger.json</code>,
+  entry <code>REDUCED-ALL63-DIRTY-4096-4SPW-001</code>.</p>
+<p><strong>Run configuration.</strong> From the runner at the build commit,
+<code>8667b5760d:tools/perf/imager/experiments/run_vlass_dirty_4096_all_fields_four_spw.sh</code>:
+- execution label <code>release-metal-grid2-fftw-f64-t8-memory-auto-16GiB</code>;
+- <code>--standard-mfs-acceleration metal --parallel --standard-mfs-grid-threads 2
+  --imaging-prepare-workers 1 --imaging-read-ahead-blocks 1</code>;
+- FFTW f64 with 8 threads, Homebrew FFTW;
+- memory target 16 GiB;
+- CASA 6.7.5.9's warm CF cache (<code>cf-cache/6.7.5.9/db96e297…</code>).</p>
+<p><strong>Mechanism.</strong> The initial grid is the compensated Metal AW gridder, described at HP
+lines 302–332:
+- two signed u32 atomic limbs per component, plus a second f32 compensation plane;
+- <code>AwProjectMetalCompensation</code>, L:14049; <code>awproject_metal_fixed_scales</code>, L:17279.
+- The automatic policy that selects it is <code>standard_mfs_auto_metal_decision</code>,
+  <code>8667b5760d:crates/casars-imager/src/lib.rs:25149</code>, reason <code>"selected_awproject"</code>.</p>
+<p><strong>Timing.</strong> Core 220.513 s, of which 217.063 s is the initial PSF grid. Peak RSS 10.0
+GB, footprint 13.9 GB, no swaps.</p>
+<p><strong>Like-for-like.</strong>
+- The selection, geometry, 18 products and the warm CASA cache are the same as CASA's.
+  This is an exact matched pair under the v2 scientific contract (RC lines 385–408).
+- With niter=0 there are no major cycles. Replay and response mechanisms are
+  irrelevant here; this row only measures the initial grid.
+- It is not a "fast" landmark: 2.4× was a recorded performance warning.</p>
+<h3 id="1b-casa-d-63-fields-spws-271217-40962-niter-2000-25740-s-against-3470197-s-1348">1b. casa-d: 63 fields, SPWs 2/7/12/17, 4096², niter 2000: 257.40 s against 3,470.197 s (13.48×)<a class="headerlink" href="#1b-casa-d-63-fields-spws-271217-40962-niter-2000-25740-s-against-3470197-s-1348" title="Permanent link">&para;</a></h3>
+<p><strong>Build.</strong>
+- The measured binary was built from base <code>f2abbb98bd</code> plus then-uncommitted changes:
+  <code>/private/tmp/casa-rs-vlass-autoresearch/target/release/casars-imager</code>, SHA
+  <code>82b01c39…</code>.
+- Those changes were committed as checkpoint <code>4d787cb1fb</code> (2026-08-05, "perf(imaging):
+  promote separable VLASS phase replay", +2,700 lines in L).
+- Run id <code>20260805T-vlass-all63-clean-4096-four-spw-separable-phase-f2abbb98b-v24</code>.
+- Sources: RC lines 612–656; ledger entry <code>REDUCED-ALL63-CLEAN-4096-4SPW-SEPARABLE-001</code>;
+  HP lines 7832–7914.</p>
+<p><strong>Run configuration.</strong>
+- Initial grid: "the existing exact 192-pixel dynamic sparse CPU initial-grid path,
+  seven workers on this host, AArch64 NEON 2x2 updates, and a 512 MiB logical tap
+  arena … 112 windows … 119.656 s" (HP:8270–8274).
+- Residual majors: Metal replay of a resident compiled AW program with separable X/Y
+  phase axes:
+  - global replay program 5,224,778,300 B;
+  - builder 6,560,435,928 B;
+  - peak absorb 7,528,750,264 B.
+- Runner flag set, <code>4d787cb1fb:tools/perf/imager/experiments/run_vlass_clean_4096_all_fields_four_spw.sh</code>:
+  - <code>standard_mfs_acceleration=metal</code>;
+  - CASA 6.7.5.18's bundled FFTW library;
+  - CASA 6.7.5.9's CF cache (warm);
+  - env flags <code>CASA_RS_EXPERIMENTAL_AWPROJECT_METAL_GLOBAL_TILE_REPLAY</code>,
+    <code>…METAL_GPU_RESIDUAL_REPLAY</code>, <code>…HYBRID_CLEAN</code>, <code>…PREDIVISION_SOURCE_PHASE</code>,
+    <code>…RAW_FRAME_TAYLOR</code>, <code>…RESIDUAL_ONLY_REFRESH</code>, <code>…REPLAY_RETENTION_BYTES</code>,
+    <code>…IMAGE_RESPONSE_CACHE</code>, <code>MT_MFS_SPARSE_RHS</code>, <code>RADIX_MADFM</code>,
+    <code>PARALLEL_MODEL/RESIDUAL_TERM_FFT</code>, <code>SPARSE_MASK_PEAK_SEARCH</code>,
+    <code>CACHE_REFRESHED_NSIGMA</code>.
+  - The exact set used by v24 is in its run log, which is not in the repository.
+  - Only the separable-phase encoding was made a non-flag production default.</p>
+<p><strong>Stages.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Seconds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Core</td>
+<td>250.10</td>
+</tr>
+<tr>
+<td>Initial PSF grid</td>
+<td>119.66</td>
+</tr>
+<tr>
+<td>Residual degrid/grid</td>
+<td>104.82 (≈9.5 s a residual major)</td>
+</tr>
+<tr>
+<td>Major refresh</td>
+<td>113.96</td>
+</tr>
+<tr>
+<td>Minor cycles</td>
+<td>9.36</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Like-for-like.</strong>
+- The manifest is the same as CASA's (<code>tools/perf/imager/workloads/vlass-fragment-all-fields-clean-4096-four-spw-casa.json</code>):
+  - AWProject, 32 w-planes, POINTING, A/WB/conjugate beams;
+  - Briggs 1, MT-MFS with nterms 2, scales [0,5,12];
+  - the same mask, nsigma 5, cyclefactor 3, flat noise, 19 products.
+- CASA used the warm CF cache (<code>cf_cache_role: warm</code>). casa-rs read the same CASA
+  6.7.5.9 cache, so CF generation was outside both timings.
+- 193 components on both sides.
+- casa-rs "12 recorded major cycles" counts the initial pass. The later traces at
+  <code>d2d0c0dad5</code> align 11 CASA boundaries with 11 casa-rs boundaries (HP:8239, 8317).
+- Science passed the approved v2 mask-topology contract: image tt0/tt1 NRMSE 7.4e-5
+  and 9.7e-5.
+- Not like-for-like with today's #625:
+  - 4 SPWs, not 16;
+  - Metal plus about 7 CPU workers, not serial CPU;
+  - experimental env flags;
+  - the CASA-bundled FFTW library.
+- No casa-rs row of this exact shape has been run on today's build.</p>
+<p><strong>Later August lineage on the same row.</strong> HP lines 8226–8320:
+- The exact-support grouped replay at the first measurement took 515.29 s (6.73×),
+  because the initial-grid planner regressed to Metal with 256 MiB CF residency
+  (29,220 CF loads, 0 hits).
+- <code>d2d0c0dad5</code> restored the sparse CPU initial grid: 268.49 s (12.92×).
+  - Initial grid 132.85 s; residual 101.28 s.
+  - Grouped program resident, 2.81 GB, zero spill reads.
+  - Requested 7 workers, effective 4.</p>
+<h3 id="1c-single-field-landmarks-field-1525-40962-niter-2000">1c. Single-field landmarks: field 1525, 4096², niter 2000<a class="headerlink" href="#1c-single-field-landmarks-field-1525-40962-niter-2000" title="Permanent link">&para;</a></h3>
+<p><strong>Contract.</strong> RC lines 530–569 and the <code>performance_preservation</code> member of
+<code>tools/perf/imager/vlass_recovery_contract.json</code>.</p>
+<h4 id="four-spws-271217-2865-s-against-363181-s-nominally-12676">Four SPWs (2/7/12/17): 28.65 s against 3,631.81 s, "nominally 126.76×"<a class="headerlink" href="#four-spws-271217-2865-s-against-363181-s-nominally-12676" title="Permanent link">&para;</a></h4>
+<p><strong>Build.</strong>
+- The commit is not recorded; the contract binds only the run log's SHA-256 (<code>f07d3b87…</code>).
+- The code was squashed into <code>41caf8cd0a</code> (author date 2026-07-29, committed
+  2026-08-02). Its message reads "improving the same-host exact control from 143.15s
+  to 28.65s".
+- Run log: <code>20260729-vlass-clean4096-4spw-n2000-image-response-radix-madfm-v4.log</code>
+  (HP:3315–3409).</p>
+<p><strong>Run configuration.</strong>
+- Metal AW (<code>--standard-mfs-acceleration metal</code>), grid threads 2, FFTW f64 with 8
+  threads.
+- Env flags <code>IMAGE_RESPONSE_CACHE</code>, <code>MODEL_DELTA_CENSUS</code>, <code>RADIX_MADFM</code>,
+  <code>CACHE_REFRESHED_NSIGMA</code>, <code>SPARSE_MASK_PEAK_SEARCH</code>, <code>PARALLEL_MODEL_TERM_FFT</code>,
+  <code>SPARSE_MODEL_PREP</code>. These are from the later commit-bound landmark runner,
+  <code>873776457e^:tools/perf/imager/experiments/run_vlass_landmark_single_4096_four_spw.sh</code>.
+- Also used: the sparse MT-MFS state, 4 GiB replay retention and global Metal tile
+  replay (HP:5151–5160).</p>
+<p><strong>Mechanism.</strong> The frozen-base image response (HP:3315–3358).
+- Model-delta census: 167 late major cycles update only pixel (581, 2143).
+- After two stable cycles, one exact refresh is run. A central ±0.125 response is then
+  measured for each input Taylor term with the exact operator (4 extra exact applications).
+- Later residuals are synthesised as base − Δm·H·e_p. The cache is invalidated on any
+  new delta position, and the final refresh is always exact.
+- The successor hybrid run (29.43 s) did <strong>11 exact refreshes over 171 major cycles</strong>
+  (HP:7088–7092).
+- CASA did 171 full degrid/grid major cycles (HP:3046–3049).</p>
+<p><strong>Stages.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Seconds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Core</td>
+<td>24.81</td>
+</tr>
+<tr>
+<td>Major refresh</td>
+<td>11.15</td>
+</tr>
+<tr>
+<td>Controller</td>
+<td>4.57</td>
+</tr>
+<tr>
+<td>Sparse minor</td>
+<td>2.33</td>
+</tr>
+<tr>
+<td>Initial PSF grid</td>
+<td>3.55</td>
+</tr>
+<tr>
+<td>Model FFT</td>
+<td>2.07</td>
+</tr>
+<tr>
+<td>Residual degrid/grid</td>
+<td>5.59</td>
+</tr>
+<tr>
+<td>Residual FFT</td>
+<td>2.34</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Not like-for-like.</strong>
+1. <strong>Different hosts and CASA versions, as far as the evidence shows.</strong>
+   - The evidence indicates that the CASA oracle ran CASA <strong>6.7.5.18</strong> on the Mac mini
+     (M2). This is an inference: GLENDENNING is an external SSD, so a GLENDENNING path
+     alone does not prove the laptop. The oracle script
+     <code>873776457e^:tools/perf/imager/experiments/vlass_reduced_casa_clean_4096_four_spw.py</code>
+     writes to <code>/Volumes/Extra Storage (not encrypted)/…</code> with <code>"casa_version": "6.7.5.18"</code>.
+   - Its products were later "copied from the Mac mini to GLENDENNING" (HP:5159).
+   - casa-rs's 28.65 s ran on the M4 laptop (GLENDENNING paths; HP:3317 "same-host"
+     refers to the casa-rs control only).
+   - The same-host figure is the c238 seed on the mini: 46.14 s with 2,000 components
+     and 171 cycles, using the same four-SPW runner SHA <code>1a9ba23a…</code>. That is <strong>78.7×</strong>.
+     Source: <code>tools/perf/imager/vlass_recovery_salvage_catalog.json</code>.
+2. <strong>Compared only with the casa-rs control.</strong>
+   - The 28.65 s run was compared with the exact casa-rs control, not with CASA; its
+     "promotion" was retracted on 2026-07-30 (HP:3396–3404, 5151–5221).
+   - The V6 29.82 s rerun against CASA was 5.7 ppm, with 16 alpha pixels.
+   - The scientific-floor pass is the <strong>29.43 s</strong> hybrid run (HP:7418–7499; receipt
+     <code>20260731-vlass-4096-4spw-scientific-floor-v2.json</code>).
+3. <strong>Experimental and single-position.</strong> The response cache was env-gated (L:6436) and
+   admitted only for a single pending delta position (L:6810–6816). It never admitted
+   the 63-field trajectory (RC:536–539; HP:7765–7775).
+4. <strong>Workload otherwise the same:</strong> the same recipe, mask, products and real CLEAN
+   from zero.</p>
+<p><strong>Later production rebaseline.</strong>
+- The grouped architecture took 38.5 s (94.3× nominal), with the ceiling at 42.35 s
+  (owner, 2026-08-07, HP:8113–8117).
+- That run then failed science: its CF support was cropped at 1e-6 energy, giving
+  NRMSE 0.05–0.15 (HP:8131–8147).
+- The exact-support rerun took 55.40 s (65.6× nominal) and passed science
+  (HP:8160–8197).</p>
+<h4 id="all-16-spws-101646-s">All 16 SPWs: 101.646 s<a class="headerlink" href="#all-16-spws-101646-s" title="Permanent link">&para;</a></h4>
+<p><strong>Build and evidence.</strong>
+- v59 is the full-16 promotion, HP lines 7500–7572 and 3629–3640.
+- Runner salvage: <code>16f4487c18</code> ("Promote the VLASS full-16-SPW candidate", 2026-07-31)
+  and PR #457 (78.89 s on the mini).
+- CASA reference: 1,690.1155 s, CASA 6.7.5.18 on GLENDENNING, that is the laptop
+  (<code>vlass_reduced_casa_clean_4096_full_16_spw.py</code>; HP:8204).
+  - The ratio is derived: about 16.6×. The contract records no CASA time for this
+    landmark.
+  - The later exact-support grouped build took 86.58 s (19.5×) at <code>761a2d8b57</code>.</p>
+<p><strong>Stages.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>Seconds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Core</td>
+<td>95.0</td>
+</tr>
+<tr>
+<td>Initial PSF grid</td>
+<td>60.5</td>
+</tr>
+<tr>
+<td>Minor</td>
+<td>4.5</td>
+</tr>
+<tr>
+<td>Residual refreshes</td>
+<td>5.4</td>
+</tr>
+<tr>
+<td>Product writes</td>
+<td>3.1</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>5 major cycles and 641 components, matching CASA's 5.</li>
+<li>Retained replay programs: 6.98 GB at v21 (HP:3417–3427); 9.93 GB at <code>761a2d8b57</code>.</li>
+</ul>
+<p><strong>Like-for-like.</strong> Same host and the same CASA version family. CASA ran only 5
+majors, so most of the speedup is the initial grid plus the cheap Metal replay
+refreshes.</p>
+<h3 id="1d-related-rows-that-bear-on-the-625-shape">1d. Related rows that bear on the #625 shape<a class="headerlink" href="#1d-related-rows-that-bear-on-the-625-shape" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>The full-16-SPW, 63-field residual-refresh envelope</strong> (RC:59–103):</li>
+<li>CASA <code>tclean</code> with <code>restart</code>, <code>calcres</code>, <code>niter=0</code> took 1,265.70 s.</li>
+<li>casa-rs "exact tile-ready replay" took 132.34 s, 9.56×.</li>
+<li>The contract itself calls it a favourable upper bound: casa-rs stops at the
+    tile-ready boundary, before FFT and normalisation.</li>
+<li>The grouped replay later took 65.17 s, 19.4×, also not matched (RC:684–690).</li>
+<li>It is the only 16-SPW all-field casa-rs datum from before the refactor.</li>
+<li><strong>12,150² all-63-field, 16-SPW clean</strong> (Aug 12, r4): about 40,412 s against CASA-B
+  82,351.8 s, about 2.0×. It used Metal initial grid plus CPU residual (PR #464).</li>
+<li><strong>Residual-replay memory</strong> (PR #461 body): the frozen Full16 63-field
+  residual-replay discriminator went from footprint 19.82 GB and resident 15.16 GB
+  (incumbent) to footprint 17.82 GB and resident 9.29 GB (grouped). Both footprints
+  are above the 16 GiB policy.</li>
+<li><strong>Today's #625 at <code>01ceae21eb</code>, CPU W1</strong> (#659 comment 6204573957):</li>
+<li>4,764.57 s; 7 majors; 390 iterations;</li>
+<li>passes: initial 603 s, then 655 / 651 / 679 / 692 / 719 / 682 s;</li>
+<li>footprint 7.08 GB.</li>
+<li>Restricted to SPW 13 alone, a pass takes 41.0 s (#659 comment 6174692598).</li>
+</ul>
+<h3 id="1e-was-anything-precomputed-outside-the-timed-run">1e. Was anything precomputed outside the timed run?<a class="headerlink" href="#1e-was-anything-precomputed-outside-the-timed-run" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Row</th>
+<th>CF cache</th>
+<th>Replay program</th>
+<th>FFTW wisdom</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>casa-c 225.10 s</td>
+<td>Warm CASA 6.7.5.9 cache on both sides</td>
+<td>n/a (niter 0)</td>
+<td>none named</td>
+<td>Matched</td>
+</tr>
+<tr>
+<td>casa-d 257.40 s</td>
+<td>Warm CASA 6.7.5.9 cache on both sides (manifest <code>cf_cache_role: warm</code>; runner <code>cf-cache/6.7.5.9/db96…</code>)</td>
+<td>Built inside the timed run during the initial pass (builder 6.56 GB; part of the 119.7 s)</td>
+<td>not named</td>
+<td>Matched boundary</td>
+</tr>
+<tr>
+<td>Single field 28.65 / 29.43 s</td>
+<td>Each side used its own 6.7.5.18 cache, warm</td>
+<td>Built inside the run</td>
+<td>The exact control log is named <code>…fftw-wisdom-f64-exact-v1</code>. HP:8023–8049 says the 5,073-byte wisdom file is "a later reproducibility pin rather than an activity claim earned by the original 28.65-second log"</td>
+<td>Workload matched; host not</td>
+</tr>
+<tr>
+<td>Residual envelope 132.34 s</td>
+<td>Warm on both sides</td>
+<td>Unknown whether the program build was inside the boundary; casa-rs stops at "tile-ready replay"</td>
+<td>—</td>
+<td>Favourable upper bound (RC:98–103)</td>
+</tr>
+<tr>
+<td>Today's #625 4,764.57 s</td>
+<td>Warm native catalog on casa-rs; warm CASA cache on CASA. Cold adds 159.8 s</td>
+<td>None</td>
+<td>none</td>
+<td>Matched</td>
+</tr>
+</tbody>
+</table>
+<h2 id="2-mechanisms-that-made-those-rows-fast">2. Mechanisms that made those rows fast<a class="headerlink" href="#2-mechanisms-that-made-those-rows-fast" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Mechanism</th>
+<th>Code at <code>d2d0c0dad5</code> (L unless noted)</th>
+<th>Doc text</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>M1</td>
+<td><strong>Frozen-base image response</strong> (exact columns H·e_p for one pixel, per Taylor input×output term pair; 4×N²×f64 = 512 MiB at 4096²)</td>
+<td><code>AwProjectImageResponseCache</code> L:5044; <code>from_central_calibrations</code> L:5061; calibration and activation L:6810–6898; final synthesis L:6949; env <code>CASA_RS_EXPERIMENTAL_AWPROJECT_IMAGE_RESPONSE_CACHE</code> L:6436</td>
+<td>HP:3315–3358; RC:536–539, 573–585</td>
+<td>28.65 / 29.43 s (single field); inert on 63 fields</td>
+</tr>
+<tr>
+<td>M2</td>
+<td><strong>Compact source-order replay cache</strong>: per-sample plans and packed AW tap bundles retained across majors</td>
+<td><code>AwProjectCompactReplayCache</code> L:10429; <code>AwProjectCompactReplayWindow</code> L:10295; <code>replay_awproject_compact_window</code> L:35184</td>
+<td>HP:3107–3140 (residual refresh 7.86 → 2.10 s); HP:3076–3088 (tap rematerialisation 758 s, CF loads 585.5 s, 48 hits in 143,926 loads)</td>
+<td>all clean rows</td>
+</tr>
+<tr>
+<td>M3</td>
+<td><strong>Metal resident replay program</strong>: per-sample observed visibilities, prediction plans, interned kernels and phases; separable X/Y phase atlas. The MS is not touched in residual majors; residual = V − A·m per sample on the GPU</td>
+<td><code>AwProjectMetalResidentProgram</code> L:12223; <code>AwProjectMetalPredictionSample</code> L:11557 (holds <code>first/second_observed_re/im</code>); <code>build_awproject_metal_global_replay_program</code> L:26572; <code>replay_awproject_metal_global_program</code> L:34351</td>
+<td>RC:612–622; HP:7832–7865 (17.69 → 5.22 GB)</td>
+<td>casa-d 257.4 s; landmarks</td>
+</tr>
+<tr>
+<td>M4</td>
+<td><strong>Grouped AOT tile replay</strong>: exact-support compiler, sorted groups, persistent integrity-checked spill, next-use-aware residency</td>
+<td><code>compile_awproject_metal_aot_grouped_tile</code> L:24333; <code>refresh_awproject_metal_aot_grouped_tile</code> L:24582; <code>replay_awproject_metal_{spilled,resident}_global_programs</code> L:34961 / 35048</td>
+<td>RC:658–707; HP:7916–8170; PR #461</td>
+<td>268.49 s; 55.4 / 86.6 s</td>
+</tr>
+<tr>
+<td>M5</td>
+<td><strong>Sparse multi-worker CPU initial grid</strong>: 192-pixel tiles, dynamic scheduler, NEON 2×2, 512 MiB tap arena</td>
+<td><code>AwProjectInitialGridPlan</code> L:5749; <code>resolved_awproject_initial_grid_plan</code> L:5766; <code>AwProjectNeonReplay2x2</code> L:15219</td>
+<td>HP:8265–8312</td>
+<td>casa-d initial pass, 119.7 / 132.8 s</td>
+</tr>
+<tr>
+<td>M6</td>
+<td><strong>Compensated Metal AW gridding</strong>: two u32 fixed-point limbs plus an f32 compensation plane, f64 readback</td>
+<td><code>AwProjectMetalCompensation</code> L:14049; <code>awproject_metal_fixed_scales</code> L:17279</td>
+<td>HP:302–332</td>
+<td>casa-c; single-field initial grids</td>
+</tr>
+<tr>
+<td>M7</td>
+<td><strong>Mask-sparse MT-MFS RHS</strong>: 384 MiB → 110,688 B of minor-cycle state; minor cycle 1.95 s</td>
+<td>L:59640–59760, env <code>CASA_RS_EXPERIMENTAL_MT_MFS_SPARSE_RHS</code>; <code>build_sparse_mtmfs_scale_search_positions</code> L:60500</td>
+<td>HP:3206–3293</td>
+<td>171-cycle rows</td>
+</tr>
+<tr>
+<td>M8</td>
+<td><strong>Exact radix MADFM</strong>, cached refreshed n-sigma, sparse mask peak search; statistics 6.27 → 3.70 s over 171 cycles</td>
+<td><code>radix_madfm_f32</code> L:67384</td>
+<td>HP:3352–3358</td>
+<td>171-cycle rows</td>
+</tr>
+<tr>
+<td>M9</td>
+<td><strong>CF locality</strong>: group samples by RR/LL CF quartet; plus prefetch, planning workers and pack workers from the 08-04 autoresearch</td>
+<td>(08-04 commits <code>9254efe960</code>, <code>cd745127a5</code>, <code>2040a07635</code>, <code>f2abbb98bd</code>)</td>
+<td>HP:276–284 (5,861 → 796 CF loads)</td>
+<td>all</td>
+</tr>
+<tr>
+<td>M10</td>
+<td><strong>FFT details</strong>: f32 casacore-layout model FFT, parallel per-term FFTs, FFTW wisdom</td>
+<td>env <code>PARALLEL_*_TERM_FFT</code></td>
+<td>HP:3120–3157, 8023–8049</td>
+<td>landmarks</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Where the wall time went.</strong>
+- casa-d: an initial grid of about 120 s (M5) plus about 9.5 s for each of 11 Metal
+  residual majors (M3).
+- Today's CPU W1 pass is about 41 s per SPW, so a 4-SPW pass is roughly 165 s. That is
+  an estimate scaled from #625; it has not been run.
+- The per-major gap is about 17×. That figure confounds three things:
+  - GPU against CPU;
+  - multi-threaded against W1;
+  - precompiled per-sample programs (M2/M3) against on-the-fly preparation.
+- What it is not is I/O avoidance. #625's MS reads are cheap: the density-pass reads
+  take 0.6 s (#659 comment 6207741158).
+- The single field's 126× came mostly from M1, which removed about 160 of 171 exact
+  passes, together with M7, M8 and M10, which cut the per-cycle fixed costs.</p>
+<h2 id="3-fate-of-each-mechanism">3. Fate of each mechanism<a class="headerlink" href="#3-fate-of-each-mechanism" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Mechanism</th>
+<th>August → #486</th>
+<th>#486 → IF</th>
+<th>Stated reason</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>M1 response cache</td>
+<td>Deleted at <code>27b9b602fe</code> and never ported</td>
+<td>Not present; never discussed by name</td>
+<td>The August cutover's transfer ratchet. RC:563–568 forbade silent retirement of landmark capabilities; I found no record of an owner retirement approval for the cutover. The #659 catalogue rejects "an image-domain residual (dirty image minus gridded model)" because it "cancels nearly equal f32 grids and breaks CASA's interpolate-then-subtract order" (comment 6134710065). That is a different construction, but the same argument would be raised.</td>
+</tr>
+<tr>
+<td>M2 compact replay, M3 Metal program, M4 grouped</td>
+<td>Deleted at <code>27b9b602fe</code>; its conceptual successor (a different design, not a port) was the gridded-normal replay (<code>gridded_normal_operator*</code>, <code>complete_data_operator*</code>, <code>metal_normal.rs</code>)</td>
+<td>Deleted by IF-2 <code>e7d29c8e5b</code> under <strong>D1</strong> (FP:71–87; deletion row FP:1025). Reaffirmed at R3 ("D1's re-traversal stands, and nothing argues for a replay cache", FP:1593) and at R4 ("the MAIN-walk profile does not justify a visibility or replay cache", FP:1695).</td>
+<td>D1: "not scientifically required"; about 40 B per row-channel, an 86 GB Wave3 reservation against a 36 GB input; valid only while weighting is frozen; forms the residual as a difference of two f64 images. ADR-0016 decision 2 (lines 38–41) and alternative 1 (lines 113–115). §5.9 outcome: "a tap-plan, record or placement cache across majors was rejected by design (D1, R3)" (FP:972–976). The #648 results say it was "not measured", and give deep32 cube sizes (2.6–8.9 GB a major).</td>
+</tr>
+<tr>
+<td>The narrow part kept</td>
+<td>—</td>
+<td><code>WeightCache</code>: 4 B per selected row and channel, one domain, admitted at 1/16 of free memory (<code>crates/casa-imaging-runtime/src/pass/weights.rs:17</code>; <code>crates/casa-imaging-application/src/imaging/cycle.rs:770–790</code>; #659 deviation 7)</td>
+<td>—</td>
+</tr>
+<tr>
+<td>M5 sparse CPU initial grid</td>
+<td>Deleted</td>
+<td>Superseded by <code>Partition::regions</code> grid strips for constant and Taylor bases (<code>cycle.rs:869–883</code>) plus CpuBackend's seven-tap/dense kernels</td>
+<td>One driver (D4/D5 consolidation)</td>
+</tr>
+<tr>
+<td>M6 compensated Metal AW grid</td>
+<td>Deleted</td>
+<td>Metal backend accumulates f32 with atomics (D2). The AW kernel set is refused on Metal: <code>Unsupported::KernelSetOnMetal</code> (<code>crates/casa-imaging-application/src/availability.rs:32–34, 217–219</code>); <code>auto</code> keeps AW on the CPU (#723, deviation 14)</td>
+<td>#653 (IF-4) open: "W, mosaic and AW wait for gate R2"</td>
+</tr>
+<tr>
+<td>M7 sparse RHS, M8 radix MADFM</td>
+<td>Deleted</td>
+<td>Not ported; the Taylor solver and <code>PlaneStatistics</code> are in <code>casa-imaging-deconvolution</code></td>
+<td>Never production defaults (env-gated)</td>
+</tr>
+<tr>
+<td>M9 CF locality and CF cache</td>
+<td>The prepared-artifact store replaced the packed CF</td>
+<td><strong>D3</strong>: CASA CF images in a bounded LRU (FP:108–114). <strong>Deviation 10</strong>: walk one DATA_DESCRIPTION at a time, which fixes the thrash (#625 15,498 → 4,764.57 s). Factored native generation is 10.8× faster (#648 rows 19 and 20). Owner, 2026-10-11: the cfcache is not an interop contract.</td>
+<td>Kept in spirit and improved</td>
+</tr>
+<tr>
+<td>M10 FFT</td>
+<td>—</td>
+<td>NEON FFTW; per-plane FFTs single-threaded on the team (FP:962)</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<h2 id="4-assessment-what-could-come-back-and-what-it-might-buy">4. Assessment: what could come back, and what it might buy<a class="headerlink" href="#4-assessment-what-could-come-back-and-what-it-might-buy" title="Permanent link">&para;</a></h2>
+<p><strong>Constraints throughout.</strong>
+- One measurement operator and one pass (ADR-0016 decisions 1 and 2).
+- <code>admit()</code> before any allocation (D5).
+- No env vars in library crates (D9 / ADR-0016 decision 9).
+- Device code only in <code>casa-imaging-metal</code> (ADR-0016 decision 10).
+- The 16 GiB native policy.
+- #625's own bar is serial W1. Report serial gains and parallel or GPU gains separately.
+- The estimates below are mine. None of them is measured.</p>
+<ol>
+<li><strong>AW kernel set on Metal (#653).</strong> This is the largest lever for the casa-d/#625
+   shape.</li>
+<li>August data: about 9.5 s per residual major for 6.4 M samples on the M4 GPU,
+     against an estimated 165 s at CPU W1 today.</li>
+<li>It fits the existing <code>GridBackend</code>/<code>Work::NativeResidualGrid</code> design; no ADR
+     change is needed.</li>
+<li>Risks:<ul>
+<li>D2's plain f32 atomics. August needed compensated accumulation (M6), and an f32
+   Metal residual "failed scientific comparison decisively" at 12,150² (salvage
+   catalog, <code>exact-metal-direct-cf-f32-residual</code>).</li>
+<li>Wide-support atomics contention: the R2 measurement #653 asked for.</li>
+<li>Host preparation becomes the bottleneck. The 08-07 initial pass spent 155 s on
+   source preparation against 136 s on Metal.</li>
+</ul>
+</li>
+<li>It needs T0/T1 Metal AW laws and possibly an owner refinement of D2
+     (compensated f32).</li>
+<li>Plausible result: residual passes at August's 65–132 s plus an initial pass at
+     August's best extrapolated figure (about 480–530 s) give about 870–1,320 s, which
+     is 7–10×.</li>
+<li>10× needs the initial pass to fall well below that too, for example a Metal
+     initial grid without the CF thrash August hit. That is unmeasured.</li>
+<li>If only the residual passes move, the cap is about 7.5× (see the budget below).</li>
+<li><strong>Multi-worker CPU AW.</strong></li>
+<li>This already exists through <code>Partition::Regions</code>. #625 was timed only at W1.</li>
+<li>It is low conflict: measure W4 and charge the per-holder CF LRU
+     (<code>AwCatalog::charge_bytes</code>).</li>
+<li>Plausible: 2.5–3.5× per pass, so #625 at about 1,400–1,900 s, roughly 5–6×.
+     It does not count toward the serial bar.</li>
+<li><strong>A bounded tap-plan (placement) cache.</strong></li>
+<li>What it holds: per-sample CF key, placement and pointing phasor, without taps or
+     values.</li>
+<li>ADR-0016 decision 2 explicitly permits "a bounded tap-plan cache … as a measured
+     execution strategy". The FP §5.9 and #648 records still list it as rejected by
+     design, so reopening it is an owner (Ask First) decision.</li>
+<li>Size: about 25 M samples on #625 at 16–32 B is 0.4–0.8 GB. It fits
+     WeightCache-style admission.</li>
+<li>Gain: about 10–30% per pass on the CPU. Gridding dominates, and the per-row
+     pointing conversion is about 10 s a pass. On Metal it would be much larger,
+     because it removes the host-preparation bottleneck.</li>
+<li><strong>A full record or program replay</strong> (observed V plus plans, as in M3/M4).</li>
+<li>D1's three objections apply unevenly to the August per-sample design:<ul>
+<li><strong>"Residual as a difference of two f64 images":</strong> this described the #486
+   gridded-normal operator. The August Metal program formed V − A·m per sample;
+   <code>AwProjectMetalPredictionSample</code> holds the observed values (L:11557). It
+   therefore kept CASA's interpolate-then-subtract order.</li>
+<li><strong>"Valid only while weighting is frozen":</strong> this is already accepted for
+   <code>WeightCache</code> (deviation 7).</li>
+<li><strong>Memory:</strong> this depends on workload and representation. Wave3 needed 86 GB at
+   40 B per sample. #625 at the #486 AW record size of 96 B per row-channel would
+   be about 4 GB (about 42 M row-channels; 25.0 M accepted samples in r22). The
+   measured M3/M4 representations were heavier: 9.3–15.2 GB resident and
+   17.8–19.8 GB footprint for the 16-SPW 63-field residual (PR #461).</li>
+</ul>
+</li>
+<li>It remains Ask First, because ADR-0016 alternative 1 rejects it, so the ADR would
+     have to be edited.</li>
+<li>ADR-0016 decision 2 is internally in tension. It says "no replay cache of
+     visibility-independent factors" yet allows "a bounded tap-plan cache", which is
+     exactly a cache of visibility-independent factors. The owner should resolve that
+     wording before item 3 or item 4 is attempted.</li>
+<li>Spilled replay was slower: 14.3 GB reread a refresh made it 2× slower than
+     resident (HP:8000–8006).</li>
+<li>Worth it only after item 1, and only if host preparation then dominates.</li>
+<li><strong>The frozen-base response (M1), generalised to a bounded set of delta positions</strong>
+   with exact shadow cycles and fallback (RC:570–585; HP:3405–3414 oracle
+   requirements: dyadic calibration, a held-out exact shadow cycle, coefficient
+   trust regions, decision-margin certificates, exact fallback).</li>
+<li>It is not named in D1, and it is mathematically exact for the linear H up to
+     rounding.</li>
+<li>It lives in the runtime's major/minor loop, and calls <code>run_major_cycle</code> for the
+     calibration columns.</li>
+<li>Cost: 512 MiB per position at 4096² and about 4.4 GiB at 12,150², so only a few
+     positions can be admitted.</li>
+<li>Buys a lot on many-cycle single-field rows: 171 → 11 exact passes. Little on
+     #625 (7 majors) or casa-d (11 majors), whose model delta is not single-position.</li>
+<li>It needs owner sign-off against the #659 "image-domain residual" rejection.</li>
+<li><strong>Sparse MT-MFS RHS (M7), radix MADFM and cached n-sigma (M8).</strong></li>
+<li>These are solver-internal (<code>Solver::State</code>, <code>PlaneStatistics</code>) with no
+     architectural conflict.</li>
+<li>They matter only on 171-cycle rows, worth seconds per cycle; they are negligible
+     on #625.</li>
+<li><strong>M5 and M10.</strong> Today's Regions partition plus NEON FFTW cover most of them.
+   Parallel per-term FFTs are a small fixed-cost win on many-cycle rows.</li>
+</ol>
+<p><strong>The 10× budget for #625</strong>, using 16-SPW data where it exists:
+- 10× on #625 is about 907 s in total. Today: initial pass 603 s plus six residual
+  passes of 651–719 s, all at CPU W1.
+- <strong>Initial grid.</strong>
+  - The best August initial grid was the multi-worker sparse CPU path, 120–133 s at 4
+    SPWs on 63 fields.
+  - Scaled by SPW count to 16 SPWs, that is about 480–530 s. This is an estimate: the
+    per-SPW cost was roughly constant today, 41 s per SPW per pass.
+  - The 16-SPW single-field v59 initial grid was 60.5 s, but that is 1/63 of the rows.
+- <strong>Residual passes.</strong> The only 16-SPW all-field residual figures are 132.34 s
+  (incumbent) and 65.17 s (grouped). Both stop before FFT and normalisation.
+- <strong>Total.</strong> About 480–530 + 6 × (65–132) ≈ 870–1,320 s. The best August mechanisms
+  therefore extrapolate to roughly the 10× line, or short of it, on #625. They were
+  never run there, and the resident replay footprint is 17.8–19.8 GB.
+- <strong>The initial grid is as large a lever as the residual.</strong> Today's 603 s initial
+  pass alone uses two-thirds of the 907 s budget. Accelerating only the residual
+  majors, to about 100 s each, caps #625 near 9,074 / (603 + 600) ≈ 7.5×.</p>
+<p><strong>No row passes 10× on the serial CPU alone.</strong> The single-field 4-SPW row is likely
+bound by its roughly 172 passes of FFT and normalisation fixed cost. It has not been
+measured on today's build, and its CASA time is the mini's.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
