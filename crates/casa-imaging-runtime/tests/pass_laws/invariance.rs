@@ -15,7 +15,7 @@ use num_complex::Complex32;
 
 use crate::fixture::{
     CHANNELS, IMAGE, INCREMENT_RAD, Rows, Run, WIDTH_HZ, nearest_cube, operator, planes, run,
-    worst_relative,
+    try_run, worst_relative,
 };
 
 #[test]
@@ -86,6 +86,73 @@ fn region_partition_matches_one_owner() {
             );
         }
     }
+}
+
+/// A region pass reports its gridding work by anchor row, and strips cut to
+/// equal shares of it (#736) grid what one owner grids, to rounding. Plane
+/// owners report none.
+#[test]
+fn balanced_regions_from_a_pass_row_work_match_one_owner() {
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let mut rows = Rows::random(500, 7, operator.geometry());
+    let reference = run(
+        &[planes(&operator, &resampler, 1)],
+        &mut rows,
+        &Run::initial(),
+    );
+    let regions = [PassDomain {
+        operator: &operator,
+        resampler: &resampler,
+        partition: Partition::regions(&operator, 3),
+    }];
+    let (_, summary) = try_run(
+        &regions,
+        &mut rows,
+        &Run {
+            workers: 3,
+            ..Run::initial()
+        },
+    )
+    .expect("pass");
+    let [Some(row_work)] = summary.row_work.as_slice() else {
+        panic!("one region-split domain reports its work");
+    };
+    assert_eq!(row_work.len(), operator.geometry().grid_shape()[1]);
+    // The spheroidal kernel's 7 × 7 taps for every placed sample.
+    assert_eq!(row_work.iter().sum::<u64>(), 49 * summary.samples);
+    let balanced = Partition::regions_balanced(&operator, 3, row_work);
+    let images = run(
+        &[PassDomain {
+            operator: &operator,
+            resampler: &resampler,
+            partition: balanced,
+        }],
+        &mut rows,
+        &Run {
+            workers: 3,
+            ..Run::initial()
+        },
+    );
+    let worst = worst_relative(&reference[0], &images[0]);
+    assert!(worst <= 1.0e-6, "balanced regions: {worst}");
+
+    let cube = crate::fixture::operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
+    let cube_resampler = nearest_cube();
+    let (_, summary) = try_run(
+        &[planes(&cube, &cube_resampler, 2)],
+        &mut Rows::random(100, 11, cube.geometry()),
+        &Run {
+            workers: 2,
+            ..Run::initial()
+        },
+    )
+    .expect("pass");
+    assert_eq!(
+        summary.row_work,
+        vec![None],
+        "plane owners report no row work"
+    );
 }
 
 /// The density pass reads flags and weights only: its source delivers zero

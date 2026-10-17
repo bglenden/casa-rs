@@ -127,6 +127,10 @@ struct Run<'a> {
     /// The imaging weights the run keeps for its samples across passes,
     /// with their charge, once a pass has admitted them ([`Run::keep_weights`]).
     kept_weights: Option<(WeightCache, Reservation)>,
+    /// The first pass's gridding work by anchor row of each region-split
+    /// domain, with its charge: later passes cut their strips to equal
+    /// shares of it (#736).
+    row_work: Option<(Vec<Option<Vec<u64>>>, Reservation)>,
 }
 
 /// One reconciled major cycle.
@@ -535,6 +539,7 @@ impl<'a> Run<'a> {
             weight_image,
             retained: Reservation::none(),
             kept_weights: None,
+            row_work: None,
         };
         if run.visibility_write.is_some() {
             // The pass that writes is the initial one without cleaning and a
@@ -694,6 +699,7 @@ impl<'a> Run<'a> {
             summary.samples,
             started.elapsed().as_secs_f64(),
         );
+        self.keep_row_work(summary.row_work);
         Ok(Major {
             completion,
             visibility,
@@ -737,7 +743,7 @@ impl<'a> Run<'a> {
     ) -> Result<(Residency, Reservation), ImagingError> {
         let besides = besides + self.stitch.pass_bytes(modes.psf);
         let workers = self.teams.streaming().workers();
-        let domains = pass_domains(&self.domains, workers);
+        let domains = pass_domains(&self.domains, workers, self.row_work());
         let demand = WaveDemand {
             domains: &domains,
             modes,
@@ -794,6 +800,30 @@ impl<'a> Run<'a> {
         Some((WeightCache::new(samples), charge))
     }
 
+    /// The kept gridding work by anchor row, per domain ([`Self::keep_row_work`]).
+    fn row_work(&self) -> Option<&[Option<Vec<u64>>]> {
+        self.row_work.as_ref().map(|(work, _)| work.as_slice())
+    }
+
+    /// Keep the first pass's gridding work by anchor row for the later
+    /// passes' strips ([`Partition::regions_balanced`]), charged before it is
+    /// kept. Every pass places the same samples, so one histogram serves the
+    /// run. Without a region-split domain, or without room, the later passes
+    /// keep strips of equal height.
+    fn keep_row_work(&mut self, row_work: Vec<Option<Vec<u64>>>) {
+        if self.row_work.is_some() || row_work.iter().all(Option::is_none) {
+            return;
+        }
+        let bytes = row_work
+            .iter()
+            .flatten()
+            .map(|rows| size_of_val(rows.as_slice()) as u64)
+            .sum();
+        if let Ok(charge) = self.admit("region row work", bytes) {
+            self.row_work = Some((row_work, charge));
+        }
+    }
+
     /// One pass over every image domain, appending its images to `state`.
     fn pass(
         &mut self,
@@ -808,7 +838,7 @@ impl<'a> Run<'a> {
             self.kept_weights = self.keep_weights(residency);
         }
         let team = self.teams.streaming();
-        let domains = pass_domains(&self.domains, team.workers());
+        let domains = pass_domains(&self.domains, team.workers(), self.row_work());
         let charts = &self.charts;
         let prepare = |chart: usize, planes: PlaneRange| {
             let generation = model.expect("the closure is installed only with a model");
@@ -865,17 +895,30 @@ impl<'a> Run<'a> {
 }
 
 /// Every image domain's operator, resampler and partition: planes split
-/// among `workers` for a channel-local basis, grid strips otherwise.
-fn pass_domains(domains: &[DomainOperator], workers: usize) -> Vec<PassDomain<'_>> {
+/// among `workers` for a channel-local basis, grid strips otherwise, cut to
+/// equal shares of an earlier pass's gridding work by anchor row when the
+/// run has it (`row_work`, per domain; #736).
+fn pass_domains<'d>(
+    domains: &'d [DomainOperator],
+    workers: usize,
+    row_work: Option<&[Option<Vec<u64>>]>,
+) -> Vec<PassDomain<'d>> {
     domains
         .iter()
-        .map(|domain| PassDomain {
+        .enumerate()
+        .map(|(index, domain)| PassDomain {
             operator: &domain.operator,
             resampler: &domain.resampler,
             partition: match domain.operator.basis() {
                 Basis::ChannelLocal { .. } => Partition::Planes { owners: workers },
                 Basis::Constant | Basis::Taylor { .. } => {
-                    Partition::regions(&domain.operator, workers)
+                    match row_work
+                        .and_then(|work| work.get(index))
+                        .and_then(Option::as_ref)
+                    {
+                        Some(work) => Partition::regions_balanced(&domain.operator, workers, work),
+                        None => Partition::regions(&domain.operator, workers),
+                    }
                 }
             },
         })

@@ -57,6 +57,10 @@ struct Domain<'w> {
     router: Router,
     owners: Vec<Owner<'w>>,
     model: Option<&'w PreparedModelGrids>,
+    /// The wave's gridding work by anchor row when the domain is split into
+    /// regions ([`Router::owner_and_work`]), for later passes' boundaries
+    /// ([`Partition::regions_balanced`]).
+    row_work: Option<Vec<u64>>,
 }
 
 /// One row chunk's placements on the wave's planes, by owner, and its
@@ -77,6 +81,10 @@ struct Chunk {
     weight_owned: SampleBuffer,
     placed: u64,
     prediction: PredictionScratch,
+    /// The gridding work of the chunk's placements by anchor row, on a
+    /// region-partitioned domain ([`Router::owner_and_work`]); merged into
+    /// the domain's after each slice.
+    row_work: Vec<u64>,
 }
 
 /// The largest chunk of a wave over blocks of `block`: at most
@@ -109,6 +117,9 @@ struct ChunkShape {
     /// ([`SpectralResampler::prediction_scratch`]) with each row's span in
     /// it.
     prediction: u64,
+    /// Grid rows of the region-partitioned domain with the most: the
+    /// length of the chunk's work histogram ([`Chunk::row_work`]).
+    grid_rows: usize,
 }
 
 impl ChunkShape {
@@ -156,6 +167,12 @@ impl ChunkShape {
                 block.channels(),
                 rows,
             ),
+            grid_rows: domains
+                .iter()
+                .filter(|domain| matches!(domain.partition, Partition::Regions { .. }))
+                .map(|domain| domain.operator.geometry().grid_shape()[1])
+                .max()
+                .unwrap_or(0),
         }
     }
 
@@ -184,11 +201,12 @@ impl ChunkShape {
     }
 
     /// Bytes a chunk of this shape holds: each owner's and the weight
-    /// owner's placements and its prediction batch.
+    /// owner's placements, its prediction batch and its work histogram.
     const fn bytes(self) -> u64 {
         self.owners as u64 * self.buffer_bytes(self.placements)
             + SampleBuffer::bytes(self.npol, self.weight_placements())
             + self.prediction
+            + (self.grid_rows * size_of::<u64>()) as u64
     }
 }
 
@@ -236,6 +254,7 @@ impl Chunk {
                 shape.channels,
                 shape.rows,
             ),
+            row_work: Vec::with_capacity(shape.grid_rows),
         }
     }
 
@@ -248,6 +267,7 @@ impl Chunk {
             .sum::<u64>()
             + self.weight_owned.capacity_bytes()
             + self.prediction.capacity_bytes()
+            + (self.row_work.capacity() * size_of::<u64>()) as u64
     }
 }
 
@@ -393,10 +413,13 @@ impl<'w, 'p> Wave<'w, 'p> {
                         })
                     })
                     .collect::<Result<_, PassError>>()?;
+                let row_work = matches!(domain.partition, Partition::Regions { .. })
+                    .then(|| vec![0; operator.geometry().grid_shape()[1]]);
                 Ok(Domain {
                     router,
                     owners,
                     model: models.map(|models| &models[index]),
+                    row_work,
                 })
             })
             .collect::<Result<_, PassError>>()?;
@@ -569,12 +592,17 @@ impl<'w, 'p> Wave<'w, 'p> {
         // A row's kept weights, at its slots from the block's (one domain).
         let weights = self.weights.filter(|_| index == 0);
         let weight_base = self.weight_base;
+        let grid_rows = domain.row_work.as_ref().map(Vec::len);
         team.for_each_mut(&mut self.chunks[..count], |_, chunk| {
             chunk.placed = 0;
             chunk.owned[..owners]
                 .iter_mut()
                 .for_each(SampleBuffer::clear);
             chunk.weight_owned.clear();
+            chunk.row_work.clear();
+            if let Some(rows) = grid_rows {
+                chunk.row_work.resize(rows, 0);
+            }
             for position in chunk.rows.clone() {
                 let row_index = row_at(block, ordered, position);
                 let native = block.row(index, row_index);
@@ -582,8 +610,12 @@ impl<'w, 'p> Wave<'w, 'p> {
                     cache.row(weight_base + row_index * channels, channels, filled)
                 });
                 let mut row_samples = 0;
-                let (owned, weight_owned, placed) =
-                    (&mut chunk.owned, &mut chunk.weight_owned, &mut chunk.placed);
+                let (owned, weight_owned, placed, row_work) = (
+                    &mut chunk.owned,
+                    &mut chunk.weight_owned,
+                    &mut chunk.placed,
+                    &mut chunk.row_work,
+                );
                 let mut keep = |placement: &Placement, values: &[Complex32], weights: &[f32]| {
                     row_samples += 1;
                     if !planes.contains(placement.plane) {
@@ -593,7 +625,13 @@ impl<'w, 'p> Wave<'w, 'p> {
                         weight_owned.push(*placement, values, weights);
                     }
                     *placed += 1;
-                    Some(router.owner(target.operator, placement))
+                    let (owner, work) = router.owner_and_work(target.operator, placement);
+                    if let Some((row, work)) = work
+                        && let Some(total) = row_work.get_mut(row)
+                    {
+                        *total += work;
+                    }
+                    Some(owner)
                 };
                 if native_residuals {
                     target.resampler.place_each_sourced(
@@ -634,6 +672,13 @@ impl<'w, 'p> Wave<'w, 'p> {
             Ok::<_, PassError>(())
         })?;
         let chunks = &self.chunks[..count];
+        if let Some(total) = &mut domain.row_work {
+            for chunk in chunks {
+                for (total, work) in total.iter_mut().zip(&chunk.row_work) {
+                    *total += work;
+                }
+            }
+        }
         let model = domain.model.filter(|_| !native_residuals);
         let native = native_residuals.then(|| match &self.predictions {
             NativeStore::Host(cells) => NativeModel::Host { cells, first: 0 },
@@ -817,6 +862,15 @@ impl<'w, 'p> Wave<'w, 'p> {
                 Ok(&unsafe { cells.host_cells() }[..len])
             }
         }
+    }
+
+    /// Each domain's gridding work by anchor row, when it is split into
+    /// regions; taken once, before [`Self::finish`].
+    pub(super) fn take_row_work(&mut self) -> Vec<Option<Vec<u64>>> {
+        self.domains
+            .iter_mut()
+            .map(|domain| domain.row_work.take())
+            .collect()
     }
 
     /// Transform the accumulated grids into this wave's normal images, one

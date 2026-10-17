@@ -50,13 +50,62 @@ impl Partition {
     /// tile.
     #[must_use]
     pub fn regions(operator: &MeasurementOperator, owners: usize) -> Self {
+        let [_, ny] = operator.geometry().grid_shape();
+        let owners = owners.clamp(1, ny);
+        let bounds = (0..=owners)
+            .map(|owner| owner * ny / owners)
+            .collect::<Vec<_>>();
+        Self::from_bounds(operator, &bounds)
+    }
+
+    /// `owners` horizontal strips of `operator`'s grid holding near-equal
+    /// shares of `row_work`, the gridding work of each anchor row that an
+    /// earlier pass measured ([`super::PassSummary::row_work`]), each with
+    /// [`Self::regions`]' halo. A uv grid's samples gather towards its
+    /// centre, so strips of equal height leave most of the work to the
+    /// middle owners (#736). Each strip keeps at least one row. Work that
+    /// does not cover the grid, or holds none, gives [`Self::regions`].
+    #[must_use]
+    pub fn regions_balanced(
+        operator: &MeasurementOperator,
+        owners: usize,
+        row_work: &[u64],
+    ) -> Self {
+        let [_, ny] = operator.geometry().grid_shape();
+        let total = row_work.iter().map(|&work| u128::from(work)).sum::<u128>();
+        if row_work.len() != ny || total == 0 {
+            return Self::regions(operator, owners);
+        }
+        let owners = owners.clamp(1, ny);
+        // `before[r]`: the work of the rows above row `r`.
+        let before = std::iter::once(0)
+            .chain(row_work.iter().scan(0_u128, |sum, &work| {
+                *sum += u128::from(work);
+                Some(*sum)
+            }))
+            .collect::<Vec<_>>();
+        let mut bounds = Vec::with_capacity(owners + 1);
+        bounds.push(0);
+        for owner in 1..owners {
+            let share = total * owner as u128 / owners as u128;
+            let row = before.partition_point(|&work| work < share);
+            let previous = *bounds.last().expect("the first bound");
+            bounds.push(row.clamp(previous + 1, ny - (owners - owner)));
+        }
+        bounds.push(ny);
+        Self::from_bounds(operator, &bounds)
+    }
+
+    /// Strips between consecutive `bounds` (rows `bounds[k]..bounds[k+1]`
+    /// for owner `k`), with the kernel set's largest half support as halo.
+    fn from_bounds(operator: &MeasurementOperator, bounds: &[usize]) -> Self {
         let [nx, ny] = operator.geometry().grid_shape();
         let halo = usize::from(operator.cf().max_half_support()[1]);
-        let owners = owners.clamp(1, ny);
         Self::Regions {
-            regions: (0..owners)
-                .map(|owner| {
-                    let rows = owner * ny / owners..(owner + 1) * ny / owners;
+            regions: bounds
+                .windows(2)
+                .map(|pair| {
+                    let rows = pair[0]..pair[1];
                     let first = rows.start.saturating_sub(halo);
                     let last = (rows.end + halo).min(ny);
                     Region {
@@ -129,7 +178,8 @@ impl WaveDemand<'_> {
     /// its accumulator holding `modes`; the operator's `f32` images; and, for
     /// a basis whose normal state is resident, that state's copy at its
     /// stored size ([`casa_imaging_deconvolution::resident_bytes_per_cell`]):
-    /// a channel-local state is paged, under its cube cache's charge. With a
+    /// a channel-local state is paged, under its cube cache's charge. Per
+    /// region-partitioned domain, its gridding work by anchor row. With a
     /// model, the prepared grids of the wave's planes and of its model halo on
     /// each side. Per worker: one
     /// transform plane and one image per grid polarization of the largest
@@ -177,6 +227,11 @@ impl WaveDemand<'_> {
                     );
             }
             bytes += per_plane * u64::from(planes);
+            // A region-partitioned domain's gridding work by anchor row,
+            // which the pass hands to the next one's partition.
+            if matches!(domain.partition, Partition::Regions { .. }) {
+                bytes += (operator.geometry().grid_shape()[1] * size_of::<u64>()) as u64;
+            }
             if self.with_model {
                 let model_planes = planes
                     .saturating_add(2 * domain.resampler.model_halo(self.native_spacing_hz))
@@ -342,24 +397,35 @@ impl Router {
         }
     }
 
-    /// Owner of one placement; the placement lies on the wave and fits the grid.
-    pub(super) fn owner(&self, operator: &MeasurementOperator, placement: &Placement) -> usize {
+    /// Owner of one placement and, with region owners, its anchor row and
+    /// gridding work, the kernel's taps `(2·h_x + 1)(2·h_y + 1)`, which
+    /// [`Partition::regions_balanced`] balances; the placement lies on the
+    /// wave and fits the grid.
+    pub(super) fn owner_and_work(
+        &self,
+        operator: &MeasurementOperator,
+        placement: &Placement,
+    ) -> (usize, Option<(usize, u64)>) {
         match self {
-            Self::Planes { starts } => {
-                starts.partition_point(|start| *start <= placement.plane) - 1
-            }
+            Self::Planes { starts } => (
+                starts.partition_point(|start| *start <= placement.plane) - 1,
+                None,
+            ),
             Self::Regions { owner_of_row, halo } => {
                 let mut hold = CellHold::new();
                 let taps = operator.cf().taps(placement.cf, &mut hold);
+                let [hx, hy] = taps.half_support();
                 debug_assert!(
-                    usize::from(taps.half_support()[1]) <= *halo,
+                    usize::from(hy) <= *halo,
                     "a kernel cell's support exceeds the regions' halo"
                 );
                 let anchor =
                     operator
                         .geometry()
                         .locate(placement.u, placement.v, taps.oversampling());
-                usize::from(owner_of_row[anchor.y as usize])
+                let row = anchor.y as usize;
+                let work = (2 * u64::from(hx) + 1) * (2 * u64::from(hy) + 1);
+                (usize::from(owner_of_row[row]), Some((row, work)))
             }
         }
     }
@@ -374,8 +440,7 @@ mod tests {
         Spheroidal,
     };
 
-    #[test]
-    fn regions_cover_the_grid_once_with_the_kernel_halo() {
+    fn spheroidal_operator() -> MeasurementOperator {
         let geometry = GridGeometry::new(
             ImageExtent {
                 shape: [64, 64],
@@ -391,13 +456,107 @@ mod tests {
         )
         .expect("routing");
         let cf = Spheroidal::new(&geometry, &polarization);
-        let operator = MeasurementOperator::new(
+        MeasurementOperator::new(
             geometry,
             Basis::Constant,
             polarization,
             Box::new(cf),
             GridPrecision::F64,
+        )
+    }
+
+    fn rows_of(partition: &Partition) -> Vec<Range<usize>> {
+        let Partition::Regions { regions, .. } = partition else {
+            panic!("regions");
+        };
+        regions.iter().map(|region| region.rows.clone()).collect()
+    }
+
+    /// Work gathered at the grid's centre, as uv samples are: equal-height
+    /// strips give the middle owner nearly all of it, balanced strips give
+    /// each owner its share to within one row's work. The strips still
+    /// cover the grid once, each with at least one row and the kernel halo.
+    #[test]
+    fn balanced_regions_share_centre_heavy_work() {
+        let operator = spheroidal_operator();
+        let ny = operator.geometry().grid_shape()[1];
+        let centre = ny as f64 / 2.0;
+        let row_work = (0..ny)
+            .map(|row| {
+                let offset = (row as f64 - centre) / (ny as f64 / 16.0);
+                (1.0e6 * (-offset * offset).exp()) as u64
+            })
+            .collect::<Vec<_>>();
+        let total = row_work.iter().sum::<u64>();
+        let largest = *row_work.iter().max().expect("rows");
+        let share = |rows: &Range<usize>| row_work[rows.clone()].iter().sum::<u64>();
+        let equal = rows_of(&Partition::regions(&operator, 3));
+        assert!(
+            share(&equal[1]) > total * 9 / 10,
+            "the middle strip holds the work"
         );
+        let balanced = Partition::regions_balanced(&operator, 3, &row_work);
+        let rows = rows_of(&balanced);
+        assert_eq!(rows.first().expect("a strip").start, 0);
+        assert_eq!(rows.last().expect("a strip").end, ny);
+        for pair in rows.windows(2) {
+            assert_eq!(pair[0].end, pair[1].start);
+        }
+        for strip in &rows {
+            assert!(!strip.is_empty());
+            assert!(
+                share(strip).abs_diff(total / 3) <= largest,
+                "strip {strip:?} holds {} of {total}",
+                share(strip)
+            );
+        }
+        let Partition::Regions { regions, halo } = balanced else {
+            panic!("regions");
+        };
+        assert_eq!(halo, 3);
+        for region in &regions {
+            assert_eq!(
+                region.tile.origin[1],
+                region.rows.start.saturating_sub(halo)
+            );
+            assert_eq!(
+                region.tile.origin[1] + region.tile.shape[1],
+                (region.rows.end + halo).min(ny)
+            );
+        }
+    }
+
+    /// Without usable work, or with work on one row, the strips stay valid:
+    /// equal strips for no work or the wrong length, and one row at least
+    /// per strip when all the work is on one row.
+    #[test]
+    fn balanced_regions_fall_back_and_keep_every_strip() {
+        let operator = spheroidal_operator();
+        let ny = operator.geometry().grid_shape()[1];
+        let equal = rows_of(&Partition::regions(&operator, 4));
+        assert_eq!(
+            rows_of(&Partition::regions_balanced(&operator, 4, &[])),
+            equal
+        );
+        assert_eq!(
+            rows_of(&Partition::regions_balanced(&operator, 4, &vec![0; ny])),
+            equal
+        );
+        let mut one_row = vec![0; ny];
+        one_row[ny / 2] = 100;
+        let rows = rows_of(&Partition::regions_balanced(&operator, 4, &one_row));
+        assert_eq!(rows.len(), 4);
+        assert!(rows.iter().all(|strip| !strip.is_empty()));
+        assert_eq!(rows.last().expect("a strip").end, ny);
+        let mut last_row = vec![0; ny];
+        last_row[ny - 1] = 100;
+        let rows = rows_of(&Partition::regions_balanced(&operator, 4, &last_row));
+        assert!(rows.iter().all(|strip| !strip.is_empty()));
+    }
+
+    #[test]
+    fn regions_cover_the_grid_once_with_the_kernel_halo() {
+        let operator = spheroidal_operator();
         let Partition::Regions { regions, halo } = Partition::regions(&operator, 3) else {
             panic!("regions");
         };
