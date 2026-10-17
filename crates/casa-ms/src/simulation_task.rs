@@ -303,13 +303,9 @@ pub struct SimobserveFamilyTaskRequest {
 }
 
 impl SimobserveFamilyTaskRequest {
-    /// Execute the family request by generating a concrete MeasurementSet and
-    /// manifest from the persisted dialog inputs.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "predates the function-length limit; #705"
-    )]
-    pub fn execute(&self) -> Result<SimobserveFamilyTaskResult, String> {
+    /// Check the requested size, counts, phase centers, frequencies, times
+    /// and imaging mode before any planning or I/O.
+    fn validate_inputs(&self) -> Result<(), String> {
         if self.target_ms_size_gib <= 0.0 || !self.target_ms_size_gib.is_finite() {
             return Err("target_ms_size_gib must be positive".to_string());
         }
@@ -371,7 +367,13 @@ impl SimobserveFamilyTaskRequest {
         {
             return Err("start_time_mjd_seconds must be finite when provided".to_string());
         }
-        validate_family_imaging_mode(&self.imaging_mode)?;
+        validate_family_imaging_mode(&self.imaging_mode)
+    }
+
+    /// Execute the family request by generating a concrete MeasurementSet and
+    /// manifest from the persisted dialog inputs.
+    pub fn execute(&self) -> Result<SimobserveFamilyTaskResult, String> {
+        self.validate_inputs()?;
         let output_ms = self
             .output_ms
             .clone()
