@@ -297,6 +297,90 @@ fn flagmanager_merge_rename_delete_and_invalid_names_are_reported() {
     assert!(save_flag_version(&ms, "bad/name", "bad", FlagMerge::Replace).is_err());
 }
 
+/// The environment variable naming the table [`hold_a_table_open`] holds.
+const HELD_TABLE: &str = "CASA_MS_TEST_HELD_TABLE";
+
+/// Not a law: the other process of [`a_flag_version_open_elsewhere_is_neither_deleted_nor_renamed`].
+/// Opened with [`HELD_TABLE`] set, it holds that table open, as a CASA
+/// session would, until its standard input closes.
+#[test]
+#[ignore = "run by another test as its holding process"]
+fn hold_a_table_open() {
+    let Some(path) = std::env::var_os(HELD_TABLE) else {
+        return;
+    };
+    let table = casa_tables::Table::open_with_lock(
+        casa_tables::TableOptions::new(&path),
+        casa_tables::LockOptions::new(casa_tables::LockMode::AutoLocking),
+    )
+    .expect("open the held table");
+    println!("held");
+    let mut line = String::new();
+    while std::io::stdin()
+        .read_line(&mut line)
+        .is_ok_and(|read| read > 0)
+    {}
+    drop(table);
+}
+
+/// #695: while another process has a flag version's table open, deleting
+/// or renaming that version is refused with an error naming the table, as
+/// casacore's `Table::deleteTable` and `Table::rename` refuse an
+/// `isMultiUsed` table; once it closes, both go ahead.
+#[cfg(unix)]
+#[test]
+fn a_flag_version_open_elsewhere_is_neither_deleted_nor_renamed() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let ms = MeasurementSet::open(&ms_path).expect("open MS");
+    save_flag_version(&ms, "held", "held elsewhere", FlagMerge::Replace).expect("save version");
+    let mut table = ms_path.clone().into_os_string();
+    table.push(".flagversions/flags.held");
+    let mut holder = Command::new(std::env::current_exe().expect("test binary"))
+        .args(["hold_a_table_open", "--exact", "--ignored", "--nocapture"])
+        .env(HELD_TABLE, &table)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("start the holding process");
+    let mut stdout = BufReader::new(holder.stdout.take().expect("holder output"));
+    let mut line = String::new();
+    while !line.contains("held") {
+        line.clear();
+        assert!(
+            stdout.read_line(&mut line).expect("read the holder") > 0,
+            "the holder exited before holding the table"
+        );
+    }
+    let refused = |result: Result<(), casa_ms::FlaggingError>| match result {
+        Err(casa_ms::FlaggingError::FlagVersionInUse {
+            version,
+            table: named,
+            ..
+        }) => {
+            assert_eq!(version, "held");
+            assert_eq!(std::path::Path::new(&named), std::path::Path::new(&table));
+        }
+        other => panic!("expected the version to be in use, got {other:?}"),
+    };
+    refused(delete_flag_version(&ms, "held"));
+    refused(rename_flag_version(&ms, "held", "moved", "moved"));
+    assert!(
+        list_flag_versions(&ms)
+            .expect("list versions")
+            .iter()
+            .any(|entry| entry.name == "held"),
+        "the version is untouched"
+    );
+    drop(holder.stdin.take());
+    assert!(holder.wait().expect("the holder ends").success());
+    rename_flag_version(&ms, "held", "moved", "moved").expect("rename once closed");
+    delete_flag_version(&ms, "moved").expect("delete once closed");
+}
+
 #[test]
 fn flagdata_summary_backups_and_selector_errors_match_expected_boundaries() {
     let temp = tempdir().expect("tempdir");

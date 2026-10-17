@@ -15,6 +15,8 @@ mod sync_data;
 mod write_lock;
 
 #[cfg(unix)]
+pub use lock_file::is_table_multi_used;
+#[cfg(unix)]
 pub(crate) use lock_file::read_sync_data_from_table_dir;
 #[cfg(unix)]
 pub(crate) use lock_file::{LockFile, LockOutcome};

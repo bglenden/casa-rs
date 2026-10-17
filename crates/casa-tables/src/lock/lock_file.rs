@@ -929,6 +929,47 @@ pub(crate) fn read_sync_data_from_table_dir(table_dir: &Path) -> io::Result<Opti
     read_sync_data_from_fd(fd)
 }
 
+/// Whether another process has the table at `table_dir` open: whether a
+/// write lock on the in-use byte of its `table.lock` would be refused,
+/// tested without opening the table or taking a lock. A table without a
+/// lock file is open nowhere. Like [`read_sync_data_from_table_dir`], a
+/// lock file this process has open is tested through its shared descriptor.
+///
+/// C++ equivalent: `Table::isMultiUsed` (`LockFile::isMultiUsed`), which
+/// `Table::deleteTable` and `Table::rename` consult before they act.
+///
+/// # Errors
+///
+/// The lock file exists but cannot be opened or tested.
+pub fn is_table_multi_used(table_dir: &Path) -> io::Result<bool> {
+    let path = table_dir.join(LOCK_FILE_NAME);
+    let registry = registry();
+    let Some(key) = path_key(&path)? else {
+        return Ok(false);
+    };
+    let in_use = |fd: RawFd| fcntl_can_lock(fd, libc::F_WRLCK as i32, 1, 1).map(|free| !free);
+    if let Some(entry) = registry.get(&key) {
+        return in_use(entry.shared.fd);
+    }
+
+    // As above: the process holds no lock on this file, so closing this
+    // descriptor releases nothing.
+    let c_path = path_to_cstring(&path)?;
+    let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    struct FdGuard(i32);
+    impl Drop for FdGuard {
+        fn drop(&mut self) {
+            unsafe { libc::close(self.0) };
+        }
+    }
+    let _guard = FdGuard(fd);
+    in_use(fd)
+}
+
 /// Read the sync data that follows the request list in an open lock file.
 fn read_sync_data_from_fd(fd: RawFd) -> io::Result<Option<SyncData>> {
     let mut len_buf = [0u8; SIZEINT];
