@@ -25,7 +25,8 @@ use casa_imaging_operator::{
     GridPrecision, ModeSet, PlaneRange, SpectralAxis, SpectralKernel, SpectralResampler,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, BoundedSource, PassError, Residency, WaveDemand, source_block_bytes,
+    BackendChoice, BoundedSource, CHUNK_PLACEMENTS, PassError, Residency, WaveDemand,
+    source_block_bytes,
 };
 
 use fixture::{Rows, Run, operator_of, planes, sparse_model, try_run, window_of};
@@ -129,6 +130,7 @@ fn a_pass_with_a_model_holds_at_most_its_admission_over_wide_native_spectra() {
             workers,
             backend: BackendChoice::Cpu,
             block: rows.maximum_block(),
+            chunk_placements: CHUNK_PLACEMENTS,
         };
         let admitted = demand.bytes(demand.planes()) + source_block_bytes(rows.maximum_block());
         let run = Run {

@@ -7,9 +7,9 @@ use casa_imaging_operator::{
     SpectralResampler, WeightingGeneration, build_density_grid,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, BlockShape, BoundedSource, Cancel, MajorCyclePass, NativeBlock, Partition,
-    PassDomain, PassError, Residency, SampleContent, SourceError, WeightCache, WorkerTeam,
-    run_density_pass, run_major_cycle,
+    BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, MajorCyclePass,
+    NativeBlock, Partition, PassDomain, PassError, Residency, SampleContent, SourceError,
+    WeightCache, WorkerTeam, run_density_pass, run_major_cycle,
 };
 use num_complex::Complex32;
 
@@ -66,24 +66,29 @@ fn region_partition_matches_one_owner() {
             &mut rows,
             &Run::initial(),
         );
+        // Chunks of 8 placements cut each block into many slices; the
+        // default and the largest region chunks take a block in one (#736).
         for workers in [2, 4] {
-            let images = run(
-                &[PassDomain {
-                    operator: &operator,
-                    resampler: &resampler,
-                    partition: Partition::regions(&operator, workers),
-                }],
-                &mut rows,
-                &Run {
-                    workers,
-                    ..Run::initial()
-                },
-            );
-            let worst = worst_relative(&reference[0], &images[0]);
-            assert!(
-                worst <= tolerance,
-                "{precision:?} {workers} regions: {worst}"
-            );
+            for chunk_placements in [8, CHUNK_PLACEMENTS, 1 << 18] {
+                let images = run(
+                    &[PassDomain {
+                        operator: &operator,
+                        resampler: &resampler,
+                        partition: Partition::regions(&operator, workers),
+                    }],
+                    &mut rows,
+                    &Run {
+                        workers,
+                        chunk_placements,
+                        ..Run::initial()
+                    },
+                );
+                let worst = worst_relative(&reference[0], &images[0]);
+                assert!(
+                    worst <= tolerance,
+                    "{precision:?} {workers} regions, chunks of {chunk_placements}: {worst}"
+                );
+            }
         }
     }
 }
@@ -240,6 +245,7 @@ fn a_cancelled_pass_stops_with_a_typed_error() {
         backend: BackendChoice::Cpu,
         metal_stage_timing: false,
         weights: None,
+        chunk_placements: CHUNK_PLACEMENTS,
     };
     let cancel = Cancel::new();
     cancel.cancel();
@@ -306,6 +312,7 @@ fn a_pass_cancelled_midway_reads_no_further_block() {
         backend: BackendChoice::Cpu,
         metal_stage_timing: false,
         weights: None,
+        chunk_placements: CHUNK_PLACEMENTS,
     };
     for workers in [1, 3] {
         let cancel = Cancel::new();

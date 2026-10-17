@@ -23,9 +23,9 @@ use casa_imaging_products::{
     FacetSumWeights, MinorCycleImageResponse, VisibilityProductCompletion,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, BoundedSource, Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain,
-    PassError, PassSummary, Residency, VisibilitySink, WaveDemand, WeightCache, WorkerTeam,
-    WorkerTeams, density_pass_bytes, run_density_pass, run_major_cycle,
+    BackendChoice, BoundedSource, CHUNK_PLACEMENTS, Cancel, MajorCyclePass, ModelPreparation,
+    Partition, PassDomain, PassError, PassSummary, Residency, VisibilitySink, WaveDemand,
+    WeightCache, WorkerTeam, WorkerTeams, density_pass_bytes, run_density_pass, run_major_cycle,
 };
 use casa_imaging_runtime::{
     CubeState, Demand, Diagnostics, HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache,
@@ -131,6 +131,14 @@ struct Run<'a> {
     /// domain, with its charge: later passes cut their strips to equal
     /// shares of it (#736).
     row_work: Option<(Vec<Option<Vec<u64>>>, Reservation)>,
+}
+
+/// What a pass's admission planned ([`Run::admit_pass`]): the waves it
+/// holds, and the placements a row chunk takes (#736).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PassPlan {
+    residency: Residency,
+    chunk_placements: usize,
 }
 
 /// One reconciled major cycle.
@@ -554,6 +562,7 @@ impl<'a> Run<'a> {
             if run
                 .admit_pass(modes, with_model, run.visibility_write_bytes)?
                 .0
+                .residency
                 != Residency::All
             {
                 return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
@@ -566,7 +575,7 @@ impl<'a> Run<'a> {
     /// visibilities when it is also final.
     fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
         // The model is admitted with the pass, before it is allocated.
-        let (residency, pass) = self.admit_pass(
+        let (plan, pass) = self.admit_pass(
             self.initial_modes(),
             false,
             self.lifecycle.resident_bytes() + self.write_bytes(last),
@@ -574,8 +583,8 @@ impl<'a> Run<'a> {
         let model = self
             .lifecycle
             .prepare_final_model(self.lifecycle.initial_empty()?, [])?;
-        let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(residency)?)?;
-        let major = self.reconcile(cycle, true, last, residency)?;
+        let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(plan.residency)?)?;
+        let major = self.reconcile(cycle, true, last, plan)?;
         self.retain(&major, pass)?;
         Ok(major)
     }
@@ -593,15 +602,15 @@ impl<'a> Run<'a> {
         // and the minor cycle's charge covers its terms until the model
         // holds them.
         let (normal_state, model) = completion.into_parts();
-        let (residency, mut pass) = self.admit_pass(ModeSet::DATA, true, self.write_bytes(last))?;
+        let (plan, mut pass) = self.admit_pass(ModeSet::DATA, true, self.write_bytes(last))?;
         let model = self.lifecycle.prepare_final_model(model, terms)?;
         let cycle = MajorCycle::refresh(
             self.problem,
             normal_state,
             model,
-            self.normal_storage(residency)?,
+            self.normal_storage(plan.residency)?,
         )?;
-        let major = self.reconcile(cycle, false, last, residency)?;
+        let major = self.reconcile(cycle, false, last, plan)?;
         pass.join(results);
         self.retain(&major, pass)?;
         Ok(major)
@@ -656,8 +665,9 @@ impl<'a> Run<'a> {
         mut cycle: MajorCycle,
         initial: bool,
         last: bool,
-        residency: Residency,
+        plan: PassPlan,
     ) -> Result<Major, ImagingError> {
+        let residency = plan.residency;
         let modes = if initial {
             self.initial_modes()
         } else {
@@ -682,7 +692,7 @@ impl<'a> Run<'a> {
         let summary = self.pass(
             modes,
             (!initial).then_some(model),
-            residency,
+            plan,
             state,
             initial,
             writer.as_mut(),
@@ -740,11 +750,11 @@ impl<'a> Run<'a> {
         modes: ModeSet,
         with_model: bool,
         besides: u64,
-    ) -> Result<(Residency, Reservation), ImagingError> {
+    ) -> Result<(PassPlan, Reservation), ImagingError> {
         let besides = besides + self.stitch.pass_bytes(modes.psf);
         let workers = self.teams.streaming().workers();
         let domains = pass_domains(&self.domains, workers, self.row_work());
-        let demand = WaveDemand {
+        let mut demand = WaveDemand {
             domains: &domains,
             modes,
             with_model,
@@ -752,6 +762,7 @@ impl<'a> Run<'a> {
             workers,
             backend: self.backend,
             block: self.source.maximum_block(),
+            chunk_placements: CHUNK_PLACEMENTS,
         };
         let free = free_memory(&self.host, &self.policy).saturating_sub(besides);
         let residency = Residency::plan(&demand, free);
@@ -759,6 +770,9 @@ impl<'a> Run<'a> {
             Residency::All => demand.planes(),
             Residency::Waves { planes_per_wave } => planes_per_wave,
         };
+        // Region owners share larger slices more evenly; take the largest
+        // that fits beside the waves just planned (#736).
+        demand.chunk_placements = demand.plan_chunk_placements(planes, free);
         let reservation = admit(
             &self.host,
             &self.policy,
@@ -767,7 +781,11 @@ impl<'a> Run<'a> {
                 memory: demand.bytes(planes) + besides,
             },
         )?;
-        Ok((residency, reservation))
+        let plan = PassPlan {
+            residency,
+            chunk_placements: demand.chunk_placements,
+        };
+        Ok((plan, reservation))
     }
 
     /// Keep the imaging weights of every sample across passes (#659) when a
@@ -829,11 +847,15 @@ impl<'a> Run<'a> {
         &mut self,
         modes: ModeSet,
         model: Option<&ModelGeneration>,
-        residency: Residency,
+        plan: PassPlan,
         mut state: PassAppender<'_>,
         initial: bool,
         mut writer: Option<&mut VisibilityWriter<'_>>,
     ) -> Result<PassSummary, ImagingError> {
+        let PassPlan {
+            residency,
+            chunk_placements,
+        } = plan;
         if self.kept_weights.is_none() {
             self.kept_weights = self.keep_weights(residency);
         }
@@ -861,6 +883,7 @@ impl<'a> Run<'a> {
             backend: self.backend,
             metal_stage_timing: self.metal_stage_timing,
             weights: self.kept_weights.as_ref().map(|(cache, _)| cache),
+            chunk_placements,
         };
         let predictions = writer.as_deref().map(VisibilityWriter::needs_predictions);
         let mut write = |block: &_, predictions: &[_]| match writer.as_deref_mut() {

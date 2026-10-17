@@ -126,12 +126,16 @@ struct ChunkShape {
 }
 
 impl ChunkShape {
+    /// The chunk of `chunks` chunks over blocks of `block`, each taking at
+    /// most `placements` placements before the owner scaling of
+    /// [`chunk_placements`].
     fn new(
         domains: &[PassDomain<'_>],
         block: BlockShape,
         weight: bool,
         sourced: bool,
         chunks: usize,
+        placements: usize,
     ) -> Self {
         let row = domains
             .iter()
@@ -143,7 +147,12 @@ impl ChunkShape {
             .map(|domain| domain.partition.owners())
             .max()
             .unwrap_or(1);
-        let rows = chunk_rows(row, block.rows, chunks, chunk_placements(owners));
+        let rows = chunk_rows(
+            row,
+            block.rows,
+            chunks,
+            chunk_placements(placements, owners),
+        );
         Self {
             row,
             rows,
@@ -287,7 +296,7 @@ const fn chunks(workers: usize) -> usize {
 /// keep their batch's predictions, and each owner of a pass forming
 /// residuals at native channels the residual values of a chunk's
 /// placements ([`CpuBackend::batch_bytes`]). They grow with the source's
-/// block only up to [`CHUNK_PLACEMENTS`](super::CHUNK_PLACEMENTS) a chunk.
+/// block only up to `placements` a chunk.
 pub(super) fn chunk_bytes(
     domains: &[PassDomain<'_>],
     backend: BackendChoice,
@@ -295,10 +304,11 @@ pub(super) fn chunk_bytes(
     workers: usize,
     weight: bool,
     with_model: bool,
+    placements: usize,
 ) -> u64 {
     let count = chunks(workers);
     let sourced = super::native_residuals(domains, with_model);
-    let shape = ChunkShape::new(domains, block, weight, sourced, count);
+    let shape = ChunkShape::new(domains, block, weight, sourced, count, placements);
     let device = match backend {
         BackendChoice::Cpu if with_model => {
             let owners = if sourced {
@@ -355,6 +365,18 @@ pub(super) struct Wave<'w, 'p> {
     weights: Option<(&'w WeightCache, bool)>,
     /// The slot of the next block's first sample.
     weight_base: usize,
+    /// Wall time in the wave's stages: predicting the native model,
+    /// placing samples on the chunks, and accumulating them by owner;
+    /// reported beside a region pass's strips (#736).
+    stages: WaveStages,
+}
+
+/// Wall time of a wave's stages ([`Wave::stages`]).
+#[derive(Clone, Copy, Default)]
+struct WaveStages {
+    predicting: std::time::Duration,
+    placing: std::time::Duration,
+    accumulating: std::time::Duration,
 }
 
 impl<'w, 'p> Wave<'w, 'p> {
@@ -377,6 +399,7 @@ impl<'w, 'p> Wave<'w, 'p> {
             pass.modes.weight,
             native_residuals,
             count,
+            pass.chunk_placements,
         );
         let domains = pass
             .domains
@@ -460,6 +483,7 @@ impl<'w, 'p> Wave<'w, 'p> {
             samples: 0,
             weights: pass.weight_cache().map(|cache| (cache, cache.filled())),
             weight_base: 0,
+            stages: WaveStages::default(),
         })
     }
 
@@ -540,7 +564,9 @@ impl<'w, 'p> Wave<'w, 'p> {
                     chunk.rows = rows;
                     count += 1;
                 }
+                let started = std::time::Instant::now();
                 self.predict(block, team, count, slice, ordered)?;
+                self.stages.predicting += started.elapsed();
             }
         }
         if let Some(sink) = visibilities {
@@ -598,6 +624,7 @@ impl<'w, 'p> Wave<'w, 'p> {
         let weights = self.weights.filter(|_| index == 0);
         let weight_base = self.weight_base;
         let grid_rows = domain.row_work.as_ref().map(Vec::len);
+        let placing = std::time::Instant::now();
         team.for_each_mut(&mut self.chunks[..count], |_, chunk| {
             chunk.placed = 0;
             chunk.owned[..owners]
@@ -684,6 +711,8 @@ impl<'w, 'p> Wave<'w, 'p> {
                 }
             }
         }
+        self.stages.placing += placing.elapsed();
+        let accumulating = std::time::Instant::now();
         let model = domain.model.filter(|_| !native_residuals);
         let native = native_residuals.then(|| match &self.predictions {
             NativeStore::Host(cells) => NativeModel::Host { cells, first: 0 },
@@ -743,6 +772,7 @@ impl<'w, 'p> Wave<'w, 'p> {
             owner.busy += started.elapsed();
             Ok::<_, PassError>(())
         })?;
+        self.stages.accumulating += accumulating.elapsed();
         Ok(chunks.iter().map(|chunk| chunk.placed).sum())
     }
 
@@ -896,7 +926,10 @@ impl<'w, 'p> Wave<'w, 'p> {
         }
         let pass = self.pass;
         let planes = self.planes;
-        self.domains
+        let stages = self.stages;
+        let transforming = std::time::Instant::now();
+        let images = self
+            .domains
             .into_iter()
             .zip(pass.domains)
             .map(|(mut domain, target)| {
@@ -940,7 +973,16 @@ impl<'w, 'p> Wave<'w, 'p> {
                     }
                 }
             })
-            .collect()
+            .collect::<Result<Vec<_>, PassError>>()?;
+        tracing::info!(
+            "wave stages: predicting {:.1} s, placing {:.1} s, accumulating {:.1} s, \
+             transforming {:.1} s",
+            stages.predicting.as_secs_f64(),
+            stages.placing.as_secs_f64(),
+            stages.accumulating.as_secs_f64(),
+            transforming.elapsed().as_secs_f64(),
+        );
+        Ok(images)
     }
 }
 
@@ -1040,24 +1082,26 @@ pub(super) fn concatenate(parts: impl IntoIterator<Item = NormalImages>) -> Norm
 
 #[cfg(test)]
 mod tests {
+    use super::super::{CHUNK_PLACEMENTS, REGION_CHUNK_PLACEMENTS};
     use super::{CHUNKS_PER_WORKER, chunk_placements, chunks};
 
     /// Every owner's buffer in a chunk can take all of the chunk's
     /// placements, and a pass has four chunks per worker and up to one
     /// owner per worker; past four owners a chunk takes proportionally
     /// fewer, so the chunks' storage grows linearly with the workers, and up
-    /// to four a chunk takes the full cap.
+    /// to four a chunk takes the full cap, whatever the cap.
     #[test]
     fn chunk_storage_grows_linearly_with_workers() {
-        let full = chunk_placements(1);
-        for workers in 1..=128 {
-            let owners = workers;
-            let storage = chunks(workers) * owners * chunk_placements(owners);
-            assert!(
-                storage <= CHUNKS_PER_WORKER * 4 * full * workers,
-                "{workers} workers place into {storage} placements of storage"
-            );
+        for full in std::iter::once(CHUNK_PLACEMENTS).chain(REGION_CHUNK_PLACEMENTS) {
+            for workers in 1..=128 {
+                let owners = workers;
+                let storage = chunks(workers) * owners * chunk_placements(full, owners);
+                assert!(
+                    storage <= CHUNKS_PER_WORKER * 4 * full * workers,
+                    "{workers} workers place into {storage} placements of storage"
+                );
+            }
+            assert_eq!(chunk_placements(full, 4), full);
         }
-        assert_eq!(chunk_placements(4), full);
     }
 }

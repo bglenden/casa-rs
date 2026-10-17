@@ -163,6 +163,9 @@ pub struct WaveDemand<'a> {
     pub backend: BackendChoice,
     /// The layout of the source's rows ([`super::BoundedSource::maximum_block`]).
     pub block: BlockShape,
+    /// Placements a row chunk takes at once ([`super::CHUNK_PLACEMENTS`],
+    /// or [`Self::plan_chunk_placements`]).
+    pub chunk_placements: usize,
 }
 
 impl WaveDemand<'_> {
@@ -268,7 +271,35 @@ impl WaveDemand<'_> {
                 self.workers,
                 self.modes.weight,
                 self.with_model,
+                self.chunk_placements,
             )
+    }
+
+    /// Placements a row chunk of a wave of `planes` planes takes: when a
+    /// domain is split among several region owners, the largest of
+    /// [`super::REGION_CHUNK_PLACEMENTS`] whose [`Self::bytes`] fit `budget`,
+    /// since the owners share larger slices more evenly (#736); otherwise,
+    /// or when none fits, [`super::CHUNK_PLACEMENTS`]. A pass that fits with
+    /// the default chunks therefore never fails for want of larger ones.
+    #[must_use]
+    pub fn plan_chunk_placements(&self, planes: u32, budget: u64) -> usize {
+        let split = self.domains.iter().any(|domain| {
+            matches!(domain.partition, Partition::Regions { .. }) && domain.partition.owners() > 1
+        });
+        if !split {
+            return super::CHUNK_PLACEMENTS;
+        }
+        super::REGION_CHUNK_PLACEMENTS
+            .into_iter()
+            .find(|&chunk_placements| {
+                WaveDemand {
+                    chunk_placements,
+                    ..*self
+                }
+                .bytes(planes)
+                    <= budget
+            })
+            .unwrap_or(super::CHUNK_PLACEMENTS)
     }
 }
 

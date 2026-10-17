@@ -233,6 +233,9 @@ pub struct MajorCyclePass<'a> {
     /// The run's kept imaging weights, which a single-wave pass over one
     /// image domain fills or reads ([`WeightCache`]).
     pub weights: Option<&'a WeightCache>,
+    /// Placements a row chunk takes at once: [`CHUNK_PLACEMENTS`], or what
+    /// the pass's admission planned ([`WaveDemand::plan_chunk_placements`]).
+    pub chunk_placements: usize,
 }
 
 impl MajorCyclePass<'_> {
@@ -404,23 +407,35 @@ pub const fn source_block_bytes(block: BlockShape) -> u64 {
 /// Row chunks per worker of a density pass.
 const DENSITY_CHUNKS_PER_WORKER: usize = 4;
 
-/// Placements a row chunk takes at once. A pass places each block in slices
-/// of chunks this size, so its sample buffers have one bound whatever rows
-/// the source puts in a block, while a slice still spans most of a large
-/// block and its workers meet once per slice.
-const CHUNK_PLACEMENTS: usize = 1 << 15;
+/// Placements a row chunk takes at once by default. A pass places each
+/// block in slices of chunks this size, so its sample buffers have one bound
+/// whatever rows the source puts in a block, while a slice still spans most
+/// of a large block and its workers meet once per slice.
+pub const CHUNK_PLACEMENTS: usize = 1 << 15;
 
-/// Placements a row chunk of a major-cycle pass takes at once when each
-/// image domain has at most `owners` owners. Each owner's buffer in a
-/// chunk can take every placement of the chunk, and a pass has four chunks
-/// per worker, so past four owners a chunk takes proportionally fewer: the
-/// chunks' storage then grows linearly with the workers rather than as
-/// their square, and a slice places as many samples whatever the workers.
-const fn chunk_placements(owners: usize) -> usize {
+/// The larger chunks a pass whose grid is split among several region
+/// owners takes when memory allows, largest first
+/// ([`WaveDemand::plan_chunk_placements`]). The owners grid each slice and
+/// then meet, and a block's rows run baseline by baseline, so a slice of a
+/// few baselines' tracks falls mostly on one owner's strip while the others
+/// wait. Larger slices hold more baselines (#736): on the VLASS 4-SPW clean
+/// with three region owners, a residual pass took 107 s at 2^15, 91 s at
+/// 2^17, 84 s at 2^18 and 84 s at 2^19, for 0.5, 1.3 and 2.7 GB more
+/// reserved than at 2^15.
+const REGION_CHUNK_PLACEMENTS: [usize; 3] = [1 << 18, 1 << 17, 1 << 16];
+
+/// Placements a row chunk of a major-cycle pass takes at once, from a cap of
+/// `placements`, when each image domain has at most `owners` owners. Each
+/// owner's buffer in a chunk can take every placement of the chunk, and a
+/// pass has four chunks per worker, so past four owners a chunk takes
+/// proportionally fewer: the chunks' storage then grows linearly with the
+/// workers rather than as their square, and a slice places as many samples
+/// whatever the workers.
+const fn chunk_placements(placements: usize, owners: usize) -> usize {
     if owners <= 4 {
-        CHUNK_PLACEMENTS
+        placements
     } else {
-        4 * CHUNK_PLACEMENTS / owners
+        4 * placements / owners
     }
 }
 
