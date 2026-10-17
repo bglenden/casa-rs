@@ -129,9 +129,10 @@ preserves the original IncrementalStMan UVW layout and values.
 Current native-AW Taylor evidence may be reused only after checking code and
 input applicability. These rows retain the size, channel, complete-product,
 validity and resource limits above; diagnostic laws do not replace them.
-The historical T53 W-cube receipt is preserved under the T55 evidence roots on
-GLENDENNING; the imaging foundation performance pass (IF-10) regenerates it
-with the other T2 rows.
+The historical T53 W-cube receipt is preserved in the T55 evidence archives
+on the NAS (`casa-rs-glendenning-preserve/GLENDENNING/casa-rs-evidence/t55/`);
+the imaging foundation performance pass (IF-10) regenerates it with the other
+T2 rows.
 
 T53 preserves the #478 named join gates
 `wproject_dirty_cube_products_track_casa_on_refim_point_withline_shared_phase_multifield`

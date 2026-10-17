@@ -63,12 +63,20 @@ Follow the storage rules in `AGENTS.md`. Current locations:
   `/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/<work-item>/`.
 - NAS `storage` over Tailscale, mounted at `/Volumes/home`: large or
   long-lived artifacts under `/Volumes/home/casa-rs/`. Shared CASA test data is
-  at `/Volumes/home/casatestdata`.
+  at `/Volumes/home/casatestdata`. The laptop mounts it at login and remounts
+  it when it drops (a user LaunchAgent; the login is in the Keychain).
 - External disk `GLENDENNING` at `/Volumes/GLENDENNING/`: fast working space
-  for large datasets and runs. It has had repeated disconnects, so it is never
-  the only copy of anything that matters. Its preserved datasets are mirrored
-  at `/Volumes/home/casa-rs-glendenning-preserve/GLENDENNING/` (see
-  `/Volumes/GLENDENNING/README.md` for the path mapping).
+  for large datasets and runs, never the only copy of anything that matters.
+  Since 2026-10-16 it is a 1 TB NVMe SSD (about 3 GB/s) that starts empty:
+  copy a run's inputs onto it from the NAS first, and never read a large
+  MeasurementSet over the network in place. Earlier GLENDENNING disks are
+  archived on the NAS:
+  - the SSD that failed on 2026-10-11, mirrored at
+    `/Volumes/home/casa-rs-glendenning-preserve/GLENDENNING/` (its
+    `README.md` maps the paths);
+  - the USB stick used from 2026-10-12 to 2026-10-16, whose data not already
+    on the NAS is in `/Volumes/home/casa-rs/glendenning-stick-20261016/`
+    (its `README.md` maps the paths).
 
 Keep an MS or large output only when it will be reused and would take hours to
 regenerate: a fixed timing input, or a long CASA run used as a correctness
@@ -119,27 +127,39 @@ merges do not run release/tag-only gates.
 `TESTING.md` ("Imaging tiers and evidence") says what an evidence run must
 record. Locations on this workstation:
 
-- **T1.5 harness** (not in the repository): working copies under
+- **T1.5 harness** (not in the repository): working copies at
   `/Volumes/GLENDENNING/casa-rs-evidence/if/IF-8/{refim,kernels}`, each with
   `t15.py`, `casa_references.py` and its `data/`, `casa/` and `bin/` folders.
-  Run `T15_TAG=-<commit> /Applications/CASA.app/Contents/MacOS/python3
-  t15.py bin/casars-imager-<commit> [cases]` in each, with a binary built
-  from the committed state; about 15 minutes for both. Durable copies of the
-  scripts, the CASA 6.7.6 references and the results are on the NAS under
-  `/Volumes/home/casa-rs/if10/`; the inputs are the NAS casatestdata
-  (`measurementset/{vla,alma,evla}`, `unittest/tclean`). Check each case's
-  `image.summary.json` `backend` when a result jumps: a case that names no
-  backend runs on `auto`.
+  - **Staging:** restage them on GLENDENNING from the NAS before a run:
+    - the scripts and the CASA 6.7.6 references from the `t15-*.tar`
+      archives in `/Volumes/home/casa-rs/if10/`;
+    - the inputs from the NAS casatestdata (`measurementset/{vla,alma,evla}`,
+      `unittest/tclean`).
+  - **Results:** results up to 2026-10-12 are in `t15-results-20261012.tar`;
+    later ones are in `glendenning-stick-20261016/stick-records-20261016.tar`.
+  - **Running:** run `T15_TAG=-<commit> /Applications/CASA.app/Contents/MacOS/python3
+    t15.py bin/casars-imager-<commit> [cases]` in each folder, with a binary
+    built from the committed state; both take about 15 minutes.
+  - **A jumped result:** check the case's `image.summary.json` `backend`. A
+    case that names no backend runs on `auto`.
 - **T2 matrix**: `tools/perf/imager/run_workload.py` with
-  `CASA_RS_IMPERF_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-imperformance` and
-  `CASA_RS_CASA_PYTHON`; receipts under
-  `/Volumes/GLENDENNING/casa-rs-evidence/if/t2/`, durable copies on the NAS.
+  `CASA_RS_IMPERF_DATA_ROOT` set to a staged copy of the inputs on
+  GLENDENNING (`casa-rs-imperformance`, from the NAS mirror above) and
+  `CASA_RS_CASA_PYTHON`.
+  - **Receipts:** write them under `/Volumes/GLENDENNING/casa-rs-evidence/if/t2/`,
+    then archive them to the NAS.
+  - **CASA oracles:** `casa-rs/if10/t2-oracles-20261013.tar` and
+    `casa-rs/glendenning-stick-20261016/casa-oracles-and-inputs-20261013-14.tar`.
 - **Timed rows and large inputs** (pilot, 512-plane cube, deep32, full
   cube, Wave3, #625): `~/SoftwareProjects/casa-rs-if10-data.noindex/` on
   this laptop, `~/ext/SoftwareProjects/casa-rs-data/` on the Mac mini, and
-  the NAS manifests under `/Volumes/home/casa-rs/if10/`. The pre-refactor
-  build `f38033668a` is the baseline for diagnosing a regression, not for
-  accepting a row.
+  the NAS manifests under `/Volumes/home/casa-rs/if10/`.
+  - **Wave3:** the MS that CASA's Wave3 reference was imaged on, regenerated
+    on 2026-10-13, is
+    `casa-rs/glendenning-stick-20261016/wave3-regenerated-ms-20261013.tar`.
+    The original in the NAS mirror differs from it.
+  - **Baseline:** the pre-refactor build `f38033668a` is the baseline for
+    diagnosing a regression, not for accepting a row.
 - **An explicit memory policy**: production reads none from the
   environment. An evidence run that needs one (forced paging, a fixed
   budget) builds an evidence-only patch of `ImagingRequest::resource_policy`
