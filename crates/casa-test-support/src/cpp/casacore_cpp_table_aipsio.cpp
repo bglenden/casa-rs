@@ -183,8 +183,11 @@ void verify_keywords_impl(const std::string& path) {
 }
 
 // ===== Undefined scalars: 4 rows, only rows 0 and 2 written =====
-// The columns are declared with ColumnDesc::Undefined, so rows 1 and 3 remain
-// truly undefined rather than reading back as incidental zero/empty values.
+// The columns are declared with ColumnDesc::Undefined. casacore's undefined
+// cell is one holding the column's default (`ScalarColumnData::isDefined`
+// compares the value with it), so the rows are added initialized: without
+// `initialize`, StManAipsIO's numeric cells are uninitialized heap
+// (`MSMColumn::allocData`), zero on macOS and garbage on Linux (#731).
 
 void write_undefined_scalars_impl(const std::string& path) {
     casacore::TableDesc td("", casacore::TableDesc::Scratch);
@@ -200,12 +203,12 @@ void write_undefined_scalars_impl(const std::string& path) {
     setup.bindAll(stman);
 
     casacore::Table table(setup);
-    table.addRow(4);
+    table.addRow(4, casacore::True);
     casacore::ScalarColumn<casacore::Int> colI32(table, "col_i32");
     casacore::ScalarColumn<casacore::Double> colF64(table, "col_f64");
     casacore::ScalarColumn<casacore::String> colStr(table, "col_str");
 
-    // Only write rows 0 and 2; rows 1 and 3 keep defaults.
+    // Only write rows 0 and 2; rows 1 and 3 keep the defaults.
     colI32.put(0, 100);
     colF64.put(0, 1.5);
     colStr.put(0, "written");
