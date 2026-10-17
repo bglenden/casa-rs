@@ -140,9 +140,11 @@ impl WaveDemand<'_> {
     ///   accumulator they are added into, which one owner's whole-grid tile
     ///   needs none of; then the accumulator beside its `f32` images; and
     ///   for the transforms, one transform plane and one image per grid
-    ///   polarization of the largest domain per worker, and planning one
-    ///   grid transform ([`grid_planning_bytes`]), which the process does
-    ///   one at a time;
+    ///   polarization for each transform that runs at once, and planning
+    ///   one grid transform ([`grid_planning_bytes`]), which the process
+    ///   does one at a time. Domains finish one after another; a plane
+    ///   pass's owners finish together on up to the workers, a region
+    ///   pass's merged accumulator alone (#745 review);
     /// - appending: the images, the copy the normal state takes of them and,
     ///   for a basis whose normal state is resident, that state at its
     ///   stored size ([`casa_imaging_deconvolution::resident_bytes_per_cell`]);
@@ -154,7 +156,7 @@ impl WaveDemand<'_> {
     #[must_use]
     pub fn bytes(&self, planes: u32) -> u64 {
         let mut stages = DomainStages::default();
-        let mut per_worker = 0_u64;
+        let mut transforming = 0_u64;
         let mut planning = 0_u64;
         for domain in self.domains {
             stages.add(self.domain_stages(domain, planes));
@@ -163,7 +165,11 @@ impl WaveDemand<'_> {
             let image_cells = (width * height) as u64;
             let grid_cells = operator.geometry().cells() as u64;
             let gpols = operator.polarization().grid_pols() as u64;
-            per_worker = per_worker.max(grid_cells * 16 + gpols * image_cells * 16);
+            let at_once = match &domain.partition {
+                Partition::Planes { owners } => (*owners).min(self.workers),
+                Partition::Regions { .. } => 1,
+            } as u64;
+            transforming = transforming.max(at_once * (grid_cells * 16 + gpols * image_cells * 16));
             planning = planning.max(grid_planning_bytes(operator.geometry().cells()));
         }
         let chunks = super::wave::chunk_bytes(
@@ -174,7 +180,7 @@ impl WaveDemand<'_> {
             self.modes.weight,
             self.with_model,
         );
-        let transforms = planning + self.workers as u64 * per_worker;
+        let transforms = planning + transforming;
         stages.held
             + (stages.gridding + chunks)
                 .max(stages.finishing + chunks + transforms)
@@ -203,7 +209,7 @@ impl WaveDemand<'_> {
                     .sum::<u64>()
                     * planes_u64;
                 // One owner's tile is the whole grid, which the wave
-                // finishes as it is.
+                // finishes as it is: both key on the owner count.
                 let merged = if regions.len() > 1 { accumulator } else { 0 };
                 (tiles, tiles + merged)
             }

@@ -855,13 +855,11 @@ impl<'w, 'p> Wave<'w, 'p> {
                         ))
                     }
                     Partition::Regions { .. } => {
-                        // One owner's tile is the whole grid: it is the sum.
-                        if let [owner] = domain.owners.as_mut_slice()
-                            && owner
-                                .acc
-                                .as_ref()
-                                .is_some_and(|acc| acc.layout().is_full_grid())
-                        {
+                        // One owner's tile is the whole grid (`Partition::regions`
+                        // gives a lone region every row): it is the sum, and
+                        // `finish` refuses a tile. The charge keys on the same
+                        // count (`DomainStages`).
+                        if let [owner] = domain.owners.as_mut_slice() {
                             let acc = owner.acc.take().expect("each owner finishes once");
                             drop(domain.owners);
                             return Ok(operator.finish(acc)?);

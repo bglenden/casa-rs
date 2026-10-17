@@ -867,11 +867,13 @@ fn mtmfs_controls() -> Value {
     })
 }
 
-/// #738: MT-MFS at one worker, at 1024² and 2048², is admitted close to
-/// what it holds. Before the charges followed their owners' footprints the
-/// 2048² run reserved 2.25 GB for a peak of 1.57 GB: the minor cycle
-/// charged the plane loads and the Taylor solver's transients as if they
-/// all coexisted, and the first pass its stages' sum.
+/// #738: MT-MFS at 1024² and 2048² on one worker, and at 1024² on four,
+/// whose per-worker charges (chunks, transform planes, minor-cycle loads)
+/// grow with the workers, is admitted close to what it holds. Before the
+/// charges followed their owners' footprints the 2048² run reserved 2.25 GB
+/// for a peak of 1.57 GB: the minor cycle charged the plane loads and the
+/// Taylor solver's transients as if they all coexisted, and the first pass
+/// its stages' sum.
 #[test]
 fn mtmfs_is_admitted_close_to_what_it_holds() {
     let _measurement = MEASUREMENT.lock().expect("measurement lock");
@@ -879,18 +881,18 @@ fn mtmfs_is_admitted_close_to_what_it_holds() {
     let measurement_set = observation(root.path(), 4);
     warm(&measurement_set, root.path());
     let mut breaches = Vec::new();
-    for imsize in [1024, 2048] {
-        let label = format!("mtmfs {imsize}");
+    for (imsize, workers) in [(1024, 1), (1024, 4), (2048, 1)] {
+        let label = format!("mtmfs {imsize} px {workers} workers");
         let measured = check(
             &mut breaches,
             &label,
             &request(
                 &measurement_set,
-                &root.path().join(format!("mtmfs-{imsize}")),
+                &root.path().join(format!("mtmfs-{imsize}-{workers}")),
                 imsize,
                 mtmfs_controls(),
             ),
-            1,
+            workers,
             AMPLE,
         );
         breaches.extend(over_charge(&label, &measured));
