@@ -9,7 +9,8 @@
 //! make the backends' per-block scratch large against the wave's grids:
 //! Astra's probe on #712 held 40,136,661 bytes against 39,617,192 admitted
 //! when the CPU backend's native prediction and residual batches went
-//! uncharged. A global allocator applies to this test binary alone.
+//! uncharged. A global allocator applies to this test binary alone, and
+//! each law runs alone in a process of its own ([`alone`]).
 
 #[allow(
     dead_code,
@@ -98,6 +99,68 @@ fn observe(live: u64) {
     }
 }
 
+/// Names the law a child process of [`alone`] runs.
+const ALONE: &str = "CASA_RS_COUNTING_LAW";
+
+/// The test a law's process runs before the law ([`alone`]).
+const SETTLE: &str = "a_counting_law_process_settles";
+
+/// Whether [`SETTLE`] ran in this process.
+static SETTLED: AtomicBool = AtomicBool::new(false);
+
+/// Runs first in a law's process ([`alone`]): libtest's main thread sets up
+/// its wait for results while the first test it starts runs, so the law,
+/// which runs second, measures none of it.
+#[test]
+#[ignore = "alone runs it before a law, in the law's process"]
+fn a_counting_law_process_settles() {
+    SETTLED.store(true, Ordering::Relaxed);
+}
+
+/// Whether this process runs the law `name` alone; if it does not, run the
+/// law alone and assert that it passed.
+///
+/// The counters see every allocation in the process, and libtest runs a
+/// binary's tests in one process: under `cargo test` its main thread starts
+/// tests and reports their results, and the binary's other tests run, while
+/// a law measures. So each law begins `if !alone("law") { return; }`. In
+/// the harness's process that runs [`SETTLE`], then the law (libtest runs
+/// tests in name order), in a child process of this binary with one test
+/// thread, so that the harness only waits while the law runs; in the child
+/// it returns true.
+fn alone(name: &str) -> bool {
+    let ran = format!("{name} ran alone");
+    if std::env::var_os(ALONE).is_some_and(|law| law == name) {
+        assert!(
+            SETTLED.load(Ordering::Relaxed),
+            "{SETTLE} runs before {name}"
+        );
+        println!("{ran}");
+        return true;
+    }
+    let output = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([
+            SETTLE,
+            name,
+            "--exact",
+            "--include-ignored",
+            "--test-threads=1",
+            "--nocapture",
+        ])
+        .env(ALONE, name)
+        .output()
+        .expect("the law's process runs");
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{name} alone: {}\n{stdout}",
+        output.status
+    );
+    assert!(stdout.contains(&ran), "{name} did not run alone:\n{stdout}");
+    false
+}
+
 /// Native channels 10 kHz apart from 1 GHz.
 fn natives(count: usize) -> Vec<f64> {
     (0..count)
@@ -114,6 +177,9 @@ fn natives(count: usize) -> Vec<f64> {
 /// team made it while being built ([`WorkerTeam::new`]).
 #[test]
 fn the_row_work_pass_holds_at_most_its_admission_over_unequal_domains() {
+    if !alone("the_row_work_pass_holds_at_most_its_admission_over_unequal_domains") {
+        return;
+    }
     let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
     let main = operator_of(1024, GridPrecision::F64, Basis::Constant);
     let taller = operator_of(1536, GridPrecision::F64, Basis::Constant);
@@ -150,6 +216,9 @@ fn the_row_work_pass_holds_at_most_its_admission_over_unequal_domains() {
 fn a_pass_with_a_model_holds_at_most_its_admission_over_wide_native_spectra() {
     const IMAGE: usize = 16;
     const NATIVES: usize = 4096;
+    if !alone("a_pass_with_a_model_holds_at_most_its_admission_over_wide_native_spectra") {
+        return;
+    }
     // Two linear output channels, each 2,048 natives wide.
     let resampler = SpectralResampler::channel_local(
         SpectralAxis::new(1.0e9 + 1023.5e4, 2048.0e4, 2).expect("axis"),

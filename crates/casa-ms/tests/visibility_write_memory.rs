@@ -13,15 +13,15 @@
 //! This binary's global allocator counts the live heap; the laws compare a
 //! write's peak beyond the heap live before it with the writer's bytes. The
 //! tiles a write reads go to the process-wide table-read cache, which is
-//! charged on its own, so the laws give that cache no budget. The laws share
-//! the counters, so they run one at a time.
+//! charged on its own, so the laws give that cache no budget. The counters
+//! are the process's, so each law runs alone in a process of its own
+//! ([`alone`]).
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use casa_imaging_model::MsColumnKind;
 use casa_ms::{
@@ -43,7 +43,6 @@ struct CountingHeap;
 
 static LIVE: AtomicU64 = AtomicU64::new(0);
 static PEAK: AtomicU64 = AtomicU64::new(0);
-static SERIAL: Mutex<()> = Mutex::new(());
 
 fn grow(bytes: u64) {
     let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
@@ -96,11 +95,66 @@ unsafe impl GlobalAlloc for CountingHeap {
     }
 }
 
-/// Run one law alone: the counters are shared.
-fn serial() -> std::sync::MutexGuard<'static, ()> {
-    SERIAL
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+/// Names the law a child process of [`alone`] runs.
+const ALONE: &str = "CASA_RS_COUNTING_LAW";
+
+/// The test a law's process runs before the law ([`alone`]).
+const SETTLE: &str = "a_counting_law_process_settles";
+
+/// Whether [`SETTLE`] ran in this process.
+static SETTLED: AtomicBool = AtomicBool::new(false);
+
+/// Runs first in a law's process ([`alone`]): libtest's main thread sets up
+/// its wait for results while the first test it starts runs, so the law,
+/// which runs second, measures none of it.
+#[test]
+#[ignore = "alone runs it before a law, in the law's process"]
+fn a_counting_law_process_settles() {
+    SETTLED.store(true, Ordering::Relaxed);
+}
+
+/// Whether this process runs the law `name` alone; if it does not, run the
+/// law alone and assert that it passed.
+///
+/// The counters see every allocation in the process, and libtest runs a
+/// binary's tests in one process: under `cargo test` its main thread starts
+/// tests and reports their results, and the binary's other tests run, while
+/// a law measures. So each law begins `if !alone("law") { return; }`. In
+/// the harness's process that runs [`SETTLE`], then the law (libtest runs
+/// tests in name order), in a child process of this binary with one test
+/// thread, so that the harness only waits while the law runs; in the child
+/// it returns true.
+fn alone(name: &str) -> bool {
+    let ran = format!("{name} ran alone");
+    if std::env::var_os(ALONE).is_some_and(|law| law == name) {
+        assert!(
+            SETTLED.load(Ordering::Relaxed),
+            "{SETTLE} runs before {name}"
+        );
+        println!("{ran}");
+        return true;
+    }
+    let output = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([
+            SETTLE,
+            name,
+            "--exact",
+            "--include-ignored",
+            "--test-threads=1",
+            "--nocapture",
+        ])
+        .env(ALONE, name)
+        .output()
+        .expect("the law's process runs");
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{name} alone: {}\n{stdout}",
+        output.status
+    );
+    assert!(stdout.contains(&ran), "{name} did not run alone:\n{stdout}");
+    false
 }
 
 /// The peak heap `write` holds beyond what was live before it.
@@ -255,7 +309,9 @@ fn manager_of(path: &Path, column: &str) -> String {
 
 #[test]
 fn a_model_data_write_holds_at_most_its_bytes() {
-    let _serial = serial();
+    if !alone("a_model_data_write_holds_at_most_its_bytes") {
+        return;
+    }
     casa_tables::set_table_cache_budget_bytes(0);
     let root = tempfile::tempdir().expect("test root");
     let targets = SelectedVisibilityWriteTargets::new(true, false);
@@ -289,7 +345,9 @@ fn a_model_data_write_holds_at_most_its_bytes() {
 
 #[test]
 fn every_accepted_destination_layout_holds_at_most_its_bytes_whatever_mains_rows() {
-    let _serial = serial();
+    if !alone("every_accepted_destination_layout_holds_at_most_its_bytes_whatever_mains_rows") {
+        return;
+    }
     casa_tables::set_table_cache_budget_bytes(0);
     let root = tempfile::tempdir().expect("test root");
     let mut breaches = Vec::new();
@@ -358,7 +416,6 @@ fn every_accepted_destination_layout_holds_at_most_its_bytes_whatever_mains_rows
 
 #[test]
 fn a_destination_in_any_other_manager_is_refused_before_anything_changes() {
-    let _serial = serial();
     let root = tempfile::tempdir().expect("test root");
     let model = SelectedVisibilityWriteTargets::new(true, false);
     let corrected = SelectedVisibilityWriteTargets::new(false, true);
