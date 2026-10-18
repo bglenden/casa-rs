@@ -403,6 +403,14 @@ impl Controller {
         stop
     }
 
+    /// Iterations the next minor cycle may do on each plane: `cycleniter`,
+    /// at most what remains of `niter`.
+    #[must_use]
+    pub fn cycle_iterations(&self) -> usize {
+        self.cycle_niter
+            .min(self.niter.saturating_sub(self.iter_done))
+    }
+
     /// The controls of the next minor cycle (`getMinorCycleControls`):
     /// `cycleniter` limited to what remains of `niter`, and the cycle
     /// threshold `peak × clamp(sidelobe × cyclefactor, minpsffraction,
@@ -417,9 +425,7 @@ impl Controller {
         });
         let threshold = automatic.max(self.threshold);
         CycleControls {
-            iterations: self
-                .cycle_niter
-                .min(self.niter.saturating_sub(self.iter_done)),
+            iterations: self.cycle_iterations(),
             threshold,
             threshold_reached: threshold == self.threshold,
             gain: self.gain,
