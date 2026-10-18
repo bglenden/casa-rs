@@ -16,8 +16,17 @@
 //! sort. Columns of equal pixel size therefore come out in descending
 //! position in the data column list.
 //!
-//! casa-rs follows this for `TiledDataStMan`. The other tiled managers
-//! still lay tiles out over every bound column in binding order (#755).
+//! casa-rs reads and writes every tiled manager's tiles this way (#730,
+//! #755). Earlier casa-rs wrote a hypercolumn of several array columns in
+//! binding order. Wherever that is not casacore's order, whether the
+//! columns' pixel sizes differ or are equal (their ties reversed), this
+//! reader takes one column's cells for another's, and casacore never could
+//! read the table. Such a table must be converted from values decoded in
+//! binding order, by the earlier casa-rs: opened and saved with this one, it
+//! keeps the exchanged cells (#764 review). A hypercolumn of one column, as
+//! the MeasurementSet writers lay out every column, is unaffected. casacore
+//! allows id columns only in a `TiledDataStMan`; the other managers may
+//! have coordinate columns, which casa-rs refuses to read.
 //!
 //! # C++ reference
 //!
@@ -35,7 +44,7 @@ use casa_types::{ArrayValue, RecordValue, Value};
 use super::super::StorageError;
 use super::super::data_type::CasacoreDataType;
 use super::super::table_control::{ColumnDescContents, PlainColumnEntry, TableDescContents};
-use super::{TiledStManHeader, TiledVariant, TsmCubeInfo, tile_element_size};
+use super::{TiledStManHeader, TiledVariant, TsmCubeInfo, compute_tile_layout, tile_element_size};
 
 /// Private keyword prefix of a hypercolumn definition (`theHyperPrefix`).
 const HYPERCOLUMN_PREFIX: &str = "Hypercolumn_";
@@ -64,6 +73,12 @@ impl TileColumns<'_> {
     }
 }
 
+/// One past the last of `rows`, the rows a read or patch of them reaches;
+/// none for no rows.
+pub(super) fn rows_reached(rows: &[usize]) -> usize {
+    rows.iter().max().map_or(0, |&row| row + 1)
+}
+
 /// Split a tiled manager's bound columns, in binding order, into its tile
 /// columns, in tile order, and the columns its hypercube values records
 /// hold.
@@ -77,16 +92,30 @@ impl TileColumns<'_> {
 ///
 /// An owned `header` is reordered in place; a borrowed one is cloned only
 /// when the tile order is not the binding order.
+///
+/// `rows_read` is one past the last row the caller reads or patches
+/// ([`rows_reached`]; a whole-table load reaches every row).
 pub(super) fn tile_columns<'h>(
     variant: &TiledVariant,
     mut header: Cow<'h, TiledStManHeader>,
     bound: &[&ColumnDescContents],
     table_desc: &TableDescContents,
+    rows_read: usize,
 ) -> Result<TileColumns<'h>, StorageError> {
-    // The other managers keep their binding-order layout (#755), and with
-    // it the header casa-rs writes for an empty table, which lists no
-    // column types.
-    if !matches!(variant, TiledVariant::Data { .. }) {
+    let data = matches!(variant, TiledVariant::Data { .. });
+    // Earlier casa-rs wrote a manager with no rows as a header listing no
+    // column types and no hypercube (#755). That form holds no rows, so one
+    // claiming rows, or read at any row, is refused; otherwise the header
+    // takes the bound columns' types, so a read indexes them as any other
+    // (#764 review).
+    if !data && header.col_data_types.is_empty() && header.cubes.is_empty() && !bound.is_empty() {
+        if header.nrrow != 0 || rows_read != 0 {
+            return Err(StorageError::FormatMismatch(format!(
+                "tiled manager {} lists no column types but holds {} rows and is read to row {}",
+                header.seq_nr, header.nrrow, rows_read
+            )));
+        }
+        header.to_mut().col_data_types = bound.iter().map(|desc| desc.data_type).collect();
         return Ok(TileColumns {
             header,
             tile_index: (0..bound.len()).map(Some).collect(),
@@ -107,8 +136,10 @@ pub(super) fn tile_columns<'h>(
         &header.col_data_types,
         &table_desc.private_keywords,
     )?;
-    for &column in &order {
-        check_data_column_axes(&header, bound[column])?;
+    if data {
+        for &column in &order {
+            check_data_column_axes(&header, bound[column])?;
+        }
     }
 
     let mut tile_index = vec![None; bound.len()];
@@ -165,13 +196,14 @@ pub(super) fn in_tile_order<'d>(
 /// The tile header a read of the column at `target_desc_idx` lays its tiles
 /// out by, and that column's index among the tile columns, for a manager
 /// whose bound columns are `bound_cols`.
+/// `selected_rows` are the rows the read reaches.
 pub(super) fn tile_target<'h>(
     variant: &TiledVariant,
     header: Cow<'h, TiledStManHeader>,
     table_desc: &TableDescContents,
     bound_cols: &[(usize, &PlainColumnEntry)],
     target_desc_idx: usize,
-    dm_seq_nr: u32,
+    (dm_seq_nr, selected_rows): (u32, &[usize]),
 ) -> Result<(Cow<'h, TiledStManHeader>, usize), StorageError> {
     let Some(bound_col_idx) = bound_cols
         .iter()
@@ -185,7 +217,13 @@ pub(super) fn tile_target<'h>(
         .iter()
         .map(|(desc_idx, _)| &table_desc.columns[*desc_idx])
         .collect();
-    let tiles = tile_columns(variant, header, &bound, table_desc)?;
+    let tiles = tile_columns(
+        variant,
+        header,
+        &bound,
+        table_desc,
+        rows_reached(selected_rows),
+    )?;
     match tiles.tile_index[bound_col_idx] {
         Some(tile) => Ok((tiles.header, tile)),
         None => Err(untiled_column_error(
@@ -224,6 +262,47 @@ pub(super) fn tile_order(
     // casacore's descending sort: by size, ties in descending list position.
     order.reverse();
     order.sort_by_key(|&column| Reverse(tile_pixel_size(types[column])));
+    Ok(order)
+}
+
+/// The bucket size of a tile laid out over the tile columns `order` (from
+/// [`tile_order`]) of the bound columns of `types`, and each bound column's
+/// offset in it. Writers build tiles from bound columns with it.
+pub(super) fn bound_tile_layout(
+    types: &[CasacoreDataType],
+    order: &[usize],
+    tile_shape: &[usize],
+) -> (usize, Vec<usize>) {
+    let tile_types: Vec<CasacoreDataType> = order.iter().map(|&column| types[column]).collect();
+    let (bucket_size, tile_offsets) = compute_tile_layout(&tile_types, tile_shape);
+    let mut offsets = vec![0; types.len()];
+    for (tile, &column) in order.iter().enumerate() {
+        offsets[column] = tile_offsets[tile];
+    }
+    (bucket_size, offsets)
+}
+
+/// The tile order of the columns a casa-rs writer stores in one tiled
+/// manager of hypercolumn `hypercolumn`, refusing a column the tiles would
+/// not hold: casa-rs writes no id or coordinate columns.
+pub(super) fn writer_tile_order(
+    hypercolumn: &str,
+    col_descs: &[ColumnDescContents],
+    types: &[CasacoreDataType],
+    private_keywords: &RecordValue,
+) -> Result<Vec<usize>, StorageError> {
+    let names: Vec<&str> = col_descs
+        .iter()
+        .map(|desc| desc.col_name.as_str())
+        .collect();
+    let order = tile_order(hypercolumn, &names, types, private_keywords)?;
+    if let Some(column) = (0..names.len()).find(|column| !order.contains(column)) {
+        return Err(StorageError::FormatMismatch(format!(
+            "cannot write column '{}': it is an id or coordinate column of hypercolumn \
+             {hypercolumn}",
+            names[column]
+        )));
+    }
     Ok(order)
 }
 
@@ -388,7 +467,7 @@ mod tests {
         let desc = defining(&["flag", "weight", "data", "count"], &["id"]);
         let header = header(&types);
         let columns =
-            tile_columns(&DATA, Cow::Borrowed(&header), &bound, &desc).expect("tile columns");
+            tile_columns(&DATA, Cow::Borrowed(&header), &bound, &desc, 2).expect("tile columns");
 
         // Complex, then the two 4-byte columns in descending definition
         // position (count after weight in it), then Bool.
@@ -459,6 +538,71 @@ mod tests {
 
     /// A field of a values record does not make a data column an id column:
     /// the definition decides.
+    /// #755: the other managers take the same split and order. A
+    /// TiledShapeStMan's coordinate column stays out of its tiles, and its
+    /// data columns sort as a TiledDataStMan's do; an empty manager earlier
+    /// casa-rs wrote, with no column types and no hypercube, lays out
+    /// nothing.
+    #[test]
+    fn every_tiled_manager_takes_casacores_split_and_order() {
+        let shape = TiledVariant::Shape {
+            default_tile_shape: Vec::new(),
+            nr_used_row_map: 0,
+            row_map: Vec::new(),
+            cube_map: Vec::new(),
+            pos_map: Vec::new(),
+        };
+        let bound = [
+            column("flag", CasacoreDataType::TpBool, 2),
+            column("freq", CasacoreDataType::TpDouble, 1),
+            column("data", CasacoreDataType::TpComplex, 2),
+        ];
+        let refs: Vec<&ColumnDescContents> = bound.iter().collect();
+        let types = [
+            CasacoreDataType::TpBool,
+            CasacoreDataType::TpDouble,
+            CasacoreDataType::TpComplex,
+        ];
+        let tiles = tile_columns(
+            &shape,
+            Cow::Owned(header(&types)),
+            &refs,
+            &defining(&["flag", "data"], &[]),
+            2,
+        )
+        .expect("tiles");
+        assert_eq!(tiles.tile_index, [Some(1), None, Some(0)]);
+        assert_eq!(
+            tiles.header.col_data_types,
+            [CasacoreDataType::TpComplex, CasacoreDataType::TpBool]
+        );
+        assert_eq!(
+            tiles
+                .first_untiled(&refs)
+                .map(|desc| desc.col_name.as_str()),
+            Some("freq")
+        );
+
+        // #764 review: the empty form takes the bound columns' types, and is
+        // refused once it claims rows or is read at one.
+        let empty = TiledStManHeader {
+            nrrow: 0,
+            col_data_types: Vec::new(),
+            cubes: Vec::new(),
+            ..header(&[])
+        };
+        let tiles =
+            tile_columns(&shape, Cow::Borrowed(&empty), &refs, &undefined(), 0).expect("tiles");
+        assert_eq!(tiles.tile_index, [Some(0), Some(1), Some(2)]);
+        assert_eq!(tiles.header.col_data_types, types);
+        assert!(tile_columns(&shape, Cow::Borrowed(&empty), &refs, &undefined(), 1).is_err());
+        let claiming = TiledStManHeader {
+            nrrow: 3,
+            ..empty.clone()
+        };
+        assert!(tile_columns(&shape, Cow::Borrowed(&claiming), &refs, &undefined(), 0).is_err());
+    }
+
     #[test]
     fn a_values_field_named_like_a_data_column_leaves_it_in_the_tiles() {
         let a = column("a", CasacoreDataType::TpFloat, 2);
@@ -467,8 +611,14 @@ mod tests {
             "a",
             Value::Scalar(ScalarValue::Float32(77.0)),
         )]);
-        let tiles = tile_columns(&DATA, Cow::Borrowed(&header), &[&a], &defining(&["a"], &[]))
-            .expect("tiles");
+        let tiles = tile_columns(
+            &DATA,
+            Cow::Borrowed(&header),
+            &[&a],
+            &defining(&["a"], &[]),
+            2,
+        )
+        .expect("tiles");
         assert_eq!(tiles.tile_index, [Some(0)]);
     }
 
@@ -484,7 +634,16 @@ mod tests {
         let header = header(&[CasacoreDataType::TpFloat]);
         let data = column("data", CasacoreDataType::TpFloat, 2);
         let id = column("id", CasacoreDataType::TpInt, 0);
-        assert!(tile_columns(&DATA, Cow::Borrowed(&header), &[&data, &id], &undefined()).is_err());
+        assert!(
+            tile_columns(
+                &DATA,
+                Cow::Borrowed(&header),
+                &[&data, &id],
+                &undefined(),
+                2
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -496,13 +655,13 @@ mod tests {
         for nrdim in [1, 0, -1] {
             let data = column("data", CasacoreDataType::TpFloat, nrdim);
             assert!(
-                tile_columns(&DATA, Cow::Borrowed(&header), &[&data], &desc).is_err(),
+                tile_columns(&DATA, Cow::Borrowed(&header), &[&data], &desc, 2).is_err(),
                 "rank {nrdim}"
             );
         }
         let data = column("data", CasacoreDataType::TpFloat, 2);
         let tiles =
-            tile_columns(&DATA, Cow::Borrowed(&header), &[&data], &desc).expect("one row axis");
+            tile_columns(&DATA, Cow::Borrowed(&header), &[&data], &desc, 2).expect("one row axis");
         assert!(
             matches!(tiles.header, Cow::Borrowed(_)),
             "an identity order borrows"
