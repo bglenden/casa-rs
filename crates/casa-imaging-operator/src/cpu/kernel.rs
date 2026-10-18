@@ -342,19 +342,40 @@ struct DenseBlock<'t> {
     conjugate: bool,
 }
 
+/// Taps per row segment, over which the ramp's x factors are tabulated
+/// ([`PointingRamp`]). Shorter tables cost less to fill per sample and
+/// longer segments less per row: 32 is within a few percent of the best
+/// of 16, 32 and 64 from 7 to 101 taps (#449).
+const RAMP_SEGMENT: usize = 32;
+
 /// The pointing ramp `e^{i(k_x g_x + k_y g_y)}` over a support, with
 /// `k = i − ⌊s/2⌋ + f` per axis at the sample's fine fraction `f`
-/// ([`fine_fraction`]). The ramp is separable, so the tap loops walk it by
-/// recurrence: one phasor at the support's first tap and one step per axis,
-/// three evaluations per sample instead of one per tap. CASA's resampler
-/// instead computes its phase-gradient array once per pointing
-/// (`cachePhaseGrad`). Each step multiplies two unit phasors, about 2ε of
-/// relative error, and each row restarts from the row phasor, so a tap's
-/// walked phasor departs from the direct one by about 2ε per tap of row
-/// and column it lies along: a few 1e-15 over a 31-tap support, and about
-/// 1e-12 even 4,096 taps along. That is an estimate of the drift, not a
-/// bound for arbitrary supports; the direct phasor's own argument error
-/// grows with `|k·g|` instead.
+/// ([`fine_fraction`]). The ramp is separable, `e^{i k_x g_x} · e^{i k_y
+/// g_y}`, so it is never evaluated per tap. CASA's resampler instead
+/// computes its phase-gradient array once per pointing
+/// (`cachePhaseGrad`). Three phasors are evaluated per sample, at the
+/// support's first tap, one tap along x and one row along y, plus a
+/// fourth for supports wider than [`RAMP_SEGMENT`]: the step from one
+/// row segment to the next.
+///
+/// The loops tabulate `step_x^j` for the taps `j` of a segment once per
+/// sample ([`RampSegment`]). Each row starts one row step on from the
+/// last, each of its segments one segment step on, and a tap takes its
+/// segment's start times its table entry. A tap's ramp is then two
+/// multiplies that depend on no other tap. Walking the ramp tap by tap
+/// instead chained each tap's multiply to the one before, and that chain
+/// bounded the loops: they ran 2–3× slower from 29 taps up (#449).
+///
+/// The doubling shortens the dependency chain, not the error: squaring
+/// doubles the relative error already in a power, and the step's own
+/// rounding enters `step_x^j` `j` times whatever the method. So a tap's
+/// factor carries about 2ε per tap of its place in the segment, as the walk
+/// did, plus about 2ε per segment and per row before it, besides the error
+/// of the three phasors themselves (#771 review: 13ε at `j = 31` by
+/// doubling against 12.5ε by the walk). That is a few 1e-15 over a 31-tap
+/// support, and about 1e-12 even 4,096 rows along. It is an estimate of
+/// the drift, not a bound for arbitrary supports; the direct phasor's own
+/// argument error grows with `|k·g|` instead.
 #[derive(Clone, Copy)]
 struct PointingRamp {
     /// The ramp at the first tap of the current row.
@@ -362,6 +383,9 @@ struct PointingRamp {
     /// The ramp's factor from one tap to the next along x, and from one
     /// row to the next along y.
     step: [Complex64; 2],
+    /// The factor from one row segment's first tap to the next's,
+    /// `e^{i g_x · RAMP_SEGMENT}`; one when a row is a single segment.
+    segment: Complex64,
 }
 
 impl PointingRamp {
@@ -369,6 +393,7 @@ impl PointingRamp {
     const NONE: Self = Self {
         row: Complex64::new(1.0, 0.0),
         step: [Complex64::new(1.0, 0.0); 2],
+        segment: Complex64::new(1.0, 0.0),
     };
 
     /// The ramp of `gradient` at `fraction` over `support` taps, or `None`
@@ -380,13 +405,46 @@ impl PointingRamp {
         let [gx, gy] = gradient.map(f64::from);
         let kx = fraction[0] - (support[0] / 2) as f64;
         let ky = fraction[1] - (support[1] / 2) as f64;
+        let segment = if support[0] > RAMP_SEGMENT {
+            Complex64::from_polar(1.0, gx * RAMP_SEGMENT as f64)
+        } else {
+            Complex64::new(1.0, 0.0)
+        };
         Some(Self {
             row: Complex64::from_polar(1.0, kx * gx + ky * gy),
             step: [
                 Complex64::from_polar(1.0, gx),
                 Complex64::from_polar(1.0, gy),
             ],
+            segment,
         })
+    }
+}
+
+/// The ramp's x factors over one row segment: `step_x^j` for its first
+/// `width` taps `j`, at most [`RAMP_SEGMENT`] ([`PointingRamp`]).
+struct RampSegment {
+    factors: [Complex64; RAMP_SEGMENT],
+}
+
+impl RampSegment {
+    /// The factors by doubling: those filled so far times the next power
+    /// `step_x^{2^k}`, so the fill is `log₂ width` multiplies deep rather
+    /// than `width`, which a small support's sample would wait on. Its
+    /// error is the walk's ([`PointingRamp`]).
+    fn new(ramp: &PointingRamp, width: usize) -> Self {
+        let width = width.min(RAMP_SEGMENT);
+        let mut factors = [Complex64::new(1.0, 0.0); RAMP_SEGMENT];
+        let (mut filled, mut power) = (1, ramp.step[0]);
+        while filled < width {
+            let more = filled.min(width - filled);
+            for j in 0..more {
+                factors[filled + j] = factors[j] * power;
+            }
+            filled += more;
+            power *= power;
+        }
+        Self { factors }
     }
 }
 
@@ -396,7 +454,9 @@ fn oriented(tap: Complex32, conjugate: bool) -> Complex64 {
     if conjugate { tap.conj() } else { tap }
 }
 
-/// Add `value · tap'` over `block`, each tap times `ramp` when `RAMPED`.
+/// Add `value · tap'` over `block`, each tap times `ramp` when `RAMPED`:
+/// a row segment's value carries the ramp at its first tap, and each tap
+/// its table factor ([`PointingRamp`]).
 fn spread_dense<T: GridScalar, const RAMPED: bool>(
     grid: &mut [Complex<T>],
     block: &DenseBlock<'_>,
@@ -404,45 +464,62 @@ fn spread_dense<T: GridScalar, const RAMPED: bool>(
     value: Complex<T>,
 ) {
     let ([x0, y0], [sx, sy]) = (block.origin, block.support);
+    let table = RAMPED.then(|| RampSegment::new(&ramp, sx));
+    let wide = Complex64::new(value.re.into_f64(), value.im.into_f64());
     for iy in 0..sy {
         let row = &mut grid[(y0 + iy) * block.nx + x0..][..sx];
-        let mut phasor = ramp.row;
-        for (cell, tap) in row.iter_mut().zip(&block.taps[iy * sx..][..sx]) {
-            let mut tap = oriented(*tap, block.conjugate);
-            if RAMPED {
-                tap *= phasor;
-                phasor *= ramp.step[0];
+        let taps = &block.taps[iy * sx..][..sx];
+        let Some(table) = &table else {
+            for (cell, tap) in row.iter_mut().zip(taps) {
+                let tap = oriented(*tap, block.conjugate);
+                *cell = *cell + value * Complex::new(T::from_f64(tap.re), T::from_f64(tap.im));
             }
-            *cell = *cell + value * Complex::new(T::from_f64(tap.re), T::from_f64(tap.im));
+            continue;
+        };
+        let mut start = wide * ramp.row;
+        for (cells, taps) in row.chunks_mut(RAMP_SEGMENT).zip(taps.chunks(RAMP_SEGMENT)) {
+            for ((cell, tap), factor) in cells.iter_mut().zip(taps).zip(&table.factors) {
+                let added = start * (oriented(*tap, block.conjugate) * *factor);
+                *cell = *cell + Complex::new(T::from_f64(added.re), T::from_f64(added.im));
+            }
+            start *= ramp.segment;
         }
-        if RAMPED {
-            ramp.row *= ramp.step[1];
-        }
+        ramp.row *= ramp.step[1];
     }
 }
 
-/// `Σ conj(tap') · grid` over `block`, each tap times `ramp` when `RAMPED`.
+/// `Σ conj(tap') · grid` over `block`, each tap times `ramp` when `RAMPED`:
+/// each row segment sums its taps times their table factors, then takes
+/// the ramp at its first tap ([`PointingRamp`]).
 fn gather_dense<T: GridScalar, const RAMPED: bool>(
     grid: &[Complex<T>],
     block: &DenseBlock<'_>,
     mut ramp: PointingRamp,
 ) -> Complex64 {
     let ([x0, y0], [sx, sy]) = (block.origin, block.support);
+    let table = RAMPED.then(|| RampSegment::new(&ramp, sx));
     let mut sum = Complex64::default();
     for iy in 0..sy {
         let row = &grid[(y0 + iy) * block.nx + x0..][..sx];
-        let mut phasor = ramp.row;
-        for (cell, tap) in row.iter().zip(&block.taps[iy * sx..][..sx]) {
-            let mut tap = oriented(*tap, block.conjugate);
-            if RAMPED {
-                tap *= phasor;
-                phasor *= ramp.step[0];
+        let taps = &block.taps[iy * sx..][..sx];
+        let Some(table) = &table else {
+            for (cell, tap) in row.iter().zip(taps) {
+                let tap = oriented(*tap, block.conjugate);
+                sum += tap.conj() * Complex64::new(cell.re.into_f64(), cell.im.into_f64());
             }
-            sum += tap.conj() * Complex64::new(cell.re.into_f64(), cell.im.into_f64());
+            continue;
+        };
+        let mut start = ramp.row;
+        for (cells, taps) in row.chunks(RAMP_SEGMENT).zip(taps.chunks(RAMP_SEGMENT)) {
+            let mut segment = Complex64::default();
+            for ((cell, tap), factor) in cells.iter().zip(taps).zip(&table.factors) {
+                let tap = oriented(*tap, block.conjugate) * *factor;
+                segment += tap.conj() * Complex64::new(cell.re.into_f64(), cell.im.into_f64());
+            }
+            sum += start.conj() * segment;
+            start *= ramp.segment;
         }
-        if RAMPED {
-            ramp.row *= ramp.step[1];
-        }
+        ramp.row *= ramp.step[1];
     }
     sum
 }
@@ -488,7 +565,7 @@ mod tests {
         seven_taps_gather_as_the_general_gather::<f64>();
     }
 
-    /// One case of [`the_walked_pointing_ramp_equals_the_ramp_at_each_tap`]:
+    /// One case of [`the_tabulated_pointing_ramp_equals_the_ramp_at_each_tap`]:
     /// a dense kernel of `support` taps spread and gathered through
     /// [`spread`] and [`gather`] at fine offsets `offsets`, against the ramp
     /// evaluated at each tap, the conjugation applied by sign rather than
@@ -596,18 +673,22 @@ mod tests {
         }
     }
 
-    /// The walked pointing ramp spreads and gathers what the ramp evaluated
-    /// at each tap does, through [`spread`] and [`gather`] (#732): odd
-    /// supports of unequal sides up to 129 × 65, gradients beyond π per
-    /// cell and zero on one axis, fine fractions either side of the cell,
-    /// both conjugations and both grid precisions. A zero gradient takes
-    /// the unramped loop, bit for bit.
+    /// The tabulated pointing ramp spreads and gathers what the ramp
+    /// evaluated at each tap does, through [`spread`] and [`gather`] (#732,
+    /// #449): odd supports of unequal sides up to 129 × 65, rows of one
+    /// segment, one tap past it, and several segments
+    /// ([`RAMP_SEGMENT`]), gradients beyond π per cell and zero on one
+    /// axis, fine fractions either side of the cell, both conjugations and
+    /// both grid precisions. A zero gradient takes the unramped loop, bit
+    /// for bit.
     #[test]
-    fn the_walked_pointing_ramp_equals_the_ramp_at_each_tap() {
+    fn the_tabulated_pointing_ramp_equals_the_ramp_at_each_tap() {
         let cases = [
             ([7, 7], [0.37_f32, -0.21], [1_u16, 3], false),
             ([5, 11], [2.9, 4.6], [0, 4], true),
             ([31, 23], [-3.7, 0.05], [4, 1], false),
+            ([33, 3], [1.7, -0.4], [3, 2], true),
+            ([65, 9], [-2.6, 3.3], [0, 1], false),
             ([129, 65], [0.9, -2.2], [2, 2], true),
             ([9, 5], [0.0, 1.3], [3, 0], true),
             ([9, 5], [0.0, 0.0], [3, 0], true),
