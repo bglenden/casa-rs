@@ -580,3 +580,33 @@ fn held_cpp_reader_sees_no_change_from_a_write_lock_that_wrote_nothing() {
     assert_eq!(after, before, "a discarded change was published");
     assert_eq!(cpp_id, 1);
 }
+
+/// casacore marks a table in use for as long as any handle has it open: a
+/// read lock on the in-use byte of `table.lock` (`LockFile`'s
+/// `itsUseLocker`, at `4*seqnr+1`). `table_holder`, which guards deleting
+/// and renaming a flag version (#695), sees that mark while a C++ reader in
+/// another process holds the table, and sees it gone once the reader
+/// closes.
+#[test]
+fn a_table_casacore_holds_open_is_multi_used_until_it_closes() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping held C++ reader test: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let table = published_id_table(dir.path(), false);
+    let holder = || casa_tables::table_holder(&table).expect("probe the in-use mark");
+    let in_use = || holder() == Some(casa_tables::TableHolder::AnotherProcess);
+    assert_eq!(holder(), None, "a closed table reads as held");
+
+    let mut reader = HeldCppReaderProcess::open(&table);
+    assert!(
+        in_use(),
+        "the table casacore holds open reads as not in use"
+    );
+    assert_eq!(reader.read_id(), 1);
+    assert!(in_use(), "the mark went with the reader's lock period");
+
+    drop(reader);
+    assert_eq!(holder(), None, "the mark outlived the casacore reader");
+}

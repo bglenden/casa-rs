@@ -129,6 +129,16 @@ impl Partition {
             Self::Regions { regions, .. } => regions.len(),
         }
     }
+
+    /// Whether the grid's rows are split among several region owners: the
+    /// one case that measures its gridding work by anchor row
+    /// ([`super::PassSummary::row_work`], [`super::run_row_work_pass`]) and
+    /// takes larger chunks ([`WaveDemand::plan_chunk_placements`]). A lone
+    /// region owner and plane owners do neither (#736).
+    #[must_use]
+    pub fn splits_rows(&self) -> bool {
+        matches!(self, Self::Regions { regions, .. } if regions.len() > 1)
+    }
 }
 
 /// How many planes a pass holds at once.
@@ -250,10 +260,11 @@ impl WaveDemand<'_> {
     /// the default chunks therefore never fails for want of larger ones.
     #[must_use]
     pub fn plan_chunk_placements(&self, planes: u32, budget: u64) -> usize {
-        let split = self.domains.iter().any(|domain| {
-            matches!(domain.partition, Partition::Regions { .. }) && domain.partition.owners() > 1
-        });
-        if !split {
+        if !self
+            .domains
+            .iter()
+            .any(|domain| domain.partition.splits_rows())
+        {
             return super::CHUNK_PLACEMENTS;
         }
         super::REGION_CHUNK_PLACEMENTS
@@ -334,9 +345,10 @@ impl WaveDemand<'_> {
             let npol = operator.polarization().correlations().len();
             held += domain.partition.owners() as u64 * casa_imaging_metal::ring_bytes(npol);
         }
-        // A region-partitioned domain's gridding work by anchor row, which
-        // the pass hands to the next one's partition (#736).
-        if matches!(domain.partition, Partition::Regions { .. }) {
+        // A domain split among region owners measures its gridding work by
+        // anchor row, which the pass hands to the next one's partition
+        // (#736).
+        if domain.partition.splits_rows() {
             held += (operator.geometry().grid_shape()[1] * size_of::<u64>()) as u64;
         }
         DomainStages {

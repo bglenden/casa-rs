@@ -420,10 +420,8 @@ pub const CHUNK_PLACEMENTS: usize = 1 << 15;
 /// ([`WaveDemand::plan_chunk_placements`]). The owners grid each slice and
 /// then meet, and a block's rows run baseline by baseline, so a slice of a
 /// few baselines' tracks falls mostly on one owner's strip while the others
-/// wait. Larger slices hold more baselines (#736): on the VLASS 4-SPW clean
-/// with three region owners, a residual pass took 107 s at 2^15, 91 s at
-/// 2^17, 84 s at 2^18 and 84 s at 2^19, for 0.5, 1.3 and 2.7 GB more
-/// reserved than at 2^15.
+/// wait. Larger slices hold more baselines, so the owners wait less; past
+/// 2^18 they cost memory and gain nothing (#736 records the measurement).
 const REGION_CHUNK_PLACEMENTS: [usize; 3] = [1 << 18, 1 << 17, 1 << 16];
 
 /// Placements a row chunk of a major-cycle pass takes at once, from a cap of

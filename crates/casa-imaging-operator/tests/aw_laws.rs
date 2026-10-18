@@ -122,9 +122,9 @@ fn context(pa_deg: f64, spectral_window: u32) -> RowContext {
     }
 }
 
-/// Generate a cache into `root` and open it.
+/// Generate a cache into `root` on four workers and open it.
 fn generated(root: &std::path::Path, conjugate_beams: bool, bound: usize) -> AwCatalog {
-    AwCatalog::generate_native(root, &request(conjugate_beams), false).expect("generate");
+    AwCatalog::generate_native(root, &request(conjugate_beams), false, 4).expect("generate");
     AwCatalog::open_casa(
         root,
         indexing(conjugate_beams),
@@ -517,7 +517,7 @@ fn predictions_divide_by_the_kernel_sum_of_the_swapped_plane() {
 fn unequal_hands_follow_casa_in_both_directions_and_on_both_w_signs() {
     let widen = |value: Complex32| Complex64::new(f64::from(value.re), f64::from(value.im));
     let root = tempfile::tempdir().expect("cache directory");
-    AwCatalog::generate_native(root.path(), &request(false), false).expect("generate");
+    AwCatalog::generate_native(root.path(), &request(false), false, 1).expect("generate");
     // This tiny aperture fixture can undersample away the EVLA squint.
     // Give LL a distinct spatial profile so a hand swap cannot pass just
     // because both cells happen to agree (the blind spot in #667).
@@ -978,6 +978,62 @@ fn open(root: &std::path::Path) -> AwCatalog {
     AwCatalog::open_casa(root, indexing(true), &geometry(), &routing(), usize::MAX).expect("open")
 }
 
+/// Every file under `root`, by its path below `root`, with its bytes.
+fn files(root: &std::path::Path) -> std::collections::BTreeMap<std::path::PathBuf, Vec<u8>> {
+    let mut found = std::collections::BTreeMap::new();
+    let mut directories = vec![root.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(&directory).expect("list") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                directories.push(path);
+            } else {
+                let name = path.strip_prefix(root).expect("below root").to_path_buf();
+                found.insert(name, std::fs::read(&path).expect("read"));
+            }
+        }
+    }
+    found
+}
+
+/// #708: generation on several workers writes the cache one worker writes,
+/// byte for byte: the same images, cell for cell, and the same manifest.
+/// Filling the missing half on several workers does too.
+#[test]
+fn several_workers_write_the_cache_one_worker_writes() {
+    let serial = tempfile::tempdir().expect("cache directory");
+    AwCatalog::generate_native(serial.path(), &request(true), false, 1).expect("generate");
+    let expected = files(serial.path());
+    assert!(expected.len() > 8, "a catalog of several cells");
+    for workers in [2, 3, 8] {
+        let parallel = tempfile::tempdir().expect("cache directory");
+        AwCatalog::generate_native(parallel.path(), &request(true), false, workers)
+            .expect("generate");
+        assert!(
+            files(parallel.path()) == expected,
+            "{workers} workers wrote another cache"
+        );
+    }
+    let filled = tempfile::tempdir().expect("cache directory");
+    AwCatalog::generate_native(filled.path(), &request(true), false, 1).expect("generate");
+    for entry in std::fs::read_dir(filled.path()).expect("list") {
+        let path = entry.expect("entry").path();
+        let name = path
+            .file_name()
+            .expect("name")
+            .to_string_lossy()
+            .into_owned();
+        if name.starts_with("CFS_") && name.ends_with("_1_0.im") {
+            std::fs::remove_dir_all(&path).expect("remove a cell");
+        }
+    }
+    AwCatalog::generate_native(filled.path(), &request(true), true, 4).expect("fill");
+    assert!(
+        files(filled.path()) == expected,
+        "a fill on four workers wrote another cache"
+    );
+}
+
 /// #735: a cell's conjugate beam is the request's listed frequency nearest
 /// `√(2f₀² − f²)`, so a cache generated for a wider SPW selection names the
 /// subset's cells and holds different ones. It is neither reusable nor
@@ -986,7 +1042,7 @@ fn open(root: &std::path::Path) -> AwCatalog {
 #[test]
 fn a_cache_of_another_frequency_list_is_regenerated_not_reused() {
     let root = tempfile::tempdir().expect("cache directory");
-    AwCatalog::generate_native(root.path(), &request(true), false).expect("generate");
+    AwCatalog::generate_native(root.path(), &request(true), false, 1).expect("generate");
     let subset = subset_request();
     let state = AwCatalog::native_cache_state(root.path(), &subset).expect("state");
     // 1 PA × 2 w × 2 Mueller cells for the subset's one frequency, and as
@@ -1001,18 +1057,18 @@ fn a_cache_of_another_frequency_list_is_regenerated_not_reused() {
         }
     );
     assert!(!state.reusable() && !state.fillable());
-    assert!(AwCatalog::generate_native(root.path(), &subset, true).is_err());
+    assert!(AwCatalog::generate_native(root.path(), &subset, true, 3).is_err());
 
     // The hazard is real: the 1.4 GHz cell's conjugate beam is 1.6 GHz in
     // the wide cache and 1.4 GHz in the subset's.
     let wide = all_taps(&open(root.path()));
     let fresh_root = tempfile::tempdir().expect("cache directory");
-    AwCatalog::generate_native(fresh_root.path(), &subset, false).expect("generate");
+    AwCatalog::generate_native(fresh_root.path(), &subset, false, 1).expect("generate");
     let fresh = all_taps(&open(fresh_root.path()));
     assert_ne!(wide[0].1, fresh[0].1, "the reused weight cell differs");
 
     AwCatalog::clear_native(root.path()).expect("clear");
-    AwCatalog::generate_native(root.path(), &subset, false).expect("regenerate");
+    AwCatalog::generate_native(root.path(), &subset, false, 1).expect("regenerate");
     let state = AwCatalog::native_cache_state(root.path(), &subset).expect("state");
     assert!(state.reusable(), "{state}");
     let catalog = open(root.path());
@@ -1032,7 +1088,7 @@ fn only_an_empty_directory_without_a_manifest_is_filled_in() {
     let empty = AwCatalog::native_cache_state(root.path(), &subset).expect("state");
     assert_eq!(empty.manifest, NativeManifest::Absent);
     assert!(empty.fillable() && !empty.reusable());
-    AwCatalog::generate_native(root.path(), &subset, true).expect("fill an empty directory");
+    AwCatalog::generate_native(root.path(), &subset, true, 3).expect("fill an empty directory");
     assert!(
         AwCatalog::native_cache_state(root.path(), &subset)
             .expect("state")
@@ -1051,7 +1107,7 @@ fn only_an_empty_directory_without_a_manifest_is_filled_in() {
 #[test]
 fn the_manifest_records_the_terms_and_the_reference_frequency() {
     let root = tempfile::tempdir().expect("cache directory");
-    AwCatalog::generate_native(root.path(), &request(true), false).expect("generate");
+    AwCatalog::generate_native(root.path(), &request(true), false, 1).expect("generate");
     let manifest = |input: &NativeAwRequestInput| {
         AwCatalog::native_cache_state(root.path(), input)
             .expect("state")
@@ -1089,14 +1145,14 @@ fn staged(root: &std::path::Path) -> Vec<String> {
 fn generation_that_fails_leaves_no_request_claimed() {
     let root = tempfile::tempdir().expect("cache directory");
     let subset = subset_request();
-    AwCatalog::generate_native(root.path(), &subset, false).expect("generate");
+    AwCatalog::generate_native(root.path(), &subset, false, 1).expect("generate");
     assert!(staged(root.path()).is_empty(), "complete images only");
     // A flat dish passes validation but its aperture normalises to nothing.
     let mut failing = subset_request();
     failing.surface =
         EvlaDishSurface::new((0..=125).map(|i| [f64::from(i) / 10.0, 0.0, 0.0]).collect())
             .expect("a valid surface");
-    assert!(AwCatalog::generate_native(root.path(), &failing, false).is_err());
+    assert!(AwCatalog::generate_native(root.path(), &failing, false, 2).is_err());
     for input in [&failing, &subset] {
         let state = AwCatalog::native_cache_state(root.path(), input).expect("state");
         assert_eq!(
@@ -1106,7 +1162,7 @@ fn generation_that_fails_leaves_no_request_claimed() {
         );
         assert!(!state.reusable(), "{state}");
     }
-    AwCatalog::generate_native(root.path(), &subset, true).expect("fill the emptied cache");
+    AwCatalog::generate_native(root.path(), &subset, true, 3).expect("fill the emptied cache");
     assert!(
         AwCatalog::native_cache_state(root.path(), &subset)
             .expect("state")
@@ -1123,10 +1179,10 @@ fn generation_that_fails_leaves_no_request_claimed() {
 fn a_half_written_cell_counts_as_missing_and_is_filled_in() {
     let subset = subset_request();
     let fresh = tempfile::tempdir().expect("cache directory");
-    AwCatalog::generate_native(fresh.path(), &subset, false).expect("generate");
+    AwCatalog::generate_native(fresh.path(), &subset, false, 1).expect("generate");
     for name in ["CFS_0_0_CF_0_1_0.im", "WTCFS_0_0_CF_0_1_1.im"] {
         let root = tempfile::tempdir().expect("cache directory");
-        AwCatalog::generate_native(root.path(), &subset, false).expect("generate");
+        AwCatalog::generate_native(root.path(), &subset, false, 1).expect("generate");
         let staging = root.path().join(format!(".staging-{name}"));
         std::fs::rename(root.path().join(name), &staging).expect("stage");
         std::fs::remove_file(staging.join("table.dat")).expect("break the staged image");
@@ -1137,7 +1193,7 @@ fn a_half_written_cell_counts_as_missing_and_is_filled_in() {
             "{name}"
         );
         assert!(!state.reusable() && state.fillable());
-        AwCatalog::generate_native(root.path(), &subset, true).expect("fill");
+        AwCatalog::generate_native(root.path(), &subset, true, 3).expect("fill");
         let state = AwCatalog::native_cache_state(root.path(), &subset).expect("state");
         assert!(state.reusable(), "{name}: {state}");
         assert!(staged(root.path()).is_empty(), "{name}");

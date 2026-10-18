@@ -181,7 +181,7 @@ impl ChunkShape {
             ),
             grid_rows: domains
                 .iter()
-                .filter(|domain| matches!(domain.partition, Partition::Regions { .. }))
+                .filter(|domain| domain.partition.splits_rows())
                 .map(|domain| domain.operator.geometry().grid_shape()[1])
                 .max()
                 .unwrap_or(0),
@@ -441,7 +441,9 @@ impl<'w, 'p> Wave<'w, 'p> {
                         })
                     })
                     .collect::<Result<_, PassError>>()?;
-                let row_work = matches!(domain.partition, Partition::Regions { .. })
+                let row_work = domain
+                    .partition
+                    .splits_rows()
                     .then(|| vec![0; operator.geometry().grid_shape()[1]]);
                 Ok(Domain {
                     router,

@@ -17,6 +17,8 @@ mod write_lock;
 #[cfg(unix)]
 pub(crate) use lock_file::read_sync_data_from_table_dir;
 #[cfg(unix)]
+pub use lock_file::table_holder;
+#[cfg(unix)]
 pub(crate) use lock_file::{LockFile, LockOutcome};
 pub(crate) use sync_data::SyncData;
 pub use write_lock::TableWriteLock;
@@ -99,6 +101,26 @@ impl LockMode {
     /// Returns `true` if this mode skips read locks.
     pub fn skip_read_lock(self) -> bool {
         matches!(self, Self::AutoNoReadLocking | Self::UserNoReadLocking)
+    }
+}
+
+/// Where a table is held open, as its lock file shows: what
+/// [`table_holder`](crate::table_holder) reports, on Unix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableHolder {
+    /// A handle in this process holds the table's lock file: a table
+    /// opened with locking, or a write in progress.
+    ThisProcess,
+    /// Another process holds the in-use mark of the table's lock file.
+    AnotherProcess,
+}
+
+impl std::fmt::Display for TableHolder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::ThisProcess => "in this process",
+            Self::AnotherProcess => "in another process",
+        })
     }
 }
 

@@ -119,19 +119,6 @@ pub struct EvlaAwCellRequest {
 }
 
 impl EvlaAwCellRequest {
-    /// Numerical residency ceiling for seven Complex32 working planes, the
-    /// support-search and W-screen tables (under one plane together), one
-    /// disposable FFTW planning plane and one opaque native-plan allowance.
-    pub fn generation_workspace_bytes(&self) -> Result<usize, NativeAwRequestError> {
-        self.validate()?;
-        self.size
-            .checked_mul(self.size)
-            .and_then(|pixels| pixels.checked_mul(10))
-            .and_then(|values| values.checked_add(64))
-            .and_then(|values| values.checked_mul(8))
-            .ok_or(NativeAwRequestError::InvalidSampling)
-    }
-
     /// Validate a cell before numerical generation or scientific identity minting.
     pub fn validate(&self) -> Result<(), NativeAwRequestError> {
         if self.size < 8

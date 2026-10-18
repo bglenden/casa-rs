@@ -884,8 +884,12 @@ impl<'a> Run<'a> {
             .flatten()
             .map(|rows| size_of_val(rows.as_slice()) as u64)
             .sum();
-        if let Ok(charge) = self.admit("region row work", bytes) {
-            self.row_work = Some((row_work, charge));
+        match self.admit("region row work", bytes) {
+            Ok(charge) => self.row_work = Some((row_work, charge)),
+            Err(_) => tracing::info!(
+                "imaging region row work: no room to keep {bytes} bytes; \
+                 later passes keep strips of equal height"
+            ),
         }
     }
 
