@@ -465,17 +465,17 @@ fn aw_open(root: &std::path::Path, bound: usize) -> AwCatalog {
     AwCatalog::open_casa(root, indexing, &geometry, &routing, bound).expect("open")
 }
 
-/// Fetch group `group`'s imaging and weight cells, and the next group's
-/// prediction cell, through `holds`: a CPU residual holds a gridding
-/// group's cell and a prediction group's at once (#449).
-fn fetch(catalog: &AwCatalog, group: usize, holds: &mut [CellHold; 3]) {
+/// Fetch group `group`'s imaging and weight cells through the gridding
+/// hold, as a pass's modes do, and the next group's prediction cell through
+/// the prediction hold: a CPU backend's two holds (#449, #773 review).
+fn fetch(catalog: &AwCatalog, group: usize, holds: &mut [CellHold; 2]) {
     let key = CfKey {
         group: group as u16,
         cube: ((group + 1) % catalog.groups()) as u16,
     };
-    let [imaging, weight, prediction] = holds;
-    assert!(catalog.taps(key, imaging).half_support()[0] > 0);
-    assert!(catalog.weight_taps(key, weight).is_some());
+    let [gridding, prediction] = holds;
+    assert!(catalog.taps(key, gridding).half_support()[0] > 0);
+    assert!(catalog.weight_taps(key, gridding).is_some());
     assert!(catalog.prediction_taps(key, prediction).half_support()[0] > 0);
 }
 
@@ -484,7 +484,7 @@ fn fetch(catalog: &AwCatalog, group: usize, holds: &mut [CellHold; 3]) {
 fn catalog_holds_at_most_its_charge(root: &std::path::Path) {
     let open_and_fetch = |bound: usize| {
         let catalog = aw_open(root, bound);
-        let mut holds = [CellHold::new(), CellHold::new(), CellHold::new()];
+        let mut holds = [CellHold::new(), CellHold::new()];
         for group in 0..catalog.groups() {
             fetch(&catalog, group, &mut holds);
         }
@@ -522,11 +522,7 @@ fn concurrent_holders_hold_at_most_their_charge() {
     // Warm the process-wide tile cache, as above.
     let warm = aw_open(root.path(), usize::MAX);
     for group in 0..warm.groups() {
-        fetch(
-            &warm,
-            group,
-            &mut [CellHold::new(), CellHold::new(), CellHold::new()],
-        );
+        fetch(&warm, group, &mut [CellHold::new(), CellHold::new()]);
     }
     drop(warm);
     let (peak, _, (loads, charge)) = measure(|| {
@@ -541,7 +537,7 @@ fn concurrent_holders_hold_at_most_their_charge() {
             for worker in 0..WORKERS {
                 let (catalog, round) = (&catalog, &round);
                 scope.spawn(move || {
-                    let mut holds = [CellHold::new(), CellHold::new(), CellHold::new()];
+                    let mut holds = [CellHold::new(), CellHold::new()];
                     for step in 0..ROUNDS {
                         round.wait();
                         fetch(catalog, (worker + step) % groups, &mut holds);
