@@ -371,8 +371,13 @@ use super::{StorageError, StorageProfiler, TileLayoutPlanner};
 
 #[cfg(test)]
 mod casacore_tiled_data_tests;
+#[cfg(test)]
+mod casacore_tiled_order_tests;
 mod tile_columns;
-use tile_columns::{TileColumns, in_tile_order, tile_columns, tile_target, untiled_column_error};
+use tile_columns::{
+    TileColumns, bound_tile_layout, in_tile_order, tile_columns, tile_target, untiled_column_error,
+    writer_tile_order,
+};
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -4258,6 +4263,15 @@ pub(crate) fn clone_tiled_manager_files(
 // Save interface (write columns with tiled DM)
 // ---------------------------------------------------------------------------
 
+/// The hypercolumn a tiled writer lays out: its name, which the header
+/// records, and the table description's private keywords, which hold its
+/// definition if the table has one.
+#[derive(Clone, Copy)]
+struct Hypercolumn<'a> {
+    name: &'a str,
+    private_keywords: &'a RecordValue,
+}
+
 /// Save columns to a tiled storage manager.
 ///
 /// Determines the appropriate variant from the `DataManagerKind` and writes
@@ -4266,6 +4280,10 @@ pub(crate) fn clone_tiled_manager_files(
 /// `dm_name` is the hypercolumn / data-manager name written into the
 /// TiledStMan header. C++ uses this to look up the DM when opening the
 /// table. Pass the column name (or an explicit name) to match C++ behaviour.
+/// The tiles are laid out as casacore lays them out: over the hypercolumn's
+/// data columns in the order of its definition, if `private_keywords` (the
+/// table description's) holds one, else the binding order, sorted by
+/// descending pixel size (#755).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn save_tiled_columns(
     table_path: &Path,
@@ -4276,6 +4294,7 @@ pub(crate) fn save_tiled_columns(
     big_endian: bool,
     default_tile_shape: Option<&[usize]>,
     dm_name: &str,
+    private_keywords: &RecordValue,
 ) -> Result<(), StorageError> {
     let mut profiler = StorageProfiler::start(format!(
         "tiled::save_tiled_columns dm_seq={} type={} cols={} rows={}",
@@ -4284,6 +4303,10 @@ pub(crate) fn save_tiled_columns(
         all_col_descs.len(),
         rows.len()
     ));
+    let hypercolumn = Hypercolumn {
+        name: dm_name,
+        private_keywords,
+    };
     let result = match dm_type_name {
         "TiledColumnStMan" => save_tiled_column_stman(
             table_path,
@@ -4292,7 +4315,7 @@ pub(crate) fn save_tiled_columns(
             rows,
             big_endian,
             default_tile_shape,
-            dm_name,
+            hypercolumn,
         ),
         "TiledShapeStMan" => save_tiled_shape_stman(
             table_path,
@@ -4301,7 +4324,7 @@ pub(crate) fn save_tiled_columns(
             rows,
             big_endian,
             default_tile_shape,
-            dm_name,
+            hypercolumn,
         ),
         "TiledCellStMan" => save_tiled_cell_stman(
             table_path,
@@ -4310,7 +4333,7 @@ pub(crate) fn save_tiled_columns(
             rows,
             big_endian,
             default_tile_shape,
-            dm_name,
+            hypercolumn,
         ),
         other => Err(StorageError::FormatMismatch(format!(
             "unknown tiled DM type: {other}"
@@ -4375,6 +4398,7 @@ pub(crate) fn save_tiled_single_column_values(
                 options.big_endian,
                 options.default_tile_shape,
                 options.dm_name,
+                &RecordValue::default(),
             )
         }
     }
@@ -7763,7 +7787,10 @@ fn save_single_column_tiled_column_stman(
             big_endian,
             seq_nr: dm_seq_nr,
             nrrow: 0,
-            col_data_types: vec![],
+            col_data_types: vec![CasacoreDataType::from_primitive_type(
+                col_desc.require_primitive_type()?,
+                false,
+            )],
             hypercolumn_name: dm_name.to_string(),
             max_cache_size: 0,
             nrdim: 0,
@@ -8260,7 +8287,7 @@ fn save_tiled_column_stman(
     rows: &[RecordValue],
     big_endian: bool,
     user_tile_shape: Option<&[usize]>,
-    dm_name: &str,
+    hypercolumn: Hypercolumn<'_>,
 ) -> Result<(), StorageError> {
     let mut profiler = StorageProfiler::start(format!(
         "tiled::column dm_seq={} cols={} rows={}",
@@ -8269,14 +8296,30 @@ fn save_tiled_column_stman(
         rows.len()
     ));
     let nrrow = rows.len();
+    let col_data_types: Vec<CasacoreDataType> = col_descs
+        .iter()
+        .map(|c| {
+            Ok(CasacoreDataType::from_primitive_type(
+                c.require_primitive_type()?,
+                false,
+            ))
+        })
+        .collect::<Result<_, StorageError>>()?;
+    let tile_order = writer_tile_order(
+        hypercolumn.name,
+        col_descs,
+        &col_data_types,
+        hypercolumn.private_keywords,
+    )?;
     if nrrow == 0 || col_descs.is_empty() {
-        // Write empty header.
+        // Write empty header, listing every bound column's type as casacore's
+        // header does (#755).
         let header = TiledStManHeader {
             big_endian,
             seq_nr: dm_seq_nr,
             nrrow: 0,
-            col_data_types: vec![],
-            hypercolumn_name: dm_name.to_string(),
+            col_data_types,
+            hypercolumn_name: hypercolumn.name.to_string(),
             max_cache_size: 0,
             nrdim: 0,
             files: vec![],
@@ -8297,15 +8340,6 @@ fn save_tiled_column_stman(
     let mut cube_shape = cell_shape.clone();
     cube_shape.push(nrrow);
 
-    let col_data_types: Vec<CasacoreDataType> = col_descs
-        .iter()
-        .map(|c| {
-            Ok(CasacoreDataType::from_primitive_type(
-                c.require_primitive_type()?,
-                false,
-            ))
-        })
-        .collect::<Result<_, StorageError>>()?;
     let bytes_per_cell_element = col_data_types
         .iter()
         .copied()
@@ -8332,7 +8366,7 @@ fn save_tiled_column_stman(
         );
     }
 
-    let (bucket_size, col_offsets) = compute_tile_layout(&col_data_types, &tile_shape);
+    let (bucket_size, col_offsets) = bound_tile_layout(&col_data_types, &tile_order, &tile_shape);
 
     // Build per-column cube data (all rows concatenated).
     let nrdim = (cell_ndim + 1) as u32;
@@ -8428,7 +8462,7 @@ fn save_tiled_column_stman(
         seq_nr: dm_seq_nr,
         nrrow: nrrow as u64,
         col_data_types,
-        hypercolumn_name: dm_name.to_string(),
+        hypercolumn_name: hypercolumn.name.to_string(),
         max_cache_size: 0,
         nrdim,
         files: vec![Some(TsmFileInfo {
@@ -8468,7 +8502,7 @@ fn save_tiled_shape_stman(
     rows: &[RecordValue],
     big_endian: bool,
     user_tile_shape: Option<&[usize]>,
-    dm_name: &str,
+    hypercolumn: Hypercolumn<'_>,
 ) -> Result<(), StorageError> {
     let mut profiler = StorageProfiler::start(format!(
         "tiled::shape dm_seq={} cols={} rows={}",
@@ -8494,6 +8528,12 @@ fn save_tiled_shape_stman(
         .ok_or_else(|| {
             StorageError::FormatMismatch("tiled shape element bytes overflow".to_string())
         })?;
+    let tile_order = writer_tile_order(
+        hypercolumn.name,
+        col_descs,
+        &col_data_types,
+        hypercolumn.private_keywords,
+    )?;
 
     if nrrow == 0 || col_descs.is_empty() {
         let header = TiledStManHeader {
@@ -8501,7 +8541,7 @@ fn save_tiled_shape_stman(
             seq_nr: dm_seq_nr,
             nrrow: 0,
             col_data_types: col_data_types.clone(),
-            hypercolumn_name: dm_name.to_string(),
+            hypercolumn_name: hypercolumn.name.to_string(),
             max_cache_size: 0,
             nrdim: if col_descs.is_empty() {
                 0
@@ -8588,7 +8628,8 @@ fn save_tiled_shape_stman(
         let file_seq_nr = all_files.len() as u32;
 
         // Build tile data for this cube.
-        let (bucket_size, col_offsets) = compute_tile_layout(&col_data_types, &tile_shape);
+        let (bucket_size, col_offsets) =
+            bound_tile_layout(&col_data_types, &tile_order, &tile_shape);
         let tiles_per_dim: Vec<usize> = cube_shape
             .iter()
             .zip(tile_shape.iter())
@@ -8756,7 +8797,7 @@ fn save_tiled_shape_stman(
         seq_nr: dm_seq_nr,
         nrrow: nrrow as u64,
         col_data_types,
-        hypercolumn_name: dm_name.to_string(),
+        hypercolumn_name: hypercolumn.name.to_string(),
         max_cache_size: 0,
         nrdim,
         files: all_files,
@@ -8786,7 +8827,7 @@ fn save_tiled_cell_stman(
     rows: &[RecordValue],
     big_endian: bool,
     user_tile_shape: Option<&[usize]>,
-    dm_name: &str,
+    hypercolumn: Hypercolumn<'_>,
 ) -> Result<(), StorageError> {
     let nrrow = rows.len();
     let col_data_types: Vec<CasacoreDataType> = col_descs
@@ -8806,6 +8847,12 @@ fn save_tiled_cell_stman(
         .ok_or_else(|| {
             StorageError::FormatMismatch("tiled cell element bytes overflow".to_string())
         })?;
+    let tile_order = writer_tile_order(
+        hypercolumn.name,
+        col_descs,
+        &col_data_types,
+        hypercolumn.private_keywords,
+    )?;
 
     let nrdim = if !col_descs.is_empty() && col_descs[0].nrdim > 0 {
         col_descs[0].nrdim as u32
@@ -8853,7 +8900,8 @@ fn save_tiled_cell_stman(
         let tile_shape =
             planned_tile_shape(&cell_shape, None, bytes_per_cell_element, user_tile_shape)?;
 
-        let (bucket_size, col_offsets) = compute_tile_layout(&col_data_types, &tile_shape);
+        let (bucket_size, col_offsets) =
+            bound_tile_layout(&col_data_types, &tile_order, &tile_shape);
         let tiles_per_dim: Vec<usize> = cube_shape
             .iter()
             .zip(tile_shape.iter())
@@ -8954,7 +9002,7 @@ fn save_tiled_cell_stman(
         seq_nr: dm_seq_nr,
         nrrow: nrrow as u64,
         col_data_types,
-        hypercolumn_name: dm_name.to_string(),
+        hypercolumn_name: hypercolumn.name.to_string(),
         max_cache_size: 0,
         nrdim,
         files: all_files,

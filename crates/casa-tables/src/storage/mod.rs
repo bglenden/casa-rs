@@ -890,6 +890,7 @@ impl StorageManager for CompositeStorage {
                     big_endian,
                     tile_shape,
                     first_col_name,
+                    &table_dat.table_desc.private_keywords,
                 )?;
             }
         }
@@ -1176,6 +1177,7 @@ impl CompositeStorage {
                     big_endian,
                     tile_shape,
                     first_col_name,
+                    &table_dat.table_desc.private_keywords,
                 )?;
             }
         }
@@ -4504,6 +4506,7 @@ impl CompositeStorage {
                             big_endian,
                             group.tile_shape.as_deref(),
                             first_col,
+                            &table_dat.table_desc.private_keywords,
                         )?;
                     }
                 }
