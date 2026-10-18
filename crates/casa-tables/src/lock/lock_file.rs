@@ -74,8 +74,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use super::LockType;
 use super::sync_data::SyncData;
+use super::{LockType, TableHolder};
 
 /// Size of a canonical `Int` in the lock file (4 bytes, big-endian).
 const SIZEINT: usize = 4;
@@ -929,6 +929,59 @@ pub(crate) fn read_sync_data_from_table_dir(table_dir: &Path) -> io::Result<Opti
     read_sync_data_from_fd(fd)
 }
 
+/// Where the table at `table_dir` is held open, tested without opening the
+/// table or taking a lock: by a handle in this process that holds its
+/// `table.lock`, or by another process, if a write lock on the lock file's
+/// in-use byte would be refused. A handle in this process is reported
+/// first, as casacore's `TableUtil::canDeleteTable` refuses a table still
+/// open in this process before it asks `isMultiUsed`. Another process is
+/// tested for only when this process holds no handle on the lock file, so
+/// the descriptor opened for the test holds no lock that closing it would
+/// release.
+///
+/// `None` means that no holder was detected, not that none exists. A
+/// handle opened without locking (casacore's `NoLocking`, and casa-rs's
+/// [`Table::open`](crate::Table::open)) leaves no mark, nor does a table
+/// casacore opened without a lock file, so neither is seen; casacore's own
+/// check does not see them either. And the answer is a snapshot: a process
+/// can open the table as soon as it is given.
+///
+/// C++ equivalent: `TableUtil::canDeleteTable`'s "still open in this
+/// process" test and `Table::isMultiUsed` (`LockFile::isMultiUsed`), which
+/// `Table::deleteTable` and `Table::rename` consult before they act.
+///
+/// # Errors
+///
+/// The lock file exists but cannot be opened or tested.
+pub fn table_holder(table_dir: &Path) -> io::Result<Option<TableHolder>> {
+    let path = table_dir.join(LOCK_FILE_NAME);
+    let registry = registry();
+    let Some(key) = path_key(&path)? else {
+        return Ok(None);
+    };
+    if registry.contains_key(&key) {
+        return Ok(Some(TableHolder::ThisProcess));
+    }
+
+    // As above: the process holds no lock on this file, so closing this
+    // descriptor releases nothing.
+    let c_path = path_to_cstring(&path)?;
+    let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    struct FdGuard(i32);
+    impl Drop for FdGuard {
+        fn drop(&mut self) {
+            unsafe { libc::close(self.0) };
+        }
+    }
+    let _guard = FdGuard(fd);
+    let free = fcntl_can_lock(fd, libc::F_WRLCK as i32, 1, 1)?;
+    Ok((!free).then_some(TableHolder::AnotherProcess))
+}
+
 /// Read the sync data that follows the request list in an open lock file.
 fn read_sync_data_from_fd(fd: RawFd) -> io::Result<Option<SyncData>> {
     let mut len_buf = [0u8; SIZEINT];
@@ -1382,5 +1435,18 @@ mod tests {
             Some(sync)
         );
         assert!(holder.has_lock(LockType::Write));
+    }
+
+    #[test]
+    fn a_table_held_in_this_process_is_reported_before_any_other_holder() {
+        let dir = TempDir::new().unwrap();
+        assert_eq!(table_holder(dir.path()).unwrap(), None, "no lock file");
+        let holder = LockFile::create_or_open(dir.path(), true, 5.0, false).unwrap();
+        assert_eq!(
+            table_holder(dir.path()).unwrap(),
+            Some(TableHolder::ThisProcess)
+        );
+        drop(holder);
+        assert_eq!(table_holder(dir.path()).unwrap(), None, "closed");
     }
 }

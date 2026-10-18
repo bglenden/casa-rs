@@ -346,6 +346,21 @@ pub enum FlaggingError {
         /// Error context.
         reason: String,
     },
+    /// A flag version cannot be deleted or renamed while its table is
+    /// open, in this process or another, as casacore's `Table::deleteTable`
+    /// and `Table::rename` refuse (`TableUtil::canDeleteTable`,
+    /// `Table::isMultiUsed`).
+    #[error("flag version {version:?} of {path} is open {holder}: {table}")]
+    FlagVersionInUse {
+        /// MeasurementSet path.
+        path: String,
+        /// The version's name.
+        version: String,
+        /// The version's table.
+        table: String,
+        /// Where the table is open.
+        holder: casa_tables::TableHolder,
+    },
 }
 
 /// Run native `flagdata` on an opened MeasurementSet.
@@ -2897,12 +2912,51 @@ pub fn restore_flag_version(
     Ok(())
 }
 
+/// Refuse to delete or rename the table of flag version `versionname` of
+/// the MeasurementSet at `path` while a handle in this process or another
+/// process has it open, as casacore's `Table::deleteTable` and
+/// `Table::rename` refuse a table that is still open in this process or
+/// `isMultiUsed` (#695). [`casa_tables::table_holder`] says what this can
+/// and cannot see.
+fn ensure_version_not_open(
+    path: &Path,
+    versionname: &str,
+    version_path: &Path,
+) -> Result<(), FlaggingError> {
+    #[cfg(unix)]
+    {
+        let holder = casa_tables::table_holder(version_path).map_err(|source| {
+            FlaggingError::FlagVersion {
+                path: path.display().to_string(),
+                reason: format!("test whether flag version {versionname:?} is open: {source}"),
+            }
+        })?;
+        if let Some(holder) = holder {
+            return Err(FlaggingError::FlagVersionInUse {
+                path: path.display().to_string(),
+                version: versionname.to_string(),
+                table: version_path.display().to_string(),
+                holder,
+            });
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (path, versionname, version_path);
+    Ok(())
+}
+
 /// Delete a named flag version.
+///
+/// # Errors
+///
+/// [`FlaggingError::FlagVersionInUse`] while a handle in this process or
+/// another process has the version's table open.
 pub fn delete_flag_version(ms: &MeasurementSet, versionname: &str) -> Result<(), FlaggingError> {
     validate_version_name(ms, versionname)?;
     let path = ms_path(ms)?;
     let version_path = flag_version_table_path(path, versionname);
     if version_path.exists() {
+        ensure_version_not_open(path, versionname, &version_path)?;
         fs::remove_dir_all(&version_path).map_err(|source| FlaggingError::FlagVersion {
             path: path.display().to_string(),
             reason: format!("delete flag version {versionname:?}: {source}"),
@@ -2911,7 +2965,15 @@ pub fn delete_flag_version(ms: &MeasurementSet, versionname: &str) -> Result<(),
     remove_flag_version_entry(path, versionname)
 }
 
-/// Rename a flag version.
+/// Rename a flag version, giving it `comment`. Renaming a version to its
+/// own name changes only its comment.
+///
+/// # Errors
+///
+/// [`FlaggingError::FlagVersionInUse`] while a handle in this process or
+/// another process has the version's table open, and
+/// [`FlaggingError::FlagVersion`] when a version named `versionname`
+/// already exists.
 pub fn rename_flag_version(
     ms: &MeasurementSet,
     oldname: &str,
@@ -2921,11 +2983,23 @@ pub fn rename_flag_version(
     validate_version_name(ms, oldname)?;
     validate_version_name(ms, versionname)?;
     let path = ms_path(ms)?;
-    fs::rename(
-        flag_version_table_path(path, oldname),
-        flag_version_table_path(path, versionname),
-    )
-    .map_err(|source| FlaggingError::FlagVersion {
+    let old_path = flag_version_table_path(path, oldname);
+    let new_path = flag_version_table_path(path, versionname);
+    if versionname != oldname
+        && (new_path.exists()
+            || list_flag_versions_for_path(path)?
+                .iter()
+                .any(|entry| entry.name == versionname))
+    {
+        return Err(FlaggingError::FlagVersion {
+            path: path.display().to_string(),
+            reason: format!(
+                "rename flag version {oldname:?}: flag version {versionname:?} already exists"
+            ),
+        });
+    }
+    ensure_version_not_open(path, oldname, &old_path)?;
+    fs::rename(old_path, new_path).map_err(|source| FlaggingError::FlagVersion {
         path: path.display().to_string(),
         reason: format!("rename flag version {oldname:?}: {source}"),
     })?;
