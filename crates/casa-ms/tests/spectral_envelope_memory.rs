@@ -82,8 +82,9 @@ unsafe impl GlobalAlloc for CountingHeap {
     }
 }
 
-/// Names the law a child process of [`alone`] runs.
-const ALONE: &str = "CASA_RS_COUNTING_LAW";
+/// The environment variable that names the law a child process of
+/// [`alone`] runs.
+const LAW_VAR: &str = "CASA_RS_COUNTING_LAW";
 
 /// The test a law's process runs before the law ([`alone`]).
 const SETTLE: &str = "a_counting_law_process_settles";
@@ -93,10 +94,12 @@ static SETTLED: AtomicBool = AtomicBool::new(false);
 
 /// Runs first in a law's process ([`alone`]): libtest's main thread sets up
 /// its wait for results while the first test it starts runs, so the law,
-/// which runs second, measures none of it.
+/// which runs second, measures none of it. The pause makes sure the main
+/// thread is waiting before this test reports.
 #[test]
 #[ignore = "alone runs it before a law, in the law's process"]
 fn a_counting_law_process_settles() {
+    std::thread::sleep(std::time::Duration::from_millis(10));
     SETTLED.store(true, Ordering::Relaxed);
 }
 
@@ -106,14 +109,20 @@ fn a_counting_law_process_settles() {
 /// The counters see every allocation in the process, and libtest runs a
 /// binary's tests in one process: under `cargo test` its main thread starts
 /// tests and reports their results, and the binary's other tests run, while
-/// a law measures. So each law begins `if !alone("law") { return; }`. In
-/// the harness's process that runs [`SETTLE`], then the law (libtest runs
-/// tests in name order), in a child process of this binary with one test
-/// thread, so that the harness only waits while the law runs; in the child
-/// it returns true.
+/// a law measures. So each law begins `if !alone("law") { return; }`, with
+/// its own name. In the harness's process it runs [`SETTLE`], then the law
+/// (libtest runs tests in name order), in a child process of this binary
+/// with one test thread, so that the harness only waits while the law runs;
+/// in the child it returns true.
 fn alone(name: &str) -> bool {
+    // libtest names each test's thread after the test.
+    assert_eq!(
+        std::thread::current().name(),
+        Some(name),
+        "a law runs alone under its own name"
+    );
     let ran = format!("{name} ran alone");
-    if std::env::var_os(ALONE).is_some_and(|law| law == name) {
+    if std::env::var_os(LAW_VAR).is_some_and(|law| law == name) {
         assert!(
             SETTLED.load(Ordering::Relaxed),
             "{SETTLE} runs before {name}"
@@ -130,7 +139,7 @@ fn alone(name: &str) -> bool {
             "--test-threads=1",
             "--nocapture",
         ])
-        .env(ALONE, name)
+        .env(LAW_VAR, name)
         .output()
         .expect("the law's process runs");
     eprint!("{}", String::from_utf8_lossy(&output.stderr));
