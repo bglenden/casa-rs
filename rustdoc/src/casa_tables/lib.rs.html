@@ -263,35 +263,37 @@
 <a href=#263 id=263 data-nosnippet>263</a>
 <a href=#264 id=264 data-nosnippet>264</a><span class="kw">pub use </span>concat_table::ConcatTable;
 <a href=#265 id=265 data-nosnippet>265</a><span class="kw">pub use </span>indexing::ColumnsIndex;
-<a href=#266 id=266 data-nosnippet>266</a><span class="kw">pub use </span>lock::{ExternalLockSync, LockMode, LockOptions, LockType, TableWriteLock};
-<a href=#267 id=267 data-nosnippet>267</a><span class="kw">pub use </span>ref_table::{RefTable, RefTableMut};
-<a href=#268 id=268 data-nosnippet>268</a><span class="kw">pub use </span>schema::{
-<a href=#269 id=269 data-nosnippet>269</a>    ArrayShapeContract, ColumnOptions, ColumnSchema, ColumnType, SchemaError, TableSchema,
-<a href=#270 id=270 data-nosnippet>270</a>};
-<a href=#271 id=271 data-nosnippet>271</a><span class="kw">pub use </span>sorting::{TableGroup, TableIterator};
-<a href=#272 id=272 data-nosnippet>272</a><span class="kw">pub use </span>storage::{
-<a href=#273 id=273 data-nosnippet>273</a>    DEFAULT_TILE_IO_BYTES, DEFAULT_TILED_ARRAY_CACHE_BYTES, DataManagerInfo,
-<a href=#274 id=274 data-nosnippet>274</a>    STREAMING_TILED_COLUMN_BUFFER_BYTES, StorageError, StreamedTiledPrimitiveColumn,
-<a href=#275 id=275 data-nosnippet>275</a>    StreamedTiledPrimitiveType, StreamedTiledShapeColumn, StreamedTiledShapeComplex32Column,
-<a href=#276 id=276 data-nosnippet>276</a>    StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledPrimitiveWriter,
-<a href=#277 id=277 data-nosnippet>277</a>    StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter, TableInfo, TileLayoutError,
-<a href=#278 id=278 data-nosnippet>278</a>    TileLayoutPlan, TileLayoutPlanner, TilePixel, TiledArrayStorage, TiledArrayStorageLayout,
-<a href=#279 id=279 data-nosnippet>279</a>    TiledFileIoStats, install_streamed_tiled_column,
-<a href=#280 id=280 data-nosnippet>280</a>    install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_column,
-<a href=#281 id=281 data-nosnippet>281</a>    install_streamed_tiled_shape_complex32_column, install_streamed_tiled_shape_primitive_column,
-<a href=#282 id=282 data-nosnippet>282</a>    set_table_cache_budget_bytes, table_cache_budget_bytes,
-<a href=#283 id=283 data-nosnippet>283</a>};
-<a href=#284 id=284 data-nosnippet>284</a><span class="kw">pub use </span>table::{
-<a href=#285 id=285 data-nosnippet>285</a>    ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride, ColumnOverrides,
-<a href=#286 id=286 data-nosnippet>286</a>    DataManagerKind, EndianFormat, GeneratedScalarColumn, GeneratedScalarValueRun,
-<a href=#287 id=287 data-nosnippet>287</a>    PreparedRowAppender, PreparedTableRow, PreparedTableRowMut, QueryResult, RecordColumnCell,
-<a href=#288 id=288 data-nosnippet>288</a>    RecordColumnIter, RequiredScalarColumnDestination, RequiredScalarColumnValues,
-<a href=#289 id=289 data-nosnippet>289</a>    RequiredScalarColumnValuesMut, RowRange, STREAMING_SCALAR_COLUMN_BUFFER_BYTES,
-<a href=#290 id=290 data-nosnippet>290</a>    SelectedArray1DCells, SelectedArray1DCellsMut, SelectedArray1DShape, SelectedArray2D,
-<a href=#291 id=291 data-nosnippet>291</a>    SelectedArray2DCells, SelectedArray2DCellsMut, SelectedArray2DShape, SelectedReadFootprint,
-<a href=#292 id=292 data-nosnippet>292</a>    Slicer, SortOrder, StreamedScalarColumn, StreamedScalarType, StreamingScalarColumnWriter,
-<a href=#293 id=293 data-nosnippet>293</a>    Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
-<a href=#294 id=294 data-nosnippet>294</a>    TableOptions, TableRow, TableRowMut, TableWritePlan,
-<a href=#295 id=295 data-nosnippet>295</a>};
-<a href=#296 id=296 data-nosnippet>296</a><span class="kw">pub use </span>table_path::{add_directory, strip_directory};
+<a href=#266 id=266 data-nosnippet>266</a><span class="attr">#[cfg(unix)]
+<a href=#267 id=267 data-nosnippet>267</a></span><span class="kw">pub use </span>lock::table_holder;
+<a href=#268 id=268 data-nosnippet>268</a><span class="kw">pub use </span>lock::{ExternalLockSync, LockMode, LockOptions, LockType, TableHolder, TableWriteLock};
+<a href=#269 id=269 data-nosnippet>269</a><span class="kw">pub use </span>ref_table::{RefTable, RefTableMut};
+<a href=#270 id=270 data-nosnippet>270</a><span class="kw">pub use </span>schema::{
+<a href=#271 id=271 data-nosnippet>271</a>    ArrayShapeContract, ColumnOptions, ColumnSchema, ColumnType, SchemaError, TableSchema,
+<a href=#272 id=272 data-nosnippet>272</a>};
+<a href=#273 id=273 data-nosnippet>273</a><span class="kw">pub use </span>sorting::{TableGroup, TableIterator};
+<a href=#274 id=274 data-nosnippet>274</a><span class="kw">pub use </span>storage::{
+<a href=#275 id=275 data-nosnippet>275</a>    DEFAULT_TILE_IO_BYTES, DEFAULT_TILED_ARRAY_CACHE_BYTES, DataManagerInfo,
+<a href=#276 id=276 data-nosnippet>276</a>    STREAMING_TILED_COLUMN_BUFFER_BYTES, StorageError, StreamedTiledPrimitiveColumn,
+<a href=#277 id=277 data-nosnippet>277</a>    StreamedTiledPrimitiveType, StreamedTiledShapeColumn, StreamedTiledShapeComplex32Column,
+<a href=#278 id=278 data-nosnippet>278</a>    StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledPrimitiveWriter,
+<a href=#279 id=279 data-nosnippet>279</a>    StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter, TableInfo, TileLayoutError,
+<a href=#280 id=280 data-nosnippet>280</a>    TileLayoutPlan, TileLayoutPlanner, TilePixel, TiledArrayStorage, TiledArrayStorageLayout,
+<a href=#281 id=281 data-nosnippet>281</a>    TiledFileIoStats, install_streamed_tiled_column,
+<a href=#282 id=282 data-nosnippet>282</a>    install_streamed_tiled_column_primitive_column, install_streamed_tiled_shape_column,
+<a href=#283 id=283 data-nosnippet>283</a>    install_streamed_tiled_shape_complex32_column, install_streamed_tiled_shape_primitive_column,
+<a href=#284 id=284 data-nosnippet>284</a>    set_table_cache_budget_bytes, table_cache_budget_bytes,
+<a href=#285 id=285 data-nosnippet>285</a>};
+<a href=#286 id=286 data-nosnippet>286</a><span class="kw">pub use </span>table::{
+<a href=#287 id=287 data-nosnippet>287</a>    ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride, ColumnOverrides,
+<a href=#288 id=288 data-nosnippet>288</a>    DataManagerKind, EndianFormat, GeneratedScalarColumn, GeneratedScalarValueRun,
+<a href=#289 id=289 data-nosnippet>289</a>    PreparedRowAppender, PreparedTableRow, PreparedTableRowMut, QueryResult, RecordColumnCell,
+<a href=#290 id=290 data-nosnippet>290</a>    RecordColumnIter, RequiredScalarColumnDestination, RequiredScalarColumnValues,
+<a href=#291 id=291 data-nosnippet>291</a>    RequiredScalarColumnValuesMut, RowRange, STREAMING_SCALAR_COLUMN_BUFFER_BYTES,
+<a href=#292 id=292 data-nosnippet>292</a>    SelectedArray1DCells, SelectedArray1DCellsMut, SelectedArray1DShape, SelectedArray2D,
+<a href=#293 id=293 data-nosnippet>293</a>    SelectedArray2DCells, SelectedArray2DCellsMut, SelectedArray2DShape, SelectedReadFootprint,
+<a href=#294 id=294 data-nosnippet>294</a>    Slicer, SortOrder, StreamedScalarColumn, StreamedScalarType, StreamingScalarColumnWriter,
+<a href=#295 id=295 data-nosnippet>295</a>    Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
+<a href=#296 id=296 data-nosnippet>296</a>    TableOptions, TableRow, TableRowMut, TableWritePlan,
+<a href=#297 id=297 data-nosnippet>297</a>};
+<a href=#298 id=298 data-nosnippet>298</a><span class="kw">pub use </span>table_path::{add_directory, strip_directory};
 </code></pre></div></section></main></body></html>
