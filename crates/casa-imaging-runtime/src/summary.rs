@@ -55,7 +55,9 @@ pub struct Diagnostics {
 ///   minor-cycle totals and stop reason as far as the run got, any products
 ///   published before the failure, and the error; a run that fails in
 ///   preparation (request validation, compile, availability, admitting its
-///   source, forming its team) records only its preparation phase;
+///   source) records only its preparation phase, and one that fails in
+///   setup (its operators, choosing and forming its team) its setup phase
+///   too;
 /// - **cancelled:** the phases that ran before the cancellation took
 ///   effect, the totals so far, and no products, since nothing is
 ///   published; a run cancelled before it starts records no phase.
@@ -75,6 +77,20 @@ pub struct RunSummary {
     pub capacity_bytes: u64,
     /// Workers in the run's team; zero before the team forms.
     pub workers: usize,
+    /// Workers the resource policy allows: more than [`Self::workers`]
+    /// when the run's memory did not fit them (#737); zero before the team
+    /// forms.
+    pub workers_policy: usize,
+    /// Why the run has fewer workers than its policy allows, with what the
+    /// policy's needed and what was free; `None` when it has as many.
+    pub workers_reason: Option<String>,
+    /// Lanes the products ran on: the most, up to [`Self::workers`], whose
+    /// products' memory fits (#763 review); zero before the products.
+    pub product_lanes: usize,
+    /// Why the products have fewer lanes than [`Self::workers`], with what
+    /// the workers' lanes needed and what was free; `None` when they have
+    /// as many.
+    pub product_lanes_reason: Option<String>,
     /// Where the passes grid.
     pub backend: BackendChoice,
     /// The grid arithmetic the run resolved (`gridprecision`); `None`
@@ -160,6 +176,10 @@ impl RunSummary {
             stop: None,
             capacity_bytes,
             workers: 0,
+            workers_policy: 0,
+            workers_reason: None,
+            product_lanes: 0,
+            product_lanes_reason: None,
             backend,
             precision: None,
             phases: Vec::new(),

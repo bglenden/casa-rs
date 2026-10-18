@@ -923,7 +923,7 @@ impl MsCalEngine {
     ///
     /// Important: CASA's `GridFT` imaging path first applies `negateUV` and is
     /// represented separately by
-    /// [`Self::reproject_raw_uvw_for_gridft_between_j2000_directions`]. This method preserves
+    /// `Self::reproject_raw_uvw_for_gridft_between_j2000_directions`. This method preserves
     /// the direct `fixvis` convention only.
     pub fn reproject_raw_uvw_between_fields(
         &self,

@@ -131,6 +131,26 @@ impl Partition {
         Self::from_bounds(operator, &bounds)
     }
 
+    /// `owners` strips of `operator`'s grid whose tiles hold the most rows
+    /// of any cut into that many strips, each with [`Self::regions`]' halo.
+    /// A cut's tiles hold the grid's rows and, at each boundary between
+    /// strips, the halo on both sides as far as the grid's edges allow; so
+    /// the boundaries here are the ones nearest the grid's centre. A charge
+    /// made at these strips bounds a pass on the strips
+    /// [`Self::regions_balanced`] later cuts for as many owners, from work
+    /// not yet measured (#737).
+    #[must_use]
+    pub fn regions_widest(operator: &MeasurementOperator, owners: usize) -> Self {
+        let [_, ny] = operator.geometry().grid_shape();
+        let inner = owners.clamp(1, ny) - 1;
+        let first = (ny - inner).div_ceil(2);
+        let bounds = std::iter::once(0)
+            .chain(first..first + inner)
+            .chain(std::iter::once(ny))
+            .collect::<Vec<_>>();
+        Self::from_bounds(operator, &bounds)
+    }
+
     /// Strips between consecutive `bounds` (rows `bounds[k]..bounds[k+1]`
     /// for owner `k`), with the kernel set's largest half support as halo.
     fn from_bounds(operator: &MeasurementOperator, bounds: &[usize]) -> Self {
@@ -289,7 +309,7 @@ impl WaveDemand<'_> {
 
     /// Placements a row chunk of a wave of `planes` planes takes: when a
     /// domain is split among several region owners, the largest of
-    /// [`super::REGION_CHUNK_PLACEMENTS`] whose [`Self::bytes`] fit `budget`,
+    /// `REGION_CHUNK_PLACEMENTS` whose [`Self::bytes`] fit `budget`,
     /// since the owners share larger slices more evenly (#736); otherwise,
     /// or when none fits, [`super::CHUNK_PLACEMENTS`]. A pass that fits with
     /// the default chunks therefore never fails for want of larger ones.
@@ -355,13 +375,7 @@ impl WaveDemand<'_> {
                 0
             }) as u64;
         let images = terms * pols * image_cells * size_of::<f32>() as u64 * planes_u64;
-        let normal = if matches!(basis, Basis::ChannelLocal { .. }) {
-            0
-        } else {
-            pols * image_cells
-                * resident_bytes_per_cell(basis.data_terms(), basis.psf_terms(), self.modes.psf)
-                * planes_u64
-        };
+        let normal = normal_bytes(operator, self.modes.psf) * planes_u64;
         let mut held = 0;
         if self.with_model {
             let model_planes = planes
@@ -393,6 +407,32 @@ impl WaveDemand<'_> {
             appending: 2 * images + normal,
         }
     }
+
+    /// Bytes the normal state a run keeps resident between its passes
+    /// holds, over every image domain: one plane's state with the PSF and
+    /// sensitivity of the first pass, which a refresh keeps ([`normal_bytes`]).
+    #[must_use]
+    pub fn resident_normal_bytes(&self) -> u64 {
+        self.domains
+            .iter()
+            .map(|domain| normal_bytes(domain.operator, true))
+            .sum()
+    }
+}
+
+/// Bytes one plane of `operator`'s normal state holds resident, with the
+/// PSF's moments and sensitivity when `psf`, at its stored size
+/// ([`resident_bytes_per_cell`]); none for a channel-local state, which is
+/// paged under its cube cache's charge.
+fn normal_bytes(operator: &MeasurementOperator, psf: bool) -> u64 {
+    let basis = operator.basis();
+    if matches!(basis, Basis::ChannelLocal { .. }) {
+        return 0;
+    }
+    let [width, height] = operator.geometry().image().shape;
+    operator.polarization().requested().len() as u64
+        * (width * height) as u64
+        * resident_bytes_per_cell(basis.data_terms(), basis.psf_terms(), psf)
 }
 
 /// What a wave holds at each of its stages ([`WaveDemand::bytes`]), summed
@@ -675,6 +715,63 @@ mod tests {
                 region.tile.origin[1] + region.tile.shape[1],
                 (region.rows.end + halo).min(ny)
             );
+        }
+    }
+
+    /// #737: the widest strips hold the most tile rows of any cut into as
+    /// many strips, so a charge at them bounds the balanced strips a pass
+    /// cuts later. Strips shorter than the halo lose rows at the grid's
+    /// edges: there equal strips hold fewer than a balanced cut of
+    /// centre-heavy work.
+    #[test]
+    fn the_widest_regions_hold_the_most_rows_of_any_cut() {
+        let operator = spheroidal_operator();
+        let ny = operator.geometry().grid_shape()[1];
+        let rows = |partition: &Partition| {
+            let Partition::Regions { regions, .. } = partition else {
+                panic!("regions");
+            };
+            regions
+                .iter()
+                .map(|region| region.tile.shape[1])
+                .sum::<usize>()
+        };
+        let most = (1..ny)
+            .flat_map(|a| (a + 1..ny).map(move |b| [0, a, b, ny]))
+            .map(|bounds| rows(&Partition::from_bounds(&operator, &bounds)))
+            .max();
+        assert_eq!(Some(rows(&Partition::regions_widest(&operator, 3))), most);
+
+        let owners = ny / 2;
+        let widest = rows(&Partition::regions_widest(&operator, owners));
+        let centre = ny as f64 / 2.0;
+        let centre_heavy = (0..ny)
+            .map(|row| {
+                let offset = (row as f64 - centre) / (ny as f64 / 16.0);
+                (1.0e6 * (-offset * offset).exp()) as u64
+            })
+            .collect::<Vec<_>>();
+        let balanced = rows(&Partition::regions_balanced(
+            &operator,
+            owners,
+            &centre_heavy,
+        ));
+        assert!(rows(&Partition::regions(&operator, owners)) < balanced);
+        assert!(balanced <= widest);
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        for _ in 0..64 {
+            let work = (0..ny)
+                .map(|_| {
+                    state = state
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    state >> 40
+                })
+                .collect::<Vec<_>>();
+            for owners in [1, 2, 3, 7, owners, ny] {
+                let balanced = rows(&Partition::regions_balanced(&operator, owners, &work));
+                assert!(balanced <= rows(&Partition::regions_widest(&operator, owners)));
+            }
         }
     }
 

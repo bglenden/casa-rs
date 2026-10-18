@@ -115,7 +115,7 @@ impl Error for ImplementationUnavailable {}
 /// `host`. `cpu` and `gpu` are taken as asked ([`check`] refuses a `gpu`
 /// request the device cannot run). `auto` takes the GPU where [`check`]
 /// admits the problem there and the GPU route has been compared with the
-/// CPU's end to end ([`gpu_checked`]), and the CPU otherwise: off macOS,
+/// CPU's end to end (`gpu_checked`), and the CPU otherwise: off macOS,
 /// without a device, for the W, mosaic and AW kernel sets, for an explicit
 /// `gridprecision = f64`, and for outlier fields, polarizations other than
 /// Stokes I and visibility writes.

@@ -8,6 +8,7 @@ mod continuum;
 mod cycle;
 mod images;
 mod measurement;
+mod setup;
 mod source;
 mod trace;
 mod visibility_write;
