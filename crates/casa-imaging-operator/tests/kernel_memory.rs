@@ -432,7 +432,7 @@ fn concurrent_holders_hold_at_most_their_charge() {
     const ROUNDS: usize = 64;
     let _measurement = MEASUREMENT.lock().expect("measurement lock");
     let root = tempfile::tempdir().expect("cache directory");
-    AwCatalog::generate_native(root.path(), &aw_request(64), false).expect("generate");
+    AwCatalog::generate_native(root.path(), &aw_request(64), false, 4).expect("generate");
     // Warm the process-wide tile cache, as above.
     let warm = aw_open(root.path(), usize::MAX);
     for group in 0..warm.groups() {
