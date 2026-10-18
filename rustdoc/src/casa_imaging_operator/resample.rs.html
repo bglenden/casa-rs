@@ -495,7 +495,7 @@
 <a href=#495 id=495 data-nosnippet>495</a>    };
 <a href=#496 id=496 data-nosnippet>496</a>    <span class="kw">if </span>placing.key != <span class="prelude-val">Some</span>(key) {
 <a href=#497 id=497 data-nosnippet>497</a>        placing.key = <span class="prelude-val">Some</span>(key);
-<a href=#498 id=498 data-nosnippet>498</a>        placing.oversampling = cf.taps(key, <span class="kw-2">&amp;mut </span>placing.hold).oversampling();
+<a href=#498 id=498 data-nosnippet>498</a>        placing.oversampling = cf.gridding_oversampling(key);
 <a href=#499 id=499 data-nosnippet>499</a>        placing.half_support = cf.placement_half_support(key, <span class="kw-2">&amp;mut </span>placing.hold);
 <a href=#500 id=500 data-nosnippet>500</a>    }
 <a href=#501 id=501 data-nosnippet>501</a>    <span class="kw">let </span>(u, v) = (row.uvw_m[<span class="number">0</span>] * scale, row.uvw_m[<span class="number">1</span>] * scale);
