@@ -9,10 +9,10 @@ mod common;
 
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
-    Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridBackend, GridPrecision,
-    ImageCorrection, KernelNormalisation, MeasurementOperator, Mode, ModeSet, ModelImages,
-    ModelPlane, ModelPrescale, MuellerRouting, Placement, PlaneRange, PolarizationRouting,
-    RowContext, SampleBuffer, Spheroidal, TapLayout, Work,
+    Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, DenseCell, GridBackend,
+    GridPrecision, ImageCorrection, KernelNormalisation, MeasurementOperator, Mode, ModeSet,
+    ModelImages, ModelPlane, ModelPrescale, MuellerRouting, Placement, PlaneRange,
+    PolarizationRouting, RowContext, SampleBuffer, Spheroidal, TapLayout, Work,
 };
 use common::{IMAGE, Rng, geometry, placements, samples};
 use ndarray::Array2;
@@ -32,9 +32,8 @@ type TapRule = Box<dyn Fn(usize, usize, &mut Rng) -> Complex32>;
 /// through plane 1 (and YY symmetrically). The direct and conjugate tables
 /// are identical so the pair stays exactly adjoint.
 struct ComplexDense {
-    data: Vec<Complex32>,
+    cell: DenseCell,
     support: u16,
-    oversampling: u16,
     mueller: MuellerRouting,
     correction: ImageCorrection,
 }
@@ -66,22 +65,21 @@ impl ComplexDense {
             leak(0, 0)
         };
         let correction = template.image_correction();
+        let mueller_planes = u8::try_from(planes.len()).expect("Mueller planes fit u8");
         Self {
-            data,
+            cell: DenseCell::new(
+                data.into_boxed_slice(),
+                [support, support],
+                oversampling,
+                mueller_planes,
+            ),
             support,
-            oversampling,
             mueller: MuellerRouting {
                 adjoint: [table.clone(), table.clone()],
                 forward: [table.clone(), table],
             },
             correction: ImageCorrection::new(correction.x().to_vec(), correction.y().to_vec()),
         }
-    }
-
-    fn planes(&self) -> u8 {
-        (self.data.len()
-            / ((usize::from(self.oversampling) + 1).pow(2) * usize::from(self.support).pow(2)))
-            as u8
     }
 }
 
@@ -91,12 +89,7 @@ impl ConvolutionFunctionSet for ComplexDense {
     }
 
     fn taps<'s>(&'s self, _key: CfKey, _hold: &'s mut CellHold) -> TapLayout<'s> {
-        TapLayout::Dense {
-            data: &self.data,
-            support: [self.support, self.support],
-            oversampling: self.oversampling,
-            mueller_planes: self.planes(),
-        }
+        self.cell.layout()
     }
 
     fn max_half_support(&self) -> [u16; 2] {

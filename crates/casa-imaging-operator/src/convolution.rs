@@ -35,6 +35,11 @@ pub enum TapLayout<'a> {
     Dense {
         /// `(oversampling + 1)² × mueller_planes × sy × sx` tap values.
         data: &'a [Complex32],
+        /// Each tile's tap sum in `f64`, `(oversampling + 1)² ×
+        /// mueller_planes` of them in the tiles' order ([`dense_norms`]),
+        /// from which [`TapLayout::norm`] reads a sample's norm rather than
+        /// summing its tile.
+        norms: &'a [Complex64],
         /// Taps per axis `[sx, sy]` (odd).
         support: [u16; 2],
         /// Fine offsets per cell (even).
@@ -84,12 +89,31 @@ impl TapLayout<'_> {
     }
 }
 
+/// Each tile's tap sum of dense taps `data` in the [`TapLayout::Dense`]
+/// order: for every fine offset and Mueller plane, `Σ t` over its
+/// `sy × sx` taps in `f64`, in tap order. A sample's kernel norm is its
+/// tile's sum, or its conjugate, so the kernels read it rather than sum the
+/// tile for every sample (#449: 7% of a B3 residual pass).
+#[must_use]
+pub fn dense_norms(data: &[Complex32], support: [u16; 2]) -> Box<[Complex64]> {
+    let taps = usize::from(support[0]) * usize::from(support[1]);
+    data.chunks_exact(taps.max(1))
+        .map(|tile| {
+            tile.iter()
+                .map(|tap| Complex64::new(f64::from(tap.re), f64::from(tap.im)))
+                .sum::<Complex64>()
+        })
+        .collect()
+}
+
 /// Dense taps of one cell in the [`TapLayout::Dense`] order, owned so a
 /// bounded cache can hand them out while it evicts others.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DenseCell {
     /// `(oversampling + 1)² × mueller_planes × sy × sx` tap values.
     pub data: Box<[Complex32]>,
+    /// Each tile's tap sum ([`dense_norms`]).
+    pub norms: Box<[Complex64]>,
     /// Taps per axis `[sx, sy]` (odd).
     pub support: [u16; 2],
     /// Fine offsets per cell (even).
@@ -99,21 +123,41 @@ pub struct DenseCell {
 }
 
 impl DenseCell {
+    /// The cell of tap values `data` in the [`TapLayout::Dense`] order,
+    /// with each tile's sum ([`dense_norms`]).
+    #[must_use]
+    pub fn new(
+        data: Box<[Complex32]>,
+        support: [u16; 2],
+        oversampling: u16,
+        mueller_planes: u8,
+    ) -> Self {
+        let norms = dense_norms(&data, support);
+        Self {
+            data,
+            norms,
+            support,
+            oversampling,
+            mueller_planes,
+        }
+    }
+
     /// The cell as a tap layout.
     #[must_use]
     pub fn layout(&self) -> TapLayout<'_> {
         TapLayout::Dense {
             data: &self.data,
+            norms: &self.norms,
             support: self.support,
             oversampling: self.oversampling,
             mueller_planes: self.mueller_planes,
         }
     }
 
-    /// Bytes of the tap values.
+    /// Bytes of the tap values and their tiles' sums.
     #[must_use]
     pub fn bytes(&self) -> usize {
-        std::mem::size_of_val(self.data.as_ref())
+        std::mem::size_of_val(self.data.as_ref()) + std::mem::size_of_val(self.norms.as_ref())
     }
 }
 

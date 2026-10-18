@@ -56,6 +56,7 @@ pub(super) fn spread<T: GridScalar>(
             support,
             oversampling,
             mueller_planes,
+            ..
         } => {
             let tile_taps = dense_tile(
                 data,
@@ -114,6 +115,7 @@ pub(super) fn gather<T: GridScalar>(
             support,
             oversampling,
             mueller_planes,
+            ..
         } => {
             let tile_taps = dense_tile(
                 data,
@@ -169,22 +171,12 @@ pub(crate) fn norm(
             Complex64::new(axis_sum(location.ox) * axis_sum(location.oy), 0.0)
         }
         TapLayout::Dense {
-            data,
-            support,
+            norms,
             oversampling,
             mueller_planes,
+            ..
         } => {
-            let sum = dense_tile(
-                data,
-                support,
-                oversampling,
-                mueller_planes,
-                location,
-                mueller,
-            )
-            .iter()
-            .map(|tap| Complex64::new(f64::from(tap.re), f64::from(tap.im)))
-            .sum::<Complex64>();
+            let sum = norms[dense_tile_index(oversampling, mueller_planes, location, mueller)];
             if conjugate { sum.conj() } else { sum }
         }
     }
@@ -306,13 +298,24 @@ fn dense_tile(
     location: CellLocation,
     mueller: u8,
 ) -> &[Complex32] {
-    debug_assert!(mueller < mueller_planes, "Mueller plane outside the cell");
     let taps = usize::from(support[0]) * usize::from(support[1]);
-    let rows = usize::from(oversampling) + 1;
-    let offset = (usize::from(location.oy) * rows + usize::from(location.ox))
-        * usize::from(mueller_planes)
-        + usize::from(mueller);
+    let offset = dense_tile_index(oversampling, mueller_planes, location, mueller);
     &data[offset * taps..][..taps]
+}
+
+/// The index of the tile of Mueller plane `mueller` at the sample's fine
+/// offset among a dense cell's tiles, and of its sum among the cell's
+/// norms ([`crate::convolution::dense_norms`]).
+fn dense_tile_index(
+    oversampling: u16,
+    mueller_planes: u8,
+    location: CellLocation,
+    mueller: u8,
+) -> usize {
+    debug_assert!(mueller < mueller_planes, "Mueller plane outside the cell");
+    let rows = usize::from(oversampling) + 1;
+    (usize::from(location.oy) * rows + usize::from(location.ox)) * usize::from(mueller_planes)
+        + usize::from(mueller)
 }
 
 /// The sample's offset from its cell in cells, `(off − s/2)/s` per axis,
@@ -447,6 +450,7 @@ fn gather_dense<T: GridScalar, const RAMPED: bool>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::convolution::DenseCell;
 
     /// A deterministic pseudo-random value in `[-1, 1)` for index `i`.
     fn noise(i: usize) -> f64 {
@@ -501,12 +505,13 @@ mod tests {
         let data = (0..tiles * sx * sy)
             .map(|i| Complex32::new(noise(3 * i) as f32, noise(3 * i + 1) as f32))
             .collect::<Vec<_>>();
-        let taps = TapLayout::Dense {
-            data: &data,
-            support: support.map(|s| u16::try_from(s).expect("support fits u16")),
+        let dense = DenseCell::new(
+            data.clone().into_boxed_slice(),
+            support.map(|s| u16::try_from(s).expect("support fits u16")),
             oversampling,
-            mueller_planes: 1,
-        };
+            1,
+        );
+        let taps = dense.layout();
         let tile = Tile {
             origin: [0, 0],
             shape: [sx + 4, sy + 6],
@@ -614,5 +619,51 @@ mod tests {
         }
         assert!(PointingRamp::new([0.0, 0.0], [0.25, -0.5], [7, 7]).is_none());
         assert!(PointingRamp::new([-0.0, 0.0], [0.25, -0.5], [7, 7]).is_none());
+    }
+
+    /// A dense cell's norm read from its tiles' sums (#449) is the sum of
+    /// the sample's tile in `f64` and tap order, conjugated or not, bit
+    /// for bit: at every fine offset of two Mueller planes of an unequal
+    /// support, the tile found from the layout's index rule.
+    #[test]
+    fn a_stored_dense_norm_is_the_sum_of_its_tile() {
+        let (oversampling, mueller_planes, support) = (4_u16, 2_u8, [3_u16, 5]);
+        let taps = usize::from(support[0]) * usize::from(support[1]);
+        let rows = usize::from(oversampling) + 1;
+        let data = (0..rows * rows * usize::from(mueller_planes) * taps)
+            .map(|i| Complex32::new(noise(5 * i) as f32, noise(5 * i + 2) as f32))
+            .collect::<Vec<_>>();
+        let dense = DenseCell::new(
+            data.clone().into_boxed_slice(),
+            support,
+            oversampling,
+            mueller_planes,
+        );
+        let layout = dense.layout();
+        for (oy, ox) in (0..rows).flat_map(|oy| (0..rows).map(move |ox| (oy, ox))) {
+            let location = CellLocation {
+                x: 0,
+                y: 0,
+                ox: ox as u16,
+                oy: oy as u16,
+            };
+            for mueller in 0..mueller_planes {
+                let first =
+                    ((oy * rows + ox) * usize::from(mueller_planes) + usize::from(mueller)) * taps;
+                let summed = data[first..][..taps]
+                    .iter()
+                    .map(|tap| Complex64::new(f64::from(tap.re), f64::from(tap.im)))
+                    .sum::<Complex64>();
+                for conjugate in [false, true] {
+                    let expected = if conjugate { summed.conj() } else { summed };
+                    let stored = norm(&layout, location, mueller, conjugate);
+                    assert_eq!(
+                        (stored.re.to_bits(), stored.im.to_bits()),
+                        (expected.re.to_bits(), expected.im.to_bits()),
+                        "offset ({ox}, {oy}), plane {mueller}, conjugate {conjugate}"
+                    );
+                }
+            }
+        }
     }
 }
