@@ -5,7 +5,7 @@ use std::ops::Range;
 
 use casa_imaging_deconvolution::resident_bytes_per_cell;
 use casa_imaging_operator::{
-    Basis, CellHold, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile, grid_planning_bytes,
+    Basis, MeasurementOperator, ModeSet, Placement, PlaneRange, Tile, grid_planning_bytes,
 };
 
 use super::{BackendChoice, BlockShape, PassDomain};
@@ -512,7 +512,9 @@ impl Router {
     /// Owner of one placement and, with region owners, its anchor row and
     /// gridding work, the kernel's taps `(2·h_x + 1)(2·h_y + 1)`, which
     /// [`Partition::regions_balanced`] balances; the placement lies on the
-    /// wave and fits the grid.
+    /// wave and fits the grid. The kernel's support and oversampling come
+    /// from the set's metadata, so routing lends no taps and takes no lock
+    /// (#744).
     pub(super) fn owner_and_work(
         &self,
         operator: &MeasurementOperator,
@@ -524,17 +526,17 @@ impl Router {
                 None,
             ),
             Self::Regions { owner_of_row, halo } => {
-                let mut hold = CellHold::new();
-                let taps = operator.cf().taps(placement.cf, &mut hold);
-                let [hx, hy] = taps.half_support();
+                let cf = operator.cf();
+                let [hx, hy] = cf.gridding_half_support(placement.cf);
                 debug_assert!(
                     usize::from(hy) <= *halo,
                     "a kernel cell's support exceeds the regions' halo"
                 );
-                let anchor =
-                    operator
-                        .geometry()
-                        .locate(placement.u, placement.v, taps.oversampling());
+                let anchor = operator.geometry().locate(
+                    placement.u,
+                    placement.v,
+                    cf.gridding_oversampling(placement.cf),
+                );
                 let row = anchor.y as usize;
                 let work = (2 * u64::from(hx) + 1) * (2 * u64::from(hy) + 1);
                 (usize::from(owner_of_row[row]), Some((row, work)))
