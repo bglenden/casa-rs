@@ -67,16 +67,16 @@ pub(super) fn spread<T: GridScalar>(
             );
             let [sx, sy] = [usize::from(support[0]), usize::from(support[1])];
             let (x0, y0) = block_origin(tile, location, [sx / 2, sy / 2]);
-            let fraction = fine_fraction(location, oversampling);
-            let nx = tile.shape[0];
-            for iy in 0..sy {
-                let row = &mut grid[(y0 + iy) * nx + x0..][..sx];
-                let tap_row = &tile_taps[iy * sx..][..sx];
-                for (ix, (cell, tap)) in row.iter_mut().zip(tap_row).enumerate() {
-                    let tap = dense_tap(*tap, conjugate, gradient, fraction, ix, iy, sx, sy);
-                    let tap = Complex::new(T::from_f64(tap.re), T::from_f64(tap.im));
-                    *cell = *cell + value * tap;
-                }
+            let block = DenseBlock {
+                nx: tile.shape[0],
+                origin: [x0, y0],
+                support: [sx, sy],
+                taps: tile_taps,
+                conjugate,
+            };
+            match PointingRamp::new(gradient, fine_fraction(location, oversampling), [sx, sy]) {
+                Some(ramp) => spread_dense::<T, true>(grid, &block, ramp, value),
+                None => spread_dense::<T, false>(grid, &block, PointingRamp::NONE, value),
             }
         }
     }
@@ -125,19 +125,17 @@ pub(super) fn gather<T: GridScalar>(
             );
             let [sx, sy] = [usize::from(support[0]), usize::from(support[1])];
             let (x0, y0) = block_origin(tile, location, [sx / 2, sy / 2]);
-            let fraction = fine_fraction(location, oversampling);
-            let nx = tile.shape[0];
-            let mut sum = Complex64::default();
-            for iy in 0..sy {
-                let row = &grid[(y0 + iy) * nx + x0..][..sx];
-                let tap_row = &tile_taps[iy * sx..][..sx];
-                for (ix, (cell, tap)) in row.iter().zip(tap_row).enumerate() {
-                    let tap = dense_tap(*tap, conjugate, gradient, fraction, ix, iy, sx, sy);
-                    let cell = Complex64::new(cell.re.into_f64(), cell.im.into_f64());
-                    sum += tap.conj() * cell;
-                }
+            let block = DenseBlock {
+                nx: tile.shape[0],
+                origin: [x0, y0],
+                support: [sx, sy],
+                taps: tile_taps,
+                conjugate,
+            };
+            match PointingRamp::new(gradient, fine_fraction(location, oversampling), [sx, sy]) {
+                Some(ramp) => gather_dense::<T, true>(grid, &block, ramp),
+                None => gather_dense::<T, false>(grid, &block, PointingRamp::NONE),
             }
-            sum
         }
     }
 }
@@ -327,28 +325,123 @@ fn fine_fraction(location: CellLocation, oversampling: u16) -> [f64; 2] {
     [fraction(location.ox), fraction(location.oy)]
 }
 
-#[allow(clippy::too_many_arguments)]
-fn dense_tap(
-    tap: Complex32,
+/// One sample's dense taps and the block cells they cover.
+struct DenseBlock<'t> {
+    /// Cells per block row.
+    nx: usize,
+    /// Block-local `[x0, y0]` of the first tap ([`block_origin`]).
+    origin: [usize; 2],
+    /// Taps per axis `[sx, sy]`.
+    support: [usize; 2],
+    /// The `sy × sx` taps at the sample's fine offset ([`dense_tile`]).
+    taps: &'t [Complex32],
+    /// Whether the taps are conjugated.
     conjugate: bool,
-    gradient: [f32; 2],
-    fraction: [f64; 2],
-    ix: usize,
-    iy: usize,
-    sx: usize,
-    sy: usize,
+}
+
+/// The pointing ramp `e^{i(k_x g_x + k_y g_y)}` over a support, with
+/// `k = i − ⌊s/2⌋ + f` per axis at the sample's fine fraction `f`
+/// ([`fine_fraction`]). The ramp is separable, so the tap loops walk it by
+/// recurrence: one phasor at the support's first tap and one step per axis,
+/// three evaluations per sample instead of one per tap. CASA's resampler
+/// instead computes its phase-gradient array once per pointing
+/// (`cachePhaseGrad`). Each step multiplies two unit phasors, about 2ε of
+/// relative error, and each row restarts from the row phasor, so a tap's
+/// walked phasor departs from the direct one by about 2ε per tap of row
+/// and column it lies along: a few 1e-15 over a 31-tap support, and about
+/// 1e-12 even 4,096 taps along. That is an estimate of the drift, not a
+/// bound for arbitrary supports; the direct phasor's own argument error
+/// grows with `|k·g|` instead.
+#[derive(Clone, Copy)]
+struct PointingRamp {
+    /// The ramp at the first tap of the current row.
+    row: Complex64,
+    /// The ramp's factor from one tap to the next along x, and from one
+    /// row to the next along y.
+    step: [Complex64; 2],
+}
+
+impl PointingRamp {
+    /// The ramp of a kernel without one, which the unramped loops ignore.
+    const NONE: Self = Self {
+        row: Complex64::new(1.0, 0.0),
+        step: [Complex64::new(1.0, 0.0); 2],
+    };
+
+    /// The ramp of `gradient` at `fraction` over `support` taps, or `None`
+    /// when the gradient is zero.
+    fn new(gradient: [f32; 2], fraction: [f64; 2], support: [usize; 2]) -> Option<Self> {
+        if gradient == [0.0, 0.0] {
+            return None;
+        }
+        let [gx, gy] = gradient.map(f64::from);
+        let kx = fraction[0] - (support[0] / 2) as f64;
+        let ky = fraction[1] - (support[1] / 2) as f64;
+        Some(Self {
+            row: Complex64::from_polar(1.0, kx * gx + ky * gy),
+            step: [
+                Complex64::from_polar(1.0, gx),
+                Complex64::from_polar(1.0, gy),
+            ],
+        })
+    }
+}
+
+/// A dense tap as stored, conjugated when `conjugate`, in `f64`.
+fn oriented(tap: Complex32, conjugate: bool) -> Complex64 {
+    let tap = Complex64::new(f64::from(tap.re), f64::from(tap.im));
+    if conjugate { tap.conj() } else { tap }
+}
+
+/// Add `value · tap'` over `block`, each tap times `ramp` when `RAMPED`.
+fn spread_dense<T: GridScalar, const RAMPED: bool>(
+    grid: &mut [Complex<T>],
+    block: &DenseBlock<'_>,
+    mut ramp: PointingRamp,
+    value: Complex<T>,
+) {
+    let ([x0, y0], [sx, sy]) = (block.origin, block.support);
+    for iy in 0..sy {
+        let row = &mut grid[(y0 + iy) * block.nx + x0..][..sx];
+        let mut phasor = ramp.row;
+        for (cell, tap) in row.iter_mut().zip(&block.taps[iy * sx..][..sx]) {
+            let mut tap = oriented(*tap, block.conjugate);
+            if RAMPED {
+                tap *= phasor;
+                phasor *= ramp.step[0];
+            }
+            *cell = *cell + value * Complex::new(T::from_f64(tap.re), T::from_f64(tap.im));
+        }
+        if RAMPED {
+            ramp.row *= ramp.step[1];
+        }
+    }
+}
+
+/// `Σ conj(tap') · grid` over `block`, each tap times `ramp` when `RAMPED`.
+fn gather_dense<T: GridScalar, const RAMPED: bool>(
+    grid: &[Complex<T>],
+    block: &DenseBlock<'_>,
+    mut ramp: PointingRamp,
 ) -> Complex64 {
-    let mut tap = Complex64::new(f64::from(tap.re), f64::from(tap.im));
-    if conjugate {
-        tap = tap.conj();
+    let ([x0, y0], [sx, sy]) = (block.origin, block.support);
+    let mut sum = Complex64::default();
+    for iy in 0..sy {
+        let row = &grid[(y0 + iy) * block.nx + x0..][..sx];
+        let mut phasor = ramp.row;
+        for (cell, tap) in row.iter().zip(&block.taps[iy * sx..][..sx]) {
+            let mut tap = oriented(*tap, block.conjugate);
+            if RAMPED {
+                tap *= phasor;
+                phasor *= ramp.step[0];
+            }
+            sum += tap.conj() * Complex64::new(cell.re.into_f64(), cell.im.into_f64());
+        }
+        if RAMPED {
+            ramp.row *= ramp.step[1];
+        }
     }
-    if gradient != [0.0, 0.0] {
-        let kx = ix as f64 - (sx / 2) as f64 + fraction[0];
-        let ky = iy as f64 - (sy / 2) as f64 + fraction[1];
-        let phase = kx * f64::from(gradient[0]) + ky * f64::from(gradient[1]);
-        tap *= Complex64::from_polar(1.0, phase);
-    }
-    tap
+    sum
 }
 
 #[cfg(test)]
@@ -389,5 +482,137 @@ mod tests {
     fn the_seven_tap_gather_equals_the_general_gather() {
         seven_taps_gather_as_the_general_gather::<f32>();
         seven_taps_gather_as_the_general_gather::<f64>();
+    }
+
+    /// One case of [`the_walked_pointing_ramp_equals_the_ramp_at_each_tap`]:
+    /// a dense kernel of `support` taps spread and gathered through
+    /// [`spread`] and [`gather`] at fine offsets `offsets`, against the ramp
+    /// evaluated at each tap, the conjugation applied by sign rather than
+    /// through [`oriented`]. A zero gradient must be the unramped arithmetic
+    /// exactly; otherwise each spread cell is within `spread_tolerance`
+    /// and the gather within 1e-12 per tap.
+    fn ramp_case<T: GridScalar>(
+        (support, gradient, offsets, conjugate): ([usize; 2], [f32; 2], [u16; 2], bool),
+        spread_tolerance: f64,
+    ) {
+        let oversampling = 4_u16;
+        let [sx, sy] = support;
+        let tiles = (usize::from(oversampling) + 1).pow(2);
+        let data = (0..tiles * sx * sy)
+            .map(|i| Complex32::new(noise(3 * i) as f32, noise(3 * i + 1) as f32))
+            .collect::<Vec<_>>();
+        let taps = TapLayout::Dense {
+            data: &data,
+            support: support.map(|s| u16::try_from(s).expect("support fits u16")),
+            oversampling,
+            mueller_planes: 1,
+        };
+        let tile = Tile {
+            origin: [0, 0],
+            shape: [sx + 4, sy + 6],
+        };
+        let location = CellLocation {
+            x: (sx / 2 + 1) as i64,
+            y: (sy / 2 + 2) as i64,
+            ox: offsets[0],
+            oy: offsets[1],
+        };
+        let cell = |ix: usize, iy: usize| (2 + iy) * tile.shape[0] + 1 + ix;
+        // The offset's tile, x fastest, and its fractions (o − s/2)/s.
+        let first = (usize::from(offsets[1]) * (usize::from(oversampling) + 1)
+            + usize::from(offsets[0]))
+            * sx
+            * sy;
+        let [fx, fy] = offsets
+            .map(|o| (f64::from(o) - f64::from(oversampling) / 2.0) / f64::from(oversampling));
+        let direct = |ix: usize, iy: usize| {
+            let stored = data[first + iy * sx + ix];
+            let sign = if conjugate { -1.0 } else { 1.0 };
+            let tap = Complex64::new(f64::from(stored.re), sign * f64::from(stored.im));
+            let kx = ix as f64 - (sx / 2) as f64 + fx;
+            let ky = iy as f64 - (sy / 2) as f64 + fy;
+            let phase = kx * f64::from(gradient[0]) + ky * f64::from(gradient[1]);
+            if gradient == [0.0, 0.0] {
+                tap
+            } else {
+                tap * Complex64::from_polar(1.0, phase)
+            }
+        };
+        let label = format!("{support:?} {gradient:?} {offsets:?} {conjugate}");
+
+        let value = Complex::new(T::from_f64(0.6), T::from_f64(-1.3));
+        let mut spread_grid = vec![Complex::<T>::default(); tile.shape[0] * tile.shape[1]];
+        spread::<T>(
+            &mut spread_grid,
+            tile,
+            location,
+            &taps,
+            0,
+            conjugate,
+            gradient,
+            value,
+        );
+        for (ix, iy) in (0..sy).flat_map(|iy| (0..sx).map(move |ix| (ix, iy))) {
+            let got = spread_grid[cell(ix, iy)];
+            let tap = direct(ix, iy);
+            if gradient == [0.0, 0.0] {
+                let unramped = value * Complex::new(T::from_f64(tap.re), T::from_f64(tap.im));
+                assert!(got == unramped, "{label}: spread tap ({ix}, {iy}) changed");
+            } else {
+                let value = Complex64::new(value.re.into_f64(), value.im.into_f64());
+                let got = Complex64::new(got.re.into_f64(), got.im.into_f64());
+                let error = (got - value * tap).norm();
+                assert!(
+                    error <= spread_tolerance,
+                    "{label}: spread tap ({ix}, {iy}) off by {error}"
+                );
+            }
+        }
+
+        let grid = (0..tile.shape[0] * tile.shape[1])
+            .map(|i| Complex::new(T::from_f64(noise(7 * i)), T::from_f64(noise(7 * i + 1))))
+            .collect::<Vec<_>>();
+        let expected = (0..sy)
+            .flat_map(|iy| (0..sx).map(move |ix| (ix, iy)))
+            .map(|(ix, iy)| {
+                let cell = grid[cell(ix, iy)];
+                direct(ix, iy).conj() * Complex64::new(cell.re.into_f64(), cell.im.into_f64())
+            })
+            .fold(Complex64::default(), |sum, term| sum + term);
+        let got = gather::<T>(&grid, tile, location, &taps, 0, conjugate, gradient);
+        if gradient == [0.0, 0.0] {
+            assert!(got == expected, "{label}: gather changed");
+        } else {
+            let error = (got - expected).norm();
+            assert!(
+                error <= 1e-12 * (sx * sy) as f64,
+                "{label}: gather off by {error}"
+            );
+        }
+    }
+
+    /// The walked pointing ramp spreads and gathers what the ramp evaluated
+    /// at each tap does, through [`spread`] and [`gather`] (#732): odd
+    /// supports of unequal sides up to 129 × 65, gradients beyond π per
+    /// cell and zero on one axis, fine fractions either side of the cell,
+    /// both conjugations and both grid precisions. A zero gradient takes
+    /// the unramped loop, bit for bit.
+    #[test]
+    fn the_walked_pointing_ramp_equals_the_ramp_at_each_tap() {
+        let cases = [
+            ([7, 7], [0.37_f32, -0.21], [1_u16, 3], false),
+            ([5, 11], [2.9, 4.6], [0, 4], true),
+            ([31, 23], [-3.7, 0.05], [4, 1], false),
+            ([129, 65], [0.9, -2.2], [2, 2], true),
+            ([9, 5], [0.0, 1.3], [3, 0], true),
+            ([9, 5], [0.0, 0.0], [3, 0], true),
+            ([9, 5], [0.0, 0.0], [1, 4], false),
+        ];
+        for case in cases {
+            ramp_case::<f64>(case, 1e-12);
+            ramp_case::<f32>(case, 1e-6);
+        }
+        assert!(PointingRamp::new([0.0, 0.0], [0.25, -0.5], [7, 7]).is_none());
+        assert!(PointingRamp::new([-0.0, 0.0], [0.25, -0.5], [7, 7]).is_none());
     }
 }
