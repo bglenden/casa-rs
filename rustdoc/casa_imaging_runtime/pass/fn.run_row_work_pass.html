@@ -7,7 +7,7 @@
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="enum" href="https://doc.rust-lang.org/1.99.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.u64.html">u64</a>&gt;&gt;&gt;, <a class="enum" href="enum.PassError.html" title="enum casa_imaging_runtime::pass::PassError">PassError</a>&gt;</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Each domain’s gridding work by anchor row over one traversal that reads
 flags and weights only (<a href="enum.SampleContent.html#variant.FlagsAndWeights" title="variant casa_imaging_runtime::pass::SampleContent::FlagsAndWeights"><code>SampleContent::FlagsAndWeights</code></a>): every row
 is placed as a pass places it, with <code>weighting</code>, and each placement adds
-its kernel’s taps to its anchor row ([<code>Router::owner_and_work</code>]). <code>None</code>
+its kernel’s taps to its anchor row (<code>Router::owner_and_work</code>). <code>None</code>
 for a domain of plane owners. It is what a first pass measures
 (<a href="struct.PassSummary.html#structfield.row_work" title="field casa_imaging_runtime::pass::PassSummary::row_work"><code>super::PassSummary::row_work</code></a>) without reading or gridding the
 visibilities, so the first pass’s strips can be cut balanced

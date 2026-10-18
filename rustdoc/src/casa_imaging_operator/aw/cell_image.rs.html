@@ -290,12 +290,12 @@
 <a href=#290 id=290 data-nosnippet>290</a>            }
 <a href=#291 id=291 data-nosnippet>291</a>        }
 <a href=#292 id=292 data-nosnippet>292</a>    }
-<a href=#293 id=293 data-nosnippet>293</a>    DenseCell {
-<a href=#294 id=294 data-nosnippet>294</a>        data: data.into_boxed_slice(),
+<a href=#293 id=293 data-nosnippet>293</a>    DenseCell::new(
+<a href=#294 id=294 data-nosnippet>294</a>        data.into_boxed_slice(),
 <a href=#295 id=295 data-nosnippet>295</a>        support,
-<a href=#296 id=296 data-nosnippet>296</a>        oversampling: sampling,
-<a href=#297 id=297 data-nosnippet>297</a>        mueller_planes: u8::try_from(planes.len()).expect(<span class="string">"Mueller planes fit u8"</span>),
-<a href=#298 id=298 data-nosnippet>298</a>    }
+<a href=#296 id=296 data-nosnippet>296</a>        sampling,
+<a href=#297 id=297 data-nosnippet>297</a>        u8::try_from(planes.len()).expect(<span class="string">"Mueller planes fit u8"</span>),
+<a href=#298 id=298 data-nosnippet>298</a>    )
 <a href=#299 id=299 data-nosnippet>299</a>}
 <a href=#300 id=300 data-nosnippet>300</a>
 <a href=#301 id=301 data-nosnippet>301</a><span class="doccomment">/// The misc info `CFCell::makePersistent` writes.

@@ -174,13 +174,13 @@
 <a href=#174 id=174 data-nosnippet>174</a>///
 <a href=#175 id=175 data-nosnippet>175</a>/// # Variants
 <a href=#176 id=176 data-nosnippet>176</a>///
-<a href=#177 id=177 data-nosnippet>177</a>/// - [`Auto`](Self::Auto): choose a strategy from the lattice type and work
+<a href=#177 id=177 data-nosnippet>177</a>/// - [`Auto`](crate::ExecutionPolicy::Auto): choose a strategy from the lattice type and work
 <a href=#178 id=178 data-nosnippet>178</a>///   size. This is the default.
-<a href=#179 id=179 data-nosnippet>179</a>/// - [`Serial`](Self::Serial): use one thread and the most direct traversal.
-<a href=#180 id=180 data-nosnippet>180</a>/// - [`Pipelined`](Self::Pipelined): use one producer and one consumer thread
+<a href=#179 id=179 data-nosnippet>179</a>/// - [`Serial`](crate::ExecutionPolicy::Serial): use one thread and the most direct traversal.
+<a href=#180 id=180 data-nosnippet>180</a>/// - [`Pipelined`](crate::ExecutionPolicy::Pipelined): use one producer and one consumer thread
 <a href=#181 id=181 data-nosnippet>181</a>///   with a bounded queue. This is mainly useful for paged lattices, where the
 <a href=#182 id=182 data-nosnippet>182</a>///   next tile can be read while the previous tile is being reduced.
-<a href=#183 id=183 data-nosnippet>183</a>/// - [`Parallel`](Self::Parallel): use one producer plus a worker pool. This
+<a href=#183 id=183 data-nosnippet>183</a>/// - [`Parallel`](crate::ExecutionPolicy::Parallel): use one producer plus a worker pool. This
 <a href=#184 id=184 data-nosnippet>184</a>///   combines the same I/O overlap as `Pipelined` with threaded compute.
 <a href=#185 id=185 data-nosnippet>185</a>///
 <a href=#186 id=186 data-nosnippet>186</a>/// Explicit policies are validated against the assigned resources and amount

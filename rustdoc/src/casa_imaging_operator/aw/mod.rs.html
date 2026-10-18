@@ -1265,17 +1265,17 @@
 <a href=#1265 id=1265 data-nosnippet>1265</a>            [<span class="number">1</span>, <span class="number">1</span>],
 <a href=#1266 id=1266 data-nosnippet>1266</a>            <span class="number">2</span>,
 <a href=#1267 id=1267 data-nosnippet>1267</a>        );
-<a href=#1268 id=1268 data-nosnippet>1268</a>        <span class="macro">assert_eq!</span>(cell.support, [<span class="number">3</span>, <span class="number">3</span>]);
-<a href=#1269 id=1269 data-nosnippet>1269</a>        <span class="macro">assert_eq!</span>(cell.mueller_planes, <span class="number">2</span>);
+<a href=#1268 id=1268 data-nosnippet>1268</a>        <span class="macro">assert_eq!</span>(cell.support(), [<span class="number">3</span>, <span class="number">3</span>]);
+<a href=#1269 id=1269 data-nosnippet>1269</a>        <span class="macro">assert_eq!</span>(cell.mueller_planes(), <span class="number">2</span>);
 <a href=#1270 id=1270 data-nosnippet>1270</a>        <span class="kw">let </span>tile = <span class="number">9</span>;
 <a href=#1271 id=1271 data-nosnippet>1271</a>        <span class="comment">// Row (ox, oy) = (0, 2): off = (−1, +1); plane 0 tap (2, 0): pixel
 <a href=#1272 id=1272 data-nosnippet>1272</a>        // (4 + 2 − 1, 4 − 2 + 1) = (5, 3).
 <a href=#1273 id=1273 data-nosnippet>1273</a>        </span><span class="kw">let </span>row = (<span class="number">2 </span>* <span class="number">3</span>) * <span class="number">2 </span>* tile;
-<a href=#1274 id=1274 data-nosnippet>1274</a>        <span class="macro">assert_eq!</span>(cell.data[row + <span class="number">2</span>], Complex32::new(<span class="number">5.0</span>, <span class="number">3.0</span>));
+<a href=#1274 id=1274 data-nosnippet>1274</a>        <span class="macro">assert_eq!</span>(cell.data()[row + <span class="number">2</span>], Complex32::new(<span class="number">5.0</span>, <span class="number">3.0</span>));
 <a href=#1275 id=1275 data-nosnippet>1275</a>        <span class="comment">// Plane 1 in the same row, tap (2, 0): pixel (2 + 2 − 1, 2 − 2 + 1)
 <a href=#1276 id=1276 data-nosnippet>1276</a>        // = (3, 1) of the small plane; tap (2, 2): y = 2 + 2 + 1 = 5 → outside.
-<a href=#1277 id=1277 data-nosnippet>1277</a>        </span><span class="macro">assert_eq!</span>(cell.data[row + tile + <span class="number">2</span>], Complex32::new(<span class="number">103.0</span>, <span class="number">1.0</span>));
-<a href=#1278 id=1278 data-nosnippet>1278</a>        <span class="macro">assert_eq!</span>(cell.data[row + tile + <span class="number">8</span>], Complex32::default());
+<a href=#1277 id=1277 data-nosnippet>1277</a>        </span><span class="macro">assert_eq!</span>(cell.data()[row + tile + <span class="number">2</span>], Complex32::new(<span class="number">103.0</span>, <span class="number">1.0</span>));
+<a href=#1278 id=1278 data-nosnippet>1278</a>        <span class="macro">assert_eq!</span>(cell.data()[row + tile + <span class="number">8</span>], Complex32::default());
 <a href=#1279 id=1279 data-nosnippet>1279</a>    }
 <a href=#1280 id=1280 data-nosnippet>1280</a>
 <a href=#1281 id=1281 data-nosnippet>1281</a>    <span class="attr">#[test]

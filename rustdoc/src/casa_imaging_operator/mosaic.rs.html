@@ -670,7 +670,7 @@
 <a href=#670 id=670 data-nosnippet>670</a>    <span class="doccomment">/// Half support of the cell `key` names.
 <a href=#671 id=671 data-nosnippet>671</a>    </span><span class="attr">#[must_use]
 <a href=#672 id=672 data-nosnippet>672</a>    </span><span class="kw">pub fn </span>half_support(<span class="kw-2">&amp;</span><span class="self">self</span>, key: CfKey) -&gt; u16 {
-<a href=#673 id=673 data-nosnippet>673</a>        <span class="self">self</span>.imaging[<span class="self">self</span>.index(key)].support[<span class="number">0</span>] / <span class="number">2
+<a href=#673 id=673 data-nosnippet>673</a>        <span class="self">self</span>.imaging[<span class="self">self</span>.index(key)].support()[<span class="number">0</span>] / <span class="number">2
 <a href=#674 id=674 data-nosnippet>674</a>    </span>}
 <a href=#675 id=675 data-nosnippet>675</a>
 <a href=#676 id=676 data-nosnippet>676</a>    <span class="kw">fn </span>window(<span class="kw-2">&amp;</span><span class="self">self</span>, spectral_window: u32) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>FrequencyCells&gt; {

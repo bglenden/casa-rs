@@ -43,7 +43,7 @@ terms. The source sizes its blocks with it
 chunks exactly.</dd><dt><a class="fn" href="fn.density_pass_bytes.html" title="fn casa_imaging_runtime::pass::density_pass_bytes">density_<wbr>pass_<wbr>bytes</a></dt><dd>Bytes a density pass over blocks of <code>block</code> on <code>workers</code> workers holds:
 its grid of <code>shape</code> ([<code>DensityGridShape::bytes</code>]), which it returns, and
 its row chunks’ sample buffers, which it frees. The stream’s native
-blocks are the source’s ([<code>stream_bytes</code>]).</dd><dt><a class="fn" href="fn.needs_row_work.html" title="fn casa_imaging_runtime::pass::needs_row_work">needs_<wbr>row_<wbr>work</a></dt><dd>Whether some domain is split among several region owners
+blocks are the source’s (<a href="fn.source_block_bytes.html" title="fn casa_imaging_runtime::pass::source_block_bytes"><code>source_block_bytes</code></a>).</dd><dt><a class="fn" href="fn.needs_row_work.html" title="fn casa_imaging_runtime::pass::needs_row_work">needs_<wbr>row_<wbr>work</a></dt><dd>Whether some domain is split among several region owners
 (<a href="enum.Partition.html#method.splits_rows" title="method casa_imaging_runtime::pass::Partition::splits_rows"><code>Partition::splits_rows</code></a>), the only case a row-work pass serves.</dd><dt><a class="fn" href="fn.row_work_pass_bytes.html" title="fn casa_imaging_runtime::pass::row_work_pass_bytes">row_<wbr>work_<wbr>pass_<wbr>bytes</a></dt><dd>Bytes a row-work pass over <code>domains</code> on <code>workers</code> workers holds: each
 chunk’s histogram, allocated once at the widest measured domain’s grid
 rows; the totals it returns; each domain’s router (an owner per grid row
@@ -57,7 +57,7 @@ added in row order. It holds <a href="fn.density_pass_bytes.html" title="fn casa
 writes visibilities, every block to <code>visibilities</code>.</dd><dt><a class="fn" href="fn.run_row_work_pass.html" title="fn casa_imaging_runtime::pass::run_row_work_pass">run_<wbr>row_<wbr>work_<wbr>pass</a></dt><dd>Each domain’s gridding work by anchor row over one traversal that reads
 flags and weights only (<a href="enum.SampleContent.html#variant.FlagsAndWeights" title="variant casa_imaging_runtime::pass::SampleContent::FlagsAndWeights"><code>SampleContent::FlagsAndWeights</code></a>): every row
 is placed as a pass places it, with <code>weighting</code>, and each placement adds
-its kernel’s taps to its anchor row ([<code>Router::owner_and_work</code>]). <code>None</code>
+its kernel’s taps to its anchor row (<code>Router::owner_and_work</code>). <code>None</code>
 for a domain of plane owners. It is what a first pass measures
 (<a href="struct.PassSummary.html#structfield.row_work" title="field casa_imaging_runtime::pass::PassSummary::row_work"><code>super::PassSummary::row_work</code></a>) without reading or gridding the
 visibilities, so the first pass’s strips can be cut balanced

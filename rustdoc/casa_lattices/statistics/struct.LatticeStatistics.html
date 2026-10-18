@@ -7,13 +7,13 @@ threads for compute.</p>
 changes the execution strategy used to build the internal caches.</p>
 <h2 id="variants-1"><a class="doc-anchor" href="#variants-1">§</a>Variants</h2>
 <ul>
-<li><a href="Self::Auto"><code>Auto</code></a>: choose a strategy from the lattice type and work
+<li><a href="../enum.ExecutionPolicy.html#variant.Auto" title="variant casa_lattices::ExecutionPolicy::Auto"><code>Auto</code></a>: choose a strategy from the lattice type and work
 size. This is the default.</li>
-<li><a href="Self::Serial"><code>Serial</code></a>: use one thread and the most direct traversal.</li>
-<li><a href="Self::Pipelined"><code>Pipelined</code></a>: use one producer and one consumer thread
+<li><a href="../enum.ExecutionPolicy.html#variant.Serial" title="variant casa_lattices::ExecutionPolicy::Serial"><code>Serial</code></a>: use one thread and the most direct traversal.</li>
+<li><a href="../enum.ExecutionPolicy.html#variant.Pipelined" title="variant casa_lattices::ExecutionPolicy::Pipelined"><code>Pipelined</code></a>: use one producer and one consumer thread
 with a bounded queue. This is mainly useful for paged lattices, where the
 next tile can be read while the previous tile is being reduced.</li>
-<li><a href="Self::Parallel"><code>Parallel</code></a>: use one producer plus a worker pool. This
+<li><a href="../enum.ExecutionPolicy.html#variant.Parallel" title="variant casa_lattices::ExecutionPolicy::Parallel"><code>Parallel</code></a>: use one producer plus a worker pool. This
 combines the same I/O overlap as <code>Pipelined</code> with threaded compute.</li>
 </ul>
 <p>Explicit policies are validated against the assigned resources and amount
