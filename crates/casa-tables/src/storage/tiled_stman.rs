@@ -683,7 +683,9 @@ fn tile_storage_bytes(dt: CasacoreDataType, nrpixels: usize) -> usize {
 
 /// Compute tile layout: per-column offsets within a tile and total bucket size.
 ///
-/// C++ casacore stores tiled columns sequentially in schema order.
+/// Lays the columns out one after another in the order given. Every caller
+/// passes casacore's tile order (`tile_columns`, `TiledStMan::setup`'s
+/// descending-size sort) or a single column's type.
 fn compute_tile_layout(
     col_data_types: &[CasacoreDataType],
     tile_shape: &[usize],
