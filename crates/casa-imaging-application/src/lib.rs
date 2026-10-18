@@ -255,7 +255,7 @@ impl NativeMinorCycleStopReason {
 
 /// Run one imaging request on the installed implementation: validate it,
 /// compile it against its MeasurementSet, check once that the
-/// implementation can run it ([`Unsupported`]), and run it.
+/// implementation can run it ([`Unsupported`](availability::Unsupported)), and run it.
 ///
 /// Preparation (validation, compile, availability, admitting the source and
 /// forming the team) is the run's first phase. The context's summary target

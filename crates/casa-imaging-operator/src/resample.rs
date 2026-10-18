@@ -859,7 +859,7 @@ impl SpectralResampler {
 
     /// The most samples [`Self::place`] places for one native row of
     /// `spectrum`. Direct and nearest sampling place at most one per
-    /// channel; linear interpolation as [`linear_samples`] bounds it.
+    /// channel; linear interpolation as `linear_samples` bounds it.
     #[must_use]
     pub fn samples_per_row(&self, spectrum: RowSpectrum) -> usize {
         match self.sampling {
