@@ -242,7 +242,8 @@ existing no-cache I/O path and does not require this Linux-specific setup.
 - Release/tag-only CI-like coverage: `scripts/run-coverage.sh --ci-like`
 - GitHub Actions reproduction: `scripts/ci-local.sh pr` for pull-request jobs or `scripts/ci-local.sh tag` for version-tag jobs
 - GitHub PR CI: lint/test, editable Python package, performance-tool tests,
-  strict docs, and native GUI checks (Swift core unit tests, then the `just gui-test` interaction gate) for
+  strict docs (rustdoc with broken and private intra-doc links denied, then
+  MkDocs), and native GUI checks (Swift core unit tests, then the `just gui-test` interaction gate) for
   non-draft PRs. The required check is `gui_gate`, which passes only when
   `native_gui` actually ran and passed; it is red on drafts by design, because
   GitHub would count a skipped `native_gui` as passing

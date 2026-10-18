@@ -139,6 +139,10 @@ jobs:
           python-version: "3.12"
 
       - name: Build rustdoc
+        # A broken or private intra-doc link fails the build rather than
+        # warning (#775, #776).
+        env:
+          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D rustdoc::private_intra_doc_links
         run: cargo doc --workspace --no-deps
 
       - name: Build MkDocs site
