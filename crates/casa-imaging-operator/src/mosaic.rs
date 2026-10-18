@@ -670,7 +670,7 @@ impl MosaicPb {
     /// Half support of the cell `key` names.
     #[must_use]
     pub fn half_support(&self, key: CfKey) -> u16 {
-        self.imaging[self.index(key)].support[0] / 2
+        self.imaging[self.index(key)].support()[0] / 2
     }
 
     fn window(&self, spectral_window: u32) -> Option<&FrequencyCells> {

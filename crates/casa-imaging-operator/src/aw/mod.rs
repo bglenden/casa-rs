@@ -1265,17 +1265,17 @@ mod tests {
             [1, 1],
             2,
         );
-        assert_eq!(cell.support, [3, 3]);
-        assert_eq!(cell.mueller_planes, 2);
+        assert_eq!(cell.support(), [3, 3]);
+        assert_eq!(cell.mueller_planes(), 2);
         let tile = 9;
         // Row (ox, oy) = (0, 2): off = (−1, +1); plane 0 tap (2, 0): pixel
         // (4 + 2 − 1, 4 − 2 + 1) = (5, 3).
         let row = (2 * 3) * 2 * tile;
-        assert_eq!(cell.data[row + 2], Complex32::new(5.0, 3.0));
+        assert_eq!(cell.data()[row + 2], Complex32::new(5.0, 3.0));
         // Plane 1 in the same row, tap (2, 0): pixel (2 + 2 − 1, 2 − 2 + 1)
         // = (3, 1) of the small plane; tap (2, 2): y = 2 + 2 + 1 = 5 → outside.
-        assert_eq!(cell.data[row + tile + 2], Complex32::new(103.0, 1.0));
-        assert_eq!(cell.data[row + tile + 8], Complex32::default());
+        assert_eq!(cell.data()[row + tile + 2], Complex32::new(103.0, 1.0));
+        assert_eq!(cell.data()[row + tile + 8], Complex32::default());
     }
 
     #[test]
