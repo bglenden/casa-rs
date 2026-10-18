@@ -366,10 +366,13 @@ const RAMP_SEGMENT: usize = 32;
 /// instead chained each tap's multiply to the one before, and that chain
 /// bounded the loops: they ran 2–3× slower from 29 taps up (#449).
 ///
-/// Each multiply of two unit phasors adds about 2ε of relative error, so
-/// a tap's phasor departs from the direct one by about 2ε per multiply on
-/// its way from the first tap: `log₂` of its place in the segment, one per
-/// segment before it and one per row. That is a few 1e-15 over a 31-tap
+/// The doubling shortens the dependency chain, not the error: squaring
+/// doubles the relative error already in a power, and the step's own
+/// rounding enters `step_x^j` `j` times whatever the method. So a tap's
+/// factor carries about 2ε per tap of its place in the segment, as the walk
+/// did, plus about 2ε per segment and per row before it, besides the error
+/// of the three phasors themselves (#771 review: 13ε at `j = 31` by
+/// doubling against 12.5ε by the walk). That is a few 1e-15 over a 31-tap
 /// support, and about 1e-12 even 4,096 rows along. It is an estimate of
 /// the drift, not a bound for arbitrary supports; the direct phasor's own
 /// argument error grows with `|k·g|` instead.
@@ -427,7 +430,8 @@ struct RampSegment {
 impl RampSegment {
     /// The factors by doubling: those filled so far times the next power
     /// `step_x^{2^k}`, so the fill is `log₂ width` multiplies deep rather
-    /// than `width`, which a small support's sample would wait on.
+    /// than `width`, which a small support's sample would wait on. Its
+    /// error is the walk's ([`PointingRamp`]).
     fn new(ramp: &PointingRamp, width: usize) -> Self {
         let width = width.min(RAMP_SEGMENT);
         let mut factors = [Complex64::new(1.0, 0.0); RAMP_SEGMENT];

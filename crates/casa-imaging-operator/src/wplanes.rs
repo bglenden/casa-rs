@@ -494,7 +494,7 @@ impl WPlanes {
     /// Half support of plane `plane`.
     #[must_use]
     pub fn half_support(&self, plane: usize) -> u16 {
-        self.planes[plane].support[0] / 2
+        self.planes[plane].support()[0] / 2
     }
 }
 

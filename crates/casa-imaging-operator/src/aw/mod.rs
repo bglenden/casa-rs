@@ -609,11 +609,11 @@ impl AwCatalog {
     /// group is loaded once, so the cells are at most every group (#738).
     /// Otherwise they are the bound and one group past it, which a fetch
     /// inserts before the cache evicts, and for each holder the largest
-    /// group three times: the two its [`CellHold`]s keep alive after
-    /// eviction, a gridding group's and a prediction group's (a CPU
-    /// residual holds both, #449), and the one it builds outside the
-    /// cache's lock beside them (#744). Every loaded cell is also its
-    /// [`Arc`] (#745 review).
+    /// group twice. A CPU residual holds a gridding cell and a prediction
+    /// cell (#449), and either keeps both alive after eviction, or one
+    /// beside the group it builds outside the cache's lock for the other
+    /// (#744): a [`CellHold`] releases its own cell before it fetches
+    /// (#773 review). Every loaded cell is also its [`Arc`] (#745 review).
     #[must_use]
     pub fn charge_bytes(&self, holders: usize) -> u64 {
         let lru = self.lru.lock().expect("cache lock");
@@ -661,8 +661,8 @@ impl AwCatalog {
             (every, groups)
         } else {
             (
-                bound + (3 * holders as u64 + 1) * largest,
-                groups + 3 * holders as u64 + 1,
+                bound + (2 * holders as u64 + 1) * largest,
+                groups + 2 * holders as u64 + 1,
             )
         };
         let serving = taps + pairs * 2 * ARC_CELL_BYTES as u64 + holders as u64 * reading;
@@ -1267,17 +1267,17 @@ mod tests {
             [1, 1],
             2,
         );
-        assert_eq!(cell.support, [3, 3]);
-        assert_eq!(cell.mueller_planes, 2);
+        assert_eq!(cell.support(), [3, 3]);
+        assert_eq!(cell.mueller_planes(), 2);
         let tile = 9;
         // Row (ox, oy) = (0, 2): off = (−1, +1); plane 0 tap (2, 0): pixel
         // (4 + 2 − 1, 4 − 2 + 1) = (5, 3).
         let row = (2 * 3) * 2 * tile;
-        assert_eq!(cell.data[row + 2], Complex32::new(5.0, 3.0));
+        assert_eq!(cell.data()[row + 2], Complex32::new(5.0, 3.0));
         // Plane 1 in the same row, tap (2, 0): pixel (2 + 2 − 1, 2 − 2 + 1)
         // = (3, 1) of the small plane; tap (2, 2): y = 2 + 2 + 1 = 5 → outside.
-        assert_eq!(cell.data[row + tile + 2], Complex32::new(103.0, 1.0));
-        assert_eq!(cell.data[row + tile + 8], Complex32::default());
+        assert_eq!(cell.data()[row + tile + 2], Complex32::new(103.0, 1.0));
+        assert_eq!(cell.data()[row + tile + 8], Complex32::default());
     }
 
     #[test]
