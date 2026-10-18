@@ -299,23 +299,55 @@ fn aw_request_with(size: usize, frequencies: usize, w_planes: usize) -> NativeAw
     }
 }
 
-/// #738: native generation holds at most what the run admits for it
-/// ([`AwCatalog::generation_bytes`]), on two working grids.
+/// #738, #708: native generation holds at most what the run admits for it
+/// ([`AwCatalog::generation_bytes`]), on two working grids, on one worker
+/// and on four, each of which generates one aperture's cells.
 #[test]
 fn native_generation_holds_at_most_its_charge() {
     let _measurement = MEASUREMENT.lock().expect("measurement lock");
-    for size in [64, 256] {
+    for (size, workers) in [(64, 1), (64, 4), (256, 1), (256, 4)] {
         let request = aw_request(size);
         let root = tempfile::tempdir().expect("cache directory");
         let (peak, _, generated) =
-            measure(|| AwCatalog::generate_native(root.path(), &request, false));
+            measure(|| AwCatalog::generate_native(root.path(), &request, false, workers));
         generated.expect("generate");
-        let charge = AwCatalog::generation_bytes(&request);
-        eprintln!("working grid {size}: held {peak}, charged {charge}");
+        let charge = AwCatalog::generation_bytes(&request, workers);
+        eprintln!("working grid {size}, {workers} workers: held {peak}, charged {charge}");
         assert!(
             peak <= charge,
-            "working grid {size}: generation held {peak}, charged {charge}"
+            "working grid {size}, {workers} workers: generation held {peak}, charged {charge}"
         );
+    }
+}
+
+/// #747 review: generation's bookkeeping grows with the request, and is
+/// charged. Requests of 16 frequencies and 512 or 2,048 w planes, 16,384
+/// (the review's probe) and 65,536 cells, whose flat dish fails at its
+/// first cell: on one worker and on four, from a cleared directory and as a
+/// fill, which first checks the directory's state, generation holds at most
+/// its charge.
+#[test]
+fn generation_of_a_large_request_holds_at_most_its_charge() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    for w_planes in [512, 2048] {
+        let mut request = aw_request_with(64, 16, w_planes);
+        request.surface =
+            EvlaDishSurface::new((0..=125).map(|i| [f64::from(i) / 10.0, 0.0, 0.0]).collect())
+                .expect("a valid surface");
+        for (only_missing, workers) in [(false, 1), (false, 4), (true, 1), (true, 4)] {
+            let root = tempfile::tempdir().expect("cache directory");
+            let (peak, _, generated) = measure(|| {
+                AwCatalog::generate_native(root.path(), &request, only_missing, workers)
+            });
+            assert!(generated.is_err(), "a flat dish has no aperture");
+            let charge = AwCatalog::generation_bytes(&request, workers);
+            let case = format!("{w_planes} w planes, fill {only_missing}, {workers} workers");
+            eprintln!("{case}: held {peak}, charged {charge}");
+            assert!(
+                peak <= charge,
+                "{case}: generation held {peak}, charged {charge}"
+            );
+        }
     }
 }
 
@@ -330,6 +362,7 @@ fn an_aw_catalog_holds_at_most_its_charge() {
             root.path(),
             &aw_request_with(64, frequencies, w_planes),
             false,
+            4,
         )
         .expect("generate");
         catalog_holds_at_most_its_charge(root.path());

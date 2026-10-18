@@ -521,35 +521,40 @@ impl AwPlan {
         self,
         admission: (&crate::HostResources, &crate::ResourcePolicy),
     ) -> Result<AwCatalogDeployment, PrepareError> {
-        let lock = match &self.native {
-            Some((policy, input)) => Some(Arc::new(self.bring_native(*policy, input, admission)?)),
-            None => None,
+        let (lock, generation_workers) = match &self.native {
+            Some((policy, input)) => {
+                let (lock, workers) = self.bring_native(*policy, input, admission)?;
+                (Some(Arc::new(lock)), workers)
+            }
+            None => (None, None),
         };
         Ok(AwCatalogDeployment {
             root: self.root,
             indexing: self.indexing,
             resident_bytes: self.resident_bytes,
             _lock: lock,
+            generation_workers,
         })
     }
 
     /// Bring the native cache to `policy` for `input` and return the shared
-    /// lock the run keeps while it reads it ([`Self::deploy`]).
+    /// lock the run keeps while it reads it ([`Self::deploy`]), and the
+    /// workers that generated cells, if any did.
     fn bring_native(
         &self,
         policy: NativeAwCachePolicy,
         input: &NativeAwRequestInput,
         (host, resources): (&crate::HostResources, &crate::ResourcePolicy),
-    ) -> Result<NativeCacheLock, PrepareError> {
+    ) -> Result<(NativeCacheLock, Option<usize>), PrepareError> {
         let root = &self.root;
         let shared = NativeCacheLock::shared(root)?;
         let state = AwCatalog::native_cache_state(root, input)?;
         let fill = match policy {
-            NativeAwCachePolicy::ReuseOnly if state.reusable() => return Ok(shared),
+            NativeAwCachePolicy::ReuseOnly if state.reusable() => return Ok((shared, None)),
             NativeAwCachePolicy::ReuseOnly => {
                 return Err(PrepareError::AwCacheNotReusable { state });
             }
-            NativeAwCachePolicy::GenerateMissing if state.reusable() => return Ok(shared),
+            NativeAwCachePolicy::GenerateMissing if state.reusable() => return Ok((shared, None)),
             NativeAwCachePolicy::GenerateMissing if state.fillable() => true,
             NativeAwCachePolicy::GenerateMissing => {
                 tracing::warn!(
@@ -563,15 +568,33 @@ impl AwPlan {
         };
         drop(shared);
         let exclusive = NativeCacheLock::exclusive(root)?;
+        // The most workers, up to the policy's and one per cell to generate,
+        // whose workspaces fit what the policy leaves free (#708); one when
+        // none does, which admission then refuses. Generation gives each of
+        // them a unit (#747 review).
+        let cells = if fill {
+            state.expected - state.present
+        } else {
+            state.expected
+        };
+        let free = casa_imaging_runtime::free_memory(host, resources);
+        let workers = (1..=resources.workers(host).min(cells))
+            .rev()
+            .find(|&workers| AwCatalog::generation_bytes(input, workers) <= free)
+            .unwrap_or(1);
         let generating = casa_imaging_runtime::admit(
             host,
             resources,
             &casa_imaging_runtime::Demand {
                 phase: "native AW generation",
-                memory: AwCatalog::generation_bytes(input),
+                memory: AwCatalog::generation_bytes(input, workers),
             },
         )?;
-        AwCatalog::generate_native(root, input, fill)?;
+        tracing::info!(
+            "generating {cells} native AW cells into {} on {workers} workers",
+            root.display()
+        );
+        AwCatalog::generate_native(root, input, fill, workers)?;
         drop(generating);
         drop(exclusive);
         let shared = NativeCacheLock::shared(root)?;
@@ -580,7 +603,7 @@ impl AwPlan {
             // Another run replaced the cache between our write and our read.
             return Err(PrepareError::AwCacheNotReusable { state });
         }
-        Ok(shared)
+        Ok((shared, Some(workers)))
     }
 }
 

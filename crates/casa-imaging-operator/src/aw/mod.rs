@@ -8,13 +8,14 @@
 
 mod cell_image;
 mod evla;
+mod generation;
 mod native;
 mod native_cache;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use casa_imaging_model::{CorrelationType, EvlaAwCellRequest, NativeAwRequestInput};
+use casa_imaging_model::{CorrelationType, NativeAwRequestInput};
 use num_complex::Complex32;
 use thiserror::Error;
 
@@ -22,10 +23,10 @@ pub use evla::{EvlaApertureGrid, EvlaApertureModel};
 pub use native::{EvlaAwWorkspace, NativeAwPair, NativeAwPlane};
 pub use native_cache::{NativeCacheLock, NativeCacheState, NativeManifest};
 
-use cell_image::{CellMisc, load_group, read_header, write_cell};
 #[cfg(test)]
 use cell_image::{cf_area, dense_cell_padded};
-use native_cache::{STAGING_PREFIX, cell_suffix, write_manifest};
+use cell_image::{load_group, read_header};
+use native_cache::{STAGING_PREFIX, write_manifest};
 
 use crate::convolution::{
     CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
@@ -443,18 +444,28 @@ impl AwCatalog {
         })
     }
 
-    /// Heap bytes [`Self::generate_native`] holds at most for `input`
-    /// (#738): the working grid ([`EvlaAwWorkspace::bytes`]), planning its
-    /// transform, and the cell image being written: a crop of the working
-    /// grid at most as wide, as its pixel array and the copy the image
-    /// takes of it, and the image's table and records (16 KiB).
+    /// Heap bytes [`Self::generate_native`] holds at most for `input` on
+    /// `workers` workers (#738, #708): for each worker, the working grid
+    /// ([`EvlaAwWorkspace::bytes`]) and the cell image being written (a crop
+    /// of the working grid at most as wide, as its pixel array and the copy
+    /// the image takes of it, and the image's table and records, 16 KiB);
+    /// planning the grid's transform, which the process does one at a time
+    /// and then caches for every workspace; and the bookkeeping that grows
+    /// with the request (#747 review): the work list, two presence bits per
+    /// cell for the state a fill checks first, and the request manifest.
     #[must_use]
-    pub const fn generation_bytes(input: &NativeAwRequestInput) -> u64 {
+    pub const fn generation_bytes(input: &NativeAwRequestInput, workers: usize) -> u64 {
+        let workers = if workers > 1 { workers } else { 1 };
         let cells = input.grid.size * input.grid.size;
-        (EvlaAwWorkspace::bytes(input.grid.size)
+        let worker = EvlaAwWorkspace::bytes(input.grid.size)
             + 2 * cells * size_of::<Complex32>()
-            + CELL_IMAGE_RECORD_BYTES) as u64
-            + casa_fft::planning_bytes::<f32>(cells)
+            + CELL_IMAGE_RECORD_BYTES;
+        let apertures =
+            input.pa_values.len() * input.frequencies.len() * input.mueller_elements.len();
+        let bookkeeping = generation::units_bytes(apertures, workers)
+            + native_cache::cache_state_bytes(input)
+            + native_cache::manifest_bytes(input);
+        (workers * worker + bookkeeping) as u64 + casa_fft::planning_bytes::<f32>(cells)
     }
 
     /// Generate every cell of `input` natively into `root` as CASA-format
@@ -472,6 +483,9 @@ impl AwCatalog {
     /// request it does not hold (#739 review). The caller holds the
     /// exclusive [`NativeCacheLock`].
     ///
+    /// The cells are generated on up to `workers` threads, each with its
+    /// own workspace, and are the cells one worker generates (#708).
+    ///
     /// # Errors
     ///
     /// Generation fails or an image cannot be written, or `only_missing`
@@ -480,6 +494,7 @@ impl AwCatalog {
         root: impl AsRef<Path>,
         input: &NativeAwRequestInput,
         only_missing: bool,
+        workers: usize,
     ) -> Result<(), AwCatalogError> {
         let root = root.as_ref();
         if only_missing {
@@ -495,75 +510,8 @@ impl AwCatalog {
         }
         std::fs::create_dir_all(root)
             .map_err(|error| cache_error(root, format!("cannot create: {error}")))?;
-        let model = EvlaApertureModel::new(input.surface.clone());
-        let grid = input.grid;
-        let mut workspace: Option<EvlaAwWorkspace> = None;
-        for (ipa, &pa) in input.pa_values.iter().enumerate() {
-            for (inu, group) in input.frequencies.iter().enumerate() {
-                let frequency = group.cf_frequency_hz;
-                let conjugate = conjugate_frequency(frequency, input.reference_frequency_hz);
-                // `AWConvFunc::makeConvFunction2`: the conjugate beam uses the
-                // nearest listed frequency to `√(2f₀² − f²)`, the first on a tie
-                // (`SynthesisUtils::nearestValue`).
-                let conjugate_frequency = if input.terms.conjugate_beams {
-                    nearest(
-                        &input
-                            .frequencies
-                            .iter()
-                            .map(|group| group.cf_frequency_hz)
-                            .collect::<Vec<_>>(),
-                        conjugate,
-                    )
-                    .1
-                } else {
-                    frequency
-                };
-                // Only the W screen depends on w: the aperture and the weight
-                // cell are formed once per (PA, frequency, Mueller element).
-                for (im, &mueller) in input.mueller_elements.iter().enumerate() {
-                    for (iw, &w) in input.w_values.iter().enumerate() {
-                        let suffix = cell_suffix(ipa, inu, iw, im);
-                        let imaging_path = root.join(format!("{IMAGING_PREFIX}{suffix}"));
-                        let weight_path = root.join(format!("{WEIGHT_PREFIX}{suffix}"));
-                        if only_missing && imaging_path.is_dir() && weight_path.is_dir() {
-                            continue;
-                        }
-                        let request = EvlaAwCellRequest {
-                            size: grid.size,
-                            sky_increment_rad: grid.sky_increment_rad,
-                            frequency_hz: frequency,
-                            conjugate_frequency_hz: conjugate_frequency,
-                            w_wavelengths: w,
-                            parallactic_angle_rad: pa,
-                            mueller,
-                            oversampling: grid.oversampling,
-                            prolate_spheroidal: input.terms.prolate_spheroidal,
-                            aperture: input.terms.aperture,
-                        };
-                        let workspace = match &mut workspace {
-                            Some(workspace) => workspace,
-                            None => workspace.insert(EvlaAwWorkspace::new(model.clone(), request)?),
-                        };
-                        workspace.prepare(request)?;
-                        let pair = workspace.realize(request)?;
-                        let misc = CellMisc {
-                            sampling: grid.oversampling as f64,
-                            pa_deg: pa.to_degrees(),
-                            mueller,
-                            w_value: w,
-                            w_increment: input.w_increment,
-                            conjugate_frequency,
-                            conjugate_mueller: MUELLER_ELEMENTS - 1 - mueller as u32,
-                            diameter_m: input.antenna_diameter_m,
-                            sky_increment_rad: grid.sky_increment_rad[1].abs(),
-                            working_size: grid.size,
-                        };
-                        write_cell(&imaging_path, &pair.imaging, frequency, grid, &misc)?;
-                        write_cell(&weight_path, &pair.weight, frequency, grid, &misc)?;
-                    }
-                }
-            }
-        }
+        let units = generation::units(root, input, only_missing, workers);
+        generation::generate(root, input, &units, only_missing, workers)?;
         write_manifest(root, input)
     }
 
