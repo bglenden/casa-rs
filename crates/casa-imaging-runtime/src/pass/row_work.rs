@@ -69,7 +69,7 @@ pub fn row_work_pass_bytes(domains: &[PassDomain<'_>], workers: usize) -> u64 {
 /// Each domain's gridding work by anchor row over one traversal that reads
 /// flags and weights only ([`SampleContent::FlagsAndWeights`]): every row
 /// is placed as a pass places it, with `weighting`, and each placement adds
-/// its kernel's taps to its anchor row ([`Router::owner_and_work`]). `None`
+/// its kernel's taps to its anchor row (`Router::owner_and_work`). `None`
 /// for a domain of plane owners. It is what a first pass measures
 /// ([`super::PassSummary::row_work`]) without reading or gridding the
 /// visibilities, so the first pass's strips can be cut balanced

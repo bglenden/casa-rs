@@ -174,13 +174,13 @@ pub enum Statistic {
 ///
 /// # Variants
 ///
-/// - [`Auto`](Self::Auto): choose a strategy from the lattice type and work
+/// - [`Auto`](crate::ExecutionPolicy::Auto): choose a strategy from the lattice type and work
 ///   size. This is the default.
-/// - [`Serial`](Self::Serial): use one thread and the most direct traversal.
-/// - [`Pipelined`](Self::Pipelined): use one producer and one consumer thread
+/// - [`Serial`](crate::ExecutionPolicy::Serial): use one thread and the most direct traversal.
+/// - [`Pipelined`](crate::ExecutionPolicy::Pipelined): use one producer and one consumer thread
 ///   with a bounded queue. This is mainly useful for paged lattices, where the
 ///   next tile can be read while the previous tile is being reduced.
-/// - [`Parallel`](Self::Parallel): use one producer plus a worker pool. This
+/// - [`Parallel`](crate::ExecutionPolicy::Parallel): use one producer plus a worker pool. This
 ///   combines the same I/O overlap as `Pipelined` with threaded compute.
 ///
 /// Explicit policies are validated against the assigned resources and amount

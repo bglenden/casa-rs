@@ -152,6 +152,9 @@ mod t55_c_array_turnaround;
 #[path = "continuum_application/t55_mfs_pilot.rs"]
 mod t55_mfs_pilot;
 
+#[path = "continuum_application/workers.rs"]
+mod workers;
+
 #[test]
 fn unsupported_primary_beam_frequency_rejects_in_preparation() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
