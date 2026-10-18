@@ -11,7 +11,8 @@ use casa_imaging_operator::{
 use super::{BackendChoice, BlockShape, PassDomain};
 
 /// The gridding work of one placement besides its taps, in taps, which
-/// region strips are balanced on ([`Router::owner_and_work`]).
+/// region strips are balanced on: each placement adds its kernel's taps
+/// and this to its anchor row's work (`Router::owner_and_work`).
 ///
 /// A placement costs more than its taps in proportion. Most of the excess
 /// is in the tap loops themselves: each spread and gather call sets up the
@@ -25,13 +26,18 @@ use super::{BackendChoice, BlockShape, PassDomain};
 /// takes longest.
 ///
 /// The value is fitted to the region owners of B3's residual passes on
-/// the M4 (#449): busy time `a · taps + b · placements`, with `a` about
-/// 7.6 ns per tap and `b` about 1.3 µs per placement, from owners holding
-/// equal taps and 1.07, 3.63 and 1.73 million placements. The fit predicts
-/// the third owner to 1%. With every AW cell kept resident it still
-/// balances them to 5%. A cheaper small-support path in the kernels would
-/// lower it. A constant with one kernel size throughout (the spheroidal
-/// or a mosaic's) moves no strip boundary.
+/// the M4's CPU backend in `f64` (#449): busy time
+/// `a · taps + b · placements`, with `a` about 7.6 ns per tap and `b`
+/// about 1.3 µs per placement, from owners holding equal taps and 1.07,
+/// 3.63 and 1.73 million placements. The fit predicts the third owner to
+/// 1%. With every AW cell kept resident it still balances them to 5%. It
+/// is a property of the tap loops, not of the problem: a cheaper
+/// small-support path would lower it, so refit it when they change. Metal
+/// region passes use it too, unmeasured; any positive value is nearer
+/// their cost than none wherever kernel sizes vary. A constant with one
+/// kernel size throughout (the spheroidal or a mosaic's) scales every
+/// row's work alike and moves no strip boundary, since
+/// [`Partition::regions_balanced`] compares the work exactly.
 pub const PLACEMENT_WORK: u64 = 170;
 
 /// How one pass divides an image domain's grid accumulation among owners
@@ -89,6 +95,8 @@ impl Partition {
     /// centre, so strips of equal height leave most of the work to the
     /// middle owners (#736). Each strip keeps at least one row. Work that
     /// does not cover the grid, or holds none, gives [`Self::regions`].
+    /// Boundaries are found in exact integer arithmetic, so work scaled by
+    /// one factor throughout cuts the same strips (#774 review).
     #[must_use]
     pub fn regions_balanced(
         operator: &MeasurementOperator,
@@ -111,8 +119,11 @@ impl Partition {
         let mut bounds = Vec::with_capacity(owners + 1);
         bounds.push(0);
         for owner in 1..owners {
-            let share = total * owner as u128 / owners as u128;
-            let row = before.partition_point(|&work| work < share);
+            // The first row whose work above reaches `owner / owners` of the
+            // total, compared exactly, `work · owners < total · owner`, so
+            // that scaling every row's work moves no boundary (#774 review).
+            let (share, owners_wide) = (total * owner as u128, owners as u128);
+            let row = before.partition_point(|&work| work * owners_wide < share);
             let previous = *bounds.last().expect("the first bound");
             bounds.push(row.clamp(previous + 1, ny - (owners - owner)));
         }
@@ -726,6 +737,31 @@ mod tests {
             ]
         );
         assert_eq!(Residency::All.waves(5), vec![PlaneRange::new(0, 5)]);
+    }
+
+    /// #774 review: scaling every row's work by one factor, as one kernel
+    /// size throughout does with or without [`PLACEMENT_WORK`], moves no
+    /// strip boundary, even with many owners over a sparse histogram (one
+    /// 7 × 7 placement on each of rows 16 to 66, the reviewer's case).
+    #[test]
+    fn scaled_work_cuts_the_same_strips() {
+        let operator = spheroidal_operator();
+        let ny = operator.geometry().grid_shape()[1];
+        assert!(ny > 66, "the sparse rows fit the grid");
+        let sparse = |per: u64| {
+            (0..ny)
+                .map(|row| if (16..=66).contains(&row) { per } else { 0 })
+                .collect::<Vec<_>>()
+        };
+        for owners in [2, 3, 7, 16, 32, 49, 50] {
+            let taps = rows_of(&Partition::regions_balanced(&operator, owners, &sparse(49)));
+            let worked = rows_of(&Partition::regions_balanced(
+                &operator,
+                owners,
+                &sparse(49 + PLACEMENT_WORK),
+            ));
+            assert_eq!(taps, worked, "{owners} owners over {ny} rows");
+        }
     }
 
     /// #449: a placement's work is its kernel's taps and [`PLACEMENT_WORK`],
