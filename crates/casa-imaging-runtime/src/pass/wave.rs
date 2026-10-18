@@ -28,6 +28,9 @@ struct Owner<'w> {
     acc: Option<GridAccumulator>,
     backend: OwnerBackend<'w>,
     images: Option<NormalImages>,
+    /// Time the owner spent accumulating in the wave, which a region pass
+    /// reports beside its strips (#736).
+    busy: std::time::Duration,
 }
 
 impl Owner<'_> {
@@ -57,6 +60,10 @@ struct Domain<'w> {
     router: Router,
     owners: Vec<Owner<'w>>,
     model: Option<&'w PreparedModelGrids>,
+    /// The wave's gridding work by anchor row when the domain is split into
+    /// regions ([`Router::owner_and_work`]), for later passes' boundaries
+    /// ([`Partition::regions_balanced`]).
+    row_work: Option<Vec<u64>>,
 }
 
 /// One row chunk's placements on the wave's planes, by owner, and its
@@ -77,6 +84,10 @@ struct Chunk {
     weight_owned: SampleBuffer,
     placed: u64,
     prediction: PredictionScratch,
+    /// The gridding work of the chunk's placements by anchor row, on a
+    /// region-partitioned domain ([`Router::owner_and_work`]); merged into
+    /// the domain's after each slice.
+    row_work: Vec<u64>,
 }
 
 /// The largest chunk of a wave over blocks of `block`: at most
@@ -109,15 +120,22 @@ struct ChunkShape {
     /// ([`SpectralResampler::prediction_scratch`]) with each row's span in
     /// it.
     prediction: u64,
+    /// Grid rows of the region-partitioned domain with the most: the
+    /// length of the chunk's work histogram ([`Chunk::row_work`]).
+    grid_rows: usize,
 }
 
 impl ChunkShape {
+    /// The chunk of `chunks` chunks over blocks of `block`, each taking at
+    /// most `placements` placements before the owner scaling of
+    /// [`chunk_placements`].
     fn new(
         domains: &[PassDomain<'_>],
         block: BlockShape,
         weight: bool,
         sourced: bool,
         chunks: usize,
+        placements: usize,
     ) -> Self {
         let row = domains
             .iter()
@@ -129,7 +147,12 @@ impl ChunkShape {
             .map(|domain| domain.partition.owners())
             .max()
             .unwrap_or(1);
-        let rows = chunk_rows(row, block.rows, chunks, chunk_placements(owners));
+        let rows = chunk_rows(
+            row,
+            block.rows,
+            chunks,
+            chunk_placements(placements, owners),
+        );
         Self {
             row,
             rows,
@@ -156,6 +179,12 @@ impl ChunkShape {
                 block.channels(),
                 rows,
             ),
+            grid_rows: domains
+                .iter()
+                .filter(|domain| domain.partition.splits_rows())
+                .map(|domain| domain.operator.geometry().grid_shape()[1])
+                .max()
+                .unwrap_or(0),
         }
     }
 
@@ -184,11 +213,12 @@ impl ChunkShape {
     }
 
     /// Bytes a chunk of this shape holds: each owner's and the weight
-    /// owner's placements and its prediction batch.
+    /// owner's placements, its prediction batch and its work histogram.
     const fn bytes(self) -> u64 {
         self.owners as u64 * self.buffer_bytes(self.placements)
             + SampleBuffer::bytes(self.npol, self.weight_placements())
             + self.prediction
+            + (self.grid_rows * size_of::<u64>()) as u64
     }
 }
 
@@ -236,6 +266,7 @@ impl Chunk {
                 shape.channels,
                 shape.rows,
             ),
+            row_work: Vec::with_capacity(shape.grid_rows),
         }
     }
 
@@ -248,6 +279,7 @@ impl Chunk {
             .sum::<u64>()
             + self.weight_owned.capacity_bytes()
             + self.prediction.capacity_bytes()
+            + (self.row_work.capacity() * size_of::<u64>()) as u64
     }
 }
 
@@ -264,7 +296,7 @@ const fn chunks(workers: usize) -> usize {
 /// keep their batch's predictions, and each owner of a pass forming
 /// residuals at native channels the residual values of a chunk's
 /// placements ([`CpuBackend::batch_bytes`]). They grow with the source's
-/// block only up to [`CHUNK_PLACEMENTS`](super::CHUNK_PLACEMENTS) a chunk.
+/// block only up to `placements` a chunk.
 pub(super) fn chunk_bytes(
     domains: &[PassDomain<'_>],
     backend: BackendChoice,
@@ -272,10 +304,11 @@ pub(super) fn chunk_bytes(
     workers: usize,
     weight: bool,
     with_model: bool,
+    placements: usize,
 ) -> u64 {
     let count = chunks(workers);
     let sourced = super::native_residuals(domains, with_model);
-    let shape = ChunkShape::new(domains, block, weight, sourced, count);
+    let shape = ChunkShape::new(domains, block, weight, sourced, count, placements);
     let device = match backend {
         BackendChoice::Cpu if with_model => {
             let owners = if sourced {
@@ -332,6 +365,18 @@ pub(super) struct Wave<'w, 'p> {
     weights: Option<(&'w WeightCache, bool)>,
     /// The slot of the next block's first sample.
     weight_base: usize,
+    /// Wall time in the wave's stages: predicting the native model,
+    /// placing samples on the chunks, and accumulating them by owner;
+    /// reported beside a region pass's strips (#736).
+    stages: WaveStages,
+}
+
+/// Wall time of a wave's stages ([`Wave::stages`]).
+#[derive(Clone, Copy, Default)]
+struct WaveStages {
+    predicting: std::time::Duration,
+    placing: std::time::Duration,
+    accumulating: std::time::Duration,
 }
 
 impl<'w, 'p> Wave<'w, 'p> {
@@ -354,6 +399,7 @@ impl<'w, 'p> Wave<'w, 'p> {
             pass.modes.weight,
             native_residuals,
             count,
+            pass.chunk_placements,
         );
         let domains = pass
             .domains
@@ -372,6 +418,7 @@ impl<'w, 'p> Wave<'w, 'p> {
                                 ),
                                 backend: OwnerBackend::Cpu(CpuBackend::new()),
                                 images: None,
+                                busy: std::time::Duration::ZERO,
                             },
                             BackendChoice::Metal => {
                                 assert_eq!(
@@ -388,15 +435,21 @@ impl<'w, 'p> Wave<'w, 'p> {
                                             .with_deferred_grid_completion(),
                                     )),
                                     images: None,
+                                    busy: std::time::Duration::ZERO,
                                 }
                             }
                         })
                     })
                     .collect::<Result<_, PassError>>()?;
+                let row_work = domain
+                    .partition
+                    .splits_rows()
+                    .then(|| vec![0; operator.geometry().grid_shape()[1]]);
                 Ok(Domain {
                     router,
                     owners,
                     model: models.map(|models| &models[index]),
+                    row_work,
                 })
             })
             .collect::<Result<_, PassError>>()?;
@@ -432,6 +485,7 @@ impl<'w, 'p> Wave<'w, 'p> {
             samples: 0,
             weights: pass.weight_cache().map(|cache| (cache, cache.filled())),
             weight_base: 0,
+            stages: WaveStages::default(),
         })
     }
 
@@ -512,7 +566,9 @@ impl<'w, 'p> Wave<'w, 'p> {
                     chunk.rows = rows;
                     count += 1;
                 }
+                let started = std::time::Instant::now();
                 self.predict(block, team, count, slice, ordered)?;
+                self.stages.predicting += started.elapsed();
             }
         }
         if let Some(sink) = visibilities {
@@ -569,12 +625,18 @@ impl<'w, 'p> Wave<'w, 'p> {
         // A row's kept weights, at its slots from the block's (one domain).
         let weights = self.weights.filter(|_| index == 0);
         let weight_base = self.weight_base;
+        let grid_rows = domain.row_work.as_ref().map(Vec::len);
+        let placing = std::time::Instant::now();
         team.for_each_mut(&mut self.chunks[..count], |_, chunk| {
             chunk.placed = 0;
             chunk.owned[..owners]
                 .iter_mut()
                 .for_each(SampleBuffer::clear);
             chunk.weight_owned.clear();
+            chunk.row_work.clear();
+            if let Some(rows) = grid_rows {
+                chunk.row_work.resize(rows, 0);
+            }
             for position in chunk.rows.clone() {
                 let row_index = row_at(block, ordered, position);
                 let native = block.row(index, row_index);
@@ -582,8 +644,12 @@ impl<'w, 'p> Wave<'w, 'p> {
                     cache.row(weight_base + row_index * channels, channels, filled)
                 });
                 let mut row_samples = 0;
-                let (owned, weight_owned, placed) =
-                    (&mut chunk.owned, &mut chunk.weight_owned, &mut chunk.placed);
+                let (owned, weight_owned, placed, row_work) = (
+                    &mut chunk.owned,
+                    &mut chunk.weight_owned,
+                    &mut chunk.placed,
+                    &mut chunk.row_work,
+                );
                 let mut keep = |placement: &Placement, values: &[Complex32], weights: &[f32]| {
                     row_samples += 1;
                     if !planes.contains(placement.plane) {
@@ -593,7 +659,13 @@ impl<'w, 'p> Wave<'w, 'p> {
                         weight_owned.push(*placement, values, weights);
                     }
                     *placed += 1;
-                    Some(router.owner(target.operator, placement))
+                    let (owner, work) = router.owner_and_work(target.operator, placement);
+                    if let Some((row, work)) = work
+                        && let Some(total) = row_work.get_mut(row)
+                    {
+                        *total += work;
+                    }
+                    Some(owner)
                 };
                 if native_residuals {
                     target.resampler.place_each_sourced(
@@ -634,6 +706,15 @@ impl<'w, 'p> Wave<'w, 'p> {
             Ok::<_, PassError>(())
         })?;
         let chunks = &self.chunks[..count];
+        if let Some(total) = &mut domain.row_work {
+            for chunk in chunks {
+                for (total, work) in total.iter_mut().zip(&chunk.row_work) {
+                    *total += work;
+                }
+            }
+        }
+        self.stages.placing += placing.elapsed();
+        let accumulating = std::time::Instant::now();
         let model = domain.model.filter(|_| !native_residuals);
         let native = native_residuals.then(|| match &self.predictions {
             NativeStore::Host(cells) => NativeModel::Host { cells, first: 0 },
@@ -641,6 +722,7 @@ impl<'w, 'p> Wave<'w, 'p> {
         });
         let weight_owner = router.weight_owner();
         team.for_each_mut(&mut domain.owners, |owner_index, owner| {
+            let started = std::time::Instant::now();
             let acc = owner
                 .acc
                 .as_mut()
@@ -689,8 +771,10 @@ impl<'w, 'p> Wave<'w, 'p> {
                     }
                 }
             }
+            owner.busy += started.elapsed();
             Ok::<_, PassError>(())
         })?;
+        self.stages.accumulating += accumulating.elapsed();
         Ok(chunks.iter().map(|chunk| chunk.placed).sum())
     }
 
@@ -819,6 +903,15 @@ impl<'w, 'p> Wave<'w, 'p> {
         }
     }
 
+    /// Each domain's gridding work by anchor row, when it is split into
+    /// regions; taken once, before [`Self::finish`].
+    pub(super) fn take_row_work(&mut self) -> Vec<Option<Vec<u64>>> {
+        self.domains
+            .iter_mut()
+            .map(|domain| domain.row_work.take())
+            .collect()
+    }
+
     /// Transform the accumulated grids into this wave's normal images, one
     /// per domain.
     pub(super) fn finish(mut self, team: &WorkerTeam) -> Result<Vec<NormalImages>, PassError> {
@@ -835,7 +928,10 @@ impl<'w, 'p> Wave<'w, 'p> {
         }
         let pass = self.pass;
         let planes = self.planes;
-        self.domains
+        let stages = self.stages;
+        let transforming = std::time::Instant::now();
+        let images = self
+            .domains
             .into_iter()
             .zip(pass.domains)
             .map(|(mut domain, target)| {
@@ -854,7 +950,7 @@ impl<'w, 'p> Wave<'w, 'p> {
                                 .map(|owner| owner.images.expect("every owner finished")),
                         ))
                     }
-                    Partition::Regions { .. } => {
+                    Partition::Regions { regions, .. } => {
                         // One owner's tile is the whole grid (`Partition::regions`
                         // gives a lone region every row): it is the sum, and
                         // `finish` refuses a tile. The charge keys on the same
@@ -864,6 +960,19 @@ impl<'w, 'p> Wave<'w, 'p> {
                             drop(domain.owners);
                             return Ok(operator.finish(acc)?);
                         }
+                        // How evenly the strips shared the gridding (#736).
+                        tracing::info!(
+                            "region owners: rows {:?}, accumulating {:?} s",
+                            regions
+                                .iter()
+                                .map(|region| region.rows.clone())
+                                .collect::<Vec<_>>(),
+                            domain
+                                .owners
+                                .iter()
+                                .map(|owner| (owner.busy.as_secs_f64() * 10.0).round() / 10.0)
+                                .collect::<Vec<_>>(),
+                        );
                         let mut merged =
                             pass.summing(operator.accumulator(planes, None, pass.modes));
                         for owner in &domain.owners {
@@ -875,7 +984,16 @@ impl<'w, 'p> Wave<'w, 'p> {
                     }
                 }
             })
-            .collect()
+            .collect::<Result<Vec<_>, PassError>>()?;
+        tracing::info!(
+            "wave stages: predicting {:.1} s, placing {:.1} s, accumulating {:.1} s, \
+             transforming {:.1} s",
+            stages.predicting.as_secs_f64(),
+            stages.placing.as_secs_f64(),
+            stages.accumulating.as_secs_f64(),
+            transforming.elapsed().as_secs_f64(),
+        );
+        Ok(images)
     }
 }
 
@@ -975,24 +1093,26 @@ pub(super) fn concatenate(parts: impl IntoIterator<Item = NormalImages>) -> Norm
 
 #[cfg(test)]
 mod tests {
+    use super::super::{CHUNK_PLACEMENTS, REGION_CHUNK_PLACEMENTS};
     use super::{CHUNKS_PER_WORKER, chunk_placements, chunks};
 
     /// Every owner's buffer in a chunk can take all of the chunk's
     /// placements, and a pass has four chunks per worker and up to one
     /// owner per worker; past four owners a chunk takes proportionally
     /// fewer, so the chunks' storage grows linearly with the workers, and up
-    /// to four a chunk takes the full cap.
+    /// to four a chunk takes the full cap, whatever the cap.
     #[test]
     fn chunk_storage_grows_linearly_with_workers() {
-        let full = chunk_placements(1);
-        for workers in 1..=128 {
-            let owners = workers;
-            let storage = chunks(workers) * owners * chunk_placements(owners);
-            assert!(
-                storage <= CHUNKS_PER_WORKER * 4 * full * workers,
-                "{workers} workers place into {storage} placements of storage"
-            );
+        for full in std::iter::once(CHUNK_PLACEMENTS).chain(REGION_CHUNK_PLACEMENTS) {
+            for workers in 1..=128 {
+                let owners = workers;
+                let storage = chunks(workers) * owners * chunk_placements(full, owners);
+                assert!(
+                    storage <= CHUNKS_PER_WORKER * 4 * full * workers,
+                    "{workers} workers place into {storage} placements of storage"
+                );
+            }
+            assert_eq!(chunk_placements(full, 4), full);
         }
-        assert_eq!(chunk_placements(4), full);
     }
 }

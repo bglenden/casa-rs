@@ -177,6 +177,11 @@ path = "tests/tables_cross_matrix_tiled_stman.rs"
 required-features = ["cpp-interop-tests"]
 
 [[test]]
+name = "tables_tiled_data_stman_interop"
+path = "tests/tables_tiled_data_stman_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
 name = "tables_cross_matrix_variable_arrays"
 path = "tests/tables_cross_matrix_variable_arrays.rs"
 required-features = ["cpp-interop-tests"]

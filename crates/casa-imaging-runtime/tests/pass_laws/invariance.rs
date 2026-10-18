@@ -2,20 +2,23 @@
 //! Partition and worker-count invariance, the streamed density grid,
 //! cancellation and the point-source law.
 
+use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
-    Basis, DensityCellRule, DensityGridShape, GridPrecision, ModeSet, NormalImages, PlaneRange,
-    SampleBuffer, SpectralResampler, WeightingGeneration, build_density_grid,
+    Basis, CellHold, DensityCellRule, DensityGridShape, GridGeometry, GridPadding, GridPrecision,
+    ImageExtent, MeasurementOperator, ModeSet, NormalImages, PlaneRange, PolarizationRouting,
+    SampleBuffer, SpectralResampler, WPlaneCount, WPlanes, WeightingGeneration, build_density_grid,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, BlockShape, BoundedSource, Cancel, MajorCyclePass, ModelPreparation,
-    NativeBlock, Partition, PassDomain, PassError, Residency, SampleContent, SourceError,
-    VisibilitySink, WeightCache, WorkerTeam, run_density_pass, run_major_cycle,
+    BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, MajorCyclePass,
+    ModelPreparation, NativeBlock, Partition, PassDomain, PassError, Residency, SampleContent,
+    SourceError, VisibilitySink, WeightCache, WorkerTeam, needs_row_work, run_density_pass,
+    run_major_cycle, run_row_work_pass,
 };
 use num_complex::Complex32;
 
 use crate::fixture::{
-    CHANNELS, IMAGE, INCREMENT_RAD, Rows, Run, WIDTH_HZ, nearest_cube, operator, planes, run,
-    sparse_model, window_of, worst_relative,
+    CHANNELS, FIRST_HZ, IMAGE, INCREMENT_RAD, Rows, Run, WIDTH_HZ, nearest_cube, operator, planes,
+    run, sparse_model, try_run, window_of, worst_relative,
 };
 
 #[test]
@@ -66,25 +69,310 @@ fn region_partition_matches_one_owner() {
             &mut rows,
             &Run::initial(),
         );
+        // Chunks of 8 placements cut each block into many slices; the
+        // default and the largest region chunks take a block in one (#736).
         for workers in [2, 4] {
-            let images = run(
-                &[PassDomain {
-                    operator: &operator,
-                    resampler: &resampler,
-                    partition: Partition::regions(&operator, workers),
-                }],
-                &mut rows,
-                &Run {
-                    workers,
-                    ..Run::initial()
-                },
-            );
-            let worst = worst_relative(&reference[0], &images[0]);
-            assert!(
-                worst <= tolerance,
-                "{precision:?} {workers} regions: {worst}"
-            );
+            for chunk_placements in [8, CHUNK_PLACEMENTS, 1 << 18] {
+                let images = run(
+                    &[PassDomain {
+                        operator: &operator,
+                        resampler: &resampler,
+                        partition: Partition::regions(&operator, workers),
+                    }],
+                    &mut rows,
+                    &Run {
+                        workers,
+                        chunk_placements,
+                        ..Run::initial()
+                    },
+                );
+                let worst = worst_relative(&reference[0], &images[0]);
+                assert!(
+                    worst <= tolerance,
+                    "{precision:?} {workers} regions, chunks of {chunk_placements}: {worst}"
+                );
+            }
         }
+    }
+}
+
+/// A region pass reports its gridding work by anchor row, and strips cut to
+/// equal shares of it (#736) grid what one owner grids, to rounding. Plane
+/// owners and a lone region owner report none.
+#[test]
+fn balanced_regions_from_a_pass_row_work_match_one_owner() {
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let mut rows = Rows::random(500, 7, operator.geometry());
+    let reference = run(
+        &[planes(&operator, &resampler, 1)],
+        &mut rows,
+        &Run::initial(),
+    );
+    let regions = [PassDomain {
+        operator: &operator,
+        resampler: &resampler,
+        partition: Partition::regions(&operator, 3),
+    }];
+    let (_, summary) = try_run(
+        &regions,
+        &mut rows,
+        &Run {
+            workers: 3,
+            ..Run::initial()
+        },
+    )
+    .expect("pass");
+    let [Some(row_work)] = summary.row_work.as_slice() else {
+        panic!("one region-split domain reports its work");
+    };
+    assert_eq!(row_work.len(), operator.geometry().grid_shape()[1]);
+    // The spheroidal kernel's 7 × 7 taps for every placed sample.
+    assert_eq!(row_work.iter().sum::<u64>(), 49 * summary.samples);
+    let balanced = Partition::regions_balanced(&operator, 3, row_work);
+    let images = run(
+        &[PassDomain {
+            operator: &operator,
+            resampler: &resampler,
+            partition: balanced,
+        }],
+        &mut rows,
+        &Run {
+            workers: 3,
+            ..Run::initial()
+        },
+    );
+    let worst = worst_relative(&reference[0], &images[0]);
+    assert!(worst <= 1.0e-6, "balanced regions: {worst}");
+
+    let cube = crate::fixture::operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
+    let cube_resampler = nearest_cube();
+    let (_, summary) = try_run(
+        &[planes(&cube, &cube_resampler, 2)],
+        &mut Rows::random(100, 11, cube.geometry()),
+        &Run {
+            workers: 2,
+            ..Run::initial()
+        },
+    )
+    .expect("pass");
+    assert_eq!(
+        summary.row_work,
+        vec![None],
+        "plane owners report no row work"
+    );
+    let (_, summary) = try_run(
+        &[PassDomain {
+            operator: &operator,
+            resampler: &resampler,
+            partition: Partition::regions(&operator, 1),
+        }],
+        &mut rows,
+        &Run::initial(),
+    )
+    .expect("pass");
+    assert_eq!(
+        summary.row_work,
+        vec![None],
+        "a lone region owner measures no row work"
+    );
+}
+
+/// The row work a first pass of `weighting` over `domains` on three workers
+/// reports ([`PassSummary::row_work`]), its weights kept in `weights`.
+fn first_pass_row_work(
+    domains: &[PassDomain<'_>],
+    rows: &mut Rows,
+    weighting: &WeightingGeneration,
+    weights: Option<&WeightCache>,
+) -> Vec<Option<Vec<u64>>> {
+    let pass = MajorCyclePass {
+        domains,
+        weighting,
+        modes: Run::initial().modes,
+        model: None,
+        residency: Residency::All,
+        native_spacing_hz: WIDTH_HZ,
+        backend: BackendChoice::Cpu,
+        metal_stage_timing: false,
+        weights,
+        chunk_placements: CHUNK_PLACEMENTS,
+    };
+    let team = WorkerTeam::new(3).expect("team");
+    run_major_cycle(&pass, rows, &team, &Cancel::new(), &mut |_, _| Ok(()), None)
+        .expect("pass")
+        .row_work
+}
+
+/// The row-work pass measures, from flags and weights alone, the row work a
+/// first pass over the same strips reports, on one and three workers: under
+/// natural weighting; under Briggs weighting with the first pass keeping
+/// its weights, as a run's first pass does; and with W-projection kernels,
+/// whose taps vary with w (#742 review, Astra and Fable). Only domains
+/// split among several region owners ask for it.
+#[test]
+fn the_row_work_pass_measures_what_a_first_pass_reports() {
+    let spheroidal = operator(GridPrecision::F64, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let polarization = PolarizationRouting::compile(
+        &[CorrelationType::LinearXx, CorrelationType::LinearYy],
+        &[PolarizationCoordinate::StokesI],
+    )
+    .expect("routing");
+    // A field of about 7° (2 mrad cells), wide enough for the w-term to
+    // widen the kernels over the rows' w.
+    let wide = GridGeometry::new(
+        ImageExtent {
+            shape: [IMAGE, IMAGE],
+            increment_rad: [-2.0e-3, 2.0e-3],
+            reference_pixel: [IMAGE / 2, IMAGE / 2],
+        },
+        GridPadding::CasaComposite,
+    )
+    .expect("geometry");
+    let kernels = WPlanes::new(&wide, &polarization, WPlaneCount::Fixed(16)).expect("planes");
+    let wproject = MeasurementOperator::new(
+        wide,
+        Basis::Constant,
+        polarization,
+        Box::new(kernels),
+        GridPrecision::F64,
+    );
+    let mut wide_rows = Rows::random(500, 37, wproject.geometry());
+    let half_support = |w_lambda: f64| {
+        let cf = wproject.cf();
+        let key = cf.key(&crate::fixture::context(0), FIRST_HZ, w_lambda);
+        cf.taps(key, &mut CellHold::new()).half_support()
+    };
+    let widest_w = wide_rows
+        .rows
+        .iter()
+        .map(|row| (row.projections[0].uvw_m[2] * FIRST_HZ / 299_792_458.0).abs())
+        .fold(0.0, f64::max);
+    assert_ne!(
+        half_support(0.0),
+        half_support(widest_w),
+        "W-projection supports vary over the rows' w"
+    );
+    let mut rows = Rows::random(500, 31, spheroidal.geometry());
+    let shape = DensityGridShape {
+        width: IMAGE,
+        height: IMAGE,
+        planes: 1,
+        padding: 0,
+        increment_rad: INCREMENT_RAD,
+        rule: DensityCellRule::Standard,
+    };
+    let density = run_density_pass(
+        &spheroidal,
+        &resampler,
+        shape,
+        &mut rows,
+        &WorkerTeam::new(1).expect("team"),
+        &Cancel::new(),
+    )
+    .expect("density pass");
+    let briggs = WeightingGeneration::density(density, Some(0.5), None, None).expect("Briggs");
+    let natural = WeightingGeneration::Natural { taper: None };
+    let cache = WeightCache::new(rows.rows.len() * CHANNELS);
+    for (label, operator, weighting, weights, wide_field) in [
+        ("natural", &spheroidal, &natural, None, false),
+        (
+            "Briggs, kept weights",
+            &spheroidal,
+            &briggs,
+            Some(&cache),
+            false,
+        ),
+        ("W-projection", &wproject, &natural, None, true),
+    ] {
+        let rows = if wide_field {
+            &mut wide_rows
+        } else {
+            &mut rows
+        };
+        let regions = [PassDomain {
+            operator,
+            resampler: &resampler,
+            partition: Partition::regions(operator, 3),
+        }];
+        let reported = first_pass_row_work(&regions, rows, weighting, weights);
+        assert!(reported.iter().all(Option::is_some), "{label}");
+        rows.contents.clear();
+        for workers in [1, 3] {
+            let team = WorkerTeam::new(workers).expect("team");
+            let measured = run_row_work_pass(&regions, weighting, rows, &team, &Cancel::new())
+                .expect("row-work pass");
+            assert_eq!(measured, reported, "{label}, {workers} workers");
+        }
+        assert_eq!(rows.contents, [SampleContent::FlagsAndWeights; 2]);
+        assert!(needs_row_work(&regions));
+    }
+    assert!(cache.filled(), "the Briggs pass kept its weights");
+
+    let cube = crate::fixture::operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
+    let cube_resampler = nearest_cube();
+    assert!(!needs_row_work(&[planes(&cube, &cube_resampler, 2)]));
+    assert!(!needs_row_work(&[PassDomain {
+        operator: &spheroidal,
+        resampler: &resampler,
+        partition: Partition::regions(&spheroidal, 1),
+    }]));
+}
+
+/// Strips cut from extreme row work grid what one owner grids (#742
+/// review, Fable): work on one row (the centre, the first, the last) or on
+/// two; no work, an empty histogram and one of the wrong length, which fall
+/// back to equal strips; a strip per row, each narrower than the 7 × 7
+/// kernel; and more owners than rows.
+#[test]
+fn strips_cut_from_extreme_row_work_grid_what_one_owner_grids() {
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let mut rows = Rows::random(500, 13, operator.geometry());
+    let reference = run(
+        &[planes(&operator, &resampler, 1)],
+        &mut rows,
+        &Run::initial(),
+    );
+    let ny = operator.geometry().grid_shape()[1];
+    let on_rows = |placed: &[(usize, u64)]| {
+        let mut work = vec![0; ny];
+        for &(row, taps) in placed {
+            work[row] = taps;
+        }
+        work
+    };
+    for (owners, workers, work) in [
+        (3, 3, on_rows(&[(ny / 2, 1)])),
+        (4, 4, on_rows(&[(ny - 1, 1)])),
+        (3, 3, on_rows(&[(0, 1)])),
+        (5, 4, on_rows(&[(ny / 3, 5), (2 * ny / 3, 7)])),
+        (3, 3, vec![0; ny]),
+        (3, 3, Vec::new()),
+        (3, 3, vec![1; ny - 1]),
+        (ny, 4, vec![1; ny]),
+        (ny + 10, 4, on_rows(&[(ny / 2, 1)])),
+    ] {
+        let partition = Partition::regions_balanced(&operator, owners, &work);
+        let images = run(
+            &[PassDomain {
+                operator: &operator,
+                resampler: &resampler,
+                partition,
+            }],
+            &mut rows,
+            &Run {
+                workers,
+                ..Run::initial()
+            },
+        );
+        let worst = worst_relative(&reference[0], &images[0]);
+        assert!(
+            worst <= 1.0e-6,
+            "{owners} owners over {} rows of work: {worst}",
+            work.len()
+        );
     }
 }
 
@@ -176,6 +464,7 @@ fn writing_pass(
         backend: BackendChoice::Cpu,
         metal_stage_timing: false,
         weights,
+        chunk_placements: CHUNK_PLACEMENTS,
     };
     let mut written = vec![None; rows.rows.len()];
     let mut write = |block: &NativeBlock, predictions: &[Complex32]| {
@@ -279,6 +568,7 @@ fn a_cancelled_pass_stops_with_a_typed_error() {
         backend: BackendChoice::Cpu,
         metal_stage_timing: false,
         weights: None,
+        chunk_placements: CHUNK_PLACEMENTS,
     };
     let cancel = Cancel::new();
     cancel.cancel();
@@ -345,6 +635,7 @@ fn a_pass_cancelled_midway_reads_no_further_block() {
         backend: BackendChoice::Cpu,
         metal_stage_timing: false,
         weights: None,
+        chunk_placements: CHUNK_PLACEMENTS,
     };
     for workers in [1, 3] {
         let cancel = Cancel::new();

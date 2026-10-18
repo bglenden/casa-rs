@@ -8,8 +8,11 @@
 //! - the AW kernel sets' cells per holder;
 //! - the imaging-weights pass;
 //! - the paged cube state's cache;
+//! - the region row-work pass, and the gridding work by anchor row it
+//!   keeps (#736);
 //! - the first major-cycle pass at one plane per wave, or at every plane
-//!   for the pass that writes visibilities;
+//!   for the pass that writes visibilities, on the region strips that hold
+//!   the most of any it may cut from that work;
 //! - the larger half of a minor cycle.
 //!
 //! The count is chosen once, from those charges, and each phase is then
@@ -21,7 +24,8 @@ use std::path::Path;
 use casa_imaging_model::{CompiledProblem, ReconstructionBasis, WeightingScheme};
 use casa_imaging_operator::{BandwidthTaper, ModeSet, WeightingGeneration};
 use casa_imaging_runtime::pass::{
-    BackendChoice, BlockShape, BoundedSource, Cancel, WaveDemand, WorkerTeam, density_pass_bytes,
+    BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, Partition, PassDomain,
+    WaveDemand, WorkerTeam, density_pass_bytes, needs_row_work, row_work_pass_bytes,
     run_density_pass,
 };
 use casa_imaging_runtime::{
@@ -118,7 +122,8 @@ pub(super) struct SetupDemand<'r> {
 impl SetupDemand<'_> {
     /// The bytes the run holds at most on `cores`: the kernel sets and the
     /// cube state throughout, beside the imaging-weights pass or, after it,
-    /// its density grid with a major-cycle pass and a minor cycle.
+    /// its density grid with the region row-work pass, and then with the
+    /// work it keeps, a major-cycle pass and a minor cycle.
     pub(super) fn bytes(&self, cores: CoreAllocation) -> Result<u64, ImagingError> {
         let streaming = cores.streaming_workers;
         let kernels = self
@@ -141,7 +146,31 @@ impl SetupDemand<'_> {
         } else {
             0
         };
-        let domains = pass_domains(self.domains, streaming);
+        // The first pass cuts its strips from the row work measured before
+        // it; no cut holds more than the widest strips (#736).
+        let domains = pass_domains(self.domains, streaming, None)
+            .into_iter()
+            .map(|domain| match domain.partition {
+                Partition::Regions { ref regions, .. } => PassDomain {
+                    partition: Partition::regions_widest(domain.operator, regions.len()),
+                    ..domain
+                },
+                Partition::Planes { .. } => domain,
+            })
+            .collect::<Vec<_>>();
+        let (measuring, measured) = if needs_row_work(&domains) {
+            let rows = domains
+                .iter()
+                .filter(|domain| domain.partition.splits_rows())
+                .map(|domain| domain.operator.geometry().grid_shape()[1])
+                .sum::<usize>();
+            (
+                row_work_pass_bytes(&domains, streaming),
+                (rows * size_of::<u64>()) as u64,
+            )
+        } else {
+            (0, 0)
+        };
         let wave = |modes: ModeSet, with_model| WaveDemand {
             domains: &domains,
             modes,
@@ -150,6 +179,7 @@ impl SetupDemand<'_> {
             workers: streaming,
             backend: self.backend,
             block: self.block,
+            chunk_placements: CHUNK_PLACEMENTS,
         };
         let mut pass =
             wave(self.modes, false).bytes(1) + self.stitch.pass_bytes(true) + self.model_bytes;
@@ -158,7 +188,11 @@ impl SetupDemand<'_> {
             pass = pass
                 .max(demand.bytes(demand.planes()) + self.stitch.pass_bytes(modes.psf) + written);
         }
-        Ok(kernels + cube + weighing.max(weights + pass + (self.minor)(cores.workers)))
+        Ok(kernels
+            + cube
+            + weighing
+                .max(weights + measuring)
+                .max(weights + measured + pass + (self.minor)(cores.workers)))
     }
 }
 

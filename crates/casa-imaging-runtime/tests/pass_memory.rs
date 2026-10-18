@@ -22,10 +22,12 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use casa_imaging_operator::{
-    GridPrecision, ModeSet, PlaneRange, SpectralAxis, SpectralKernel, SpectralResampler,
+    Basis, GridPrecision, ModeSet, PlaneRange, SpectralAxis, SpectralKernel, SpectralResampler,
+    WeightingGeneration,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, BoundedSource, PassError, Residency, WaveDemand, source_block_bytes,
+    BackendChoice, BoundedSource, CHUNK_PLACEMENTS, Cancel, Partition, PassDomain, PassError,
+    Residency, WaveDemand, WorkerTeam, row_work_pass_bytes, run_row_work_pass, source_block_bytes,
 };
 
 use fixture::{Rows, Run, operator_of, planes, sparse_model, try_run, window_of};
@@ -103,6 +105,47 @@ fn natives(count: usize) -> Vec<f64> {
         .collect()
 }
 
+/// The row-work pass holds at most its charge and the source's blocks over
+/// region domains of increasing, unequal heights (#742 review, Astra): a
+/// 1024² main field then a 1536² one, 1,250 and 1,920 padded rows, on one,
+/// two and four workers, each on a team just built. Chunk histograms that
+/// grew per domain held 2,500 rows each, 75,443 bytes over the charge on
+/// four workers; a team's first parallel call held 7 KB more until the
+/// team made it while being built ([`WorkerTeam::new`]).
+#[test]
+fn the_row_work_pass_holds_at_most_its_admission_over_unequal_domains() {
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let main = operator_of(1024, GridPrecision::F64, Basis::Constant);
+    let taller = operator_of(1536, GridPrecision::F64, Basis::Constant);
+    assert!(taller.geometry().grid_shape()[1] > main.geometry().grid_shape()[1]);
+    assert!(taller.geometry().grid_shape()[1] < 2 * main.geometry().grid_shape()[1]);
+    let weighting = WeightingGeneration::Natural { taper: None };
+    for workers in [1, 2, 4] {
+        let domains = [&main, &taller].map(|operator| PassDomain {
+            operator,
+            resampler: &resampler,
+            partition: Partition::regions(operator, workers.max(2)),
+        });
+        let mut rows = Rows::random(37, 83, main.geometry());
+        rows.add_domain(0.2, 89);
+        let team = WorkerTeam::new(workers).expect("team");
+        let admitted =
+            row_work_pass_bytes(&domains, workers) + source_block_bytes(rows.maximum_block());
+        let baseline = LIVE.load(Ordering::Relaxed);
+        PEAK.store(baseline, Ordering::Relaxed);
+        MEASURING.store(true, Ordering::Relaxed);
+        let result = run_row_work_pass(&domains, &weighting, &mut rows, &team, &Cancel::new());
+        MEASURING.store(false, Ordering::Relaxed);
+        let work = result.expect("row-work pass");
+        assert!(work.iter().all(Option::is_some), "both domains are split");
+        let held = PEAK.load(Ordering::Relaxed) - baseline;
+        assert!(
+            held <= admitted,
+            "{workers} workers: the row-work pass held {held} bytes against {admitted} admitted"
+        );
+    }
+}
+
 #[test]
 fn a_pass_with_a_model_holds_at_most_its_admission_over_wide_native_spectra() {
     const IMAGE: usize = 16;
@@ -129,6 +172,7 @@ fn a_pass_with_a_model_holds_at_most_its_admission_over_wide_native_spectra() {
             workers,
             backend: BackendChoice::Cpu,
             block: rows.maximum_block(),
+            chunk_placements: CHUNK_PLACEMENTS,
         };
         let admitted = demand.bytes(demand.planes()) + source_block_bytes(rows.maximum_block());
         let run = Run {
