@@ -66,6 +66,32 @@ pub enum CppTableFixture {
     /// TiledCellStMan interop: Variable-shape Float32 array column,
     /// 3 rows each with a unique shape (\[2,3\], \[4,2\], \[3,3\]).
     TiledCellStMan,
+    /// TiledDataStMan interop: Float32 2-D `data` and Int32 id column `id`
+    /// in hypercolumn `TiledData`, 5 rows in two hypercubes: id 10 with
+    /// \[2,3\] cells (rows 0-1) and id 20 with \[3,2\] cells (rows 2-4).
+    /// Cell `row` holds `100*row + i` at column-major index `i`. Written
+    /// little-endian.
+    TiledDataStMan,
+    /// [`TiledDataStMan`](Self::TiledDataStMan) written big-endian.
+    TiledDataStManBigEndian,
+    /// [`TiledDataStMan`](Self::TiledDataStMan) with the cells of rows 1
+    /// and 3 negated; writes the unpatched table, verifies the patched one.
+    TiledDataStManPatched,
+    /// TiledDataStMan data columns of equal pixel size: Float `a`, `b`,
+    /// Complex `c`, Int `d` (2-D) and id `id`, in hypercolumn `TiledMulti`
+    /// defined as data \[b, a, d, c\], so casacore's tile is c, d, a, b.
+    /// Hypercube id 10 (\[2,3\] cells, rows 0-1) also holds a stray values
+    /// field `a`; id 20 has \[3,2\] cells (rows 2-3). Written little-endian.
+    TiledDataStManMulti,
+    /// [`TiledDataStManMulti`](Self::TiledDataStManMulti) written big-endian.
+    TiledDataStManMultiBigEndian,
+    /// [`TiledDataStManMulti`](Self::TiledDataStManMulti) with `a` negated in
+    /// rows 1 and 3 and every other cell unchanged; writes the unpatched
+    /// table, verifies the patched one.
+    TiledDataStManMultiPatched,
+    /// A scalar Float data column `s` over a 2-axis TiledDataStMan
+    /// hypercube \[2,2\]: rows 0-3 hold 10-13.
+    TiledDataStManScalar,
     /// ForwardColumnEngine interop: base table with col_value (Double, 3 rows)
     /// and a forwarding table that delegates col_value via ForwardColumnEngine.
     /// The path is the forwarding table directory; base is at `{path}_base`.
@@ -223,6 +249,21 @@ pub(crate) fn cpp_table_write_unlocked(
             }
             CppTableFixture::TiledCellStMan => {
                 cpp_table_write_tiled_cell_stman(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledDataStMan | CppTableFixture::TiledDataStManPatched => {
+                cpp_table_write_tiled_data_stman(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledDataStManBigEndian => {
+                cpp_table_write_tiled_data_stman_big_endian(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledDataStManMulti | CppTableFixture::TiledDataStManMultiPatched => {
+                cpp_table_write_tiled_data_multi(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledDataStManMultiBigEndian => {
+                cpp_table_write_tiled_data_multi_big_endian(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledDataStManScalar => {
+                cpp_table_write_tiled_data_scalar(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::ForwardColumn => {
                 cpp_table_write_forward_column_fixture(c_path.as_ptr(), &mut error)
@@ -402,6 +443,22 @@ pub(crate) fn cpp_table_verify_unlocked(
             }
             CppTableFixture::TiledCellStMan => {
                 cpp_table_verify_tiled_cell_stman(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledDataStMan | CppTableFixture::TiledDataStManBigEndian => {
+                cpp_table_verify_tiled_data_stman(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledDataStManPatched => {
+                cpp_table_verify_tiled_data_stman_patched(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledDataStManMulti
+            | CppTableFixture::TiledDataStManMultiBigEndian => {
+                cpp_table_verify_tiled_data_multi(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledDataStManMultiPatched => {
+                cpp_table_verify_tiled_data_multi_patched(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledDataStManScalar => {
+                cpp_table_verify_tiled_data_scalar(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::ForwardColumn => {
                 cpp_table_verify_forward_column_fixture(c_path.as_ptr(), &mut error)
