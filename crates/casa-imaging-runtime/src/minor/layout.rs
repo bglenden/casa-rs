@@ -107,7 +107,7 @@ impl MinorLayout {
 
     /// Heap bytes the record of one minor cycle keeps for the rest of the
     /// run: a copy of the primary mask's support, the first image domain's,
-    /// and at most [`TRACE`] traced components (the run's `record_bytes`).
+    /// and at most `TRACE` traced components (the run's `record_bytes`).
     #[must_use]
     pub fn record_bytes(&self) -> u64 {
         let support = self
