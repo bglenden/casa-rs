@@ -154,16 +154,16 @@ mod tests {
             sampling: 2,
         };
         let cell = dense_cell(&[plane], [1, 1]);
-        assert_eq!(cell.support, [3, 3]);
-        assert_eq!(cell.data.len(), 3 * 3 * 9);
+        assert_eq!(cell.support(), [3, 3]);
+        assert_eq!(cell.data().len(), 3 * 3 * 9);
         // Row (ox, oy) = (0, 2), the seventh tile: off_x = −1, off_y = +1;
         // tap (ix, iy) = (2, 0) → k = (+1, −1) → pixel (4 + 2 − 1, 4 − 2 +
         // 1) = (5, 3).
-        let tile = &cell.data[6 * 9..][..9];
+        let tile = &cell.data()[6 * 9..][..9];
         assert_eq!(tile[2], Complex32::new(5.0, 3.0));
         // Centre row (1, 1), the fifth tile; its centre tap is the plane
         // centre.
-        let tile = &cell.data[4 * 9..][..9];
+        let tile = &cell.data()[4 * 9..][..9];
         assert_eq!(tile[4], Complex32::new(4.0, 4.0));
     }
 
@@ -176,7 +176,7 @@ mod tests {
         let cell = dense_cell_from_quadrant(&quadrant, side, 2, 1);
         // Row (0, 1), the fourth tile: off_x = −1, off_y = 0; tap (0, 1):
         // k = (−1, 0) → |−2 − 1| = 3 along x, 0 along y.
-        let tile = &cell.data[3 * 9..][..9];
+        let tile = &cell.data()[3 * 9..][..9];
         assert_eq!(tile[3], Complex32::new(3.0, 0.0));
         // Tap (2, 1): k = (+1, 0) → |2 − 1| = 1.
         assert_eq!(tile[5], Complex32::new(1.0, 0.0));
@@ -199,7 +199,7 @@ mod tests {
             sampling: 2,
         };
         let cell = dense_cell(&[plane, plane], [2, 1]);
-        assert_eq!(cell.norms.len(), 3 * 3 * 2);
+        assert_eq!(cell.norms().len(), 3 * 3 * 2);
         assert_eq!(dense_cell_bytes(2, 2, [2, 1]), cell.bytes() as u64);
         for sampling in [1, 4] {
             let cell = dense_cell_from_quadrant(&values, side, sampling, 3);
