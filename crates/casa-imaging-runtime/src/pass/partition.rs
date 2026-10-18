@@ -10,6 +10,25 @@ use casa_imaging_operator::{
 
 use super::{BackendChoice, BlockShape, PassDomain};
 
+/// The gridding work of one placement besides its taps, in taps, which
+/// region strips are balanced on ([`Router::owner_and_work`]).
+///
+/// A placement costs a fixed amount besides its taps: locating it,
+/// fetching its kernel cells, its ramp and norms, routing its
+/// polarizations and forming its residual. Kernels of every size meet in
+/// a pass: AW and W-projection supports grow with `|w|`, so short
+/// baselines near the uv centre bring many small kernels and long ones a
+/// few large ones. Strips balanced on taps alone then give the centre's
+/// owner several times the placements, and it takes longest.
+///
+/// The value is fitted to the region owners of B3's residual passes on
+/// the M4 (#449): busy time `a · taps + b · placements`, with `a` about
+/// 7.6 ns per tap and `b` about 1.3 µs per placement, from owners holding
+/// equal taps and 1.07, 3.63 and 1.73 million placements. The fit predicts
+/// the third owner to 1%. A constant with one kernel size throughout (the
+/// spheroidal or a mosaic's) moves no strip boundary.
+pub const PLACEMENT_WORK: u64 = 170;
+
 /// How one pass divides an image domain's grid accumulation among owners
 /// (one per worker).
 #[derive(Clone, Debug, PartialEq)]
@@ -510,11 +529,11 @@ impl Router {
     }
 
     /// Owner of one placement and, with region owners, its anchor row and
-    /// gridding work, the kernel's taps `(2·h_x + 1)(2·h_y + 1)`, which
-    /// [`Partition::regions_balanced`] balances; the placement lies on the
-    /// wave and fits the grid. The kernel's support and oversampling come
-    /// from the set's metadata, so routing lends no taps and takes no lock
-    /// (#744).
+    /// gridding work, the kernel's taps `(2·h_x + 1)(2·h_y + 1)` plus
+    /// [`PLACEMENT_WORK`], which [`Partition::regions_balanced`] balances;
+    /// the placement lies on the wave and fits the grid. The kernel's
+    /// support and oversampling come from the set's metadata, so routing
+    /// lends no taps and takes no lock (#744).
     pub(super) fn owner_and_work(
         &self,
         operator: &MeasurementOperator,
@@ -538,8 +557,11 @@ impl Router {
                     cf.gridding_oversampling(placement.cf),
                 );
                 let row = anchor.y as usize;
-                let work = (2 * u64::from(hx) + 1) * (2 * u64::from(hy) + 1);
-                (usize::from(owner_of_row[row]), Some((row, work)))
+                let taps = (2 * u64::from(hx) + 1) * (2 * u64::from(hy) + 1);
+                (
+                    usize::from(owner_of_row[row]),
+                    Some((row, taps + PLACEMENT_WORK)),
+                )
             }
         }
     }
@@ -699,5 +721,52 @@ mod tests {
             ]
         );
         assert_eq!(Residency::All.waves(5), vec![PlaneRange::new(0, 5)]);
+    }
+
+    /// #449: a placement's work is its kernel's taps and [`PLACEMENT_WORK`],
+    /// at its anchor row; so of two rows with equal taps, the one with more
+    /// placements carries more work, and balanced strips give it fewer
+    /// rows. Plane owners carry no row work.
+    #[test]
+    fn a_placement_works_its_taps_and_its_own_cost() {
+        let operator = spheroidal_operator();
+        let ny = operator.geometry().grid_shape()[1];
+        let partition = Partition::regions(&operator, 2);
+        let router = Router::new(&partition, PlaneRange::single(0));
+        let placement = Placement {
+            u: 0.0,
+            v: 0.0,
+            w: 0.0,
+            prediction_w_positive: false,
+            phase: 0.0,
+            plane: 0,
+            spectral: 0.0,
+            cf: casa_imaging_operator::CfKey::default(),
+            gradient: [0.0, 0.0],
+        };
+        let (_, work) = router.owner_and_work(&operator, &placement);
+        let oversampling = operator.cf().gridding_oversampling(placement.cf);
+        let anchor = operator.geometry().locate(0.0, 0.0, oversampling).y as usize;
+        assert_eq!(work, Some((anchor, 49 + PLACEMENT_WORK)));
+        let planes = Router::new(&Partition::Planes { owners: 2 }, PlaneRange::single(0));
+        assert_eq!(planes.owner_and_work(&operator, &placement).1, None);
+
+        // Below the centre, rows of one large kernel's taps per placement;
+        // above it, rows of as many taps over many small placements.
+        let (large, small) = (49 * 40, 49);
+        let row_work = (0..ny)
+            .map(|row| {
+                if row < ny / 2 {
+                    large + PLACEMENT_WORK
+                } else {
+                    40 * (small + PLACEMENT_WORK)
+                }
+            })
+            .collect::<Vec<_>>();
+        let rows = rows_of(&Partition::regions_balanced(&operator, 2, &row_work));
+        assert!(
+            rows[0].len() > rows[1].len(),
+            "the strip of many placements is the shorter: {rows:?}"
+        );
     }
 }
