@@ -13,7 +13,6 @@
 //! cell. A directory serves a request only when its manifest is the
 //! request's and it holds exactly the request's cells.
 
-use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::fs::{File, TryLockError};
 use std::path::Path;
@@ -112,19 +111,51 @@ pub(super) fn cell_suffix(pa: usize, frequency: usize, w: usize, mueller: usize)
     format!("{pa}_0_CF_{frequency}_{w}_{mueller}.im")
 }
 
-/// Every cell suffix `input` names.
-fn request_suffixes(input: &NativeAwRequestInput) -> HashSet<String> {
-    let mut suffixes = HashSet::new();
-    for pa in 0..input.pa_values.len() {
-        for frequency in 0..input.frequencies.len() {
-            for w in 0..input.w_values.len() {
-                for mueller in 0..input.mueller_elements.len() {
-                    suffixes.insert(cell_suffix(pa, frequency, w, mueller));
-                }
-            }
-        }
-    }
-    suffixes
+/// The number of cells `input` names: one per (parallactic angle,
+/// frequency, w plane, Mueller element).
+pub(super) const fn request_cells(input: &NativeAwRequestInput) -> usize {
+    input.pa_values.len()
+        * input.frequencies.len()
+        * input.w_values.len()
+        * input.mueller_elements.len()
+}
+
+/// Heap bytes [`AwCatalog::native_cache_state`] holds for `input`'s cells
+/// beside the manifest: a bit per cell for each of its two images.
+pub(super) const fn cache_state_bytes(input: &NativeAwRequestInput) -> usize {
+    2 * request_cells(input).div_ceil(64) * size_of::<u64>()
+}
+
+/// The position, in the order (parallactic angle, frequency, w plane,
+/// Mueller element), of the cell of `input` whose suffix is `suffix`, if it
+/// names one: exactly the name [`cell_suffix`] gives it.
+fn request_cell(input: &NativeAwRequestInput, suffix: &str) -> Option<usize> {
+    let (pa, rest) = suffix.strip_suffix(".im")?.split_once("_0_CF_")?;
+    let mut fields = rest.split('_');
+    let index =
+        |field: Option<&str>, len: usize| field?.parse::<usize>().ok().filter(|&index| index < len);
+    let pa = index(Some(pa), input.pa_values.len())?;
+    let frequency = index(fields.next(), input.frequencies.len())?;
+    let w = index(fields.next(), input.w_values.len())?;
+    let mueller = index(fields.next(), input.mueller_elements.len())?;
+    (cell_suffix(pa, frequency, w, mueller) == suffix).then(|| {
+        ((pa * input.frequencies.len() + frequency) * input.w_values.len() + w)
+            * input.mueller_elements.len()
+            + mueller
+    })
+}
+
+/// Heap bytes reading and comparing `input`'s manifest holds at most: the
+/// file's text (this manifest, in a directory of this request), and the
+/// manifest being built, at most twice its length while it grows and three
+/// times as it moves, and the frequencies it lists. The text is at most
+/// 1 KiB of labels and scalars, 26 bytes for each value listed in `Debug`
+/// form (at most 24 characters and a separator) and 12 for each Mueller
+/// element.
+pub(super) const fn manifest_bytes(input: &NativeAwRequestInput) -> usize {
+    let values = input.frequencies.len() + input.w_values.len() + input.pa_values.len();
+    let text = 1024 + 26 * values + 12 * input.mueller_elements.len();
+    4 * text + input.frequencies.len() * size_of::<f64>()
 }
 
 /// The manifest of `input`: one line per input that enters a cell, values
@@ -297,8 +328,7 @@ impl AwCatalog {
         input: &NativeAwRequestInput,
     ) -> Result<NativeCacheState, AwCatalogError> {
         let root = root.as_ref();
-        let names = request_suffixes(input);
-        let expected = names.len();
+        let expected = request_cells(input);
         if !root.is_dir() {
             return Ok(NativeCacheState {
                 manifest: NativeManifest::Absent,
@@ -319,8 +349,8 @@ impl AwCatalog {
                 ));
             }
         };
-        let mut imaging = HashSet::new();
-        let mut weight = HashSet::new();
+        let words = expected.div_ceil(64);
+        let (mut imaging, mut weight) = (vec![0_u64; words], vec![0_u64; words]);
         let mut foreign = 0;
         let entries = std::fs::read_dir(root)
             .map_err(|error| cache_error(root, format!("cannot list: {error}")))?;
@@ -338,16 +368,16 @@ impl AwCatalog {
             } else {
                 continue;
             };
-            if names.contains(rest) && entry.path().is_dir() {
-                held.insert(rest.to_string());
-            } else {
-                foreign += 1;
+            match request_cell(input, rest) {
+                Some(cell) if entry.path().is_dir() => held[cell / 64] |= 1 << (cell % 64),
+                _ => foreign += 1,
             }
         }
-        let present = names
+        let present = imaging
             .iter()
-            .filter(|suffix| imaging.contains(*suffix) && weight.contains(*suffix))
-            .count();
+            .zip(&weight)
+            .map(|(imaging, weight)| (imaging & weight).count_ones() as usize)
+            .sum();
         Ok(NativeCacheState {
             manifest: recorded,
             present,
