@@ -7,6 +7,7 @@
 //! by every pass. The final pass also writes the model column when the run
 //! asks for it.
 
+use std::cell::OnceCell;
 use std::path::Path;
 use std::time::Instant;
 
@@ -15,32 +16,31 @@ use casa_imaging_deconvolution::{
     ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, ModelGeneration,
     ModelLifecycle, ModelStoragePlan, PassAppender, ReconstructionMaskPlan, ReconstructionMaskSet,
 };
-use casa_imaging_model::{CompiledProblem, ModelDeltaTerm, SpectralWcs, WeightingScheme};
-use casa_imaging_operator::{
-    BandwidthTaper, Basis, GridPrecision, ModeSet, PlaneRange, WeightingGeneration,
-};
+use casa_imaging_model::{CompiledProblem, ModelDeltaTerm, SpectralWcs};
+use casa_imaging_operator::{Basis, GridPrecision, ModeSet, PlaneRange, WeightingGeneration};
 use casa_imaging_products::{
     FacetSumWeights, MinorCycleImageResponse, VisibilityProductCompletion,
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, BoundedSource, CHUNK_PLACEMENTS, Cancel, MajorCyclePass, ModelPreparation,
     Partition, PassDomain, PassError, PassSummary, Residency, VisibilitySink, WaveDemand,
-    WeightCache, WorkerTeam, WorkerTeams, density_pass_bytes, needs_row_work, row_work_pass_bytes,
-    run_density_pass, run_major_cycle, run_row_work_pass,
+    WeightCache, WorkerTeams, needs_row_work, row_work_pass_bytes, run_major_cycle,
+    run_row_work_pass,
 };
 use casa_imaging_runtime::{
     Admitted, CubeState, Demand, Diagnostics, HostResources, MinorCycleOutcome, MinorCycleSetup,
-    PsfCache, Reservation, ResourcePolicy, RunSummary, admit, free_memory, mask_bytes,
-    prepare_bytes, prepare_minor_cycle, run_bytes, run_minor_cycle, run_phase,
+    MinorLayout, PsfCache, Reservation, ResourcePolicy, RunSummary, admit, free_memory, mask_bytes,
+    prepare_bytes, prepare_bytes_for, prepare_minor_cycle, run_bytes, run_bytes_for,
+    run_minor_cycle, run_phase,
 };
 use casa_ms::ResolvedSelectedObservationAccess;
 
 use super::charts::{Chart, ChartStitch, charts};
 use super::images::{pass_images, prepare_model};
 use super::measurement::{
-    DomainOperator, KernelAdmission, density_shape, domain_operator, native_spacing_hz,
-    selected_correlations,
+    DomainOperator, KernelAdmission, domain_operator, native_spacing_hz, selected_correlations,
 };
+use super::setup::{self, RefreshDemand, SetupDemand, WorkerChoice};
 use super::source::{MeasurementSetSource, PlaneBounds};
 use super::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
 use super::{ImagingError, trace};
@@ -55,9 +55,10 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) visibility_write: Option<VisibilityWriteTarget>,
     pub(crate) host: HostResources,
     pub(crate) policy: ResourcePolicy,
-    /// The run's worker teams: the passes stream on one, the minor cycles
+    /// Where the run's worker teams go once its setup forms them
+    /// ([`setup::fit_workers`]): the passes stream on one, the minor cycles
     /// and the products compute on the other.
-    pub(crate) teams: &'a WorkerTeams,
+    pub(crate) teams: &'a OnceCell<WorkerTeams>,
     pub(crate) cancel: Cancel,
     /// Where the paged cube state of a channel-local run lives.
     pub(crate) spill_directory: &'a Path,
@@ -190,8 +191,41 @@ pub(crate) fn run(
     let mut mask_plans = inputs.masks.clone();
     let cancel = inputs.cancel.clone();
     let diagnostics = inputs.diagnostics;
-    // Operators, the source, the imaging weights and the paged cube state.
-    let mut run = run_phase("setup", &cancel, diagnostics, summary, || Run::open(inputs))?;
+    // What a minor cycle holds on a team of so many workers, from the
+    // layout the first pass forms, before any image exists (#737): the masks
+    // it keeps and the larger of its two halves.
+    let layout = MinorLayout::planned(problem);
+    let iterations = Controller::new(&controls).cycle_iterations();
+    let minor = |workers: usize| {
+        if cleaning {
+            2 * layout.mask_bytes()
+                + prepare_bytes_for(&layout, &mask_plans, &setup, true, workers)
+                    .max(run_bytes_for(&layout, &setup, iterations, 0, workers))
+        } else {
+            0
+        }
+    };
+    // What a refresh pass holds beside its wave (#763 review): every cycle
+    // before it keeps its record, up to the last refresh `nmajor` allows.
+    let refresh = cleaning.then(|| RefreshDemand {
+        masks: 2 * layout.mask_bytes(),
+        cached: layout.refresh_bytes(&setup),
+        results: layout.result_bytes(),
+        records: layout.record_bytes() * controls.maximum_major_cycles().unwrap_or(1).max(1) as u64,
+    });
+    // Operators, the workers, the source, the imaging weights and the paged
+    // cube state. The choice of workers is recorded as it is made, so a
+    // setup that then fails still reports it.
+    let mut chosen = None;
+    let opened = run_phase("setup", &cancel, diagnostics, summary, || {
+        Run::open(inputs, (&minor, refresh), &mut chosen)
+    });
+    if let Some(workers) = chosen {
+        summary.workers = workers.cores.workers;
+        summary.workers_policy = workers.policy.workers;
+        summary.workers_reason = workers.reason;
+    }
+    let mut run = opened?;
     summary.precision = run
         .domains
         .first()
@@ -429,7 +463,17 @@ fn minor_setup(
 
 impl<'a> Run<'a> {
     /// The operators, worker teams, source and imaging weights of a run.
-    fn open(inputs: ImagingInputs<'a>) -> Result<Self, ImagingError> {
+    /// The teams take the most workers, up to the policy's, whose charges
+    /// fit beside the operators and the source ([`setup::fit_workers`],
+    /// #737); a paged kernel set is admitted for the count chosen, and each
+    /// later phase is admitted as it starts. `minor` is what a minor cycle
+    /// holds on a team of so many workers and `refresh` what a refresh pass
+    /// holds beside its wave. `chosen` receives the choice as it is made.
+    fn open(
+        inputs: ImagingInputs<'a>,
+        (minor, refresh): (&dyn Fn(usize) -> u64, Option<RefreshDemand>),
+        chosen: &mut Option<WorkerChoice>,
+    ) -> Result<Self, ImagingError> {
         let problem = inputs.problem;
         let backend = inputs.backend;
         let correlations = selected_correlations(problem)?;
@@ -439,16 +483,18 @@ impl<'a> Run<'a> {
             .open(problem)
             .map_err(|error| ImagingError::Observation(Box::new(error)))?;
         let dish_classes = selected.antenna_response_classes();
-        // The passes' workers hold the kernels.
+        let (host, policy) = (inputs.host, inputs.policy);
+        // The passes' workers hold the kernels: at most the policy's.
+        let ceiling = policy.cores(&host);
         let admission = KernelAdmission {
-            host: &inputs.host,
-            policy: &inputs.policy,
-            workers: inputs.teams.streaming().workers(),
+            host: &host,
+            policy: &policy,
+            workers: ceiling.streaming_workers,
         };
         // One operator per chart: each image domain, or each facet of a
         // faceted one.
         let charts = charts(problem);
-        let domains = charts
+        let mut domains = charts
             .iter()
             .map(|chart| {
                 domain_operator(
@@ -469,23 +515,81 @@ impl<'a> Run<'a> {
                 reason: "visibilities are written back for one image domain",
             });
         }
-        let teams = inputs.teams;
-        let streaming = teams.streaming();
         let cancel = inputs.cancel;
-        let main = &domains[0].operator;
+        let channel_local = matches!(domains[0].operator.basis(), Basis::ChannelLocal { .. });
         let mut source = MeasurementSetSource::new(
             problem,
             selected,
-            main.basis().planes(),
+            domains[0].operator.basis().planes(),
             plane_bounds(problem),
             domains
                 .iter()
                 .any(|domain| domain.operator.cf().pointing_ramp()),
             dish_classes,
         );
-        let (host, policy) = (inputs.host, inputs.policy);
+        let stitch = ChartStitch::new(problem, charts.clone());
+        let visibility_write_bytes = inputs
+            .visibility_write
+            .as_ref()
+            .map(VisibilityWriteTarget::retained_bytes)
+            .transpose()
+            .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?
+            .unwrap_or(0);
+        let initial = initial_modes(weight_image);
+        let demand = SetupDemand {
+            problem,
+            domains: &domains,
+            stitch: &stitch,
+            block: source.maximum_block(),
+            native_spacing_hz: native_spacing_hz(problem),
+            backend,
+            modes: initial,
+            // A cube's model is paged with its state.
+            model_bytes: if channel_local {
+                0
+            } else {
+                ModelLifecycle::new(problem, ModelStoragePlan::resident(usize::MAX)?)
+                    .resident_bytes()
+            },
+            write: inputs.visibility_write.as_ref().map(|_| {
+                let (modes, with_model) = write_pass(problem, initial);
+                (modes, with_model, visibility_write_bytes)
+            }),
+            spill_directory: inputs.spill_directory,
+            weight_image,
+            minor,
+            refresh,
+            kept_weights: kept_weight_bytes(
+                problem,
+                &domains,
+                source.maximum_block().channels(),
+                free_memory(&host, &policy),
+            )
+            .map_or(0, |(_, bytes)| bytes),
+            free: free_memory(&host, &policy),
+        };
+        let choice = setup::fit_workers(ceiling, demand.free, |cores| demand.bytes(cores))?;
+        *chosen = Some(choice.clone());
+        if let Some(reason) = &choice.reason {
+            tracing::warn!(
+                "imaging on {} workers, not the resource policy's {}: {reason}",
+                choice.cores.workers,
+                choice.policy.workers
+            );
+        }
+        tracing::info!(
+            "workers: {} computing, {} streaming beside the source's producer",
+            choice.cores.workers,
+            choice.cores.streaming_workers
+        );
+        let formed = WorkerTeams::new(choice.cores).map_err(ImagingError::Pass)?;
+        let teams = inputs.teams.get_or_init(move || formed);
+        for domain in &mut domains {
+            domain.admit_kernels(admission, choice.cores.streaming_workers)?;
+        }
+        let streaming = teams.streaming();
         let started = Instant::now();
-        let (weighting, weights) = weighting(
+        let (weighting, weights) = setup::weighting(
             problem,
             &domains[0],
             &mut source,
@@ -499,13 +603,12 @@ impl<'a> Run<'a> {
             started.elapsed().as_secs_f64()
         );
         // The minor cycles, the widest team, access the cube state's planes.
-        let cube = matches!(main.basis(), Basis::ChannelLocal { .. })
+        let cube = channel_local
             .then(|| {
-                let workers = teams.compute().workers();
-                cube_state(
+                setup::cube_state(
                     problem,
                     inputs.spill_directory,
-                    (workers, weight_image),
+                    (teams.compute().workers(), weight_image),
                     &host,
                     &policy,
                 )
@@ -518,17 +621,10 @@ impl<'a> Run<'a> {
                 None => ModelStoragePlan::resident(usize::MAX)?,
             },
         );
-        let visibility_write_bytes = inputs
-            .visibility_write
-            .as_ref()
-            .map(VisibilityWriteTarget::retained_bytes)
-            .transpose()
-            .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?
-            .unwrap_or(0);
         let run = Self {
             problem,
             domains,
-            stitch: ChartStitch::new(problem, charts.clone()),
+            stitch,
             charts,
             source,
             weighting,
@@ -551,15 +647,9 @@ impl<'a> Run<'a> {
             row_work: None,
         };
         if run.visibility_write.is_some() {
-            // The pass that writes is the initial one without cleaning and a
-            // residual refresh otherwise; it must hold every plane, and is
-            // refused now rather than after the cycles that precede it.
-            let cleaning = problem.reconstruction().controls().max_minor_iterations() > 0;
-            let (modes, with_model) = if cleaning {
-                (ModeSet::DATA, true)
-            } else {
-                (run.initial_modes(), false)
-            };
+            // The pass that writes must hold every plane, and is refused now
+            // rather than after the cycles that precede it.
+            let (modes, with_model) = write_pass(problem, initial);
             if run
                 .admit_pass(modes, with_model, run.visibility_write_bytes)?
                 .value
@@ -737,14 +827,9 @@ impl<'a> Run<'a> {
         })
     }
 
-    /// The modes of the initial pass: data and PSF, plus the sensitivity
-    /// image when a kernel set has weight taps (mosaic, AW).
+    /// The modes of the initial pass ([`initial_modes`]).
     const fn initial_modes(&self) -> ModeSet {
-        ModeSet {
-            data: true,
-            psf: true,
-            weight: self.weight_image,
-        }
+        initial_modes(self.weight_image)
     }
 
     /// The waves of a pass accumulating `modes`, with a model when
@@ -804,26 +889,15 @@ impl<'a> Run<'a> {
     /// sixteenth of the free memory; charged before they are allocated.
     /// Wider runs weigh every pass.
     fn keep_weights(&self, residency: Residency) -> Option<(WeightCache, Reservation)> {
-        if residency != Residency::All
-            || self.domains.len() != 1
-            || !self.domains[0].resampler.is_direct()
-        {
+        if residency != Residency::All {
             return None;
         }
-        let rows = self
-            .problem
-            .observation()
-            .sources()
-            .iter()
-            .map(|source| source.selection().rows().selected_row_count())
-            .sum::<u64>();
-        let samples = usize::try_from(rows)
-            .ok()?
-            .checked_mul(self.source.maximum_block().channels())?;
-        let bytes = WeightCache::bytes(samples);
-        if bytes > free_memory(&self.host, &self.policy) / 16 {
-            return None;
-        }
+        let (samples, bytes) = kept_weight_bytes(
+            self.problem,
+            &self.domains,
+            self.source.maximum_block().channels(),
+            free_memory(&self.host, &self.policy),
+        )?;
         let charge = self.admit("kept imaging weights", bytes).ok()?;
         Some((WeightCache::new(samples), charge))
     }
@@ -968,11 +1042,35 @@ impl<'a> Run<'a> {
     }
 }
 
+/// The samples and bytes of the imaging weights a run keeps across its
+/// passes ([`Run::keep_weights`]): one image domain placed a channel at a
+/// time, `channels` per row, whose slots take at most a sixteenth of
+/// `free`; `None` when the run weighs every pass instead.
+fn kept_weight_bytes(
+    problem: &CompiledProblem,
+    domains: &[DomainOperator],
+    channels: usize,
+    free: u64,
+) -> Option<(usize, u64)> {
+    if domains.len() != 1 || !domains[0].resampler.is_direct() {
+        return None;
+    }
+    let rows = problem
+        .observation()
+        .sources()
+        .iter()
+        .map(|source| source.selection().rows().selected_row_count())
+        .sum::<u64>();
+    let samples = usize::try_from(rows).ok()?.checked_mul(channels)?;
+    let bytes = WeightCache::bytes(samples);
+    (bytes <= free / 16).then_some((samples, bytes))
+}
+
 /// Every image domain's operator, resampler and partition: planes split
 /// among `workers` for a channel-local basis, grid strips otherwise, cut to
 /// equal shares of an earlier pass's gridding work by anchor row when the
 /// run has it (`row_work`, per domain; #736).
-fn pass_domains<'d>(
+pub(super) fn pass_domains<'d>(
     domains: &'d [DomainOperator],
     workers: usize,
     row_work: Option<&[Option<Vec<u64>>]>,
@@ -1015,62 +1113,25 @@ fn next_masks(
     Ok(plans.next_cycle(&outcome.masks, cycle, threshold_reached, &stopped)?)
 }
 
-/// CASA's imaging weights for the run: the input weights (natural) or the
-/// density weights of one traversal on the main domain's cells, which every
-/// domain shares (`SynthesisImagerVi2::weight`), with the charge of the
-/// density grid the weights keep. The density pass is admitted under the
-/// run's `(host, policy)` before it allocates.
-fn weighting(
-    problem: &CompiledProblem,
-    main: &DomainOperator,
-    source: &mut MeasurementSetSource<'_>,
-    team: &WorkerTeam,
-    cancel: &Cancel,
-    (host, policy): (&HostResources, &ResourcePolicy),
-) -> Result<(WeightingGeneration, Reservation), ImagingError> {
-    let contract = problem.weighting();
-    let taper = contract.uv_taper();
-    let (robust, bandwidth) = match contract.scheme() {
-        WeightingScheme::Natural => {
-            return Ok((WeightingGeneration::Natural { taper }, Reservation::none()));
-        }
-        WeightingScheme::Uniform => (None, None),
-        WeightingScheme::Briggs { robust } => (Some(robust), None),
-        WeightingScheme::BriggsBandwidthTaper { robust } => {
-            let spectral = problem.geometry().spectral();
-            let last = spectral.output_channels().saturating_sub(1);
-            let (Some(first_hz), Some(last_hz)) = (
-                spectral.channel_centre_hz(0),
-                spectral.channel_centre_hz(last),
-            ) else {
-                return Err(ImagingError::Unsupported {
-                    reason: "the image spectral axis has no channels",
-                });
-            };
-            (
-                Some(robust),
-                Some(BandwidthTaper::from_frequency_range(first_hz, last_hz)?),
-            )
-        }
-    };
-    let shape = density_shape(problem, &problem.geometry().domains()[0])?;
-    let mut weights = admit(
-        host,
-        policy,
-        &Demand {
-            phase: "imaging weights",
-            memory: density_pass_bytes(
-                &main.resampler,
-                &shape,
-                source.maximum_block(),
-                team.workers(),
-            ),
-        },
-    )?;
-    let grid = run_density_pass(&main.operator, &main.resampler, shape, source, team, cancel)?;
-    weights.retain(shape.bytes());
-    let weighting = WeightingGeneration::density(grid, robust, bandwidth, taper)?;
-    Ok((weighting, weights))
+/// The modes of the initial pass: data and PSF, plus the sensitivity image
+/// when a kernel set has weight taps (mosaic, AW), `weight_image`.
+const fn initial_modes(weight_image: bool) -> ModeSet {
+    ModeSet {
+        data: true,
+        psf: true,
+        weight: weight_image,
+    }
+}
+
+/// The modes of the pass that writes visibilities, and whether it has a
+/// model: the initial pass, of modes `initial`, without cleaning, and a
+/// residual refresh otherwise.
+fn write_pass(problem: &CompiledProblem, initial: ModeSet) -> (ModeSet, bool) {
+    if problem.reconstruction().controls().max_minor_iterations() > 0 {
+        (ModeSet::DATA, true)
+    } else {
+        (initial, false)
+    }
 }
 
 /// The output-frame frequency envelope of a plane range of a channel-local
@@ -1100,45 +1161,6 @@ fn plane_bounds(problem: &CompiledProblem) -> Option<PlaneBounds> {
         let [first, last] = [centre(planes.start), centre(planes.end - 1)];
         [first.min(last) - half, first.max(last) + half]
     }))
-}
-
-/// The paged cube state of a channel-local run, with a cache as large as
-/// the whole cube when a quarter of the free memory allows; the state holds
-/// the cache's reservation for as long as its storage lives. With a weight
-/// image (a mosaic cube) each plane keeps its own beside the PSF.
-fn cube_state(
-    problem: &CompiledProblem,
-    directory: &Path,
-    (workers, weight_image): (usize, bool),
-    host: &HostResources,
-    policy: &ResourcePolicy,
-) -> Result<CubeState, ImagingError> {
-    let target = problem.model_lifecycle().target();
-    let domains = target
-        .domains()
-        .iter()
-        .map(|domain| domain.pixels())
-        .collect::<Vec<_>>();
-    let planes = target.coefficients() * target.polarizations();
-    let (minimum, full) =
-        CubeState::cache_limits(directory, &domains, planes, weight_image, workers)?;
-    let quarter = usize::try_from(free_memory(host, policy) / 4).unwrap_or(usize::MAX);
-    let cache = full.min(minimum.max(quarter));
-    let reservation = admit(
-        host,
-        policy,
-        &Demand {
-            phase: "paged cube state",
-            memory: cache as u64,
-        },
-    )?;
-    Ok(CubeState::new(
-        directory,
-        &domains,
-        planes,
-        weight_image,
-        reservation,
-    )?)
 }
 
 /// The record of one minor cycle; `global_threshold` is the run's

@@ -29,7 +29,44 @@ pub(crate) struct DomainOperator {
     /// (`ConvolutionFunctionSet::weight_taps`): mosaic and AW.
     pub(crate) weight_image: bool,
     /// The charge of the kernel set, held while the operator lives.
-    _kernels: Reservation,
+    kernels: Kernels,
+}
+
+/// The charge of a kernel set: admitted before the set was built or, for
+/// an AW catalog whose holders are the passes' workers, its charge for each
+/// count of them up to the run's ceiling, admitted once the run has chosen
+/// its workers (#737).
+enum Kernels {
+    Admitted { _charge: Reservation },
+    ByWorkers(Vec<u64>),
+}
+
+impl DomainOperator {
+    /// Bytes the kernel set still to be admitted holds for passes on
+    /// `workers` streaming workers, at most the ceiling it was opened for;
+    /// zero for a set already admitted.
+    pub(crate) fn pending_kernel_bytes(&self, workers: usize) -> u64 {
+        match &self.kernels {
+            Kernels::Admitted { .. } => 0,
+            Kernels::ByWorkers(charges) => charges[workers.clamp(1, charges.len()) - 1],
+        }
+    }
+
+    /// Admit the kernel set's charge for passes on `workers` streaming
+    /// workers, if it is still to be admitted.
+    pub(crate) fn admit_kernels(
+        &mut self,
+        admission: KernelAdmission<'_>,
+        workers: usize,
+    ) -> Result<(), ImagingError> {
+        if let Kernels::ByWorkers(_) = self.kernels {
+            let charge = self.pending_kernel_bytes(workers);
+            self.kernels = Kernels::Admitted {
+                _charge: admission.admit("convolution functions", charge)?,
+            };
+        }
+        Ok(())
+    }
 }
 
 /// Correlation types every block delivers, in block order: the first
@@ -213,12 +250,14 @@ pub(crate) fn domain_operator(
         ),
         resampler,
         weight_image: matches!(kind, KernelSetKind::Mosaic | KernelSetKind::Aw),
-        _kernels: kernels,
+        kernels,
     })
 }
 
-/// Where a run admits its kernel sets: its host and policy, and the
-/// workers that fetch cells from a paged set.
+/// Where a run admits its kernel sets: its host and policy, and the most
+/// workers that fetch cells from a paged set, the policy's; the run admits
+/// a paged set's charge once it has chosen how many do
+/// ([`DomainOperator::admit_kernels`]).
 #[derive(Clone, Copy)]
 pub(crate) struct KernelAdmission<'a> {
     pub(crate) host: &'a HostResources,
@@ -236,9 +275,11 @@ impl KernelAdmission<'_> {
 /// charge of what it holds, admitted before it is built. W-projection and
 /// mosaic sets are built in two stages, their screens and then the kernels
 /// cut from them, each admitted before it allocates; the screens' charge
-/// is released once the kernels are built. An AW catalog is charged its
-/// cache bound and what its workers can hold beyond it once its index is
-/// read ([`AwCatalog::charge_bytes`]).
+/// is released once the kernels are built. An AW catalog's charge, its
+/// cache bound and what its workers can hold beyond it
+/// ([`AwCatalog::charge_bytes`]), is known once its index is read, for
+/// each count of workers up to `admission`'s, and is admitted when the run
+/// has chosen its workers.
 fn kernel_set(
     problem: &CompiledProblem,
     kind: KernelSetKind,
@@ -246,12 +287,15 @@ fn kernel_set(
     aw_catalog: Option<&AwCatalogDeployment>,
     dish_classes: &[AntennaResponseClass],
     admission: KernelAdmission<'_>,
-) -> Result<(Box<dyn ConvolutionFunctionSet>, Reservation), ImagingError> {
+) -> Result<(Box<dyn ConvolutionFunctionSet>, Kernels), ImagingError> {
     const PHASE: &str = "convolution functions";
     Ok(match kind {
         KernelSetKind::Standard => {
             let kernels = admission.admit(PHASE, Spheroidal::bytes(geometry))?;
-            (Box::new(Spheroidal::new(geometry, polarization)), kernels)
+            (
+                Box::new(Spheroidal::new(geometry, polarization)),
+                Kernels::Admitted { _charge: kernels },
+            )
         }
         KernelSetKind::WPlanes => {
             let contract = problem
@@ -281,7 +325,7 @@ fn kernel_set(
             let set = screens.finish()?;
             drop(screening);
             kernels.retain(set.resident_bytes());
-            (Box::new(set), kernels)
+            (Box::new(set), Kernels::Admitted { _charge: kernels })
         }
         KernelSetKind::Mosaic => {
             if dish_classes.is_empty() {
@@ -313,7 +357,7 @@ fn kernel_set(
             let set = screens.finish()?;
             drop(screening);
             kernels.retain(set.resident_bytes());
-            (Box::new(set), kernels)
+            (Box::new(set), Kernels::Admitted { _charge: kernels })
         }
         KernelSetKind::Aw => {
             let deployment = aw_catalog.ok_or(ImagingError::Unsupported {
@@ -326,8 +370,10 @@ fn kernel_set(
                 polarization,
                 deployment.resident_bytes,
             )?;
-            let kernels = admission.admit(PHASE, catalog.charge_bytes(admission.workers))?;
-            (Box::new(catalog), kernels)
+            let charges = (1..=admission.workers.max(1))
+                .map(|workers| catalog.charge_bytes(workers))
+                .collect();
+            (Box::new(catalog), Kernels::ByWorkers(charges))
         }
     })
 }

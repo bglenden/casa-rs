@@ -97,7 +97,7 @@ const REGION_PADDING: usize = 5;
 /// borrowed full PSF. The Gaussian solve uses fixed-size stack matrices.
 ///
 /// The lobe search patch is at most `2·20 + 1` pixels per axis; the fit
-/// window is the CASA window ([`fit_window`]) of a whole patch around the
+/// window is the CASA window (`fit_window`) of a whole patch around the
 /// image centre, where CASA's PSF peaks. On a non-square plane squaring by
 /// index makes that window span the gap between the two centre pixels.
 #[must_use]

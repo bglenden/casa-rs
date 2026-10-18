@@ -188,7 +188,8 @@ pub struct ImagingRequest {
     pub fitorder: usize,
     /// Write the continuum-subtracted visibilities to `CORRECTED_DATA`.
     pub save_continuum_residual: bool,
-    /// Use the host's workers (the balanced policy) instead of one.
+    /// Use the host's workers (the balanced policy) instead of one: as many
+    /// as fit the run's memory, which the run summary records (#737).
     pub parallel: bool,
     /// Where the major-cycle passes grid, resolved against the compiled
     /// problem and the host by [`crate::availability::resolve_backend`].

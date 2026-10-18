@@ -724,6 +724,60 @@ fn cubes_stay_within_their_admission_resident_and_in_waves() {
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
 
+/// Products on fewer lanes than the run's workers (#763 review) hold at most
+/// what they were admitted. A dirty cube's products scratch grows with its
+/// lanes; the ceiling rises from 1 MiB until the cube runs on all four
+/// workers. Every run, refused or completed, keeps the law, and on some
+/// completed run the products took fewer lanes than the workers.
+#[test]
+fn products_on_fewer_lanes_stay_within_their_admission() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), CUBE_CHANNELS);
+    warm(&measurement_set, root.path());
+    let dirty = cube(
+        &measurement_set,
+        &root.path().join("dirty"),
+        json!({ "niter": 0 }),
+    );
+    let mut breaches = Vec::new();
+    let mut fewer_lanes = None;
+    let mut memory = 1 << 20;
+    for _ in 0..64 {
+        let label = format!("dirty cube at {memory} bytes");
+        eprintln!("{label}");
+        let measured = measure(&dirty, 4, memory);
+        breaches.extend(admission_breach(&label, &measured));
+        match &measured.outcome {
+            Ok(outcome) => {
+                let summary = &outcome.summary;
+                if summary.product_lanes < outcome.workers {
+                    fewer_lanes.get_or_insert((summary.product_lanes, outcome.workers));
+                }
+                if outcome.workers == 4 {
+                    break;
+                }
+                memory += memory / 8;
+            }
+            Err(ApplicationDispatchError::Admission(Admission {
+                required,
+                available,
+                ..
+            })) => {
+                let gap = required - available;
+                memory += (gap + gap.div_ceil(3)).max(memory / 8);
+            }
+            Err(error) => panic!("only admission refuses a small ceiling: {error}"),
+        }
+    }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+    let (lanes, workers) = fewer_lanes.expect("some run's products took fewer lanes");
+    assert!(
+        lanes >= 1 && lanes < workers,
+        "{lanes} lanes, {workers} workers"
+    );
+}
+
 /// A ceiling too small for the run is refused before the run allocates
 /// what it was not admitted.
 #[test]

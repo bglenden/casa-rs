@@ -928,6 +928,7 @@ impl Table {
                                 table_dat.big_endian,
                                 None,
                                 dm_name,
+                                &table_dat.table_desc.private_keywords,
                             )?;
                         }
                     }
