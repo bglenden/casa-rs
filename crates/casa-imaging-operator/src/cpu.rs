@@ -34,7 +34,13 @@ pub struct CpuBackend {
     residual: Vec<Complex32>,
     /// A block's predictions, or its residual values at native channels.
     batch: Vec<Complex32>,
+    /// The gridding's kernel cell.
     hold: CellHold,
+    /// The prediction's kernel cell, apart from the gridding's: a residual
+    /// reads both for every sample, and one slot would fetch each anew per
+    /// sample, a lock and a shared count for every set that pages its cells
+    /// (AW), where two let a run of samples of one key fetch once (#449).
+    prediction_hold: CellHold,
 }
 
 impl CpuBackend {
@@ -215,10 +221,10 @@ impl CpuBackend {
             prediction,
             norms,
             gathered,
-            hold,
+            prediction_hold,
             ..
         } = self;
-        let taps = cf.prediction_taps(placement.cf, hold);
+        let taps = cf.prediction_taps(placement.cf, prediction_hold);
         let location = layout
             .geometry()
             .locate(placement.u, placement.v, taps.oversampling());
@@ -356,6 +362,7 @@ impl GridBackend for CpuBackend {
             Work::NativeResidualGrid { model, acc } => self.native_residual(block, cf, model, acc),
         };
         self.hold.clear();
+        self.prediction_hold.clear();
         result
     }
 }

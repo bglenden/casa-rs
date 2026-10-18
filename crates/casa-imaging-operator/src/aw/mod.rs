@@ -609,9 +609,11 @@ impl AwCatalog {
     /// group is loaded once, so the cells are at most every group (#738).
     /// Otherwise they are the bound and one group past it, which a fetch
     /// inserts before the cache evicts, and for each holder the largest
-    /// group twice: the one its [`CellHold`] keeps alive after eviction and
-    /// the one it builds outside the cache's lock beside it (#744). Every
-    /// loaded cell is also its [`Arc`] (#745 review).
+    /// group three times: the two its [`CellHold`]s keep alive after
+    /// eviction, a gridding group's and a prediction group's (a CPU
+    /// residual holds both, #449), and the one it builds outside the
+    /// cache's lock beside them (#744). Every loaded cell is also its
+    /// [`Arc`] (#745 review).
     #[must_use]
     pub fn charge_bytes(&self, holders: usize) -> u64 {
         let lru = self.lru.lock().expect("cache lock");
@@ -659,8 +661,8 @@ impl AwCatalog {
             (every, groups)
         } else {
             (
-                bound + (2 * holders as u64 + 1) * largest,
-                groups + 2 * holders as u64 + 1,
+                bound + (3 * holders as u64 + 1) * largest,
+                groups + 3 * holders as u64 + 1,
             )
         };
         let serving = taps + pairs * 2 * ARC_CELL_BYTES as u64 + holders as u64 * reading;

@@ -465,15 +465,18 @@ fn aw_open(root: &std::path::Path, bound: usize) -> AwCatalog {
     AwCatalog::open_casa(root, indexing, &geometry, &routing, bound).expect("open")
 }
 
-/// Fetch group `group`'s imaging and weight cells through `holds`.
-fn fetch(catalog: &AwCatalog, group: usize, holds: &mut [CellHold; 2]) {
+/// Fetch group `group`'s imaging and weight cells, and the next group's
+/// prediction cell, through `holds`: a CPU residual holds a gridding
+/// group's cell and a prediction group's at once (#449).
+fn fetch(catalog: &AwCatalog, group: usize, holds: &mut [CellHold; 3]) {
     let key = CfKey {
         group: group as u16,
-        cube: group as u16,
+        cube: ((group + 1) % catalog.groups()) as u16,
     };
-    let [imaging, weight] = holds;
+    let [imaging, weight, prediction] = holds;
     assert!(catalog.taps(key, imaging).half_support()[0] > 0);
     assert!(catalog.weight_taps(key, weight).is_some());
+    assert!(catalog.prediction_taps(key, prediction).half_support()[0] > 0);
 }
 
 /// Open the catalog in `root` and fetch every group through one worker's
@@ -481,7 +484,7 @@ fn fetch(catalog: &AwCatalog, group: usize, holds: &mut [CellHold; 2]) {
 fn catalog_holds_at_most_its_charge(root: &std::path::Path) {
     let open_and_fetch = |bound: usize| {
         let catalog = aw_open(root, bound);
-        let mut holds = [CellHold::new(), CellHold::new()];
+        let mut holds = [CellHold::new(), CellHold::new(), CellHold::new()];
         for group in 0..catalog.groups() {
             fetch(&catalog, group, &mut holds);
         }
@@ -505,7 +508,8 @@ fn catalog_holds_at_most_its_charge(root: &std::path::Path) {
 
 /// #744: workers that load different groups at once, outside the cache
 /// lock, each keeping the cells it fetched last after a cache below one
-/// group has evicted them, hold at most the charge for that many holders.
+/// group has evicted them (a gridding group's and a prediction group's,
+/// #449), hold at most the charge for that many holders.
 #[test]
 fn concurrent_holders_hold_at_most_their_charge() {
     const WORKERS: usize = 4;
@@ -518,20 +522,26 @@ fn concurrent_holders_hold_at_most_their_charge() {
     // Warm the process-wide tile cache, as above.
     let warm = aw_open(root.path(), usize::MAX);
     for group in 0..warm.groups() {
-        fetch(&warm, group, &mut [CellHold::new(), CellHold::new()]);
+        fetch(
+            &warm,
+            group,
+            &mut [CellHold::new(), CellHold::new(), CellHold::new()],
+        );
     }
     drop(warm);
     let (peak, _, (loads, charge)) = measure(|| {
         let catalog = aw_open(root.path(), 1);
         let groups = catalog.groups();
         assert!(groups >= WORKERS, "every worker loads its own group");
-        // Every round, each worker fetches a group no other worker does.
+        // Every round, each worker grids through a group no other worker
+        // grids through, and predicts through the next, as a CPU residual
+        // does.
         let round = std::sync::Barrier::new(WORKERS);
         std::thread::scope(|scope| {
             for worker in 0..WORKERS {
                 let (catalog, round) = (&catalog, &round);
                 scope.spawn(move || {
-                    let mut holds = [CellHold::new(), CellHold::new()];
+                    let mut holds = [CellHold::new(), CellHold::new(), CellHold::new()];
                     for step in 0..ROUNDS {
                         round.wait();
                         fetch(catalog, (worker + step) % groups, &mut holds);
