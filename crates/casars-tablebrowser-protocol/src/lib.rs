@@ -836,10 +836,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "predates the function-length limit; #705"
-    )]
     fn response_envelopes_round_trip_snapshot_and_error_variants() {
         let viewport = BrowserViewport::new(120, 32);
         let breadcrumb = vec![
@@ -907,51 +903,7 @@ mod tests {
                     column: "DATA".to_string(),
                     value_path: vec![ValuePathSegment::ArrayIndex { flat_index: 1 }],
                 }),
-                inspector: Some(BrowserInspectorSnapshot {
-                    title: "Complex array".to_string(),
-                    trail: vec![
-                        BrowserInspectorTrailEntry {
-                            label: "root".to_string(),
-                            summary: "array[2x2]".to_string(),
-                        },
-                        BrowserInspectorTrailEntry {
-                            label: "[0,1]".to_string(),
-                            summary: "complex64".to_string(),
-                        },
-                    ],
-                    node: BrowserValueNode::Array {
-                        primitive: BrowserPrimitiveType::Complex64,
-                        shape: vec![2, 2],
-                        total_elements: 4,
-                        page_start: 0,
-                        page_size: 4,
-                        elements: vec![
-                            BrowserArrayElement {
-                                flat_index: 0,
-                                index: vec![0, 0],
-                                value: BrowserScalarValue::Complex64(BrowserComplex64Value {
-                                    re: 1.0,
-                                    im: -1.0,
-                                }),
-                                selected: false,
-                            },
-                            BrowserArrayElement {
-                                flat_index: 1,
-                                index: vec![0, 1],
-                                value: BrowserScalarValue::Complex64(BrowserComplex64Value {
-                                    re: 2.0,
-                                    im: -2.0,
-                                }),
-                                selected: true,
-                            },
-                        ],
-                    },
-                    rendered_lines: vec![
-                        "Inspector".to_string(),
-                        "Type: array".to_string(),
-                        "[0,1] = 2.0000-2.0000i".to_string(),
-                    ],
-                }),
+                inspector: Some(complex_array_inspector()),
             }),
             BrowserResponseEnvelope::snapshot(BrowserSnapshot {
                 capabilities: BrowserCapabilities { editable: false },
@@ -973,41 +925,7 @@ mod tests {
                         name: "Ref".to_string(),
                     }],
                 }),
-                inspector: Some(BrowserInspectorSnapshot {
-                    title: "Record".to_string(),
-                    trail: vec![BrowserInspectorTrailEntry {
-                        label: "root".to_string(),
-                        summary: "record(2)".to_string(),
-                    }],
-                    node: BrowserValueNode::Record {
-                        total_fields: 2,
-                        page_start: 0,
-                        page_size: 32,
-                        fields: vec![
-                            BrowserRecordFieldSummary {
-                                name: "type".to_string(),
-                                kind: BrowserValueKind::Scalar,
-                                summary: "\"direction\"".to_string(),
-                                expandable: false,
-                                openable: false,
-                                selected: false,
-                            },
-                            BrowserRecordFieldSummary {
-                                name: "Ref".to_string(),
-                                kind: BrowserValueKind::Scalar,
-                                summary: "\"J2000\"".to_string(),
-                                expandable: false,
-                                openable: false,
-                                selected: true,
-                            },
-                        ],
-                    },
-                    rendered_lines: vec![
-                        "Inspector".to_string(),
-                        "Type: record".to_string(),
-                        "Ref = \"J2000\"".to_string(),
-                    ],
-                }),
+                inspector: Some(measinfo_record_inspector()),
             }),
             BrowserResponseEnvelope::snapshot(BrowserSnapshot {
                 capabilities: BrowserCapabilities { editable: false },
@@ -1075,6 +993,96 @@ mod tests {
 
         for case in cases {
             assert_round_trip(case);
+        }
+    }
+
+    /// Inspector on a paged 2x2 complex64 array cell with element `[0,1]`
+    /// selected.
+    fn complex_array_inspector() -> BrowserInspectorSnapshot {
+        BrowserInspectorSnapshot {
+            title: "Complex array".to_string(),
+            trail: vec![
+                BrowserInspectorTrailEntry {
+                    label: "root".to_string(),
+                    summary: "array[2x2]".to_string(),
+                },
+                BrowserInspectorTrailEntry {
+                    label: "[0,1]".to_string(),
+                    summary: "complex64".to_string(),
+                },
+            ],
+            node: BrowserValueNode::Array {
+                primitive: BrowserPrimitiveType::Complex64,
+                shape: vec![2, 2],
+                total_elements: 4,
+                page_start: 0,
+                page_size: 4,
+                elements: vec![
+                    BrowserArrayElement {
+                        flat_index: 0,
+                        index: vec![0, 0],
+                        value: BrowserScalarValue::Complex64(BrowserComplex64Value {
+                            re: 1.0,
+                            im: -1.0,
+                        }),
+                        selected: false,
+                    },
+                    BrowserArrayElement {
+                        flat_index: 1,
+                        index: vec![0, 1],
+                        value: BrowserScalarValue::Complex64(BrowserComplex64Value {
+                            re: 2.0,
+                            im: -2.0,
+                        }),
+                        selected: true,
+                    },
+                ],
+            },
+            rendered_lines: vec![
+                "Inspector".to_string(),
+                "Type: array".to_string(),
+                "[0,1] = 2.0000-2.0000i".to_string(),
+            ],
+        }
+    }
+
+    /// Inspector on a two-field `MEASINFO` keyword record with the `Ref`
+    /// field selected.
+    fn measinfo_record_inspector() -> BrowserInspectorSnapshot {
+        BrowserInspectorSnapshot {
+            title: "Record".to_string(),
+            trail: vec![BrowserInspectorTrailEntry {
+                label: "root".to_string(),
+                summary: "record(2)".to_string(),
+            }],
+            node: BrowserValueNode::Record {
+                total_fields: 2,
+                page_start: 0,
+                page_size: 32,
+                fields: vec![
+                    BrowserRecordFieldSummary {
+                        name: "type".to_string(),
+                        kind: BrowserValueKind::Scalar,
+                        summary: "\"direction\"".to_string(),
+                        expandable: false,
+                        openable: false,
+                        selected: false,
+                    },
+                    BrowserRecordFieldSummary {
+                        name: "Ref".to_string(),
+                        kind: BrowserValueKind::Scalar,
+                        summary: "\"J2000\"".to_string(),
+                        expandable: false,
+                        openable: false,
+                        selected: true,
+                    },
+                ],
+            },
+            rendered_lines: vec![
+                "Inspector".to_string(),
+                "Type: record".to_string(),
+                "Ref = \"J2000\"".to_string(),
+            ],
         }
     }
 

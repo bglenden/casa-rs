@@ -210,14 +210,19 @@ pub(super) fn cf_area(
     area
 }
 
-/// Load one group's Mueller planes into an imaging and a weight cell:
+/// Load one group's Mueller planes (its `cells`, at `group`'s supports)
+/// into an imaging and a weight cell:
 /// every plane normalised by its own area (`AWConvFunc::cfArea`), tiled at
 /// its kind's largest support with zero beyond a smaller plane's image.
-pub(super) fn load_group(group: &Group, sampling: u16) -> Result<Loaded, AwCatalogError> {
+pub(super) fn load_group(
+    cells: &[CellFiles],
+    group: &Group,
+    sampling: u16,
+) -> Result<Loaded, AwCatalogError> {
     let build = |select: fn(&CellFiles) -> &CellHeader,
                  half: [u16; 2]|
      -> Result<Arc<DenseCell>, AwCatalogError> {
-        let headers = group.cells.iter().map(select).collect::<Vec<_>>();
+        let headers = cells.iter().map(select).collect::<Vec<_>>();
         let mut planes = Vec::with_capacity(headers.len());
         for header in &headers {
             let mut plane = read_plane(header)?;

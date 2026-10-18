@@ -158,31 +158,45 @@ impl PlannedContinuumGeneration {
             self.algorithm_scratch_bytes(inputs, &bounds, workers.min(maximum_windows))?;
         let (retained_metadata_bytes, member_beam_bytes, beam_scratch_bytes) =
             self.metadata_demand(inputs, workers.min(beam_jobs))?;
-        let transient_bytes = if matches!(inputs.normal_state().basis(), NormalBasis::Taylor) {
+        let writer_bytes =
+            writer.residency_bytes(self, bounds.window_payload, bounds.window_validity)?;
+        let peak_residency_bytes = if matches!(inputs.normal_state().basis(), NormalBasis::Taylor) {
+            // The coupled family is built whole, then published member by
+            // member: it peaks at the larger stage, not at their sum (#738).
+            let stages = taylor_stages(inputs, beam_scratch_bytes)?;
+            let publishing = [
+                bounds.member_payload,
+                bounds.member_validity,
+                bounds.window_payload,
+                bounds.window_validity,
+                writer_bytes,
+            ]
+            .into_iter()
+            .try_fold(stages.retained, |sum, bytes| {
+                checked_add(sum, bytes, "Taylor publication residency")
+            })?;
             checked_add(
-                algorithm_scratch_bytes,
-                beam_scratch_bytes,
-                "coupled beam workspace",
+                retained_metadata_bytes,
+                stages.building.max(publishing),
+                "Taylor generation residency",
             )?
         } else {
-            checked_add(
+            let transient_bytes = checked_add(
                 algorithm_scratch_bytes,
                 member_beam_bytes,
                 "active member preparation",
             )?
-            .max(beam_scratch_bytes)
-        };
-        let writer_bytes =
-            writer.residency_bytes(self, bounds.window_payload, bounds.window_validity)?;
-        let peak_residency_bytes = checked_add(
+            .max(beam_scratch_bytes);
             checked_add(
-                retained_metadata_bytes,
-                transient_bytes,
-                "product generation residency",
-            )?,
-            writer_bytes,
-            "product generation and writer residency",
-        )?;
+                checked_add(
+                    retained_metadata_bytes,
+                    transient_bytes,
+                    "product generation residency",
+                )?,
+                writer_bytes,
+                "product generation and writer residency",
+            )?
+        };
         Ok(ContinuumGenerationDemand {
             storage_plan,
             algorithm_scratch_bytes,
@@ -441,88 +455,163 @@ fn generic_scratch_bytes(
 }
 
 fn taylor_scratch_bytes(inputs: &ContinuumProductInputs<'_>) -> Result<u64, ProductsError> {
-    let state = inputs.normal_state();
-    let shape = state.shape();
-    let cells = checked_shape_values([shape[0], shape[1], 1, 1])?;
-    let terms = u64::try_from(state.coefficient_term_count())
-        .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor term count"))?;
-    let moments = u64::try_from(state.normal_moment_count())
-        .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor moment count"))?;
-    let cells = u64::try_from(cells)
-        .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor cell count"))?;
+    let parts = TaylorParts::of(inputs)?;
+    checked_add(
+        checked_add(parts.retained, parts.transient, "Taylor algorithm scratch")?,
+        parts.restoration.unwrap_or(0),
+        "Taylor restoration scratch",
+    )
+}
 
-    // TaylorProducts retains PSF and weight moments; residual, model,
-    // restored, PB and PB-corrected term families; alpha, PB-corrected alpha,
-    // alpha-error, sensitivity and mask;
-    // two validity planes; and scalar sum weights until every planned member
-    // has been copied into the produced generation.
-    let retained_f32_planes = checked_add(
-        checked_mul(moments, 2, "Taylor PSF and weight planes")?,
-        checked_add(
-            checked_mul(terms, 5, "Taylor term families")?,
-            5,
-            "Taylor scalar product planes",
-        )?,
-        "Taylor retained plane count",
-    )?;
-    let retained = checked_add(
-        checked_mul(
-            checked_mul(retained_f32_planes, cells, "Taylor retained values")?,
-            size_of::<f32>() as u64,
-            "Taylor retained payload bytes",
-        )?,
-        checked_add(
-            checked_mul(
-                checked_mul(2, cells, "Taylor validity values")?,
-                size_of::<bool>() as u64,
-                "Taylor validity bytes",
-            )?,
-            checked_mul(moments, size_of::<f32>() as u64, "Taylor sum weights")?,
-            "Taylor validity and sum-weight bytes",
-        )?,
-        "Taylor retained scratch",
-    )?;
+/// What the coupled Taylor family holds while `TaylorProducts::build`
+/// builds it, at its largest stage, and once it is built
+/// ([`taylor_stages`]).
+struct TaylorStages {
+    building: u64,
+    retained: u64,
+}
 
-    // Construction additionally retains the principal residual family and PB0
-    // source plane. The normal solve owns three dense term matrices plus two
-    // term vectors at its peak. This intentionally follows the product owner's
-    // concrete current data structures, rather than a runtime approximation.
-    let transient_planes = checked_mul(
-        checked_add(terms, 1, "Taylor transient plane count")?,
-        checked_mul(
-            cells,
-            size_of::<f32>() as u64,
-            "Taylor transient plane bytes",
-        )?,
-        "Taylor transient planes",
+/// The stages of the coupled Taylor family (#738). It reads its PSF and
+/// weight moments, residual and model terms and sensitivity first, solves
+/// the principal residuals, fits the beam and restores each term; the PB,
+/// PB-corrected, spectral-index and mask planes come after the
+/// restoration's FFT workspace is gone. Building peaks at the largest of:
+/// the read family and the principal residuals beside the beam fit
+/// (`beam_scratch`) or beside restoration (its kernel, the restored terms
+/// and one FFT convolution's workspace); or every retained plane beside
+/// the principal residuals, the PB0 source and the normal solve.
+fn taylor_stages(
+    inputs: &ContinuumProductInputs<'_>,
+    beam_scratch: u64,
+) -> Result<TaylorStages, ProductsError> {
+    let parts = TaylorParts::of(inputs)?;
+    let planes = |count: u64| checked_mul(count, parts.plane, "Taylor stage planes");
+    // PSF and weight moments, residual and model terms, the sensitivity.
+    let read = checked_add(
+        planes(2 * parts.moments + 2 * parts.terms + 1)?,
+        checked_mul(parts.moments, size_of::<f32>() as u64, "Taylor sum weights")?,
+        "Taylor read family",
     )?;
-    let term_square = checked_mul(terms, terms, "Taylor normal matrix values")?;
-    let solve = checked_mul(
-        checked_add(
-            checked_mul(term_square, 3, "Taylor normal matrices")?,
-            checked_mul(terms, 2, "Taylor solve vectors")?,
-            "Taylor solve values",
-        )?,
-        size_of::<f64>() as u64,
-        "Taylor solve bytes",
-    )?;
-    let mut total = checked_add(
-        retained,
-        checked_add(transient_planes, solve, "Taylor transient scratch")?,
-        "Taylor algorithm scratch",
-    )?;
-    if inputs.problem().products().restoring_beam() != RestoringBeamPolicy::None {
-        total = checked_add(
-            total,
-            checked_add(
-                checked_mul(cells, size_of::<f32>() as u64, "Taylor restoring kernel")?,
-                fft_convolution_workspace_bytes(shape)?,
-                "Taylor convolution scratch",
-            )?,
-            "Taylor restoration scratch",
-        )?;
+    let solved = checked_add(read, planes(parts.terms)?, "Taylor principal residuals")?;
+    let mut building = checked_add(parts.retained, parts.transient, "Taylor built family")?
+        .max(checked_add(solved, beam_scratch, "Taylor beam fit")?);
+    if let Some(restoration) = parts.restoration {
+        // The kernel and the workspace's output are in `restoration`; the
+        // terms restored before the last are beside it.
+        building = building.max(checked_add(
+            checked_add(solved, restoration, "Taylor restoration")?,
+            planes(parts.terms.saturating_sub(1))?,
+            "Taylor restored terms",
+        )?);
     }
-    Ok(total)
+    Ok(TaylorStages {
+        building,
+        retained: parts.retained,
+    })
+}
+
+/// The pieces of the coupled Taylor family's demand.
+struct TaylorParts {
+    /// One `f32` plane.
+    plane: u64,
+    terms: u64,
+    moments: u64,
+    /// Every plane the built family keeps, its validity and sum weights.
+    retained: u64,
+    /// The principal residuals and PB0 source the build keeps beside the
+    /// family, and the normal solve.
+    transient: u64,
+    /// The restoring kernel and one FFT convolution's workspace, when the
+    /// products restore.
+    restoration: Option<u64>,
+}
+
+impl TaylorParts {
+    fn of(inputs: &ContinuumProductInputs<'_>) -> Result<Self, ProductsError> {
+        let state = inputs.normal_state();
+        let shape = state.shape();
+        let cells = checked_shape_values([shape[0], shape[1], 1, 1])?;
+        let terms = u64::try_from(state.coefficient_term_count())
+            .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor term count"))?;
+        let moments = u64::try_from(state.normal_moment_count())
+            .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor moment count"))?;
+        let cells = u64::try_from(cells)
+            .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor cell count"))?;
+
+        // TaylorProducts retains PSF and weight moments; residual, model,
+        // restored, PB and PB-corrected term families; alpha, PB-corrected alpha,
+        // alpha-error, sensitivity and mask;
+        // two validity planes; and scalar sum weights until every planned member
+        // has been copied into the produced generation.
+        let retained_f32_planes = checked_add(
+            checked_mul(moments, 2, "Taylor PSF and weight planes")?,
+            checked_add(
+                checked_mul(terms, 5, "Taylor term families")?,
+                5,
+                "Taylor scalar product planes",
+            )?,
+            "Taylor retained plane count",
+        )?;
+        let retained = checked_add(
+            checked_mul(
+                checked_mul(retained_f32_planes, cells, "Taylor retained values")?,
+                size_of::<f32>() as u64,
+                "Taylor retained payload bytes",
+            )?,
+            checked_add(
+                checked_mul(
+                    checked_mul(2, cells, "Taylor validity values")?,
+                    size_of::<bool>() as u64,
+                    "Taylor validity bytes",
+                )?,
+                checked_mul(moments, size_of::<f32>() as u64, "Taylor sum weights")?,
+                "Taylor validity and sum-weight bytes",
+            )?,
+            "Taylor retained scratch",
+        )?;
+
+        // Construction additionally retains the principal residual family and PB0
+        // source plane. The normal solve owns three dense term matrices plus two
+        // term vectors at its peak. This intentionally follows the product owner's
+        // concrete current data structures, rather than a runtime approximation.
+        let transient_planes = checked_mul(
+            checked_add(terms, 1, "Taylor transient plane count")?,
+            checked_mul(
+                cells,
+                size_of::<f32>() as u64,
+                "Taylor transient plane bytes",
+            )?,
+            "Taylor transient planes",
+        )?;
+        let term_square = checked_mul(terms, terms, "Taylor normal matrix values")?;
+        let solve = checked_mul(
+            checked_add(
+                checked_mul(term_square, 3, "Taylor normal matrices")?,
+                checked_mul(terms, 2, "Taylor solve vectors")?,
+                "Taylor solve values",
+            )?,
+            size_of::<f64>() as u64,
+            "Taylor solve bytes",
+        )?;
+        let restoration =
+            if inputs.problem().products().restoring_beam() != RestoringBeamPolicy::None {
+                Some(checked_add(
+                    checked_mul(cells, size_of::<f32>() as u64, "Taylor restoring kernel")?,
+                    fft_convolution_workspace_bytes(shape)?,
+                    "Taylor convolution scratch",
+                )?)
+            } else {
+                None
+            };
+        Ok(Self {
+            plane: checked_mul(cells, size_of::<f32>() as u64, "Taylor plane bytes")?,
+            terms,
+            moments,
+            retained,
+            transient: checked_add(transient_planes, solve, "Taylor transient scratch")?,
+            restoration,
+        })
+    }
 }
 
 fn fft_convolution_workspace_bytes(shape: [usize; 2]) -> Result<u64, ProductsError> {

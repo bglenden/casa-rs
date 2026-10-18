@@ -9,11 +9,26 @@ use casa_imaging_model::{
 use casa_imaging_operator::{AwCatalog, AwIndexing, NativeManifest};
 
 use super::{AwPlan, NativeAwCachePolicy, PrepareError};
+use crate::{HostResources, ResourcePolicy};
 
 const CELL_RAD: f64 = 1.0e-4;
 const SIZE: usize = 64;
 const OVERSAMPLING: usize = 4;
 const REFERENCE_HZ: f64 = 1.5e9;
+
+/// A host whose memory no deployment here reaches.
+const HOST: HostResources = HostResources {
+    threads: 1,
+    performance_cores: 1,
+    available_memory: 1 << 40,
+    metal: false,
+};
+/// One worker and all of [`HOST`]'s memory.
+const POLICY: ResourcePolicy = ResourcePolicy::Explicit {
+    workers: 1,
+    memory: 1 << 40,
+};
+const AMPLE: (&HostResources, &ResourcePolicy) = (&HOST, &POLICY);
 
 /// Two frequency groups about the reference, conjugate beams on: each
 /// group's conjugate beam is the other group.
@@ -99,7 +114,7 @@ fn wide_cache() -> tempfile::TempDir {
 fn generate_missing_regenerates_a_cache_of_another_selection() {
     let root = wide_cache();
     plan(root.path(), NativeAwCachePolicy::GenerateMissing)
-        .deploy()
+        .deploy(AMPLE)
         .expect("deploy");
     let state = AwCatalog::native_cache_state(root.path(), &subset()).expect("state");
     assert!(state.reusable(), "{state}");
@@ -109,7 +124,7 @@ fn generate_missing_regenerates_a_cache_of_another_selection() {
 fn reuse_only_refuses_a_cache_of_another_selection() {
     let root = wide_cache();
     let Err(PrepareError::AwCacheNotReusable { state }) =
-        plan(root.path(), NativeAwCachePolicy::ReuseOnly).deploy()
+        plan(root.path(), NativeAwCachePolicy::ReuseOnly).deploy(AMPLE)
     else {
         panic!("reuse-only accepted a cache of another selection");
     };
@@ -128,7 +143,7 @@ fn generate_missing_keeps_a_cache_of_this_request() {
         .modified()
         .expect("mtime");
     plan(root.path(), NativeAwCachePolicy::GenerateMissing)
-        .deploy()
+        .deploy(AMPLE)
         .expect("deploy");
     let kept = std::fs::metadata(&cell)
         .expect("cell")
@@ -146,13 +161,13 @@ fn generate_missing_keeps_a_cache_of_this_request() {
 fn a_cache_in_use_is_not_regenerated_under_its_run() {
     let root = tempfile::tempdir().expect("cache directory");
     let running = plan_for(root.path(), NativeAwCachePolicy::GenerateMissing, wide())
-        .deploy()
+        .deploy(AMPLE)
         .expect("the first run deploys");
     for policy in [
         NativeAwCachePolicy::GenerateMissing,
         NativeAwCachePolicy::Regenerate,
     ] {
-        let Err(PrepareError::AwCatalog(error)) = plan(root.path(), policy).deploy() else {
+        let Err(PrepareError::AwCatalog(error)) = plan(root.path(), policy).deploy(AMPLE) else {
             panic!("{policy:?} replaced a cache in use");
         };
         assert!(error.to_string().contains("another run"), "{error}");
@@ -165,15 +180,45 @@ fn a_cache_in_use_is_not_regenerated_under_its_run() {
     }
     // Another reader of the same request shares it.
     let sharing = plan_for(root.path(), NativeAwCachePolicy::ReuseOnly, wide())
-        .deploy()
+        .deploy(AMPLE)
         .expect("a second reader shares the cache");
     drop((running, sharing));
     plan(root.path(), NativeAwCachePolicy::GenerateMissing)
-        .deploy()
+        .deploy(AMPLE)
         .expect("regenerated once the runs end");
     assert!(
         AwCatalog::native_cache_state(root.path(), &subset())
             .expect("state")
             .reusable()
     );
+}
+
+/// #738: native generation is admitted before it starts. Under a policy
+/// that cannot hold [`AwCatalog::generation_bytes`] it is refused, typed,
+/// and writes no cell.
+#[test]
+fn native_generation_is_admitted_before_it_writes_a_cell() {
+    let root = tempfile::tempdir().expect("cache directory");
+    let tight = ResourcePolicy::Explicit {
+        workers: 1,
+        memory: AwCatalog::generation_bytes(&subset()) - 1,
+    };
+    let Err(PrepareError::Admission(admission)) =
+        plan(root.path(), NativeAwCachePolicy::GenerateMissing).deploy((&HOST, &tight))
+    else {
+        panic!("generation ran beyond its policy");
+    };
+    assert_eq!(admission.phase, "native AW generation");
+    let cells = std::fs::read_dir(root.path())
+        .expect("cache directory")
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .contains("CFS_")
+        })
+        .count();
+    assert_eq!(cells, 0, "no cell was written");
 }

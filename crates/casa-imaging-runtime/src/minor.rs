@@ -114,23 +114,35 @@ impl PsfCache {
     }
 }
 
-/// Heap bytes one loaded plane holds ([`load`]): its residual and PSF terms
-/// (`f64`), its support and validity, its sensitivity under a response, and
-/// what it is read through (the normal state's windows as `Complex64`, one
-/// model plane).
-fn load_bytes(cells: u64, residual_terms: u64, psf_terms: u64, response: bool) -> u64 {
+/// Heap bytes one loaded plane holds at most ([`load`]): its residual and
+/// PSF terms (`f64`), its support and validity, its sensitivity under a
+/// response and, from a paged channel-local state, the plane's fields read
+/// as `Complex64`; or, before any of them, its validity beside the one
+/// model plane read at a time to find the valid cells. A constant or Taylor
+/// state is resident and its planes are borrowed, not read (#738).
+fn load_bytes(
+    cells: u64,
+    (residual_terms, psf_terms): (u64, u64),
+    response: bool,
+    paged: bool,
+) -> u64 {
     let terms = residual_terms + psf_terms;
-    cells
-        * (terms * size_of::<f64>() as u64
-            + 2 * size_of::<bool>() as u64
-            + if response { size_of::<f64>() as u64 } else { 0 }
-            + terms * size_of::<num_complex::Complex64>() as u64
-            + size_of::<casa_imaging_model::ModelSample>() as u64)
+    let loaded = terms * size_of::<f64>() as u64
+        + 2 * size_of::<bool>() as u64
+        + if response { size_of::<f64>() as u64 } else { 0 }
+        + if paged {
+            terms * size_of::<num_complex::Complex64>() as u64
+        } else {
+            0
+        };
+    let validity = (size_of::<casa_imaging_model::ModelSample>() + size_of::<bool>()) as u64;
+    cells * loaded.max(validity)
 }
 
-/// The planes a minor cycle of `normal` loads, their largest cell count and
-/// their residual and PSF term counts.
-fn plane_layout(normal: &FinalNormalState) -> (Vec<PlaneKey>, u64, u64, u64) {
+/// The planes a minor cycle of `normal` loads, their largest cell count,
+/// their residual and PSF term counts, and whether they are read from a
+/// paged channel-local state.
+fn plane_layout(normal: &FinalNormalState) -> (Vec<PlaneKey>, u64, (u64, u64), bool) {
     let taylor = is_taylor(normal);
     let keys = plane_keys(normal, taylor);
     let cells = keys
@@ -138,7 +150,7 @@ fn plane_layout(normal: &FinalNormalState) -> (Vec<PlaneKey>, u64, u64, u64) {
         .map(|key| plane_shape(normal, *key).len() as u64)
         .max()
         .unwrap_or(0);
-    let (residual, psf) = if taylor {
+    let terms = if taylor {
         (
             normal.coefficient_term_count() as u64,
             normal.normal_moment_count() as u64,
@@ -146,7 +158,12 @@ fn plane_layout(normal: &FinalNormalState) -> (Vec<PlaneKey>, u64, u64, u64) {
     } else {
         (1, 1)
     };
-    (keys, cells, residual, psf)
+    (
+        keys,
+        cells,
+        terms,
+        normal.basis() == NormalBasis::ChannelLocal,
+    )
 }
 
 /// Heap bytes [`prepare_minor_cycle`] holds at most: the masks it
@@ -162,7 +179,7 @@ pub fn prepare_bytes(
     workers: usize,
 ) -> u64 {
     let normal = completion.normal_state();
-    let (keys, cells, residual, psf) = plane_layout(normal);
+    let (keys, cells, terms, paged) = plane_layout(normal);
     let fits = keys.iter().any(|key| !cache.summaries.contains_key(key));
     let measure = cells
         * if setup.nsigma > 0.0 {
@@ -173,7 +190,7 @@ pub fn prepare_bytes(
         .max(if fits { 2 * size_of::<f32>() as u64 } else { 0 });
     let concurrent = workers.min(keys.len()).max(1) as u64;
     mask_plans.materialize_bytes(normal)
-        + concurrent * (load_bytes(cells, residual, psf, setup.response.is_some()) + measure)
+        + concurrent * (load_bytes(cells, terms, setup.response.is_some(), paged) + measure)
 }
 
 /// Heap bytes the masks a minor cycle forms keep while the cycle runs and
@@ -217,13 +234,13 @@ pub fn run_bytes(
     workers: usize,
 ) -> u64 {
     let normal = completion.normal_state();
-    let (keys, cells, residual, psf) = plane_layout(normal);
+    let (keys, cells, load_terms, paged) = plane_layout(normal);
     let shape = keys
         .iter()
         .map(|key| plane_shape(normal, *key))
         .max_by_key(|shape| shape.len())
         .unwrap_or(PlaneShape::new(0, 0));
-    let terms = residual as usize;
+    let terms = load_terms.0 as usize;
     let components = controls.iterations + 1;
     let solve = match &setup.algorithm {
         ReconstructionAlgorithm::Hogbom => casa_imaging_deconvolution::solve_bytes(
@@ -277,7 +294,7 @@ pub fn run_bytes(
     // Every plane's slot, solved record and stop, which the cycle keeps
     // until it merges them.
     let records = keys.len() * (size_of::<Slot>() + size_of::<Solved>() + size_of::<PlaneStop>());
-    concurrent * (load_bytes(cells, residual, psf, setup.response.is_some()) + solve)
+    concurrent * (load_bytes(cells, load_terms, setup.response.is_some(), paged) + solve)
         + records as u64
 }
 

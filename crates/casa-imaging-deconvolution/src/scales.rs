@@ -203,6 +203,15 @@ impl ScaleBank {
     /// wrapped plane and its spectrum at a time, beside planning their
     /// transform.
     pub(crate) fn bytes(sizes: &[f64], shape: PlaneShape) -> u64 {
+        Self::resident_bytes(sizes, shape)
+            + plane_bytes(shape)
+            + spectrum_bytes(shape)
+            + planning_bytes(shape)
+    }
+
+    /// Heap bytes a built bank of `sizes` on `shape` keeps: each scale's
+    /// spectrum and samples.
+    pub(crate) fn resident_bytes(sizes: &[f64], shape: PlaneShape) -> u64 {
         let samples = sizes
             .iter()
             .map(|&size| {
@@ -210,11 +219,7 @@ impl ScaleBank {
                 (count * size_of::<(isize, isize, f64)>()) as u64
             })
             .sum::<u64>();
-        sizes.len() as u64 * spectrum_bytes(shape)
-            + samples
-            + plane_bytes(shape)
-            + spectrum_bytes(shape)
-            + planning_bytes(shape)
+        sizes.len() as u64 * spectrum_bytes(shape) + samples
     }
 
     /// Samples one scale function of `size` pixels has at most on `shape`:

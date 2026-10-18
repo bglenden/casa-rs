@@ -11,7 +11,6 @@ mod evla;
 mod native;
 mod native_cache;
 
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
@@ -44,6 +43,10 @@ const IMAGING_PREFIX: &str = "CFS_";
 const WEIGHT_PREFIX: &str = "WTCFS_";
 /// `AWProjectFT`: Mueller elements of a 4 × 4 matrix, `element = 4·i + j`.
 const MUELLER_ELEMENTS: u32 = 16;
+/// Heap bytes opening, reading or writing one cell image holds besides its
+/// pixels: its table's description, coordinate and misc-info records. The
+/// `kernel_memory` laws measure about 3 KiB for a write.
+const CELL_IMAGE_RECORD_BYTES: usize = 16 << 10;
 
 /// A native A/W request or numerical calculation could not be completed.
 #[derive(Clone, Copy, Debug, Error, PartialEq, Eq)]
@@ -140,11 +143,10 @@ struct CellFiles {
     weight: CellHeader,
 }
 
-/// One (PA, frequency, w) group: its Mueller elements in the catalog's
-/// element order.
+/// One (PA, frequency, w) group's supports; its cells, one per Mueller
+/// element in the catalog's element order, are [`AwCatalog::group_cells`].
 #[derive(Clone, Debug)]
 struct Group {
-    cells: Vec<CellFiles>,
     /// The largest declared half support over the group's imaging cells:
     /// the imaging dense cell is padded to it, and `AWVisResampler`'s
     /// `onGrid` test for a data row uses it (`CF Support: 4 (6)` in CASA's
@@ -158,7 +160,7 @@ struct Group {
 }
 
 impl Group {
-    fn new(cells: Vec<CellFiles>) -> Self {
+    fn new(cells: &[CellFiles]) -> Self {
         let largest = |select: fn(&CellFiles) -> &CellHeader| {
             cells.iter().map(select).fold([0_u16; 2], |half, header| {
                 [
@@ -179,7 +181,6 @@ impl Group {
                 ]
             });
         Self {
-            cells,
             imaging_half_support,
             weight_half_support,
             smallest_half_support,
@@ -214,21 +215,34 @@ impl Loaded {
     }
 }
 
+/// Heap bytes of one loaded cell besides its taps: the [`Arc`]'s two counts
+/// and the [`DenseCell`] they share.
+const ARC_CELL_BYTES: usize = 2 * size_of::<usize>() + size_of::<DenseCell>();
+
 /// The bounded cell cache: least recently used eviction once the loaded
 /// cells exceed the bound; a cell a worker holds stays alive through its
 /// [`CellHold`] after eviction.
 struct Lru {
-    loaded: HashMap<usize, Loaded>,
-    /// Groups a fetcher is reading from disk, outside the cache's lock;
-    /// another fetcher of one of them waits for that load rather than
-    /// reading the group again (#744).
-    loading: HashSet<usize>,
+    /// One slot per group, allocated once at open (#745 review).
+    slots: Vec<Slot>,
     /// Use counter stamped on every fetch.
     clock: u64,
     bytes: usize,
     bound: usize,
     /// Groups read from disk since the catalog opened.
     loads: u64,
+}
+
+/// A group's place in the cache.
+enum Slot {
+    /// Not loaded.
+    Empty,
+    /// A fetcher is reading it from disk, outside the cache's lock; another
+    /// fetcher of it waits for that load rather than reading the group again
+    /// (#744).
+    Loading,
+    /// Its loaded taps.
+    Loaded(Loaded),
 }
 
 /// The AW-projection kernel set over a CASA convolution-function cache.
@@ -258,6 +272,9 @@ pub struct AwCatalog {
     w_values: Vec<f64>,
     w_increment: f64,
     mueller_elements: Vec<u32>,
+    /// Every cell, by group and then Mueller element: group `g`'s are
+    /// `cells[g·E..(g + 1)·E]` with `E` the number of elements.
+    cells: Vec<CellFiles>,
     groups: Vec<Group>,
     oversampling: u16,
     max_half_support: [u16; 2],
@@ -265,7 +282,7 @@ pub struct AwCatalog {
     correction: ImageCorrection,
     lru: Mutex<Lru>,
     /// Signalled whenever a group's load ends, loaded or not, for the
-    /// fetchers waiting on it ([`Lru::loading`]).
+    /// fetchers waiting on it ([`Slot::Loading`]).
     load_ended: Condvar,
 }
 
@@ -303,31 +320,12 @@ impl AwCatalog {
         bound_bytes: usize,
     ) -> Result<Self, AwCatalogError> {
         let root = root.as_ref().to_path_buf();
-        let entries = std::fs::read_dir(&root)
-            .map_err(|error| cache_error(&root, format!("cannot list: {error}")))?;
-        let mut imaging = HashMap::new();
-        let mut weight = HashMap::new();
-        for entry in entries {
-            let entry =
-                entry.map_err(|error| cache_error(&root, format!("cannot list: {error}")))?;
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                continue;
-            };
-            if let Some(rest) = name.strip_prefix(WEIGHT_PREFIX) {
-                weight.insert(rest.to_string(), read_header(&entry.path())?);
-            } else if let Some(rest) = name.strip_prefix(IMAGING_PREFIX) {
-                imaging.insert(rest.to_string(), read_header(&entry.path())?);
-            }
-        }
-        if imaging.is_empty() {
-            return Err(cache_error(&root, "no CFS_ cell images"));
-        }
+        let mut cells = read_cells(&root)?;
         // A native cell's working field is the image field times the
         // oversampling: `working_size · working_increment = sampling · n · Δx`.
         let [grid_n, _] = geometry.grid_shape();
         let image_increment = geometry.image().increment_rad[0].abs();
-        for header in imaging.values() {
+        for header in cells.iter().map(|cell| &cell.imaging) {
             let Some(working_field) = header.working_field_rad else {
                 continue;
             };
@@ -342,33 +340,14 @@ impl AwCatalog {
                 ));
             }
         }
-        let mut cells = Vec::with_capacity(imaging.len());
-        for (rest, header) in imaging {
-            let partner = weight
-                .remove(&rest)
-                .ok_or_else(|| cache_error(&header.path, "paired WTCFS_ cell is missing"))?;
-            if partner.mueller != header.mueller
-                || partner.w_value.to_bits() != header.w_value.to_bits()
-                || partner.pa_deg.to_bits() != header.pa_deg.to_bits()
-                || partner.sampling != header.sampling
-            {
-                return Err(cache_error(
-                    &partner.path,
-                    "WTCFS_ cell disagrees with its CFS_ cell",
-                ));
-            }
-            cells.push(CellFiles {
-                imaging: header,
-                weight: partner,
-            });
-        }
-        if let Some((_, orphan)) = weight.into_iter().next() {
-            return Err(cache_error(&orphan.path, "paired CFS_ cell is missing"));
-        }
+        // Sorted unique values, held at their length: the catalog keeps them
+        // and its charge counts their capacity (#745 review). Values equal
+        // under `total_cmp` share their bits, so the order among them is moot.
         let unique = |values: Vec<f64>| {
             let mut values = values;
-            values.sort_by(f64::total_cmp);
+            values.sort_unstable_by(f64::total_cmp);
             values.dedup_by(|a, b| a.to_bits() == b.to_bits());
+            values.shrink_to_fit();
             values
         };
         let pa_deg = unique(cells.iter().map(|cell| cell.imaging.pa_deg).collect());
@@ -380,6 +359,7 @@ impl AwCatalog {
             .collect::<Vec<_>>();
         mueller_elements.sort_unstable();
         mueller_elements.dedup();
+        mueller_elements.shrink_to_fit();
         let w_increment = cells[0].imaging.w_increment;
         let oversampling = cells[0].imaging.sampling;
         if cells.iter().any(|cell| {
@@ -388,47 +368,46 @@ impl AwCatalog {
         }) {
             return Err(cache_error(&root, "cells disagree on WIncr or Sampling"));
         }
+        // Order the cells in place by group and element: distinct keys over
+        // every (group, element) pair leave cell `i` at key `i`.
         let index_of = |values: &[f64], value: f64| {
             values
-                .iter()
-                .position(|listed| listed.to_bits() == value.to_bits())
+                .binary_search_by(|listed| listed.total_cmp(&value))
                 .expect("listed value")
         };
-        let groups_len = pa_deg.len() * frequencies_hz.len() * w_values.len();
-        let mut groups: Vec<Vec<Option<CellFiles>>> = (0..groups_len)
-            .map(|_| vec![None; mueller_elements.len()])
-            .collect();
-        let mut max_half_support = [0_u16; 2];
-        for cell in cells {
-            let group = (index_of(&pa_deg, cell.imaging.pa_deg) * frequencies_hz.len()
-                + index_of(&frequencies_hz, cell.imaging.frequency_hz))
+        let elements = mueller_elements.len();
+        let key = |cell: &CellFiles| {
+            let header = &cell.imaging;
+            let group = (index_of(&pa_deg, header.pa_deg) * frequencies_hz.len()
+                + index_of(&frequencies_hz, header.frequency_hz))
                 * w_values.len()
-                + index_of(&w_values, cell.imaging.w_value);
+                + index_of(&w_values, header.w_value);
             let plane = mueller_elements
-                .binary_search(&cell.imaging.mueller)
+                .binary_search(&header.mueller)
                 .expect("listed element");
-            if groups[group][plane].is_some() {
-                return Err(cache_error(&cell.imaging.path, "duplicate cell key"));
-            }
-            for (axis, largest) in max_half_support.iter_mut().enumerate() {
-                *largest = (*largest)
-                    .max(cell.imaging.support[axis])
-                    .max(cell.weight.support[axis]);
-            }
-            groups[group][plane] = Some(cell);
+            group * elements + plane
+        };
+        cells.sort_unstable_by_key(key);
+        if let Some(pair) = cells.windows(2).find(|pair| key(&pair[0]) == key(&pair[1])) {
+            return Err(cache_error(&pair[1].imaging.path, "duplicate cell key"));
         }
-        let groups = groups
-            .into_iter()
-            .map(|planes| {
-                let cells = planes
-                    .into_iter()
-                    .collect::<Option<Vec<_>>>()
-                    .ok_or_else(|| {
-                        cache_error(&root, "a (PA, frequency, w) group lacks a Mueller element")
-                    })?;
-                Ok(Group::new(cells))
+        if cells.len() != pa_deg.len() * frequencies_hz.len() * w_values.len() * elements {
+            return Err(cache_error(
+                &root,
+                "a (PA, frequency, w) group lacks a Mueller element",
+            ));
+        }
+        let max_half_support = cells.iter().fold([0_u16; 2], |largest, cell| {
+            [0, 1].map(|axis| {
+                largest[axis]
+                    .max(cell.imaging.support[axis])
+                    .max(cell.weight.support[axis])
             })
-            .collect::<Result<Vec<_>, AwCatalogError>>()?;
+        });
+        let groups = cells
+            .chunks_exact(elements)
+            .map(Group::new)
+            .collect::<Vec<_>>();
         let mueller = routing(&mueller_elements, polarization).ok_or_else(|| {
             cache_error(
                 &root,
@@ -461,6 +440,14 @@ impl AwCatalog {
             w_values,
             w_increment,
             mueller_elements,
+            lru: Mutex::new(Lru {
+                slots: (0..groups.len()).map(|_| Slot::Empty).collect(),
+                clock: 0,
+                bytes: 0,
+                bound: bound_bytes,
+                loads: 0,
+            }),
+            cells,
             groups,
             oversampling,
             max_half_support,
@@ -471,16 +458,22 @@ impl AwCatalog {
                 vec![1.0; nx],
                 vec![1.0; ny],
             ),
-            lru: Mutex::new(Lru {
-                loaded: HashMap::new(),
-                loading: HashSet::new(),
-                clock: 0,
-                bytes: 0,
-                bound: bound_bytes,
-                loads: 0,
-            }),
             load_ended: Condvar::new(),
         })
+    }
+
+    /// Heap bytes [`Self::generate_native`] holds at most for `input`
+    /// (#738): the working grid ([`EvlaAwWorkspace::bytes`]), planning its
+    /// transform, and the cell image being written: a crop of the working
+    /// grid at most as wide, as its pixel array and the copy the image
+    /// takes of it, and the image's table and records (16 KiB).
+    #[must_use]
+    pub const fn generation_bytes(input: &NativeAwRequestInput) -> u64 {
+        let cells = input.grid.size * input.grid.size;
+        (EvlaAwWorkspace::bytes(input.grid.size)
+            + 2 * cells * size_of::<Complex32>()
+            + CELL_IMAGE_RECORD_BYTES) as u64
+            + casa_fft::planning_bytes::<f32>(cells)
     }
 
     /// Generate every cell of `input` natively into `root` as CASA-format
@@ -655,53 +648,84 @@ impl AwCatalog {
         self.lru.lock().expect("cache lock").loads
     }
 
-    /// Bytes the catalog holds at most while it lives with `holders`
-    /// workers fetching cells: its index and corrections; the cache's bound
-    /// and one group past it, which a fetch inserts before the cache
-    /// evicts; and for each holder the largest group twice, the one its
-    /// [`CellHold`] keeps alive after eviction and the one it builds outside
-    /// the cache's lock beside it (#744), and the planes it reads to build
-    /// one (each read as an image array and its copy).
+    /// Bytes the catalog holds at most from its open on, with `holders`
+    /// workers fetching cells: what it keeps of its index (each cell's two
+    /// headers and paths, the groups, axes, routes, corrections and the
+    /// cache's group slots, at their capacities) and the larger of its two
+    /// stages. Opening reads one header at a time and lists one axis's
+    /// values before it is reduced. Serving holds its cells and, for each
+    /// holder, the planes it reads to build one group (each read as an image
+    /// array and its copy) with that read's records.
+    ///
+    /// When every group fits the cache's bound nothing is evicted and each
+    /// group is loaded once, so the cells are at most every group (#738).
+    /// Otherwise they are the bound and one group past it, which a fetch
+    /// inserts before the cache evicts, and for each holder the largest
+    /// group twice: the one its [`CellHold`] keeps alive after eviction and
+    /// the one it builds outside the cache's lock beside it (#744). Every
+    /// loaded cell is also its [`Arc`] (#745 review).
     #[must_use]
     pub fn charge_bytes(&self, holders: usize) -> u64 {
-        let header = |header: &CellHeader| size_of::<CellHeader>() + header.path.as_os_str().len();
-        let index = self.groups.capacity() * size_of::<Group>()
-            + self
-                .groups
-                .iter()
-                .flat_map(|group| &group.cells)
-                .map(|cell| header(&cell.imaging) + header(&cell.weight))
-                .sum::<usize>()
-            + (self.pa_deg.len() + self.frequencies_hz.len() + self.w_values.len())
+        let lru = self.lru.lock().expect("cache lock");
+        let paths = self
+            .cells
+            .iter()
+            .map(|cell| cell.imaging.path.capacity() + cell.weight.path.capacity());
+        let index = self.root.capacity()
+            + self.cells.capacity() * size_of::<CellFiles>()
+            + paths.clone().sum::<usize>()
+            + self.groups.capacity() * size_of::<Group>()
+            + (self.pa_deg.capacity() + self.frequencies_hz.capacity() + self.w_values.capacity())
                 * size_of::<f64>()
-            + self.mueller_elements.len() * size_of::<u32>();
+            + self.mueller_elements.capacity() * size_of::<u32>()
+            + lru.slots.capacity() * size_of::<Slot>();
+        let opening = (self.cells.len() * size_of::<f64>())
+            .max(CELL_IMAGE_RECORD_BYTES + 4 * paths.max().unwrap_or(0))
+            as u64;
+        let elements = self.mueller_elements.len();
         let group = |group: &Group| {
-            let planes = group.cells.len();
-            dense_cell_bytes(planes, self.oversampling, group.imaging_half_support)
-                + dense_cell_bytes(planes, self.oversampling, group.weight_half_support)
+            dense_cell_bytes(elements, self.oversampling, group.imaging_half_support)
+                + dense_cell_bytes(elements, self.oversampling, group.weight_half_support)
         };
-        let read = |group: &Group| {
+        let read = |cells: &[CellFiles]| {
             let plane = |header: &CellHeader| header.shape[0] * header.shape[1];
-            let imaging = group
-                .cells
-                .iter()
-                .map(|cell| plane(&cell.imaging))
-                .sum::<usize>();
-            let weight = group
-                .cells
-                .iter()
-                .map(|cell| plane(&cell.weight))
-                .sum::<usize>();
-            (2 * imaging.max(weight) * size_of::<Complex32>()) as u64
+            let imaging = cells.iter().map(|cell| plane(&cell.imaging)).sum::<usize>();
+            let weight = cells.iter().map(|cell| plane(&cell.weight)).sum::<usize>();
+            // `load_group`'s header and plane lists.
+            let lists = elements
+                * (size_of::<&CellHeader>() + size_of::<(Vec<Complex32>, [usize; 2], [u16; 2])>());
+            (2 * imaging.max(weight) * size_of::<Complex32>() + lists + CELL_IMAGE_RECORD_BYTES)
+                as u64
         };
         let largest = self.groups.iter().map(group).max().unwrap_or(0);
-        let reading = self.groups.iter().map(read).max().unwrap_or(0);
-        let bound = self.lru.lock().expect("cache lock").bound as u64;
+        let every = self.groups.iter().map(group).sum::<u64>();
+        let reading = self
+            .cells
+            .chunks_exact(elements)
+            .map(read)
+            .max()
+            .unwrap_or(0);
+        let bound = lru.bound as u64;
+        let groups = self.groups.len() as u64;
+        let (taps, pairs) = if every <= bound {
+            (every, groups)
+        } else {
+            (
+                bound + (2 * holders as u64 + 1) * largest,
+                groups + 2 * holders as u64 + 1,
+            )
+        };
+        let serving = taps + pairs * 2 * ARC_CELL_BYTES as u64 + holders as u64 * reading;
         index as u64
+            + self.mueller.bytes()
             + self.correction.resident_bytes()
-            + bound
-            + (2 * holders as u64 + 1) * largest
-            + holders as u64 * reading
+            + opening.max(serving)
+    }
+
+    /// Group `group`'s cells, one per Mueller element.
+    fn group_cells(&self, group: usize) -> &[CellFiles] {
+        let elements = self.mueller_elements.len();
+        &self.cells[group * elements..(group + 1) * elements]
     }
 
     /// The parallactic-angle cell of `pa_deg`: the nearest listed angle on
@@ -763,24 +787,29 @@ impl AwCatalog {
         loop {
             lru.clock += 1;
             let now = lru.clock;
-            if let Some(loaded) = lru.loaded.get_mut(&group) {
-                loaded.last_use = now;
-                return (loaded.imaging.clone(), loaded.weight.clone());
-            }
-            if !lru.loading.contains(&group) {
-                break;
+            match &mut lru.slots[group] {
+                Slot::Loaded(loaded) => {
+                    loaded.last_use = now;
+                    return (loaded.imaging.clone(), loaded.weight.clone());
+                }
+                Slot::Empty => break,
+                Slot::Loading => {}
             }
             lru = self.load_ended.wait(lru).expect("cache lock");
         }
-        lru.loading.insert(group);
+        lru.slots[group] = Slot::Loading;
         lru.loads += 1;
         drop(lru);
         let loading = Loading {
             catalog: self,
             group,
         };
-        let mut loaded = load_group(&self.groups[group], self.oversampling)
-            .unwrap_or_else(|error| panic!("AW cell group {group} cannot be read: {error}"));
+        let mut loaded = load_group(
+            self.group_cells(group),
+            &self.groups[group],
+            self.oversampling,
+        )
+        .unwrap_or_else(|error| panic!("AW cell group {group} cannot be read: {error}"));
         let mut lru = self.lru.lock().expect("cache lock");
         lru.clock += 1;
         loaded.last_use = lru.clock;
@@ -788,16 +817,24 @@ impl AwCatalog {
         lru.bytes += loaded.bytes();
         // Caching the group ends its load in the same lock hold, so no
         // other fetcher can mark it loading in between.
-        lru.loaded.insert(group, loaded);
-        lru.loading.remove(&group);
-        while lru.bytes > lru.bound && lru.loaded.len() > 1 {
-            let oldest = lru
-                .loaded
+        lru.slots[group] = Slot::Loaded(loaded);
+        // Evict the least recently used loaded group but the one just loaded.
+        while lru.bytes > lru.bound {
+            let Some(oldest) = lru
+                .slots
                 .iter()
-                .min_by_key(|(_, loaded)| loaded.last_use)
-                .map(|(group, _)| *group)
-                .expect("a loaded group");
-            if let Some(cell) = lru.loaded.remove(&oldest) {
+                .enumerate()
+                .filter(|(other, _)| *other != group)
+                .filter_map(|(other, slot)| match slot {
+                    Slot::Loaded(loaded) => Some((other, loaded.last_use)),
+                    Slot::Empty | Slot::Loading => None,
+                })
+                .min_by_key(|(_, last_use)| *last_use)
+                .map(|(other, _)| other)
+            else {
+                break;
+            };
+            if let Slot::Loaded(cell) = std::mem::replace(&mut lru.slots[oldest], Slot::Empty) {
                 lru.bytes -= cell.bytes();
             }
         }
@@ -832,7 +869,7 @@ impl Drop for Loading<'_> {
         // so it cannot have poisoned this one; a poisoned lock is another
         // thread's panic, which ends the pass.
         if let Ok(mut lru) = self.catalog.lru.lock() {
-            lru.loading.remove(&self.group);
+            lru.slots[self.group] = Slot::Empty;
         }
         self.catalog.load_ended.notify_all();
     }
@@ -941,6 +978,80 @@ impl ConvolutionFunctionSet for AwCatalog {
     fn weight_image_magnitude(&self) -> bool {
         true
     }
+}
+
+/// Every cell of the cache at `root` (`CFCache::fillCFListFromDisk`): each
+/// `CFS_` image's header with its `WTCFS_` partner's, which shares the name
+/// after the prefix. The directory is listed first to count the cells, so
+/// the list is allocated once, at its length, and opening holds no table of
+/// names beside it (#745 review).
+fn read_cells(root: &Path) -> Result<Vec<CellFiles>, AwCatalogError> {
+    let entries =
+        || {
+            let listing = std::fs::read_dir(root)
+                .map_err(|error| cache_error(root, format!("cannot list: {error}")))?;
+            Ok::<_, AwCatalogError>(listing.map(|entry| {
+                entry.map_err(|error| cache_error(root, format!("cannot list: {error}")))
+            }))
+        };
+    let named = |entry: &std::fs::DirEntry, prefix: &str| {
+        let name = entry.file_name();
+        name.to_str()
+            .and_then(|name| name.strip_prefix(prefix))
+            .map(str::to_owned)
+    };
+    let (mut imaging, mut weight) = (0_usize, 0_usize);
+    for entry in entries()? {
+        let entry = entry?;
+        if named(&entry, WEIGHT_PREFIX).is_some() {
+            weight += 1;
+        } else if named(&entry, IMAGING_PREFIX).is_some() {
+            imaging += 1;
+        }
+    }
+    if imaging == 0 {
+        return Err(cache_error(root, "no CFS_ cell images"));
+    }
+    let mut cells = Vec::with_capacity(imaging);
+    for entry in entries()? {
+        let entry = entry?;
+        let Some(rest) = named(&entry, IMAGING_PREFIX) else {
+            continue;
+        };
+        let header = read_header(&entry.path())?;
+        let partner = root.join(format!("{WEIGHT_PREFIX}{rest}"));
+        if !partner.exists() {
+            return Err(cache_error(&header.path, "paired WTCFS_ cell is missing"));
+        }
+        let partner = read_header(&partner)?;
+        if partner.mueller != header.mueller
+            || partner.w_value.to_bits() != header.w_value.to_bits()
+            || partner.pa_deg.to_bits() != header.pa_deg.to_bits()
+            || partner.sampling != header.sampling
+        {
+            return Err(cache_error(
+                &partner.path,
+                "WTCFS_ cell disagrees with its CFS_ cell",
+            ));
+        }
+        cells.push(CellFiles {
+            imaging: header,
+            weight: partner,
+        });
+    }
+    // Every CFS_ cell found its partner, so a WTCFS_ cell over their count
+    // has none.
+    if weight > cells.len() {
+        for entry in entries()? {
+            let entry = entry?;
+            if let Some(rest) = named(&entry, WEIGHT_PREFIX)
+                && !root.join(format!("{IMAGING_PREFIX}{rest}")).exists()
+            {
+                return Err(cache_error(entry.path(), "paired CFS_ cell is missing"));
+            }
+        }
+    }
+    Ok(cells)
 }
 
 /// `AWVisResampler`'s routes through diagonal Mueller cells. Each selected
@@ -1142,13 +1253,13 @@ mod tests {
         };
         let group = |cells: &[([u16; 2], [u16; 2])]| {
             Group::new(
-                cells
+                &cells
                     .iter()
                     .map(|(imaging, weight)| CellFiles {
                         imaging: header(*imaging),
                         weight: header(*weight),
                     })
-                    .collect(),
+                    .collect::<Vec<_>>(),
             )
         };
         // Imaging 6 over weight 4: the PSF and weight image keep rows the

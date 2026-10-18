@@ -762,12 +762,31 @@ fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
         taylor_workspace + restoration_workspace + maximum * 10,
         "coupled Taylor scratch additionally overlaps its emitted member and bounded backing-write window"
     );
+    // The family is built whole, then published member by member, so the
+    // phase peaks at the larger stage (#738). Building peaks at the largest
+    // of: the built family beside its principal residuals, PB0 source and
+    // solve; the read family (3 PSF and 3 weight moments, 2 residual and 2
+    // model terms, the sensitivity, 3 sum weights) and the 2 principal
+    // residuals beside the beam fit, or beside restoration and the term
+    // restored before the last. Publication holds the family, one member,
+    // its window and the writer.
+    let plane = maximum * 4;
+    let solved = 11 * plane + 3 * 4 + 2 * plane;
+    let building = taylor_workspace
+        .max(solved + demand.beam_scratch_bytes())
+        .max(solved + restoration_workspace + plane);
+    let publishing = 5_516 + 2 * (maximum * 4 + maximum) + demand.writer_bytes();
     assert_eq!(
         demand.peak_residency_bytes(),
-        demand.algorithm_scratch_bytes()
-            + demand.retained_metadata_bytes()
-            + demand.beam_scratch_bytes()
-            + demand.writer_bytes()
+        demand.retained_metadata_bytes() + building.max(publishing)
+    );
+    assert!(
+        demand.peak_residency_bytes()
+            < demand.algorithm_scratch_bytes()
+                + demand.retained_metadata_bytes()
+                + demand.beam_scratch_bytes()
+                + demand.writer_bytes(),
+        "the stages do not all coexist"
     );
     let generated = produce_continuum_members(
         &planned,
