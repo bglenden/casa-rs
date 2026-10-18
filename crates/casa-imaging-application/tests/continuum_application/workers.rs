@@ -2,6 +2,9 @@
 //! #737: a run takes the most workers, up to its policy's, whose memory
 //! fits, rather than being refused.
 
+use casa_imaging_application::SummaryTarget;
+use serde_json::Value;
+
 use super::*;
 
 /// A host of four threads, all performance cores, whose memory no run here
@@ -108,22 +111,122 @@ fn a_cube_whose_products_do_not_fit_every_lane_publishes() {
     }
 }
 
-/// #763 review (Astra, finding 2; Fable, finding 1): a count the fit takes
-/// is not refused at a later major cycle. The refresh passes are admitted
-/// beside the normal state and model the run keeps, its masks and the
-/// minor cycles' records, which grow with each cycle up to `nmajor`.
+/// [`run`], writing the run's summary to `summary` and returning it beside
+/// the outcome, so a refused run's choice of workers can be read.
+fn run_summarised(
+    request: &ImagingRequest,
+    workers: usize,
+    memory: u64,
+    summary: &Path,
+) -> (Result<ImagingOutcome, ApplicationDispatchError>, Value) {
+    let outcome = casa_imaging_application::execute(
+        request,
+        RunContext {
+            host: HOST,
+            policy: ResourcePolicy::Explicit {
+                workers,
+                memory: memory + compile_resident(),
+            },
+            cancel: Cancel::new(),
+            summary: Some(SummaryTarget {
+                path: summary.to_path_buf(),
+                request: json!({ "case": "workers" }),
+            }),
+        },
+    );
+    let written =
+        serde_json::from_slice(&std::fs::read(summary).expect("the summary")).expect("JSON");
+    (outcome, written)
+}
+
+/// #763 review (Astra, finding 2; Fable, findings 1 and 2): a count the
+/// fit takes is never refused at a later phase. The refresh passes are
+/// admitted beside the normal state and model the run keeps, its masks and
+/// the minor cycles' records, which grow with each cycle up to `nmajor`.
+/// Over budgets 128 KiB apart, and the two of Astra's reproductions, every
+/// run completes or is refused with the fit's own reason that no fewer
+/// workers fit; the sweep completes on one worker and on more.
 #[test]
-fn a_chosen_count_is_not_refused_at_a_later_major_cycle() {
+fn a_count_the_fit_takes_is_never_refused_later() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
-    for (nmajor, budget) in [(1, 6 << 20), (10, 6_488_064)] {
-        let name = root.path().join(format!("cycled-{nmajor}"));
-        let outcome = run(&cycled_mfs(&measurement_set, &name, nmajor), 4, budget)
-            .unwrap_or_else(|error| panic!("nmajor {nmajor}, {budget} bytes: {error}"));
-        assert!(outcome.workers >= 1);
-        assert_standard_products(&name, &outcome.product_names());
+    let mut completed = std::collections::BTreeSet::new();
+    for nmajor in [1, 10] {
+        let budgets = (1_u64 << 20..=8 << 20)
+            .step_by(128 << 10)
+            .chain([6 << 20, 6_488_064]);
+        for budget in budgets {
+            let name = root.path().join(format!("cycled-{nmajor}-{budget}"));
+            let summary = root.path().join(format!("cycled-{nmajor}-{budget}.json"));
+            let (outcome, written) = run_summarised(
+                &cycled_mfs(&measurement_set, &name, nmajor),
+                4,
+                budget,
+                &summary,
+            );
+            match outcome {
+                Ok(outcome) => {
+                    completed.insert(outcome.workers);
+                }
+                Err(error) => {
+                    // Refused before the fit chose, in the preparation.
+                    if written["workers"] == 0 {
+                        continue;
+                    }
+                    let reason = written["workers_reason"].as_str().unwrap_or_default();
+                    assert!(
+                        reason.contains("no fewer fit"),
+                        "nmajor {nmajor}, {budget} bytes: a count the fit took ({}, {reason:?}) \
+                         was refused: {error}",
+                        written["workers"]
+                    );
+                }
+            }
+        }
     }
+    assert!(
+        completed.contains(&1),
+        "some budget runs on one worker: {completed:?}"
+    );
+    assert!(
+        completed.iter().any(|&workers| workers > 1),
+        "some budget runs on more: {completed:?}"
+    );
+}
+
+/// #763 review (Astra, finding 3): a setup refused after the fit chose its
+/// workers still reports the choice and why. Briggs weighting at 512 pixels
+/// on a 4,096,000-byte budget: the fit finds that no count fits and takes
+/// one, and the imaging weights are then refused.
+#[test]
+fn a_refused_setup_reports_the_workers_it_chose() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
+    let name = root.path().join("briggs");
+    let summary = root.path().join("briggs.json");
+    let (outcome, written) = run_summarised(
+        &request(
+            &measurement_set,
+            &name,
+            json!({
+                "imsize": 512,
+                "niter": 20,
+                "weighting": "briggs",
+                "robust": 0.5,
+                "spw": "0:1~30",
+            }),
+        ),
+        4,
+        4_096_000,
+        &summary,
+    );
+    assert!(outcome.is_err(), "the budget does not hold the run");
+    assert_eq!(written["workers"], 1, "{written}");
+    assert_eq!(written["workers_policy"], 4, "{written}");
+    let reason = written["workers_reason"].as_str().expect("a reason");
+    assert!(reason.contains("no fewer fit"), "{reason}");
 }
 
 fn read_values(base: &Path, suffix: &str) -> Vec<f32> {
@@ -155,10 +258,25 @@ fn a_policy_whose_workers_do_not_fit_runs_on_the_most_that_do() {
     assert_eq!(serial.workers, 1);
     assert_eq!(serial.summary.workers_reason, None);
 
+    // A refusal must be the fit's own, that no fewer workers fit, or come
+    // before the fit chose; never a later refusal of a count it took (#763
+    // review).
     let workers = |memory: u64| {
         let name = root.path().join(format!("probe-{memory}"));
-        let outcome = run(&cleaned_mfs(&measurement_set, &name), 4, memory);
-        outcome.map_or(0, |outcome| outcome.workers)
+        let summary = root.path().join(format!("probe-{memory}.json"));
+        let (outcome, written) =
+            run_summarised(&cleaned_mfs(&measurement_set, &name), 4, memory, &summary);
+        outcome.map_or_else(
+            |error| {
+                let reason = written["workers_reason"].as_str().unwrap_or_default();
+                assert!(
+                    written["workers"] == 0 || reason.contains("no fewer fit"),
+                    "{memory} bytes: a count the fit took was refused: {error}"
+                );
+                0
+            },
+            |outcome| outcome.workers,
+        )
     };
     let (mut fewer, mut more) = (0_u64, 4_u64 << 30);
     assert_eq!(workers(more), 4, "ample memory holds four workers");
@@ -185,13 +303,12 @@ fn a_policy_whose_workers_do_not_fit_runs_on_the_most_that_do() {
         .expect("a reason");
     assert!(reason.starts_with("4 workers need "), "{reason}");
     assert!(reason.contains(", 2 fit "), "{reason}");
+    // Below it at most one worker fits; a refusal there is the fit's own
+    // (`workers` checks). On this 128-pixel field the refresh pass, which
+    // hardly grows with the workers, sets both counts' needs, so the budget
+    // just below may fit none.
     assert!(
-        run(
-            &cleaned_mfs(&measurement_set, &root.path().join("below")),
-            4,
-            fewer
-        )
-        .map_or(true, |outcome| outcome.workers == 1),
+        workers(fewer) <= 1,
         "below the budget at most one worker fits"
     );
     for suffix in [".psf", ".residual", ".model", ".image"] {

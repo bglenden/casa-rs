@@ -40,7 +40,7 @@ use super::images::{pass_images, prepare_model};
 use super::measurement::{
     DomainOperator, KernelAdmission, domain_operator, native_spacing_hz, selected_correlations,
 };
-use super::setup::{self, SetupDemand, WorkerChoice};
+use super::setup::{self, RefreshDemand, SetupDemand, WorkerChoice};
 use super::source::{MeasurementSetSource, PlaneBounds};
 use super::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
 use super::{ImagingError, trace};
@@ -205,14 +205,27 @@ pub(crate) fn run(
             0
         }
     };
+    // What a refresh pass holds beside its wave (#763 review): every cycle
+    // before it keeps its record, up to the last refresh `nmajor` allows.
+    let refresh = cleaning.then(|| RefreshDemand {
+        masks: 2 * layout.mask_bytes(),
+        cached: layout.refresh_bytes(&setup),
+        results: layout.result_bytes(),
+        records: layout.record_bytes() * controls.maximum_major_cycles().unwrap_or(1).max(1) as u64,
+    });
     // Operators, the workers, the source, the imaging weights and the paged
-    // cube state.
-    let (mut run, workers) = run_phase("setup", &cancel, diagnostics, summary, || {
-        Run::open(inputs, &minor)
-    })?;
-    summary.workers = workers.cores.workers;
-    summary.workers_policy = workers.policy.workers;
-    summary.workers_reason = workers.reason;
+    // cube state. The choice of workers is recorded as it is made, so a
+    // setup that then fails still reports it.
+    let mut chosen = None;
+    let opened = run_phase("setup", &cancel, diagnostics, summary, || {
+        Run::open(inputs, (&minor, refresh), &mut chosen)
+    });
+    if let Some(workers) = chosen {
+        summary.workers = workers.cores.workers;
+        summary.workers_policy = workers.policy.workers;
+        summary.workers_reason = workers.reason;
+    }
+    let mut run = opened?;
     summary.precision = run
         .domains
         .first()
@@ -454,11 +467,13 @@ impl<'a> Run<'a> {
     /// fit beside the operators and the source ([`setup::fit_workers`],
     /// #737); a paged kernel set is admitted for the count chosen, and each
     /// later phase is admitted as it starts. `minor` is what a minor cycle
-    /// holds on a team of so many workers.
+    /// holds on a team of so many workers and `refresh` what a refresh pass
+    /// holds beside its wave. `chosen` receives the choice as it is made.
     fn open(
         inputs: ImagingInputs<'a>,
-        minor: &dyn Fn(usize) -> u64,
-    ) -> Result<(Self, WorkerChoice), ImagingError> {
+        (minor, refresh): (&dyn Fn(usize) -> u64, Option<RefreshDemand>),
+        chosen: &mut Option<WorkerChoice>,
+    ) -> Result<Self, ImagingError> {
         let problem = inputs.problem;
         let backend = inputs.backend;
         let correlations = selected_correlations(problem)?;
@@ -543,9 +558,18 @@ impl<'a> Run<'a> {
             spill_directory: inputs.spill_directory,
             weight_image,
             minor,
+            refresh,
+            kept_weights: kept_weight_bytes(
+                problem,
+                &domains,
+                source.maximum_block().channels(),
+                free_memory(&host, &policy),
+            )
+            .map_or(0, |(_, bytes)| bytes),
             free: free_memory(&host, &policy),
         };
         let choice = setup::fit_workers(ceiling, demand.free, |cores| demand.bytes(cores))?;
+        *chosen = Some(choice.clone());
         if let Some(reason) = &choice.reason {
             tracing::warn!(
                 "imaging on {} workers, not the resource policy's {}: {reason}",
@@ -635,7 +659,7 @@ impl<'a> Run<'a> {
                 return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
             }
         }
-        Ok((run, choice))
+        Ok(run)
     }
 
     /// The initial major cycle: data and PSF, from an empty model; it writes
@@ -865,26 +889,15 @@ impl<'a> Run<'a> {
     /// sixteenth of the free memory; charged before they are allocated.
     /// Wider runs weigh every pass.
     fn keep_weights(&self, residency: Residency) -> Option<(WeightCache, Reservation)> {
-        if residency != Residency::All
-            || self.domains.len() != 1
-            || !self.domains[0].resampler.is_direct()
-        {
+        if residency != Residency::All {
             return None;
         }
-        let rows = self
-            .problem
-            .observation()
-            .sources()
-            .iter()
-            .map(|source| source.selection().rows().selected_row_count())
-            .sum::<u64>();
-        let samples = usize::try_from(rows)
-            .ok()?
-            .checked_mul(self.source.maximum_block().channels())?;
-        let bytes = WeightCache::bytes(samples);
-        if bytes > free_memory(&self.host, &self.policy) / 16 {
-            return None;
-        }
+        let (samples, bytes) = kept_weight_bytes(
+            self.problem,
+            &self.domains,
+            self.source.maximum_block().channels(),
+            free_memory(&self.host, &self.policy),
+        )?;
         let charge = self.admit("kept imaging weights", bytes).ok()?;
         Some((WeightCache::new(samples), charge))
     }
@@ -1027,6 +1040,30 @@ impl<'a> Run<'a> {
             sink.as_mut(),
         )?)
     }
+}
+
+/// The samples and bytes of the imaging weights a run keeps across its
+/// passes ([`Run::keep_weights`]): one image domain placed a channel at a
+/// time, `channels` per row, whose slots take at most a sixteenth of
+/// `free`; `None` when the run weighs every pass instead.
+fn kept_weight_bytes(
+    problem: &CompiledProblem,
+    domains: &[DomainOperator],
+    channels: usize,
+    free: u64,
+) -> Option<(usize, u64)> {
+    if domains.len() != 1 || !domains[0].resampler.is_direct() {
+        return None;
+    }
+    let rows = problem
+        .observation()
+        .sources()
+        .iter()
+        .map(|source| source.selection().rows().selected_row_count())
+        .sum::<u64>();
+    let samples = usize::try_from(rows).ok()?.checked_mul(channels)?;
+    let bytes = WeightCache::bytes(samples);
+    (bytes <= free / 16).then_some((samples, bytes))
 }
 
 /// Every image domain's operator, resampler and partition: planes split

@@ -13,11 +13,18 @@
 //! - the first major-cycle pass at one plane per wave, or at every plane
 //!   for the pass that writes visibilities, on the region strips that hold
 //!   the most of any it may cut from that work;
-//! - the larger half of a minor cycle.
+//! - the larger half of a minor cycle;
+//! - a refresh pass, beside what the run keeps then: the normal state and
+//!   model, the imaging weights it kept, the masks, a cached Clark refresh,
+//!   the minor cycle's terms and the record of every cycle before it, up to
+//!   `nmajor` (#763 review). A run with no `nmajor` is covered to its first
+//!   refresh: its records grow with each cycle after that.
 //!
 //! The count is chosen once, from those charges, and each phase is then
 //! admitted as before. A run that no count fits takes one worker, which
-//! admission refuses.
+//! admission refuses. The products, whose scratch grows with their lanes,
+//! choose their lanes when they start, from their own demand
+//! (`native::publish_products`).
 
 use std::path::Path;
 
@@ -115,15 +122,39 @@ pub(super) struct SetupDemand<'r> {
     pub(super) weight_image: bool,
     /// What a minor cycle holds on a team of so many workers.
     pub(super) minor: &'r dyn Fn(usize) -> u64,
+    /// What a refresh pass holds beside its own wave; `None` for a run
+    /// that does not clean.
+    pub(super) refresh: Option<RefreshDemand>,
+    /// The imaging weights the passes keep across passes, when the run
+    /// keeps them (`Run::keep_weights`).
+    pub(super) kept_weights: u64,
     /// The memory the policy leaves free before the setup's charges.
     pub(super) free: u64,
+}
+
+/// What the run holds beside a refresh pass's own wave, from the layout
+/// the first pass forms (#763 review): the minor cycle's masks, a cached
+/// Clark refresh, the model terms the minor cycle hands the pass, and the
+/// record of every minor cycle before it, which the run keeps.
+pub(super) struct RefreshDemand {
+    /// The latest masks and the ones an automatic mask evolves from.
+    pub(super) masks: u64,
+    /// The Clark refresh a single-plane Clark run caches.
+    pub(super) cached: u64,
+    /// The minor cycle's model terms.
+    pub(super) results: u64,
+    /// The records of the cycles up to the last refresh `nmajor` allows,
+    /// or the first when it allows any number.
+    pub(super) records: u64,
 }
 
 impl SetupDemand<'_> {
     /// The bytes the run holds at most on `cores`: the kernel sets and the
     /// cube state throughout, beside the imaging-weights pass or, after it,
     /// its density grid with the region row-work pass, and then with the
-    /// work it keeps, a major-cycle pass and a minor cycle.
+    /// work and imaging weights it keeps, the first major-cycle pass and a
+    /// minor cycle, or a refresh pass beside the normal state and model the
+    /// run keeps and [`RefreshDemand`].
     pub(super) fn bytes(&self, cores: CoreAllocation) -> Result<u64, ImagingError> {
         let streaming = cores.streaming_workers;
         let kernels = self
@@ -188,11 +219,28 @@ impl SetupDemand<'_> {
             pass = pass
                 .max(demand.bytes(demand.planes()) + self.stitch.pass_bytes(modes.psf) + written);
         }
+        let minor = (self.minor)(cores.workers);
+        let kept = weights + measured + self.kept_weights;
+        // A refresh is admitted while the run keeps the normal state and
+        // model it refreshes, its masks and records (`Run::refresh`).
+        let refresh = self.refresh.as_ref().map_or(0, |refresh| {
+            let refreshing = wave(ModeSet::DATA, true);
+            kept + refreshing.resident_normal_bytes()
+                + self.model_bytes
+                + refresh.cached
+                + refresh.records
+                + (refresh.masks
+                    + refresh.results
+                    + refreshing.bytes(1)
+                    + self.stitch.pass_bytes(false))
+                .max(minor)
+        });
         Ok(kernels
             + cube
             + weighing
                 .max(weights + measuring)
-                .max(weights + measured + pass + (self.minor)(cores.workers)))
+                .max(kept + pass + minor)
+                .max(refresh))
     }
 }
 

@@ -105,6 +105,37 @@ impl MinorLayout {
             .sum()
     }
 
+    /// Heap bytes the record of one minor cycle keeps for the rest of the
+    /// run: a copy of the primary mask's support, the first image domain's,
+    /// and at most [`TRACE`] traced components (the run's `record_bytes`).
+    #[must_use]
+    pub fn record_bytes(&self) -> u64 {
+        let support = self
+            .domains
+            .first()
+            .map_or(0, |[width, height]| width * height * size_of::<bool>());
+        (support + TRACE * size_of::<super::TracedComponent>()) as u64
+    }
+
+    /// Heap bytes the model terms of a minor cycle hold until its refresh
+    /// pass takes them: [`super::result_bytes`] for every plane.
+    #[must_use]
+    pub fn result_bytes(&self) -> u64 {
+        self.planes as u64 * super::result_bytes(self.terms.0 as usize)
+    }
+
+    /// Heap bytes the Clark refresh a run caches across its minor cycles
+    /// holds ([`PsfCache::refresh_bytes`]): a single-plane Clark run keeps
+    /// one; any other keeps none.
+    #[must_use]
+    pub fn refresh_bytes(&self, setup: &MinorCycleSetup) -> u64 {
+        if matches!(setup.algorithm, ReconstructionAlgorithm::Clark) && self.planes == 1 {
+            casa_imaging_deconvolution::LinearRefresh::bytes(self.shape)
+        } else {
+            0
+        }
+    }
+
     /// Heap bytes one loaded plane holds at most ([`super::load`]): its
     /// residual and PSF terms (`f64`), its support and validity, its
     /// sensitivity under a response and, from a paged channel-local state,

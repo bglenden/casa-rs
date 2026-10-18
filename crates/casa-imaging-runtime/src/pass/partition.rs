@@ -340,13 +340,7 @@ impl WaveDemand<'_> {
                 0
             }) as u64;
         let images = terms * pols * image_cells * size_of::<f32>() as u64 * planes_u64;
-        let normal = if matches!(basis, Basis::ChannelLocal { .. }) {
-            0
-        } else {
-            pols * image_cells
-                * resident_bytes_per_cell(basis.data_terms(), basis.psf_terms(), self.modes.psf)
-                * planes_u64
-        };
+        let normal = normal_bytes(operator, self.modes.psf) * planes_u64;
         let mut held = 0;
         if self.with_model {
             let model_planes = planes
@@ -378,6 +372,32 @@ impl WaveDemand<'_> {
             appending: 2 * images + normal,
         }
     }
+
+    /// Bytes the normal state a run keeps resident between its passes
+    /// holds, over every image domain: one plane's state with the PSF and
+    /// sensitivity of the first pass, which a refresh keeps ([`normal_bytes`]).
+    #[must_use]
+    pub fn resident_normal_bytes(&self) -> u64 {
+        self.domains
+            .iter()
+            .map(|domain| normal_bytes(domain.operator, true))
+            .sum()
+    }
+}
+
+/// Bytes one plane of `operator`'s normal state holds resident, with the
+/// PSF's moments and sensitivity when `psf`, at its stored size
+/// ([`resident_bytes_per_cell`]); none for a channel-local state, which is
+/// paged under its cube cache's charge.
+fn normal_bytes(operator: &MeasurementOperator, psf: bool) -> u64 {
+    let basis = operator.basis();
+    if matches!(basis, Basis::ChannelLocal { .. }) {
+        return 0;
+    }
+    let [width, height] = operator.geometry().image().shape;
+    operator.polarization().requested().len() as u64
+        * (width * height) as u64
+        * resident_bytes_per_cell(basis.data_terms(), basis.psf_terms(), psf)
 }
 
 /// What a wave holds at each of its stages ([`WaveDemand::bytes`]), summed
@@ -660,9 +680,6 @@ mod tests {
         }
     }
 
-    /// Without usable work, or with work on one row, the strips stay valid:
-    /// equal strips for no work or the wrong length, and one row at least
-    /// per strip when all the work is on one row.
     /// #737: the widest strips hold the most tile rows of any cut into as
     /// many strips, so a charge at them bounds the balanced strips a pass
     /// cuts later. Strips shorter than the halo lose rows at the grid's
@@ -720,6 +737,9 @@ mod tests {
         }
     }
 
+    /// Without usable work, or with work on one row, the strips stay valid:
+    /// equal strips for no work or the wrong length, and one row at least
+    /// per strip when all the work is on one row.
     #[test]
     fn balanced_regions_fall_back_and_keep_every_strip() {
         let operator = spheroidal_operator();
