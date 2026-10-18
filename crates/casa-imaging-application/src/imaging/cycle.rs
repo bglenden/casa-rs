@@ -23,9 +23,10 @@ use casa_imaging_products::{
     FacetSumWeights, MinorCycleImageResponse, VisibilityProductCompletion,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, BoundedSource, Cancel, MajorCyclePass, ModelPreparation, Partition, PassDomain,
-    PassError, PassSummary, Residency, VisibilitySink, WaveDemand, WeightCache, WorkerTeam,
-    WorkerTeams, density_pass_bytes, run_density_pass, run_major_cycle,
+    BackendChoice, BoundedSource, CHUNK_PLACEMENTS, Cancel, MajorCyclePass, ModelPreparation,
+    Partition, PassDomain, PassError, PassSummary, Residency, VisibilitySink, WaveDemand,
+    WeightCache, WorkerTeam, WorkerTeams, density_pass_bytes, needs_row_work, row_work_pass_bytes,
+    run_density_pass, run_major_cycle, run_row_work_pass,
 };
 use casa_imaging_runtime::{
     Admitted, CubeState, Demand, Diagnostics, HostResources, MinorCycleOutcome, MinorCycleSetup,
@@ -127,6 +128,18 @@ struct Run<'a> {
     /// The imaging weights the run keeps for its samples across passes,
     /// with their charge, once a pass has admitted them ([`Run::keep_weights`]).
     kept_weights: Option<(WeightCache, Reservation)>,
+    /// The first pass's gridding work by anchor row of each region-split
+    /// domain, with its charge: later passes cut their strips to equal
+    /// shares of it (#736).
+    row_work: Option<(Vec<Option<Vec<u64>>>, Reservation)>,
+}
+
+/// What a pass's admission planned ([`Run::admit_pass`]): the waves it
+/// holds, and the placements a row chunk takes (#736).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PassPlan {
+    residency: Residency,
+    chunk_placements: usize,
 }
 
 /// One reconciled major cycle.
@@ -535,6 +548,7 @@ impl<'a> Run<'a> {
             weight_image,
             retained: Reservation::none(),
             kept_weights: None,
+            row_work: None,
         };
         if run.visibility_write.is_some() {
             // The pass that writes is the initial one without cleaning and a
@@ -549,6 +563,7 @@ impl<'a> Run<'a> {
             if run
                 .admit_pass(modes, with_model, run.visibility_write_bytes)?
                 .value
+                .residency
                 != Residency::All
             {
                 return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
@@ -560,9 +575,10 @@ impl<'a> Run<'a> {
     /// The initial major cycle: data and PSF, from an empty model; it writes
     /// visibilities when it is also final.
     fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
+        self.measure_row_work()?;
         // The model is admitted with the pass, before it is allocated.
         let Admitted {
-            value: residency,
+            value: plan,
             reservation: pass,
         } = self.admit_pass(
             self.initial_modes(),
@@ -572,8 +588,8 @@ impl<'a> Run<'a> {
         let model = self
             .lifecycle
             .prepare_final_model(self.lifecycle.initial_empty()?, [])?;
-        let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(residency)?)?;
-        let major = self.reconcile(cycle, true, last, residency)?;
+        let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(plan.residency)?)?;
+        let major = self.reconcile(cycle, true, last, plan)?;
         self.retain(&major, pass)?;
         Ok(major)
     }
@@ -592,7 +608,7 @@ impl<'a> Run<'a> {
         // holds them.
         let (normal_state, model) = completion.into_parts();
         let Admitted {
-            value: residency,
+            value: plan,
             reservation: mut pass,
         } = self.admit_pass(ModeSet::DATA, true, self.write_bytes(last))?;
         let model = self.lifecycle.prepare_final_model(model, terms)?;
@@ -600,9 +616,9 @@ impl<'a> Run<'a> {
             self.problem,
             normal_state,
             model,
-            self.normal_storage(residency)?,
+            self.normal_storage(plan.residency)?,
         )?;
-        let major = self.reconcile(cycle, false, last, residency)?;
+        let major = self.reconcile(cycle, false, last, plan)?;
         pass.join(results);
         self.retain(&major, pass)?;
         Ok(major)
@@ -657,8 +673,9 @@ impl<'a> Run<'a> {
         mut cycle: MajorCycle,
         initial: bool,
         last: bool,
-        residency: Residency,
+        plan: PassPlan,
     ) -> Result<Major, ImagingError> {
+        let residency = plan.residency;
         let modes = if initial {
             self.initial_modes()
         } else {
@@ -683,7 +700,7 @@ impl<'a> Run<'a> {
         let summary = self.pass(
             modes,
             (!initial).then_some(model),
-            residency,
+            plan,
             state,
             initial,
             writer.as_mut(),
@@ -700,6 +717,7 @@ impl<'a> Run<'a> {
             summary.samples,
             started.elapsed().as_secs_f64(),
         );
+        self.keep_row_work(summary.row_work);
         Ok(Major {
             completion,
             visibility,
@@ -740,11 +758,11 @@ impl<'a> Run<'a> {
         modes: ModeSet,
         with_model: bool,
         besides: u64,
-    ) -> Result<Admitted<Residency>, ImagingError> {
+    ) -> Result<Admitted<PassPlan>, ImagingError> {
         let besides = besides + self.stitch.pass_bytes(modes.psf);
         let workers = self.teams.streaming().workers();
-        let domains = pass_domains(&self.domains, workers);
-        let demand = WaveDemand {
+        let domains = pass_domains(&self.domains, workers, self.row_work());
+        let mut demand = WaveDemand {
             domains: &domains,
             modes,
             with_model,
@@ -752,6 +770,7 @@ impl<'a> Run<'a> {
             workers,
             backend: self.backend,
             block: self.source.maximum_block(),
+            chunk_placements: CHUNK_PLACEMENTS,
         };
         let free = free_memory(&self.host, &self.policy).saturating_sub(besides);
         let residency = Residency::plan(&demand, free);
@@ -759,6 +778,9 @@ impl<'a> Run<'a> {
             Residency::All => demand.planes(),
             Residency::Waves { planes_per_wave } => planes_per_wave,
         };
+        // Region owners share larger slices more evenly; take the largest
+        // that fits beside the waves just planned (#736).
+        demand.chunk_placements = demand.plan_chunk_placements(planes, free);
         let reservation = admit(
             &self.host,
             &self.policy,
@@ -768,7 +790,10 @@ impl<'a> Run<'a> {
             },
         )?;
         Ok(Admitted {
-            value: residency,
+            value: PassPlan {
+                residency,
+                chunk_placements: demand.chunk_placements,
+            },
             reservation,
         })
     }
@@ -803,21 +828,90 @@ impl<'a> Run<'a> {
         Some((WeightCache::new(samples), charge))
     }
 
+    /// Measure each region-split domain's gridding work by anchor row before
+    /// the first pass, over a traversal of flags and weights only
+    /// ([`run_row_work_pass`]), so that the first pass cuts balanced strips
+    /// too (#736). A run without several region owners measures nothing,
+    /// and the pass is charged while it runs.
+    fn measure_row_work(&mut self) -> Result<(), ImagingError> {
+        if self.row_work.is_some() {
+            return Ok(());
+        }
+        let team = self.teams.streaming();
+        let work = {
+            let domains = pass_domains(&self.domains, team.workers(), None);
+            if !needs_row_work(&domains) {
+                return Ok(());
+            }
+            let _charge = self.admit(
+                "region row-work pass",
+                row_work_pass_bytes(&domains, team.workers()),
+            )?;
+            let started = Instant::now();
+            let work = run_row_work_pass(
+                &domains,
+                &self.weighting,
+                &mut self.source,
+                team,
+                &self.cancel,
+            )?;
+            tracing::info!(
+                "imaging region row work: measured in {:.2} s",
+                started.elapsed().as_secs_f64()
+            );
+            work
+        };
+        self.keep_row_work(work);
+        Ok(())
+    }
+
+    /// The kept gridding work by anchor row, per domain ([`Self::keep_row_work`]).
+    fn row_work(&self) -> Option<&[Option<Vec<u64>>]> {
+        self.row_work.as_ref().map(|(work, _)| work.as_slice())
+    }
+
+    /// Keep the first pass's gridding work by anchor row for the later
+    /// passes' strips ([`Partition::regions_balanced`]), charged before it is
+    /// kept. Every pass places the same samples, so one histogram serves the
+    /// run. Without a region-split domain, or without room, the later passes
+    /// keep strips of equal height.
+    fn keep_row_work(&mut self, row_work: Vec<Option<Vec<u64>>>) {
+        if self.row_work.is_some() || row_work.iter().all(Option::is_none) {
+            return;
+        }
+        let bytes = row_work
+            .iter()
+            .flatten()
+            .map(|rows| size_of_val(rows.as_slice()) as u64)
+            .sum();
+        match self.admit("region row work", bytes) {
+            Ok(charge) => self.row_work = Some((row_work, charge)),
+            Err(_) => tracing::info!(
+                "imaging region row work: no room to keep {bytes} bytes; \
+                 later passes keep strips of equal height"
+            ),
+        }
+    }
+
     /// One pass over every image domain, appending its images to `state`.
     fn pass(
         &mut self,
         modes: ModeSet,
         model: Option<&ModelGeneration>,
-        residency: Residency,
+        plan: PassPlan,
         mut state: PassAppender<'_>,
         initial: bool,
         mut writer: Option<&mut VisibilityWriter<'_>>,
     ) -> Result<PassSummary, ImagingError> {
+        let PassPlan {
+            residency,
+            chunk_placements,
+        } = plan;
         if self.kept_weights.is_none() {
             self.kept_weights = self.keep_weights(residency);
         }
         let team = self.teams.streaming();
-        let domains = pass_domains(&self.domains, team.workers());
+        let domains = pass_domains(&self.domains, team.workers(), self.row_work());
         let charts = &self.charts;
         let prepare = |chart: usize, planes: PlaneRange| {
             let generation = model.expect("the closure is installed only with a model");
@@ -840,6 +934,7 @@ impl<'a> Run<'a> {
             backend: self.backend,
             metal_stage_timing: self.metal_stage_timing,
             weights: self.kept_weights.as_ref().map(|(cache, _)| cache),
+            chunk_placements,
         };
         let predictions = writer.as_deref().map(VisibilityWriter::needs_predictions);
         let mut write = |block: &_, predictions: &[_]| match writer.as_deref_mut() {
@@ -874,17 +969,30 @@ impl<'a> Run<'a> {
 }
 
 /// Every image domain's operator, resampler and partition: planes split
-/// among `workers` for a channel-local basis, grid strips otherwise.
-fn pass_domains(domains: &[DomainOperator], workers: usize) -> Vec<PassDomain<'_>> {
+/// among `workers` for a channel-local basis, grid strips otherwise, cut to
+/// equal shares of an earlier pass's gridding work by anchor row when the
+/// run has it (`row_work`, per domain; #736).
+fn pass_domains<'d>(
+    domains: &'d [DomainOperator],
+    workers: usize,
+    row_work: Option<&[Option<Vec<u64>>]>,
+) -> Vec<PassDomain<'d>> {
     domains
         .iter()
-        .map(|domain| PassDomain {
+        .enumerate()
+        .map(|(index, domain)| PassDomain {
             operator: &domain.operator,
             resampler: &domain.resampler,
             partition: match domain.operator.basis() {
                 Basis::ChannelLocal { .. } => Partition::Planes { owners: workers },
                 Basis::Constant | Basis::Taylor { .. } => {
-                    Partition::regions(&domain.operator, workers)
+                    match row_work
+                        .and_then(|work| work.get(index))
+                        .and_then(Option::as_ref)
+                    {
+                        Some(work) => Partition::regions_balanced(&domain.operator, workers, work),
+                        None => Partition::regions(&domain.operator, workers),
+                    }
                 }
             },
         })
