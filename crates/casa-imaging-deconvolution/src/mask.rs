@@ -469,13 +469,20 @@ impl ImageDomainReconstructionMaskPlans {
     /// ([`AUTO_MULTITHRESH_BYTES_PER_CELL`]) with the model support it reads.
     #[must_use]
     pub fn materialize_bytes(&self, normal: &FinalNormalState) -> u64 {
+        self.materialize_bytes_for(|ordinal| normal.domain_shape(ordinal))
+    }
+
+    /// [`Self::materialize_bytes`] against image domains of the shapes
+    /// `domain_shape` gives by ordinal: what a run plans before its first
+    /// major cycle forms the Normal State (#737).
+    #[must_use]
+    pub fn materialize_bytes_for(&self, domain_shape: impl Fn(usize) -> Option<[usize; 2]>) -> u64 {
         self.plans
             .iter()
             .enumerate()
             .map(|(ordinal, plan)| {
-                let cells = normal
-                    .domain_shape(ordinal)
-                    .map_or(0, |[width, height]| (width * height) as u64);
+                let cells =
+                    domain_shape(ordinal).map_or(0, |[width, height]| (width * height) as u64);
                 let working = match plan {
                     ReconstructionMaskPlan::AutoMultithresh { .. } => {
                         AUTO_MULTITHRESH_BYTES_PER_CELL

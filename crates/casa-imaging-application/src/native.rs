@@ -2,6 +2,7 @@
 //! The native run: the source admitted, the major and minor cycles on one
 //! worker team, and the products, each phase recorded in the run summary.
 
+use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
 
 use casa_imaging_deconvolution::{
@@ -12,7 +13,7 @@ use casa_imaging_products::{
     ContinuumProductInputs, FacetSumWeights, MinorCycleImageResponse, PlannedContinuumGeneration,
     ProductStoragePlan, ProductsError, PublishedContinuumGeneration, produce_continuum_members,
 };
-use casa_imaging_runtime::pass::{PassError, WorkerTeam, WorkerTeams};
+use casa_imaging_runtime::pass::{PassError, WorkerTeam};
 use casa_imaging_runtime::{
     Admission, Admitted, Cancelled, Demand, Reservation, RunSummary, SourceAccessError, admit,
     finalize_source_access, run_phase,
@@ -109,8 +110,8 @@ impl From<std::io::Error> for NativeError {
     }
 }
 
-/// A native run ready to start: its admitted source, its worker teams and
-/// what its passes, cycles and products need.
+/// A native run ready to start: its admitted source and what its passes,
+/// cycles and products need. Its setup chooses and forms its worker teams.
 pub(crate) struct NativeRun {
     runtime: ApplicationRuntime,
     publication: ApplicationPublication,
@@ -119,14 +120,14 @@ pub(crate) struct NativeRun {
     access: ResolvedSelectedObservationAccess,
     /// The source's charge, held while it is open.
     source: Reservation,
-    teams: WorkerTeams,
     masks: ImageDomainReconstructionMaskPlans,
     image_response: Option<MinorCycleImageResponse>,
 }
 
 /// The end of a run's preparation: check the products against `problem`,
-/// resolve any visibility write, admit the source and form the worker teams
-/// of the policy's core allocation ([`ResourcePolicy::cores`]).
+/// resolve any visibility write and admit the source, its pass storage
+/// sized for the policy's streaming workers ([`ResourcePolicy::cores`]), the
+/// most the run's setup then chooses.
 ///
 /// [`ResourcePolicy::cores`]: casa_imaging_runtime::ResourcePolicy::cores
 pub(crate) fn prepare(
@@ -160,13 +161,6 @@ pub(crate) fn prepare(
         &runtime.host,
         &runtime.resource_policy,
     )?;
-    let cores = runtime.resource_policy.cores(&runtime.host);
-    tracing::info!(
-        "workers: {} computing, {} streaming beside the source's producer",
-        cores.workers,
-        cores.streaming_workers
-    );
-    let teams = WorkerTeams::new(cores)?;
     Ok(NativeRun {
         runtime,
         publication,
@@ -174,7 +168,6 @@ pub(crate) fn prepare(
         visibility_write,
         access,
         source,
-        teams,
         masks: input.masks,
         image_response: input.minor_cycle_image_response,
     })
@@ -189,7 +182,6 @@ pub(crate) fn run(
     run: NativeRun,
     summary: &mut RunSummary,
 ) -> Result<impl FnOnce(RunSummary) -> ImagingOutcome + use<>, NativeError> {
-    summary.workers = run.teams.compute().workers();
     let NativeRun {
         runtime,
         publication,
@@ -197,10 +189,10 @@ pub(crate) fn run(
         visibility_write,
         access,
         source,
-        teams,
         masks,
         image_response,
     } = run;
+    let teams = OnceCell::new();
     let outcome = imaging::run(
         imaging::ImagingInputs {
             problem,
@@ -221,6 +213,10 @@ pub(crate) fn run(
         summary,
     )?;
     drop(source);
+    let team = teams
+        .get()
+        .expect("a run that completed formed its teams")
+        .compute();
     let mut published = Vec::new();
     let products = run_phase(
         "products",
@@ -237,14 +233,14 @@ pub(crate) fn run(
                 },
                 &runtime,
                 publication,
-                teams.compute(),
+                team,
                 &mut published,
             )
         },
     );
     summary.products = published;
     let products = products?;
-    let workers = teams.compute().workers();
+    let workers = team.workers();
     let problem = problem.clone();
     Ok(move |summary| ImagingOutcome {
         problem,

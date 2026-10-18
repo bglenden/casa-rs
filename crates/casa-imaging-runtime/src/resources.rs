@@ -106,6 +106,20 @@ pub struct CoreAllocation {
     pub streaming_workers: usize,
 }
 
+impl CoreAllocation {
+    /// This allocation with at most `workers` workers in each phase, and at
+    /// least one: what a run uses when the policy's workers do not fit its
+    /// memory (#737).
+    #[must_use]
+    pub fn at_most(self, workers: usize) -> Self {
+        let workers = workers.clamp(1, self.workers);
+        Self {
+            workers,
+            streaming_workers: self.streaming_workers.min(workers),
+        }
+    }
+}
+
 /// How much of the host one run may use.
 ///
 /// Each policy sets a budget of busy threads: its workers and, while a
@@ -534,6 +548,34 @@ mod tests {
         ];
         for (policy, host, expected) in cases {
             assert_eq!(policy.cores(&host), expected, "{policy:?} on {host:?}");
+        }
+    }
+
+    /// #737: fewer workers keep the streaming phases at most as wide as
+    /// the computing ones, and never go below one.
+    #[test]
+    fn an_allocation_at_most_some_workers_narrows_both_phases() {
+        let four = CoreAllocation {
+            workers: 4,
+            streaming_workers: 3,
+        };
+        let cases = [
+            (5, (4, 3)),
+            (4, (4, 3)),
+            (3, (3, 3)),
+            (2, (2, 2)),
+            (1, (1, 1)),
+            (0, (1, 1)),
+        ];
+        for (workers, (computing, streaming)) in cases {
+            assert_eq!(
+                four.at_most(workers),
+                CoreAllocation {
+                    workers: computing,
+                    streaming_workers: streaming,
+                },
+                "at most {workers}"
+            );
         }
     }
 
