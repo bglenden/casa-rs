@@ -16,7 +16,7 @@ use casa_imaging_products::{
 use casa_imaging_runtime::pass::{PassError, WorkerTeam};
 use casa_imaging_runtime::{
     Admission, Admitted, Cancelled, Demand, Reservation, RunSummary, SourceAccessError, admit,
-    finalize_source_access, run_phase,
+    finalize_source_access, free_memory, run_phase,
 };
 use casa_ms::{ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest};
 
@@ -218,6 +218,7 @@ pub(crate) fn run(
         .expect("a run that completed formed its teams")
         .compute();
     let mut published = Vec::new();
+    let mut lanes = (0, None);
     let products = run_phase(
         "products",
         &runtime.cancel,
@@ -235,10 +236,12 @@ pub(crate) fn run(
                 publication,
                 team,
                 &mut published,
+                &mut lanes,
             )
         },
     );
     summary.products = published;
+    (summary.product_lanes, summary.product_lanes_reason) = lanes;
     let products = products?;
     let workers = team.workers();
     let problem = problem.clone();
@@ -279,7 +282,8 @@ struct ProductSource {
 /// Generate every planned product member into the writer's private staging,
 /// one output channel per window on the run's team, and publish them,
 /// adding each image published to `published`; a cancelled run publishes
-/// nothing.
+/// nothing. `lanes` receives the lanes the products ran on and, when fewer
+/// than the team's workers, why.
 fn publish_products(
     problem: &CompiledProblem,
     source: ProductSource,
@@ -287,6 +291,7 @@ fn publish_products(
     publication: ApplicationPublication,
     team: &WorkerTeam,
     published: &mut Vec<String>,
+    lanes: &mut (usize, Option<String>),
 ) -> Result<Products, NativeError> {
     let ProductSource {
         scientific,
@@ -307,8 +312,49 @@ fn publish_products(
         inputs = inputs.with_facet_sum_weights(&facet_sum_weights);
     }
     let planned = PlannedContinuumGeneration::new(&inputs, &publication.controls)?;
-    let window = ProductStoragePlan::new(1, team.workers())?;
-    let demand = planned.demand(&inputs, window, &publication.writer)?;
+    // The products' scratch grows with their lanes, and the gridding's
+    // workers were chosen without it: the products take the most lanes, up
+    // to the team's, whose demand fits what the policy leaves free (#763
+    // review), and one when none does, which admission then refuses.
+    let free = free_memory(&runtime.host, &runtime.resource_policy);
+    let demand_on = |count: usize| -> Result<_, NativeError> {
+        let window = ProductStoragePlan::new(1, count)?;
+        Ok((
+            window,
+            planned.demand(&inputs, window, &publication.writer)?,
+        ))
+    };
+    let workers = team.workers();
+    let (mut window, mut demand) = demand_on(workers)?;
+    let needed = demand.peak_residency_bytes();
+    if needed > free {
+        for count in (1..workers).rev() {
+            (window, demand) = demand_on(count)?;
+            if demand.peak_residency_bytes() <= free {
+                break;
+            }
+        }
+        let count = window.maximum_workers();
+        let gigabytes = |bytes: u64| format!("{:.2} GB", bytes as f64 / 1e9);
+        let reason = if demand.peak_residency_bytes() <= free {
+            format!(
+                "{workers} lanes need {}, {count} fit {} free",
+                gigabytes(needed),
+                gigabytes(free)
+            )
+        } else {
+            format!(
+                "{workers} lanes need {} and no fewer fit {} free",
+                gigabytes(needed),
+                gigabytes(free)
+            )
+        };
+        if count < workers {
+            tracing::warn!("products on {count} lanes, not the team's {workers}: {reason}");
+            lanes.1 = Some(reason);
+        }
+    }
+    lanes.0 = window.maximum_workers();
     let held = admit(
         &runtime.host,
         &runtime.resource_policy,

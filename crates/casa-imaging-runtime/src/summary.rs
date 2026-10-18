@@ -84,6 +84,13 @@ pub struct RunSummary {
     /// Why the run has fewer workers than its policy allows, with what the
     /// policy's needed and what was free; `None` when it has as many.
     pub workers_reason: Option<String>,
+    /// Lanes the products ran on: the most, up to [`Self::workers`], whose
+    /// products' memory fits (#763 review); zero before the products.
+    pub product_lanes: usize,
+    /// Why the products have fewer lanes than [`Self::workers`], with what
+    /// the workers' lanes needed and what was free; `None` when they have
+    /// as many.
+    pub product_lanes_reason: Option<String>,
     /// Where the passes grid.
     pub backend: BackendChoice,
     /// The grid arithmetic the run resolved (`gridprecision`); `None`
@@ -171,6 +178,8 @@ impl RunSummary {
             workers: 0,
             workers_policy: 0,
             workers_reason: None,
+            product_lanes: 0,
+            product_lanes_reason: None,
             backend,
             precision: None,
             phases: Vec::new(),

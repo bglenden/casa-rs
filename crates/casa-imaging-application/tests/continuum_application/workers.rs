@@ -43,6 +43,89 @@ fn run(
     )
 }
 
+/// A dirty 30-channel cube of the 32-channel fixture at `image_name`,
+/// 256 × 256: its products' scratch grows with the product lanes.
+fn dirty_cube(measurement_set: &Path, image_name: &Path) -> ImagingRequest {
+    request(
+        measurement_set,
+        image_name,
+        json!({
+            "imsize": 256,
+            "niter": 0,
+            "spw": "0:1~30",
+            "channel_start": 1,
+            "channel_count": 30,
+            "specmode": "cube",
+            "outframe": "TOPO",
+            "start": "1",
+            "width": "1",
+        }),
+    )
+}
+
+/// A cleaned 128 × 128 MFS image of one component per minor cycle, for at
+/// most `nmajor` major cycles after the first.
+fn cycled_mfs(measurement_set: &Path, image_name: &Path, nmajor: i64) -> ImagingRequest {
+    request(
+        measurement_set,
+        image_name,
+        json!({
+            "imsize": 128,
+            "niter": 20,
+            "minor_cycle_length": 1,
+            "nmajor": nmajor,
+            "gain": 0.37,
+            "spw": "0:1~30",
+        }),
+    )
+}
+
+/// #763 review (Astra, finding 1): a dirty cube whose gridding fits four
+/// workers but whose products do not fit four lanes publishes, on the
+/// most lanes that fit, rather than being refused after its gridding.
+#[test]
+fn a_cube_whose_products_do_not_fit_every_lane_publishes() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
+    for budget in [24 << 20, 20 << 20] {
+        let name = root.path().join(format!("cube-{budget}"));
+        let outcome = run(&dirty_cube(&measurement_set, &name), 4, budget)
+            .unwrap_or_else(|error| panic!("{budget} bytes: {error}"));
+        assert_dirty_products(&name, &outcome.product_names());
+        let summary = &outcome.summary;
+        assert!(
+            (1..outcome.workers).contains(&summary.product_lanes),
+            "{budget} bytes: products on {} lanes beside {} workers",
+            summary.product_lanes,
+            outcome.workers
+        );
+        let reason = summary.product_lanes_reason.as_deref().expect("a reason");
+        assert!(
+            reason.starts_with(&format!("{} lanes need ", outcome.workers)),
+            "{reason}"
+        );
+    }
+}
+
+/// #763 review (Astra, finding 2; Fable, finding 1): a count the fit takes
+/// is not refused at a later major cycle. The refresh passes are admitted
+/// beside the normal state and model the run keeps, its masks and the
+/// minor cycles' records, which grow with each cycle up to `nmajor`.
+#[test]
+fn a_chosen_count_is_not_refused_at_a_later_major_cycle() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
+    for (nmajor, budget) in [(1, 6 << 20), (10, 6_488_064)] {
+        let name = root.path().join(format!("cycled-{nmajor}"));
+        let outcome = run(&cycled_mfs(&measurement_set, &name, nmajor), 4, budget)
+            .unwrap_or_else(|error| panic!("nmajor {nmajor}, {budget} bytes: {error}"));
+        assert!(outcome.workers >= 1);
+        assert_standard_products(&name, &outcome.product_names());
+    }
+}
+
 fn read_values(base: &Path, suffix: &str) -> Vec<f32> {
     let image = PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", base.display())))
         .expect("open product");
