@@ -2,7 +2,7 @@
 //! Coordinate system: container of coordinates with axis mapping.
 //!
 //! [`CoordinateSystem`] is the top-level object that groups multiple
-//! [`Coordinate`] objects into a single system describing a multi-dimensional
+//! [`Coordinate`](crate::Coordinate) objects into a single system describing a multi-dimensional
 //! data cube. Each coordinate owns a contiguous range of pixel and world
 //! axes.
 //!

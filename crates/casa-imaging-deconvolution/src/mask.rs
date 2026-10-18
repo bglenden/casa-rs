@@ -466,7 +466,7 @@ impl ImageDomainReconstructionMaskPlans {
 
     /// Heap bytes [`Self::materialize`] holds at most against `normal`: each
     /// domain's support, and for an automatic mask its working planes
-    /// ([`AUTO_MULTITHRESH_BYTES_PER_CELL`]) with the model support it reads.
+    /// (`AUTO_MULTITHRESH_BYTES_PER_CELL`) with the model support it reads.
     #[must_use]
     pub fn materialize_bytes(&self, normal: &FinalNormalState) -> u64 {
         self.plans

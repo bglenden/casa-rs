@@ -254,7 +254,7 @@ impl WaveDemand<'_> {
 
     /// Placements a row chunk of a wave of `planes` planes takes: when a
     /// domain is split among several region owners, the largest of
-    /// [`super::REGION_CHUNK_PLACEMENTS`] whose [`Self::bytes`] fit `budget`,
+    /// `REGION_CHUNK_PLACEMENTS` whose [`Self::bytes`] fit `budget`,
     /// since the owners share larger slices more evenly (#736); otherwise,
     /// or when none fits, [`super::CHUNK_PLACEMENTS`]. A pass that fits with
     /// the default chunks therefore never fails for want of larger ones.

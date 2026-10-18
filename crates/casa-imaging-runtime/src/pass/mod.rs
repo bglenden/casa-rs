@@ -505,7 +505,7 @@ fn chunk_ranges(
 /// Bytes a density pass over blocks of `block` on `workers` workers holds:
 /// its grid of `shape` ([`DensityGridShape::bytes`]), which it returns, and
 /// its row chunks' sample buffers, which it frees. The stream's native
-/// blocks are the source's ([`stream_bytes`]).
+/// blocks are the source's ([`source_block_bytes`]).
 #[must_use]
 pub fn density_pass_bytes(
     resampler: &SpectralResampler,
