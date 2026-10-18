@@ -9,10 +9,10 @@
 //! `bytes` before it is built; an AW catalog's `charge_bytes` once its
 //! index is read, for the workers that fetch its cells. This binary's
 //! global allocator counts the live heap and measures each stage against
-//! its statement. A global allocator applies to this test binary alone.
+//! its statement. A global allocator applies to this test binary alone,
+//! and each law runs alone in a process of its own ([`alone`]).
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use casa_imaging_model::{
@@ -95,8 +95,76 @@ fn observe(live: u64) {
     }
 }
 
-/// One measurement at a time: the allocator is the process's.
-static MEASUREMENT: Mutex<()> = Mutex::new(());
+/// The environment variable that names the law a child process of
+/// [`alone`] runs.
+const LAW_VAR: &str = "CASA_RS_COUNTING_LAW";
+
+/// The test a law's process runs before the law ([`alone`]).
+const SETTLE: &str = "a_counting_law_process_settles";
+
+/// Whether [`SETTLE`] ran in this process.
+static SETTLED: AtomicBool = AtomicBool::new(false);
+
+/// Runs first in a law's process ([`alone`]): libtest's main thread sets up
+/// its wait for results while the first test it starts runs, so the law,
+/// which runs second, measures none of it. The pause makes sure the main
+/// thread is waiting before this test reports.
+#[test]
+#[ignore = "alone runs it before a law, in the law's process"]
+fn a_counting_law_process_settles() {
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    SETTLED.store(true, Ordering::Relaxed);
+}
+
+/// Whether this process runs the law `name` alone; if it does not, run the
+/// law alone and assert that it passed.
+///
+/// The counters see every allocation in the process, and libtest runs a
+/// binary's tests in one process: under `cargo test` its main thread starts
+/// tests and reports their results, and the binary's other tests run, while
+/// a law measures. So each law begins `if !alone("law") { return; }`, with
+/// its own name. In the harness's process it runs [`SETTLE`], then the law
+/// (libtest runs tests in name order), in a child process of this binary
+/// with one test thread, so that the harness only waits while the law runs;
+/// in the child it returns true.
+fn alone(name: &str) -> bool {
+    // libtest names each test's thread after the test.
+    assert_eq!(
+        std::thread::current().name(),
+        Some(name),
+        "a law runs alone under its own name"
+    );
+    let ran = format!("{name} ran alone");
+    if std::env::var_os(LAW_VAR).is_some_and(|law| law == name) {
+        assert!(
+            SETTLED.load(Ordering::Relaxed),
+            "{SETTLE} runs before {name}"
+        );
+        println!("{ran}");
+        return true;
+    }
+    let output = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([
+            SETTLE,
+            name,
+            "--exact",
+            "--include-ignored",
+            "--test-threads=1",
+            "--nocapture",
+        ])
+        .env(LAW_VAR, name)
+        .output()
+        .expect("the law's process runs");
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{name} alone: {}\n{stdout}",
+        output.status
+    );
+    assert!(stdout.contains(&ran), "{name} did not run alone:\n{stdout}");
+    false
+}
 
 /// The most `stage` adds to the live heap while it runs, and what it adds
 /// to or frees from it by its end, with its result.
@@ -133,7 +201,9 @@ fn geometry(image: usize, increment_rad: f64, padding: GridPadding) -> GridGeome
 
 #[test]
 fn w_projection_stages_hold_at_most_what_they_state() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("w_projection_stages_hold_at_most_what_they_state") {
+        return;
+    }
     let routing = routing();
     for (image, planes) in [(64, 1), (64, 8), (200, 16)] {
         let geometry = geometry(image, 1.0e-3, GridPadding::CasaComposite);
@@ -171,7 +241,9 @@ fn w_projection_stages_hold_at_most_what_they_state() {
 
 #[test]
 fn mosaic_stages_hold_at_most_what_they_state() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("mosaic_stages_hold_at_most_what_they_state") {
+        return;
+    }
     let routing = routing();
     let geometry = geometry(64, 2.0e-5, GridPadding::None);
     let dishes = [
@@ -224,7 +296,9 @@ fn mosaic_stages_hold_at_most_what_they_state() {
 
 #[test]
 fn a_spheroidal_set_holds_what_it_states() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("a_spheroidal_set_holds_what_it_states") {
+        return;
+    }
     let routing = routing();
     for image in [64, 1000] {
         let geometry = geometry(image, 1.0e-5, GridPadding::CasaComposite);
@@ -304,7 +378,9 @@ fn aw_request_with(size: usize, frequencies: usize, w_planes: usize) -> NativeAw
 /// and on four, each of which generates one aperture's cells.
 #[test]
 fn native_generation_holds_at_most_its_charge() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("native_generation_holds_at_most_its_charge") {
+        return;
+    }
     for (size, workers) in [(64, 1), (64, 4), (256, 1), (256, 4)] {
         let request = aw_request(size);
         let root = tempfile::tempdir().expect("cache directory");
@@ -328,7 +404,9 @@ fn native_generation_holds_at_most_its_charge() {
 /// its charge.
 #[test]
 fn generation_of_a_large_request_holds_at_most_its_charge() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("generation_of_a_large_request_holds_at_most_its_charge") {
+        return;
+    }
     for w_planes in [512, 2048] {
         let mut request = aw_request_with(64, 16, w_planes);
         request.surface =
@@ -355,7 +433,9 @@ fn generation_of_a_large_request_holds_at_most_its_charge() {
 /// probes), whose index and cache bookkeeping grow with the catalog.
 #[test]
 fn an_aw_catalog_holds_at_most_its_charge() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("an_aw_catalog_holds_at_most_its_charge") {
+        return;
+    }
     for (frequencies, w_planes) in [(2, 2), (2, 32), (16, 32)] {
         let root = tempfile::tempdir().expect("cache directory");
         AwCatalog::generate_native(
@@ -430,7 +510,9 @@ fn catalog_holds_at_most_its_charge(root: &std::path::Path) {
 fn concurrent_holders_hold_at_most_their_charge() {
     const WORKERS: usize = 4;
     const ROUNDS: usize = 64;
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("concurrent_holders_hold_at_most_their_charge") {
+        return;
+    }
     let root = tempfile::tempdir().expect("cache directory");
     AwCatalog::generate_native(root.path(), &aw_request(64), false, 4).expect("generate");
     // Warm the process-wide tile cache, as above.

@@ -64,9 +64,16 @@ const SLACK: u64 = 16 << 20;
 /// One footprint measurement at a time: the footprint is the process's.
 static MEASUREMENT: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Take [`MEASUREMENT`], whether or not a law that held it failed.
+fn measurement() -> std::sync::MutexGuard<'static, ()> {
+    MEASUREMENT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[test]
 fn freed_large_buffers_leave_the_footprint() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let _measurement = measurement();
     // Per-plane buffers of several sizes above the threshold, every page
     // written, allocated and freed in turn as a pass does.
     let sizes = [
@@ -104,7 +111,7 @@ fn freed_large_buffers_leave_the_footprint() {
 
 #[test]
 fn a_growing_buffer_keeps_its_contents_and_returns_its_pages() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let _measurement = measurement();
     let before = footprint();
     let mut values = Vec::<u64>::new();
     for value in 0..(48 << 20) / 8 {

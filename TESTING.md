@@ -481,9 +481,13 @@ The imaging foundation (#648, plan section 7) tests in four tiers:
 (`casa_imaging_runtime::admit`), and an owner that changes what it keeps
 adds a counting law: a test that runs the owner and asserts its measured
 allocation stays within the bytes it charges (for example
-`a_model_data_write_holds_at_most_its_bytes` in `casa-ms`). At T2, a run's
-peak footprint must stay within its largest reservation plus the process's
-fixed overhead; the run summary's per-phase `peak_reserved_bytes` and
+`a_model_data_write_holds_at_most_its_bytes` in `casa-ms`). The allocator
+counts the whole process, where under `cargo test` the harness and the
+binary's other tests allocate too, so a law in a binary with other tests
+first calls the binary's `alone`, which reruns the law in a process of its
+own, as nextest runs every test. At T2, a run's peak footprint must stay
+within its largest reservation plus the process's fixed overhead; the run
+summary's per-phase `peak_reserved_bytes` and
 `/usr/bin/time -l` give both. On macOS the footprint drops up to about a
 second after memory is freed, so a phase boundary is judged after a short
 idle, or with that lag counted in the allocator allowance. A measured live

@@ -5,7 +5,8 @@
 //! every allocation of a measured run it compares the bytes the run holds
 //! beyond what was live when it started with the memory its phases hold
 //! admitted at that instant. A global allocator applies to this test binary
-//! alone, so no other test is affected.
+//! alone, so no other test is affected, and each law runs alone in a
+//! process of its own ([`alone`]).
 //!
 //! The comparison leaves out the process caches' charge: each test first
 //! runs its MeasurementSet once unmeasured ([`warm`]), so the caches are
@@ -176,9 +177,76 @@ fn observe(live: u64) {
     }
 }
 
-/// One process-wide measurement at a time: the allocator and the
-/// reservations are global.
-static MEASUREMENT: Mutex<()> = Mutex::new(());
+/// The environment variable that names the law a child process of
+/// [`alone`] runs.
+const LAW_VAR: &str = "CASA_RS_COUNTING_LAW";
+
+/// The test a law's process runs before the law ([`alone`]).
+const SETTLE: &str = "a_counting_law_process_settles";
+
+/// Whether [`SETTLE`] ran in this process.
+static SETTLED: AtomicBool = AtomicBool::new(false);
+
+/// Runs first in a law's process ([`alone`]): libtest's main thread sets up
+/// its wait for results while the first test it starts runs, so the law,
+/// which runs second, measures none of it. The pause makes sure the main
+/// thread is waiting before this test reports.
+#[test]
+#[ignore = "alone runs it before a law, in the law's process"]
+fn a_counting_law_process_settles() {
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    SETTLED.store(true, Ordering::Relaxed);
+}
+
+/// Whether this process runs the law `name` alone; if it does not, run the
+/// law alone and assert that it passed.
+///
+/// The counters see every allocation in the process, and libtest runs a
+/// binary's tests in one process: under `cargo test` its main thread starts
+/// tests and reports their results, and the binary's other tests run, while
+/// a law measures. So each law begins `if !alone("law") { return; }`, with
+/// its own name. In the harness's process it runs [`SETTLE`], then the law
+/// (libtest runs tests in name order), in a child process of this binary
+/// with one test thread, so that the harness only waits while the law runs;
+/// in the child it returns true.
+fn alone(name: &str) -> bool {
+    // libtest names each test's thread after the test.
+    assert_eq!(
+        std::thread::current().name(),
+        Some(name),
+        "a law runs alone under its own name"
+    );
+    let ran = format!("{name} ran alone");
+    if std::env::var_os(LAW_VAR).is_some_and(|law| law == name) {
+        assert!(
+            SETTLED.load(Ordering::Relaxed),
+            "{SETTLE} runs before {name}"
+        );
+        println!("{ran}");
+        return true;
+    }
+    let output = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([
+            SETTLE,
+            name,
+            "--exact",
+            "--include-ignored",
+            "--test-threads=1",
+            "--nocapture",
+        ])
+        .env(LAW_VAR, name)
+        .output()
+        .expect("the law's process runs");
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{name} alone: {}\n{stdout}",
+        output.status
+    );
+    assert!(stdout.contains(&ran), "{name} did not run alone:\n{stdout}");
+    false
+}
 
 /// What a measured run held.
 struct Measured {
@@ -519,7 +587,9 @@ fn check(
 /// with the image cannot hide in the fixed costs.
 #[test]
 fn continuum_runs_stay_within_their_admission() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("continuum_runs_stay_within_their_admission") {
+        return;
+    }
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = observation(root.path(), 4);
     warm(&measurement_set, root.path());
@@ -585,7 +655,9 @@ fn cube(measurement_set: &Path, image_name: &Path, controls: Value) -> ImagingRe
 /// model, and the waved cube pages its state.
 #[test]
 fn cubes_stay_within_their_admission_resident_and_in_waves() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("cubes_stay_within_their_admission_resident_and_in_waves") {
+        return;
+    }
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = observation(root.path(), CUBE_CHANNELS);
     warm(&measurement_set, root.path());
@@ -656,7 +728,9 @@ fn cubes_stay_within_their_admission_resident_and_in_waves() {
 /// what it was not admitted.
 #[test]
 fn a_refused_run_holds_no_more_than_it_was_admitted() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("a_refused_run_holds_no_more_than_it_was_admitted") {
+        return;
+    }
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = observation(root.path(), 4);
     warm(&measurement_set, root.path());
@@ -704,7 +778,9 @@ fn a_refused_run_holds_no_more_than_it_was_admitted() {
 /// predicts every selected sample and hands each block to the writer.
 #[test]
 fn a_visibility_write_stays_within_its_admission() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("a_visibility_write_stays_within_its_admission") {
+        return;
+    }
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = observation(root.path(), 4);
     warm(&measurement_set, root.path());
@@ -736,7 +812,9 @@ fn a_visibility_write_stays_within_its_admission() {
 /// their sizes.
 #[test]
 fn facets_and_mosaic_cubes_stay_within_their_admission() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("facets_and_mosaic_cubes_stay_within_their_admission") {
+        return;
+    }
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = observation(root.path(), CUBE_CHANNELS);
     warm(&measurement_set, root.path());
@@ -772,7 +850,9 @@ fn facets_and_mosaic_cubes_stay_within_their_admission() {
 /// apart onto ten channels 1.28 GHz wide).
 #[test]
 fn kernel_sets_and_sparse_selections_stay_within_their_admission() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("kernel_sets_and_sparse_selections_stay_within_their_admission") {
+        return;
+    }
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = observation(root.path(), 101);
     warm(&measurement_set, root.path());
@@ -876,7 +956,9 @@ fn mtmfs_controls() -> Value {
 /// its stages' sum.
 #[test]
 fn mtmfs_is_admitted_close_to_what_it_holds() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("mtmfs_is_admitted_close_to_what_it_holds") {
+        return;
+    }
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = observation(root.path(), 4);
     warm(&measurement_set, root.path());
@@ -984,7 +1066,9 @@ fn evla_surface(root: &Path) -> PathBuf {
 /// reserved 974 MB for a peak of 398 MB.
 #[test]
 fn aw_mtmfs_is_admitted_close_to_what_it_holds() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("aw_mtmfs_is_admitted_close_to_what_it_holds") {
+        return;
+    }
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = evla_observation(root.path());
     let surface = evla_surface(root.path());
