@@ -375,7 +375,7 @@ impl WaveDemand<'_> {
 
     /// Bytes the normal state a run keeps resident between its passes
     /// holds, over every image domain: one plane's state with the PSF and
-    /// sensitivity of the first pass, which a refresh keeps ([`normal_bytes`]).
+    /// sensitivity of the first pass, which a refresh keeps (`normal_bytes`).
     #[must_use]
     pub fn resident_normal_bytes(&self) -> u64 {
         self.domains
