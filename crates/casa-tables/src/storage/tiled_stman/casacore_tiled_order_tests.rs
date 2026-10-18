@@ -244,46 +244,105 @@ fn casa_rs_writes_casacores_tiles_byte_for_byte() {
     }
 }
 
-/// A manager casa-rs wrote with no rows lists every bound column's type,
-/// as casacore's header does; one earlier casa-rs wrote without them still
-/// reads.
+/// A manager casa-rs writes with no rows is casacore's: it lists every
+/// bound column's type, and its hypercube is the cell shape with an empty
+/// row axis, which a first row extends (#764 review). One earlier casa-rs
+/// wrote with no types and no hypercube still reads while it has no rows;
+/// on a table with rows it is refused, whole-table and lazily.
 #[test]
-fn an_empty_tiled_manager_lists_its_column_types() {
+fn an_empty_tiled_manager_is_casacores() {
     let dir = tempdir().expect("tempdir");
     let mut table =
         Table::open(TableOptions::new(fixture("column_nodef/little"))).expect("open table");
     let empty = dir.path().join("empty.tbl");
     table.remove_rows(&[0, 1, 2]).expect("remove every row");
-    table
-        .save(
-            TableOptions::new(&empty)
-                .with_data_manager(DataManagerKind::TiledColumnStMan)
-                .with_tile_shape(vec![2, 3, 2]),
-        )
-        .expect("save the empty table");
-    let (_, header) = read_tiled_header(&empty.join("table.f0")).expect("empty header");
+    let save = |table: &mut Table, path: &Path| {
+        table
+            .save(
+                TableOptions::new(path)
+                    .with_data_manager(DataManagerKind::TiledColumnStMan)
+                    .with_tile_shape(vec![2, 3, 2]),
+            )
+            .expect("save the table");
+    };
+    save(&mut table, &empty);
+    let (variant, header) = read_tiled_header(&empty.join("table.f0")).expect("empty header");
     assert_eq!(header.col_data_types.len(), NODEF_COLUMNS.len());
+    assert_eq!(header.nrdim, 3);
+    let [cube] = header.cubes.as_slice() else {
+        panic!("one hypercube, found {}", header.cubes.len());
+    };
+    assert_eq!(cube.cube_shape, [2, 3, 0]);
+    assert_eq!(cube.tile_shape, [2, 3, 2]);
+    assert!(matches!(
+        variant,
+        TiledVariant::Column { ref default_tile_shape } if default_tile_shape == &[2, 3, 2]
+    ));
+
+    // The single-column writer makes the same hypercube.
+    let single = dir.path().join("single.tbl");
+    std::fs::create_dir_all(&single).expect("single-column table dir");
+    let count = ColumnDescContents {
+        class_name: String::new(),
+        col_name: "count".to_string(),
+        comment: String::new(),
+        data_manager_type: "TiledColumnStMan".to_string(),
+        data_manager_group: "count".to_string(),
+        data_type: CasacoreDataType::TpInt,
+        option: 5,
+        nrdim: 2,
+        shape: vec![2, 3],
+        max_length: 0,
+        keywords: RecordValue::default(),
+        is_array: true,
+        primitive_type: Some(PrimitiveType::Int32),
+    };
+    save_single_column_tiled_column_stman(
+        &single,
+        0,
+        &count,
+        &[],
+        false,
+        Some(&[2, 3, 2]),
+        "count",
+    )
+    .expect("save one empty column");
+    let (_, one) = read_tiled_header(&single.join("table.f0")).expect("single-column header");
+    assert_eq!(one.nrdim, 3);
+    assert_eq!(one.col_data_types, [CasacoreDataType::TpInt]);
+    let [one_cube] = one.cubes.as_slice() else {
+        panic!("one single-column hypercube, found {}", one.cubes.len());
+    };
     assert_eq!(
-        Table::open(TableOptions::new(&empty))
-            .expect("open the empty table")
-            .row_count(),
-        0
+        (&one_cube.cube_shape, &one_cube.tile_shape),
+        (&cube.cube_shape, &cube.tile_shape)
     );
+
+    let mut table = Table::open(TableOptions::new(&empty)).expect("open the empty table");
+    assert_eq!(table.row_count(), 0);
+    let first = RecordValue::new(
+        NODEF_COLUMNS
+            .iter()
+            .map(|&column| RecordField::new(column, Value::Array(nodef_cell(column, 0))))
+            .collect(),
+    );
+    table.add_row(first).expect("add a first row");
+    let extended = dir.path().join("extended.tbl");
+    save(&mut table, &extended);
+    assert_cells(&extended, 1, &NODEF_COLUMNS, nodef_cell);
 
     // The form earlier casa-rs wrote: no column types and no hypercube.
     let legacy = TiledStManHeader {
         col_data_types: Vec::new(),
         cubes: Vec::new(),
+        nrdim: 0,
+        files: Vec::new(),
         ..header
     };
-    write_tiled_header(
-        &empty.join("table.f0"),
-        &TiledVariant::Column {
-            default_tile_shape: Vec::new(),
-        },
-        &legacy,
-    )
-    .expect("write a legacy empty header");
+    let column = TiledVariant::Column {
+        default_tile_shape: Vec::new(),
+    };
+    write_tiled_header(&empty.join("table.f0"), &column, &legacy).expect("write a legacy header");
     assert_eq!(
         Table::open(TableOptions::new(&empty))
             .expect("open a legacy empty table")
@@ -292,4 +351,26 @@ fn an_empty_tiled_manager_lists_its_column_types() {
             .len(),
         0
     );
+
+    // On a table of three rows, claiming them or not, it is refused.
+    for nrrow in [0, NODEF_ROWS as u64] {
+        let rows = copy_fixture("column_nodef/little", dir.path());
+        let malformed = TiledStManHeader {
+            nrrow,
+            ..legacy.clone()
+        };
+        write_tiled_header(&rows.join("table.f0"), &column, &malformed)
+            .expect("write a legacy header over rows");
+        let table = Table::open(TableOptions::new(&rows)).expect("open lazily");
+        let lazy = table.column_accessor("count").expect("column");
+        assert!(
+            lazy.array_cell(0).is_err(),
+            "header rows {nrrow}: lazy read"
+        );
+        let whole = Table::open(TableOptions::new(&rows));
+        assert!(
+            whole.and_then(|table| table.rows().map(|_| ())).is_err(),
+            "header rows {nrrow}: whole-table read"
+        );
+    }
 }

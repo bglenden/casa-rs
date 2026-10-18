@@ -30,8 +30,10 @@
 // Each table is written little-endian, or big-endian by the _big_endian
 // writer.
 #include "casacore_cpp_common.h"
+#include <casacore/tables/DataMan/TiledCellStMan.h>
 #include <casacore/tables/DataMan/TiledColumnStMan.h>
 #include <casacore/tables/DataMan/TiledShapeStMan.h>
+#include <casacore/tables/DataMan/TiledStManAccessor.h>
 
 #include <functional>
 
@@ -100,7 +102,13 @@ void check_cell(const casacore::Table& table, const char* column, uInt row,
     cell.freeStorage(values, deleteIt);
 }
 
-void write_shape_mixed_impl(const std::string& path, casacore::Table::EndianFormat endian) {
+// The shape-mixed table under a TiledShapeStMan, or under a TiledCellStMan,
+// whose every cell is its own hypercube of [2,2] tiles crossing the cell's
+// edges.
+enum class MixedManager { Shape, Cell };
+
+void write_mixed_impl(const std::string& path, casacore::Table::EndianFormat endian,
+                      MixedManager manager) {
     casacore::TableDesc td("", casacore::TableDesc::Scratch);
     td.addColumn(casacore::ArrayColumnDesc<Bool>("flag", 2));
     td.addColumn(casacore::ArrayColumnDesc<Complex>("data", 2));
@@ -111,11 +119,15 @@ void write_shape_mixed_impl(const std::string& path, casacore::Table::EndianForm
     data(1) = "sigma";
     data(2) = "data";
     data(3) = "weight";
-    td.defineHypercolumn("TiledMixed", 3, data);
+    const bool shape_manager = manager == MixedManager::Shape;
+    td.defineHypercolumn("TiledMixed", shape_manager ? 3 : 2, data);
 
     casacore::SetupNewTable setup(path, td, casacore::Table::New);
-    casacore::TiledShapeStMan tsm("TiledMixed", IPosition(3, 2, 3, 2));
-    setup.bindAll(tsm);
+    if (shape_manager) {
+        setup.bindAll(casacore::TiledShapeStMan("TiledMixed", IPosition(3, 2, 3, 2)));
+    } else {
+        setup.bindAll(casacore::TiledCellStMan("TiledMixed", IPosition(2, 2, 2)));
+    }
     casacore::Table table(setup, casacore::Table::Plain, kMixedRows, casacore::False, endian);
 
     casacore::ArrayColumn<Bool> flag(table, "flag");
@@ -148,7 +160,21 @@ void verify_shape_mixed_impl(const std::string& path, bool patched) {
     }
 }
 
-void write_column_nodef_impl(const std::string& path, casacore::Table::EndianFormat endian) {
+// Put the no-definition fixture's cells of `row`.
+void put_column_nodef_row(casacore::Table& table, uInt row) {
+    const IPosition shape(2, 2, 3);
+    casacore::ArrayColumn<Int>(table, "count")
+        .put(row, make_cell<Int>(shape, [row](uInt i) { return nodef_count(row, i); }));
+    casacore::ArrayColumn<Bool>(table, "flag")
+        .put(row, make_cell<Bool>(shape, [row](uInt i) { return nodef_flag(row, i); }));
+    casacore::ArrayColumn<Double>(table, "value")
+        .put(row, make_cell<Double>(shape, [row](uInt i) { return nodef_value(row, i); }));
+    casacore::ArrayColumn<Float>(table, "amp")
+        .put(row, make_cell<Float>(shape, [row](uInt i) { return nodef_amp(row, i); }));
+}
+
+void write_column_nodef_impl(const std::string& path, casacore::Table::EndianFormat endian,
+                             uInt rows) {
     const IPosition shape(2, 2, 3);
     const int option = casacore::ColumnDesc::Direct | casacore::ColumnDesc::FixedShape;
     casacore::TableDesc td("", casacore::TableDesc::Scratch);
@@ -160,17 +186,9 @@ void write_column_nodef_impl(const std::string& path, casacore::Table::EndianFor
     casacore::SetupNewTable setup(path, td, casacore::Table::New);
     casacore::TiledColumnStMan tsm("TiledCol", IPosition(3, 2, 3, 2));
     setup.bindAll(tsm);
-    casacore::Table table(setup, casacore::Table::Plain, kNoDefRows, casacore::False, endian);
-
-    casacore::ArrayColumn<Int> count(table, "count");
-    casacore::ArrayColumn<Bool> flag(table, "flag");
-    casacore::ArrayColumn<Double> value(table, "value");
-    casacore::ArrayColumn<Float> amp(table, "amp");
-    for (uInt row = 0; row < kNoDefRows; row++) {
-        count.put(row, make_cell<Int>(shape, [row](uInt i) { return nodef_count(row, i); }));
-        flag.put(row, make_cell<Bool>(shape, [row](uInt i) { return nodef_flag(row, i); }));
-        value.put(row, make_cell<Double>(shape, [row](uInt i) { return nodef_value(row, i); }));
-        amp.put(row, make_cell<Float>(shape, [row](uInt i) { return nodef_amp(row, i); }));
+    casacore::Table table(setup, casacore::Table::Plain, rows, casacore::False, endian);
+    for (uInt row = 0; row < rows; row++) {
+        put_column_nodef_row(table, row);
     }
     table.flush();
 }
@@ -187,6 +205,44 @@ void verify_column_nodef_impl(const std::string& path) {
         check_cell<Double>(table, "value", row, shape, [row](uInt i) { return nodef_value(row, i); });
         check_cell<Float>(table, "amp", row, shape, [row](uInt i) { return nodef_amp(row, i); });
     }
+}
+
+// The no-definition table with no rows opens with every column's fixed
+// shape and casacore's one hypercube, of that shape and an empty row axis,
+// which its first row extends (#764 review).
+void verify_column_nodef_empty_impl(const std::string& path) {
+    const IPosition shape(2, 2, 3);
+    {
+        casacore::Table table(path, casacore::Table::Old);
+        if (table.nrow() != 0) {
+            throw std::runtime_error("expected no rows, found " + std::to_string(table.nrow()));
+        }
+        for (const char* column : {"count", "flag", "value", "amp"}) {
+            if (!casacore::TableColumn(table, column).shapeColumn().isEqual(shape)) {
+                throw std::runtime_error(std::string(column) + ": not a fixed [2,3] column");
+            }
+        }
+        casacore::ROTiledStManAccessor tiles(table, "count", casacore::True);
+        if (tiles.nhypercubes() != 1 ||
+            !tiles.getHypercubeShape(0).isEqual(IPosition(3, 2, 3, 0)) ||
+            !tiles.getTileShape(0).isEqual(IPosition(3, 2, 3, 2))) {
+            throw std::runtime_error("expected one [2,3,0] hypercube of [2,3,2] tiles");
+        }
+    }
+    {
+        casacore::Table table(path, casacore::Table::Update);
+        table.addRow(1);
+        put_column_nodef_row(table, 0);
+        table.flush();
+    }
+    casacore::Table table(path, casacore::Table::Old);
+    if (table.nrow() != 1) {
+        throw std::runtime_error("expected the first row, found " + std::to_string(table.nrow()));
+    }
+    check_cell<Int>(table, "count", 0, shape, [](uInt i) { return nodef_count(0, i); });
+    check_cell<Bool>(table, "flag", 0, shape, [](uInt i) { return nodef_flag(0, i); });
+    check_cell<Double>(table, "value", 0, shape, [](uInt i) { return nodef_value(0, i); });
+    check_cell<Float>(table, "amp", 0, shape, [](uInt i) { return nodef_amp(0, i); });
 }
 
 int32_t guarded(const char* operation, char** out_error,
@@ -209,13 +265,25 @@ extern "C" {
 
 int32_t cpp_table_write_tiled_shape_mixed(const char* path, char** out_error) {
     return guarded("write_tiled_shape_mixed", out_error, [](const std::string& p) {
-        write_shape_mixed_impl(p, casacore::Table::LittleEndian);
+        write_mixed_impl(p, casacore::Table::LittleEndian, MixedManager::Shape);
     }, path);
 }
 
 int32_t cpp_table_write_tiled_shape_mixed_big_endian(const char* path, char** out_error) {
     return guarded("write_tiled_shape_mixed_big_endian", out_error, [](const std::string& p) {
-        write_shape_mixed_impl(p, casacore::Table::BigEndian);
+        write_mixed_impl(p, casacore::Table::BigEndian, MixedManager::Shape);
+    }, path);
+}
+
+int32_t cpp_table_write_tiled_cell_mixed(const char* path, char** out_error) {
+    return guarded("write_tiled_cell_mixed", out_error, [](const std::string& p) {
+        write_mixed_impl(p, casacore::Table::LittleEndian, MixedManager::Cell);
+    }, path);
+}
+
+int32_t cpp_table_write_tiled_cell_mixed_big_endian(const char* path, char** out_error) {
+    return guarded("write_tiled_cell_mixed_big_endian", out_error, [](const std::string& p) {
+        write_mixed_impl(p, casacore::Table::BigEndian, MixedManager::Cell);
     }, path);
 }
 
@@ -231,18 +299,37 @@ int32_t cpp_table_verify_tiled_shape_mixed_patched(const char* path, char** out_
 
 int32_t cpp_table_write_tiled_column_nodef(const char* path, char** out_error) {
     return guarded("write_tiled_column_nodef", out_error, [](const std::string& p) {
-        write_column_nodef_impl(p, casacore::Table::LittleEndian);
+        write_column_nodef_impl(p, casacore::Table::LittleEndian, kNoDefRows);
     }, path);
 }
 
 int32_t cpp_table_write_tiled_column_nodef_big_endian(const char* path, char** out_error) {
     return guarded("write_tiled_column_nodef_big_endian", out_error, [](const std::string& p) {
-        write_column_nodef_impl(p, casacore::Table::BigEndian);
+        write_column_nodef_impl(p, casacore::Table::BigEndian, kNoDefRows);
     }, path);
 }
 
 int32_t cpp_table_verify_tiled_column_nodef(const char* path, char** out_error) {
     return guarded("verify_tiled_column_nodef", out_error, verify_column_nodef_impl, path);
+}
+
+int32_t cpp_table_write_tiled_column_nodef_empty(const char* path, char** out_error) {
+    return guarded("write_tiled_column_nodef_empty", out_error, [](const std::string& p) {
+        write_column_nodef_impl(p, casacore::Table::LittleEndian, 0);
+    }, path);
+}
+
+int32_t cpp_table_write_tiled_column_nodef_empty_big_endian(const char* path, char** out_error) {
+    return guarded("write_tiled_column_nodef_empty_big_endian", out_error,
+                   [](const std::string& p) {
+                       write_column_nodef_impl(p, casacore::Table::BigEndian, 0);
+                   },
+                   path);
+}
+
+int32_t cpp_table_verify_tiled_column_nodef_empty(const char* path, char** out_error) {
+    return guarded("verify_tiled_column_nodef_empty", out_error, verify_column_nodef_empty_impl,
+                   path);
 }
 
 }  // extern "C"

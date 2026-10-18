@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![cfg(feature = "cpp-interop-tests")]
-//! Tile-order interop for TiledShapeStMan and TiledColumnStMan (#755).
+//! Tile-order interop for TiledShapeStMan, TiledCellStMan and
+//! TiledColumnStMan (#755).
 //!
 //! casacore lays a tile out over a hypercolumn's data columns by
 //! descending pixel size, Bool last and ties in descending position in the
@@ -106,6 +107,8 @@ fn cr_mixed_size_columns_read_as_casacore_lays_them_out() {
     for writer in [
         CppTableFixture::TiledShapeMixed,
         CppTableFixture::TiledShapeMixedBigEndian,
+        CppTableFixture::TiledCellMixed,
+        CppTableFixture::TiledCellMixedBigEndian,
     ] {
         let path = cpp_table(dir.path(), writer);
         TableOracle::table_verify(writer, &path).expect("CC: C++ reads its own table");
@@ -135,6 +138,8 @@ fn rc_casacore_reads_mixed_size_columns_casa_rs_patched() {
     for writer in [
         CppTableFixture::TiledShapeMixed,
         CppTableFixture::TiledShapeMixedBigEndian,
+        CppTableFixture::TiledCellMixed,
+        CppTableFixture::TiledCellMixedBigEndian,
     ] {
         let path = cpp_table(dir.path(), writer);
         let mut table = Table::open(TableOptions::new(&path)).expect("casa-rs opens the table");
@@ -180,6 +185,11 @@ fn rc_casacore_reads_mixed_size_columns_casa_rs_wrote() {
             vec![2, 3, 2],
         ),
         (
+            CppTableFixture::TiledCellMixed,
+            DataManagerKind::TiledCellStMan,
+            vec![2, 2],
+        ),
+        (
             CppTableFixture::TiledColumnNoDef,
             DataManagerKind::TiledColumnStMan,
             vec![2, 3, 2],
@@ -203,5 +213,54 @@ fn rc_casacore_reads_mixed_size_columns_casa_rs_wrote() {
             TableOracle::table_verify(writer, &rewritten)
                 .unwrap_or_else(|error| panic!("RC {writer:?} {format:?}: {error}"));
         }
+    }
+}
+
+/// #764 review: an empty TiledColumnStMan is casacore's either way. CR:
+/// casa-rs opens casacore's empty table and reads the first row C++ then
+/// adds. RC: casa-rs empties the C++ table and rewrites it in each byte
+/// order; C++ opens it with each column's shape and its one empty
+/// hypercube, and adds the first row, which casa-rs reads back.
+#[test]
+fn an_empty_tiled_column_manager_is_casacores_both_ways() {
+    if !casacore_oracle_available() {
+        eprintln!("skipping: C++ casacore not available");
+        return;
+    }
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cases = [
+        (
+            CppTableFixture::TiledColumnNoDefEmpty,
+            EndianFormat::LittleEndian,
+        ),
+        (
+            CppTableFixture::TiledColumnNoDefEmptyBigEndian,
+            EndianFormat::BigEndian,
+        ),
+    ];
+    let source = cpp_table(dir.path(), CppTableFixture::TiledColumnNoDef);
+    for (empty, format) in cases {
+        let cpp = cpp_table(dir.path(), empty);
+        let table = Table::open(TableOptions::new(&cpp)).expect("CR: casa-rs opens it");
+        assert_eq!(table.row_count(), 0);
+        assert!(table.rows().expect("CR: no rows").is_empty());
+        drop(table);
+        TableOracle::table_verify(empty, &cpp).expect("CC: C++ adds the first row");
+        assert_cells(&cpp, 1, &NODEF_COLUMNS, nodef_cell);
+
+        let mut table = Table::open(TableOptions::new(&source)).expect("casa-rs opens the table");
+        table.remove_rows(&[0, 1, 2]).expect("remove every row");
+        let rewritten = dir.path().join(format!("empty-{format:?}.tbl"));
+        table
+            .save(
+                TableOptions::new(&rewritten)
+                    .with_data_manager(DataManagerKind::TiledColumnStMan)
+                    .with_tile_shape(vec![2, 3, 2])
+                    .with_endian_format(format),
+            )
+            .expect("casa-rs writes the empty table");
+        TableOracle::table_verify(empty, &rewritten)
+            .unwrap_or_else(|error| panic!("RC {format:?}: {error}"));
+        assert_cells(&rewritten, 1, &NODEF_COLUMNS, nodef_cell);
     }
 }

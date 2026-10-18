@@ -375,8 +375,8 @@ mod casacore_tiled_data_tests;
 mod casacore_tiled_order_tests;
 mod tile_columns;
 use tile_columns::{
-    TileColumns, bound_tile_layout, in_tile_order, tile_columns, tile_target, untiled_column_error,
-    writer_tile_order,
+    TileColumns, bound_tile_layout, in_tile_order, rows_reached, tile_columns, tile_target,
+    untiled_column_error, writer_tile_order,
 };
 
 // ---------------------------------------------------------------------------
@@ -1724,7 +1724,7 @@ pub(crate) fn load_tiled_columns(
         .iter()
         .map(|(desc_idx, _)| &table_desc.columns[*desc_idx])
         .collect();
-    let tiles = tile_columns(&variant, Cow::Owned(header), &col_descs, table_desc)?;
+    let tiles = tile_columns(&variant, Cow::Owned(header), &col_descs, table_desc, nrrow)?;
     // The managers other than TiledDataStMan index the header's types, the
     // tile offsets and the descriptors alike, so they take all three in tile
     // order, and every bound column must be a tile column.
@@ -1813,7 +1813,7 @@ pub(crate) fn load_tiled_column_rows(
         table_desc,
         bound_cols,
         target_desc_idx,
-        dm.seq_nr,
+        (dm.seq_nr, selected_rows),
     )?;
     let header = &*header;
     let col_desc = &table_desc.columns[target_desc_idx];
@@ -1906,7 +1906,7 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
         table_desc,
         bound_cols,
         target_desc_idx,
-        dm.seq_nr,
+        (dm.seq_nr, selected_rows),
     )?;
     let header = &*tile_header;
     let col_desc = &table_desc.columns[target_desc_idx];
@@ -1971,7 +1971,7 @@ pub(crate) fn fill_tiled_column_rows_2d_channel_range_typed(
         table_desc,
         bound_cols,
         target_desc_idx,
-        dm.seq_nr,
+        (dm.seq_nr, selected_rows),
     )?;
     let header = &*tile_header;
     let col_desc = &table_desc.columns[target_desc_idx];
@@ -2033,7 +2033,7 @@ pub(crate) fn load_tiled_column_rows_1d_typed(
         table_desc,
         bound_cols,
         target_desc_idx,
-        dm.seq_nr,
+        (dm.seq_nr, selected_rows),
     )?;
     let header = &*tile_header;
     let col_desc = &table_desc.columns[target_desc_idx];
@@ -2125,7 +2125,7 @@ pub(crate) fn fill_tiled_column_rows_1d_typed(
         table_desc,
         bound_cols,
         target_desc_idx,
-        dm.seq_nr,
+        (dm.seq_nr, selected_rows),
     )?;
     let header = &*tile_header;
     let col_desc = &table_desc.columns[target_desc_idx];
@@ -4558,7 +4558,13 @@ fn save_tiled_column_group_rows_sparse_in_place(
         return Ok(true);
     }
     let bound: Vec<&ColumnDescContents> = col_descs.iter().collect();
-    let tiles = tile_columns(&variant, Cow::Borrowed(&header), &bound, table_desc)?;
+    let tiles = tile_columns(
+        &variant,
+        Cow::Borrowed(&header),
+        &bound,
+        table_desc,
+        rows_reached(changed_rows),
+    )?;
     patch_tiled_cube_sparse_rows(
         table_path,
         dm_seq_nr,
@@ -4589,7 +4595,13 @@ fn save_tiled_cell_group_rows_sparse_in_place(
         return Ok(false);
     }
     let bound: Vec<&ColumnDescContents> = col_descs.iter().collect();
-    let tiles = tile_columns(&variant, Cow::Borrowed(&header), &bound, table_desc)?;
+    let tiles = tile_columns(
+        &variant,
+        Cow::Borrowed(&header),
+        &bound,
+        table_desc,
+        rows_reached(changed_rows),
+    )?;
 
     for &row_idx in changed_rows {
         let Some(cube) = header.cubes.get(row_idx) else {
@@ -4632,7 +4644,13 @@ fn save_tiled_data_group_rows_sparse_in_place(
         return Ok(false);
     }
     let bound: Vec<&ColumnDescContents> = col_descs.iter().collect();
-    let tiles = tile_columns(&variant, Cow::Borrowed(&header), &bound, table_desc)?;
+    let tiles = tile_columns(
+        &variant,
+        Cow::Borrowed(&header),
+        &bound,
+        table_desc,
+        rows_reached(changed_rows),
+    )?;
     let TiledVariant::Data {
         row_map,
         cube_map,
@@ -4711,7 +4729,13 @@ fn save_tiled_shape_group_rows_sparse_in_place(
         return Ok(false);
     }
     let bound: Vec<&ColumnDescContents> = col_descs.iter().collect();
-    let tiles = tile_columns(&variant, Cow::Borrowed(&header), &bound, table_desc)?;
+    let tiles = tile_columns(
+        &variant,
+        Cow::Borrowed(&header),
+        &bound,
+        table_desc,
+        rows_reached(changed_rows),
+    )?;
     let TiledVariant::Shape {
         nr_used_row_map,
         row_map,
@@ -7781,29 +7805,9 @@ fn save_single_column_tiled_column_stman(
         dm_seq_nr,
         values.len()
     ));
+    // With no rows the cube's row axis is empty and it has no tiles, as
+    // `TiledColumnStMan::create64` makes it (#764 review).
     let nrrow = values.len();
-    if nrrow == 0 {
-        let header = TiledStManHeader {
-            big_endian,
-            seq_nr: dm_seq_nr,
-            nrrow: 0,
-            col_data_types: vec![CasacoreDataType::from_primitive_type(
-                col_desc.require_primitive_type()?,
-                false,
-            )],
-            hypercolumn_name: dm_name.to_string(),
-            max_cache_size: 0,
-            nrdim: 0,
-            files: vec![],
-            cubes: vec![],
-        };
-        let variant = TiledVariant::Column {
-            default_tile_shape: vec![],
-        };
-        let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
-        return write_tiled_header(&header_path, &variant, &header);
-    }
-
     let cell_shape: Vec<usize> = col_desc.shape.iter().map(|&s| s as usize).collect();
     let cell_ndim = cell_shape.len();
 
@@ -8311,9 +8315,9 @@ fn save_tiled_column_stman(
         &col_data_types,
         hypercolumn.private_keywords,
     )?;
-    if nrrow == 0 || col_descs.is_empty() {
-        // Write empty header, listing every bound column's type as casacore's
-        // header does (#755).
+    // With no rows the cube's row axis is empty and it has no tiles, as
+    // `TiledColumnStMan::create64` makes it (#764 review).
+    if col_descs.is_empty() {
         let header = TiledStManHeader {
             big_endian,
             seq_nr: dm_seq_nr,

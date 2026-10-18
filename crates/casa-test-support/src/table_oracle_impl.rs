@@ -105,6 +105,14 @@ pub enum CppTableFixture {
     /// inverted in rows 1 and 3; writes the unpatched table, verifies the
     /// patched one.
     TiledShapeMixedPatched,
+    /// The [`TiledShapeMixed`](Self::TiledShapeMixed) table under a
+    /// TiledCellStMan: the same definition, binding and cells, each cell its
+    /// own hypercube of \[2,2\] tiles crossing its edges. Written
+    /// little-endian; verified as `TiledShapeMixed`, whose check reads cell
+    /// values only, as is the patched form ([`TiledShapeMixedPatched`](Self::TiledShapeMixedPatched)).
+    TiledCellMixed,
+    /// [`TiledCellMixed`](Self::TiledCellMixed) written big-endian.
+    TiledCellMixedBigEndian,
     /// TiledColumnStMan `TiledCol` without a hypercolumn definition, bound
     /// count (Int), flag (Bool), value (Double), amp (Float), fixed \[2,3\],
     /// so casacore's tile is value, amp, count, flag. Three rows; at index
@@ -113,6 +121,14 @@ pub enum CppTableFixture {
     TiledColumnNoDef,
     /// [`TiledColumnNoDef`](Self::TiledColumnNoDef) written big-endian.
     TiledColumnNoDefBigEndian,
+    /// [`TiledColumnNoDef`](Self::TiledColumnNoDef) with no rows, written
+    /// little-endian. Verifying opens it with every column's fixed shape and
+    /// one \[2,3,0\] hypercube of \[2,3,2\] tiles, then adds row 0 and reads
+    /// it back.
+    TiledColumnNoDefEmpty,
+    /// [`TiledColumnNoDefEmpty`](Self::TiledColumnNoDefEmpty) written
+    /// big-endian.
+    TiledColumnNoDefEmptyBigEndian,
     /// ForwardColumnEngine interop: base table with col_value (Double, 3 rows)
     /// and a forwarding table that delegates col_value via ForwardColumnEngine.
     /// The path is the forwarding table directory; base is at `{path}_base`.
@@ -292,11 +308,23 @@ pub(crate) fn cpp_table_write_unlocked(
             CppTableFixture::TiledShapeMixedBigEndian => {
                 cpp_table_write_tiled_shape_mixed_big_endian(c_path.as_ptr(), &mut error)
             }
+            CppTableFixture::TiledCellMixed => {
+                cpp_table_write_tiled_cell_mixed(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledCellMixedBigEndian => {
+                cpp_table_write_tiled_cell_mixed_big_endian(c_path.as_ptr(), &mut error)
+            }
             CppTableFixture::TiledColumnNoDef => {
                 cpp_table_write_tiled_column_nodef(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::TiledColumnNoDefBigEndian => {
                 cpp_table_write_tiled_column_nodef_big_endian(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledColumnNoDefEmpty => {
+                cpp_table_write_tiled_column_nodef_empty(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledColumnNoDefEmptyBigEndian => {
+                cpp_table_write_tiled_column_nodef_empty_big_endian(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::ForwardColumn => {
                 cpp_table_write_forward_column_fixture(c_path.as_ptr(), &mut error)
@@ -493,7 +521,10 @@ pub(crate) fn cpp_table_verify_unlocked(
             CppTableFixture::TiledDataStManScalar => {
                 cpp_table_verify_tiled_data_scalar(c_path.as_ptr(), &mut error)
             }
-            CppTableFixture::TiledShapeMixed | CppTableFixture::TiledShapeMixedBigEndian => {
+            CppTableFixture::TiledShapeMixed
+            | CppTableFixture::TiledShapeMixedBigEndian
+            | CppTableFixture::TiledCellMixed
+            | CppTableFixture::TiledCellMixedBigEndian => {
                 cpp_table_verify_tiled_shape_mixed(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::TiledShapeMixedPatched => {
@@ -501,6 +532,10 @@ pub(crate) fn cpp_table_verify_unlocked(
             }
             CppTableFixture::TiledColumnNoDef | CppTableFixture::TiledColumnNoDefBigEndian => {
                 cpp_table_verify_tiled_column_nodef(c_path.as_ptr(), &mut error)
+            }
+            CppTableFixture::TiledColumnNoDefEmpty
+            | CppTableFixture::TiledColumnNoDefEmptyBigEndian => {
+                cpp_table_verify_tiled_column_nodef_empty(c_path.as_ptr(), &mut error)
             }
             CppTableFixture::ForwardColumn => {
                 cpp_table_verify_forward_column_fixture(c_path.as_ptr(), &mut error)
