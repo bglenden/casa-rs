@@ -13,20 +13,25 @@ use super::{BackendChoice, BlockShape, PassDomain};
 /// The gridding work of one placement besides its taps, in taps, which
 /// region strips are balanced on ([`Router::owner_and_work`]).
 ///
-/// A placement costs a fixed amount besides its taps: locating it,
-/// fetching its kernel cells, its ramp and norms, routing its
-/// polarizations and forming its residual. Kernels of every size meet in
-/// a pass: AW and W-projection supports grow with `|w|`, so short
-/// baselines near the uv centre bring many small kernels and long ones a
-/// few large ones. Strips balanced on taps alone then give the centre's
-/// owner several times the placements, and it takes longest.
+/// A placement costs more than its taps in proportion. Most of the excess
+/// is in the tap loops themselves: each spread and gather call sets up the
+/// sample's pointing ramp, and the short rows of a small support cost
+/// about twice as much per tap as long ones. The routing and residual
+/// work outside the loops is about 2% of a B3 residual pass (#449).
+/// Kernels of every size meet in a pass: AW and W-projection supports grow
+/// with `|w|`, so short baselines near the uv centre bring many small
+/// kernels and long ones a few large ones. Strips balanced on taps alone
+/// then give the centre's owner several times the placements, and it
+/// takes longest.
 ///
 /// The value is fitted to the region owners of B3's residual passes on
 /// the M4 (#449): busy time `a · taps + b · placements`, with `a` about
 /// 7.6 ns per tap and `b` about 1.3 µs per placement, from owners holding
 /// equal taps and 1.07, 3.63 and 1.73 million placements. The fit predicts
-/// the third owner to 1%. A constant with one kernel size throughout (the
-/// spheroidal or a mosaic's) moves no strip boundary.
+/// the third owner to 1%. With every AW cell kept resident it still
+/// balances them to 5%. A cheaper small-support path in the kernels would
+/// lower it. A constant with one kernel size throughout (the spheroidal
+/// or a mosaic's) moves no strip boundary.
 pub const PLACEMENT_WORK: u64 = 170;
 
 /// How one pass divides an image domain's grid accumulation among owners
