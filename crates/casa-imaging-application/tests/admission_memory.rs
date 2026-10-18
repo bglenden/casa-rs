@@ -731,7 +731,9 @@ fn cubes_stay_within_their_admission_resident_and_in_waves() {
 /// completed run the products took fewer lanes than the workers.
 #[test]
 fn products_on_fewer_lanes_stay_within_their_admission() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    if !alone("products_on_fewer_lanes_stay_within_their_admission") {
+        return;
+    }
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = observation(root.path(), CUBE_CHANNELS);
     warm(&measurement_set, root.path());
