@@ -3,6 +3,8 @@
 //! row, measured before the first pass so that even it cuts balanced strips
 //! (#736).
 
+use std::ops::Range;
+
 use casa_imaging_operator::{PlaneRange, WeightingGeneration};
 
 use super::partition::Router;
@@ -19,27 +21,49 @@ const CHUNKS_PER_WORKER: usize = 4;
 /// memory.
 const CHUNK_ROWS: usize = 1 << 12;
 
-/// Whether some domain is split among several region owners, the only case
-/// a row-work pass serves.
+/// Whether some domain is split among several region owners
+/// ([`Partition::splits_rows`]), the only case a row-work pass serves.
 #[must_use]
 pub fn needs_row_work(domains: &[PassDomain<'_>]) -> bool {
-    domains.iter().any(|domain| {
-        matches!(domain.partition, Partition::Regions { .. }) && domain.partition.owners() > 1
-    })
+    domains.iter().any(|domain| domain.partition.splits_rows())
 }
 
-/// Bytes a row-work pass over `domains` on `workers` workers holds: one
-/// histogram per chunk of the widest region-split domain's grid rows, and
-/// the totals it returns.
+/// The grid rows a row-work pass measures for `domain`: every row of one
+/// split among region owners, none otherwise.
+fn measured_rows(domain: &PassDomain<'_>) -> usize {
+    if domain.partition.splits_rows() {
+        domain.operator.geometry().grid_shape()[1]
+    } else {
+        0
+    }
+}
+
+/// Bytes a row-work pass over `domains` on `workers` workers holds: each
+/// chunk's histogram, allocated once at the widest measured domain's grid
+/// rows; the totals it returns; each domain's router (an owner per grid row
+/// for region owners, a start per owner for plane owners); and the
+/// containers of chunks, routers and totals. The source's blocks are the
+/// source's charge ([`super::source_block_bytes`]).
 #[must_use]
 pub fn row_work_pass_bytes(domains: &[PassDomain<'_>], workers: usize) -> u64 {
-    let rows = |domain: &PassDomain<'_>| match domain.partition {
-        Partition::Regions { .. } => domain.operator.geometry().grid_shape()[1],
-        Partition::Planes { .. } => 0,
-    };
-    let widest = domains.iter().map(rows).max().unwrap_or(0);
-    let totals = domains.iter().map(rows).sum::<usize>();
-    ((workers * CHUNKS_PER_WORKER * widest + totals) * size_of::<u64>()) as u64
+    let chunks = workers * CHUNKS_PER_WORKER;
+    let widest = domains.iter().map(measured_rows).max().unwrap_or(0);
+    let totals = domains.iter().map(measured_rows).sum::<usize>();
+    let routing = domains
+        .iter()
+        .map(|domain| match domain.partition {
+            Partition::Regions { .. } => {
+                domain.operator.geometry().grid_shape()[1] * size_of::<u16>()
+            }
+            Partition::Planes { owners } => (owners + 1) * size_of::<u32>(),
+        })
+        .sum::<usize>();
+    let containers = chunks * size_of::<(Range<usize>, Vec<u64>)>()
+        + domains.len() * (size_of::<Router>() + size_of::<Option<Vec<u64>>>());
+    // The team's result per chunk, collected on each call
+    // ([`WorkerTeam::for_each_mut`]).
+    let results = chunks * size_of::<Result<(), PassError>>();
+    ((chunks * widest + totals) * size_of::<u64>() + routing + containers + results) as u64
 }
 
 /// Each domain's gridding work by anchor row over one traversal that reads
@@ -71,13 +95,16 @@ pub fn run_row_work_pass(
     let mut totals = domains
         .iter()
         .map(|domain| {
-            matches!(domain.partition, Partition::Regions { .. })
-                .then(|| vec![0_u64; domain.operator.geometry().grid_shape()[1]])
+            let rows = measured_rows(domain);
+            (rows > 0).then(|| vec![0_u64; rows])
         })
         .collect::<Vec<_>>();
     let count = team.workers() * CHUNKS_PER_WORKER;
+    // Each chunk's histogram holds the widest domain's rows from the start,
+    // so a later, taller domain never grows it ([`row_work_pass_bytes`]).
+    let widest = domains.iter().map(measured_rows).max().unwrap_or(0);
     let mut chunks = (0..count)
-        .map(|_| (0..0, Vec::<u64>::new()))
+        .map(|_| (0..0, vec![0_u64; widest]))
         .collect::<Vec<_>>();
     stream_blocks(source, cancel, false, |block| {
         for (index, (domain, router)) in domains.iter().zip(&routers).enumerate() {
@@ -92,8 +119,8 @@ pub fn run_row_work_pass(
                 }
                 let rows = total.len();
                 team.for_each_mut(&mut chunks[..used], |_, (range, work)| {
-                    work.clear();
-                    work.resize(rows, 0);
+                    let work = &mut work[..rows];
+                    work.fill(0);
                     // In the block's locality order, as a pass places them:
                     // a baseline's rows share kernel cells, which a set that
                     // pages its cells (AW) would otherwise reload row by row.

@@ -21,6 +21,12 @@ pub struct WorkerTeam {
 
 impl WorkerTeam {
     /// A team of `workers` threads; `workers` must be positive.
+    ///
+    /// The team runs a job on every thread, and one [`Self::for_each_mut`]
+    /// from the caller, before it returns: a pool's threads and the
+    /// caller's hand-off make their first-use allocations then, as part of
+    /// the team, rather than inside the first admitted phase that runs on
+    /// it (#742 review: 7 KB on a fresh four-worker team).
     pub fn new(workers: usize) -> Result<Self, PassError> {
         if workers == 0 {
             return Err(PassError::Workers);
@@ -35,7 +41,12 @@ impl WorkerTeam {
                     .map_err(|_| PassError::Workers)
             })
             .transpose()?;
-        Ok(Self { workers, pool })
+        let team = Self { workers, pool };
+        if let Some(pool) = &team.pool {
+            pool.broadcast(|_| ());
+        }
+        team.for_each_mut(&mut [(); 64], |_, ()| Ok::<_, PassError>(()))?;
+        Ok(team)
     }
 
     /// Number of workers.
