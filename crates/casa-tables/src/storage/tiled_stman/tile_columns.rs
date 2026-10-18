@@ -83,6 +83,15 @@ pub(super) fn tile_columns<'h>(
     bound: &[&ColumnDescContents],
     table_desc: &TableDescContents,
 ) -> Result<TileColumns<'h>, StorageError> {
+    // The other managers keep their binding-order layout (#755), and with
+    // it the header casa-rs writes for an empty table, which lists no
+    // column types.
+    if !matches!(variant, TiledVariant::Data { .. }) {
+        return Ok(TileColumns {
+            header,
+            tile_index: (0..bound.len()).map(Some).collect(),
+        });
+    }
     if bound.len() != header.col_data_types.len() {
         return Err(StorageError::FormatMismatch(format!(
             "tiled manager {} binds {} columns but its header lists {}",
@@ -90,12 +99,6 @@ pub(super) fn tile_columns<'h>(
             bound.len(),
             header.col_data_types.len()
         )));
-    }
-    if !matches!(variant, TiledVariant::Data { .. }) {
-        return Ok(TileColumns {
-            header,
-            tile_index: (0..bound.len()).map(Some).collect(),
-        });
     }
     let names: Vec<&str> = bound.iter().map(|desc| desc.col_name.as_str()).collect();
     let order = tile_order(
