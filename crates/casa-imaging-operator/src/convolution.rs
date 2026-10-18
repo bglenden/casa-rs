@@ -207,8 +207,9 @@ impl DenseCell {
 ///
 /// Resident sets ignore it and lend their own storage. A set whose cells
 /// come and go ([`AwCatalog`](crate::AwCatalog)) parks the cell here, so
-/// the cache may drop its own reference without invalidating the borrow,
-/// and a worker holds at most one cell per slot beyond the cache's bound.
+/// the cache may drop its own reference without invalidating the borrow.
+/// A hold keeps at most one cell beyond the cache's bound, and none while
+/// it fetches another ([`Self::lend_keyed`]).
 #[derive(Clone, Debug, Default)]
 pub struct CellHold {
     cell: Option<Arc<DenseCell>>,
@@ -236,7 +237,9 @@ impl CellHold {
 
     /// Lend the taps of the cell parked for `key` in the set's `slot` (the
     /// set numbers its kinds of cell), fetching it with `load` when another
-    /// cell is parked: rows of one key in sequence cost one fetch.
+    /// cell is parked: rows of one key in sequence cost one fetch. The
+    /// parked cell is released before `load` runs, so a fetch never has the
+    /// old cell beside the one it builds (#773 review).
     pub fn lend_keyed(
         &mut self,
         key: CfKey,
@@ -244,6 +247,7 @@ impl CellHold {
         load: impl FnOnce() -> Arc<DenseCell>,
     ) -> TapLayout<'_> {
         if self.keyed != Some((key, slot)) || self.cell.is_none() {
+            self.clear();
             self.cell = Some(load());
             self.keyed = Some((key, slot));
         }
@@ -609,5 +613,43 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// Σ W·s·K, which can be negative, publishes its magnitude.
     fn weight_image_magnitude(&self) -> bool {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cell(value: f32) -> Arc<DenseCell> {
+        let taps = vec![Complex32::new(value, 0.0); 9].into_boxed_slice();
+        Arc::new(DenseCell::new(taps, [1, 1], 2, 1))
+    }
+
+    /// #773 review: a hold releases the cell it parks before it fetches
+    /// another, for another key or another slot, so beside a fetch it keeps
+    /// nothing alive; and a repeated key in its slot lends the parked cell
+    /// without fetching.
+    #[test]
+    fn a_hold_releases_its_cell_before_it_fetches_another() {
+        let mut hold = CellHold::new();
+        let key = |group| CfKey { group, cube: 0 };
+        let first = cell(1.0);
+        let mut parked = Arc::downgrade(&first);
+        let _ = hold.lend_keyed(key(0), 0, move || first);
+        let _ = hold.lend_keyed(key(0), 0, || panic!("a parked key fetched again"));
+        assert!(parked.upgrade().is_some(), "the hold parks the cell");
+        for (group, slot) in [(1, 0), (1, 2), (2, 2)] {
+            let before = parked.clone();
+            let next = cell(f32::from(group));
+            parked = Arc::downgrade(&next);
+            let _ = hold.lend_keyed(key(group), slot, move || {
+                assert!(
+                    before.upgrade().is_none(),
+                    "the parked cell is alive while slot {slot} fetches group {group}"
+                );
+                next
+            });
+            assert!(parked.upgrade().is_some(), "the hold parks group {group}");
+        }
     }
 }
