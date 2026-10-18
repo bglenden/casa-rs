@@ -226,6 +226,7 @@ fn the_zero_w_plane_is_the_spheroidal_kernel() {
         support,
         oversampling: 4,
         mueller_planes: 1,
+        ..
     } = planes.taps(CfKey::default(), &mut w_hold)
     else {
         panic!("dense plane");

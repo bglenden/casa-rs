@@ -3,7 +3,7 @@
 //! from CASA's `[x][y]` oversampled planes (fine pixel `k · sampling + off`
 //! per tap) to the `[oy][ox][mueller][iy][ix]` tiles the kernels read.
 
-use num_complex::Complex32;
+use num_complex::{Complex32, Complex64};
 
 use crate::convolution::DenseCell;
 
@@ -66,29 +66,29 @@ pub(crate) fn dense_cell(planes: &[OversampledPlane<'_>], half_support: [u16; 2]
             }
         }
     }
-    DenseCell {
-        data: data.into_boxed_slice(),
+    DenseCell::new(
+        data.into_boxed_slice(),
         support,
-        oversampling: sampling,
-        mueller_planes: u8::try_from(planes.len()).expect("Mueller planes fit a byte"),
-    }
+        sampling,
+        u8::try_from(planes.len()).expect("Mueller planes fit a byte"),
+    )
 }
 
 /// Bytes the taps of [`dense_cell`]'s cell of `planes` planes at `sampling`
-/// hold for `half_support`.
+/// and their tiles' sums hold for `half_support` ([`DenseCell::bytes`]).
 pub(crate) const fn dense_cell_bytes(planes: usize, sampling: u16, half_support: [u16; 2]) -> u64 {
     let rows = sampling as usize + 1;
     let taps = (2 * half_support[0] as usize + 1) * (2 * half_support[1] as usize + 1);
-    (rows * rows * planes * taps * size_of::<Complex32>()) as u64
+    (rows * rows * planes * (taps * size_of::<Complex32>() + size_of::<Complex64>())) as u64
 }
 
-/// Bytes the taps of [`dense_cell_from_quadrant`]'s cell hold for
-/// `sampling` and `half_support`.
+/// Bytes the taps of [`dense_cell_from_quadrant`]'s cell and their tiles'
+/// sums hold for `sampling` and `half_support` ([`DenseCell::bytes`]).
 pub(crate) const fn dense_cell_from_quadrant_bytes(sampling: u16, half_support: u16) -> u64 {
     let oversampling = if sampling == 1 { 2 } else { sampling };
     let rows = oversampling as usize + 1;
     let taps = 2 * half_support as usize + 1;
-    (rows * rows * taps * taps * size_of::<Complex32>()) as u64
+    (rows * rows * (taps * taps * size_of::<Complex32>() + size_of::<Complex64>())) as u64
 }
 
 /// The dense cell of one even-symmetric kernel stored as its positive
@@ -132,12 +132,7 @@ pub(crate) fn dense_cell_from_quadrant(
             }
         }
     }
-    DenseCell {
-        data: data.into_boxed_slice(),
-        support: [support, support],
-        oversampling,
-        mueller_planes: 1,
-    }
+    DenseCell::new(data.into_boxed_slice(), [support, support], oversampling, 1)
 }
 
 #[cfg(test)]
@@ -159,16 +154,16 @@ mod tests {
             sampling: 2,
         };
         let cell = dense_cell(&[plane], [1, 1]);
-        assert_eq!(cell.support, [3, 3]);
-        assert_eq!(cell.data.len(), 3 * 3 * 9);
+        assert_eq!(cell.support(), [3, 3]);
+        assert_eq!(cell.data().len(), 3 * 3 * 9);
         // Row (ox, oy) = (0, 2), the seventh tile: off_x = −1, off_y = +1;
         // tap (ix, iy) = (2, 0) → k = (+1, −1) → pixel (4 + 2 − 1, 4 − 2 +
         // 1) = (5, 3).
-        let tile = &cell.data[6 * 9..][..9];
+        let tile = &cell.data()[6 * 9..][..9];
         assert_eq!(tile[2], Complex32::new(5.0, 3.0));
         // Centre row (1, 1), the fifth tile; its centre tap is the plane
         // centre.
-        let tile = &cell.data[4 * 9..][..9];
+        let tile = &cell.data()[4 * 9..][..9];
         assert_eq!(tile[4], Complex32::new(4.0, 4.0));
     }
 
@@ -181,9 +176,38 @@ mod tests {
         let cell = dense_cell_from_quadrant(&quadrant, side, 2, 1);
         // Row (0, 1), the fourth tile: off_x = −1, off_y = 0; tap (0, 1):
         // k = (−1, 0) → |−2 − 1| = 3 along x, 0 along y.
-        let tile = &cell.data[3 * 9..][..9];
+        let tile = &cell.data()[3 * 9..][..9];
         assert_eq!(tile[3], Complex32::new(3.0, 0.0));
         // Tap (2, 1): k = (+1, 0) → |2 − 1| = 1.
         assert_eq!(tile[5], Complex32::new(1.0, 0.0));
+    }
+
+    /// The charges admission makes before a cell exists are the bytes the
+    /// built cell holds, its tiles' sums included: for two Mueller planes
+    /// of unequal half-supports, and for a quadrant cell at sampling 1
+    /// (oversampled to 2) and 4.
+    #[test]
+    fn the_cell_charges_are_the_bytes_the_cells_hold() {
+        let side = 17;
+        let values = (0..side * side)
+            .map(|index| Complex32::new(index as f32, -(index as f32)))
+            .collect::<Vec<_>>();
+        let plane = OversampledPlane {
+            values: &values,
+            side,
+            centre: [8, 8],
+            sampling: 2,
+        };
+        let cell = dense_cell(&[plane, plane], [2, 1]);
+        assert_eq!(cell.norms().len(), 3 * 3 * 2);
+        assert_eq!(dense_cell_bytes(2, 2, [2, 1]), cell.bytes() as u64);
+        for sampling in [1, 4] {
+            let cell = dense_cell_from_quadrant(&values, side, sampling, 3);
+            assert_eq!(
+                dense_cell_from_quadrant_bytes(sampling, 3),
+                cell.bytes() as u64,
+                "sampling {sampling}"
+            );
+        }
     }
 }

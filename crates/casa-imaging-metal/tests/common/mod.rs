@@ -6,8 +6,8 @@
 use casa_imaging_metal::MetalBackend;
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
-    Basis, CellHold, CfKey, ConvolutionFunctionSet, GridAccumulator, GridGeometry, GridPadding,
-    GridPrecision, GridScalar, ImageCorrection, ImageExtent, KernelNormalisation,
+    Basis, CellHold, CfKey, ConvolutionFunctionSet, DenseCell, GridAccumulator, GridGeometry,
+    GridPadding, GridPrecision, GridScalar, ImageCorrection, ImageExtent, KernelNormalisation,
     MeasurementOperator, ModelImages, ModelPlane, MuellerRouting, Placement, PolarizationRouting,
     RowContext, SampleBuffer, Spheroidal, TapLayout, Tile,
 };
@@ -172,9 +172,8 @@ impl ConvolutionFunctionSet for Separable {
 /// and grid YY through plane 1 (YY symmetrically). Independent tables for
 /// each direction and w sign exercise all four routing choices.
 struct Dense {
-    cells: [Vec<Complex32>; 2],
+    cells: [DenseCell; 2],
     support: u16,
-    oversampling: u16,
     mueller: MuellerRouting,
     correction: ImageCorrection,
 }
@@ -184,16 +183,16 @@ impl Dense {
         let fine = usize::from(oversampling) + 1;
         let count = fine * fine * 2 * usize::from(support).pow(2);
         let mut cell = || {
-            (0..count)
+            let data = (0..count)
                 .map(|_| Complex32::new(rng.signed() as f32, rng.signed() as f32))
-                .collect()
+                .collect();
+            DenseCell::new(data, [support, support], oversampling, 2)
         };
         let leak =
             |own: u8, other: u8| vec![vec![Some(own), Some(other)], vec![Some(other), Some(own)]];
         Self {
             cells: [cell(), cell()],
             support,
-            oversampling,
             mueller: MuellerRouting {
                 adjoint: [leak(1, 0), leak(0, 1)],
                 // Exercise forward routes that are not a swap of the
@@ -210,12 +209,7 @@ impl ConvolutionFunctionSet for Dense {
         CfKey::default()
     }
     fn taps<'s>(&'s self, key: CfKey, _hold: &'s mut CellHold) -> TapLayout<'s> {
-        TapLayout::Dense {
-            data: &self.cells[usize::from(key.cube)],
-            support: [self.support, self.support],
-            oversampling: self.oversampling,
-            mueller_planes: 2,
-        }
+        self.cells[usize::from(key.cube)].layout()
     }
     fn max_half_support(&self) -> [u16; 2] {
         [self.support / 2; 2]

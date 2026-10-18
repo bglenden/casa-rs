@@ -328,6 +328,7 @@ impl<'cf> MetalBackend<'cf> {
                     support,
                     oversampling,
                     mueller_planes,
+                    ..
                 } => TableRecord {
                     offset: self.dense.append(self.device, data)?,
                     support,

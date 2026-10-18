@@ -720,10 +720,10 @@ fn the_bounded_cache_evicts_but_a_held_cell_stays_valid() {
     let mut hold = CellHold::new();
     let first = CfKey { group: 0, cube: 0 };
     let bytes_of_one = {
-        let TapLayout::Dense { data, .. } = unbounded.taps(first, &mut hold) else {
+        let TapLayout::Dense { data, norms, .. } = unbounded.taps(first, &mut hold) else {
             panic!("dense");
         };
-        2 * data.len() * size_of::<Complex32>()
+        2 * (size_of_val(data) + size_of_val(norms))
     };
     let bounded = AwCatalog::open_casa(
         root.path(),

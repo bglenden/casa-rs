@@ -8,9 +8,9 @@ mod common;
 
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
-    Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridAccumulator, GridBackend,
-    GridPrecision, ImageCorrection, KernelNormalisation, MeasurementOperator, Mode, ModeSet,
-    ModelImages, ModelPlane, ModelPrescale, MuellerRouting, Placement, PlaneRange,
+    Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, DenseCell, GridAccumulator,
+    GridBackend, GridPrecision, ImageCorrection, KernelNormalisation, MeasurementOperator, Mode,
+    ModeSet, ModelImages, ModelPlane, ModelPrescale, MuellerRouting, Placement, PlaneRange,
     PolarizationRouting, RowContext, SPHEROIDAL_OVERSAMPLING, Spheroidal, TapLayout, Work,
 };
 use common::{IMAGE, Rng, buffer, geometry, max_abs, placements, samples};
@@ -26,9 +26,8 @@ const XX_YY_REQUESTED: [PolarizationCoordinate; 2] = [
 
 /// A kernel set whose dense tiles are the outer product of separable rows.
 struct DenseFromRows {
-    data: Vec<Complex32>,
+    cell: DenseCell,
     support: u16,
-    oversampling: u16,
     mueller: MuellerRouting,
     correction: ImageCorrection,
 }
@@ -57,9 +56,8 @@ impl DenseFromRows {
         }
         let correction = template.image_correction();
         Self {
-            data,
+            cell: DenseCell::new(data.into_boxed_slice(), [support, support], oversampling, 1),
             support,
-            oversampling,
             mueller: MuellerRouting::scalar(polarization.pol_map(), polarization.grid_pols()),
             correction: ImageCorrection::new(correction.x().to_vec(), correction.y().to_vec()),
         }
@@ -72,12 +70,7 @@ impl ConvolutionFunctionSet for DenseFromRows {
     }
 
     fn taps<'s>(&'s self, _key: CfKey, _hold: &'s mut CellHold) -> TapLayout<'s> {
-        TapLayout::Dense {
-            data: &self.data,
-            support: [self.support, self.support],
-            oversampling: self.oversampling,
-            mueller_planes: 1,
-        }
+        self.cell.layout()
     }
 
     fn max_half_support(&self) -> [u16; 2] {

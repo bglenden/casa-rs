@@ -290,12 +290,12 @@ pub(super) fn dense_cell_padded(
             }
         }
     }
-    DenseCell {
-        data: data.into_boxed_slice(),
+    DenseCell::new(
+        data.into_boxed_slice(),
         support,
-        oversampling: sampling,
-        mueller_planes: u8::try_from(planes.len()).expect("Mueller planes fit u8"),
-    }
+        sampling,
+        u8::try_from(planes.len()).expect("Mueller planes fit u8"),
+    )
 }
 
 /// The misc info `CFCell::makePersistent` writes.
