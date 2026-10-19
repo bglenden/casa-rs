@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "id": "b11-mosaic-cube-alma-1024-clean",
+  "mode_id": "t53-mosaic-spectral-join",
+  "description": "Imaging taxonomy row B11 (#787): the wave1 ALMA seven-pointing mosaic as a sixteen-channel cube, the channels of the T53 cube row with linear interpolation (CASA's cube default), 1024² at 0.08″, natural weighting, Högbom clean of 500 iterations, pblimit 0.2, one CPU worker. B10's data and size as a cube, where mosaic workers run plane owners rather than region owners. Natural weighting because a Briggs mosaic cube with a per-channel density does not yet agree with CASA (#789). usepointing is off (CASA's default): the MS's POINTING table has one TIME for all 301 rows, so with usepointing on every row resolves to one pointing and the seven primary beams collapse onto field 0 (#791).",
+  "dataset": {
+    "key": "wave1-alma-mosaic-small",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT",
+    "relative_path": "wave1/alma/mosaic/small/ms/wave1-alma-mosaic-small.ms"
+  },
+  "imaging": {
+    "mode": "clean",
+    "specmode": "cube",
+    "gridder": "mosaic",
+    "field": "0,1,2,3,4,5,6",
+    "usepointing": false,
+    "spw": "0:0~17",
+    "channel_start": 0,
+    "channel_count": 16,
+    "imsize": 1024,
+    "cell_arcsec": 0.08,
+    "weighting": "natural",
+    "parallel": false,
+    "standard_mfs_acceleration": "cpu",
+    "imaging_fft_precision": "auto",
+    "deconvolver": "hogbom",
+    "hogbom_iteration_mode": "casa",
+    "niter": 500,
+    "threshold_jy": 0.0,
+    "minor_cycle_length": 50,
+    "write_pb": true,
+    "pbcor": true,
+    "wterm": "none",
+    "phasecenter_field": 0,
+    "pblimit": 0.2,
+    "interpolation": "linear",
+    "start": "1",
+    "width": "1",
+    "perchanweightdensity": true
+  },
+  "run": {
+    "ms_staging": "copy",
+    "repeats": 1,
+    "profile_repeats": 1,
+    "skip_profile": "1",
+    "run_label": "b11-mosaic-cube",
+    "storage_label": "external-ssd",
+    "evidence_role": "representative_scientific_acceptance",
+    "stream_log": true
+  },
+  "comparison": {
+    "mode": "full",
+    "products": [
+      ".image",
+      ".residual",
+      ".psf",
+      ".sumwt",
+      ".model",
+      ".mask",
+      ".weight",
+      ".pb",
+      ".image.pbcor"
+    ],
+    "max_elements_per_product": 1000000,
+    "full_chunk_elements": 1000000,
+    "require_exact_product_inventory": true,
+    "require_direction_wcs_parity": true,
+    "require_metadata_parity": true,
+    "tolerances": {
+      "contract_version": 2,
+      "require_full_array": true,
+      "default": {
+        "diff_rms_over_right_rms": 0.001
+      },
+      "products": {
+        ".image": {
+          "beam_area_relative": 0.001,
+          "beam_kernel_nrmse": 0.001
+        }
+      }
+    }
+  }
+}

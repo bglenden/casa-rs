@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "b10-mosaic-mfs-alma-1024-clean",
   "mode_id": "t53-mosaic-mfs",
-  "description": "Imaging taxonomy row B10 (#732): the wave1 ALMA seven-pointing mosaic, MFS over the sixteen channels the T53 rows image, 1024² at 0.08″, Briggs 0.5, Högbom clean of 500 iterations, flat-noise, pblimit 0.2, one CPU worker. The 512² dirty row's data at the size where per-sample gridding, not fixed cost, sets the time.",
+  "description": "Imaging taxonomy row B10 (#732): the wave1 ALMA seven-pointing mosaic, MFS over the sixteen channels the T53 rows image, 1024² at 0.08″, Briggs 0.5, Högbom clean of 500 iterations, flat-noise, pblimit 0.2, one CPU worker. The 512² dirty row's data at the size where per-sample gridding, not fixed cost, sets the time. usepointing is off (CASA's default): the MS's POINTING table has one TIME for all 301 rows, so with usepointing on every row resolves to one pointing and the seven primary beams collapse onto field 0 (#791).",
   "dataset": {
     "key": "wave1-alma-mosaic-small",
     "root_env": "CASA_RS_IMPERF_DATA_ROOT",
@@ -13,6 +13,7 @@
     "specmode": "mfs",
     "gridder": "mosaic",
     "field": "0,1,2,3,4,5,6",
+    "usepointing": false,
     "spw": "0",
     "channel_start": 1,
     "channel_count": 16,
