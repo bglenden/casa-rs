@@ -62,14 +62,28 @@ pub fn solve_bytes<S: Solver>(
     components: usize,
     trace: usize,
 ) -> u64 {
-    let cells = components
-        .saturating_mul(solver.component_cells(shape))
-        .min(shape.len());
-    let entries = 2 * cells as u64 * terms as u64;
+    let entries = 2 * update_entries(solver, shape, terms, components) as u64;
     (terms * shape.len() * size_of::<f64>()) as u64
         + entries * DELTA_ENTRY_BYTES
         + (trace.next_power_of_two() * size_of::<Component>()) as u64
         + solver.working_bytes(shape, terms)
+}
+
+/// Entries a [`Delta`] of `terms` terms holds at most after `components`
+/// components on a plane of `shape`: for each term, an entry for each pixel
+/// a component adds flux to ([`Solver::component_cells`]), and at most
+/// every pixel. It bounds the model terms a plane's minor cycle forms.
+#[must_use]
+pub fn update_entries<S: Solver>(
+    solver: &S,
+    shape: PlaneShape,
+    terms: usize,
+    components: usize,
+) -> usize {
+    let cells = components
+        .saturating_mul(solver.component_cells(shape))
+        .min(shape.len());
+    terms.saturating_mul(cells)
 }
 
 /// Run one plane's minor cycle.

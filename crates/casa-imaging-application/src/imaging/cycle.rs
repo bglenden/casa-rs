@@ -206,11 +206,12 @@ pub(crate) fn run(
         }
     };
     // What a refresh pass holds beside its wave (#763 review): every cycle
-    // before it keeps its record, up to the last refresh `nmajor` allows.
+    // before it keeps its record, up to the last refresh `nmajor` allows,
+    // and the minor cycle's terms, which its solve holds too (#778 review).
     let refresh = cleaning.then(|| RefreshDemand {
         masks: 2 * layout.mask_bytes(),
         cached: layout.refresh_bytes(&setup),
-        results: layout.result_bytes(),
+        results: layout.result_bytes(&setup, iterations),
         records: layout.record_bytes() * controls.maximum_major_cycles().unwrap_or(1).max(1) as u64,
     });
     // Operators, the workers, the source, the imaging weights and the paged

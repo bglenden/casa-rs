@@ -119,6 +119,9 @@ mod imaging;
 mod continuum_fixture;
 use continuum_fixture::*;
 
+#[path = "common/synthetic_observation.rs"]
+mod synthetic_observation;
+
 #[path = "continuum_application/clean_cycles.rs"]
 mod clean_cycles;
 

@@ -10,9 +10,9 @@ use casa_imaging_operator::{
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, MajorCyclePass,
-    ModelPreparation, NativeBlock, Partition, PassDomain, PassError, Residency, SampleContent,
-    SourceError, VisibilitySink, WeightCache, WorkerTeam, needs_row_work, run_density_pass,
-    run_major_cycle, run_row_work_pass,
+    ModelPreparation, NativeBlock, PLACEMENT_WORK, Partition, PassDomain, PassError, Residency,
+    SampleContent, SourceError, VisibilitySink, WeightCache, WorkerTeam, needs_row_work,
+    run_density_pass, run_major_cycle, run_row_work_pass,
 };
 use num_complex::Complex32;
 
@@ -127,8 +127,12 @@ fn balanced_regions_from_a_pass_row_work_match_one_owner() {
         panic!("one region-split domain reports its work");
     };
     assert_eq!(row_work.len(), operator.geometry().grid_shape()[1]);
-    // The spheroidal kernel's 7 × 7 taps for every placed sample.
-    assert_eq!(row_work.iter().sum::<u64>(), 49 * summary.samples);
+    // The spheroidal kernel's 7 × 7 taps and a placement's own work for
+    // every placed sample.
+    assert_eq!(
+        row_work.iter().sum::<u64>(),
+        (49 + PLACEMENT_WORK) * summary.samples
+    );
     let balanced = Partition::regions_balanced(&operator, 3, row_work);
     let images = run(
         &[PassDomain {
