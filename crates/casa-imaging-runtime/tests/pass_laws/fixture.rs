@@ -321,6 +321,9 @@ pub struct TestKernels {
     weight_image: bool,
     panic_at: Option<usize>,
     lent: AtomicUsize,
+    /// Whether every lend of the weight taps panics: only the weight
+    /// owner's grid of its summed groups lends them (#787).
+    weight_panics: bool,
 }
 
 impl TestKernels {
@@ -336,6 +339,16 @@ impl TestKernels {
             weight_image,
             panic_at,
             lent: AtomicUsize::new(0),
+            weight_panics: false,
+        }
+    }
+
+    /// These kernels, panicking whenever the weight taps are lent.
+    #[must_use]
+    pub fn panicking_weights(self) -> Self {
+        Self {
+            weight_panics: true,
+            ..self
         }
     }
 }
@@ -368,6 +381,7 @@ impl ConvolutionFunctionSet for TestKernels {
     }
 
     fn weight_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> Option<TapLayout<'s>> {
+        assert!(!self.weight_panics, "the test kernels' weight taps panic");
         self.weight_image.then(|| self.inner.taps(key, hold))
     }
 
@@ -429,6 +443,19 @@ pub fn test_kernels_operator(weight_image: bool, panic_at: Option<usize>) -> Mea
                 weight_image,
                 panic_at,
             ))
+        },
+    )
+}
+
+/// [`test_kernels_operator`] with a weight image whose taps panic when
+/// lent ([`TestKernels::panicking_weights`]).
+pub fn panicking_weights_operator() -> MeasurementOperator {
+    operator_with(
+        IMAGE,
+        GridPrecision::F64,
+        Basis::Constant,
+        |geometry, polarization| {
+            Box::new(TestKernels::new(geometry, polarization, true, None).panicking_weights())
         },
     )
 }
@@ -631,6 +658,8 @@ pub fn normalised_peak(images: &NormalImages, sums: &NormalImages) -> f64 {
     peak
 }
 
+/// The worst difference between `a` and `b`: over their data, PSF and
+/// weight images, each relative to its own peak, and their `sumwt`.
 pub fn worst_relative(a: &NormalImages, b: &NormalImages) -> f64 {
     assert_eq!(a.planes.len(), b.planes.len());
     let mut worst = 0.0_f64;
@@ -639,7 +668,8 @@ pub fn worst_relative(a: &NormalImages, b: &NormalImages) -> f64 {
             .data
             .iter()
             .chain(&pa.psf)
-            .zip(pb.data.iter().chain(&pb.psf))
+            .chain(&pa.weight)
+            .zip(pb.data.iter().chain(&pb.psf).chain(&pb.weight))
         {
             let peak = ia
                 .iter()

@@ -4,14 +4,25 @@
 //! transforms.
 
 mod pipeline;
+mod weight_sums;
+
+use weight_sums::WeightSums;
+pub(super) use weight_sums::{GroupCount, WEIGHT_GROUPS};
+
+/// Bytes the weight-image table of one owner holds ([`WeightSums`]) over
+/// placements of `npol` correlations.
+pub(super) fn weight_sums_bytes(npol: usize) -> u64 {
+    WeightSums::bytes(npol, WEIGHT_GROUPS)
+}
 
 use std::ops::Range;
+use std::sync::PoisonError;
 
 use casa_imaging_metal::MetalBackend;
 use casa_imaging_operator::{
-    CpuBackend, DeviceNativeCells, GridAccumulator, GridBackend, GridPrecision, Mode, NativeModel,
-    NativeTarget, NormalImages, Placement, PlaneRange, PredictionScratch, PreparedModelGrids,
-    SampleBuffer, SpectralResampler, Work,
+    ConvolutionFunctionSet, CpuBackend, DeviceNativeCells, GridAccumulator, GridBackend,
+    GridPrecision, Mode, NativeModel, NativeTarget, NormalImages, Placement, PlaneRange,
+    PredictionScratch, PreparedModelGrids, SampleBlock, SampleBuffer, SpectralResampler, Work,
 };
 use num_complex::Complex32;
 
@@ -33,6 +44,10 @@ struct Owner<'w> {
     /// Time the owner spent accumulating in the wave, which a region pass
     /// reports beside its strips (#736).
     busy: std::time::Duration,
+    /// The weight image's contributions, summed before they are gridded
+    /// ([`WeightSums`], #787), when this owner grids the weight image: the
+    /// weight owner of a region pass, every owner of a plane pass.
+    weights: Option<WeightSums>,
 }
 
 impl Owner<'_> {
@@ -46,10 +61,11 @@ impl Owner<'_> {
     }
 
     /// Grid owner `index`'s placements in `chunks`, of `target`'s domain,
-    /// in every mode `pass` holds, less what `subtract` names; and the
-    /// weight image over every placement when this owner holds it
-    /// (`weight_owner`; otherwise each owner grids its own placements'
-    /// weights).
+    /// in every mode `pass` holds, less what `subtract` names; and sum the
+    /// weight image's contributions over every placement when this owner
+    /// holds it (`weight_owner`; otherwise each owner sums its own
+    /// placements'). The sums are gridded when the table fills and at
+    /// [`Self::flush_weights`].
     fn accumulate(
         &mut self,
         pass: &MajorCyclePass<'_>,
@@ -59,48 +75,101 @@ impl Owner<'_> {
         chunks: &[Chunk],
     ) -> Result<(), PassError> {
         let started = std::time::Instant::now();
-        let acc = self.acc.as_mut().expect("owners accumulate until finished");
-        let own_weight = weight_owner.is_none();
+        let Self {
+            acc,
+            backend,
+            weights,
+            busy,
+            ..
+        } = self;
+        let acc = acc.as_mut().expect("owners accumulate until finished");
         let cf = target.operator.cf();
-        match &mut self.backend {
-            OwnerBackend::Cpu(backend) => {
+        let own_weights = if weight_owner.is_none() {
+            weights.as_mut()
+        } else {
+            None
+        };
+        match &mut *backend {
+            OwnerBackend::Cpu(cpu) => {
                 for chunk in chunks {
                     let block = chunk.owned[index].block();
                     if !block.is_empty() {
-                        let mut apply = |work: Work<'_>| backend.apply(&block, cf, work);
-                        accumulate(pass, &mut apply, subtract, acc, own_weight)?;
+                        let mut apply = |work: Work<'_>| cpu.apply(&block, cf, work);
+                        accumulate(pass, &mut apply, subtract, acc)?;
                     }
                 }
             }
-            OwnerBackend::Metal(backend) => {
+            OwnerBackend::Metal(metal) => {
                 let parts = chunks
                     .iter()
                     .map(|chunk| chunk.owned[index].block())
                     .collect::<Vec<_>>();
                 if parts.iter().any(|part| !part.is_empty()) {
-                    let mut apply = |work: Work<'_>| backend.apply_parts(&parts, cf, work);
-                    accumulate(pass, &mut apply, subtract, acc, own_weight)?;
+                    let mut apply = |work: Work<'_>| metal.apply_parts(&parts, cf, work);
+                    accumulate(pass, &mut apply, subtract, acc)?;
                 }
             }
         }
-        if pass.modes.weight && weight_owner == Some(index) {
+        if let Some(sums) = own_weights {
             for chunk in chunks {
-                let block = chunk.weight_owned.block();
-                if block.is_empty() {
-                    continue;
-                }
-                let work = Work::Grid {
-                    mode: Mode::Weight,
-                    acc,
-                };
-                match &mut self.backend {
-                    OwnerBackend::Cpu(backend) => backend.apply(&block, cf, work)?,
-                    OwnerBackend::Metal(backend) => backend.apply(&block, cf, work)?,
-                }
+                let mut grid = weight_grid(backend, cf, acc);
+                sums.add(&chunk.owned[index].block(), &mut grid)?;
             }
         }
-        self.busy += started.elapsed();
+        if weight_owner == Some(index)
+            && let Some(sums) = weights
+        {
+            for chunk in chunks {
+                let mut grid = weight_grid(backend, cf, acc);
+                sums.add(&chunk.weight_owned.block(), &mut grid)?;
+            }
+        }
+        *busy += started.elapsed();
         Ok(())
+    }
+
+    /// Grid the weight image's summed contributions still in the owner's
+    /// table, of `target`'s domain ([`WeightSums::flush`]), and drop the
+    /// table: the wave's last placement is accumulated.
+    ///
+    /// The flush's time is the owner's ([`Self::busy`]). Its placements,
+    /// group grids and grids are returned for the wave's log. A panic while
+    /// gridding fails the pass with [`PassError::OwnerPanicked`], as an
+    /// owner's panic does in a pipelined pass.
+    fn flush_weights(&mut self, target: &PassDomain<'_>) -> Result<[u64; 3], PassError> {
+        let Some(mut sums) = self.weights.take() else {
+            return Ok([0; 3]);
+        };
+        let started = std::time::Instant::now();
+        let acc = self.acc.as_mut().expect("owners flush before they finish");
+        let backend = &mut self.backend;
+        let flushed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut grid = weight_grid(backend, target.operator.cf(), acc);
+            sums.flush(&mut grid)
+        }))
+        .unwrap_or(Err(PassError::OwnerPanicked));
+        self.busy += started.elapsed();
+        flushed?;
+        Ok(sums.totals())
+    }
+}
+
+/// Grid a block of summed weight-image contributions on `backend` into
+/// `acc` ([`WeightSums`]).
+fn weight_grid<'a>(
+    backend: &'a mut OwnerBackend<'_>,
+    cf: &'a dyn ConvolutionFunctionSet,
+    acc: &'a mut GridAccumulator,
+) -> impl FnMut(&SampleBlock<'_>) -> Result<(), PassError> + 'a {
+    move |groups: &SampleBlock<'_>| {
+        let work = Work::Grid {
+            mode: Mode::Weight,
+            acc: &mut *acc,
+        };
+        match backend {
+            OwnerBackend::Cpu(cpu) => Ok(cpu.apply(groups, cf, work)?),
+            OwnerBackend::Metal(metal) => Ok(metal.apply(groups, cf, work)?),
+        }
     }
 }
 
@@ -615,9 +684,13 @@ impl<'w, 'p> Wave<'w, 'p> {
             .map(|(index, domain)| {
                 let router = Router::new(&domain.partition, planes);
                 let operator = domain.operator;
+                let weight_owner = router.weight_owner();
                 let owners = (0..router.owners())
                     .map(|owner| {
                         let (range, tile) = router.target(&domain.partition, planes, owner);
+                        let weights = (pass.modes.weight
+                            && weight_owner.is_none_or(|holder| holder == owner))
+                        .then(|| WeightSums::new(block.correlations, WEIGHT_GROUPS));
                         Ok(match pass.backend {
                             BackendChoice::Cpu => Owner {
                                 acc: Some(
@@ -626,6 +699,7 @@ impl<'w, 'p> Wave<'w, 'p> {
                                 backend: OwnerBackend::Cpu(CpuBackend::new()),
                                 images: None,
                                 busy: std::time::Duration::ZERO,
+                                weights,
                             },
                             BackendChoice::Metal => {
                                 assert_eq!(
@@ -643,6 +717,7 @@ impl<'w, 'p> Wave<'w, 'p> {
                                     )),
                                     images: None,
                                     busy: std::time::Duration::ZERO,
+                                    weights,
                                 }
                             }
                         })
@@ -1017,9 +1092,30 @@ impl<'w, 'p> Wave<'w, 'p> {
                 backend.complete()?;
             }
         }
-        for domain in &mut self.domains {
-            team.for_each_mut(&mut domain.owners, |_, owner| owner.complete())?;
+        // The weight image's last summed contributions go to the grid first:
+        // accumulation, which the stages count as such.
+        let flushing = std::time::Instant::now();
+        for (domain, target) in self.domains.iter_mut().zip(self.pass.domains) {
+            let summed = std::sync::Mutex::new([0_u64; 3]);
+            team.for_each_mut(&mut domain.owners, |_, owner| {
+                let totals = owner.flush_weights(target)?;
+                let mut summed = summed.lock().unwrap_or_else(PoisonError::into_inner);
+                for (sum, total) in summed.iter_mut().zip(totals) {
+                    *sum += total;
+                }
+                drop(summed);
+                owner.complete()
+            })?;
+            let [placements, groups, grids] =
+                summed.into_inner().unwrap_or_else(PoisonError::into_inner);
+            if placements > 0 {
+                tracing::info!(
+                    "weight image summed: {placements} placements as {groups} group grids in \
+                     {grids} grids"
+                );
+            }
         }
+        self.stages.accumulating += flushing.elapsed();
         let pass = self.pass;
         let planes = self.planes;
         let stages = self.stages;
@@ -1134,15 +1230,14 @@ struct Subtract<'a> {
     native: Option<NativeModel<'a>>,
 }
 
-/// Grid one owner's share of a slice, through `apply`, in every mode the
-/// pass holds; the data terms receive the residual of what `subtract`
-/// names.
+/// Grid one owner's share of a slice, through `apply`, in the data and PSF
+/// modes the pass holds; the data terms receive the residual of what
+/// `subtract` names. The weight image is summed apart ([`WeightSums`]).
 fn accumulate(
     pass: &MajorCyclePass<'_>,
     apply: &mut dyn FnMut(Work<'_>) -> Result<(), casa_imaging_operator::OperatorError>,
     subtract: Subtract<'_>,
     acc: &mut GridAccumulator,
-    weight: bool,
 ) -> Result<(), PassError> {
     if pass.modes.data {
         let work = match subtract {
@@ -1167,12 +1262,6 @@ fn accumulate(
     if pass.modes.psf {
         apply(Work::Grid {
             mode: Mode::Psf,
-            acc,
-        })?;
-    }
-    if pass.modes.weight && weight {
-        apply(Work::Grid {
-            mode: Mode::Weight,
             acc,
         })?;
     }

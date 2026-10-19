@@ -40,6 +40,15 @@ use super::{BackendChoice, BlockShape, PassDomain};
 /// [`Partition::regions_balanced`] compares the work exactly.
 pub const PLACEMENT_WORK: u64 = 170;
 
+/// One placement's sum into its owner's weight-image table (`WeightSums`,
+/// #787), in the units of a placement's taps and [`PLACEMENT_WORK`] (about
+/// 7.6 ns a tap). It is a key compare and an add per correlation when the
+/// placement's group is the last one's, and a hash lookup otherwise, as on
+/// a Taylor basis, whose spectral factor changes each channel. Each group
+/// the table grids is charged a kernel stamp on top
+/// ([`ModeWork`](super::ModeWork)).
+pub const WEIGHT_SUM_WORK: u64 = 1;
+
 /// One placement's work for a kernel of half-support `[h_x, h_y]`: its taps
 /// `(2·h_x + 1)(2·h_y + 1)` plus [`PLACEMENT_WORK`]. Routing and the
 /// row-work pass both count with it, so their totals cannot drift apart.
@@ -442,6 +451,17 @@ impl WaveDemand<'_> {
         // (#736).
         if domain.partition.splits_rows() {
             held += (operator.geometry().grid_shape()[1] * size_of::<u64>()) as u64;
+        }
+        // Each owner that grids the weight image sums its contributions in
+        // a table (`WeightSums`, #787): the region owner of the centre row,
+        // or every plane owner.
+        if self.modes.weight {
+            let holders = match &domain.partition {
+                Partition::Planes { owners } => *owners,
+                Partition::Regions { .. } => 1,
+            };
+            held += holders as u64
+                * super::wave::weight_sums_bytes(operator.polarization().correlations().len());
         }
         DomainStages {
             held,

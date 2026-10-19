@@ -9,9 +9,17 @@ use std::ops::Range;
 use casa_imaging_operator::{ModeSet, PlaneRange, WeightingGeneration};
 
 use super::partition::{Router, placement_work};
+use super::wave::GroupCount;
+
+/// Groups a chunk's weight-image count holds before it forgets them
+/// ([`GroupCount`]). A chunk's count only estimates what the weight owner's
+/// table grids. A mosaic's few groups are counted once per chunk however
+/// small this is, and AW's rarely recur once a few rows have passed, so a
+/// count far smaller than the table's suffices and keeps the pass light.
+const COUNTED_GROUPS: usize = 1 << 10;
 use super::{
-    BoundedSource, Cancel, Partition, PassDomain, PassError, SampleContent, WorkerTeam,
-    chunk_ranges, slices, stream_blocks,
+    BoundedSource, Cancel, Partition, PassDomain, PassError, SampleContent, WEIGHT_SUM_WORK,
+    WorkerTeam, chunk_ranges, slices, stream_blocks,
 };
 
 /// What a row-work pass measures ([`run_row_work_pass`]): each domain's
@@ -45,10 +53,14 @@ impl MeasuredRowWork {
 
 /// A region-split domain's work in each mode a pass may grid, summed over
 /// every placement the row work counts: the data mode's kernel taps
-/// (`Router::owner_and_work`); the PSF's taps, at each
-/// sample's own position (the weight cells for an AW catalog); and the
-/// weight image's taps, which every sample places at the uv origin. Each
-/// adds [`PLACEMENT_WORK`](super::PLACEMENT_WORK).
+/// (`Router::owner_and_work`) and the PSF's taps, at each sample's own
+/// position (the weight cells for an AW catalog), each with
+/// [`PLACEMENT_WORK`](super::PLACEMENT_WORK); and the weight image's. The
+/// weight owner sums each placement into its table ([`WEIGHT_SUM_WORK`]) and
+/// stamps a weight kernel once per group it grids (#787). The pass counts
+/// those groups as the table would (`GroupCount`), so a mosaic's few groups
+/// cost almost nothing while AW's, about one per two placements, keep
+/// half a stamp each.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ModeWork {
     /// The data mode's work, the row work's total.
@@ -111,14 +123,20 @@ fn measured_rows(domain: &PassDomain<'_>) -> usize {
     }
 }
 
-/// Bytes a row-work pass over `domains` on `workers` workers holds: each
-/// chunk's histogram, allocated once at the widest measured domain's grid
-/// rows; the totals it returns; each domain's router (an owner per grid row
-/// for region owners, a start per owner for plane owners); and the
-/// containers of chunks, routers and totals. The source's blocks are the
-/// source's charge ([`super::source_block_bytes`]).
+/// Bytes a row-work pass over `domains` on `workers` workers holds:
+/// - each chunk's histogram, allocated once at the widest measured domain's
+///   grid rows;
+/// - the totals it returns;
+/// - each domain's router: an owner per grid row for region owners, a
+///   start per owner for plane owners;
+/// - the containers of chunks, routers and totals;
+/// - when the first pass grids a weight image (`weight`, its kernel sets
+///   having weight taps), each chunk's count of its groups per domain
+///   (`GroupCount`), which is allocated only for weight placements.
+///
+/// The source's blocks are the source's charge ([`super::source_block_bytes`]).
 #[must_use]
-pub fn row_work_pass_bytes(domains: &[PassDomain<'_>], workers: usize) -> u64 {
+pub fn row_work_pass_bytes(domains: &[PassDomain<'_>], workers: usize, weight: bool) -> u64 {
     let chunks = workers * CHUNKS_PER_WORKER;
     let widest = domains.iter().map(measured_rows).max().unwrap_or(0);
     let totals = domains.iter().map(measured_rows).sum::<usize>();
@@ -131,13 +149,20 @@ pub fn row_work_pass_bytes(domains: &[PassDomain<'_>], workers: usize) -> u64 {
             Partition::Planes { owners } => (owners + 1) * size_of::<u32>(),
         })
         .sum::<usize>();
-    let containers = chunks * size_of::<(Range<usize>, Vec<u64>, ModeWork)>()
+    let containers = chunks * size_of::<(Range<usize>, Vec<u64>, ModeWork, Vec<GroupCount>)>()
         + domains.len()
             * (size_of::<Router>() + size_of::<Option<Vec<u64>>>() + size_of::<ModeWork>());
+    // Each chunk's weight-image group count per domain, allocated whole on
+    // its first weight placement (`GroupCount`).
+    let counts = if weight {
+        (chunks * domains.len()) as u64 * GroupCount::bytes(COUNTED_GROUPS)
+    } else {
+        0
+    } + (chunks * domains.len() * size_of::<GroupCount>()) as u64;
     // The team's result per chunk, collected on each call
     // ([`WorkerTeam::for_each_mut`]).
     let results = chunks * size_of::<Result<(), PassError>>();
-    ((chunks * widest + totals) * size_of::<u64>() + routing + containers + results) as u64
+    ((chunks * widest + totals) * size_of::<u64>() + routing + containers + results) as u64 + counts
 }
 
 /// Each domain's gridding work by anchor row over one traversal that reads
@@ -182,8 +207,19 @@ pub fn run_row_work_pass(
     // so a later, taller domain never grows it ([`row_work_pass_bytes`]).
     let widest = domains.iter().map(measured_rows).max().unwrap_or(0);
     let mut modes = vec![ModeWork::default(); domains.len()];
+    // Each chunk counts, per domain, the weight-image groups its rows start
+    // (`GroupCount`), kept across slices as the weight owner's table is.
     let mut chunks = (0..count)
-        .map(|_| (0..0, vec![0_u64; widest], ModeWork::default()))
+        .map(|_| {
+            (
+                0..0,
+                vec![0_u64; widest],
+                ModeWork::default(),
+                (0..domains.len())
+                    .map(|_| GroupCount::new(COUNTED_GROUPS))
+                    .collect::<Vec<_>>(),
+            )
+        })
         .collect::<Vec<_>>();
     stream_blocks(source, cancel, false, |block| {
         for (index, (domain, router)) in domains.iter().zip(&routers).enumerate() {
@@ -193,15 +229,16 @@ pub fn run_row_work_pass(
             let cf = domain.operator.cf();
             for slice in slices(block.len(), count, CHUNK_ROWS) {
                 let mut used = 0;
-                for ((range, _, _), rows) in chunks.iter_mut().zip(chunk_ranges(slice, count)) {
+                for ((range, _, _, _), rows) in chunks.iter_mut().zip(chunk_ranges(slice, count)) {
                     *range = rows;
                     used += 1;
                 }
                 let rows = total.len();
-                team.for_each_mut(&mut chunks[..used], |_, (range, work, other)| {
+                team.for_each_mut(&mut chunks[..used], |_, (range, work, other, counts)| {
                     let work = &mut work[..rows];
                     work.fill(0);
                     *other = ModeWork::default();
+                    let groups = &mut counts[index];
                     // In the block's locality order, as a pass places them:
                     // a baseline's rows share kernel cells, which a set that
                     // pages its cells (AW) would otherwise reload row by row.
@@ -224,7 +261,10 @@ pub fn run_row_work_pass(
                                     other.data += taps;
                                     other.psf += placement_work(cf.psf_half_support(placement.cf));
                                     if let Some(support) = cf.weight_half_support(placement.cf) {
-                                        other.weight += placement_work(support);
+                                        other.weight += WEIGHT_SUM_WORK;
+                                        if groups.starts(&placement) {
+                                            other.weight += placement_work(support);
+                                        }
                                     }
                                 }
                             },
@@ -232,7 +272,7 @@ pub fn run_row_work_pass(
                     }
                     Ok::<_, PassError>(())
                 })?;
-                for (_, work, other) in &chunks[..used] {
+                for (_, work, other, _) in &chunks[..used] {
                     for (total, work) in total.iter_mut().zip(work) {
                         *total += work;
                     }

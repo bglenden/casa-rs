@@ -33,7 +33,7 @@ use casa_imaging_operator::{
 };
 
 pub use block::{BlockShape, DomainProjection, NativeBlock, NativeRowHeader, RowAddress};
-pub use partition::{PLACEMENT_WORK, Partition, Region, Residency, WaveDemand};
+pub use partition::{PLACEMENT_WORK, Partition, Region, Residency, WEIGHT_SUM_WORK, WaveDemand};
 pub use row_work::{
     MeasuredRowWork, ModeWork, needs_row_work, row_work_pass_bytes, run_row_work_pass,
 };
@@ -114,9 +114,11 @@ pub enum PassError {
     #[error("the visibility source thread failed")]
     ProducerPanicked,
     /// An owner's accumulation panicked in a pipelined pass
-    /// ([`MajorCyclePass::chunk_sets`]). The pass caught the panic, stopped
-    /// placing, released every set its owners held, and joined their
-    /// tasks. A pass on one set lets an owner's panic propagate instead.
+    /// ([`MajorCyclePass::chunk_sets`]), or, in any pass, while gridding
+    /// the weight image's last summed contributions at the wave's end
+    /// (#787). The pass caught the panic, stopped placing, released every
+    /// set its owners held, and joined their tasks. A pass on one set lets
+    /// a panic during accumulation propagate instead.
     #[error("an owner's accumulation panicked")]
     OwnerPanicked,
 }
