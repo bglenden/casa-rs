@@ -37,8 +37,8 @@
 <a href=#37 id=37 data-nosnippet>37</a><span class="kw">use </span>casa_imaging_model::{CompiledProblem, ReconstructionBasis, WeightingScheme};
 <a href=#38 id=38 data-nosnippet>38</a><span class="kw">use </span>casa_imaging_operator::{BandwidthTaper, ModeSet, WeightingGeneration};
 <a href=#39 id=39 data-nosnippet>39</a><span class="kw">use </span>casa_imaging_runtime::pass::{
-<a href=#40 id=40 data-nosnippet>40</a>    BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, Partition, PassDomain,
-<a href=#41 id=41 data-nosnippet>41</a>    WaveDemand, WorkerTeam, density_pass_bytes, needs_row_work, row_work_pass_bytes,
+<a href=#40 id=40 data-nosnippet>40</a>    BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, MeasuredRowWork, Partition,
+<a href=#41 id=41 data-nosnippet>41</a>    PassDomain, WaveDemand, WorkerTeam, density_pass_bytes, needs_row_work, row_work_pass_bytes,
 <a href=#42 id=42 data-nosnippet>42</a>    run_density_pass,
 <a href=#43 id=43 data-nosnippet>43</a>};
 <a href=#44 id=44 data-nosnippet>44</a><span class="kw">use </span>casa_imaging_runtime::{
@@ -206,7 +206,7 @@
 <a href=#206 id=206 data-nosnippet>206</a>                .sum::&lt;usize&gt;();
 <a href=#207 id=207 data-nosnippet>207</a>            (
 <a href=#208 id=208 data-nosnippet>208</a>                row_work_pass_bytes(<span class="kw-2">&amp;</span>domains, streaming),
-<a href=#209 id=209 data-nosnippet>209</a>                (rows * size_of::&lt;u64&gt;()) <span class="kw">as </span>u64,
+<a href=#209 id=209 data-nosnippet>209</a>                MeasuredRowWork::kept_bytes(rows, domains.len()),
 <a href=#210 id=210 data-nosnippet>210</a>            )
 <a href=#211 id=211 data-nosnippet>211</a>        } <span class="kw">else </span>{
 <a href=#212 id=212 data-nosnippet>212</a>            (<span class="number">0</span>, <span class="number">0</span>)
