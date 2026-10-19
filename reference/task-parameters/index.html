@@ -1494,7 +1494,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-imager">Imager</a><br><code>imager</code></td>
 <td>task</td>
-<td style="text-align: right;">24</td>
+<td style="text-align: right;">25</td>
 <td><code>imager</code></td>
 <td style="text-align: right;">81</td>
 <td>Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</td>
@@ -2806,7 +2806,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="imager-imager">Imager (<code>imager</code>)<a class="headerlink" href="#imager-imager" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>24</code></li>
+<li>Contract version: <code>25</code></li>
 <li>Category: Imaging</li>
 <li>Provider family: <code>imager</code></li>
 <li>Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</li>
@@ -3321,11 +3321,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>cf_resident_mb</code></td>
-<td><code>parameter.cf_resident_mb@r1</code></td>
-<td><code>integer; unit dimension: data_size</code></td>
-<td><code>256</code>; optional</td>
+<td><code>parameter.cf_resident_mb@r2</code></td>
+<td><code>optional&lt;integer&gt; (states: auto); unit dimension: data_size</code></td>
+<td><code>"auto"</code>; optional</td>
 <td>Advanced Wide-Field</td>
-<td>AW convolution-function working-memory ceiling in MiB<br><em>Surface:</em> Per-allocation full-cell LRU and compact source-order tap ceiling in MiB; the runtime charges both and rejects zero.</td>
+<td>AW convolution-function cell cache size in MiB, or auto<br><em>Surface:</em> The AW cell cache in MiB, or auto: the memory the worker fit leaves free, from 256 MiB up to every cell; the runtime rejects zero.</td>
 </tr>
 <tr>
 <td><code>pointingoffsetsigdev</code></td>
