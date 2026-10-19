@@ -103,9 +103,9 @@ fn region_partition_matches_one_owner() {
 /// fixture's 37 rows, in many small slices and in one slice a block, on two
 /// and four owners: data and PSF; data with a model subtracted; every mode
 /// with a weight image, which the centre row's owner grids from every
-/// placement on its own lane; and a three-plane cube in one-plane waves,
-/// which take the owners and chunks back at every wave (#784 review, Astra
-/// 4 and Fable 2).
+/// placement on its own lane, on equal strips and on the strips #783 cuts
+/// for that work; and a three-plane cube in one-plane waves, which take the
+/// owners and chunks back at every wave (#784 review, Astra 4 and Fable 2).
 #[test]
 fn pipelined_owners_grid_what_one_set_grids() {
     #[derive(Clone, Copy)]
@@ -116,6 +116,7 @@ fn pipelined_owners_grid_what_one_set_grids() {
         modes: ModeSet,
         model: Option<&'a ModelPreparation<'a>>,
         residency: Residency,
+        weighed: bool,
     }
 
     let operator = operator(GridPrecision::F64, Basis::Constant);
@@ -135,6 +136,7 @@ fn pipelined_owners_grid_what_one_set_grids() {
         modes,
         model,
         residency: Residency::All,
+        weighed: false,
     };
     let cases = [
         case(
@@ -152,6 +154,16 @@ fn pipelined_owners_grid_what_one_set_grids() {
             Some(&prepare),
         ),
         case("a weight image", &weighted, &resampler, ModeSet::ALL, None),
+        PipelineCase {
+            weighed: true,
+            ..case(
+                "a weight image on weighed strips",
+                &weighted,
+                &resampler,
+                ModeSet::ALL,
+                None,
+            )
+        },
         PipelineCase {
             residency: Residency::Waves { planes_per_wave: 1 },
             ..case(
@@ -172,12 +184,18 @@ fn pipelined_owners_grid_what_one_set_grids() {
                 modes,
                 model,
                 residency,
+                weighed,
             } in cases
             {
+                let partition = if weighed {
+                    weighed_strips(operator, resampler, workers, modes, &mut rows)
+                } else {
+                    Partition::regions(operator, workers)
+                };
                 let domains = [PassDomain {
                     operator,
                     resampler,
-                    partition: Partition::regions(operator, workers),
+                    partition,
                 }];
                 let pass = |chunk_sets| Run {
                     workers,
@@ -205,6 +223,42 @@ fn pipelined_owners_grid_what_one_set_grids() {
             }
         }
     }
+}
+
+/// The strips a pass of `modes` that grids the weight image cuts on `owners`
+/// region owners, from the row work it measures over `rows` first (#783).
+/// The centre row's owner, which grids the weight image, takes a narrower
+/// strip than the data work alone would give it.
+fn weighed_strips(
+    operator: &MeasurementOperator,
+    resampler: &SpectralResampler,
+    owners: usize,
+    modes: ModeSet,
+    rows: &mut Rows,
+) -> Partition {
+    let measured = run_row_work_pass(
+        &[PassDomain {
+            operator,
+            resampler,
+            partition: Partition::regions(operator, owners),
+        }],
+        &WeightingGeneration::Natural { taper: None },
+        rows,
+        &WorkerTeam::new(owners).expect("team"),
+        &Cancel::new(),
+    )
+    .expect("row-work pass");
+    let data = measured.rows[0].as_deref().expect("a histogram");
+    let work = measured.modes[0]
+        .weighed(data, modes)
+        .expect("a weight pass weighs its strips");
+    let weighed = Partition::regions_balanced(operator, owners, &work);
+    assert_ne!(
+        weighed,
+        Partition::regions_balanced(operator, owners, data),
+        "the weight image moves the strips"
+    );
+    weighed
 }
 
 /// #784 review (Astra 1, Fable 1): an owner that panics in a pipelined pass,
