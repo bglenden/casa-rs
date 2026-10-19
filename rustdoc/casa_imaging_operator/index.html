@@ -95,7 +95,8 @@ centre, signed channel width and channel count. The width matters even
 for one channel, because it decides which native channels the channel
 accepts.</dd><dt><a class="struct" href="struct.SpectralResampler.html" title="struct casa_imaging_operator::SpectralResampler">Spectral<wbr>Resampler</a></dt><dd>Turns native rows into placed, weighted samples for one operator.</dd><dt><a class="struct" href="struct.Spheroidal.html" title="struct casa_imaging_operator::Spheroidal">Spheroidal</a></dt><dd>The standard separable spheroidal kernel set: one cell, real taps
 normalised to unit sum per fractional offset, scalar Mueller routing and
-the <code>1/grdsf</code> image correction on both sides of the operator.</dd><dt><a class="struct" href="struct.Tile.html" title="struct casa_imaging_operator::Tile">Tile</a></dt><dd>A rectangular window of the padded grid an accumulator covers, in grid
+the <code>1/grdsf</code> image correction on both sides of the operator.</dd><dt><a class="struct" href="struct.TapFootprint.html" title="struct casa_imaging_operator::TapFootprint">TapFootprint</a></dt><dd>The taps of every cell a set can lend, as a device backend that copies
+each cell it meets holds them (<a href="trait.ConvolutionFunctionSet.html#tymethod.tap_footprint" title="method casa_imaging_operator::ConvolutionFunctionSet::tap_footprint"><code>ConvolutionFunctionSet::tap_footprint</code></a>).</dd><dt><a class="struct" href="struct.Tile.html" title="struct casa_imaging_operator::Tile">Tile</a></dt><dd>A rectangular window of the padded grid an accumulator covers, in grid
 cells. A tile is the region a worker owns plus the kernel halo; every
 sample routed to it must have its whole support inside.</dd><dt><a class="struct" href="struct.WPlanes.html" title="struct casa_imaging_operator::WPlanes">WPlanes</a></dt><dd>The W-projection kernel set: one dense complex cell per w-plane,
 <code>C ⋆ FT[e^{2πi w(√(1−l²−m²)−1)}]</code> sampled four times per cell, scalar

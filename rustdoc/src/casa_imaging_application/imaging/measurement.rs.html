@@ -195,390 +195,406 @@
 <a href=#195 id=195 data-nosnippet>195</a>    }
 <a href=#196 id=196 data-nosnippet>196</a>}
 <a href=#197 id=197 data-nosnippet>197</a>
-<a href=#198 id=198 data-nosnippet>198</a><span class="doccomment">/// Whether the problem grids with the standard kernel set, the one the
-<a href=#199 id=199 data-nosnippet>199</a>/// Metal backend implements.
+<a href=#198 id=198 data-nosnippet>198</a><span class="doccomment">/// Whether the problem grids with the standard kernel set, the one facets
+<a href=#199 id=199 data-nosnippet>199</a>/// take.
 <a href=#200 id=200 data-nosnippet>200</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>standard_kernel_set(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; bool {
 <a href=#201 id=201 data-nosnippet>201</a>    kernel_set_kind(problem) == KernelSetKind::Standard
 <a href=#202 id=202 data-nosnippet>202</a>}
 <a href=#203 id=203 data-nosnippet>203</a>
-<a href=#204 id=204 data-nosnippet>204</a><span class="doccomment">/// Which kernel set the compiled problem's measurement equation names.
-<a href=#205 id=205 data-nosnippet>205</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-<a href=#206 id=206 data-nosnippet>206</a></span><span class="kw">enum </span>KernelSetKind {
-<a href=#207 id=207 data-nosnippet>207</a>    <span class="doccomment">/// The standard spheroidal set (`GridFT`).
-<a href=#208 id=208 data-nosnippet>208</a>    </span>Standard,
-<a href=#209 id=209 data-nosnippet>209</a>    <span class="doccomment">/// W-projection planes (`WProjectFT`).
-<a href=#210 id=210 data-nosnippet>210</a>    </span>WPlanes,
-<a href=#211 id=211 data-nosnippet>211</a>    <span class="doccomment">/// The heterogeneous-array mosaic beams (`MosaicFT` with
-<a href=#212 id=212 data-nosnippet>212</a>    /// `HetArrayConvFunc`).
-<a href=#213 id=213 data-nosnippet>213</a>    </span>Mosaic,
-<a href=#214 id=214 data-nosnippet>214</a>    <span class="doccomment">/// The AW catalog (`AWProjectFT`).
-<a href=#215 id=215 data-nosnippet>215</a>    </span>Aw,
-<a href=#216 id=216 data-nosnippet>216</a>}
-<a href=#217 id=217 data-nosnippet>217</a>
-<a href=#218 id=218 data-nosnippet>218</a><span class="kw">fn </span>kernel_set_kind(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; KernelSetKind {
-<a href=#219 id=219 data-nosnippet>219</a>    <span class="kw">let </span>equation = problem.science().measurement_equation();
-<a href=#220 id=220 data-nosnippet>220</a>    <span class="kw">if </span>equation.aw_projection().is_some() {
-<a href=#221 id=221 data-nosnippet>221</a>        KernelSetKind::Aw
-<a href=#222 id=222 data-nosnippet>222</a>    } <span class="kw">else if </span>equation.w_projection().is_some() {
-<a href=#223 id=223 data-nosnippet>223</a>        KernelSetKind::WPlanes
-<a href=#224 id=224 data-nosnippet>224</a>    } <span class="kw">else if </span>problem.science().instrument_model()
-<a href=#225 id=225 data-nosnippet>225</a>        == <span class="prelude-val">Some</span>(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1)
-<a href=#226 id=226 data-nosnippet>226</a>    {
-<a href=#227 id=227 data-nosnippet>227</a>        KernelSetKind::Mosaic
-<a href=#228 id=228 data-nosnippet>228</a>    } <span class="kw">else </span>{
-<a href=#229 id=229 data-nosnippet>229</a>        KernelSetKind::Standard
-<a href=#230 id=230 data-nosnippet>230</a>    }
-<a href=#231 id=231 data-nosnippet>231</a>}
-<a href=#232 id=232 data-nosnippet>232</a>
-<a href=#233 id=233 data-nosnippet>233</a><span class="doccomment">/// The operator of a chart of `extent` (an image domain, or one of its
-<a href=#234 id=234 data-nosnippet>234</a>/// facets) with the kernel set the problem names: the
-<a href=#235 id=235 data-nosnippet>235</a>/// standard spheroidal set, W-projection planes sized by the W contract,
-<a href=#236 id=236 data-nosnippet>236</a>/// the mosaic primary beams of the selected windows, or the AW catalog of
-<a href=#237 id=237 data-nosnippet>237</a>/// `aw_catalog`, in the requested precision or the one `backend` grids at.
-<a href=#238 id=238 data-nosnippet>238</a>/// The mosaic set takes one dish per selected aperture class in
-<a href=#239 id=239 data-nosnippet>239</a>/// `dish_classes` (`HetArrayConvFunc::findAntennaSizes`), the order the
-<a href=#240 id=240 data-nosnippet>240</a>/// rows' antenna types index. Mosaic and AW grid without padding (CASA
-<a href=#241 id=241 data-nosnippet>241</a>/// `MosaicFT`, `AWProjectFT`); the others on CASA's composite-padded grid.
-<a href=#242 id=242 data-nosnippet>242</a>/// The kernel set is admitted as [`kernel_set`] says, and its charge lives
-<a href=#243 id=243 data-nosnippet>243</a>/// with the operator.
-<a href=#244 id=244 data-nosnippet>244</a></span><span class="attr">#[allow(clippy::too_many_arguments)]
-<a href=#245 id=245 data-nosnippet>245</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>domain_operator(
-<a href=#246 id=246 data-nosnippet>246</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#247 id=247 data-nosnippet>247</a>    extent: ImageExtent,
-<a href=#248 id=248 data-nosnippet>248</a>    correlations: <span class="kw-2">&amp;</span>[CorrelationType],
-<a href=#249 id=249 data-nosnippet>249</a>    backend: BackendChoice,
-<a href=#250 id=250 data-nosnippet>250</a>    requested_precision: <span class="prelude-ty">Option</span>&lt;GridPrecision&gt;,
-<a href=#251 id=251 data-nosnippet>251</a>    aw_catalog: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>AwCatalogDeployment&gt;,
-<a href=#252 id=252 data-nosnippet>252</a>    dish_classes: <span class="kw-2">&amp;</span>[AntennaResponseClass],
-<a href=#253 id=253 data-nosnippet>253</a>    admission: KernelAdmission&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#254 id=254 data-nosnippet>254</a>) -&gt; <span class="prelude-ty">Result</span>&lt;DomainOperator, ImagingError&gt; {
-<a href=#255 id=255 data-nosnippet>255</a>    <span class="kw">let </span>kind = kernel_set_kind(problem);
-<a href=#256 id=256 data-nosnippet>256</a>    <span class="comment">// Each CASA facet's GridFT pads its own facet grid.
-<a href=#257 id=257 data-nosnippet>257</a>    </span><span class="kw">let </span>padding = <span class="kw">match </span>kind {
-<a href=#258 id=258 data-nosnippet>258</a>        KernelSetKind::Standard | KernelSetKind::WPlanes =&gt; GridPadding::CasaComposite,
-<a href=#259 id=259 data-nosnippet>259</a>        KernelSetKind::Mosaic | KernelSetKind::Aw =&gt; GridPadding::None,
-<a href=#260 id=260 data-nosnippet>260</a>    };
-<a href=#261 id=261 data-nosnippet>261</a>    <span class="kw">let </span>geometry = GridGeometry::new(extent, padding)<span class="question-mark">?</span>;
-<a href=#262 id=262 data-nosnippet>262</a>    <span class="kw">let </span>polarization = PolarizationRouting::compile(
-<a href=#263 id=263 data-nosnippet>263</a>        correlations,
-<a href=#264 id=264 data-nosnippet>264</a>        problem.reconstruction().polarization().coordinates(),
-<a href=#265 id=265 data-nosnippet>265</a>    )<span class="question-mark">?</span>;
-<a href=#266 id=266 data-nosnippet>266</a>    <span class="comment">// An AW cube is refused by the gate (`Unsupported::CubeAwProjection`).
-<a href=#267 id=267 data-nosnippet>267</a>    </span><span class="kw">let </span>basis = basis(problem)<span class="question-mark">?</span>;
-<a href=#268 id=268 data-nosnippet>268</a>    <span class="kw">let </span>resampler = resampler(problem, basis)<span class="question-mark">?</span>;
-<a href=#269 id=269 data-nosnippet>269</a>    <span class="kw">let </span>(cf, kernels) = kernel_set(
-<a href=#270 id=270 data-nosnippet>270</a>        problem,
-<a href=#271 id=271 data-nosnippet>271</a>        kind,
-<a href=#272 id=272 data-nosnippet>272</a>        (<span class="kw-2">&amp;</span>geometry, <span class="kw-2">&amp;</span>polarization),
-<a href=#273 id=273 data-nosnippet>273</a>        aw_catalog,
-<a href=#274 id=274 data-nosnippet>274</a>        dish_classes,
-<a href=#275 id=275 data-nosnippet>275</a>        admission,
-<a href=#276 id=276 data-nosnippet>276</a>    )<span class="question-mark">?</span>;
-<a href=#277 id=277 data-nosnippet>277</a>    <span class="prelude-val">Ok</span>(DomainOperator {
-<a href=#278 id=278 data-nosnippet>278</a>        operator: MeasurementOperator::new(
-<a href=#279 id=279 data-nosnippet>279</a>            geometry,
-<a href=#280 id=280 data-nosnippet>280</a>            basis,
-<a href=#281 id=281 data-nosnippet>281</a>            polarization,
-<a href=#282 id=282 data-nosnippet>282</a>            cf,
-<a href=#283 id=283 data-nosnippet>283</a>            precision(backend, requested_precision),
-<a href=#284 id=284 data-nosnippet>284</a>        ),
-<a href=#285 id=285 data-nosnippet>285</a>        resampler,
-<a href=#286 id=286 data-nosnippet>286</a>        weight_image: <span class="macro">matches!</span>(kind, KernelSetKind::Mosaic | KernelSetKind::Aw),
-<a href=#287 id=287 data-nosnippet>287</a>        kernels,
-<a href=#288 id=288 data-nosnippet>288</a>    })
-<a href=#289 id=289 data-nosnippet>289</a>}
-<a href=#290 id=290 data-nosnippet>290</a>
-<a href=#291 id=291 data-nosnippet>291</a><span class="doccomment">/// Where a run admits its kernel sets: its host and policy, and the most
-<a href=#292 id=292 data-nosnippet>292</a>/// workers that fetch cells from a paged set, the policy's; the run admits
-<a href=#293 id=293 data-nosnippet>293</a>/// a paged set's charge once it has chosen how many do
-<a href=#294 id=294 data-nosnippet>294</a>/// ([`DomainOperator::admit_kernels`]).
-<a href=#295 id=295 data-nosnippet>295</a></span><span class="attr">#[derive(Clone, Copy)]
-<a href=#296 id=296 data-nosnippet>296</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>KernelAdmission&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#297 id=297 data-nosnippet>297</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) host: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>HostResources,
-<a href=#298 id=298 data-nosnippet>298</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) policy: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ResourcePolicy,
-<a href=#299 id=299 data-nosnippet>299</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) workers: usize,
-<a href=#300 id=300 data-nosnippet>300</a>}
-<a href=#301 id=301 data-nosnippet>301</a>
-<a href=#302 id=302 data-nosnippet>302</a><span class="kw">impl </span>KernelAdmission&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#303 id=303 data-nosnippet>303</a>    <span class="kw">fn </span>admit(<span class="self">self</span>, phase: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, memory: u64) -&gt; <span class="prelude-ty">Result</span>&lt;Reservation, ImagingError&gt; {
-<a href=#304 id=304 data-nosnippet>304</a>        <span class="prelude-val">Ok</span>(admit(<span class="self">self</span>.host, <span class="self">self</span>.policy, <span class="kw-2">&amp;</span>Demand { phase, memory })<span class="question-mark">?</span>)
-<a href=#305 id=305 data-nosnippet>305</a>    }
-<a href=#306 id=306 data-nosnippet>306</a>}
-<a href=#307 id=307 data-nosnippet>307</a>
-<a href=#308 id=308 data-nosnippet>308</a><span class="doccomment">/// The kernel set of `kind` on `geometry` routing `polarization`, with the
-<a href=#309 id=309 data-nosnippet>309</a>/// charge of what it holds, admitted before it is built. W-projection and
-<a href=#310 id=310 data-nosnippet>310</a>/// mosaic sets are built in two stages, their screens and then the kernels
-<a href=#311 id=311 data-nosnippet>311</a>/// cut from them, each admitted before it allocates; the screens' charge
-<a href=#312 id=312 data-nosnippet>312</a>/// is released once the kernels are built. An AW catalog's charge, its
-<a href=#313 id=313 data-nosnippet>313</a>/// cache bound and what its workers can hold beyond it
-<a href=#314 id=314 data-nosnippet>314</a>/// ([`AwCatalog::charge_bytes`]), is known once its index is read, for
-<a href=#315 id=315 data-nosnippet>315</a>/// each count of workers up to `admission`'s, and is admitted when the run
-<a href=#316 id=316 data-nosnippet>316</a>/// has chosen its workers.
-<a href=#317 id=317 data-nosnippet>317</a></span><span class="kw">fn </span>kernel_set(
-<a href=#318 id=318 data-nosnippet>318</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#319 id=319 data-nosnippet>319</a>    kind: KernelSetKind,
-<a href=#320 id=320 data-nosnippet>320</a>    (geometry, polarization): (<span class="kw-2">&amp;</span>GridGeometry, <span class="kw-2">&amp;</span>PolarizationRouting),
-<a href=#321 id=321 data-nosnippet>321</a>    aw_catalog: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>AwCatalogDeployment&gt;,
-<a href=#322 id=322 data-nosnippet>322</a>    dish_classes: <span class="kw-2">&amp;</span>[AntennaResponseClass],
-<a href=#323 id=323 data-nosnippet>323</a>    admission: KernelAdmission&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#324 id=324 data-nosnippet>324</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Box&lt;<span class="kw">dyn </span>ConvolutionFunctionSet&gt;, Kernels), ImagingError&gt; {
-<a href=#325 id=325 data-nosnippet>325</a>    <span class="kw">const </span>PHASE: <span class="kw-2">&amp;</span>str = <span class="string">"convolution functions"</span>;
-<a href=#326 id=326 data-nosnippet>326</a>    <span class="prelude-val">Ok</span>(<span class="kw">match </span>kind {
-<a href=#327 id=327 data-nosnippet>327</a>        KernelSetKind::Standard =&gt; {
-<a href=#328 id=328 data-nosnippet>328</a>            <span class="kw">let </span>kernels = admission.admit(PHASE, Spheroidal::bytes(geometry))<span class="question-mark">?</span>;
-<a href=#329 id=329 data-nosnippet>329</a>            (
-<a href=#330 id=330 data-nosnippet>330</a>                Box::new(Spheroidal::new(geometry, polarization)),
-<a href=#331 id=331 data-nosnippet>331</a>                Kernels::Admitted { _charge: kernels },
-<a href=#332 id=332 data-nosnippet>332</a>            )
-<a href=#333 id=333 data-nosnippet>333</a>        }
-<a href=#334 id=334 data-nosnippet>334</a>        KernelSetKind::WPlanes =&gt; {
-<a href=#335 id=335 data-nosnippet>335</a>            <span class="kw">let </span>contract = problem
-<a href=#336 id=336 data-nosnippet>336</a>                .science()
-<a href=#337 id=337 data-nosnippet>337</a>                .measurement_equation()
-<a href=#338 id=338 data-nosnippet>338</a>                .w_projection()
-<a href=#339 id=339 data-nosnippet>339</a>                .expect(<span class="string">"the kind names a W contract"</span>);
-<a href=#340 id=340 data-nosnippet>340</a>            <span class="kw">let </span>count = <span class="kw">match </span>(contract.planes(), contract.statistics()) {
-<a href=#341 id=341 data-nosnippet>341</a>                (<span class="prelude-val">Some</span>(planes), <span class="kw">_</span>) =&gt; WPlaneCount::Fixed(planes.get() <span class="kw">as </span>u32),
-<a href=#342 id=342 data-nosnippet>342</a>                (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(statistics)) =&gt; WPlaneCount::Auto {
-<a href=#343 id=343 data-nosnippet>343</a>                    min_w: statistics.minimum_abs_w_lambda(),
-<a href=#344 id=344 data-nosnippet>344</a>                    max_w: contract.maximum_abs_w_lambda(),
-<a href=#345 id=345 data-nosnippet>345</a>                    rms_w: statistics.rms_w_lambda(),
-<a href=#346 id=346 data-nosnippet>346</a>                },
-<a href=#347 id=347 data-nosnippet>347</a>                (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>) =&gt; {
-<a href=#348 id=348 data-nosnippet>348</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
-<a href=#349 id=349 data-nosnippet>349</a>                        reason: <span class="string">"an automatic W-plane count needs the selection's w statistics"</span>,
-<a href=#350 id=350 data-nosnippet>350</a>                    });
-<a href=#351 id=351 data-nosnippet>351</a>                }
-<a href=#352 id=352 data-nosnippet>352</a>            };
-<a href=#353 id=353 data-nosnippet>353</a>            <span class="kw">let </span>screening = admission.admit(
-<a href=#354 id=354 data-nosnippet>354</a>                <span class="string">"W-projection screens"</span>,
-<a href=#355 id=355 data-nosnippet>355</a>                WPlanes::screens_bytes(geometry, count)<span class="question-mark">?</span>,
-<a href=#356 id=356 data-nosnippet>356</a>            )<span class="question-mark">?</span>;
-<a href=#357 id=357 data-nosnippet>357</a>            <span class="kw">let </span>screens = WPlanes::screens(geometry, polarization, count)<span class="question-mark">?</span>;
-<a href=#358 id=358 data-nosnippet>358</a>            <span class="kw">let </span><span class="kw-2">mut </span>kernels = admission.admit(PHASE, screens.kernel_bytes())<span class="question-mark">?</span>;
-<a href=#359 id=359 data-nosnippet>359</a>            <span class="kw">let </span>set = screens.finish()<span class="question-mark">?</span>;
-<a href=#360 id=360 data-nosnippet>360</a>            drop(screening);
-<a href=#361 id=361 data-nosnippet>361</a>            kernels.retain(set.resident_bytes());
-<a href=#362 id=362 data-nosnippet>362</a>            (Box::new(set), Kernels::Admitted { _charge: kernels })
-<a href=#363 id=363 data-nosnippet>363</a>        }
-<a href=#364 id=364 data-nosnippet>364</a>        KernelSetKind::Mosaic =&gt; {
-<a href=#365 id=365 data-nosnippet>365</a>            <span class="kw">if </span>dish_classes.is_empty() {
-<a href=#366 id=366 data-nosnippet>366</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
-<a href=#367 id=367 data-nosnippet>367</a>                    reason: <span class="string">"the mosaic set needs ALMA or ACA dishes in the selection"</span>,
-<a href=#368 id=368 data-nosnippet>368</a>                });
-<a href=#369 id=369 data-nosnippet>369</a>            }
-<a href=#370 id=370 data-nosnippet>370</a>            <span class="kw">let </span>dishes = dish_classes
-<a href=#371 id=371 data-nosnippet>371</a>                .iter()
-<a href=#372 id=372 data-nosnippet>372</a>                .map(|class| {
-<a href=#373 id=373 data-nosnippet>373</a>                    AiryDish::casa_alma(
-<a href=#374 id=374 data-nosnippet>374</a>                        <span class="kw">match </span>class {
-<a href=#375 id=375 data-nosnippet>375</a>                            AntennaResponseClass::CasaAlma12m =&gt; <span class="number">12.0</span>,
-<a href=#376 id=376 data-nosnippet>376</a>                            AntennaResponseClass::CasaAca7m =&gt; <span class="number">7.0</span>,
-<a href=#377 id=377 data-nosnippet>377</a>                        },
-<a href=#378 id=378 data-nosnippet>378</a>                        geometry,
-<a href=#379 id=379 data-nosnippet>379</a>                    )
-<a href=#380 id=380 data-nosnippet>380</a>                })
-<a href=#381 id=381 data-nosnippet>381</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#382 id=382 data-nosnippet>382</a>            <span class="kw">let </span>frequency_hz = reference_frequency_hz(problem)<span class="question-mark">?</span>;
-<a href=#383 id=383 data-nosnippet>383</a>            <span class="kw">let </span>windows = mosaic_windows(problem)<span class="question-mark">?</span>;
-<a href=#384 id=384 data-nosnippet>384</a>            <span class="kw">let </span>screening = admission.admit(
-<a href=#385 id=385 data-nosnippet>385</a>                <span class="string">"mosaic screens"</span>,
-<a href=#386 id=386 data-nosnippet>386</a>                MosaicPb::screens_bytes(geometry, frequency_hz, <span class="kw-2">&amp;</span>dishes, <span class="kw-2">&amp;</span>windows)<span class="question-mark">?</span>,
-<a href=#387 id=387 data-nosnippet>387</a>            )<span class="question-mark">?</span>;
-<a href=#388 id=388 data-nosnippet>388</a>            <span class="kw">let </span>screens =
-<a href=#389 id=389 data-nosnippet>389</a>                MosaicPb::screens(geometry, polarization, frequency_hz, <span class="kw-2">&amp;</span>dishes, <span class="kw-2">&amp;</span>windows)<span class="question-mark">?</span>;
-<a href=#390 id=390 data-nosnippet>390</a>            <span class="kw">let </span><span class="kw-2">mut </span>kernels = admission.admit(PHASE, screens.kernel_bytes())<span class="question-mark">?</span>;
-<a href=#391 id=391 data-nosnippet>391</a>            <span class="kw">let </span>set = screens.finish()<span class="question-mark">?</span>;
-<a href=#392 id=392 data-nosnippet>392</a>            drop(screening);
-<a href=#393 id=393 data-nosnippet>393</a>            kernels.retain(set.resident_bytes());
-<a href=#394 id=394 data-nosnippet>394</a>            (Box::new(set), Kernels::Admitted { _charge: kernels })
-<a href=#395 id=395 data-nosnippet>395</a>        }
-<a href=#396 id=396 data-nosnippet>396</a>        KernelSetKind::Aw =&gt; {
-<a href=#397 id=397 data-nosnippet>397</a>            <span class="kw">let </span>deployment = aw_catalog.ok_or(ImagingError::Unsupported {
-<a href=#398 id=398 data-nosnippet>398</a>                reason: <span class="string">"an A-projection run needs its convolution-function catalog"</span>,
-<a href=#399 id=399 data-nosnippet>399</a>            })<span class="question-mark">?</span>;
-<a href=#400 id=400 data-nosnippet>400</a>            <span class="kw">let </span>catalog = AwCatalog::open_casa(
-<a href=#401 id=401 data-nosnippet>401</a>                <span class="kw-2">&amp;</span>deployment.root,
-<a href=#402 id=402 data-nosnippet>402</a>                deployment.indexing,
-<a href=#403 id=403 data-nosnippet>403</a>                geometry,
-<a href=#404 id=404 data-nosnippet>404</a>                polarization,
-<a href=#405 id=405 data-nosnippet>405</a>                deployment.resident_bytes,
-<a href=#406 id=406 data-nosnippet>406</a>            )<span class="question-mark">?</span>;
-<a href=#407 id=407 data-nosnippet>407</a>            <span class="kw">let </span>kernels = Kernels::Catalog {
-<a href=#408 id=408 data-nosnippet>408</a>                charge: catalog.cache_charge(),
-<a href=#409 id=409 data-nosnippet>409</a>                bound: catalog.cache_bound(),
-<a href=#410 id=410 data-nosnippet>410</a>                ceiling: admission.workers.max(<span class="number">1</span>),
-<a href=#411 id=411 data-nosnippet>411</a>                automatic: deployment.automatic,
-<a href=#412 id=412 data-nosnippet>412</a>            };
-<a href=#413 id=413 data-nosnippet>413</a>            (Box::new(catalog), kernels)
-<a href=#414 id=414 data-nosnippet>414</a>        }
-<a href=#415 id=415 data-nosnippet>415</a>    })
-<a href=#416 id=416 data-nosnippet>416</a>}
-<a href=#417 id=417 data-nosnippet>417</a>
-<a href=#418 id=418 data-nosnippet>418</a><span class="doccomment">/// The selected spectral windows as the mosaic set keys them: every
-<a href=#419 id=419 data-nosnippet>419</a>/// channel of the window, its first channel width and the selected
-<a href=#420 id=420 data-nosnippet>420</a>/// channels' frequencies (`HetArrayConvFunc` beams per window).
-<a href=#421 id=421 data-nosnippet>421</a></span><span class="kw">fn </span>mosaic_windows(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;MosaicWindow&gt;, ImagingError&gt; {
-<a href=#422 id=422 data-nosnippet>422</a>    <span class="kw">let </span><span class="kw-2">mut </span>windows = Vec::new();
-<a href=#423 id=423 data-nosnippet>423</a>    <span class="kw">for </span>source <span class="kw">in </span>problem.observation_transaction().read_set().sources() {
-<a href=#424 id=424 data-nosnippet>424</a>        <span class="kw">for </span>window <span class="kw">in </span>source.selection().spectral_windows() {
-<a href=#425 id=425 data-nosnippet>425</a>            <span class="kw">if </span>windows
-<a href=#426 id=426 data-nosnippet>426</a>                .iter()
-<a href=#427 id=427 data-nosnippet>427</a>                .any(|known: <span class="kw-2">&amp;</span>MosaicWindow| known.spectral_window == window.spectral_window_id())
-<a href=#428 id=428 data-nosnippet>428</a>            {
-<a href=#429 id=429 data-nosnippet>429</a>                <span class="kw">continue</span>;
-<a href=#430 id=430 data-nosnippet>430</a>            }
-<a href=#431 id=431 data-nosnippet>431</a>            <span class="kw">let </span>catalog = window
-<a href=#432 id=432 data-nosnippet>432</a>                .coordinate_catalog()
-<a href=#433 id=433 data-nosnippet>433</a>                .ok_or(ImagingError::Unsupported {
-<a href=#434 id=434 data-nosnippet>434</a>                    reason: <span class="string">"the mosaic set needs every window's channel frequencies"</span>,
-<a href=#435 id=435 data-nosnippet>435</a>                })<span class="question-mark">?</span>;
-<a href=#436 id=436 data-nosnippet>436</a>            <span class="kw">let </span>selected = window
-<a href=#437 id=437 data-nosnippet>437</a>                .channel_indices()
-<a href=#438 id=438 data-nosnippet>438</a>                .iter()
-<a href=#439 id=439 data-nosnippet>439</a>                .map(|index| {
-<a href=#440 id=440 data-nosnippet>440</a>                    catalog
-<a href=#441 id=441 data-nosnippet>441</a>                        .channel_frequency_hz(<span class="kw-2">*</span>index <span class="kw">as </span>usize)
-<a href=#442 id=442 data-nosnippet>442</a>                        .ok_or(ImagingError::Unsupported {
-<a href=#443 id=443 data-nosnippet>443</a>                            reason: <span class="string">"a selected channel lies outside its window"</span>,
-<a href=#444 id=444 data-nosnippet>444</a>                        })
-<a href=#445 id=445 data-nosnippet>445</a>                })
-<a href=#446 id=446 data-nosnippet>446</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#447 id=447 data-nosnippet>447</a>            windows.push(MosaicWindow {
-<a href=#448 id=448 data-nosnippet>448</a>                spectral_window: window.spectral_window_id(),
-<a href=#449 id=449 data-nosnippet>449</a>                window_frequencies_hz: catalog.channel_frequencies_hz().to_vec(),
-<a href=#450 id=450 data-nosnippet>450</a>                channel_width_hz: catalog.first_channel_width_hz(),
-<a href=#451 id=451 data-nosnippet>451</a>                selected_frequencies_hz: selected,
-<a href=#452 id=452 data-nosnippet>452</a>            });
-<a href=#453 id=453 data-nosnippet>453</a>        }
-<a href=#454 id=454 data-nosnippet>454</a>    }
-<a href=#455 id=455 data-nosnippet>455</a>    <span class="prelude-val">Ok</span>(windows)
-<a href=#456 id=456 data-nosnippet>456</a>}
-<a href=#457 id=457 data-nosnippet>457</a>
-<a href=#458 id=458 data-nosnippet>458</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>image_extent(domain: <span class="kw-2">&amp;</span>CompiledImageDomain) -&gt; <span class="prelude-ty">Result</span>&lt;ImageExtent, ImagingError&gt; {
-<a href=#459 id=459 data-nosnippet>459</a>    <span class="kw">let </span>direction = domain.direction();
-<a href=#460 id=460 data-nosnippet>460</a>    <span class="kw">let </span>reference = direction.reference_pixel();
-<a href=#461 id=461 data-nosnippet>461</a>    <span class="kw">if </span>reference
-<a href=#462 id=462 data-nosnippet>462</a>        .iter()
-<a href=#463 id=463 data-nosnippet>463</a>        .any(|pixel| pixel.fract() != <span class="number">0.0 </span>|| <span class="kw-2">*</span>pixel &lt; <span class="number">0.0</span>)
-<a href=#464 id=464 data-nosnippet>464</a>    {
-<a href=#465 id=465 data-nosnippet>465</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
-<a href=#466 id=466 data-nosnippet>466</a>            reason: <span class="string">"the image reference pixel must be a whole pixel"</span>,
-<a href=#467 id=467 data-nosnippet>467</a>        });
-<a href=#468 id=468 data-nosnippet>468</a>    }
-<a href=#469 id=469 data-nosnippet>469</a>    <span class="prelude-val">Ok</span>(ImageExtent {
-<a href=#470 id=470 data-nosnippet>470</a>        shape: domain.shape().pixels(),
-<a href=#471 id=471 data-nosnippet>471</a>        increment_rad: direction.increment_rad(),
-<a href=#472 id=472 data-nosnippet>472</a>        reference_pixel: [reference[<span class="number">0</span>] <span class="kw">as </span>usize, reference[<span class="number">1</span>] <span class="kw">as </span>usize],
-<a href=#473 id=473 data-nosnippet>473</a>    })
-<a href=#474 id=474 data-nosnippet>474</a>}
-<a href=#475 id=475 data-nosnippet>475</a>
-<a href=#476 id=476 data-nosnippet>476</a><span class="doccomment">/// CASA `FTMachine` channel mapping for a channel-local basis; every native
-<a href=#477 id=477 data-nosnippet>477</a>/// channel on plane 0 otherwise.
-<a href=#478 id=478 data-nosnippet>478</a></span><span class="kw">fn </span>resampler(problem: <span class="kw-2">&amp;</span>CompiledProblem, basis: Basis) -&gt; <span class="prelude-ty">Result</span>&lt;SpectralResampler, ImagingError&gt; {
-<a href=#479 id=479 data-nosnippet>479</a>    <span class="kw">let </span>Basis::ChannelLocal { planes } = basis <span class="kw">else </span>{
-<a href=#480 id=480 data-nosnippet>480</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(SpectralResampler::direct(basis)<span class="question-mark">?</span>);
-<a href=#481 id=481 data-nosnippet>481</a>    };
-<a href=#482 id=482 data-nosnippet>482</a>    <span class="kw">let </span>SpectralWcs::Linear {
-<a href=#483 id=483 data-nosnippet>483</a>        reference_pixel,
-<a href=#484 id=484 data-nosnippet>484</a>        reference_frequency_hz,
-<a href=#485 id=485 data-nosnippet>485</a>        increment_hz,
-<a href=#486 id=486 data-nosnippet>486</a>        ..
-<a href=#487 id=487 data-nosnippet>487</a>    } = problem.geometry().spectral().wcs()
-<a href=#488 id=488 data-nosnippet>488</a>    <span class="kw">else </span>{
-<a href=#489 id=489 data-nosnippet>489</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
-<a href=#490 id=490 data-nosnippet>490</a>            reason: <span class="string">"a tabular spectral axis has no uniform channel width"</span>,
-<a href=#491 id=491 data-nosnippet>491</a>        });
-<a href=#492 id=492 data-nosnippet>492</a>    };
-<a href=#493 id=493 data-nosnippet>493</a>    <span class="kw">let </span>kernel = <span class="kw">match </span>problem.science().spectral().sampling().kernel() {
-<a href=#494 id=494 data-nosnippet>494</a>        SpectralKernel::Nearest | SpectralKernel::Identity =&gt; {
-<a href=#495 id=495 data-nosnippet>495</a>            casa_imaging_operator::SpectralKernel::Nearest
-<a href=#496 id=496 data-nosnippet>496</a>        }
-<a href=#497 id=497 data-nosnippet>497</a>        SpectralKernel::Linear =&gt; casa_imaging_operator::SpectralKernel::Linear,
-<a href=#498 id=498 data-nosnippet>498</a>        SpectralKernel::Cubic | SpectralKernel::ChannelIntegration { .. } =&gt; {
-<a href=#499 id=499 data-nosnippet>499</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
-<a href=#500 id=500 data-nosnippet>500</a>                reason: <span class="string">"cube interpolation is nearest or linear"</span>,
-<a href=#501 id=501 data-nosnippet>501</a>            });
-<a href=#502 id=502 data-nosnippet>502</a>        }
-<a href=#503 id=503 data-nosnippet>503</a>    };
-<a href=#504 id=504 data-nosnippet>504</a>    <span class="kw">let </span>first_hz = reference_frequency_hz - reference_pixel * increment_hz;
-<a href=#505 id=505 data-nosnippet>505</a>    <span class="prelude-val">Ok</span>(SpectralResampler::channel_local(
-<a href=#506 id=506 data-nosnippet>506</a>        SpectralAxis::new(first_hz, <span class="kw-2">*</span>increment_hz, planes)<span class="question-mark">?</span>,
-<a href=#507 id=507 data-nosnippet>507</a>        kernel,
-<a href=#508 id=508 data-nosnippet>508</a>    ))
-<a href=#509 id=509 data-nosnippet>509</a>}
-<a href=#510 id=510 data-nosnippet>510</a>
-<a href=#511 id=511 data-nosnippet>511</a><span class="doccomment">/// The widest spacing between adjacent selected native channels of any
-<a href=#512 id=512 data-nosnippet>512</a>/// selected spectral window, from the storage owner's `CHAN_FREQ` catalog,
-<a href=#513 id=513 data-nosnippet>513</a>/// widened by [`FRAME_MARGIN`]. A window without a catalog makes it
-<a href=#514 id=514 data-nosnippet>514</a>/// infinite, so every wave holds the whole model.
-<a href=#515 id=515 data-nosnippet>515</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>native_spacing_hz(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; f64 {
-<a href=#516 id=516 data-nosnippet>516</a>    <span class="kw">let </span><span class="kw-2">mut </span>widest = <span class="number">0.0_f64</span>;
-<a href=#517 id=517 data-nosnippet>517</a>    <span class="kw">for </span>window <span class="kw">in </span>problem
-<a href=#518 id=518 data-nosnippet>518</a>        .observation_transaction()
-<a href=#519 id=519 data-nosnippet>519</a>        .read_set()
-<a href=#520 id=520 data-nosnippet>520</a>        .sources()
-<a href=#521 id=521 data-nosnippet>521</a>        .iter()
-<a href=#522 id=522 data-nosnippet>522</a>        .flat_map(|source| source.selection().spectral_windows())
-<a href=#523 id=523 data-nosnippet>523</a>    {
-<a href=#524 id=524 data-nosnippet>524</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(catalog) = window.coordinate_catalog() <span class="kw">else </span>{
-<a href=#525 id=525 data-nosnippet>525</a>            <span class="kw">return </span>f64::INFINITY;
-<a href=#526 id=526 data-nosnippet>526</a>        };
-<a href=#527 id=527 data-nosnippet>527</a>        <span class="kw">for </span>pair <span class="kw">in </span>window.channel_indices().windows(<span class="number">2</span>) {
-<a href=#528 id=528 data-nosnippet>528</a>            <span class="kw">let </span>(<span class="prelude-val">Some</span>(first), <span class="prelude-val">Some</span>(second)) = (
-<a href=#529 id=529 data-nosnippet>529</a>                catalog.channel_frequency_hz(pair[<span class="number">0</span>] <span class="kw">as </span>usize),
-<a href=#530 id=530 data-nosnippet>530</a>                catalog.channel_frequency_hz(pair[<span class="number">1</span>] <span class="kw">as </span>usize),
-<a href=#531 id=531 data-nosnippet>531</a>            ) <span class="kw">else </span>{
-<a href=#532 id=532 data-nosnippet>532</a>                <span class="kw">return </span>f64::INFINITY;
-<a href=#533 id=533 data-nosnippet>533</a>            };
-<a href=#534 id=534 data-nosnippet>534</a>            widest = widest.max((second - first).abs());
-<a href=#535 id=535 data-nosnippet>535</a>        }
-<a href=#536 id=536 data-nosnippet>536</a>    }
-<a href=#537 id=537 data-nosnippet>537</a>    widest * (<span class="number">1.0 </span>+ FRAME_MARGIN)
-<a href=#538 id=538 data-nosnippet>538</a>}
-<a href=#539 id=539 data-nosnippet>539</a>
-<a href=#540 id=540 data-nosnippet>540</a><span class="doccomment">/// Shape of the weight-density grid of `domain`: one global plane on CASA's
-<a href=#541 id=541 data-nosnippet>541</a>/// `VisImagingWeight` cells, or one plane per output channel, plus the
-<a href=#542 id=542 data-nosnippet>542</a>/// compiled padding planes on each side, on `BriggsCubeWeightor` cells.
-<a href=#543 id=543 data-nosnippet>543</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>density_shape(
-<a href=#544 id=544 data-nosnippet>544</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#545 id=545 data-nosnippet>545</a>    domain: <span class="kw-2">&amp;</span>CompiledImageDomain,
-<a href=#546 id=546 data-nosnippet>546</a>) -&gt; <span class="prelude-ty">Result</span>&lt;DensityGridShape, ImagingError&gt; {
-<a href=#547 id=547 data-nosnippet>547</a>    <span class="kw">let </span>[width, height] = domain.shape().pixels();
-<a href=#548 id=548 data-nosnippet>548</a>    <span class="kw">let </span>(planes, padding, rule) = <span class="kw">match </span>problem.weighting().density_scope() {
-<a href=#549 id=549 data-nosnippet>549</a>        WeightDensityScope::PerOutputChannel =&gt; {
-<a href=#550 id=550 data-nosnippet>550</a>            <span class="comment">// CASA always pads the cube density axis
-<a href=#551 id=551 data-nosnippet>551</a>            // (`BriggsCubeWeightor::estimateSwingChanPad`); a contract without
-<a href=#552 id=552 data-nosnippet>552</a>            // the padding cannot reproduce it.
-<a href=#553 id=553 data-nosnippet>553</a>            </span><span class="kw">let </span>padding = problem.weighting().casa_cube_density_padding().ok_or(
-<a href=#554 id=554 data-nosnippet>554</a>                ImagingError::Unsupported {
-<a href=#555 id=555 data-nosnippet>555</a>                    reason: <span class="string">"a per-channel weight density needs its compiled padding"</span>,
-<a href=#556 id=556 data-nosnippet>556</a>                },
-<a href=#557 id=557 data-nosnippet>557</a>            )<span class="question-mark">?</span>;
-<a href=#558 id=558 data-nosnippet>558</a>            <span class="kw">let </span>planes = padding
-<a href=#559 id=559 data-nosnippet>559</a>                .checked_mul(<span class="number">2</span>)
-<a href=#560 id=560 data-nosnippet>560</a>                .and_then(|padding| {
-<a href=#561 id=561 data-nosnippet>561</a>                    padding.checked_add(problem.geometry().spectral().output_channels())
-<a href=#562 id=562 data-nosnippet>562</a>                })
-<a href=#563 id=563 data-nosnippet>563</a>                .ok_or(ImagingError::Unsupported {
-<a href=#564 id=564 data-nosnippet>564</a>                    reason: <span class="string">"the padded density axis overflows"</span>,
-<a href=#565 id=565 data-nosnippet>565</a>                })<span class="question-mark">?</span>;
-<a href=#566 id=566 data-nosnippet>566</a>            <span class="kw">let </span>padding = u32::try_from(padding).map_err(|<span class="kw">_</span>| ImagingError::Unsupported {
-<a href=#567 id=567 data-nosnippet>567</a>                reason: <span class="string">"the padded density axis overflows"</span>,
-<a href=#568 id=568 data-nosnippet>568</a>            })<span class="question-mark">?</span>;
-<a href=#569 id=569 data-nosnippet>569</a>            (planes, padding, DensityCellRule::Cube)
-<a href=#570 id=570 data-nosnippet>570</a>        }
-<a href=#571 id=571 data-nosnippet>571</a>        WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection =&gt; {
-<a href=#572 id=572 data-nosnippet>572</a>            (<span class="number">1</span>, <span class="number">0</span>, DensityCellRule::Standard)
-<a href=#573 id=573 data-nosnippet>573</a>        }
-<a href=#574 id=574 data-nosnippet>574</a>    };
-<a href=#575 id=575 data-nosnippet>575</a>    <span class="prelude-val">Ok</span>(DensityGridShape {
-<a href=#576 id=576 data-nosnippet>576</a>        width,
-<a href=#577 id=577 data-nosnippet>577</a>        height,
-<a href=#578 id=578 data-nosnippet>578</a>        planes,
-<a href=#579 id=579 data-nosnippet>579</a>        padding,
-<a href=#580 id=580 data-nosnippet>580</a>        increment_rad: domain.direction().increment_rad(),
-<a href=#581 id=581 data-nosnippet>581</a>        rule,
-<a href=#582 id=582 data-nosnippet>582</a>    })
-<a href=#583 id=583 data-nosnippet>583</a>}
+<a href=#204 id=204 data-nosnippet>204</a><span class="doccomment">/// Whether the Metal backend grids the problem's kernel set: the standard
+<a href=#205 id=205 data-nosnippet>205</a>/// spheroidal set, and the mosaic primary beams (#787). The mosaic's PSF
+<a href=#206 id=206 data-nosnippet>206</a>/// and prediction cells are its imaging cells, and its weight cells share
+<a href=#207 id=207 data-nosnippet>207</a>/// their support, so Metal's one tap route per mode serves it. Its weight
+<a href=#208 id=208 data-nosnippet>208</a>/// image keeps f32 precision because the weight owner sums it by
+<a href=#209 id=209 data-nosnippet>209</a>/// contribution first (#792). Each Metal backend of a pass copies the
+<a href=#210 id=210 data-nosnippet>210</a>/// cells it meets to the device, which the wave demand admits per backend
+<a href=#211 id=211 data-nosnippet>211</a>/// (`casa_imaging_metal::kernel_bytes`, #793 review). W-planes and the AW
+<a href=#212 id=212 data-nosnippet>212</a>/// catalog run on the CPU until #653's rows for them.
+<a href=#213 id=213 data-nosnippet>213</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>metal_kernel_set(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; bool {
+<a href=#214 id=214 data-nosnippet>214</a>    <span class="macro">matches!</span>(
+<a href=#215 id=215 data-nosnippet>215</a>        kernel_set_kind(problem),
+<a href=#216 id=216 data-nosnippet>216</a>        KernelSetKind::Standard | KernelSetKind::Mosaic
+<a href=#217 id=217 data-nosnippet>217</a>    )
+<a href=#218 id=218 data-nosnippet>218</a>}
+<a href=#219 id=219 data-nosnippet>219</a>
+<a href=#220 id=220 data-nosnippet>220</a><span class="doccomment">/// Which kernel set the compiled problem's measurement equation names.
+<a href=#221 id=221 data-nosnippet>221</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+<a href=#222 id=222 data-nosnippet>222</a></span><span class="kw">enum </span>KernelSetKind {
+<a href=#223 id=223 data-nosnippet>223</a>    <span class="doccomment">/// The standard spheroidal set (`GridFT`).
+<a href=#224 id=224 data-nosnippet>224</a>    </span>Standard,
+<a href=#225 id=225 data-nosnippet>225</a>    <span class="doccomment">/// W-projection planes (`WProjectFT`).
+<a href=#226 id=226 data-nosnippet>226</a>    </span>WPlanes,
+<a href=#227 id=227 data-nosnippet>227</a>    <span class="doccomment">/// The heterogeneous-array mosaic beams (`MosaicFT` with
+<a href=#228 id=228 data-nosnippet>228</a>    /// `HetArrayConvFunc`).
+<a href=#229 id=229 data-nosnippet>229</a>    </span>Mosaic,
+<a href=#230 id=230 data-nosnippet>230</a>    <span class="doccomment">/// The AW catalog (`AWProjectFT`).
+<a href=#231 id=231 data-nosnippet>231</a>    </span>Aw,
+<a href=#232 id=232 data-nosnippet>232</a>}
+<a href=#233 id=233 data-nosnippet>233</a>
+<a href=#234 id=234 data-nosnippet>234</a><span class="kw">fn </span>kernel_set_kind(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; KernelSetKind {
+<a href=#235 id=235 data-nosnippet>235</a>    <span class="kw">let </span>equation = problem.science().measurement_equation();
+<a href=#236 id=236 data-nosnippet>236</a>    <span class="kw">if </span>equation.aw_projection().is_some() {
+<a href=#237 id=237 data-nosnippet>237</a>        KernelSetKind::Aw
+<a href=#238 id=238 data-nosnippet>238</a>    } <span class="kw">else if </span>equation.w_projection().is_some() {
+<a href=#239 id=239 data-nosnippet>239</a>        KernelSetKind::WPlanes
+<a href=#240 id=240 data-nosnippet>240</a>    } <span class="kw">else if </span>problem.science().instrument_model()
+<a href=#241 id=241 data-nosnippet>241</a>        == <span class="prelude-val">Some</span>(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1)
+<a href=#242 id=242 data-nosnippet>242</a>    {
+<a href=#243 id=243 data-nosnippet>243</a>        KernelSetKind::Mosaic
+<a href=#244 id=244 data-nosnippet>244</a>    } <span class="kw">else </span>{
+<a href=#245 id=245 data-nosnippet>245</a>        KernelSetKind::Standard
+<a href=#246 id=246 data-nosnippet>246</a>    }
+<a href=#247 id=247 data-nosnippet>247</a>}
+<a href=#248 id=248 data-nosnippet>248</a>
+<a href=#249 id=249 data-nosnippet>249</a><span class="doccomment">/// The operator of a chart of `extent` (an image domain, or one of its
+<a href=#250 id=250 data-nosnippet>250</a>/// facets) with the kernel set the problem names: the
+<a href=#251 id=251 data-nosnippet>251</a>/// standard spheroidal set, W-projection planes sized by the W contract,
+<a href=#252 id=252 data-nosnippet>252</a>/// the mosaic primary beams of the selected windows, or the AW catalog of
+<a href=#253 id=253 data-nosnippet>253</a>/// `aw_catalog`, in the requested precision or the one `backend` grids at.
+<a href=#254 id=254 data-nosnippet>254</a>/// The mosaic set takes one dish per selected aperture class in
+<a href=#255 id=255 data-nosnippet>255</a>/// `dish_classes` (`HetArrayConvFunc::findAntennaSizes`), the order the
+<a href=#256 id=256 data-nosnippet>256</a>/// rows' antenna types index. Mosaic and AW grid without padding (CASA
+<a href=#257 id=257 data-nosnippet>257</a>/// `MosaicFT`, `AWProjectFT`); the others on CASA's composite-padded grid.
+<a href=#258 id=258 data-nosnippet>258</a>/// The kernel set is admitted as [`kernel_set`] says, and its charge lives
+<a href=#259 id=259 data-nosnippet>259</a>/// with the operator.
+<a href=#260 id=260 data-nosnippet>260</a></span><span class="attr">#[allow(clippy::too_many_arguments)]
+<a href=#261 id=261 data-nosnippet>261</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>domain_operator(
+<a href=#262 id=262 data-nosnippet>262</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#263 id=263 data-nosnippet>263</a>    extent: ImageExtent,
+<a href=#264 id=264 data-nosnippet>264</a>    correlations: <span class="kw-2">&amp;</span>[CorrelationType],
+<a href=#265 id=265 data-nosnippet>265</a>    backend: BackendChoice,
+<a href=#266 id=266 data-nosnippet>266</a>    requested_precision: <span class="prelude-ty">Option</span>&lt;GridPrecision&gt;,
+<a href=#267 id=267 data-nosnippet>267</a>    aw_catalog: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>AwCatalogDeployment&gt;,
+<a href=#268 id=268 data-nosnippet>268</a>    dish_classes: <span class="kw-2">&amp;</span>[AntennaResponseClass],
+<a href=#269 id=269 data-nosnippet>269</a>    admission: KernelAdmission&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#270 id=270 data-nosnippet>270</a>) -&gt; <span class="prelude-ty">Result</span>&lt;DomainOperator, ImagingError&gt; {
+<a href=#271 id=271 data-nosnippet>271</a>    <span class="kw">let </span>kind = kernel_set_kind(problem);
+<a href=#272 id=272 data-nosnippet>272</a>    <span class="comment">// Each CASA facet's GridFT pads its own facet grid.
+<a href=#273 id=273 data-nosnippet>273</a>    </span><span class="kw">let </span>padding = <span class="kw">match </span>kind {
+<a href=#274 id=274 data-nosnippet>274</a>        KernelSetKind::Standard | KernelSetKind::WPlanes =&gt; GridPadding::CasaComposite,
+<a href=#275 id=275 data-nosnippet>275</a>        KernelSetKind::Mosaic | KernelSetKind::Aw =&gt; GridPadding::None,
+<a href=#276 id=276 data-nosnippet>276</a>    };
+<a href=#277 id=277 data-nosnippet>277</a>    <span class="kw">let </span>geometry = GridGeometry::new(extent, padding)<span class="question-mark">?</span>;
+<a href=#278 id=278 data-nosnippet>278</a>    <span class="kw">let </span>polarization = PolarizationRouting::compile(
+<a href=#279 id=279 data-nosnippet>279</a>        correlations,
+<a href=#280 id=280 data-nosnippet>280</a>        problem.reconstruction().polarization().coordinates(),
+<a href=#281 id=281 data-nosnippet>281</a>    )<span class="question-mark">?</span>;
+<a href=#282 id=282 data-nosnippet>282</a>    <span class="comment">// An AW cube is refused by the gate (`Unsupported::CubeAwProjection`).
+<a href=#283 id=283 data-nosnippet>283</a>    </span><span class="kw">let </span>basis = basis(problem)<span class="question-mark">?</span>;
+<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">let </span>resampler = resampler(problem, basis)<span class="question-mark">?</span>;
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="kw">let </span>(cf, kernels) = kernel_set(
+<a href=#286 id=286 data-nosnippet>286</a>        problem,
+<a href=#287 id=287 data-nosnippet>287</a>        kind,
+<a href=#288 id=288 data-nosnippet>288</a>        (<span class="kw-2">&amp;</span>geometry, <span class="kw-2">&amp;</span>polarization),
+<a href=#289 id=289 data-nosnippet>289</a>        aw_catalog,
+<a href=#290 id=290 data-nosnippet>290</a>        dish_classes,
+<a href=#291 id=291 data-nosnippet>291</a>        admission,
+<a href=#292 id=292 data-nosnippet>292</a>    )<span class="question-mark">?</span>;
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="prelude-val">Ok</span>(DomainOperator {
+<a href=#294 id=294 data-nosnippet>294</a>        operator: MeasurementOperator::new(
+<a href=#295 id=295 data-nosnippet>295</a>            geometry,
+<a href=#296 id=296 data-nosnippet>296</a>            basis,
+<a href=#297 id=297 data-nosnippet>297</a>            polarization,
+<a href=#298 id=298 data-nosnippet>298</a>            cf,
+<a href=#299 id=299 data-nosnippet>299</a>            precision(backend, requested_precision),
+<a href=#300 id=300 data-nosnippet>300</a>        ),
+<a href=#301 id=301 data-nosnippet>301</a>        resampler,
+<a href=#302 id=302 data-nosnippet>302</a>        weight_image: <span class="macro">matches!</span>(kind, KernelSetKind::Mosaic | KernelSetKind::Aw),
+<a href=#303 id=303 data-nosnippet>303</a>        kernels,
+<a href=#304 id=304 data-nosnippet>304</a>    })
+<a href=#305 id=305 data-nosnippet>305</a>}
+<a href=#306 id=306 data-nosnippet>306</a>
+<a href=#307 id=307 data-nosnippet>307</a><span class="doccomment">/// Where a run admits its kernel sets: its host and policy, and the most
+<a href=#308 id=308 data-nosnippet>308</a>/// workers that fetch cells from a paged set, the policy's; the run admits
+<a href=#309 id=309 data-nosnippet>309</a>/// a paged set's charge once it has chosen how many do
+<a href=#310 id=310 data-nosnippet>310</a>/// ([`DomainOperator::admit_kernels`]).
+<a href=#311 id=311 data-nosnippet>311</a></span><span class="attr">#[derive(Clone, Copy)]
+<a href=#312 id=312 data-nosnippet>312</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>KernelAdmission&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#313 id=313 data-nosnippet>313</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) host: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>HostResources,
+<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) policy: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>ResourcePolicy,
+<a href=#315 id=315 data-nosnippet>315</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) workers: usize,
+<a href=#316 id=316 data-nosnippet>316</a>}
+<a href=#317 id=317 data-nosnippet>317</a>
+<a href=#318 id=318 data-nosnippet>318</a><span class="kw">impl </span>KernelAdmission&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#319 id=319 data-nosnippet>319</a>    <span class="kw">fn </span>admit(<span class="self">self</span>, phase: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, memory: u64) -&gt; <span class="prelude-ty">Result</span>&lt;Reservation, ImagingError&gt; {
+<a href=#320 id=320 data-nosnippet>320</a>        <span class="prelude-val">Ok</span>(admit(<span class="self">self</span>.host, <span class="self">self</span>.policy, <span class="kw-2">&amp;</span>Demand { phase, memory })<span class="question-mark">?</span>)
+<a href=#321 id=321 data-nosnippet>321</a>    }
+<a href=#322 id=322 data-nosnippet>322</a>}
+<a href=#323 id=323 data-nosnippet>323</a>
+<a href=#324 id=324 data-nosnippet>324</a><span class="doccomment">/// The kernel set of `kind` on `geometry` routing `polarization`, with the
+<a href=#325 id=325 data-nosnippet>325</a>/// charge of what it holds, admitted before it is built. W-projection and
+<a href=#326 id=326 data-nosnippet>326</a>/// mosaic sets are built in two stages, their screens and then the kernels
+<a href=#327 id=327 data-nosnippet>327</a>/// cut from them, each admitted before it allocates; the screens' charge
+<a href=#328 id=328 data-nosnippet>328</a>/// is released once the kernels are built. An AW catalog's charge, its
+<a href=#329 id=329 data-nosnippet>329</a>/// cache bound and what its workers can hold beyond it
+<a href=#330 id=330 data-nosnippet>330</a>/// ([`AwCatalog::charge_bytes`]), is known once its index is read, for
+<a href=#331 id=331 data-nosnippet>331</a>/// each count of workers up to `admission`'s, and is admitted when the run
+<a href=#332 id=332 data-nosnippet>332</a>/// has chosen its workers.
+<a href=#333 id=333 data-nosnippet>333</a></span><span class="kw">fn </span>kernel_set(
+<a href=#334 id=334 data-nosnippet>334</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#335 id=335 data-nosnippet>335</a>    kind: KernelSetKind,
+<a href=#336 id=336 data-nosnippet>336</a>    (geometry, polarization): (<span class="kw-2">&amp;</span>GridGeometry, <span class="kw-2">&amp;</span>PolarizationRouting),
+<a href=#337 id=337 data-nosnippet>337</a>    aw_catalog: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>AwCatalogDeployment&gt;,
+<a href=#338 id=338 data-nosnippet>338</a>    dish_classes: <span class="kw-2">&amp;</span>[AntennaResponseClass],
+<a href=#339 id=339 data-nosnippet>339</a>    admission: KernelAdmission&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#340 id=340 data-nosnippet>340</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Box&lt;<span class="kw">dyn </span>ConvolutionFunctionSet&gt;, Kernels), ImagingError&gt; {
+<a href=#341 id=341 data-nosnippet>341</a>    <span class="kw">const </span>PHASE: <span class="kw-2">&amp;</span>str = <span class="string">"convolution functions"</span>;
+<a href=#342 id=342 data-nosnippet>342</a>    <span class="prelude-val">Ok</span>(<span class="kw">match </span>kind {
+<a href=#343 id=343 data-nosnippet>343</a>        KernelSetKind::Standard =&gt; {
+<a href=#344 id=344 data-nosnippet>344</a>            <span class="kw">let </span>kernels = admission.admit(PHASE, Spheroidal::bytes(geometry))<span class="question-mark">?</span>;
+<a href=#345 id=345 data-nosnippet>345</a>            (
+<a href=#346 id=346 data-nosnippet>346</a>                Box::new(Spheroidal::new(geometry, polarization)),
+<a href=#347 id=347 data-nosnippet>347</a>                Kernels::Admitted { _charge: kernels },
+<a href=#348 id=348 data-nosnippet>348</a>            )
+<a href=#349 id=349 data-nosnippet>349</a>        }
+<a href=#350 id=350 data-nosnippet>350</a>        KernelSetKind::WPlanes =&gt; {
+<a href=#351 id=351 data-nosnippet>351</a>            <span class="kw">let </span>contract = problem
+<a href=#352 id=352 data-nosnippet>352</a>                .science()
+<a href=#353 id=353 data-nosnippet>353</a>                .measurement_equation()
+<a href=#354 id=354 data-nosnippet>354</a>                .w_projection()
+<a href=#355 id=355 data-nosnippet>355</a>                .expect(<span class="string">"the kind names a W contract"</span>);
+<a href=#356 id=356 data-nosnippet>356</a>            <span class="kw">let </span>count = <span class="kw">match </span>(contract.planes(), contract.statistics()) {
+<a href=#357 id=357 data-nosnippet>357</a>                (<span class="prelude-val">Some</span>(planes), <span class="kw">_</span>) =&gt; WPlaneCount::Fixed(planes.get() <span class="kw">as </span>u32),
+<a href=#358 id=358 data-nosnippet>358</a>                (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(statistics)) =&gt; WPlaneCount::Auto {
+<a href=#359 id=359 data-nosnippet>359</a>                    min_w: statistics.minimum_abs_w_lambda(),
+<a href=#360 id=360 data-nosnippet>360</a>                    max_w: contract.maximum_abs_w_lambda(),
+<a href=#361 id=361 data-nosnippet>361</a>                    rms_w: statistics.rms_w_lambda(),
+<a href=#362 id=362 data-nosnippet>362</a>                },
+<a href=#363 id=363 data-nosnippet>363</a>                (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>) =&gt; {
+<a href=#364 id=364 data-nosnippet>364</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
+<a href=#365 id=365 data-nosnippet>365</a>                        reason: <span class="string">"an automatic W-plane count needs the selection's w statistics"</span>,
+<a href=#366 id=366 data-nosnippet>366</a>                    });
+<a href=#367 id=367 data-nosnippet>367</a>                }
+<a href=#368 id=368 data-nosnippet>368</a>            };
+<a href=#369 id=369 data-nosnippet>369</a>            <span class="kw">let </span>screening = admission.admit(
+<a href=#370 id=370 data-nosnippet>370</a>                <span class="string">"W-projection screens"</span>,
+<a href=#371 id=371 data-nosnippet>371</a>                WPlanes::screens_bytes(geometry, count)<span class="question-mark">?</span>,
+<a href=#372 id=372 data-nosnippet>372</a>            )<span class="question-mark">?</span>;
+<a href=#373 id=373 data-nosnippet>373</a>            <span class="kw">let </span>screens = WPlanes::screens(geometry, polarization, count)<span class="question-mark">?</span>;
+<a href=#374 id=374 data-nosnippet>374</a>            <span class="kw">let </span><span class="kw-2">mut </span>kernels = admission.admit(PHASE, screens.kernel_bytes())<span class="question-mark">?</span>;
+<a href=#375 id=375 data-nosnippet>375</a>            <span class="kw">let </span>set = screens.finish()<span class="question-mark">?</span>;
+<a href=#376 id=376 data-nosnippet>376</a>            drop(screening);
+<a href=#377 id=377 data-nosnippet>377</a>            kernels.retain(set.resident_bytes());
+<a href=#378 id=378 data-nosnippet>378</a>            (Box::new(set), Kernels::Admitted { _charge: kernels })
+<a href=#379 id=379 data-nosnippet>379</a>        }
+<a href=#380 id=380 data-nosnippet>380</a>        KernelSetKind::Mosaic =&gt; {
+<a href=#381 id=381 data-nosnippet>381</a>            <span class="kw">if </span>dish_classes.is_empty() {
+<a href=#382 id=382 data-nosnippet>382</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
+<a href=#383 id=383 data-nosnippet>383</a>                    reason: <span class="string">"the mosaic set needs ALMA or ACA dishes in the selection"</span>,
+<a href=#384 id=384 data-nosnippet>384</a>                });
+<a href=#385 id=385 data-nosnippet>385</a>            }
+<a href=#386 id=386 data-nosnippet>386</a>            <span class="kw">let </span>dishes = dish_classes
+<a href=#387 id=387 data-nosnippet>387</a>                .iter()
+<a href=#388 id=388 data-nosnippet>388</a>                .map(|class| {
+<a href=#389 id=389 data-nosnippet>389</a>                    AiryDish::casa_alma(
+<a href=#390 id=390 data-nosnippet>390</a>                        <span class="kw">match </span>class {
+<a href=#391 id=391 data-nosnippet>391</a>                            AntennaResponseClass::CasaAlma12m =&gt; <span class="number">12.0</span>,
+<a href=#392 id=392 data-nosnippet>392</a>                            AntennaResponseClass::CasaAca7m =&gt; <span class="number">7.0</span>,
+<a href=#393 id=393 data-nosnippet>393</a>                        },
+<a href=#394 id=394 data-nosnippet>394</a>                        geometry,
+<a href=#395 id=395 data-nosnippet>395</a>                    )
+<a href=#396 id=396 data-nosnippet>396</a>                })
+<a href=#397 id=397 data-nosnippet>397</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#398 id=398 data-nosnippet>398</a>            <span class="kw">let </span>frequency_hz = reference_frequency_hz(problem)<span class="question-mark">?</span>;
+<a href=#399 id=399 data-nosnippet>399</a>            <span class="kw">let </span>windows = mosaic_windows(problem)<span class="question-mark">?</span>;
+<a href=#400 id=400 data-nosnippet>400</a>            <span class="kw">let </span>screening = admission.admit(
+<a href=#401 id=401 data-nosnippet>401</a>                <span class="string">"mosaic screens"</span>,
+<a href=#402 id=402 data-nosnippet>402</a>                MosaicPb::screens_bytes(geometry, frequency_hz, <span class="kw-2">&amp;</span>dishes, <span class="kw-2">&amp;</span>windows)<span class="question-mark">?</span>,
+<a href=#403 id=403 data-nosnippet>403</a>            )<span class="question-mark">?</span>;
+<a href=#404 id=404 data-nosnippet>404</a>            <span class="kw">let </span>screens =
+<a href=#405 id=405 data-nosnippet>405</a>                MosaicPb::screens(geometry, polarization, frequency_hz, <span class="kw-2">&amp;</span>dishes, <span class="kw-2">&amp;</span>windows)<span class="question-mark">?</span>;
+<a href=#406 id=406 data-nosnippet>406</a>            <span class="kw">let </span><span class="kw-2">mut </span>kernels = admission.admit(PHASE, screens.kernel_bytes())<span class="question-mark">?</span>;
+<a href=#407 id=407 data-nosnippet>407</a>            <span class="kw">let </span>set = screens.finish()<span class="question-mark">?</span>;
+<a href=#408 id=408 data-nosnippet>408</a>            drop(screening);
+<a href=#409 id=409 data-nosnippet>409</a>            kernels.retain(set.resident_bytes());
+<a href=#410 id=410 data-nosnippet>410</a>            (Box::new(set), Kernels::Admitted { _charge: kernels })
+<a href=#411 id=411 data-nosnippet>411</a>        }
+<a href=#412 id=412 data-nosnippet>412</a>        KernelSetKind::Aw =&gt; {
+<a href=#413 id=413 data-nosnippet>413</a>            <span class="kw">let </span>deployment = aw_catalog.ok_or(ImagingError::Unsupported {
+<a href=#414 id=414 data-nosnippet>414</a>                reason: <span class="string">"an A-projection run needs its convolution-function catalog"</span>,
+<a href=#415 id=415 data-nosnippet>415</a>            })<span class="question-mark">?</span>;
+<a href=#416 id=416 data-nosnippet>416</a>            <span class="kw">let </span>catalog = AwCatalog::open_casa(
+<a href=#417 id=417 data-nosnippet>417</a>                <span class="kw-2">&amp;</span>deployment.root,
+<a href=#418 id=418 data-nosnippet>418</a>                deployment.indexing,
+<a href=#419 id=419 data-nosnippet>419</a>                geometry,
+<a href=#420 id=420 data-nosnippet>420</a>                polarization,
+<a href=#421 id=421 data-nosnippet>421</a>                deployment.resident_bytes,
+<a href=#422 id=422 data-nosnippet>422</a>            )<span class="question-mark">?</span>;
+<a href=#423 id=423 data-nosnippet>423</a>            <span class="kw">let </span>kernels = Kernels::Catalog {
+<a href=#424 id=424 data-nosnippet>424</a>                charge: catalog.cache_charge(),
+<a href=#425 id=425 data-nosnippet>425</a>                bound: catalog.cache_bound(),
+<a href=#426 id=426 data-nosnippet>426</a>                ceiling: admission.workers.max(<span class="number">1</span>),
+<a href=#427 id=427 data-nosnippet>427</a>                automatic: deployment.automatic,
+<a href=#428 id=428 data-nosnippet>428</a>            };
+<a href=#429 id=429 data-nosnippet>429</a>            (Box::new(catalog), kernels)
+<a href=#430 id=430 data-nosnippet>430</a>        }
+<a href=#431 id=431 data-nosnippet>431</a>    })
+<a href=#432 id=432 data-nosnippet>432</a>}
+<a href=#433 id=433 data-nosnippet>433</a>
+<a href=#434 id=434 data-nosnippet>434</a><span class="doccomment">/// The selected spectral windows as the mosaic set keys them: every
+<a href=#435 id=435 data-nosnippet>435</a>/// channel of the window, its first channel width and the selected
+<a href=#436 id=436 data-nosnippet>436</a>/// channels' frequencies (`HetArrayConvFunc` beams per window).
+<a href=#437 id=437 data-nosnippet>437</a></span><span class="kw">fn </span>mosaic_windows(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;MosaicWindow&gt;, ImagingError&gt; {
+<a href=#438 id=438 data-nosnippet>438</a>    <span class="kw">let </span><span class="kw-2">mut </span>windows = Vec::new();
+<a href=#439 id=439 data-nosnippet>439</a>    <span class="kw">for </span>source <span class="kw">in </span>problem.observation_transaction().read_set().sources() {
+<a href=#440 id=440 data-nosnippet>440</a>        <span class="kw">for </span>window <span class="kw">in </span>source.selection().spectral_windows() {
+<a href=#441 id=441 data-nosnippet>441</a>            <span class="kw">if </span>windows
+<a href=#442 id=442 data-nosnippet>442</a>                .iter()
+<a href=#443 id=443 data-nosnippet>443</a>                .any(|known: <span class="kw-2">&amp;</span>MosaicWindow| known.spectral_window == window.spectral_window_id())
+<a href=#444 id=444 data-nosnippet>444</a>            {
+<a href=#445 id=445 data-nosnippet>445</a>                <span class="kw">continue</span>;
+<a href=#446 id=446 data-nosnippet>446</a>            }
+<a href=#447 id=447 data-nosnippet>447</a>            <span class="kw">let </span>catalog = window
+<a href=#448 id=448 data-nosnippet>448</a>                .coordinate_catalog()
+<a href=#449 id=449 data-nosnippet>449</a>                .ok_or(ImagingError::Unsupported {
+<a href=#450 id=450 data-nosnippet>450</a>                    reason: <span class="string">"the mosaic set needs every window's channel frequencies"</span>,
+<a href=#451 id=451 data-nosnippet>451</a>                })<span class="question-mark">?</span>;
+<a href=#452 id=452 data-nosnippet>452</a>            <span class="kw">let </span>selected = window
+<a href=#453 id=453 data-nosnippet>453</a>                .channel_indices()
+<a href=#454 id=454 data-nosnippet>454</a>                .iter()
+<a href=#455 id=455 data-nosnippet>455</a>                .map(|index| {
+<a href=#456 id=456 data-nosnippet>456</a>                    catalog
+<a href=#457 id=457 data-nosnippet>457</a>                        .channel_frequency_hz(<span class="kw-2">*</span>index <span class="kw">as </span>usize)
+<a href=#458 id=458 data-nosnippet>458</a>                        .ok_or(ImagingError::Unsupported {
+<a href=#459 id=459 data-nosnippet>459</a>                            reason: <span class="string">"a selected channel lies outside its window"</span>,
+<a href=#460 id=460 data-nosnippet>460</a>                        })
+<a href=#461 id=461 data-nosnippet>461</a>                })
+<a href=#462 id=462 data-nosnippet>462</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#463 id=463 data-nosnippet>463</a>            windows.push(MosaicWindow {
+<a href=#464 id=464 data-nosnippet>464</a>                spectral_window: window.spectral_window_id(),
+<a href=#465 id=465 data-nosnippet>465</a>                window_frequencies_hz: catalog.channel_frequencies_hz().to_vec(),
+<a href=#466 id=466 data-nosnippet>466</a>                channel_width_hz: catalog.first_channel_width_hz(),
+<a href=#467 id=467 data-nosnippet>467</a>                selected_frequencies_hz: selected,
+<a href=#468 id=468 data-nosnippet>468</a>            });
+<a href=#469 id=469 data-nosnippet>469</a>        }
+<a href=#470 id=470 data-nosnippet>470</a>    }
+<a href=#471 id=471 data-nosnippet>471</a>    <span class="prelude-val">Ok</span>(windows)
+<a href=#472 id=472 data-nosnippet>472</a>}
+<a href=#473 id=473 data-nosnippet>473</a>
+<a href=#474 id=474 data-nosnippet>474</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>image_extent(domain: <span class="kw-2">&amp;</span>CompiledImageDomain) -&gt; <span class="prelude-ty">Result</span>&lt;ImageExtent, ImagingError&gt; {
+<a href=#475 id=475 data-nosnippet>475</a>    <span class="kw">let </span>direction = domain.direction();
+<a href=#476 id=476 data-nosnippet>476</a>    <span class="kw">let </span>reference = direction.reference_pixel();
+<a href=#477 id=477 data-nosnippet>477</a>    <span class="kw">if </span>reference
+<a href=#478 id=478 data-nosnippet>478</a>        .iter()
+<a href=#479 id=479 data-nosnippet>479</a>        .any(|pixel| pixel.fract() != <span class="number">0.0 </span>|| <span class="kw-2">*</span>pixel &lt; <span class="number">0.0</span>)
+<a href=#480 id=480 data-nosnippet>480</a>    {
+<a href=#481 id=481 data-nosnippet>481</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
+<a href=#482 id=482 data-nosnippet>482</a>            reason: <span class="string">"the image reference pixel must be a whole pixel"</span>,
+<a href=#483 id=483 data-nosnippet>483</a>        });
+<a href=#484 id=484 data-nosnippet>484</a>    }
+<a href=#485 id=485 data-nosnippet>485</a>    <span class="prelude-val">Ok</span>(ImageExtent {
+<a href=#486 id=486 data-nosnippet>486</a>        shape: domain.shape().pixels(),
+<a href=#487 id=487 data-nosnippet>487</a>        increment_rad: direction.increment_rad(),
+<a href=#488 id=488 data-nosnippet>488</a>        reference_pixel: [reference[<span class="number">0</span>] <span class="kw">as </span>usize, reference[<span class="number">1</span>] <span class="kw">as </span>usize],
+<a href=#489 id=489 data-nosnippet>489</a>    })
+<a href=#490 id=490 data-nosnippet>490</a>}
+<a href=#491 id=491 data-nosnippet>491</a>
+<a href=#492 id=492 data-nosnippet>492</a><span class="doccomment">/// CASA `FTMachine` channel mapping for a channel-local basis; every native
+<a href=#493 id=493 data-nosnippet>493</a>/// channel on plane 0 otherwise.
+<a href=#494 id=494 data-nosnippet>494</a></span><span class="kw">fn </span>resampler(problem: <span class="kw-2">&amp;</span>CompiledProblem, basis: Basis) -&gt; <span class="prelude-ty">Result</span>&lt;SpectralResampler, ImagingError&gt; {
+<a href=#495 id=495 data-nosnippet>495</a>    <span class="kw">let </span>Basis::ChannelLocal { planes } = basis <span class="kw">else </span>{
+<a href=#496 id=496 data-nosnippet>496</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(SpectralResampler::direct(basis)<span class="question-mark">?</span>);
+<a href=#497 id=497 data-nosnippet>497</a>    };
+<a href=#498 id=498 data-nosnippet>498</a>    <span class="kw">let </span>SpectralWcs::Linear {
+<a href=#499 id=499 data-nosnippet>499</a>        reference_pixel,
+<a href=#500 id=500 data-nosnippet>500</a>        reference_frequency_hz,
+<a href=#501 id=501 data-nosnippet>501</a>        increment_hz,
+<a href=#502 id=502 data-nosnippet>502</a>        ..
+<a href=#503 id=503 data-nosnippet>503</a>    } = problem.geometry().spectral().wcs()
+<a href=#504 id=504 data-nosnippet>504</a>    <span class="kw">else </span>{
+<a href=#505 id=505 data-nosnippet>505</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
+<a href=#506 id=506 data-nosnippet>506</a>            reason: <span class="string">"a tabular spectral axis has no uniform channel width"</span>,
+<a href=#507 id=507 data-nosnippet>507</a>        });
+<a href=#508 id=508 data-nosnippet>508</a>    };
+<a href=#509 id=509 data-nosnippet>509</a>    <span class="kw">let </span>kernel = <span class="kw">match </span>problem.science().spectral().sampling().kernel() {
+<a href=#510 id=510 data-nosnippet>510</a>        SpectralKernel::Nearest | SpectralKernel::Identity =&gt; {
+<a href=#511 id=511 data-nosnippet>511</a>            casa_imaging_operator::SpectralKernel::Nearest
+<a href=#512 id=512 data-nosnippet>512</a>        }
+<a href=#513 id=513 data-nosnippet>513</a>        SpectralKernel::Linear =&gt; casa_imaging_operator::SpectralKernel::Linear,
+<a href=#514 id=514 data-nosnippet>514</a>        SpectralKernel::Cubic | SpectralKernel::ChannelIntegration { .. } =&gt; {
+<a href=#515 id=515 data-nosnippet>515</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ImagingError::Unsupported {
+<a href=#516 id=516 data-nosnippet>516</a>                reason: <span class="string">"cube interpolation is nearest or linear"</span>,
+<a href=#517 id=517 data-nosnippet>517</a>            });
+<a href=#518 id=518 data-nosnippet>518</a>        }
+<a href=#519 id=519 data-nosnippet>519</a>    };
+<a href=#520 id=520 data-nosnippet>520</a>    <span class="kw">let </span>first_hz = reference_frequency_hz - reference_pixel * increment_hz;
+<a href=#521 id=521 data-nosnippet>521</a>    <span class="prelude-val">Ok</span>(SpectralResampler::channel_local(
+<a href=#522 id=522 data-nosnippet>522</a>        SpectralAxis::new(first_hz, <span class="kw-2">*</span>increment_hz, planes)<span class="question-mark">?</span>,
+<a href=#523 id=523 data-nosnippet>523</a>        kernel,
+<a href=#524 id=524 data-nosnippet>524</a>    ))
+<a href=#525 id=525 data-nosnippet>525</a>}
+<a href=#526 id=526 data-nosnippet>526</a>
+<a href=#527 id=527 data-nosnippet>527</a><span class="doccomment">/// The widest spacing between adjacent selected native channels of any
+<a href=#528 id=528 data-nosnippet>528</a>/// selected spectral window, from the storage owner's `CHAN_FREQ` catalog,
+<a href=#529 id=529 data-nosnippet>529</a>/// widened by [`FRAME_MARGIN`]. A window without a catalog makes it
+<a href=#530 id=530 data-nosnippet>530</a>/// infinite, so every wave holds the whole model.
+<a href=#531 id=531 data-nosnippet>531</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>native_spacing_hz(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; f64 {
+<a href=#532 id=532 data-nosnippet>532</a>    <span class="kw">let </span><span class="kw-2">mut </span>widest = <span class="number">0.0_f64</span>;
+<a href=#533 id=533 data-nosnippet>533</a>    <span class="kw">for </span>window <span class="kw">in </span>problem
+<a href=#534 id=534 data-nosnippet>534</a>        .observation_transaction()
+<a href=#535 id=535 data-nosnippet>535</a>        .read_set()
+<a href=#536 id=536 data-nosnippet>536</a>        .sources()
+<a href=#537 id=537 data-nosnippet>537</a>        .iter()
+<a href=#538 id=538 data-nosnippet>538</a>        .flat_map(|source| source.selection().spectral_windows())
+<a href=#539 id=539 data-nosnippet>539</a>    {
+<a href=#540 id=540 data-nosnippet>540</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(catalog) = window.coordinate_catalog() <span class="kw">else </span>{
+<a href=#541 id=541 data-nosnippet>541</a>            <span class="kw">return </span>f64::INFINITY;
+<a href=#542 id=542 data-nosnippet>542</a>        };
+<a href=#543 id=543 data-nosnippet>543</a>        <span class="kw">for </span>pair <span class="kw">in </span>window.channel_indices().windows(<span class="number">2</span>) {
+<a href=#544 id=544 data-nosnippet>544</a>            <span class="kw">let </span>(<span class="prelude-val">Some</span>(first), <span class="prelude-val">Some</span>(second)) = (
+<a href=#545 id=545 data-nosnippet>545</a>                catalog.channel_frequency_hz(pair[<span class="number">0</span>] <span class="kw">as </span>usize),
+<a href=#546 id=546 data-nosnippet>546</a>                catalog.channel_frequency_hz(pair[<span class="number">1</span>] <span class="kw">as </span>usize),
+<a href=#547 id=547 data-nosnippet>547</a>            ) <span class="kw">else </span>{
+<a href=#548 id=548 data-nosnippet>548</a>                <span class="kw">return </span>f64::INFINITY;
+<a href=#549 id=549 data-nosnippet>549</a>            };
+<a href=#550 id=550 data-nosnippet>550</a>            widest = widest.max((second - first).abs());
+<a href=#551 id=551 data-nosnippet>551</a>        }
+<a href=#552 id=552 data-nosnippet>552</a>    }
+<a href=#553 id=553 data-nosnippet>553</a>    widest * (<span class="number">1.0 </span>+ FRAME_MARGIN)
+<a href=#554 id=554 data-nosnippet>554</a>}
+<a href=#555 id=555 data-nosnippet>555</a>
+<a href=#556 id=556 data-nosnippet>556</a><span class="doccomment">/// Shape of the weight-density grid of `domain`: one global plane on CASA's
+<a href=#557 id=557 data-nosnippet>557</a>/// `VisImagingWeight` cells, or one plane per output channel, plus the
+<a href=#558 id=558 data-nosnippet>558</a>/// compiled padding planes on each side, on `BriggsCubeWeightor` cells.
+<a href=#559 id=559 data-nosnippet>559</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>density_shape(
+<a href=#560 id=560 data-nosnippet>560</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#561 id=561 data-nosnippet>561</a>    domain: <span class="kw-2">&amp;</span>CompiledImageDomain,
+<a href=#562 id=562 data-nosnippet>562</a>) -&gt; <span class="prelude-ty">Result</span>&lt;DensityGridShape, ImagingError&gt; {
+<a href=#563 id=563 data-nosnippet>563</a>    <span class="kw">let </span>[width, height] = domain.shape().pixels();
+<a href=#564 id=564 data-nosnippet>564</a>    <span class="kw">let </span>(planes, padding, rule) = <span class="kw">match </span>problem.weighting().density_scope() {
+<a href=#565 id=565 data-nosnippet>565</a>        WeightDensityScope::PerOutputChannel =&gt; {
+<a href=#566 id=566 data-nosnippet>566</a>            <span class="comment">// CASA always pads the cube density axis
+<a href=#567 id=567 data-nosnippet>567</a>            // (`BriggsCubeWeightor::estimateSwingChanPad`); a contract without
+<a href=#568 id=568 data-nosnippet>568</a>            // the padding cannot reproduce it.
+<a href=#569 id=569 data-nosnippet>569</a>            </span><span class="kw">let </span>padding = problem.weighting().casa_cube_density_padding().ok_or(
+<a href=#570 id=570 data-nosnippet>570</a>                ImagingError::Unsupported {
+<a href=#571 id=571 data-nosnippet>571</a>                    reason: <span class="string">"a per-channel weight density needs its compiled padding"</span>,
+<a href=#572 id=572 data-nosnippet>572</a>                },
+<a href=#573 id=573 data-nosnippet>573</a>            )<span class="question-mark">?</span>;
+<a href=#574 id=574 data-nosnippet>574</a>            <span class="kw">let </span>planes = padding
+<a href=#575 id=575 data-nosnippet>575</a>                .checked_mul(<span class="number">2</span>)
+<a href=#576 id=576 data-nosnippet>576</a>                .and_then(|padding| {
+<a href=#577 id=577 data-nosnippet>577</a>                    padding.checked_add(problem.geometry().spectral().output_channels())
+<a href=#578 id=578 data-nosnippet>578</a>                })
+<a href=#579 id=579 data-nosnippet>579</a>                .ok_or(ImagingError::Unsupported {
+<a href=#580 id=580 data-nosnippet>580</a>                    reason: <span class="string">"the padded density axis overflows"</span>,
+<a href=#581 id=581 data-nosnippet>581</a>                })<span class="question-mark">?</span>;
+<a href=#582 id=582 data-nosnippet>582</a>            <span class="kw">let </span>padding = u32::try_from(padding).map_err(|<span class="kw">_</span>| ImagingError::Unsupported {
+<a href=#583 id=583 data-nosnippet>583</a>                reason: <span class="string">"the padded density axis overflows"</span>,
+<a href=#584 id=584 data-nosnippet>584</a>            })<span class="question-mark">?</span>;
+<a href=#585 id=585 data-nosnippet>585</a>            (planes, padding, DensityCellRule::Cube)
+<a href=#586 id=586 data-nosnippet>586</a>        }
+<a href=#587 id=587 data-nosnippet>587</a>        WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection =&gt; {
+<a href=#588 id=588 data-nosnippet>588</a>            (<span class="number">1</span>, <span class="number">0</span>, DensityCellRule::Standard)
+<a href=#589 id=589 data-nosnippet>589</a>        }
+<a href=#590 id=590 data-nosnippet>590</a>    };
+<a href=#591 id=591 data-nosnippet>591</a>    <span class="prelude-val">Ok</span>(DensityGridShape {
+<a href=#592 id=592 data-nosnippet>592</a>        width,
+<a href=#593 id=593 data-nosnippet>593</a>        height,
+<a href=#594 id=594 data-nosnippet>594</a>        planes,
+<a href=#595 id=595 data-nosnippet>595</a>        padding,
+<a href=#596 id=596 data-nosnippet>596</a>        increment_rad: domain.direction().increment_rad(),
+<a href=#597 id=597 data-nosnippet>597</a>        rule,
+<a href=#598 id=598 data-nosnippet>598</a>    })
+<a href=#599 id=599 data-nosnippet>599</a>}
 </code></pre></div></section></main></body></html>

@@ -16,8 +16,8 @@ problem requires.</p>
 have no outlier fields.</p>
 </div><section id="variant.NoMetalDevice" class="variant"><a href="#variant.NoMetalDevice" class="anchor">§</a><h3 class="code-header">NoMetalDevice</h3></section><div class="docblock"><p>The Metal backend needs a Metal device, which the host lacks.</p>
 </div><section id="variant.F64GridsOnMetal" class="variant"><a href="#variant.F64GridsOnMetal" class="anchor">§</a><h3 class="code-header">F64GridsOnMetal</h3></section><div class="docblock"><p>Metal accumulates its grids in <code>f32</code> (plan decision D2).</p>
-</div><section id="variant.KernelSetOnMetal" class="variant"><a href="#variant.KernelSetOnMetal" class="anchor">§</a><h3 class="code-header">KernelSetOnMetal</h3></section><div class="docblock"><p>Metal grids the standard kernel set; W, mosaic and AW wait for gate
-R2 (#653).</p>
+</div><section id="variant.KernelSetOnMetal" class="variant"><a href="#variant.KernelSetOnMetal" class="anchor">§</a><h3 class="code-header">KernelSetOnMetal</h3></section><div class="docblock"><p>Metal grids the standard and mosaic kernel sets (#787); W and AW
+wait for their gate R2 rows (#653).</p>
 </div><section id="variant.FacetedBasis" class="variant"><a href="#variant.FacetedBasis" class="anchor">§</a><h3 class="code-header">FacetedBasis</h3></section><div class="docblock"><p>Facets image a constant-basis (MFS) image; CASA also facets Taylor
 images, which wait for a CASA comparison, and a cube’s density rule
 would see each facet’s rotated uvw.</p>
