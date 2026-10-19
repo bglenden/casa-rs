@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["PLAN_CACHE_BYTES","PLAN_PAIR_BYTES"],"enum":["FftError"],"fn":["planning_bytes"],"struct":["Fft2","RealFft2"],"trait":["FftScalar"]};
+window.SIDEBAR_ITEMS = {"constant":["PLAN_CACHE_BYTES","PLAN_PAIR_BYTES"],"enum":["FftError"],"fn":["plan_pair_bytes","planning_bytes"],"struct":["Fft2","RealFft2"],"trait":["FftScalar"]};
