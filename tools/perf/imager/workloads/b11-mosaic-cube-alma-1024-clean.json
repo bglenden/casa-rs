@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "b11-mosaic-cube-alma-1024-clean",
   "mode_id": "t53-mosaic-spectral-join",
-  "description": "Imaging taxonomy row B11 (#787): the wave1 ALMA seven-pointing mosaic as a sixteen-channel cube, the channels of the T53 cube row with linear interpolation (CASA's cube default), 1024² at 0.08″, natural weighting, Högbom clean of 500 iterations, pblimit 0.2, one CPU worker. B10's data and size as a cube, where mosaic workers run plane owners rather than region owners. Natural weighting because a Briggs mosaic cube with a per-channel density does not yet agree with CASA (#789).",
+  "description": "Imaging taxonomy row B11 (#787): the wave1 ALMA seven-pointing mosaic as a sixteen-channel cube, the channels of the T53 cube row with linear interpolation (CASA's cube default), 1024² at 0.08″, natural weighting, Högbom clean of 500 iterations, pblimit 0.2, one CPU worker. B10's data and size as a cube, where mosaic workers run plane owners rather than region owners. Natural weighting because a Briggs mosaic cube with a per-channel density does not yet agree with CASA (#789). usepointing is off (CASA's default): the MS's POINTING table has one TIME for all 301 rows, so with usepointing on every row resolves to one pointing and the seven primary beams collapse onto field 0 (#791).",
   "dataset": {
     "key": "wave1-alma-mosaic-small",
     "root_env": "CASA_RS_IMPERF_DATA_ROOT",
@@ -13,6 +13,7 @@
     "specmode": "cube",
     "gridder": "mosaic",
     "field": "0,1,2,3,4,5,6",
+    "usepointing": false,
     "spw": "0:0~17",
     "channel_start": 0,
     "channel_count": 16,
