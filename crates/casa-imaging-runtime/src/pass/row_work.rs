@@ -10,8 +10,8 @@ use casa_imaging_operator::{ModeSet, PlaneRange, WeightingGeneration};
 
 use super::partition::{Router, placement_work};
 use super::{
-    BoundedSource, Cancel, Partition, PassDomain, PassError, SampleContent, WorkerTeam,
-    chunk_ranges, slices, stream_blocks,
+    BoundedSource, Cancel, Partition, PassDomain, PassError, SampleContent, WEIGHT_SUM_WORK,
+    WorkerTeam, chunk_ranges, slices, stream_blocks,
 };
 
 /// What a row-work pass measures ([`run_row_work_pass`]): each domain's
@@ -45,10 +45,12 @@ impl MeasuredRowWork {
 
 /// A region-split domain's work in each mode a pass may grid, summed over
 /// every placement the row work counts: the data mode's kernel taps
-/// (`Router::owner_and_work`); the PSF's taps, at each
-/// sample's own position (the weight cells for an AW catalog); and the
-/// weight image's taps, which every sample places at the uv origin. Each
-/// adds [`PLACEMENT_WORK`](super::PLACEMENT_WORK).
+/// (`Router::owner_and_work`) and the PSF's taps, at each sample's own
+/// position (the weight cells for an AW catalog), each with
+/// [`PLACEMENT_WORK`](super::PLACEMENT_WORK); and the weight image's, a
+/// sum into its owner's table per placement
+/// ([`WEIGHT_SUM_WORK`](super::WEIGHT_SUM_WORK)), since the weight owner
+/// stamps a kernel only once per group (#787).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ModeWork {
     /// The data mode's work, the row work's total.
@@ -223,8 +225,8 @@ pub fn run_row_work_pass(
                                     *cell += taps;
                                     other.data += taps;
                                     other.psf += placement_work(cf.psf_half_support(placement.cf));
-                                    if let Some(support) = cf.weight_half_support(placement.cf) {
-                                        other.weight += placement_work(support);
+                                    if cf.weight_half_support(placement.cf).is_some() {
+                                        other.weight += WEIGHT_SUM_WORK;
                                     }
                                 }
                             },

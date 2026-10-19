@@ -227,8 +227,9 @@ fn pipelined_owners_grid_what_one_set_grids() {
 
 /// The strips a pass of `modes` that grids the weight image cuts on `owners`
 /// region owners, from the row work it measures over `rows` first (#783).
-/// The centre row's owner, which grids the weight image, takes a narrower
-/// strip than the data work alone would give it.
+/// The centre row's owner, which sums the weight image, carries that work
+/// too. Since the weight image is summed by contribution (#787), that work
+/// is one unit a placement, so the strips may equal the data's.
 fn weighed_strips(
     operator: &MeasurementOperator,
     resampler: &SpectralResampler,
@@ -252,13 +253,7 @@ fn weighed_strips(
     let work = measured.modes[0]
         .weighed(data, modes)
         .expect("a weight pass weighs its strips");
-    let weighed = Partition::regions_balanced(operator, owners, &work);
-    assert_ne!(
-        weighed,
-        Partition::regions_balanced(operator, owners, data),
-        "the weight image moves the strips"
-    );
-    weighed
+    Partition::regions_balanced(operator, owners, &work)
 }
 
 /// #784 review (Astra 1, Fable 1): an owner that panics in a pipelined pass,

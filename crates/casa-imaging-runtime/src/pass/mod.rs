@@ -33,7 +33,7 @@ use casa_imaging_operator::{
 };
 
 pub use block::{BlockShape, DomainProjection, NativeBlock, NativeRowHeader, RowAddress};
-pub use partition::{PLACEMENT_WORK, Partition, Region, Residency, WaveDemand};
+pub use partition::{PLACEMENT_WORK, Partition, Region, Residency, WEIGHT_SUM_WORK, WaveDemand};
 pub use row_work::{
     MeasuredRowWork, ModeWork, needs_row_work, row_work_pass_bytes, run_row_work_pass,
 };
