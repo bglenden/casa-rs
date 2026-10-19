@@ -156,34 +156,10 @@ fn a_count_the_fit_takes_is_never_refused_later() {
         let budgets = (1_u64 << 20..=8 << 20)
             .step_by(128 << 10)
             .chain([6 << 20, 6_488_064]);
-        for budget in budgets {
-            let name = root.path().join(format!("cycled-{nmajor}-{budget}"));
-            let summary = root.path().join(format!("cycled-{nmajor}-{budget}.json"));
-            let (outcome, written) = run_summarised(
-                &cycled_mfs(&measurement_set, &name, nmajor),
-                4,
-                budget,
-                &summary,
-            );
-            match outcome {
-                Ok(outcome) => {
-                    completed.insert(outcome.workers);
-                }
-                Err(error) => {
-                    // Refused before the fit chose, in the preparation.
-                    if written["workers"] == 0 {
-                        continue;
-                    }
-                    let reason = written["workers_reason"].as_str().unwrap_or_default();
-                    assert!(
-                        reason.contains("no fewer fit"),
-                        "nmajor {nmajor}, {budget} bytes: a count the fit took ({}, {reason:?}) \
-                         was refused: {error}",
-                        written["workers"]
-                    );
-                }
-            }
-        }
+        let outcomes = fit_sweep(root.path(), &format!("cycled-{nmajor}"), budgets, |name| {
+            cycled_mfs(&measurement_set, name, nmajor)
+        });
+        completed.extend(outcomes.into_iter().filter_map(|(_, workers)| workers));
     }
     assert!(
         completed.contains(&1),
@@ -193,6 +169,143 @@ fn a_count_the_fit_takes_is_never_refused_later() {
         completed.iter().any(|&workers| workers > 1),
         "some budget runs on more: {completed:?}"
     );
+}
+
+/// `request` of an image at `name` under `root`, run on four workers with
+/// `budget` bytes: it completes, or is refused before the fit chose or
+/// with the fit's own reason that no fewer workers fit, never at a later
+/// phase for a count the fit took. The workers it completed on, if it did,
+/// and the count the fit took, zero when it took none.
+fn fit_run(
+    root: &Path,
+    name: &str,
+    budget: u64,
+    request: &impl Fn(&Path) -> ImagingRequest,
+) -> (Option<usize>, usize) {
+    let summary = root.join(format!("{name}.json"));
+    let (outcome, written) = run_summarised(&request(&root.join(name)), 4, budget, &summary);
+    let reason = written["workers_reason"].as_str().unwrap_or_default();
+    let took = if reason.contains("no fewer fit") {
+        0
+    } else {
+        written["workers"].as_u64().unwrap_or_default() as usize
+    };
+    match outcome {
+        Ok(outcome) => (Some(outcome.workers), took),
+        Err(error) => {
+            // Refused before the fit chose, in the preparation, or by the
+            // fit's own reason.
+            assert_eq!(
+                took, 0,
+                "{name}, {budget} bytes: a count the fit took ({reason:?}) was refused: {error}"
+            );
+            (None, 0)
+        }
+    }
+}
+
+/// [`fit_run`] of `request` at each of `budgets`, its images named `label`
+/// and the budget: the workers each run completed on; `None` for a
+/// refusal.
+fn fit_sweep(
+    root: &Path,
+    label: &str,
+    budgets: impl IntoIterator<Item = u64>,
+    request: impl Fn(&Path) -> ImagingRequest,
+) -> Vec<(u64, Option<usize>)> {
+    budgets
+        .into_iter()
+        .map(|budget| {
+            let (completed, _) = fit_run(root, &format!("{label}-{budget}"), budget, &request);
+            (budget, completed)
+        })
+        .collect()
+}
+
+/// The four channels of [`synthetic_observation::observation`] at
+/// `measurement_set`, imaged to `image_name` at 128 pixels and cleaned for
+/// one major cycle after the first, in minor cycles of 50 iterations, with
+/// `controls`: the request of Astra's #778 reproductions.
+fn synthetic_clean(measurement_set: &Path, image_name: &Path, controls: Value) -> ImagingRequest {
+    let mut values = json!({
+        "vis": measurement_set,
+        "imagename": image_name,
+        "imsize": 128,
+        "cell": format!("{}arcsec", synthetic_observation::CELL_ARCSEC),
+        "weighting": "natural",
+        "niter": 200,
+        "minor_cycle_length": 50,
+        "nmajor": 1,
+        "gain": 0.2,
+        "threshold": "1mJy",
+    });
+    values
+        .as_object_mut()
+        .expect("controls")
+        .extend(controls.as_object().expect("overrides").clone());
+    imaging::request(values)
+}
+
+/// #778 review (Astra, finding 1; Fable, findings 2 and 3): a count the fit
+/// takes is never refused later when a minor cycle's model terms or the
+/// pass that writes visibilities set the run's largest stage. A multiscale
+/// or MT-MFS component adds flux to every cell of its scale, and the solve
+/// admits the terms while it holds its own charge; a cleaning run writes
+/// on a refresh pass, at every plane, beside what the run keeps. The fit's
+/// charges are tightest at the least budget on which it takes a count: for
+/// one, two and four workers that budget is found to 16 KiB, and over the
+/// 160 KiB above it, 16 KiB apart, and Astra's reproductions (10,199,040
+/// and 10,223,616 bytes for multiscale, 14,909,440 for MT-MFS), every run
+/// completes or is refused with the fit's own reason.
+#[test]
+fn a_count_the_fit_takes_for_scales_or_a_write_is_never_refused_later() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = synthetic_observation::observation(root.path(), 4);
+    let cases = [
+        (
+            "multiscale",
+            json!({ "deconvolver": "multiscale", "scales": "5,12" }),
+            &[10_199_040_u64, 10_223_616][..],
+        ),
+        (
+            "mtmfs",
+            json!({ "deconvolver": "mtmfs", "nterms": 2, "scales": "5,12" }),
+            &[14_909_440],
+        ),
+        (
+            "savemodel",
+            json!({ "deconvolver": "hogbom", "savemodel": "modelcolumn" }),
+            &[],
+        ),
+    ];
+    for (label, controls, reproductions) in cases {
+        let request = |name: &Path| synthetic_clean(&measurement_set, name, controls.clone());
+        let mut budgets = reproductions.to_vec();
+        for workers in [1, 2, 4] {
+            let (mut fewer, mut more) = (0_u64, 64_u64 << 20);
+            while more - fewer > 16 << 10 {
+                let middle = fewer + (more - fewer) / 2;
+                let name = format!("{label}-least-{workers}-{middle}");
+                if fit_run(root.path(), &name, middle, &request).1 >= workers {
+                    more = middle;
+                } else {
+                    fewer = middle;
+                }
+            }
+            budgets.extend((more..more + (160 << 10)).step_by(16 << 10));
+        }
+        budgets.sort_unstable();
+        budgets.dedup();
+        let outcomes = fit_sweep(root.path(), label, budgets, request);
+        assert!(
+            outcomes.iter().any(|&(_, workers)| workers == Some(4))
+                && outcomes
+                    .iter()
+                    .any(|&(_, workers)| workers.is_some_and(|workers| workers < 4)),
+            "{label}: runs on four workers and on fewer: {outcomes:?}"
+        );
+    }
 }
 
 /// #763 review (Astra, finding 3): a setup refused after the fit chose its

@@ -7,7 +7,7 @@
 
 use casa_imaging_deconvolution::{
     Clark, CycleControls, FinalNormalState, Hogbom, ImageDomainReconstructionMaskPlans,
-    MajorCycleCompletion, Multiscale, NormalBasis, PlaneShape, PlaneStop, Taylor,
+    MajorCycleCompletion, Multiscale, NormalBasis, PlaneShape, PlaneStop, Solver, Taylor,
 };
 use casa_imaging_model::{CompiledProblem, ReconstructionAlgorithm, ReconstructionBasis};
 
@@ -117,11 +117,17 @@ impl MinorLayout {
         (support + TRACE * size_of::<super::TracedComponent>()) as u64
     }
 
-    /// Heap bytes the model terms of a minor cycle hold until its refresh
-    /// pass takes them: [`super::result_bytes`] for every plane.
+    /// Heap bytes the model terms of a minor cycle under `setup` hold, from
+    /// the solve until its refresh pass takes them: [`super::result_bytes`]
+    /// of every plane's update, cleaning at most `iterations`, at the most
+    /// entries its solver's components can make
+    /// ([`casa_imaging_deconvolution::update_entries`]). A multiscale
+    /// component makes an entry for each cell of its scale, not one (#778
+    /// review).
     #[must_use]
-    pub fn result_bytes(&self) -> u64 {
-        self.planes as u64 * super::result_bytes(self.terms.0 as usize)
+    pub fn result_bytes(&self, setup: &MinorCycleSetup, iterations: usize) -> u64 {
+        let (_, entries) = solve_bound(self, setup, iterations);
+        self.planes as u64 * super::result_bytes(entries)
     }
 
     /// Heap bytes the Clark refresh a run caches across its minor cycles
@@ -245,52 +251,11 @@ pub fn run_bytes_for(
     refresh: u64,
     workers: usize,
 ) -> u64 {
-    let shape = layout.shape;
-    let terms = layout.terms.0 as usize;
-    let components = iterations + 1;
-    let solve = match &setup.algorithm {
-        ReconstructionAlgorithm::Hogbom => casa_imaging_deconvolution::solve_bytes(
-            &Hogbom::new(false),
-            shape,
-            terms,
-            components,
-            TRACE,
-        ),
-        ReconstructionAlgorithm::Clark => {
-            let solve = casa_imaging_deconvolution::solve_bytes(
-                &Clark::new(None),
-                shape,
-                terms,
-                components,
-                TRACE,
-            );
-            if layout.planes == 1 {
-                solve.saturating_sub(refresh)
-            } else {
-                solve
-            }
-        }
-        ReconstructionAlgorithm::Multiscale {
-            scales_px,
-            small_scale_bias,
-        } => casa_imaging_deconvolution::solve_bytes(
-            &Multiscale::new(scales_px.clone(), *small_scale_bias),
-            shape,
-            terms,
-            components,
-            TRACE,
-        ),
-        ReconstructionAlgorithm::Mtmfs {
-            scales_px,
-            small_scale_bias,
-        } => casa_imaging_deconvolution::solve_bytes(
-            &Taylor::new(terms, scales_px.clone(), *small_scale_bias),
-            shape,
-            terms,
-            components,
-            TRACE,
-        ),
-        _ => 0,
+    let (solve, _) = solve_bound(layout, setup, iterations);
+    let solve = if matches!(setup.algorithm, ReconstructionAlgorithm::Clark) && layout.planes == 1 {
+        solve.saturating_sub(refresh)
+    } else {
+        solve
     };
     // Every plane's slot, solved record and stop, which the cycle keeps
     // until it merges them.
@@ -298,4 +263,45 @@ pub fn run_bytes_for(
         layout.planes * (size_of::<Slot>() + size_of::<Solved>() + size_of::<PlaneStop>());
     layout.concurrent(workers) * (layout.load_bytes(setup.response.is_some()) + solve)
         + records as u64
+}
+
+/// What `setup`'s solver holds for one plane of `layout`, cleaning at most
+/// `iterations` and so placing at most one more component
+/// ([`casa_imaging_deconvolution::solve_bytes`]), and the entries of the
+/// plane's model update ([`casa_imaging_deconvolution::update_entries`]);
+/// nothing for an algorithm with no solver here.
+fn solve_bound(layout: &MinorLayout, setup: &MinorCycleSetup, iterations: usize) -> (u64, usize) {
+    fn bound<S: Solver>(solver: &S, layout: &MinorLayout, components: usize) -> (u64, usize) {
+        let (shape, terms) = (layout.shape, layout.terms.0 as usize);
+        (
+            casa_imaging_deconvolution::solve_bytes(solver, shape, terms, components, TRACE),
+            casa_imaging_deconvolution::update_entries(solver, shape, terms, components),
+        )
+    }
+    let components = iterations + 1;
+    match &setup.algorithm {
+        ReconstructionAlgorithm::Hogbom => bound(&Hogbom::new(false), layout, components),
+        ReconstructionAlgorithm::Clark => bound(&Clark::new(None), layout, components),
+        ReconstructionAlgorithm::Multiscale {
+            scales_px,
+            small_scale_bias,
+        } => bound(
+            &Multiscale::new(scales_px.clone(), *small_scale_bias),
+            layout,
+            components,
+        ),
+        ReconstructionAlgorithm::Mtmfs {
+            scales_px,
+            small_scale_bias,
+        } => bound(
+            &Taylor::new(
+                layout.terms.0 as usize,
+                scales_px.clone(),
+                *small_scale_bias,
+            ),
+            layout,
+            components,
+        ),
+        _ => (0, 0),
+    }
 }
