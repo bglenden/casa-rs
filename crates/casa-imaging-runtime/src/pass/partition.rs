@@ -10,6 +10,36 @@ use casa_imaging_operator::{
 
 use super::{BackendChoice, BlockShape, PassDomain};
 
+/// The gridding work of one placement besides its taps, in taps, which
+/// region strips are balanced on: each placement adds its kernel's taps
+/// and this to its anchor row's work (`Router::owner_and_work`).
+///
+/// A placement costs more than its taps in proportion. Most of the excess
+/// is in the tap loops themselves: each spread and gather call sets up the
+/// sample's pointing ramp, and the short rows of a small support cost
+/// about twice as much per tap as long ones. The routing and residual
+/// work outside the loops is about 2% of a B3 residual pass (#449).
+/// Kernels of every size meet in a pass: AW and W-projection supports grow
+/// with `|w|`, so short baselines near the uv centre bring many small
+/// kernels and long ones a few large ones. Strips balanced on taps alone
+/// then give the centre's owner several times the placements, and it
+/// takes longest.
+///
+/// The value is fitted to the region owners of B3's residual passes on
+/// the M4's CPU backend in `f64` (#449): busy time
+/// `a · taps + b · placements`, with `a` about 7.6 ns per tap and `b`
+/// about 1.3 µs per placement, from owners holding equal taps and 1.07,
+/// 3.63 and 1.73 million placements. The fit predicts the third owner to
+/// 1%. With every AW cell kept resident it still balances them to 5%. It
+/// is a property of the tap loops, not of the problem: a cheaper
+/// small-support path would lower it, so refit it when they change. Metal
+/// region passes use it too, unmeasured; any positive value is nearer
+/// their cost than none wherever kernel sizes vary. A constant with one
+/// kernel size throughout (the spheroidal or a mosaic's) scales every
+/// row's work alike and moves no strip boundary, since
+/// [`Partition::regions_balanced`] compares the work exactly.
+pub const PLACEMENT_WORK: u64 = 170;
+
 /// How one pass divides an image domain's grid accumulation among owners
 /// (one per worker).
 #[derive(Clone, Debug, PartialEq)]
@@ -65,6 +95,8 @@ impl Partition {
     /// centre, so strips of equal height leave most of the work to the
     /// middle owners (#736). Each strip keeps at least one row. Work that
     /// does not cover the grid, or holds none, gives [`Self::regions`].
+    /// Boundaries are found in exact integer arithmetic, so work scaled by
+    /// one factor throughout cuts the same strips (#774 review).
     #[must_use]
     pub fn regions_balanced(
         operator: &MeasurementOperator,
@@ -87,8 +119,11 @@ impl Partition {
         let mut bounds = Vec::with_capacity(owners + 1);
         bounds.push(0);
         for owner in 1..owners {
-            let share = total * owner as u128 / owners as u128;
-            let row = before.partition_point(|&work| work < share);
+            // The first row whose work above reaches `owner / owners` of the
+            // total, compared exactly, `work · owners < total · owner`, so
+            // that scaling every row's work moves no boundary (#774 review).
+            let (share, owners_wide) = (total * owner as u128, owners as u128);
+            let row = before.partition_point(|&work| work * owners_wide < share);
             let previous = *bounds.last().expect("the first bound");
             bounds.push(row.clamp(previous + 1, ny - (owners - owner)));
         }
@@ -550,11 +585,11 @@ impl Router {
     }
 
     /// Owner of one placement and, with region owners, its anchor row and
-    /// gridding work, the kernel's taps `(2·h_x + 1)(2·h_y + 1)`, which
-    /// [`Partition::regions_balanced`] balances; the placement lies on the
-    /// wave and fits the grid. The kernel's support and oversampling come
-    /// from the set's metadata, so routing lends no taps and takes no lock
-    /// (#744).
+    /// gridding work, the kernel's taps `(2·h_x + 1)(2·h_y + 1)` plus
+    /// [`PLACEMENT_WORK`], which [`Partition::regions_balanced`] balances;
+    /// the placement lies on the wave and fits the grid. The kernel's
+    /// support and oversampling come from the set's metadata, so routing
+    /// lends no taps and takes no lock (#744).
     pub(super) fn owner_and_work(
         &self,
         operator: &MeasurementOperator,
@@ -578,8 +613,11 @@ impl Router {
                     cf.gridding_oversampling(placement.cf),
                 );
                 let row = anchor.y as usize;
-                let work = (2 * u64::from(hx) + 1) * (2 * u64::from(hy) + 1);
-                (usize::from(owner_of_row[row]), Some((row, work)))
+                let taps = (2 * u64::from(hx) + 1) * (2 * u64::from(hy) + 1);
+                (
+                    usize::from(owner_of_row[row]),
+                    Some((row, taps + PLACEMENT_WORK)),
+                )
             }
         }
     }
@@ -796,5 +834,77 @@ mod tests {
             ]
         );
         assert_eq!(Residency::All.waves(5), vec![PlaneRange::new(0, 5)]);
+    }
+
+    /// #774 review: scaling every row's work by one factor, as one kernel
+    /// size throughout does with or without [`PLACEMENT_WORK`], moves no
+    /// strip boundary, even with many owners over a sparse histogram (one
+    /// 7 × 7 placement on each of rows 16 to 66, the reviewer's case).
+    #[test]
+    fn scaled_work_cuts_the_same_strips() {
+        let operator = spheroidal_operator();
+        let ny = operator.geometry().grid_shape()[1];
+        assert!(ny > 66, "the sparse rows fit the grid");
+        let sparse = |per: u64| {
+            (0..ny)
+                .map(|row| if (16..=66).contains(&row) { per } else { 0 })
+                .collect::<Vec<_>>()
+        };
+        for owners in [2, 3, 7, 16, 32, 49, 50] {
+            let taps = rows_of(&Partition::regions_balanced(&operator, owners, &sparse(49)));
+            let worked = rows_of(&Partition::regions_balanced(
+                &operator,
+                owners,
+                &sparse(49 + PLACEMENT_WORK),
+            ));
+            assert_eq!(taps, worked, "{owners} owners over {ny} rows");
+        }
+    }
+
+    /// #449: a placement's work is its kernel's taps and [`PLACEMENT_WORK`],
+    /// at its anchor row; so of two rows with equal taps, the one with more
+    /// placements carries more work, and balanced strips give it fewer
+    /// rows. Plane owners carry no row work.
+    #[test]
+    fn a_placement_works_its_taps_and_its_own_cost() {
+        let operator = spheroidal_operator();
+        let ny = operator.geometry().grid_shape()[1];
+        let partition = Partition::regions(&operator, 2);
+        let router = Router::new(&partition, PlaneRange::single(0));
+        let placement = Placement {
+            u: 0.0,
+            v: 0.0,
+            w: 0.0,
+            prediction_w_positive: false,
+            phase: 0.0,
+            plane: 0,
+            spectral: 0.0,
+            cf: casa_imaging_operator::CfKey::default(),
+            gradient: [0.0, 0.0],
+        };
+        let (_, work) = router.owner_and_work(&operator, &placement);
+        let oversampling = operator.cf().gridding_oversampling(placement.cf);
+        let anchor = operator.geometry().locate(0.0, 0.0, oversampling).y as usize;
+        assert_eq!(work, Some((anchor, 49 + PLACEMENT_WORK)));
+        let planes = Router::new(&Partition::Planes { owners: 2 }, PlaneRange::single(0));
+        assert_eq!(planes.owner_and_work(&operator, &placement).1, None);
+
+        // Below the centre, rows of one large kernel's taps per placement;
+        // above it, rows of as many taps over many small placements.
+        let (large, small) = (49 * 40, 49);
+        let row_work = (0..ny)
+            .map(|row| {
+                if row < ny / 2 {
+                    large + PLACEMENT_WORK
+                } else {
+                    40 * (small + PLACEMENT_WORK)
+                }
+            })
+            .collect::<Vec<_>>();
+        let rows = rows_of(&Partition::regions_balanced(&operator, 2, &row_work));
+        assert!(
+            rows[0].len() > rows[1].len(),
+            "the strip of many placements is the shorter: {rows:?}"
+        );
     }
 }
