@@ -9,13 +9,25 @@
 //! agree on those five add the same taps scaled by their weights: summing
 //! their weights in f64 first and gridding each group once gives the same
 //! image, to rounding, for a lookup and an add per sample rather than a
-//! kernel stamp. It also holds the weight image to the grid's own
-//! precision whatever the sample count: on f32 grids (Metal, plan decision
-//! D2), millions of adds into the origin's cells lost about 1e-3 of the
-//! weight image on the 1024² ALMA mosaic (B10, #787); one add per group
-//! does not.
+//! kernel stamp.
+//!
+//! What it saves, in work and in precision, depends on how many groups the
+//! samples share:
+//! - **Fixed pointing.** A mosaic with fixed pointings shares a few groups
+//!   per pointing and plane: B10, the 1024² ALMA mosaic, sums 4.19 M
+//!   placements into 14 (#787). Its weight image then costs a lookup per
+//!   sample. On f32 grids (Metal, plan decision D2) it also keeps the grid's
+//!   own precision: millions of adds into the origin's cells had lost about
+//!   1e-3, and a few adds per group do not.
+//! - **A pointing that drifts row by row.** AW projection's pointing does,
+//!   which leaves about two samples a group: B3, the 63-field VLASS clean,
+//!   has 3.36 M groups for 6.42 M placements. The saving is then about
+//!   half, and f32 grids keep most of their per-sample drift.
+//!
+//! The row-work pass counts the groups the same way ([`GroupCount`]), so
+//! the strips charge the weight owner for the stamps it will make.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use casa_imaging_operator::{CfKey, Placement, SampleBlock, SampleBuffer};
 use num_complex::Complex32;
@@ -29,9 +41,13 @@ pub(in crate::pass) const WEIGHT_GROUPS: usize = 1 << 14;
 const MAX_POL: usize = 4;
 
 /// What fixes one sample's weight-image contribution apart from its
-/// weights: every input `Mode::Weight` reads but the weights. Floats are
-/// kept as their bits, so two samples share a group only when their
-/// contributions are the same bits.
+/// weights: every input `Mode::Weight` reads but the weights.
+///
+/// Both backends locate the weight taps at the uv origin, so the sample's
+/// `u` and `v` are not read. Only the sign of `w` is read (the Mueller table
+/// and the tap conjugation), and `phase` and `prediction_w_positive` are
+/// read only by prediction. Floats are kept as their bits, so two samples
+/// share a group only when their contributions are the same bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Contribution {
     cf: CfKey,
@@ -66,6 +82,60 @@ impl Contribution {
             cf: self.cf,
             gradient: self.gradient.map(f32::from_bits),
         }
+    }
+}
+
+/// The groups a [`WeightSums`] of `capacity` groups grids for the
+/// placements it is shown, counted without summing: the row-work pass
+/// charges the weight owner a kernel stamp for each
+/// ([`ModeWork`](crate::pass::ModeWork)). Its set is allocated whole on the
+/// first placement, so a pass without a weight image holds nothing.
+pub(in crate::pass) struct GroupCount {
+    capacity: usize,
+    seen: HashSet<Contribution>,
+    last: Option<Contribution>,
+}
+
+impl GroupCount {
+    /// A counter that forgets every group when `capacity` are held, as a
+    /// full [`WeightSums`] grids and starts again.
+    pub(in crate::pass) fn new(capacity: usize) -> Self {
+        assert!(capacity > 0, "a group count holds at least one group");
+        Self {
+            capacity,
+            seen: HashSet::new(),
+            last: None,
+        }
+    }
+
+    /// Bytes a counter of `capacity` groups holds once it has seen a
+    /// placement: its hash set's buckets, a key and a control byte each.
+    #[must_use]
+    pub(in crate::pass) fn bytes(capacity: usize) -> u64 {
+        let buckets = (capacity * 8).div_ceil(7).next_power_of_two().max(4);
+        (buckets * (size_of::<Contribution>() + 1) + 16) as u64
+    }
+
+    /// Whether `placement` starts a group that [`WeightSums::add`] would
+    /// grid: its contribution is not among those held since the last time
+    /// the table filled.
+    pub(in crate::pass) fn starts(&mut self, placement: &Placement) -> bool {
+        let key = Contribution::of(placement);
+        if self.last == Some(key) {
+            return false;
+        }
+        self.last = Some(key);
+        if self.seen.capacity() == 0 {
+            self.seen.reserve(self.capacity);
+        }
+        if self.seen.contains(&key) {
+            return false;
+        }
+        if self.seen.len() == self.capacity {
+            self.seen.clear();
+        }
+        self.seen.insert(key);
+        true
     }
 }
 
@@ -401,6 +471,15 @@ mod tests {
         samples: &SampleBuffer,
         per_sample: bool,
     ) -> Vec<f32> {
+        weight_image_and_sums(operator, samples, per_sample).0
+    }
+
+    /// [`weight_image`] and the finished images' `sumwt`.
+    fn weight_image_and_sums(
+        operator: &casa_imaging_operator::MeasurementOperator,
+        samples: &SampleBuffer,
+        per_sample: bool,
+    ) -> (Vec<f32>, Vec<f64>) {
         use casa_imaging_operator::{CpuBackend, GridBackend, Mode, ModeSet, PlaneRange, Work};
         let mut acc = operator.accumulator(PlaneRange::single(0), None, ModeSet::ALL);
         let mut backend = CpuBackend::new();
@@ -423,11 +502,15 @@ mod tests {
             sums.flush(&mut grid).expect("flush");
         }
         let images = operator.finish(acc).expect("finish");
-        images.planes[0]
-            .weight
-            .iter()
-            .flat_map(|image| image.iter().copied())
-            .collect()
+        let plane = &images.planes[0];
+        (
+            plane
+                .weight
+                .iter()
+                .flat_map(|image| image.iter().copied())
+                .collect(),
+            plane.sumwt.clone(),
+        )
     }
 
     /// The largest difference between `a` and `b`, relative to `b`'s peak.
@@ -454,10 +537,22 @@ mod tests {
         // Enough samples for the per-sample f32 drift, which grows with
         // their count, to show: B10 grids 4.19 M (#787).
         let samples = weight_samples(&f64_operator, 400_000);
-        let reference = weight_image(&f64_operator, &samples, true);
-        let summed = weight_image(&f64_operator, &samples, false);
+        let (reference, reference_sumwt) = weight_image_and_sums(&f64_operator, &samples, true);
+        let (summed, summed_sumwt) = weight_image_and_sums(&f64_operator, &samples, false);
         let f64_error = relative(&summed, &reference);
         assert!(f64_error <= 1.0e-6, "f64 grids: {f64_error}");
+        // The weight terms' sumwt takes each group's summed weight once, as
+        // the f32 weight its f64 sum rounds to (#792 review, Astra).
+        assert!(
+            reference_sumwt.iter().any(|sum| *sum > 0.0),
+            "a weight sumwt"
+        );
+        for (summed, each) in summed_sumwt.iter().zip(&reference_sumwt) {
+            assert!(
+                (summed - each).abs() <= 1.0e-7 * each.abs().max(1.0),
+                "sumwt: {summed} against {each}"
+            );
+        }
         let f32_operator = mosaic_operator(GridPrecision::F32);
         let summed_f32 = relative(&weight_image(&f32_operator, &samples, false), &reference);
         let each_f32 = relative(&weight_image(&f32_operator, &samples, true), &reference);
@@ -465,6 +560,38 @@ mod tests {
         assert!(
             each_f32 > 10.0 * summed_f32,
             "per sample on f32 grids drifts: {each_f32} against {summed_f32}"
+        );
+    }
+
+    /// With no group shared, every pointing gradient distinct (AW's case
+    /// at its extreme, #792 review, Astra 2), the summed table grids on f32
+    /// grids exactly what each sample grids, bit for bit: groups of one
+    /// sample keep its f32 weights and their order, across the table's
+    /// flushes. It saves nothing then, but costs nothing in precision.
+    #[test]
+    fn with_no_group_shared_the_table_grids_each_sample_exactly() {
+        use casa_imaging_operator::GridPrecision;
+        let operator = mosaic_operator(GridPrecision::F32);
+        let mut samples = weight_samples(&operator, WEIGHT_GROUPS + 3000);
+        let block = samples.block();
+        let mut distinct = SampleBuffer::with_capacity(2, block.len());
+        for (index, placement) in block.placements.iter().enumerate() {
+            let step = index as f32 * 1.0e-7;
+            distinct.push(
+                Placement {
+                    gradient: [placement.gradient[0] + step, placement.gradient[1]],
+                    ..*placement
+                },
+                block.values_of(index),
+                block.weights_of(index),
+            );
+        }
+        samples = distinct;
+        let summed = weight_image(&operator, &samples, false);
+        let each = weight_image(&operator, &samples, true);
+        assert!(
+            summed == each,
+            "summed and per-sample f32 weight images differ"
         );
     }
 

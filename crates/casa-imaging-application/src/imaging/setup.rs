@@ -205,7 +205,7 @@ impl SetupDemand<'_> {
                 .map(|domain| domain.operator.geometry().grid_shape()[1])
                 .sum::<usize>();
             (
-                row_work_pass_bytes(&domains, streaming),
+                row_work_pass_bytes(&domains, streaming, self.weight_image),
                 MeasuredRowWork::kept_bytes(rows, domains.len()),
             )
         } else {

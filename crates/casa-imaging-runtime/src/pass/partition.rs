@@ -40,13 +40,13 @@ use super::{BackendChoice, BlockShape, PassDomain};
 /// [`Partition::regions_balanced`] compares the work exactly.
 pub const PLACEMENT_WORK: u64 = 170;
 
-/// One placement's weight-image work, in the units of a placement's taps
-/// and [`PLACEMENT_WORK`] (about 7.6 ns a tap): a sum into its owner's
-/// table, a key compare and an add per correlation, rather than a kernel
-/// stamp (`WeightSums`, #787). The groups' own stamps, a few per pointing
-/// and plane, are negligible beside them. With so little weight work,
-/// [`ModeWork::weighed`](super::ModeWork::weighed) barely narrows the
-/// centre owner's strip.
+/// One placement's sum into its owner's weight-image table (`WeightSums`,
+/// #787), in the units of a placement's taps and [`PLACEMENT_WORK`] (about
+/// 7.6 ns a tap). It is a key compare and an add per correlation when the
+/// placement's group is the last one's, and a hash lookup otherwise, as on
+/// a Taylor basis, whose spectral factor changes each channel. Each group
+/// the table grids is charged a kernel stamp on top
+/// ([`ModeWork`](super::ModeWork)).
 pub const WEIGHT_SUM_WORK: u64 = 1;
 
 /// One placement's work for a kernel of half-support `[h_x, h_y]`: its taps

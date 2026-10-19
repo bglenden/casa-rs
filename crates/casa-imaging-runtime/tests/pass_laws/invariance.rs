@@ -11,14 +11,15 @@ use casa_imaging_operator::{
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, MajorCyclePass,
     ModelPreparation, NativeBlock, PLACEMENT_WORK, Partition, PassDomain, PassError, Residency,
-    SampleContent, SourceError, VisibilitySink, WeightCache, WorkerTeam, needs_row_work,
-    run_density_pass, run_major_cycle, run_row_work_pass,
+    SampleContent, SourceError, VisibilitySink, WEIGHT_SUM_WORK, WeightCache, WorkerTeam,
+    needs_row_work, run_density_pass, run_major_cycle, run_row_work_pass,
 };
 use num_complex::Complex32;
 
 use crate::fixture::{
-    CHANNELS, FIRST_HZ, IMAGE, INCREMENT_RAD, Rows, Run, WIDTH_HZ, nearest_cube, operator, planes,
-    run, sparse_model, test_kernels_operator, try_run, try_run_on, window_of, worst_relative,
+    CHANNELS, FIRST_HZ, IMAGE, INCREMENT_RAD, Rows, Run, WIDTH_HZ, nearest_cube, operator,
+    panicking_weights_operator, planes, run, sparse_model, test_kernels_operator, try_run,
+    try_run_on, window_of, worst_relative,
 };
 
 #[test]
@@ -296,6 +297,51 @@ fn a_pipelined_pass_whose_owner_panics_fails_with_the_typed_error() {
     }
 }
 
+/// #792 review (Astra 1): a panic while the weight owner grids its summed
+/// weight image at the wave's end fails the pass with
+/// [`PassError::OwnerPanicked`] within a bound. That holds on one set of
+/// chunks and on two (pipelined), on region owners and on plane owners. The
+/// test kernels' weight taps panic when lent, which only that grid does.
+#[test]
+fn a_panic_gridding_the_summed_weight_image_fails_with_the_typed_error() {
+    for (chunk_sets, planes) in [(1, false), (2, false), (1, true)] {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let operator = panicking_weights_operator();
+            let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+            let partition = if planes {
+                Partition::Planes { owners: 2 }
+            } else {
+                Partition::regions(&operator, 2)
+            };
+            let domains = [PassDomain {
+                operator: &operator,
+                resampler: &resampler,
+                partition,
+            }];
+            let mut rows = Rows::random(100, 13, operator.geometry());
+            let run = Run {
+                workers: 2,
+                modes: ModeSet::ALL,
+                chunk_placements: 8,
+                chunk_sets,
+                ..Run::initial()
+            };
+            let outcome = match try_run(&domains, &mut rows, &run) {
+                Err(PassError::OwnerPanicked) => Ok(()),
+                Err(other) => Err(other.to_string()),
+                Ok(_) => Err("the pass succeeded".to_owned()),
+            };
+            sender.send(outcome).expect("the law waits");
+        });
+        let label = format!("{chunk_sets} sets, plane owners {planes}");
+        let outcome = receiver
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .unwrap_or_else(|_| panic!("{label}: the pass hung"));
+        assert_eq!(outcome, Ok(()), "{label}");
+    }
+}
+
 /// #784 review (Astra 2, Fable 4): a pass asked for two sets of chunks that
 /// cannot wait off its team's threads places into one set and grids what
 /// one set grids. That holds on a team of one, and for two passes started
@@ -502,6 +548,44 @@ fn first_pass_row_work(
     run_major_cycle(&pass, rows, &team, &Cancel::new(), &mut |_, _| Ok(()), None)
         .expect("pass")
         .row_work
+}
+
+/// #792 review (Fable 6): the row-work pass charges the weight image one sum
+/// a placement ([`WEIGHT_SUM_WORK`]) and a kernel stamp a group it grids
+/// (#787). The test kernels' weight cell is the spheroidal's own, and their
+/// weight groups are the two signs of w, so each chunk makes at most two
+/// stamps.
+#[test]
+fn the_row_work_pass_charges_a_sum_a_placement_and_a_stamp_a_group() {
+    let operator = test_kernels_operator(true, None);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let regions = [PassDomain {
+        operator: &operator,
+        resampler: &resampler,
+        partition: Partition::regions(&operator, 3),
+    }];
+    let mut rows = Rows::random(500, 31, operator.geometry());
+    let weighting = WeightingGeneration::Natural { taper: None };
+    // The spheroidal's 7 × 7 taps beside a placement's work.
+    let stamp = 49 + PLACEMENT_WORK;
+    for workers in [1, 3] {
+        let team = WorkerTeam::new(workers).expect("team");
+        let measured = run_row_work_pass(&regions, &weighting, &mut rows, &team, &Cancel::new())
+            .expect("row-work pass");
+        let [modes] = measured.modes.as_slice() else {
+            panic!("one domain's mode work");
+        };
+        assert_eq!(modes.data % stamp, 0, "{workers} workers: whole placements");
+        let placements = modes.data / stamp;
+        let stamps = modes.weight - placements * WEIGHT_SUM_WORK;
+        assert_eq!(stamps % stamp, 0, "{workers} workers: whole stamps");
+        let chunks = 4 * workers as u64;
+        assert!(
+            (1..=2 * chunks).contains(&(stamps / stamp)),
+            "{workers} workers: {} stamps over {placements} placements",
+            stamps / stamp
+        );
+    }
 }
 
 /// The row-work pass measures, from flags and weights alone, the row work a

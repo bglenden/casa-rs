@@ -947,7 +947,7 @@ impl<'a> Run<'a> {
             }
             let _charge = self.admit(
                 "region row-work pass",
-                row_work_pass_bytes(&domains, team.workers()),
+                row_work_pass_bytes(&domains, team.workers(), self.weight_image),
             )?;
             let started = Instant::now();
             let work = run_row_work_pass(

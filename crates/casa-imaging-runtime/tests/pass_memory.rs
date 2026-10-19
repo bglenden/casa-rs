@@ -186,7 +186,8 @@ fn natives(count: usize) -> Vec<f64> {
 /// two and four workers, each on a team just built. Chunk histograms that
 /// grew per domain held 2,500 rows each, 75,443 bytes over the charge on
 /// four workers; a team's first parallel call held 7 KB more until the
-/// team made it while being built ([`WorkerTeam::new`]).
+/// team made it while being built ([`WorkerTeam::new`]). Each case runs
+/// without and with weight images, whose groups each chunk counts (#792).
 #[test]
 fn the_row_work_pass_holds_at_most_its_admission_over_unequal_domains() {
     if !alone("the_row_work_pass_holds_at_most_its_admission_over_unequal_domains") {
@@ -195,11 +196,27 @@ fn the_row_work_pass_holds_at_most_its_admission_over_unequal_domains() {
     let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
     let main = operator_of(1024, GridPrecision::F64, Basis::Constant);
     let taller = operator_of(1536, GridPrecision::F64, Basis::Constant);
+    // The same with weight images, whose groups each chunk counts (#792).
+    let weighted = |image| {
+        operator_with(
+            image,
+            GridPrecision::F64,
+            Basis::Constant,
+            |geometry, polarization| Box::new(TestKernels::new(geometry, polarization, true, None)),
+        )
+    };
+    let weighted_main = weighted(1024);
+    let weighted_taller = weighted(1536);
     assert!(taller.geometry().grid_shape()[1] > main.geometry().grid_shape()[1]);
     assert!(taller.geometry().grid_shape()[1] < 2 * main.geometry().grid_shape()[1]);
     let weighting = WeightingGeneration::Natural { taper: None };
-    for workers in [1, 2, 4] {
-        let domains = [&main, &taller].map(|operator| PassDomain {
+    for (workers, weight) in [1, 2, 4].into_iter().flat_map(|w| [(w, false), (w, true)]) {
+        let operators = if weight {
+            [&weighted_main, &weighted_taller]
+        } else {
+            [&main, &taller]
+        };
+        let domains = operators.map(|operator| PassDomain {
             operator,
             resampler: &resampler,
             partition: Partition::regions(operator, workers.max(2)),
@@ -207,8 +224,8 @@ fn the_row_work_pass_holds_at_most_its_admission_over_unequal_domains() {
         let mut rows = Rows::random(37, 83, main.geometry());
         rows.add_domain(0.2, 89);
         let team = WorkerTeam::new(workers).expect("team");
-        let admitted =
-            row_work_pass_bytes(&domains, workers) + source_block_bytes(rows.maximum_block());
+        let admitted = row_work_pass_bytes(&domains, workers, weight)
+            + source_block_bytes(rows.maximum_block());
         let baseline = LIVE.load(Ordering::Relaxed);
         PEAK.store(baseline, Ordering::Relaxed);
         MEASURING.store(true, Ordering::Relaxed);
@@ -219,7 +236,8 @@ fn the_row_work_pass_holds_at_most_its_admission_over_unequal_domains() {
         let held = PEAK.load(Ordering::Relaxed) - baseline;
         assert!(
             held <= admitted,
-            "{workers} workers: the row-work pass held {held} bytes against {admitted} admitted"
+            "{workers} workers, weight image {weight}: the row-work pass held {held} bytes \
+             against {admitted} admitted"
         );
     }
 }

@@ -9,8 +9,8 @@ use casa_imaging_operator::{Basis, GridPrecision, ModeSet, PlaneRange, SpectralR
 use casa_imaging_runtime::pass::{BackendChoice, Partition, PassDomain, PassError, Residency};
 
 use crate::fixture::{
-    IMAGE, Rows, Run, nearest_cube, offset_linear_cube, operator, planes, run, sparse_model,
-    window_of, worst_relative,
+    IMAGE, Rows, Run, TestKernels, nearest_cube, offset_linear_cube, operator, operator_with,
+    planes, run, sparse_model, window_of, worst_relative,
 };
 
 const TOLERANCE: f64 = 1.0e-4;
@@ -64,6 +64,73 @@ fn metal_cube_passes_equal_cpu_passes_in_waves_and_with_a_model() {
                 );
             }
         }
+    }
+}
+
+/// #792 review (Fable 2): with a weight image (`ModeSet::ALL`), the Metal
+/// pass equals the CPU's, the weight image included: on region tiles, where
+/// the centre-row owner sums and grids it, and on plane owners in one-plane
+/// waves, where each owner does. Both grid the summed groups after their
+/// deferred device work (#787).
+#[test]
+fn metal_weight_images_equal_the_cpu_on_region_tiles_and_plane_owners() {
+    if !available() {
+        return;
+    }
+    let weighted = |basis| {
+        operator_with(
+            IMAGE,
+            GridPrecision::F32,
+            basis,
+            |geometry, polarization| Box::new(TestKernels::new(geometry, polarization, true, None)),
+        )
+    };
+    let constant = weighted(Basis::Constant);
+    let direct = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let cube_resampler = nearest_cube();
+    let cube = weighted(cube_resampler.basis());
+    let mut rows = Rows::random(400, 59, constant.geometry());
+    for (label, domain, residency) in [
+        (
+            "region tiles",
+            PassDomain {
+                operator: &constant,
+                resampler: &direct,
+                partition: Partition::regions(&constant, 3),
+            },
+            Residency::All,
+        ),
+        (
+            "plane owners in waves",
+            planes(&cube, &cube_resampler, 3),
+            Residency::Waves { planes_per_wave: 1 },
+        ),
+    ] {
+        let mut pass = |backend| {
+            run(
+                std::slice::from_ref(&domain),
+                &mut rows,
+                &Run {
+                    workers: 3,
+                    modes: ModeSet::ALL,
+                    residency,
+                    backend,
+                    ..Run::initial()
+                },
+            )
+        };
+        let cpu = pass(BackendChoice::Cpu);
+        let metal = pass(BackendChoice::Metal);
+        assert!(
+            cpu[0]
+                .planes
+                .iter()
+                .flat_map(|plane| &plane.weight)
+                .any(|image| image.iter().any(|value| *value != 0.0)),
+            "{label}: a weight image"
+        );
+        let worst = worst_relative(&metal[0], &cpu[0]);
+        assert!(worst <= TOLERANCE, "{label}: {worst}");
     }
 }
 

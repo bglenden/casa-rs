@@ -6,7 +6,8 @@
 mod pipeline;
 mod weight_sums;
 
-use weight_sums::{WEIGHT_GROUPS, WeightSums};
+use weight_sums::WeightSums;
+pub(super) use weight_sums::{GroupCount, WEIGHT_GROUPS};
 
 /// Bytes the weight-image table of one owner holds ([`WeightSums`]) over
 /// placements of `npol` correlations.
@@ -15,6 +16,7 @@ pub(super) fn weight_sums_bytes(npol: usize) -> u64 {
 }
 
 use std::ops::Range;
+use std::sync::PoisonError;
 
 use casa_imaging_metal::MetalBackend;
 use casa_imaging_operator::{
@@ -129,18 +131,26 @@ impl Owner<'_> {
     /// Grid the weight image's summed contributions still in the owner's
     /// table, of `target`'s domain ([`WeightSums::flush`]), and drop the
     /// table: the wave's last placement is accumulated.
-    fn flush_weights(&mut self, target: &PassDomain<'_>) -> Result<(), PassError> {
+    ///
+    /// The flush's time is the owner's ([`Self::busy`]). Its placements,
+    /// group grids and grids are returned for the wave's log. A panic while
+    /// gridding fails the pass with [`PassError::OwnerPanicked`], as an
+    /// owner's panic does in a pipelined pass.
+    fn flush_weights(&mut self, target: &PassDomain<'_>) -> Result<[u64; 3], PassError> {
         let Some(mut sums) = self.weights.take() else {
-            return Ok(());
+            return Ok([0; 3]);
         };
+        let started = std::time::Instant::now();
         let acc = self.acc.as_mut().expect("owners flush before they finish");
-        let mut grid = weight_grid(&mut self.backend, target.operator.cf(), acc);
-        sums.flush(&mut grid)?;
-        let [placements, groups, grids] = sums.totals();
-        tracing::info!(
-            "weight image summed: {placements} placements in {groups} groups, {grids} grids"
-        );
-        Ok(())
+        let backend = &mut self.backend;
+        let flushed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut grid = weight_grid(backend, target.operator.cf(), acc);
+            sums.flush(&mut grid)
+        }))
+        .unwrap_or(Err(PassError::OwnerPanicked));
+        self.busy += started.elapsed();
+        flushed?;
+        Ok(sums.totals())
     }
 }
 
@@ -1082,13 +1092,30 @@ impl<'w, 'p> Wave<'w, 'p> {
                 backend.complete()?;
             }
         }
-        // The weight image's last summed contributions go to the grid first.
+        // The weight image's last summed contributions go to the grid first:
+        // accumulation, which the stages count as such.
+        let flushing = std::time::Instant::now();
         for (domain, target) in self.domains.iter_mut().zip(self.pass.domains) {
+            let summed = std::sync::Mutex::new([0_u64; 3]);
             team.for_each_mut(&mut domain.owners, |_, owner| {
-                owner.flush_weights(target)?;
+                let totals = owner.flush_weights(target)?;
+                let mut summed = summed.lock().unwrap_or_else(PoisonError::into_inner);
+                for (sum, total) in summed.iter_mut().zip(totals) {
+                    *sum += total;
+                }
+                drop(summed);
                 owner.complete()
             })?;
+            let [placements, groups, grids] =
+                summed.into_inner().unwrap_or_else(PoisonError::into_inner);
+            if placements > 0 {
+                tracing::info!(
+                    "weight image summed: {placements} placements as {groups} group grids in \
+                     {grids} grids"
+                );
+            }
         }
+        self.stages.accumulating += flushing.elapsed();
         let pass = self.pass;
         let planes = self.planes;
         let stages = self.stages;
