@@ -262,7 +262,7 @@ def imager(
     uvrange: str = ...,
     intent: str = ...,
     cfcache: StrPath | Literal['none'] = ...,
-    cf_resident_mb: int = ...,
+    cf_resident_mb: int | Literal['auto'] = ...,
     pointingoffsetsigdev: str = ...,
     normtype: Literal['flatnoise', 'flatsky'] = ...,
     fitspw: str = ...,

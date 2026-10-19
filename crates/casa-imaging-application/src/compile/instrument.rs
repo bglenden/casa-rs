@@ -177,7 +177,7 @@ mod tests {
             wprojplanes: NonZeroUsize::new(32),
             usepointing,
             normtype: ProductNormalization::FlatNoise,
-            cf_resident_mb: 256,
+            cf_resident_mb: Some(256),
             pointingoffsetsigdev: Vec::new(),
             cf_source: AwCfSource::CasaImport {
                 cfcache: PathBuf::from("cf"),

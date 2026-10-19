@@ -9094,10 +9094,16 @@
     },
     {
       "id": "parameter.cf_resident_mb",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "cf_resident_mb",
       "value_domain": {
-        "kind": "integer"
+        "kind": "optional",
+        "value": {
+          "kind": "integer"
+        },
+        "states": [
+          "auto"
+        ]
       },
       "normalization": {
         "kind": "identity"
@@ -9110,9 +9116,10 @@
       "unit_dimension": "data_size",
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "AW convolution-function working-memory ceiling in MiB",
-        "details": "This bounds both the shared full-cell LRU and the compact exact-source-order tap arena per allocation. The runtime planner charges the two bounded allocations independently; neither is copied per worker.",
+        "summary": "AW convolution-function cell cache size in MiB, or auto",
+        "details": "An integer bounds the AW catalog's shared cell cache to that many MiB, as before. auto sizes it once the run has chosen its workers: it starts at 256 MiB and grows into the memory the worker fit leaves free, up to every cell of the catalog, so it never costs a worker. A cache that holds every cell reads each one once; a smaller one evicts and rereads cells every pass.",
         "examples": [
+          "auto",
           "256"
         ]
       },

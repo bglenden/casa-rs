@@ -100,6 +100,7 @@ fn plan_for(
             image_reference_hz: REFERENCE_HZ,
         },
         resident_bytes: 1 << 20,
+        automatic: false,
     }
 }
 

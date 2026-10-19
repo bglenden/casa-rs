@@ -585,8 +585,11 @@ impl<'a> Run<'a> {
         );
         let formed = WorkerTeams::new(choice.cores).map_err(ImagingError::Pass)?;
         let teams = inputs.teams.get_or_init(move || formed);
+        // An automatic AW cell cache takes what the chosen workers leave
+        // free (#449).
+        let mut spare = demand.free.saturating_sub(demand.bytes(choice.cores)?);
         for domain in &mut domains {
-            domain.admit_kernels(admission, choice.cores.streaming_workers)?;
+            domain.admit_kernels(admission, choice.cores.streaming_workers, &mut spare)?;
         }
         let streaming = teams.streaming();
         let started = Instant::now();

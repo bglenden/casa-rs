@@ -89,9 +89,11 @@ its own `casa_imaging_metal::MetalBackend`.
 
 AW projection reads its convolution functions from one catalog of CASA
 `CFS_*`/`WTCFS_*` images (`casa_imaging_operator::aw`), opened header-first and
-read cell by cell into a cache bounded by `cf_resident_mb`. The catalog is
-either an existing CASA cache, read as it is and never modified, or a native
-EVLA cache that casa-rs generates in the same CASA format
+read cell by cell into a cache bounded by `cf_resident_mb`. Its default,
+`auto`, opens the cache at 256 MiB and raises it, once the worker fit has
+chosen, into the memory those workers leave free, up to every cell. The
+catalog is either an existing CASA cache, read as it is and never
+modified, or a native EVLA cache that casa-rs generates in the same CASA format
 (`AWConvFunc::makeConvFunction2`, `CFCell::makePersistent`). Before the run the
 application compares the request's cells with the cache directory
 (`NativeAwCachePolicy`): reuse needs every cell, generation fills in the absent

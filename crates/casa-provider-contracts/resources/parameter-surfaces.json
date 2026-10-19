@@ -7936,7 +7936,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 24,
+      "contract_version": 25,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -11744,14 +11744,14 @@
           "name": "cf_resident_mb",
           "concept": {
             "id": "parameter.cf_resident_mb",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 70,
           "default": {
             "kind": "literal",
             "value": {
-              "kind": "integer",
-              "value": 256
+              "kind": "string",
+              "value": "auto"
             }
           },
           "required_when": {
@@ -11765,13 +11765,13 @@
               "value": "awproject"
             }
           },
-          "surface_note": "Per-allocation full-cell LRU and compact source-order tap ceiling in MiB; the runtime charges both and rejects zero.",
+          "surface_note": "The AW cell cache in MiB, or auto: the memory the worker fit leaves free, from 256 MiB up to every cell; the runtime rejects zero.",
           "projections": {
             "cli": {
               "flags": [
                 "--cf-resident-mb"
               ],
-              "metavar": "MIB"
+              "metavar": "MIB|auto"
             },
             "provider": {
               "field": "cf_resident_mb",
@@ -11781,7 +11781,7 @@
               "name": "cf_resident_mb"
             },
             "presentation": {
-              "label": "CF/Tap Ceiling (MiB)",
+              "label": "CF Cache (MiB or auto)",
               "group": "Advanced Wide-Field",
               "advanced": true,
               "hidden": false

@@ -321,7 +321,7 @@ def imager(
     uvrange: str | object = _UNSET,
     intent: str | object = _UNSET,
     cfcache: StrPath | Literal['none'] | object = _UNSET,
-    cf_resident_mb: int | object = _UNSET,
+    cf_resident_mb: int | Literal['auto'] | object = _UNSET,
     pointingoffsetsigdev: str | object = _UNSET,
     normtype: Literal['flatnoise', 'flatsky'] | object = _UNSET,
     fitspw: str | object = _UNSET,

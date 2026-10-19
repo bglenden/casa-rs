@@ -7,10 +7,10 @@ use casa_imaging_model::{
     ReconstructionBasis, SpectralKernel, SpectralWcs, WeightDensityScope,
 };
 use casa_imaging_operator::{
-    AiryDish, AwCatalog, Basis, ConvolutionFunctionSet, DensityCellRule, DensityGridShape,
-    GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator, MosaicPb,
-    MosaicWindow, PolarizationRouting, SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount,
-    WPlanes,
+    AiryDish, AwCatalog, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet, DensityCellRule,
+    DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
+    MosaicPb, MosaicWindow, PolarizationRouting, SpectralAxis, SpectralResampler, Spheroidal,
+    WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::{BackendChoice, RowSamples};
 use casa_imaging_runtime::{
@@ -33,36 +33,70 @@ pub(crate) struct DomainOperator {
 }
 
 /// The charge of a kernel set: admitted before the set was built or, for
-/// an AW catalog whose holders are the passes' workers, its charge for each
-/// count of them up to the run's ceiling, admitted once the run has chosen
-/// its workers (#737).
+/// an AW catalog whose holders are the passes' workers, admitted once the
+/// run has chosen its workers (#737).
 enum Kernels {
-    Admitted { _charge: Reservation },
-    ByWorkers(Vec<u64>),
+    Admitted {
+        _charge: Reservation,
+    },
+    /// An AW catalog's charge at its cache's bound, for at most `ceiling`
+    /// holders. An `automatic` bound (`cf_resident_mb = auto`) rises, as the
+    /// charge is admitted, into the memory the chosen workers leave (#449).
+    Catalog {
+        charge: CacheCharge,
+        bound: CacheBound,
+        ceiling: usize,
+        automatic: bool,
+    },
 }
 
 impl DomainOperator {
     /// Bytes the kernel set still to be admitted holds for passes on
-    /// `workers` streaming workers, at most the ceiling it was opened for;
-    /// zero for a set already admitted.
+    /// `workers` streaming workers, at most the ceiling it was opened for,
+    /// at its cache's bound now; zero for a set already admitted.
     pub(crate) fn pending_kernel_bytes(&self, workers: usize) -> u64 {
         match &self.kernels {
             Kernels::Admitted { .. } => 0,
-            Kernels::ByWorkers(charges) => charges[workers.clamp(1, charges.len()) - 1],
+            Kernels::Catalog {
+                charge,
+                bound,
+                ceiling,
+                ..
+            } => charge.bytes(workers.clamp(1, *ceiling), bound.bytes()),
         }
     }
 
     /// Admit the kernel set's charge for passes on `workers` streaming
-    /// workers, if it is still to be admitted.
+    /// workers, if it is still to be admitted. An automatic cell cache first
+    /// takes what it can of `spare`, the bytes the run's chosen workers
+    /// leave free: every cell when they fit, otherwise as much more bound as
+    /// `spare` allows. What the raise costs comes off `spare`, and what it
+    /// saves goes back for the next catalog ([`CacheCharge::raise_within`]).
     pub(crate) fn admit_kernels(
         &mut self,
         admission: KernelAdmission<'_>,
         workers: usize,
+        spare: &mut u64,
     ) -> Result<(), ImagingError> {
-        if let Kernels::ByWorkers(_) = self.kernels {
-            let charge = self.pending_kernel_bytes(workers);
+        if let Kernels::Catalog {
+            charge,
+            bound,
+            ceiling,
+            automatic,
+        } = &self.kernels
+        {
+            let holders = workers.clamp(1, *ceiling);
+            if *automatic {
+                charge.raise_within(holders, bound, spare);
+                tracing::info!(
+                    "AW cell cache: {:.0} MB of {:.0} MB of cells resident at most (auto)",
+                    bound.bytes().min(charge.every_bytes() as usize) as f64 / 1e6,
+                    charge.every_bytes() as f64 / 1e6
+                );
+            }
+            let memory = charge.bytes(holders, bound.bytes());
             self.kernels = Kernels::Admitted {
-                _charge: admission.admit("convolution functions", charge)?,
+                _charge: admission.admit("convolution functions", memory)?,
             };
         }
         Ok(())
@@ -370,10 +404,13 @@ fn kernel_set(
                 polarization,
                 deployment.resident_bytes,
             )?;
-            let charges = (1..=admission.workers.max(1))
-                .map(|workers| catalog.charge_bytes(workers))
-                .collect();
-            (Box::new(catalog), Kernels::ByWorkers(charges))
+            let kernels = Kernels::Catalog {
+                charge: catalog.cache_charge(),
+                bound: catalog.cache_bound(),
+                ceiling: admission.workers.max(1),
+                automatic: deployment.automatic,
+            };
+            (Box::new(catalog), kernels)
         }
     })
 }

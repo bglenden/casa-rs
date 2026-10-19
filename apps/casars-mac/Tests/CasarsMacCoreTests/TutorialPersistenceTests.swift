@@ -27,7 +27,7 @@ final class TutorialPersistenceTests: XCTestCase {
         format = 1
         surface = "imager"
         kind = "task"
-        contract = 24
+        contract = 25
 
         [parameters]
         vis = "data/science.bin"
