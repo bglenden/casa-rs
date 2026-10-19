@@ -195,7 +195,7 @@ impl Partition {
     /// Whether the grid's rows are split among several region owners: the
     /// one case that measures its gridding work by anchor row
     /// ([`super::PassSummary::row_work`], [`super::run_row_work_pass`]) and
-    /// takes larger chunks ([`WaveDemand::plan_chunk_placements`]). A lone
+    /// takes larger chunks ([`WaveDemand::plan_chunks`]). A lone
     /// region owner and plane owners do neither (#736).
     #[must_use]
     pub fn splits_rows(&self) -> bool {
@@ -236,8 +236,11 @@ pub struct WaveDemand<'a> {
     /// The layout of the source's rows ([`super::BoundedSource::maximum_block`]).
     pub block: BlockShape,
     /// Placements a row chunk takes at once ([`super::CHUNK_PLACEMENTS`],
-    /// or [`Self::plan_chunk_placements`]).
+    /// or [`Self::plan_chunks`]).
     pub chunk_placements: usize,
+    /// Sets of row chunks the wave places into
+    /// ([`super::MajorCyclePass::chunk_sets`]): 1, or [`Self::plan_chunks`].
+    pub chunk_sets: usize,
 }
 
 impl WaveDemand<'_> {
@@ -298,15 +301,21 @@ impl WaveDemand<'_> {
             transforming = transforming.max(at_once * (grid_cells * 16 + gpols * image_cells * 16));
             planning = planning.max(grid_planning_bytes(operator.geometry().cells()));
         }
-        let chunks = super::wave::chunk_bytes(
-            self.domains,
-            self.backend,
-            self.block,
-            self.workers,
-            self.modes.weight,
-            self.with_model,
-            self.chunk_placements,
-        );
+        let sets = if super::pipelines_owners(self.domains, self.backend, self.with_model) {
+            self.chunk_sets.max(1)
+        } else {
+            1
+        };
+        let chunks = sets as u64
+            * super::wave::chunk_bytes(
+                self.domains,
+                self.backend,
+                self.block,
+                self.workers,
+                self.modes.weight,
+                self.with_model,
+                self.chunk_placements,
+            );
         let transforms = planning + transforming;
         stages.held
             + (stages.gridding + chunks)
@@ -314,32 +323,59 @@ impl WaveDemand<'_> {
                 .max(stages.appending)
     }
 
-    /// Placements a row chunk of a wave of `planes` planes takes: when a
-    /// domain is split among several region owners, the largest of
-    /// `REGION_CHUNK_PLACEMENTS` whose [`Self::bytes`] fit `budget`,
-    /// since the owners share larger slices more evenly (#736); otherwise,
-    /// or when none fits, [`super::CHUNK_PLACEMENTS`]. A pass that fits with
-    /// the default chunks therefore never fails for want of larger ones.
+    /// Placements a row chunk of a wave of `planes` planes takes, and the
+    /// sets of chunks it places into, the first whose [`Self::bytes`] fit
+    /// `budget`:
+    /// - when the owners can pipeline ([`super::MajorCyclePass::chunk_sets`])
+    ///   and the pass writes no visibilities (`sink`, which keeps a pass on
+    ///   one set), two sets of chunks of each of `REGION_CHUNK_PLACEMENTS`
+    ///   and then of [`super::CHUNK_PLACEMENTS`], largest first. A second
+    ///   set lets each owner go on to the next slice. On B3 two sets beat
+    ///   one set of the largest chunks even at a quarter of its chunk size
+    ///   (#784). Whether two sets also beat one set of twice their size at
+    ///   the same memory is not measured (#786);
+    /// - when a domain is split among several region owners, one set of
+    ///   each of `REGION_CHUNK_PLACEMENTS`, largest first, since the owners
+    ///   share larger slices more evenly (#736);
+    /// - otherwise, or when none fits, one set of
+    ///   [`super::CHUNK_PLACEMENTS`]. A pass that fits with one set of the
+    ///   default chunks therefore never fails for want of more.
     #[must_use]
-    pub fn plan_chunk_placements(&self, planes: u32, budget: u64) -> usize {
+    pub fn plan_chunks(&self, planes: u32, budget: u64, sink: bool) -> (usize, usize) {
+        let default = (super::CHUNK_PLACEMENTS, 1);
         if !self
             .domains
             .iter()
             .any(|domain| domain.partition.splits_rows())
         {
-            return super::CHUNK_PLACEMENTS;
+            return default;
         }
-        super::REGION_CHUNK_PLACEMENTS
-            .into_iter()
-            .find(|&chunk_placements| {
+        let pipelined = (!sink
+            && super::pipelines_owners(self.domains, self.backend, self.with_model))
+        .then(|| {
+            super::REGION_CHUNK_PLACEMENTS
+                .into_iter()
+                .chain(std::iter::once(super::CHUNK_PLACEMENTS))
+                .map(|placements| (placements, 2))
+        })
+        .into_iter()
+        .flatten();
+        pipelined
+            .chain(
+                super::REGION_CHUNK_PLACEMENTS
+                    .into_iter()
+                    .map(|placements| (placements, 1)),
+            )
+            .find(|&(chunk_placements, chunk_sets)| {
                 WaveDemand {
                     chunk_placements,
+                    chunk_sets,
                     ..*self
                 }
                 .bytes(planes)
                     <= budget
             })
-            .unwrap_or(super::CHUNK_PLACEMENTS)
+            .unwrap_or(default)
     }
 
     /// What `domain` holds at each stage of a wave of `planes` planes

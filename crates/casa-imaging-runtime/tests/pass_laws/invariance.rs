@@ -18,7 +18,7 @@ use num_complex::Complex32;
 
 use crate::fixture::{
     CHANNELS, FIRST_HZ, IMAGE, INCREMENT_RAD, Rows, Run, WIDTH_HZ, nearest_cube, operator, planes,
-    run, sparse_model, try_run, window_of, worst_relative,
+    run, sparse_model, test_kernels_operator, try_run, try_run_on, window_of, worst_relative,
 };
 
 #[test]
@@ -94,6 +94,306 @@ fn region_partition_matches_one_owner() {
             }
         }
     }
+}
+
+/// #449: a region pass on the CPU that pipelines its owners over two sets of
+/// chunks, each owner going on to its next slice once its own earlier
+/// slices are done, grids exactly what one set grids, bit for bit: every
+/// owner accumulates the same samples in the same order. Over blocks of the
+/// fixture's 37 rows, in many small slices and in one slice a block, on two
+/// and four owners: data and PSF; data with a model subtracted; every mode
+/// with a weight image, which the centre row's owner grids from every
+/// placement on its own lane, on equal strips and on the strips #783 cuts
+/// for that work; and a three-plane cube in one-plane waves, which take the
+/// owners and chunks back at every wave (#784 review, Astra 4 and Fable 2).
+#[test]
+fn pipelined_owners_grid_what_one_set_grids() {
+    #[derive(Clone, Copy)]
+    struct PipelineCase<'a> {
+        name: &'a str,
+        operator: &'a MeasurementOperator,
+        resampler: &'a SpectralResampler,
+        modes: ModeSet,
+        model: Option<&'a ModelPreparation<'a>>,
+        residency: Residency,
+        weighed: bool,
+    }
+
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let weighted = test_kernels_operator(true, None);
+    let cube = crate::fixture::operator(GridPrecision::F64, Basis::ChannelLocal { planes: 3 });
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let cube_resampler = nearest_cube();
+    let mut rows = Rows::random(500, 13, operator.geometry());
+    let model = sparse_model(IMAGE, 1, 59);
+    let prepare = |_: usize, planes: PlaneRange| -> Result<_, PassError> {
+        Ok(window_of(&operator, &model, planes))
+    };
+    let case = |name, operator, resampler, modes, model| PipelineCase {
+        name,
+        operator,
+        resampler,
+        modes,
+        model,
+        residency: Residency::All,
+        weighed: false,
+    };
+    let cases = [
+        case(
+            "data and PSF",
+            &operator,
+            &resampler,
+            ModeSet::DATA_PSF,
+            None,
+        ),
+        case(
+            "a model",
+            &operator,
+            &resampler,
+            ModeSet::DATA,
+            Some(&prepare),
+        ),
+        case("a weight image", &weighted, &resampler, ModeSet::ALL, None),
+        PipelineCase {
+            weighed: true,
+            ..case(
+                "a weight image on weighed strips",
+                &weighted,
+                &resampler,
+                ModeSet::ALL,
+                None,
+            )
+        },
+        PipelineCase {
+            residency: Residency::Waves { planes_per_wave: 1 },
+            ..case(
+                "cube waves",
+                &cube,
+                &cube_resampler,
+                ModeSet::DATA_PSF,
+                None,
+            )
+        },
+    ];
+    for workers in [2, 4] {
+        for chunk_placements in [8, CHUNK_PLACEMENTS] {
+            for PipelineCase {
+                name,
+                operator,
+                resampler,
+                modes,
+                model,
+                residency,
+                weighed,
+            } in cases
+            {
+                let partition = if weighed {
+                    weighed_strips(operator, resampler, workers, modes, &mut rows)
+                } else {
+                    Partition::regions(operator, workers)
+                };
+                let domains = [PassDomain {
+                    operator,
+                    resampler,
+                    partition,
+                }];
+                let pass = |chunk_sets| Run {
+                    workers,
+                    chunk_placements,
+                    chunk_sets,
+                    modes,
+                    model,
+                    residency,
+                    ..Run::initial()
+                };
+                let label = format!("{name}, {workers} owners, chunks of {chunk_placements}");
+                let (one, summary) = try_run(&domains, &mut rows, &pass(1)).expect("one set");
+                assert!(summary.blocks > 1, "{label}: several blocks");
+                let (two, _) = try_run(&domains, &mut rows, &pass(2)).expect("two sets");
+                assert_eq!(one, two, "{label}");
+                if modes.weight {
+                    assert!(
+                        two.iter()
+                            .flat_map(|images| &images.planes)
+                            .flat_map(|plane| &plane.weight)
+                            .any(|image| image.iter().any(|value| *value != 0.0)),
+                        "{label}: a weight image"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The strips a pass of `modes` that grids the weight image cuts on `owners`
+/// region owners, from the row work it measures over `rows` first (#783).
+/// The centre row's owner, which grids the weight image, takes a narrower
+/// strip than the data work alone would give it.
+fn weighed_strips(
+    operator: &MeasurementOperator,
+    resampler: &SpectralResampler,
+    owners: usize,
+    modes: ModeSet,
+    rows: &mut Rows,
+) -> Partition {
+    let measured = run_row_work_pass(
+        &[PassDomain {
+            operator,
+            resampler,
+            partition: Partition::regions(operator, owners),
+        }],
+        &WeightingGeneration::Natural { taper: None },
+        rows,
+        &WorkerTeam::new(owners).expect("team"),
+        &Cancel::new(),
+    )
+    .expect("row-work pass");
+    let data = measured.rows[0].as_deref().expect("a histogram");
+    let work = measured.modes[0]
+        .weighed(data, modes)
+        .expect("a weight pass weighs its strips");
+    let weighed = Partition::regions_balanced(operator, owners, &work);
+    assert_ne!(
+        weighed,
+        Partition::regions_balanced(operator, owners, data),
+        "the weight image moves the strips"
+    );
+    weighed
+}
+
+/// #784 review (Astra 1, Fable 1): an owner that panics in a pipelined pass,
+/// whether or not its lane has a second set queued behind the one it
+/// panics in, fails the pass with [`PassError::OwnerPanicked`] within a
+/// bound, rather than leaving the placer waiting for that lane's sets. The
+/// test kernels panic at the `n`-th lend of their imaging taps, which only
+/// the owners' accumulation asks for.
+#[test]
+fn a_pipelined_pass_whose_owner_panics_fails_with_the_typed_error() {
+    for panic_at in [1, 40, 400] {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let operator = test_kernels_operator(false, Some(panic_at));
+            let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+            let domains = [PassDomain {
+                operator: &operator,
+                resampler: &resampler,
+                partition: Partition::regions(&operator, 2),
+            }];
+            let mut rows = Rows::random(500, 13, operator.geometry());
+            let run = Run {
+                workers: 2,
+                modes: ModeSet::DATA,
+                chunk_placements: 8,
+                chunk_sets: 2,
+                ..Run::initial()
+            };
+            let outcome = match try_run(&domains, &mut rows, &run) {
+                Err(PassError::OwnerPanicked) => Ok(()),
+                Err(other) => Err(other.to_string()),
+                Ok(_) => Err("the pass succeeded".to_owned()),
+            };
+            sender.send(outcome).expect("the law waits");
+        });
+        let outcome = receiver
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .unwrap_or_else(|_| panic!("panic at lend {panic_at}: the pass hung"));
+        assert_eq!(outcome, Ok(()), "panic at lend {panic_at}");
+    }
+}
+
+/// #784 review (Astra 2, Fable 4): a pass asked for two sets of chunks that
+/// cannot wait off its team's threads places into one set and grids what
+/// one set grids. That holds on a team of one, and for two passes started
+/// from the two threads of the team they run on, which would otherwise
+/// each hold a thread their owners need.
+#[test]
+fn a_pass_that_cannot_wait_off_its_team_grids_on_one_set() {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let operator = operator(GridPrecision::F64, Basis::Constant);
+        let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+        let domains = [PassDomain {
+            operator: &operator,
+            resampler: &resampler,
+            partition: Partition::regions(&operator, 2),
+        }];
+        let pass = |workers, chunk_sets| Run {
+            workers,
+            chunk_placements: 8,
+            chunk_sets,
+            ..Run::initial()
+        };
+        let mut rows = Rows::random(300, 13, operator.geometry());
+        let (reference, _) = try_run(&domains, &mut rows, &pass(2, 1)).expect("one set");
+        let (alone, _) = try_run(&domains, &mut rows, &pass(1, 2)).expect("a team of one");
+        let team = WorkerTeam::new(2).expect("team");
+        let mut nested = [
+            (Rows::random(300, 13, operator.geometry()), None),
+            (Rows::random(300, 13, operator.geometry()), None),
+        ];
+        team.for_each_mut(&mut nested, |_, (rows, images)| {
+            *images = Some(try_run_on(&domains, rows, &pass(2, 2), &team)?.0);
+            Ok::<_, PassError>(())
+        })
+        .expect("nested passes");
+        let outcome = (alone == reference
+            && nested
+                .iter()
+                .all(|(_, images)| images.as_ref() == Some(&reference)))
+        .then_some(())
+        .ok_or("a pass that cannot pipeline gridded otherwise");
+        sender.send(outcome).expect("the law waits");
+    });
+    let outcome = receiver
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("the passes hung");
+    assert_eq!(outcome, Ok(()));
+}
+
+/// #449: a pass whose owners pipeline over two sets of chunks, cancelled
+/// midway, stops within one block with the typed error, every owner's task
+/// joined, as a pass on one set does.
+#[test]
+fn a_pipelined_pass_cancelled_midway_stops_within_a_block() {
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let weighting = WeightingGeneration::Natural { taper: None };
+    let domains = [PassDomain {
+        operator: &operator,
+        resampler: &resampler,
+        partition: Partition::regions(&operator, 3),
+    }];
+    let pass = MajorCyclePass {
+        domains: &domains,
+        weighting: &weighting,
+        modes: ModeSet::DATA,
+        model: None,
+        residency: Residency::All,
+        native_spacing_hz: WIDTH_HZ,
+        backend: BackendChoice::Cpu,
+        metal_stage_timing: false,
+        weights: None,
+        chunk_placements: 8,
+        chunk_sets: 2,
+    };
+    let cancel = Cancel::new();
+    let mut rows = CancellingRows {
+        rows: Rows::random(9 * 37, 43, operator.geometry()),
+        cancel: cancel.clone(),
+        after: 3,
+        filled: 0,
+    };
+    let team = WorkerTeam::new(3).expect("team");
+    let result = run_major_cycle(
+        &pass,
+        &mut rows,
+        &team,
+        &cancel,
+        &mut |_, _| panic!("a cancelled pass hands back no images"),
+        None,
+    );
+    assert!(matches!(result, Err(PassError::Cancelled)), "{result:?}");
+    assert_eq!(rows.filled, 3);
 }
 
 /// A region pass reports its gridding work by anchor row, and strips cut to
@@ -201,6 +501,7 @@ fn first_pass_row_work(
         metal_stage_timing: false,
         weights,
         chunk_placements: CHUNK_PLACEMENTS,
+        chunk_sets: 1,
     };
     let team = WorkerTeam::new(3).expect("team");
     run_major_cycle(&pass, rows, &team, &Cancel::new(), &mut |_, _| Ok(()), None)
@@ -483,6 +784,7 @@ fn writing_pass(
         metal_stage_timing: false,
         weights,
         chunk_placements: CHUNK_PLACEMENTS,
+        chunk_sets: 1,
     };
     let mut written = vec![None; rows.rows.len()];
     let mut write = |block: &NativeBlock, predictions: &[Complex32]| {
@@ -587,6 +889,7 @@ fn a_cancelled_pass_stops_with_a_typed_error() {
         metal_stage_timing: false,
         weights: None,
         chunk_placements: CHUNK_PLACEMENTS,
+        chunk_sets: 1,
     };
     let cancel = Cancel::new();
     cancel.cancel();
@@ -654,6 +957,7 @@ fn a_pass_cancelled_midway_reads_no_further_block() {
         metal_stage_timing: false,
         weights: None,
         chunk_placements: CHUNK_PLACEMENTS,
+        chunk_sets: 1,
     };
     for workers in [1, 3] {
         let cancel = Cancel::new();

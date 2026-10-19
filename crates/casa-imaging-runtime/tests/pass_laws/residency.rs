@@ -30,10 +30,14 @@ const HOST: HostResources = HostResources {
 };
 
 /// A pass whose grid three region owners split takes the largest chunks
-/// that fit its budget (#736), and the default chunks when none does, so a
-/// pass that fits with the default is never refused for larger ones. One
-/// region owner, or plane owners, keep the default chunks whatever the
-/// budget. The block is wide enough for every chunk size to bind.
+/// that fit its budget (#736), two sets of them on the CPU so that its
+/// owners pipeline (#449), and one set of the default chunks when nothing
+/// else fits, so a pass that fits with the default is never refused for
+/// more. Two sets of any size come before one of a larger size. A pass that
+/// writes visibilities, or on Metal, takes one set of the largest chunks;
+/// one region owner, or plane owners, keep one set of the default chunks
+/// whatever the budget. The
+/// block is wide enough for every chunk size to bind.
 #[test]
 fn region_owners_take_the_largest_chunks_that_fit() {
     let operator = operator(GridPrecision::F64, Basis::Constant);
@@ -52,6 +56,7 @@ fn region_owners_take_the_largest_chunks_that_fit() {
         backend: BackendChoice::Cpu,
         block,
         chunk_placements: CHUNK_PLACEMENTS,
+        chunk_sets: 1,
     };
     let regions = [PassDomain {
         operator: &operator,
@@ -59,25 +64,53 @@ fn region_owners_take_the_largest_chunks_that_fit() {
         partition: Partition::regions(&operator, 3),
     }];
     let demand = demand_of(&regions);
-    let bytes = |chunk_placements| {
+    let bytes = |chunk_placements, chunk_sets| {
         WaveDemand {
             chunk_placements,
+            chunk_sets,
             ..demand
         }
         .bytes(1)
     };
-    let default = bytes(CHUNK_PLACEMENTS);
-    let largest = bytes(1 << 18);
-    assert!(bytes(1 << 16) > default && largest > bytes(1 << 17));
-    assert_eq!(demand.plan_chunk_placements(1, u64::MAX), 1 << 18);
-    assert_eq!(demand.plan_chunk_placements(1, largest), 1 << 18);
-    assert_eq!(demand.plan_chunk_placements(1, largest - 1), 1 << 17);
-    assert_eq!(demand.plan_chunk_placements(1, bytes(1 << 16)), 1 << 16);
-    assert_eq!(demand.plan_chunk_placements(1, default), CHUNK_PLACEMENTS);
+    let default = bytes(CHUNK_PLACEMENTS, 1);
+    let largest = bytes(1 << 18, 2);
+    assert!(bytes(1 << 16, 1) > default && largest > bytes(1 << 17, 2));
+    assert!(
+        bytes(CHUNK_PLACEMENTS, 2) > default,
+        "a second set costs its chunks"
+    );
+    assert_eq!(demand.plan_chunks(1, u64::MAX, false), (1 << 18, 2));
+    assert_eq!(demand.plan_chunks(1, largest, false), (1 << 18, 2));
+    assert_eq!(demand.plan_chunks(1, largest - 1, false), (1 << 17, 2));
+    let two_default = bytes(CHUNK_PLACEMENTS, 2);
     assert_eq!(
-        demand.plan_chunk_placements(1, 0),
-        CHUNK_PLACEMENTS,
+        demand.plan_chunks(1, two_default, false),
+        (CHUNK_PLACEMENTS, 2)
+    );
+    assert_eq!(demand.plan_chunks(1, default, false), (CHUNK_PLACEMENTS, 1));
+    assert_eq!(
+        demand.plan_chunks(1, 0, false),
+        (CHUNK_PLACEMENTS, 1),
         "nothing fits: the default, which admission then refuses"
+    );
+    // A pass that writes visibilities does not pipeline (`Wave::pipelines`),
+    // so it keeps one set of the largest chunks that fit rather than two of
+    // smaller ones (#784 review, Astra 3 and Fable 5).
+    for budget in [u64::MAX, largest - 1] {
+        assert_eq!(
+            demand.plan_chunks(1, budget, true),
+            (1 << 18, 1),
+            "a writing pass, budget {budget}"
+        );
+    }
+    let metal = WaveDemand {
+        backend: BackendChoice::Metal,
+        ..demand
+    };
+    assert_eq!(
+        metal.plan_chunks(1, u64::MAX, false),
+        (1 << 18, 1),
+        "Metal owners overlap their grid work already"
     );
 
     let one_owner = [PassDomain {
@@ -90,8 +123,8 @@ fn region_owners_take_the_largest_chunks_that_fit() {
     let plane_owners = [planes(&cube, &cube_resampler, 3)];
     for domains in [&one_owner[..], &plane_owners[..]] {
         assert_eq!(
-            demand_of(domains).plan_chunk_placements(1, u64::MAX),
-            CHUNK_PLACEMENTS
+            demand_of(domains).plan_chunks(1, u64::MAX, false),
+            (CHUNK_PLACEMENTS, 1)
         );
     }
 }
@@ -140,6 +173,7 @@ fn one_plane_budget(backend: BackendChoice, precision: GridPrecision) {
             backend,
             block: rows.maximum_block(),
             chunk_placements: CHUNK_PLACEMENTS,
+            chunk_sets: 1,
         };
         let one = demand.bytes(1);
         assert_eq!(
@@ -226,6 +260,7 @@ fn a_writing_pass_in_waves_is_a_typed_error() {
         metal_stage_timing: false,
         weights: None,
         chunk_placements: CHUNK_PLACEMENTS,
+        chunk_sets: 1,
     };
     let mut write = |_: &_, _: &[_]| -> Result<(), _> { panic!("nothing is written") };
     let mut sink = VisibilitySink {
@@ -291,6 +326,7 @@ fn a_writing_pass_hands_each_row_its_own_prediction() {
             metal_stage_timing: false,
             weights: None,
             chunk_placements: CHUNK_PLACEMENTS,
+            chunk_sets: 1,
         };
         let mut written = vec![None; expected.len()];
         let mut write = |block: &NativeBlock, predictions: &[Complex32]| {

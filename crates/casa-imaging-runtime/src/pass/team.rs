@@ -57,6 +57,31 @@ impl WorkerTeam {
         self.workers
     }
 
+    /// Whether the calling thread can wait on work spawned onto the team
+    /// without holding one of the team's threads: the team has threads of
+    /// its own, and the caller is not one of them. A caller on the team's
+    /// own work that waited there could take the last thread the waited-on
+    /// work needs ([`Self::in_place_scope`]).
+    pub(crate) fn waits_off_team(&self) -> bool {
+        self.pool
+            .as_ref()
+            .is_some_and(|pool| pool.current_thread_index().is_none())
+    }
+
+    /// Run `operation` on the calling thread with a scope whose spawned
+    /// work runs on the team's threads, joined before this returns
+    /// ([`rayon::ThreadPool::in_place_scope`]). The caller may wait on what
+    /// the spawned work releases only when [`Self::waits_off_team`]. `None`
+    /// for a team of one, which has no threads of its own.
+    pub(crate) fn in_place_scope<'scope, R>(
+        &self,
+        operation: impl FnOnce(&rayon::Scope<'scope>) -> R,
+    ) -> Option<R> {
+        self.pool
+            .as_ref()
+            .map(|pool| pool.in_place_scope(operation))
+    }
+
     /// Run `operation` with the team as the current rayon pool, so that
     /// parallel work inside it (a single plane's sparse refresh) runs on the
     /// team's threads.
