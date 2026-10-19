@@ -462,6 +462,11 @@
       "fingerprint": "3121eb371ca0bf8d5701087cb15d0a7ad6687e2172d2303a3cd70a66d463ee11"
     },
     {
+      "id": "parameter.cf_resident_mb",
+      "semantic_revision": 2,
+      "fingerprint": "2b228a85620b43dc5256e6c473285f7373228dc321ee3a778d8fdd6b1971222e"
+    },
+    {
       "id": "parameter.cfcache",
       "semantic_revision": 1,
       "fingerprint": "392f55473a583b6493bb92508117a3b02d645680e95982c5915c031d9e85525d"
@@ -2592,6 +2597,11 @@
       "id": "imager",
       "contract_version": 24,
       "fingerprint": "2a88c82d61df8ddf00b0ba9034f4f351f763ed6e71c8d77c294b953b73036204"
+    },
+    {
+      "id": "imager",
+      "contract_version": 25,
+      "fingerprint": "929068c256bf85fb22ef5b35bf47f095cb31f54baef825d3b94d8900ed5c4574"
     },
     {
       "id": "imcollapse",

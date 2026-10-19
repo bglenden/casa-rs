@@ -336,8 +336,11 @@ pub struct AwProjection {
     /// Flat-noise or flat-sky products.
     #[serde(deserialize_with = "normalization")]
     pub normtype: ProductNormalization,
-    /// Bound on resident convolution-function cells, in MiB.
-    pub cf_resident_mb: usize,
+    /// Bound on resident convolution-function cells, in MiB; `None`
+    /// (`auto`) sizes the cache once the run has chosen its workers, from
+    /// the memory their fit leaves free (#449).
+    #[serde(deserialize_with = "auto_or")]
+    pub cf_resident_mb: Option<usize>,
     /// CASA pointing-offset grouping and refresh thresholds in arcseconds;
     /// any count but two takes CASA's `[600, 600]` under `usepointing`.
     #[serde(deserialize_with = "list")]
@@ -588,6 +591,28 @@ where
         value => Err(unexpected(&value, "text or a number")),
     }
 }
+
+/// `auto` as `None`, else the value as text or a number.
+fn auto_or<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: FromStr,
+    T::Err: fmt::Display,
+{
+    match Value::deserialize(deserializer)? {
+        Value::String(text) if text.trim() == AUTO => Ok(None),
+        Value::String(text) => text.trim().parse().map(Some).map_err(D::Error::custom),
+        Value::Number(number) => number
+            .to_string()
+            .parse()
+            .map(Some)
+            .map_err(D::Error::custom),
+        value => Err(unexpected(&value, "auto, text or a number")),
+    }
+}
+
+/// The catalog's spelling of a value the run chooses itself.
+const AUTO: &str = "auto";
 
 /// The one element of a one-element array, or the element itself.
 fn single<'de, D, T>(deserializer: D) -> Result<T, D::Error>

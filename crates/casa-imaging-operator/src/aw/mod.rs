@@ -6,6 +6,7 @@
 //! and native EVLA generation that writes the same images
 //! (`AWConvFunc::makeConvFunction2`, `CFCell::makePersistent`).
 
+mod cache;
 mod cell_image;
 mod evla;
 mod generation;
@@ -19,6 +20,7 @@ use casa_imaging_model::{CorrelationType, NativeAwRequestInput};
 use num_complex::Complex32;
 use thiserror::Error;
 
+pub use cache::{CacheBound, CacheCharge};
 pub use evla::{EvlaApertureGrid, EvlaApertureModel};
 pub use native::{EvlaAwWorkspace, NativeAwPair, NativeAwPlane};
 pub use native_cache::{NativeCacheLock, NativeCacheState, NativeManifest};
@@ -221,15 +223,14 @@ impl Loaded {
 const ARC_CELL_BYTES: usize = 2 * size_of::<usize>() + size_of::<DenseCell>();
 
 /// The bounded cell cache: least recently used eviction once the loaded
-/// cells exceed the bound; a cell a worker holds stays alive through its
-/// [`CellHold`] after eviction.
+/// cells exceed the catalog's [`CacheBound`]; a cell a worker holds stays
+/// alive through its [`CellHold`] after eviction.
 struct Lru {
     /// One slot per group, allocated once at open (#745 review).
     slots: Vec<Slot>,
     /// Use counter stamped on every fetch.
     clock: u64,
     bytes: usize,
-    bound: usize,
     /// Groups read from disk since the catalog opened.
     loads: u64,
 }
@@ -282,6 +283,7 @@ pub struct AwCatalog {
     mueller: MuellerRouting,
     correction: ImageCorrection,
     lru: Mutex<Lru>,
+    bound: CacheBound,
     /// Signalled whenever a group's load ends, loaded or not, for the
     /// fetchers waiting on it ([`Slot::Loading`]).
     load_ended: Condvar,
@@ -445,9 +447,9 @@ impl AwCatalog {
                 slots: (0..groups.len()).map(|_| Slot::Empty).collect(),
                 clock: 0,
                 bytes: 0,
-                bound: bound_bytes,
                 loads: 0,
             }),
+            bound: CacheBound::new(bound_bytes),
             cells,
             groups,
             oversampling,
@@ -597,25 +599,23 @@ impl AwCatalog {
     }
 
     /// Bytes the catalog holds at most from its open on, with `holders`
-    /// workers fetching cells: what it keeps of its index (each cell's two
-    /// headers and paths, the groups, axes, routes, corrections and the
-    /// cache's group slots, at their capacities) and the larger of its two
-    /// stages. Opening reads one header at a time and lists one axis's
-    /// values before it is reduced. Serving holds its cells and, for each
-    /// holder, the planes it reads to build one group (each read as an image
-    /// array and its copy) with that read's records.
-    ///
-    /// When every group fits the cache's bound nothing is evicted and each
-    /// group is loaded once, so the cells are at most every group (#738).
-    /// Otherwise they are the bound and one group past it, which a fetch
-    /// inserts before the cache evicts, and for each holder the largest
-    /// group twice. A CPU residual holds a gridding cell and a prediction
-    /// cell (#449), and either keeps both alive after eviction, or one
-    /// beside the group it builds outside the cache's lock for the other
-    /// (#744): a [`CellHold`] releases its own cell before it fetches
-    /// (#773 review). Every loaded cell is also its [`Arc`] (#745 review).
+    /// workers fetching cells, at its cache's bound now
+    /// ([`CacheCharge::bytes`]).
     #[must_use]
     pub fn charge_bytes(&self, holders: usize) -> u64 {
+        self.cache_charge().bytes(holders, self.bound.bytes())
+    }
+
+    /// The cache's bound, which a run may raise ([`CacheBound::raise`]).
+    #[must_use]
+    pub fn cache_bound(&self) -> CacheBound {
+        self.bound.clone()
+    }
+
+    /// What the catalog holds as a function of its cache's bound and the
+    /// workers fetching from it.
+    #[must_use]
+    pub fn cache_charge(&self) -> CacheCharge {
         let lru = self.lru.lock().expect("cache lock");
         let paths = self
             .cells
@@ -647,29 +647,19 @@ impl AwCatalog {
             (2 * imaging.max(weight) * size_of::<Complex32>() + lists + CELL_IMAGE_RECORD_BYTES)
                 as u64
         };
-        let largest = self.groups.iter().map(group).max().unwrap_or(0);
-        let every = self.groups.iter().map(group).sum::<u64>();
-        let reading = self
-            .cells
-            .chunks_exact(elements)
-            .map(read)
-            .max()
-            .unwrap_or(0);
-        let bound = lru.bound as u64;
-        let groups = self.groups.len() as u64;
-        let (taps, pairs) = if every <= bound {
-            (every, groups)
-        } else {
-            (
-                bound + (2 * holders as u64 + 1) * largest,
-                groups + 2 * holders as u64 + 1,
-            )
-        };
-        let serving = taps + pairs * 2 * ARC_CELL_BYTES as u64 + holders as u64 * reading;
-        index as u64
-            + self.mueller.bytes()
-            + self.correction.resident_bytes()
-            + opening.max(serving)
+        CacheCharge {
+            kept: index as u64 + self.mueller.bytes() + self.correction.resident_bytes(),
+            opening,
+            every: self.groups.iter().map(group).sum::<u64>(),
+            largest: self.groups.iter().map(group).max().unwrap_or(0),
+            groups: self.groups.len() as u64,
+            reading: self
+                .cells
+                .chunks_exact(elements)
+                .map(read)
+                .max()
+                .unwrap_or(0),
+        }
     }
 
     /// Group `group`'s cells, one per Mueller element.
@@ -769,7 +759,8 @@ impl AwCatalog {
         // other fetcher can mark it loading in between.
         lru.slots[group] = Slot::Loaded(loaded);
         // Evict the least recently used loaded group but the one just loaded.
-        while lru.bytes > lru.bound {
+        let bound = self.bound.bytes();
+        while lru.bytes > bound {
             let Some(oldest) = lru
                 .slots
                 .iter()

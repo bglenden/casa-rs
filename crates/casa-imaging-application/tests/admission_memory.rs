@@ -1052,7 +1052,9 @@ fn evla_surface(root: &Path) -> PathBuf {
 /// admitted before it starts: uncharged, it held 274 MB beyond the
 /// admitted memory. A catalog whose groups all fit its bound is charged
 /// those groups: charged the bound of `cf_resident_mb = 512`, the run
-/// reserved 974 MB for a peak of 398 MB.
+/// reserved 974 MB for a peak of 398 MB. An automatic bound
+/// (`cf_resident_mb = auto`, #449) raised into what the workers leave holds
+/// within what it then charges.
 #[test]
 fn aw_mtmfs_is_admitted_close_to_what_it_holds() {
     if !alone("aw_mtmfs_is_admitted_close_to_what_it_holds") {
@@ -1064,7 +1066,11 @@ fn aw_mtmfs_is_admitted_close_to_what_it_holds() {
     warm(&measurement_set, root.path());
     let cache = root.path().join("native-cf");
     let mut breaches = Vec::new();
-    for label in ["aw generating", "aw reusing"] {
+    for (label, resident) in [
+        ("aw generating", json!(512)),
+        ("aw reusing", json!(512)),
+        ("aw automatic", json!("auto")),
+    ] {
         let mut values = json!({
             "vis": measurement_set,
             "imagename": root.path().join(label.replace(' ', "-")),
@@ -1085,7 +1091,7 @@ fn aw_mtmfs_is_admitted_close_to_what_it_holds() {
             "native_cf_oversampling": 4,
             "native_cf_cache_bytes": 2_147_483_648_u64,
             "native_cf_maximum_cells": 128,
-            "cf_resident_mb": 512,
+            "cf_resident_mb": resident,
             "normtype": "flatnoise",
             "pbcor": true,
         });

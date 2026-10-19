@@ -452,7 +452,14 @@ struct AwPlan {
     native: Option<(NativeAwCachePolicy, NativeAwRequestInput)>,
     indexing: AwIndexing,
     resident_bytes: usize,
+    /// Whether the run raises the bound into the memory its workers leave
+    /// (`cf_resident_mb = auto`).
+    automatic: bool,
 }
+
+/// The cell cache's bound for `cf_resident_mb = auto` before the run raises
+/// it into the memory its workers leave (#449).
+const AUTOMATIC_CELL_CACHE_FLOOR: usize = 256 << 20;
 
 impl Deployment {
     /// Create every domain's output directory, settle the spill directory
@@ -532,6 +539,7 @@ impl AwPlan {
             root: self.root,
             indexing: self.indexing,
             resident_bytes: self.resident_bytes,
+            automatic: self.automatic,
             _lock: lock,
             generation_workers,
         })
@@ -686,10 +694,12 @@ fn aw_plan(
             conjugate_beams: true,
             image_reference_hz: surveyed.spectral.reference_frequency_hz,
         },
-        resident_bytes: aw.cf_resident_mb.checked_mul(1 << 20).ok_or(
-            PrepareError::CfResidentSize {
-                megabytes: aw.cf_resident_mb,
-            },
-        )?,
+        resident_bytes: match aw.cf_resident_mb {
+            Some(megabytes) => megabytes
+                .checked_mul(1 << 20)
+                .ok_or(PrepareError::CfResidentSize { megabytes })?,
+            None => AUTOMATIC_CELL_CACHE_FLOOR,
+        },
+        automatic: aw.cf_resident_mb.is_none(),
     })
 }

@@ -19,7 +19,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 4 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 4 | <code>calibration</code> | 49 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 24 | <code>imager</code> | 81 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 25 | <code>imager</code> | 81 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 4 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
 | [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 3 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
 | [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 3 | <code>image_browser</code> | 17 | browse persistent casacore images |
@@ -219,7 +219,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `24`
+- Contract version: `25`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -288,7 +288,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine. |
 | <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine. |
 | <code>cfcache</code> | <code>parameter.cfcache@r2</code> | <code>optional&lt;path (directory)&gt; (states: none)</code> | <code>"none"</code>; required | Advanced Wide-Field | Read-only CASA AW convolution-function cache input<br><em>Surface:</em> Existing CASA CFS_/WTCFS_ input directory, imported read-only. This is never a native writable cache. |
-| <code>cf_resident_mb</code> | <code>parameter.cf_resident_mb@r1</code> | <code>integer; unit dimension: data_size</code> | <code>256</code>; optional | Advanced Wide-Field | AW convolution-function working-memory ceiling in MiB<br><em>Surface:</em> Per-allocation full-cell LRU and compact source-order tap ceiling in MiB; the runtime charges both and rejects zero. |
+| <code>cf_resident_mb</code> | <code>parameter.cf_resident_mb@r2</code> | <code>optional&lt;integer&gt; (states: auto); unit dimension: data_size</code> | <code>"auto"</code>; optional | Advanced Wide-Field | AW convolution-function cell cache size in MiB, or auto<br><em>Surface:</em> The AW cell cache in MiB, or auto: the memory the worker fit leaves free, from 256 MiB up to every cell; the runtime rejects zero. |
 | <code>pointingoffsetsigdev</code> | <code>parameter.pointingoffsetsigdev@r1</code> | <code>string</code> | <code>"0"</code>; optional | Advanced Wide-Field | Comma-separated AW pointing grouping/refresh thresholds; non-pairs use CASA 600,600 |
 | <code>normtype</code> | <code>parameter.normtype@r2</code> | <code>choice (2 values)</code> | <code>"flatnoise"</code>; optional | Advanced Wide-Field | Mosaic and AWProject sensitivity normalization policy |
 | <code>fitspw</code> | <code>parameter.fitspw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Continuum Subtraction | Fit SPW selector. |

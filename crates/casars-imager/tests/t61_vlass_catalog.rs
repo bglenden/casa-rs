@@ -116,7 +116,7 @@ fn t61_vlass_controls_reach_the_request_and_the_real_snapshot() -> Result<(), Bo
     assert_eq!(wprojplanes.map(usize::from), Some(32));
     assert!(*usepointing);
     assert_eq!(*normtype, ProductNormalization::FlatNoise);
-    assert_eq!(*cf_resident_mb, 384);
+    assert_eq!(*cf_resident_mb, Some(384));
     assert_eq!(pointingoffsetsigdev, &[0.0]);
     assert!(cfcache.ends_with("cf-cache/vlass-spw2-17"));
 

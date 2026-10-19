@@ -57,9 +57,9 @@ pub use accumulator::{
     GridStorage, Mode, ModeSet, PlaneRange, Tile,
 };
 pub use aw::{
-    AwCatalog, AwCatalogError, AwIndexing, EvlaApertureGrid, EvlaApertureModel, EvlaAwWorkspace,
-    NativeAwGenerationError, NativeAwPair, NativeAwPlane, NativeCacheLock, NativeCacheState,
-    NativeManifest,
+    AwCatalog, AwCatalogError, AwIndexing, CacheBound, CacheCharge, EvlaApertureGrid,
+    EvlaApertureModel, EvlaAwWorkspace, NativeAwGenerationError, NativeAwPair, NativeAwPlane,
+    NativeCacheLock, NativeCacheState, NativeManifest,
 };
 pub use backend::{GridBackend, PreparedModelGrids, Work};
 pub use continuum::{
