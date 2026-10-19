@@ -1,0 +1,612 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging-runtime/src/pass/wave/weight_sums.rs`."><title>weight_sums.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="casa_imaging_runtime" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging_runtime/pass/wave/</div>weight_sums.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! An owner's weight image, summed by contribution before it is gridded
+<a href=#3 id=3 data-nosnippet>3</a>//! (#787).
+<a href=#4 id=4 data-nosnippet>4</a>//!
+<a href=#5 id=5 data-nosnippet>5</a>//! `Mode::Weight` places every sample's weight taps at the uv origin
+<a href=#6 id=6 data-nosnippet>6</a>//! (`CpuBackend`'s gridding, the Metal records), so a sample's contribution
+<a href=#7 id=7 data-nosnippet>7</a>//! is fixed by its kernel cell, plane, spectral factor, pointing gradient
+<a href=#8 id=8 data-nosnippet>8</a>//! and the sign of its w, and scales with its weights alone. Samples that
+<a href=#9 id=9 data-nosnippet>9</a>//! agree on those five add the same taps scaled by their weights: summing
+<a href=#10 id=10 data-nosnippet>10</a>//! their weights in f64 first and gridding each group once gives the same
+<a href=#11 id=11 data-nosnippet>11</a>//! image, to rounding, for a lookup and an add per sample rather than a
+<a href=#12 id=12 data-nosnippet>12</a>//! kernel stamp.
+<a href=#13 id=13 data-nosnippet>13</a>//!
+<a href=#14 id=14 data-nosnippet>14</a>//! What it saves, in work and in precision, depends on how many groups the
+<a href=#15 id=15 data-nosnippet>15</a>//! samples share:
+<a href=#16 id=16 data-nosnippet>16</a>//! - **Fixed pointing.** A mosaic with fixed pointings shares a few groups
+<a href=#17 id=17 data-nosnippet>17</a>//!   per pointing and plane: B10, the 1024² ALMA mosaic, sums 4.19 M
+<a href=#18 id=18 data-nosnippet>18</a>//!   placements into 14 (#787). Its weight image then costs a lookup per
+<a href=#19 id=19 data-nosnippet>19</a>//!   sample. On f32 grids (Metal, plan decision D2) it also keeps the grid's
+<a href=#20 id=20 data-nosnippet>20</a>//!   own precision: millions of adds into the origin's cells had lost about
+<a href=#21 id=21 data-nosnippet>21</a>//!   1e-3, and a few adds per group do not.
+<a href=#22 id=22 data-nosnippet>22</a>//! - **A pointing that drifts row by row.** AW projection's pointing does,
+<a href=#23 id=23 data-nosnippet>23</a>//!   which leaves about two samples a group: B3, the 63-field VLASS clean,
+<a href=#24 id=24 data-nosnippet>24</a>//!   has 3.36 M groups for 6.42 M placements. The saving is then about
+<a href=#25 id=25 data-nosnippet>25</a>//!   half, and f32 grids keep most of their per-sample drift.
+<a href=#26 id=26 data-nosnippet>26</a>//!
+<a href=#27 id=27 data-nosnippet>27</a>//! The row-work pass counts the groups the same way ([`GroupCount`]), so
+<a href=#28 id=28 data-nosnippet>28</a>//! the strips charge the weight owner for the stamps it will make.
+<a href=#29 id=29 data-nosnippet>29</a>
+<a href=#30 id=30 data-nosnippet>30</a></span><span class="kw">use </span>std::collections::{HashMap, HashSet};
+<a href=#31 id=31 data-nosnippet>31</a>
+<a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>casa_imaging_operator::{CfKey, Placement, SampleBlock, SampleBuffer};
+<a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span>num_complex::Complex32;
+<a href=#34 id=34 data-nosnippet>34</a>
+<a href=#35 id=35 data-nosnippet>35</a><span class="doccomment">/// Groups an owner's table holds before it grids them and starts again: a
+<a href=#36 id=36 data-nosnippet>36</a>/// mosaic's first pass has a few per pointing and plane (14 on B10), so the
+<a href=#37 id=37 data-nosnippet>37</a>/// table grids once a wave unless the pointing drifts row by row.
+<a href=#38 id=38 data-nosnippet>38</a></span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::pass) <span class="kw">const </span>WEIGHT_GROUPS: usize = <span class="number">1 </span>&lt;&lt; <span class="number">14</span>;
+<a href=#39 id=39 data-nosnippet>39</a>
+<a href=#40 id=40 data-nosnippet>40</a><span class="doccomment">/// Correlations a placement carries at most.
+<a href=#41 id=41 data-nosnippet>41</a></span><span class="kw">const </span>MAX_POL: usize = <span class="number">4</span>;
+<a href=#42 id=42 data-nosnippet>42</a>
+<a href=#43 id=43 data-nosnippet>43</a><span class="doccomment">/// What fixes one sample's weight-image contribution apart from its
+<a href=#44 id=44 data-nosnippet>44</a>/// weights: every input `Mode::Weight` reads but the weights.
+<a href=#45 id=45 data-nosnippet>45</a>///
+<a href=#46 id=46 data-nosnippet>46</a>/// Both backends locate the weight taps at the uv origin, so the sample's
+<a href=#47 id=47 data-nosnippet>47</a>/// `u` and `v` are not read. Only the sign of `w` is read (the Mueller table
+<a href=#48 id=48 data-nosnippet>48</a>/// and the tap conjugation), and `phase` and `prediction_w_positive` are
+<a href=#49 id=49 data-nosnippet>49</a>/// read only by prediction. Floats are kept as their bits, so two samples
+<a href=#50 id=50 data-nosnippet>50</a>/// share a group only when their contributions are the same bits.
+<a href=#51 id=51 data-nosnippet>51</a></span><span class="attr">#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+<a href=#52 id=52 data-nosnippet>52</a></span><span class="kw">struct </span>Contribution {
+<a href=#53 id=53 data-nosnippet>53</a>    cf: CfKey,
+<a href=#54 id=54 data-nosnippet>54</a>    plane: u32,
+<a href=#55 id=55 data-nosnippet>55</a>    spectral: u32,
+<a href=#56 id=56 data-nosnippet>56</a>    gradient: [u32; <span class="number">2</span>],
+<a href=#57 id=57 data-nosnippet>57</a>    w_positive: bool,
+<a href=#58 id=58 data-nosnippet>58</a>}
+<a href=#59 id=59 data-nosnippet>59</a>
+<a href=#60 id=60 data-nosnippet>60</a><span class="kw">impl </span>Contribution {
+<a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">fn </span>of(placement: <span class="kw-2">&amp;</span>Placement) -&gt; <span class="self">Self </span>{
+<a href=#62 id=62 data-nosnippet>62</a>        <span class="self">Self </span>{
+<a href=#63 id=63 data-nosnippet>63</a>            cf: placement.cf,
+<a href=#64 id=64 data-nosnippet>64</a>            plane: placement.plane,
+<a href=#65 id=65 data-nosnippet>65</a>            spectral: placement.spectral.to_bits(),
+<a href=#66 id=66 data-nosnippet>66</a>            gradient: placement.gradient.map(f32::to_bits),
+<a href=#67 id=67 data-nosnippet>67</a>            w_positive: placement.w &gt; <span class="number">0.0</span>,
+<a href=#68 id=68 data-nosnippet>68</a>        }
+<a href=#69 id=69 data-nosnippet>69</a>    }
+<a href=#70 id=70 data-nosnippet>70</a>
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="doccomment">/// A placement with this contribution: at the uv origin, as
+<a href=#72 id=72 data-nosnippet>72</a>    /// `Mode::Weight` grids every sample, with a w of the group's sign.
+<a href=#73 id=73 data-nosnippet>73</a>    </span><span class="kw">fn </span>placement(<span class="self">self</span>) -&gt; Placement {
+<a href=#74 id=74 data-nosnippet>74</a>        Placement {
+<a href=#75 id=75 data-nosnippet>75</a>            u: <span class="number">0.0</span>,
+<a href=#76 id=76 data-nosnippet>76</a>            v: <span class="number">0.0</span>,
+<a href=#77 id=77 data-nosnippet>77</a>            w: <span class="kw">if </span><span class="self">self</span>.w_positive { <span class="number">1.0 </span>} <span class="kw">else </span>{ -<span class="number">1.0 </span>},
+<a href=#78 id=78 data-nosnippet>78</a>            prediction_w_positive: <span class="self">self</span>.w_positive,
+<a href=#79 id=79 data-nosnippet>79</a>            phase: <span class="number">0.0</span>,
+<a href=#80 id=80 data-nosnippet>80</a>            plane: <span class="self">self</span>.plane,
+<a href=#81 id=81 data-nosnippet>81</a>            spectral: f32::from_bits(<span class="self">self</span>.spectral),
+<a href=#82 id=82 data-nosnippet>82</a>            cf: <span class="self">self</span>.cf,
+<a href=#83 id=83 data-nosnippet>83</a>            gradient: <span class="self">self</span>.gradient.map(f32::from_bits),
+<a href=#84 id=84 data-nosnippet>84</a>        }
+<a href=#85 id=85 data-nosnippet>85</a>    }
+<a href=#86 id=86 data-nosnippet>86</a>}
+<a href=#87 id=87 data-nosnippet>87</a>
+<a href=#88 id=88 data-nosnippet>88</a><span class="doccomment">/// The groups a [`WeightSums`] of `capacity` groups grids for the
+<a href=#89 id=89 data-nosnippet>89</a>/// placements it is shown, counted without summing: the row-work pass
+<a href=#90 id=90 data-nosnippet>90</a>/// charges the weight owner a kernel stamp for each
+<a href=#91 id=91 data-nosnippet>91</a>/// ([`ModeWork`](crate::pass::ModeWork)). Its set is allocated whole on the
+<a href=#92 id=92 data-nosnippet>92</a>/// first placement, so a pass without a weight image holds nothing.
+<a href=#93 id=93 data-nosnippet>93</a></span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::pass) <span class="kw">struct </span>GroupCount {
+<a href=#94 id=94 data-nosnippet>94</a>    capacity: usize,
+<a href=#95 id=95 data-nosnippet>95</a>    seen: HashSet&lt;Contribution&gt;,
+<a href=#96 id=96 data-nosnippet>96</a>    last: <span class="prelude-ty">Option</span>&lt;Contribution&gt;,
+<a href=#97 id=97 data-nosnippet>97</a>}
+<a href=#98 id=98 data-nosnippet>98</a>
+<a href=#99 id=99 data-nosnippet>99</a><span class="kw">impl </span>GroupCount {
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="doccomment">/// A counter that forgets every group when `capacity` are held, as a
+<a href=#101 id=101 data-nosnippet>101</a>    /// full [`WeightSums`] grids and starts again.
+<a href=#102 id=102 data-nosnippet>102</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::pass) <span class="kw">fn </span>new(capacity: usize) -&gt; <span class="self">Self </span>{
+<a href=#103 id=103 data-nosnippet>103</a>        <span class="macro">assert!</span>(capacity &gt; <span class="number">0</span>, <span class="string">"a group count holds at least one group"</span>);
+<a href=#104 id=104 data-nosnippet>104</a>        <span class="self">Self </span>{
+<a href=#105 id=105 data-nosnippet>105</a>            capacity,
+<a href=#106 id=106 data-nosnippet>106</a>            seen: HashSet::new(),
+<a href=#107 id=107 data-nosnippet>107</a>            last: <span class="prelude-val">None</span>,
+<a href=#108 id=108 data-nosnippet>108</a>        }
+<a href=#109 id=109 data-nosnippet>109</a>    }
+<a href=#110 id=110 data-nosnippet>110</a>
+<a href=#111 id=111 data-nosnippet>111</a>    <span class="doccomment">/// Bytes a counter of `capacity` groups holds once it has seen a
+<a href=#112 id=112 data-nosnippet>112</a>    /// placement: its hash set's buckets, a key and a control byte each.
+<a href=#113 id=113 data-nosnippet>113</a>    </span><span class="attr">#[must_use]
+<a href=#114 id=114 data-nosnippet>114</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::pass) <span class="kw">fn </span>bytes(capacity: usize) -&gt; u64 {
+<a href=#115 id=115 data-nosnippet>115</a>        <span class="kw">let </span>buckets = (capacity * <span class="number">8</span>).div_ceil(<span class="number">7</span>).next_power_of_two().max(<span class="number">4</span>);
+<a href=#116 id=116 data-nosnippet>116</a>        (buckets * (size_of::&lt;Contribution&gt;() + <span class="number">1</span>) + <span class="number">16</span>) <span class="kw">as </span>u64
+<a href=#117 id=117 data-nosnippet>117</a>    }
+<a href=#118 id=118 data-nosnippet>118</a>
+<a href=#119 id=119 data-nosnippet>119</a>    <span class="doccomment">/// Whether `placement` starts a group that [`WeightSums::add`] would
+<a href=#120 id=120 data-nosnippet>120</a>    /// grid: its contribution is not among those held since the last time
+<a href=#121 id=121 data-nosnippet>121</a>    /// the table filled.
+<a href=#122 id=122 data-nosnippet>122</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::pass) <span class="kw">fn </span>starts(<span class="kw-2">&amp;mut </span><span class="self">self</span>, placement: <span class="kw-2">&amp;</span>Placement) -&gt; bool {
+<a href=#123 id=123 data-nosnippet>123</a>        <span class="kw">let </span>key = Contribution::of(placement);
+<a href=#124 id=124 data-nosnippet>124</a>        <span class="kw">if </span><span class="self">self</span>.last == <span class="prelude-val">Some</span>(key) {
+<a href=#125 id=125 data-nosnippet>125</a>            <span class="kw">return </span><span class="bool-val">false</span>;
+<a href=#126 id=126 data-nosnippet>126</a>        }
+<a href=#127 id=127 data-nosnippet>127</a>        <span class="self">self</span>.last = <span class="prelude-val">Some</span>(key);
+<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">if </span><span class="self">self</span>.seen.capacity() == <span class="number">0 </span>{
+<a href=#129 id=129 data-nosnippet>129</a>            <span class="self">self</span>.seen.reserve(<span class="self">self</span>.capacity);
+<a href=#130 id=130 data-nosnippet>130</a>        }
+<a href=#131 id=131 data-nosnippet>131</a>        <span class="kw">if </span><span class="self">self</span>.seen.contains(<span class="kw-2">&amp;</span>key) {
+<a href=#132 id=132 data-nosnippet>132</a>            <span class="kw">return </span><span class="bool-val">false</span>;
+<a href=#133 id=133 data-nosnippet>133</a>        }
+<a href=#134 id=134 data-nosnippet>134</a>        <span class="kw">if </span><span class="self">self</span>.seen.len() == <span class="self">self</span>.capacity {
+<a href=#135 id=135 data-nosnippet>135</a>            <span class="self">self</span>.seen.clear();
+<a href=#136 id=136 data-nosnippet>136</a>        }
+<a href=#137 id=137 data-nosnippet>137</a>        <span class="self">self</span>.seen.insert(key);
+<a href=#138 id=138 data-nosnippet>138</a>        <span class="bool-val">true
+<a href=#139 id=139 data-nosnippet>139</a>    </span>}
+<a href=#140 id=140 data-nosnippet>140</a>}
+<a href=#141 id=141 data-nosnippet>141</a>
+<a href=#142 id=142 data-nosnippet>142</a><span class="doccomment">/// One owner's weight-image contributions, summed in f64 by
+<a href=#143 id=143 data-nosnippet>143</a>/// [`Contribution`] in the order they first appear, and gridded as one
+<a href=#144 id=144 data-nosnippet>144</a>/// placement per group ([`Self::flush`]) when the table fills and when the
+<a href=#145 id=145 data-nosnippet>145</a>/// wave ends.
+<a href=#146 id=146 data-nosnippet>146</a></span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::pass) <span class="kw">struct </span>WeightSums {
+<a href=#147 id=147 data-nosnippet>147</a>    npol: usize,
+<a href=#148 id=148 data-nosnippet>148</a>    capacity: usize,
+<a href=#149 id=149 data-nosnippet>149</a>    index: HashMap&lt;Contribution, usize&gt;,
+<a href=#150 id=150 data-nosnippet>150</a>    groups: Vec&lt;Contribution&gt;,
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="doccomment">/// `npol` weights per group.
+<a href=#152 id=152 data-nosnippet>152</a>    </span>sums: Vec&lt;f64&gt;,
+<a href=#153 id=153 data-nosnippet>153</a>    <span class="doccomment">/// The groups as placements, for the backend.
+<a href=#154 id=154 data-nosnippet>154</a>    </span>buffer: SampleBuffer,
+<a href=#155 id=155 data-nosnippet>155</a>    <span class="doccomment">/// Placements summed, groups gridded and grids made since the table
+<a href=#156 id=156 data-nosnippet>156</a>    /// was made, for the wave's log ([`Self::totals`]).
+<a href=#157 id=157 data-nosnippet>157</a>    </span>totals: [u64; <span class="number">3</span>],
+<a href=#158 id=158 data-nosnippet>158</a>}
+<a href=#159 id=159 data-nosnippet>159</a>
+<a href=#160 id=160 data-nosnippet>160</a><span class="kw">impl </span>WeightSums {
+<a href=#161 id=161 data-nosnippet>161</a>    <span class="doccomment">/// An empty table of `capacity` groups of `npol` weights, allocated
+<a href=#162 id=162 data-nosnippet>162</a>    /// whole ([`Self::bytes`]).
+<a href=#163 id=163 data-nosnippet>163</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::pass) <span class="kw">fn </span>new(npol: usize, capacity: usize) -&gt; <span class="self">Self </span>{
+<a href=#164 id=164 data-nosnippet>164</a>        <span class="macro">assert!</span>(
+<a href=#165 id=165 data-nosnippet>165</a>            (<span class="number">1</span>..=MAX_POL).contains(<span class="kw-2">&amp;</span>npol),
+<a href=#166 id=166 data-nosnippet>166</a>            <span class="string">"a placement carries one to four correlations"
+<a href=#167 id=167 data-nosnippet>167</a>        </span>);
+<a href=#168 id=168 data-nosnippet>168</a>        <span class="macro">assert!</span>(capacity &gt; <span class="number">0</span>, <span class="string">"a weight table holds at least one group"</span>);
+<a href=#169 id=169 data-nosnippet>169</a>        <span class="self">Self </span>{
+<a href=#170 id=170 data-nosnippet>170</a>            npol,
+<a href=#171 id=171 data-nosnippet>171</a>            capacity,
+<a href=#172 id=172 data-nosnippet>172</a>            index: HashMap::with_capacity(capacity),
+<a href=#173 id=173 data-nosnippet>173</a>            groups: Vec::with_capacity(capacity),
+<a href=#174 id=174 data-nosnippet>174</a>            sums: Vec::with_capacity(capacity * npol),
+<a href=#175 id=175 data-nosnippet>175</a>            buffer: SampleBuffer::with_capacity(npol, capacity),
+<a href=#176 id=176 data-nosnippet>176</a>            totals: [<span class="number">0</span>; <span class="number">3</span>],
+<a href=#177 id=177 data-nosnippet>177</a>        }
+<a href=#178 id=178 data-nosnippet>178</a>    }
+<a href=#179 id=179 data-nosnippet>179</a>
+<a href=#180 id=180 data-nosnippet>180</a>    <span class="doccomment">/// Placements summed, groups gridded and grids made so far.
+<a href=#181 id=181 data-nosnippet>181</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::pass) <span class="kw">const fn </span>totals(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; [u64; <span class="number">3</span>] {
+<a href=#182 id=182 data-nosnippet>182</a>        <span class="self">self</span>.totals
+<a href=#183 id=183 data-nosnippet>183</a>    }
+<a href=#184 id=184 data-nosnippet>184</a>
+<a href=#185 id=185 data-nosnippet>185</a>    <span class="doccomment">/// Bytes a table of `capacity` groups of `npol` weights holds: the
+<a href=#186 id=186 data-nosnippet>186</a>    /// hash index (its buckets, each a key, an index and a control byte,
+<a href=#187 id=187 data-nosnippet>187</a>    /// at the standard library's 7/8 load), the groups, their sums and
+<a href=#188 id=188 data-nosnippet>188</a>    /// the buffer they are gridded from.
+<a href=#189 id=189 data-nosnippet>189</a>    </span><span class="attr">#[must_use]
+<a href=#190 id=190 data-nosnippet>190</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::pass) <span class="kw">fn </span>bytes(npol: usize, capacity: usize) -&gt; u64 {
+<a href=#191 id=191 data-nosnippet>191</a>        <span class="kw">let </span>buckets = (capacity * <span class="number">8</span>).div_ceil(<span class="number">7</span>).next_power_of_two().max(<span class="number">4</span>);
+<a href=#192 id=192 data-nosnippet>192</a>        <span class="kw">let </span>index = buckets * (size_of::&lt;(Contribution, usize)&gt;() + <span class="number">1</span>) + <span class="number">16</span>;
+<a href=#193 id=193 data-nosnippet>193</a>        (index + capacity * size_of::&lt;Contribution&gt;() + capacity * npol * size_of::&lt;f64&gt;()) <span class="kw">as </span>u64
+<a href=#194 id=194 data-nosnippet>194</a>            + SampleBuffer::bytes(npol, capacity)
+<a href=#195 id=195 data-nosnippet>195</a>    }
+<a href=#196 id=196 data-nosnippet>196</a>
+<a href=#197 id=197 data-nosnippet>197</a>    <span class="doccomment">/// Bytes the table holds now, from its parts' capacities.
+<a href=#198 id=198 data-nosnippet>198</a>    </span><span class="attr">#[cfg(test)]
+<a href=#199 id=199 data-nosnippet>199</a>    </span><span class="kw">fn </span>capacity_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
+<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">let </span>index = <span class="self">self</span>.index.capacity();
+<a href=#201 id=201 data-nosnippet>201</a>        <span class="kw">let </span>buckets = (index * <span class="number">8</span>).div_ceil(<span class="number">7</span>).next_power_of_two().max(<span class="number">4</span>);
+<a href=#202 id=202 data-nosnippet>202</a>        (buckets * (size_of::&lt;(Contribution, usize)&gt;() + <span class="number">1</span>)
+<a href=#203 id=203 data-nosnippet>203</a>            + <span class="number">16
+<a href=#204 id=204 data-nosnippet>204</a>            </span>+ <span class="self">self</span>.groups.capacity() * size_of::&lt;Contribution&gt;()
+<a href=#205 id=205 data-nosnippet>205</a>            + <span class="self">self</span>.sums.capacity() * size_of::&lt;f64&gt;()) <span class="kw">as </span>u64
+<a href=#206 id=206 data-nosnippet>206</a>            + <span class="self">self</span>.buffer.capacity_bytes()
+<a href=#207 id=207 data-nosnippet>207</a>    }
+<a href=#208 id=208 data-nosnippet>208</a>
+<a href=#209 id=209 data-nosnippet>209</a>    <span class="doccomment">/// Add the weights of every placement of `block` to its group, gridding
+<a href=#210 id=210 data-nosnippet>210</a>    /// the groups through `grid` first whenever a new group finds the
+<a href=#211 id=211 data-nosnippet>211</a>    /// table full.
+<a href=#212 id=212 data-nosnippet>212</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::pass) <span class="kw">fn </span>add&lt;E&gt;(
+<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#214 id=214 data-nosnippet>214</a>        block: <span class="kw-2">&amp;</span>SampleBlock&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#215 id=215 data-nosnippet>215</a>        grid: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>FnMut(<span class="kw-2">&amp;</span>SampleBlock&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), E&gt;,
+<a href=#216 id=216 data-nosnippet>216</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), E&gt; {
+<a href=#217 id=217 data-nosnippet>217</a>        <span class="macro">debug_assert_eq!</span>(block.npol, <span class="self">self</span>.npol, <span class="string">"the table's correlations"</span>);
+<a href=#218 id=218 data-nosnippet>218</a>        <span class="self">self</span>.totals[<span class="number">0</span>] += block.len() <span class="kw">as </span>u64;
+<a href=#219 id=219 data-nosnippet>219</a>        <span class="comment">// Rows place their channels together, so successive samples share
+<a href=#220 id=220 data-nosnippet>220</a>        // a group almost always: look the hash up only when it changes.
+<a href=#221 id=221 data-nosnippet>221</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>last: <span class="prelude-ty">Option</span>&lt;(Contribution, usize)&gt; = <span class="prelude-val">None</span>;
+<a href=#222 id=222 data-nosnippet>222</a>        <span class="kw">for </span>(index, placement) <span class="kw">in </span>block.placements.iter().enumerate() {
+<a href=#223 id=223 data-nosnippet>223</a>            <span class="kw">let </span>key = Contribution::of(placement);
+<a href=#224 id=224 data-nosnippet>224</a>            <span class="kw">let </span>group = <span class="kw">match </span>last {
+<a href=#225 id=225 data-nosnippet>225</a>                <span class="prelude-val">Some</span>((held, group)) <span class="kw">if </span>held == key =&gt; group,
+<a href=#226 id=226 data-nosnippet>226</a>                <span class="kw">_ </span>=&gt; {
+<a href=#227 id=227 data-nosnippet>227</a>                    <span class="kw">let </span>group = <span class="kw">match </span><span class="self">self</span>.index.get(<span class="kw-2">&amp;</span>key) {
+<a href=#228 id=228 data-nosnippet>228</a>                        <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>group) =&gt; group,
+<a href=#229 id=229 data-nosnippet>229</a>                        <span class="prelude-val">None </span>=&gt; {
+<a href=#230 id=230 data-nosnippet>230</a>                            <span class="kw">if </span><span class="self">self</span>.groups.len() == <span class="self">self</span>.capacity {
+<a href=#231 id=231 data-nosnippet>231</a>                                <span class="self">self</span>.flush(grid)<span class="question-mark">?</span>;
+<a href=#232 id=232 data-nosnippet>232</a>                            }
+<a href=#233 id=233 data-nosnippet>233</a>                            <span class="kw">let </span>group = <span class="self">self</span>.groups.len();
+<a href=#234 id=234 data-nosnippet>234</a>                            <span class="self">self</span>.index.insert(key, group);
+<a href=#235 id=235 data-nosnippet>235</a>                            <span class="self">self</span>.groups.push(key);
+<a href=#236 id=236 data-nosnippet>236</a>                            <span class="self">self</span>.sums.resize(<span class="self">self</span>.sums.len() + <span class="self">self</span>.npol, <span class="number">0.0</span>);
+<a href=#237 id=237 data-nosnippet>237</a>                            group
+<a href=#238 id=238 data-nosnippet>238</a>                        }
+<a href=#239 id=239 data-nosnippet>239</a>                    };
+<a href=#240 id=240 data-nosnippet>240</a>                    last = <span class="prelude-val">Some</span>((key, group));
+<a href=#241 id=241 data-nosnippet>241</a>                    group
+<a href=#242 id=242 data-nosnippet>242</a>                }
+<a href=#243 id=243 data-nosnippet>243</a>            };
+<a href=#244 id=244 data-nosnippet>244</a>            <span class="kw">let </span>sums = <span class="kw-2">&amp;mut </span><span class="self">self</span>.sums[group * <span class="self">self</span>.npol..(group + <span class="number">1</span>) * <span class="self">self</span>.npol];
+<a href=#245 id=245 data-nosnippet>245</a>            <span class="kw">for </span>(sum, weight) <span class="kw">in </span>sums.iter_mut().zip(block.weights_of(index)) {
+<a href=#246 id=246 data-nosnippet>246</a>                <span class="kw-2">*</span>sum += f64::from(<span class="kw-2">*</span>weight);
+<a href=#247 id=247 data-nosnippet>247</a>            }
+<a href=#248 id=248 data-nosnippet>248</a>        }
+<a href=#249 id=249 data-nosnippet>249</a>        <span class="prelude-val">Ok</span>(())
+<a href=#250 id=250 data-nosnippet>250</a>    }
+<a href=#251 id=251 data-nosnippet>251</a>
+<a href=#252 id=252 data-nosnippet>252</a>    <span class="doccomment">/// Grid every group through `grid`, as one placement of its summed
+<a href=#253 id=253 data-nosnippet>253</a>    /// weights each, and empty the table. Nothing when it is empty.
+<a href=#254 id=254 data-nosnippet>254</a>    </span><span class="kw">pub</span>(<span class="kw">in </span><span class="kw">crate</span>::pass) <span class="kw">fn </span>flush&lt;E&gt;(
+<a href=#255 id=255 data-nosnippet>255</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#256 id=256 data-nosnippet>256</a>        grid: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>FnMut(<span class="kw-2">&amp;</span>SampleBlock&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), E&gt;,
+<a href=#257 id=257 data-nosnippet>257</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), E&gt; {
+<a href=#258 id=258 data-nosnippet>258</a>        <span class="kw">if </span><span class="self">self</span>.groups.is_empty() {
+<a href=#259 id=259 data-nosnippet>259</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#260 id=260 data-nosnippet>260</a>        }
+<a href=#261 id=261 data-nosnippet>261</a>        <span class="self">self</span>.buffer.clear();
+<a href=#262 id=262 data-nosnippet>262</a>        <span class="kw">let </span>values = [Complex32::default(); MAX_POL];
+<a href=#263 id=263 data-nosnippet>263</a>        <span class="kw">let </span><span class="kw-2">mut </span>weights = [<span class="number">0.0_f32</span>; MAX_POL];
+<a href=#264 id=264 data-nosnippet>264</a>        <span class="kw">for </span>(group, key) <span class="kw">in </span><span class="self">self</span>.groups.iter().enumerate() {
+<a href=#265 id=265 data-nosnippet>265</a>            <span class="kw">let </span>sums = <span class="kw-2">&amp;</span><span class="self">self</span>.sums[group * <span class="self">self</span>.npol..(group + <span class="number">1</span>) * <span class="self">self</span>.npol];
+<a href=#266 id=266 data-nosnippet>266</a>            <span class="kw">for </span>(weight, sum) <span class="kw">in </span>weights.iter_mut().zip(sums) {
+<a href=#267 id=267 data-nosnippet>267</a>                <span class="kw-2">*</span>weight = <span class="kw-2">*</span>sum <span class="kw">as </span>f32;
+<a href=#268 id=268 data-nosnippet>268</a>            }
+<a href=#269 id=269 data-nosnippet>269</a>            <span class="self">self</span>.buffer
+<a href=#270 id=270 data-nosnippet>270</a>                .push(key.placement(), <span class="kw-2">&amp;</span>values[..<span class="self">self</span>.npol], <span class="kw-2">&amp;</span>weights[..<span class="self">self</span>.npol]);
+<a href=#271 id=271 data-nosnippet>271</a>        }
+<a href=#272 id=272 data-nosnippet>272</a>        <span class="self">self</span>.totals[<span class="number">1</span>] += <span class="self">self</span>.groups.len() <span class="kw">as </span>u64;
+<a href=#273 id=273 data-nosnippet>273</a>        <span class="self">self</span>.totals[<span class="number">2</span>] += <span class="number">1</span>;
+<a href=#274 id=274 data-nosnippet>274</a>        <span class="self">self</span>.index.clear();
+<a href=#275 id=275 data-nosnippet>275</a>        <span class="self">self</span>.groups.clear();
+<a href=#276 id=276 data-nosnippet>276</a>        <span class="self">self</span>.sums.clear();
+<a href=#277 id=277 data-nosnippet>277</a>        grid(<span class="kw-2">&amp;</span><span class="self">self</span>.buffer.block())
+<a href=#278 id=278 data-nosnippet>278</a>    }
+<a href=#279 id=279 data-nosnippet>279</a>}
+<a href=#280 id=280 data-nosnippet>280</a>
+<a href=#281 id=281 data-nosnippet>281</a><span class="attr">#[cfg(test)]
+<a href=#282 id=282 data-nosnippet>282</a></span><span class="kw">mod </span>tests {
+<a href=#283 id=283 data-nosnippet>283</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#284 id=284 data-nosnippet>284</a>
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="kw">fn </span>placement(cf: u16, plane: u32, spectral: f32, gradient: [f32; <span class="number">2</span>], w: f64) -&gt; Placement {
+<a href=#286 id=286 data-nosnippet>286</a>        Placement {
+<a href=#287 id=287 data-nosnippet>287</a>            u: <span class="number">123.0</span>,
+<a href=#288 id=288 data-nosnippet>288</a>            v: -<span class="number">45.0</span>,
+<a href=#289 id=289 data-nosnippet>289</a>            w,
+<a href=#290 id=290 data-nosnippet>290</a>            prediction_w_positive: w &gt; <span class="number">0.0</span>,
+<a href=#291 id=291 data-nosnippet>291</a>            phase: <span class="number">0.7</span>,
+<a href=#292 id=292 data-nosnippet>292</a>            plane,
+<a href=#293 id=293 data-nosnippet>293</a>            spectral,
+<a href=#294 id=294 data-nosnippet>294</a>            cf: CfKey { group: cf, cube: <span class="number">0 </span>},
+<a href=#295 id=295 data-nosnippet>295</a>            gradient,
+<a href=#296 id=296 data-nosnippet>296</a>        }
+<a href=#297 id=297 data-nosnippet>297</a>    }
+<a href=#298 id=298 data-nosnippet>298</a>
+<a href=#299 id=299 data-nosnippet>299</a>    <span class="doccomment">/// The groups a table hands to `grid`, with their summed weights.
+<a href=#300 id=300 data-nosnippet>300</a>    </span><span class="kw">fn </span>flushed(sums: <span class="kw-2">&amp;mut </span>WeightSums) -&gt; Vec&lt;(Placement, Vec&lt;f32&gt;)&gt; {
+<a href=#301 id=301 data-nosnippet>301</a>        <span class="kw">let </span><span class="kw-2">mut </span>out = Vec::new();
+<a href=#302 id=302 data-nosnippet>302</a>        sums.flush(<span class="kw-2">&amp;mut </span>|block: <span class="kw-2">&amp;</span>SampleBlock&lt;<span class="lifetime">'_</span>&gt;| {
+<a href=#303 id=303 data-nosnippet>303</a>            <span class="kw">for </span>(index, placement) <span class="kw">in </span>block.placements.iter().enumerate() {
+<a href=#304 id=304 data-nosnippet>304</a>                out.push((<span class="kw-2">*</span>placement, block.weights_of(index).to_vec()));
+<a href=#305 id=305 data-nosnippet>305</a>            }
+<a href=#306 id=306 data-nosnippet>306</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ()&gt;(())
+<a href=#307 id=307 data-nosnippet>307</a>        })
+<a href=#308 id=308 data-nosnippet>308</a>        .expect(<span class="string">"flush"</span>);
+<a href=#309 id=309 data-nosnippet>309</a>        out
+<a href=#310 id=310 data-nosnippet>310</a>    }
+<a href=#311 id=311 data-nosnippet>311</a>
+<a href=#312 id=312 data-nosnippet>312</a>    <span class="doccomment">/// Samples that differ in any input of `Mode::Weight` but their weights
+<a href=#313 id=313 data-nosnippet>313</a>    /// keep apart, and the rest merge with their weights summed (#787).
+<a href=#314 id=314 data-nosnippet>314</a>    </span><span class="attr">#[test]
+<a href=#315 id=315 data-nosnippet>315</a>    </span><span class="kw">fn </span>only_samples_with_one_contribution_share_a_group() {
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">let </span>base = placement(<span class="number">1</span>, <span class="number">0</span>, <span class="number">0.25</span>, [<span class="number">0.5</span>, -<span class="number">0.5</span>], <span class="number">10.0</span>);
+<a href=#317 id=317 data-nosnippet>317</a>        <span class="kw">let </span>variants = [
+<a href=#318 id=318 data-nosnippet>318</a>            base,
+<a href=#319 id=319 data-nosnippet>319</a>            placement(<span class="number">2</span>, <span class="number">0</span>, <span class="number">0.25</span>, [<span class="number">0.5</span>, -<span class="number">0.5</span>], <span class="number">10.0</span>),
+<a href=#320 id=320 data-nosnippet>320</a>            placement(<span class="number">1</span>, <span class="number">1</span>, <span class="number">0.25</span>, [<span class="number">0.5</span>, -<span class="number">0.5</span>], <span class="number">10.0</span>),
+<a href=#321 id=321 data-nosnippet>321</a>            placement(<span class="number">1</span>, <span class="number">0</span>, <span class="number">0.5</span>, [<span class="number">0.5</span>, -<span class="number">0.5</span>], <span class="number">10.0</span>),
+<a href=#322 id=322 data-nosnippet>322</a>            placement(<span class="number">1</span>, <span class="number">0</span>, <span class="number">0.25</span>, [<span class="number">0.25</span>, -<span class="number">0.5</span>], <span class="number">10.0</span>),
+<a href=#323 id=323 data-nosnippet>323</a>            placement(<span class="number">1</span>, <span class="number">0</span>, <span class="number">0.25</span>, [<span class="number">0.5</span>, -<span class="number">0.25</span>], <span class="number">10.0</span>),
+<a href=#324 id=324 data-nosnippet>324</a>            placement(<span class="number">1</span>, <span class="number">0</span>, <span class="number">0.25</span>, [<span class="number">0.5</span>, -<span class="number">0.5</span>], -<span class="number">10.0</span>),
+<a href=#325 id=325 data-nosnippet>325</a>        ];
+<a href=#326 id=326 data-nosnippet>326</a>        <span class="comment">// The base again at another uv, w magnitude and phase, which
+<a href=#327 id=327 data-nosnippet>327</a>        // `Mode::Weight` does not read.
+<a href=#328 id=328 data-nosnippet>328</a>        </span><span class="kw">let </span>same = Placement {
+<a href=#329 id=329 data-nosnippet>329</a>            u: -<span class="number">9.0</span>,
+<a href=#330 id=330 data-nosnippet>330</a>            v: <span class="number">8.0</span>,
+<a href=#331 id=331 data-nosnippet>331</a>            w: <span class="number">3.0</span>,
+<a href=#332 id=332 data-nosnippet>332</a>            phase: -<span class="number">1.0</span>,
+<a href=#333 id=333 data-nosnippet>333</a>            ..base
+<a href=#334 id=334 data-nosnippet>334</a>        };
+<a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">let </span><span class="kw-2">mut </span>buffer = SampleBuffer::with_capacity(<span class="number">2</span>, <span class="number">16</span>);
+<a href=#336 id=336 data-nosnippet>336</a>        <span class="kw">for </span>placement <span class="kw">in </span>variants.iter().chain([<span class="kw-2">&amp;</span>same]) {
+<a href=#337 id=337 data-nosnippet>337</a>            buffer.push(<span class="kw-2">*</span>placement, <span class="kw-2">&amp;</span>[Complex32::default(); <span class="number">2</span>], <span class="kw-2">&amp;</span>[<span class="number">1.5</span>, <span class="number">2.5</span>]);
+<a href=#338 id=338 data-nosnippet>338</a>        }
+<a href=#339 id=339 data-nosnippet>339</a>        <span class="kw">let </span><span class="kw-2">mut </span>sums = WeightSums::new(<span class="number">2</span>, <span class="number">16</span>);
+<a href=#340 id=340 data-nosnippet>340</a>        sums.add(<span class="kw-2">&amp;</span>buffer.block(), <span class="kw-2">&amp;mut </span>|<span class="kw">_</span>: <span class="kw-2">&amp;</span>SampleBlock&lt;<span class="lifetime">'_</span>&gt;| <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ()&gt;(()))
+<a href=#341 id=341 data-nosnippet>341</a>            .expect(<span class="string">"add"</span>);
+<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">let </span>groups = flushed(<span class="kw-2">&amp;mut </span>sums);
+<a href=#343 id=343 data-nosnippet>343</a>        <span class="macro">assert_eq!</span>(groups.len(), variants.len());
+<a href=#344 id=344 data-nosnippet>344</a>        <span class="macro">assert_eq!</span>(groups[<span class="number">0</span>].<span class="number">1</span>, [<span class="number">3.0</span>, <span class="number">5.0</span>], <span class="string">"the base merged with its twin"</span>);
+<a href=#345 id=345 data-nosnippet>345</a>        <span class="kw">for </span>(group, variant) <span class="kw">in </span>groups.iter().zip(<span class="kw-2">&amp;</span>variants).skip(<span class="number">1</span>) {
+<a href=#346 id=346 data-nosnippet>346</a>            <span class="macro">assert_eq!</span>(group.<span class="number">1</span>, [<span class="number">1.5</span>, <span class="number">2.5</span>]);
+<a href=#347 id=347 data-nosnippet>347</a>            <span class="macro">assert_eq!</span>(Contribution::of(<span class="kw-2">&amp;</span>group.<span class="number">0</span>), Contribution::of(variant));
+<a href=#348 id=348 data-nosnippet>348</a>        }
+<a href=#349 id=349 data-nosnippet>349</a>        <span class="macro">assert!</span>(flushed(<span class="kw-2">&amp;mut </span>sums).is_empty(), <span class="string">"a flush empties the table"</span>);
+<a href=#350 id=350 data-nosnippet>350</a>    }
+<a href=#351 id=351 data-nosnippet>351</a>
+<a href=#352 id=352 data-nosnippet>352</a>    <span class="doccomment">/// A full table grids its groups before it takes a new one, and every
+<a href=#353 id=353 data-nosnippet>353</a>    /// weight reaches exactly one flushed group.
+<a href=#354 id=354 data-nosnippet>354</a>    </span><span class="attr">#[test]
+<a href=#355 id=355 data-nosnippet>355</a>    </span><span class="kw">fn </span>a_full_table_grids_before_it_takes_a_new_group() {
+<a href=#356 id=356 data-nosnippet>356</a>        <span class="kw">let </span><span class="kw-2">mut </span>buffer = SampleBuffer::with_capacity(<span class="number">1</span>, <span class="number">64</span>);
+<a href=#357 id=357 data-nosnippet>357</a>        <span class="kw">for </span>sample <span class="kw">in </span><span class="number">0</span>..<span class="number">64_u32 </span>{
+<a href=#358 id=358 data-nosnippet>358</a>            <span class="kw">let </span>cf = u16::try_from(sample % <span class="number">5</span>).expect(<span class="string">"small"</span>);
+<a href=#359 id=359 data-nosnippet>359</a>            buffer.push(
+<a href=#360 id=360 data-nosnippet>360</a>                placement(cf, <span class="number">0</span>, <span class="number">0.0</span>, [<span class="number">0.0</span>, <span class="number">0.0</span>], <span class="number">1.0</span>),
+<a href=#361 id=361 data-nosnippet>361</a>                <span class="kw-2">&amp;</span>[Complex32::default()],
+<a href=#362 id=362 data-nosnippet>362</a>                <span class="kw-2">&amp;</span>[<span class="number">1.0</span>],
+<a href=#363 id=363 data-nosnippet>363</a>            );
+<a href=#364 id=364 data-nosnippet>364</a>        }
+<a href=#365 id=365 data-nosnippet>365</a>        <span class="kw">let </span><span class="kw-2">mut </span>sums = WeightSums::new(<span class="number">1</span>, <span class="number">3</span>);
+<a href=#366 id=366 data-nosnippet>366</a>        <span class="kw">let </span><span class="kw-2">mut </span>grids = <span class="number">0</span>;
+<a href=#367 id=367 data-nosnippet>367</a>        <span class="kw">let </span><span class="kw-2">mut </span>total = <span class="number">0.0</span>;
+<a href=#368 id=368 data-nosnippet>368</a>        <span class="kw">let </span><span class="kw-2">mut </span>grid = |block: <span class="kw-2">&amp;</span>SampleBlock&lt;<span class="lifetime">'_</span>&gt;| {
+<a href=#369 id=369 data-nosnippet>369</a>            <span class="macro">assert!</span>(block.len() &lt;= <span class="number">3</span>, <span class="string">"never more groups than the table holds"</span>);
+<a href=#370 id=370 data-nosnippet>370</a>            grids += <span class="number">1</span>;
+<a href=#371 id=371 data-nosnippet>371</a>            total += block.weights.iter().map(|w| f64::from(<span class="kw-2">*</span>w)).sum::&lt;f64&gt;();
+<a href=#372 id=372 data-nosnippet>372</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ()&gt;(())
+<a href=#373 id=373 data-nosnippet>373</a>        };
+<a href=#374 id=374 data-nosnippet>374</a>        sums.add(<span class="kw-2">&amp;</span>buffer.block(), <span class="kw-2">&amp;mut </span>grid).expect(<span class="string">"add"</span>);
+<a href=#375 id=375 data-nosnippet>375</a>        sums.flush(<span class="kw-2">&amp;mut </span>grid).expect(<span class="string">"flush"</span>);
+<a href=#376 id=376 data-nosnippet>376</a>        <span class="macro">assert!</span>(grids &gt; <span class="number">1</span>, <span class="string">"the table filled and gridded early"</span>);
+<a href=#377 id=377 data-nosnippet>377</a>        <span class="macro">assert_eq!</span>(total, <span class="number">64.0</span>);
+<a href=#378 id=378 data-nosnippet>378</a>    }
+<a href=#379 id=379 data-nosnippet>379</a>
+<a href=#380 id=380 data-nosnippet>380</a>    <span class="doccomment">/// The ALMA 12 m mosaic set on a 64² grid, on a two-term Taylor basis,
+<a href=#381 id=381 data-nosnippet>381</a>    /// gridding at `precision`.
+<a href=#382 id=382 data-nosnippet>382</a>    </span><span class="kw">fn </span>mosaic_operator(
+<a href=#383 id=383 data-nosnippet>383</a>        precision: casa_imaging_operator::GridPrecision,
+<a href=#384 id=384 data-nosnippet>384</a>    ) -&gt; casa_imaging_operator::MeasurementOperator {
+<a href=#385 id=385 data-nosnippet>385</a>        <span class="kw">use </span>casa_imaging_model::{CorrelationType, PolarizationCoordinate};
+<a href=#386 id=386 data-nosnippet>386</a>        <span class="kw">use </span>casa_imaging_operator::{
+<a href=#387 id=387 data-nosnippet>387</a>            AiryDish, Basis, GridGeometry, GridPadding, ImageExtent, MeasurementOperator, MosaicPb,
+<a href=#388 id=388 data-nosnippet>388</a>            MosaicWindow, PolarizationRouting,
+<a href=#389 id=389 data-nosnippet>389</a>        };
+<a href=#390 id=390 data-nosnippet>390</a>        <span class="kw">let </span>geometry = GridGeometry::new(
+<a href=#391 id=391 data-nosnippet>391</a>            ImageExtent {
+<a href=#392 id=392 data-nosnippet>392</a>                shape: [<span class="number">64</span>, <span class="number">64</span>],
+<a href=#393 id=393 data-nosnippet>393</a>                increment_rad: [-<span class="number">2.0e-5</span>, <span class="number">2.0e-5</span>],
+<a href=#394 id=394 data-nosnippet>394</a>                reference_pixel: [<span class="number">32</span>, <span class="number">32</span>],
+<a href=#395 id=395 data-nosnippet>395</a>            },
+<a href=#396 id=396 data-nosnippet>396</a>            GridPadding::None,
+<a href=#397 id=397 data-nosnippet>397</a>        )
+<a href=#398 id=398 data-nosnippet>398</a>        .expect(<span class="string">"geometry"</span>);
+<a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">let </span>routing = PolarizationRouting::compile(
+<a href=#400 id=400 data-nosnippet>400</a>            <span class="kw-2">&amp;</span>[CorrelationType::LinearXx, CorrelationType::LinearYy],
+<a href=#401 id=401 data-nosnippet>401</a>            <span class="kw-2">&amp;</span>[PolarizationCoordinate::StokesI],
+<a href=#402 id=402 data-nosnippet>402</a>        )
+<a href=#403 id=403 data-nosnippet>403</a>        .expect(<span class="string">"routing"</span>);
+<a href=#404 id=404 data-nosnippet>404</a>        <span class="kw">let </span>window = MosaicWindow {
+<a href=#405 id=405 data-nosnippet>405</a>            spectral_window: <span class="number">0</span>,
+<a href=#406 id=406 data-nosnippet>406</a>            window_frequencies_hz: <span class="macro">vec!</span>[<span class="number">0.98e11</span>, <span class="number">1.0e11</span>],
+<a href=#407 id=407 data-nosnippet>407</a>            channel_width_hz: <span class="number">1.0e6</span>,
+<a href=#408 id=408 data-nosnippet>408</a>            selected_frequencies_hz: <span class="macro">vec!</span>[<span class="number">1.0e11</span>],
+<a href=#409 id=409 data-nosnippet>409</a>        };
+<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw">let </span>dishes = [AiryDish::casa_alma(<span class="number">12.0</span>, <span class="kw-2">&amp;</span>geometry)];
+<a href=#411 id=411 data-nosnippet>411</a>        <span class="kw">let </span>cf =
+<a href=#412 id=412 data-nosnippet>412</a>            MosaicPb::new(<span class="kw-2">&amp;</span>geometry, <span class="kw-2">&amp;</span>routing, <span class="number">1.0e11</span>, <span class="kw-2">&amp;</span>dishes, <span class="kw-2">&amp;</span>[window]).expect(<span class="string">"mosaic set"</span>);
+<a href=#413 id=413 data-nosnippet>413</a>        MeasurementOperator::new(
+<a href=#414 id=414 data-nosnippet>414</a>            geometry,
+<a href=#415 id=415 data-nosnippet>415</a>            Basis::Taylor {
+<a href=#416 id=416 data-nosnippet>416</a>                terms: <span class="number">2</span>,
+<a href=#417 id=417 data-nosnippet>417</a>                reference_hz: <span class="number">1.0e11</span>,
+<a href=#418 id=418 data-nosnippet>418</a>            },
+<a href=#419 id=419 data-nosnippet>419</a>            routing,
+<a href=#420 id=420 data-nosnippet>420</a>            Box::new(cf),
+<a href=#421 id=421 data-nosnippet>421</a>            precision,
+<a href=#422 id=422 data-nosnippet>422</a>        )
+<a href=#423 id=423 data-nosnippet>423</a>    }
+<a href=#424 id=424 data-nosnippet>424</a>
+<a href=#425 id=425 data-nosnippet>425</a>    <span class="doccomment">/// `samples` weight placements over three pointings, three spectral
+<a href=#426 id=426 data-nosnippet>426</a>    /// factors and both signs of w, with random weights, in random order.
+<a href=#427 id=427 data-nosnippet>427</a>    </span><span class="kw">fn </span>weight_samples(
+<a href=#428 id=428 data-nosnippet>428</a>        operator: <span class="kw-2">&amp;</span>casa_imaging_operator::MeasurementOperator,
+<a href=#429 id=429 data-nosnippet>429</a>        samples: usize,
+<a href=#430 id=430 data-nosnippet>430</a>    ) -&gt; SampleBuffer {
+<a href=#431 id=431 data-nosnippet>431</a>        <span class="kw">let </span>gradients = [[<span class="number">0.0</span>, <span class="number">0.0</span>], [<span class="number">0.6</span>, -<span class="number">0.2</span>], [-<span class="number">0.3</span>, <span class="number">0.9</span>]].map(|offset: [f64; <span class="number">2</span>]| {
+<a href=#432 id=432 data-nosnippet>432</a>            operator
+<a href=#433 id=433 data-nosnippet>433</a>                .geometry()
+<a href=#434 id=434 data-nosnippet>434</a>                .pointing_gradient([offset[<span class="number">0</span>] * <span class="number">1.0e-4</span>, offset[<span class="number">1</span>] * <span class="number">1.0e-4</span>])
+<a href=#435 id=435 data-nosnippet>435</a>        });
+<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">let </span>spectral = [-<span class="number">0.01_f32</span>, <span class="number">0.0</span>, <span class="number">0.02</span>];
+<a href=#437 id=437 data-nosnippet>437</a>        <span class="kw">let </span><span class="kw-2">mut </span>state = <span class="number">0x9e37_79b9_7f4a_7c15_u64</span>;
+<a href=#438 id=438 data-nosnippet>438</a>        <span class="kw">let </span><span class="kw-2">mut </span>next = || {
+<a href=#439 id=439 data-nosnippet>439</a>            state ^= state &lt;&lt; <span class="number">13</span>;
+<a href=#440 id=440 data-nosnippet>440</a>            state ^= state &gt;&gt; <span class="number">7</span>;
+<a href=#441 id=441 data-nosnippet>441</a>            state ^= state &lt;&lt; <span class="number">17</span>;
+<a href=#442 id=442 data-nosnippet>442</a>            state
+<a href=#443 id=443 data-nosnippet>443</a>        };
+<a href=#444 id=444 data-nosnippet>444</a>        <span class="kw">let </span><span class="kw-2">mut </span>buffer = SampleBuffer::with_capacity(<span class="number">2</span>, samples);
+<a href=#445 id=445 data-nosnippet>445</a>        <span class="kw">for _ in </span><span class="number">0</span>..samples {
+<a href=#446 id=446 data-nosnippet>446</a>            <span class="kw">let </span>draw = next();
+<a href=#447 id=447 data-nosnippet>447</a>            <span class="kw">let </span>weight = |shift: u32| <span class="number">0.5 </span>+ ((draw &gt;&gt; shift) &amp; <span class="number">0xffff</span>) <span class="kw">as </span>f32 / <span class="number">65536.0</span>;
+<a href=#448 id=448 data-nosnippet>448</a>            buffer.push(
+<a href=#449 id=449 data-nosnippet>449</a>                Placement {
+<a href=#450 id=450 data-nosnippet>450</a>                    u: <span class="number">0.0</span>,
+<a href=#451 id=451 data-nosnippet>451</a>                    v: <span class="number">0.0</span>,
+<a href=#452 id=452 data-nosnippet>452</a>                    w: <span class="kw">if </span>draw &amp; <span class="number">1 </span>== <span class="number">0 </span>{ <span class="number">25.0 </span>} <span class="kw">else </span>{ -<span class="number">25.0 </span>},
+<a href=#453 id=453 data-nosnippet>453</a>                    prediction_w_positive: <span class="bool-val">true</span>,
+<a href=#454 id=454 data-nosnippet>454</a>                    phase: <span class="number">0.0</span>,
+<a href=#455 id=455 data-nosnippet>455</a>                    plane: <span class="number">0</span>,
+<a href=#456 id=456 data-nosnippet>456</a>                    spectral: spectral[(draw &gt;&gt; <span class="number">1</span>) <span class="kw">as </span>usize % <span class="number">3</span>],
+<a href=#457 id=457 data-nosnippet>457</a>                    cf: CfKey::default(),
+<a href=#458 id=458 data-nosnippet>458</a>                    gradient: gradients[(draw &gt;&gt; <span class="number">3</span>) <span class="kw">as </span>usize % <span class="number">3</span>],
+<a href=#459 id=459 data-nosnippet>459</a>                },
+<a href=#460 id=460 data-nosnippet>460</a>                <span class="kw-2">&amp;</span>[Complex32::default(); <span class="number">2</span>],
+<a href=#461 id=461 data-nosnippet>461</a>                <span class="kw-2">&amp;</span>[weight(<span class="number">16</span>), weight(<span class="number">32</span>)],
+<a href=#462 id=462 data-nosnippet>462</a>            );
+<a href=#463 id=463 data-nosnippet>463</a>        }
+<a href=#464 id=464 data-nosnippet>464</a>        buffer
+<a href=#465 id=465 data-nosnippet>465</a>    }
+<a href=#466 id=466 data-nosnippet>466</a>
+<a href=#467 id=467 data-nosnippet>467</a>    <span class="doccomment">/// The weight image `samples` grid on `operator`, one sample at a time
+<a href=#468 id=468 data-nosnippet>468</a>    /// (`per_sample`) or summed by contribution, as its finished images.
+<a href=#469 id=469 data-nosnippet>469</a>    </span><span class="kw">fn </span>weight_image(
+<a href=#470 id=470 data-nosnippet>470</a>        operator: <span class="kw-2">&amp;</span>casa_imaging_operator::MeasurementOperator,
+<a href=#471 id=471 data-nosnippet>471</a>        samples: <span class="kw-2">&amp;</span>SampleBuffer,
+<a href=#472 id=472 data-nosnippet>472</a>        per_sample: bool,
+<a href=#473 id=473 data-nosnippet>473</a>    ) -&gt; Vec&lt;f32&gt; {
+<a href=#474 id=474 data-nosnippet>474</a>        weight_image_and_sums(operator, samples, per_sample).<span class="number">0
+<a href=#475 id=475 data-nosnippet>475</a>    </span>}
+<a href=#476 id=476 data-nosnippet>476</a>
+<a href=#477 id=477 data-nosnippet>477</a>    <span class="doccomment">/// [`weight_image`] and the finished images' `sumwt`.
+<a href=#478 id=478 data-nosnippet>478</a>    </span><span class="kw">fn </span>weight_image_and_sums(
+<a href=#479 id=479 data-nosnippet>479</a>        operator: <span class="kw-2">&amp;</span>casa_imaging_operator::MeasurementOperator,
+<a href=#480 id=480 data-nosnippet>480</a>        samples: <span class="kw-2">&amp;</span>SampleBuffer,
+<a href=#481 id=481 data-nosnippet>481</a>        per_sample: bool,
+<a href=#482 id=482 data-nosnippet>482</a>    ) -&gt; (Vec&lt;f32&gt;, Vec&lt;f64&gt;) {
+<a href=#483 id=483 data-nosnippet>483</a>        <span class="kw">use </span>casa_imaging_operator::{CpuBackend, GridBackend, Mode, ModeSet, PlaneRange, Work};
+<a href=#484 id=484 data-nosnippet>484</a>        <span class="kw">let </span><span class="kw-2">mut </span>acc = operator.accumulator(PlaneRange::single(<span class="number">0</span>), <span class="prelude-val">None</span>, ModeSet::ALL);
+<a href=#485 id=485 data-nosnippet>485</a>        <span class="kw">let </span><span class="kw-2">mut </span>backend = CpuBackend::new();
+<a href=#486 id=486 data-nosnippet>486</a>        <span class="kw">let </span>cf = operator.cf();
+<a href=#487 id=487 data-nosnippet>487</a>        <span class="kw">let </span><span class="kw-2">mut </span>grid = |block: <span class="kw-2">&amp;</span>SampleBlock&lt;<span class="lifetime">'_</span>&gt;| {
+<a href=#488 id=488 data-nosnippet>488</a>            backend.apply(
+<a href=#489 id=489 data-nosnippet>489</a>                block,
+<a href=#490 id=490 data-nosnippet>490</a>                cf,
+<a href=#491 id=491 data-nosnippet>491</a>                Work::Grid {
+<a href=#492 id=492 data-nosnippet>492</a>                    mode: Mode::Weight,
+<a href=#493 id=493 data-nosnippet>493</a>                    acc: <span class="kw-2">&amp;mut </span>acc,
+<a href=#494 id=494 data-nosnippet>494</a>                },
+<a href=#495 id=495 data-nosnippet>495</a>            )
+<a href=#496 id=496 data-nosnippet>496</a>        };
+<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">if </span>per_sample {
+<a href=#498 id=498 data-nosnippet>498</a>            grid(<span class="kw-2">&amp;</span>samples.block()).expect(<span class="string">"grid"</span>);
+<a href=#499 id=499 data-nosnippet>499</a>        } <span class="kw">else </span>{
+<a href=#500 id=500 data-nosnippet>500</a>            <span class="kw">let </span><span class="kw-2">mut </span>sums = WeightSums::new(<span class="number">2</span>, WEIGHT_GROUPS);
+<a href=#501 id=501 data-nosnippet>501</a>            sums.add(<span class="kw-2">&amp;</span>samples.block(), <span class="kw-2">&amp;mut </span>grid).expect(<span class="string">"add"</span>);
+<a href=#502 id=502 data-nosnippet>502</a>            sums.flush(<span class="kw-2">&amp;mut </span>grid).expect(<span class="string">"flush"</span>);
+<a href=#503 id=503 data-nosnippet>503</a>        }
+<a href=#504 id=504 data-nosnippet>504</a>        <span class="kw">let </span>images = operator.finish(acc).expect(<span class="string">"finish"</span>);
+<a href=#505 id=505 data-nosnippet>505</a>        <span class="kw">let </span>plane = <span class="kw-2">&amp;</span>images.planes[<span class="number">0</span>];
+<a href=#506 id=506 data-nosnippet>506</a>        (
+<a href=#507 id=507 data-nosnippet>507</a>            plane
+<a href=#508 id=508 data-nosnippet>508</a>                .weight
+<a href=#509 id=509 data-nosnippet>509</a>                .iter()
+<a href=#510 id=510 data-nosnippet>510</a>                .flat_map(|image| image.iter().copied())
+<a href=#511 id=511 data-nosnippet>511</a>                .collect(),
+<a href=#512 id=512 data-nosnippet>512</a>            plane.sumwt.clone(),
+<a href=#513 id=513 data-nosnippet>513</a>        )
+<a href=#514 id=514 data-nosnippet>514</a>    }
+<a href=#515 id=515 data-nosnippet>515</a>
+<a href=#516 id=516 data-nosnippet>516</a>    <span class="doccomment">/// The largest difference between `a` and `b`, relative to `b`'s peak.
+<a href=#517 id=517 data-nosnippet>517</a>    </span><span class="kw">fn </span>relative(a: <span class="kw-2">&amp;</span>[f32], b: <span class="kw-2">&amp;</span>[f32]) -&gt; f64 {
+<a href=#518 id=518 data-nosnippet>518</a>        <span class="kw">let </span>peak = b
+<a href=#519 id=519 data-nosnippet>519</a>            .iter()
+<a href=#520 id=520 data-nosnippet>520</a>            .fold(<span class="number">0.0_f64</span>, |peak, v| peak.max(f64::from(v.abs())));
+<a href=#521 id=521 data-nosnippet>521</a>        a.iter()
+<a href=#522 id=522 data-nosnippet>522</a>            .zip(b)
+<a href=#523 id=523 data-nosnippet>523</a>            .map(|(a, b)| f64::from((a - b).abs()))
+<a href=#524 id=524 data-nosnippet>524</a>            .fold(<span class="number">0.0</span>, f64::max)
+<a href=#525 id=525 data-nosnippet>525</a>            / peak
+<a href=#526 id=526 data-nosnippet>526</a>    }
+<a href=#527 id=527 data-nosnippet>527</a>
+<a href=#528 id=528 data-nosnippet>528</a>    <span class="doccomment">/// Summing the weight image by contribution grids, on the real mosaic
+<a href=#529 id=529 data-nosnippet>529</a>    /// set with pointing ramps and Taylor terms, what gridding each sample
+<a href=#530 id=530 data-nosnippet>530</a>    /// grids, to rounding in f64 grids (#787). On f32 grids it stays at the
+<a href=#531 id=531 data-nosnippet>531</a>    /// f32 image's precision while the per-sample f32 weight image drifts
+<a href=#532 id=532 data-nosnippet>532</a>    /// with the sample count.
+<a href=#533 id=533 data-nosnippet>533</a>    </span><span class="attr">#[test]
+<a href=#534 id=534 data-nosnippet>534</a>    </span><span class="kw">fn </span>summed_weights_grid_what_each_sample_grids() {
+<a href=#535 id=535 data-nosnippet>535</a>        <span class="kw">use </span>casa_imaging_operator::GridPrecision;
+<a href=#536 id=536 data-nosnippet>536</a>        <span class="kw">let </span>f64_operator = mosaic_operator(GridPrecision::F64);
+<a href=#537 id=537 data-nosnippet>537</a>        <span class="comment">// Enough samples for the per-sample f32 drift, which grows with
+<a href=#538 id=538 data-nosnippet>538</a>        // their count, to show: B10 grids 4.19 M (#787).
+<a href=#539 id=539 data-nosnippet>539</a>        </span><span class="kw">let </span>samples = weight_samples(<span class="kw-2">&amp;</span>f64_operator, <span class="number">400_000</span>);
+<a href=#540 id=540 data-nosnippet>540</a>        <span class="kw">let </span>(reference, reference_sumwt) = weight_image_and_sums(<span class="kw-2">&amp;</span>f64_operator, <span class="kw-2">&amp;</span>samples, <span class="bool-val">true</span>);
+<a href=#541 id=541 data-nosnippet>541</a>        <span class="kw">let </span>(summed, summed_sumwt) = weight_image_and_sums(<span class="kw-2">&amp;</span>f64_operator, <span class="kw-2">&amp;</span>samples, <span class="bool-val">false</span>);
+<a href=#542 id=542 data-nosnippet>542</a>        <span class="kw">let </span>f64_error = relative(<span class="kw-2">&amp;</span>summed, <span class="kw-2">&amp;</span>reference);
+<a href=#543 id=543 data-nosnippet>543</a>        <span class="macro">assert!</span>(f64_error &lt;= <span class="number">1.0e-6</span>, <span class="string">"f64 grids: {f64_error}"</span>);
+<a href=#544 id=544 data-nosnippet>544</a>        <span class="comment">// The weight terms' sumwt takes each group's summed weight once, as
+<a href=#545 id=545 data-nosnippet>545</a>        // the f32 weight its f64 sum rounds to (#792 review, Astra).
+<a href=#546 id=546 data-nosnippet>546</a>        </span><span class="macro">assert!</span>(
+<a href=#547 id=547 data-nosnippet>547</a>            reference_sumwt.iter().any(|sum| <span class="kw-2">*</span>sum &gt; <span class="number">0.0</span>),
+<a href=#548 id=548 data-nosnippet>548</a>            <span class="string">"a weight sumwt"
+<a href=#549 id=549 data-nosnippet>549</a>        </span>);
+<a href=#550 id=550 data-nosnippet>550</a>        <span class="kw">for </span>(summed, each) <span class="kw">in </span>summed_sumwt.iter().zip(<span class="kw-2">&amp;</span>reference_sumwt) {
+<a href=#551 id=551 data-nosnippet>551</a>            <span class="macro">assert!</span>(
+<a href=#552 id=552 data-nosnippet>552</a>                (summed - each).abs() &lt;= <span class="number">1.0e-7 </span>* each.abs().max(<span class="number">1.0</span>),
+<a href=#553 id=553 data-nosnippet>553</a>                <span class="string">"sumwt: {summed} against {each}"
+<a href=#554 id=554 data-nosnippet>554</a>            </span>);
+<a href=#555 id=555 data-nosnippet>555</a>        }
+<a href=#556 id=556 data-nosnippet>556</a>        <span class="kw">let </span>f32_operator = mosaic_operator(GridPrecision::F32);
+<a href=#557 id=557 data-nosnippet>557</a>        <span class="kw">let </span>summed_f32 = relative(<span class="kw-2">&amp;</span>weight_image(<span class="kw-2">&amp;</span>f32_operator, <span class="kw-2">&amp;</span>samples, <span class="bool-val">false</span>), <span class="kw-2">&amp;</span>reference);
+<a href=#558 id=558 data-nosnippet>558</a>        <span class="kw">let </span>each_f32 = relative(<span class="kw-2">&amp;</span>weight_image(<span class="kw-2">&amp;</span>f32_operator, <span class="kw-2">&amp;</span>samples, <span class="bool-val">true</span>), <span class="kw-2">&amp;</span>reference);
+<a href=#559 id=559 data-nosnippet>559</a>        <span class="macro">assert!</span>(summed_f32 &lt;= <span class="number">1.0e-6</span>, <span class="string">"summed on f32 grids: {summed_f32}"</span>);
+<a href=#560 id=560 data-nosnippet>560</a>        <span class="macro">assert!</span>(
+<a href=#561 id=561 data-nosnippet>561</a>            each_f32 &gt; <span class="number">10.0 </span>* summed_f32,
+<a href=#562 id=562 data-nosnippet>562</a>            <span class="string">"per sample on f32 grids drifts: {each_f32} against {summed_f32}"
+<a href=#563 id=563 data-nosnippet>563</a>        </span>);
+<a href=#564 id=564 data-nosnippet>564</a>    }
+<a href=#565 id=565 data-nosnippet>565</a>
+<a href=#566 id=566 data-nosnippet>566</a>    <span class="doccomment">/// With no group shared, every pointing gradient distinct (AW's case
+<a href=#567 id=567 data-nosnippet>567</a>    /// at its extreme, #792 review, Astra 2), the summed table grids on f32
+<a href=#568 id=568 data-nosnippet>568</a>    /// grids exactly what each sample grids, bit for bit: groups of one
+<a href=#569 id=569 data-nosnippet>569</a>    /// sample keep its f32 weights and their order, across the table's
+<a href=#570 id=570 data-nosnippet>570</a>    /// flushes. It saves nothing then, but costs nothing in precision.
+<a href=#571 id=571 data-nosnippet>571</a>    </span><span class="attr">#[test]
+<a href=#572 id=572 data-nosnippet>572</a>    </span><span class="kw">fn </span>with_no_group_shared_the_table_grids_each_sample_exactly() {
+<a href=#573 id=573 data-nosnippet>573</a>        <span class="kw">use </span>casa_imaging_operator::GridPrecision;
+<a href=#574 id=574 data-nosnippet>574</a>        <span class="kw">let </span>operator = mosaic_operator(GridPrecision::F32);
+<a href=#575 id=575 data-nosnippet>575</a>        <span class="kw">let </span><span class="kw-2">mut </span>samples = weight_samples(<span class="kw-2">&amp;</span>operator, WEIGHT_GROUPS + <span class="number">3000</span>);
+<a href=#576 id=576 data-nosnippet>576</a>        <span class="kw">let </span>block = samples.block();
+<a href=#577 id=577 data-nosnippet>577</a>        <span class="kw">let </span><span class="kw-2">mut </span>distinct = SampleBuffer::with_capacity(<span class="number">2</span>, block.len());
+<a href=#578 id=578 data-nosnippet>578</a>        <span class="kw">for </span>(index, placement) <span class="kw">in </span>block.placements.iter().enumerate() {
+<a href=#579 id=579 data-nosnippet>579</a>            <span class="kw">let </span>step = index <span class="kw">as </span>f32 * <span class="number">1.0e-7</span>;
+<a href=#580 id=580 data-nosnippet>580</a>            distinct.push(
+<a href=#581 id=581 data-nosnippet>581</a>                Placement {
+<a href=#582 id=582 data-nosnippet>582</a>                    gradient: [placement.gradient[<span class="number">0</span>] + step, placement.gradient[<span class="number">1</span>]],
+<a href=#583 id=583 data-nosnippet>583</a>                    ..<span class="kw-2">*</span>placement
+<a href=#584 id=584 data-nosnippet>584</a>                },
+<a href=#585 id=585 data-nosnippet>585</a>                block.values_of(index),
+<a href=#586 id=586 data-nosnippet>586</a>                block.weights_of(index),
+<a href=#587 id=587 data-nosnippet>587</a>            );
+<a href=#588 id=588 data-nosnippet>588</a>        }
+<a href=#589 id=589 data-nosnippet>589</a>        samples = distinct;
+<a href=#590 id=590 data-nosnippet>590</a>        <span class="kw">let </span>summed = weight_image(<span class="kw-2">&amp;</span>operator, <span class="kw-2">&amp;</span>samples, <span class="bool-val">false</span>);
+<a href=#591 id=591 data-nosnippet>591</a>        <span class="kw">let </span>each = weight_image(<span class="kw-2">&amp;</span>operator, <span class="kw-2">&amp;</span>samples, <span class="bool-val">true</span>);
+<a href=#592 id=592 data-nosnippet>592</a>        <span class="macro">assert!</span>(
+<a href=#593 id=593 data-nosnippet>593</a>            summed == each,
+<a href=#594 id=594 data-nosnippet>594</a>            <span class="string">"summed and per-sample f32 weight images differ"
+<a href=#595 id=595 data-nosnippet>595</a>        </span>);
+<a href=#596 id=596 data-nosnippet>596</a>    }
+<a href=#597 id=597 data-nosnippet>597</a>
+<a href=#598 id=598 data-nosnippet>598</a>    <span class="doccomment">/// A table holds at most [`WeightSums::bytes`].
+<a href=#599 id=599 data-nosnippet>599</a>    </span><span class="attr">#[test]
+<a href=#600 id=600 data-nosnippet>600</a>    </span><span class="kw">fn </span>a_table_holds_at_most_its_bytes() {
+<a href=#601 id=601 data-nosnippet>601</a>        <span class="kw">for </span>(npol, capacity) <span class="kw">in </span>[(<span class="number">1</span>, <span class="number">1</span>), (<span class="number">2</span>, <span class="number">7</span>), (<span class="number">2</span>, WEIGHT_GROUPS), (<span class="number">4</span>, <span class="number">1000</span>)] {
+<a href=#602 id=602 data-nosnippet>602</a>            <span class="kw">let </span>sums = WeightSums::new(npol, capacity);
+<a href=#603 id=603 data-nosnippet>603</a>            <span class="macro">assert!</span>(
+<a href=#604 id=604 data-nosnippet>604</a>                sums.capacity_bytes() &lt;= WeightSums::bytes(npol, capacity),
+<a href=#605 id=605 data-nosnippet>605</a>                <span class="string">"{npol} correlations, {capacity} groups: {} &gt; {}"</span>,
+<a href=#606 id=606 data-nosnippet>606</a>                sums.capacity_bytes(),
+<a href=#607 id=607 data-nosnippet>607</a>                WeightSums::bytes(npol, capacity)
+<a href=#608 id=608 data-nosnippet>608</a>            );
+<a href=#609 id=609 data-nosnippet>609</a>        }
+<a href=#610 id=610 data-nosnippet>610</a>    }
+<a href=#611 id=611 data-nosnippet>611</a>}
+</code></pre></div></section></main></body></html>
