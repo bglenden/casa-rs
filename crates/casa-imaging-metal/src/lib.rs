@@ -33,6 +33,8 @@ mod records;
 #[cfg(not(all(target_os = "macos", not(coverage))))]
 mod unavailable;
 
+use casa_imaging_operator::ConvolutionFunctionSet;
+
 #[cfg(all(target_os = "macos", not(coverage)))]
 pub use backend::MetalBackend;
 #[cfg(not(all(target_os = "macos", not(coverage))))]
@@ -65,12 +67,54 @@ const SOURCE_BYTES: usize = 24;
 const POLARIZATION_BYTES: usize = 8 + 4 + 8 + 8;
 
 /// The most device memory one backend's ring holds for blocks of `npol`
-/// visibility polarizations; kernel tables add one copy of the taps of the
-/// cells the backend has met, and a native prediction its batch
-/// ([`batch_bytes`]).
+/// visibility polarizations; its kernel copies add [`kernel_bytes`], and a
+/// native prediction its batch ([`batch_bytes`]).
 #[must_use]
 pub const fn ring_bytes(npol: usize) -> u64 {
     (RING * MAX_SUB * (SAMPLE_BYTES + SOURCE_BYTES + npol * POLARIZATION_BYTES)) as u64
+}
+
+/// Device bytes of one kernel table record (`records::TableRecord`).
+const TABLE_RECORD_BYTES: u64 = 16;
+/// Host bytes a backend keeps per kernel cell beside its norms: its table
+/// record, its `KnownTable` and their map entry, at the map's load factor
+/// and growth.
+const HOST_TABLE_BYTES: u64 = 256;
+/// Host and device bytes a backend keeps for its kernel copies before it
+/// meets a cell: its empty arenas and table buffer (16 bytes each) and its
+/// map's first allocation.
+const KERNEL_BASE_BYTES: u64 = 1024;
+
+/// The most memory one backend holds for its copies of `cf`'s kernel
+/// cells, which a pass admits for every backend it makes (#793 review):
+/// the taps of every cell the set can lend, in a device arena reserved
+/// whole from the set's footprint at the first upload, so it never grows
+/// past them; a device table record per cell; and the host's norm tables
+/// and table map ([`ConvolutionFunctionSet::tap_footprint`]). A backend
+/// that meets only some cells holds less; `MetalBackend::kernel_bytes_held`
+/// says how much.
+#[must_use]
+pub fn kernel_bytes(cf: &dyn ConvolutionFunctionSet) -> u64 {
+    let footprint = cf.tap_footprint();
+    footprint.tap_bytes
+        + footprint.norm_bytes
+        + footprint.cells as u64 * (TABLE_RECORD_BYTES + HOST_TABLE_BYTES)
+        + KERNEL_BASE_BYTES
+}
+
+/// Bytes of every device buffer this crate holds now: kernel copies, rings,
+/// accumulators, model copies and native cells of every live backend. Zero
+/// on a host without Metal.
+#[must_use]
+pub fn device_bytes() -> u64 {
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    {
+        device::live_bytes()
+    }
+    #[cfg(not(all(target_os = "macos", not(coverage))))]
+    {
+        0
+    }
 }
 
 /// The device memory a backend's predictions of a native-prediction batch

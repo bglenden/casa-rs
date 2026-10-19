@@ -53,7 +53,8 @@ pub(crate) struct SampleRecord {
     pub gradient: [f32; 2],
 }
 
-/// Where one kernel cell's taps sit in the device arenas (`Table`).
+/// Where one kernel cell's taps sit in the device arenas (`Table`);
+/// [`crate::kernel_bytes`] charges its size per cell.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TableRecord {
@@ -216,10 +217,20 @@ impl KnownTable {
         let norm = self.norms[row * self.mueller_planes + usize::from(mueller)];
         if conjugate { norm.conj() } else { norm }
     }
+
+    /// Host bytes of the norms ([`TapLayout::norm_bytes`] of the cell).
+    pub(crate) fn norm_bytes(&self) -> usize {
+        self.norms.capacity() * size_of::<Complex64>()
+    }
 }
 
 /// The kernel cells a backend has given the device, by cell and kind.
 pub(crate) type KnownTables = HashMap<(CfKey, TapsKind), KnownTable>;
+
+const _: () = assert!(
+    size_of::<TableRecord>() as u64 == crate::TABLE_RECORD_BYTES,
+    "kernel_bytes charges one table record per cell"
+);
 
 /// A Mueller route: the plane that joins a grid and a visibility
 /// polarization.

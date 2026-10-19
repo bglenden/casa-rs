@@ -397,3 +397,47 @@ fn rows_wider_apart_than_the_planned_spacing_are_refused_in_waves() {
         result.map(|_| ())
     );
 }
+
+/// #793 review (Astra 1): on Metal a wave's demand charges each owner's
+/// backend its ring and its copies of the kernel cells it meets, at most
+/// the whole set ([`casa_imaging_metal::kernel_bytes`]), and each chunk's
+/// predictors theirs; the CPU demand charges neither.
+#[test]
+fn metal_owners_and_predictors_are_charged_their_kernel_copies() {
+    let operator = operator(GridPrecision::F32, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let rows = Rows::random(50, 17, operator.geometry());
+    let owners = 3;
+    let domains = [PassDomain {
+        operator: &operator,
+        resampler: &resampler,
+        partition: Partition::regions(&operator, owners),
+    }];
+    let demand = |backend, with_model| WaveDemand {
+        domains: &domains,
+        modes: ModeSet::DATA_PSF,
+        with_model,
+        native_spacing_hz: WIDTH_HZ,
+        workers: 2,
+        backend,
+        block: rows.maximum_block(),
+        chunk_placements: CHUNK_PLACEMENTS,
+        chunk_sets: 1,
+    };
+    let kernels = casa_imaging_metal::kernel_bytes(operator.cf());
+    assert!(kernels > 0, "the spheroidal's rows are charged");
+    let ring = casa_imaging_metal::ring_bytes(operator.polarization().correlations().len());
+    let cpu = demand(BackendChoice::Cpu, false).bytes(1);
+    let metal = demand(BackendChoice::Metal, false).bytes(1);
+    assert_eq!(
+        metal,
+        cpu + owners as u64 * (ring + kernels),
+        "each owner's ring and kernel copies"
+    );
+    let with_model = demand(BackendChoice::Metal, true).bytes(1);
+    assert!(
+        with_model >= metal + 2 * kernels,
+        "two workers' chunks each keep a predictor with its kernel copies: \
+         {with_model} against {metal} + 2 × {kernels}"
+    );
+}

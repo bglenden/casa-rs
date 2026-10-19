@@ -162,23 +162,41 @@ fn local_peak(
     (value, [centre[0] - half + x, centre[1] - half + y], offset)
 }
 
+/// The T1 mosaic: three pointings over the centre and eastern sources, on
+/// one channel or, for a `cube`, two (50 and 75 GHz), and the controls that
+/// clean it. Shared with the Metal variants (#787).
+pub(super) fn mosaic_run(cube: bool) -> (Observation, serde_json::Value) {
+    let mut setup = setup();
+    if cube {
+        setup.spectral_windows = vec![casa_ms::SyntheticSpectralSetup {
+            name: "t1-50-75ghz".to_string(),
+            start_frequency_hz: FREQUENCY_HZ,
+            channel_width_hz: 25.0e9,
+            channel_count: 2,
+        }];
+    }
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE), ("east", EAST)]);
+    let mut controls = json!({
+        "weighting": "natural",
+        "deconvolver": "hogbom",
+        "niter": 3000,
+        "threshold": THRESHOLD,
+        "field": "0,1,2",
+        "phasecenter_field": "1",
+        "gridder": "mosaic",
+        "pbcor": true,
+        "write_pb": true,
+    });
+    if cube {
+        controls["specmode"] = json!("cube");
+    }
+    (observation, controls)
+}
+
 #[test]
 fn mosaic_recovers_the_sky_under_the_summed_beams() {
-    let observation = Observation::synthesise_setup(setup(), &[("centre", CENTRE), ("east", EAST)]);
-    let (summary, products) = observation.image(
-        "mosaic",
-        json!({
-            "weighting": "natural",
-            "deconvolver": "hogbom",
-            "niter": 3000,
-            "threshold": THRESHOLD,
-            "field": "0,1,2",
-            "phasecenter_field": "1",
-            "gridder": "mosaic",
-            "pbcor": true,
-            "write_pb": true,
-        }),
-    );
+    let (observation, controls) = mosaic_run(false);
+    let (summary, products) = observation.image("mosaic", controls);
     let geometry = observation.geometry();
     let noise_jy = observation.image_noise_jy();
     let image = products.get(".image");
@@ -262,29 +280,8 @@ fn mosaic_recovers_the_sky_under_the_summed_beams() {
 /// quarter. Each channel's PB-corrected image recovers both points.
 #[test]
 fn a_mosaic_cube_keeps_each_channels_weight_image() {
-    let mut setup = setup();
-    setup.spectral_windows = vec![casa_ms::SyntheticSpectralSetup {
-        name: "t1-50-75ghz".to_string(),
-        start_frequency_hz: FREQUENCY_HZ,
-        channel_width_hz: 25.0e9,
-        channel_count: 2,
-    }];
-    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE), ("east", EAST)]);
-    let (summary, products) = observation.image(
-        "mosaic-cube",
-        json!({
-            "specmode": "cube",
-            "weighting": "natural",
-            "deconvolver": "hogbom",
-            "niter": 3000,
-            "threshold": THRESHOLD,
-            "field": "0,1,2",
-            "phasecenter_field": "1",
-            "gridder": "mosaic",
-            "pbcor": true,
-            "write_pb": true,
-        }),
-    );
+    let (observation, controls) = mosaic_run(true);
+    let (summary, products) = observation.image("mosaic-cube", controls);
     observation.assert_product_contract(
         &products,
         &ProductContract {

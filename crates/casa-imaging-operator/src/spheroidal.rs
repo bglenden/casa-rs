@@ -4,7 +4,7 @@
 
 use crate::convolution::{
     CellHold, ConvolutionFunctionSet, ImageCorrection, KernelNormalisation, MuellerRouting,
-    RowContext, TapLayout,
+    RowContext, TapFootprint, TapLayout,
 };
 use crate::geometry::GridGeometry;
 use crate::polarization::PolarizationRouting;
@@ -91,6 +91,11 @@ impl ConvolutionFunctionSet for Spheroidal {
 
     fn pointing_ramp(&self) -> bool {
         false
+    }
+
+    /// One cell of rows; no weight taps.
+    fn tap_footprint(&self) -> TapFootprint {
+        TapFootprint::of([self.taps(CfKey::default(), &mut CellHold::new())])
     }
 }
 

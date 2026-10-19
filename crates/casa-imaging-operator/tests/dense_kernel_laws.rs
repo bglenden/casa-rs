@@ -116,6 +116,10 @@ impl ConvolutionFunctionSet for ComplexDense {
     fn pointing_ramp(&self) -> bool {
         true
     }
+
+    fn tap_footprint(&self) -> casa_imaging_operator::TapFootprint {
+        casa_imaging_operator::TapFootprint::of([self.cell.layout()])
+    }
 }
 
 fn random_tap(_ix: usize, _iy: usize, rng: &mut Rng) -> Complex32 {

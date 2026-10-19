@@ -195,10 +195,26 @@ pub(crate) const fn precision(
     }
 }
 
-/// Whether the problem grids with the standard kernel set, the one the
-/// Metal backend implements.
+/// Whether the problem grids with the standard kernel set, the one facets
+/// take.
 pub(crate) fn standard_kernel_set(problem: &CompiledProblem) -> bool {
     kernel_set_kind(problem) == KernelSetKind::Standard
+}
+
+/// Whether the Metal backend grids the problem's kernel set: the standard
+/// spheroidal set, and the mosaic primary beams (#787). The mosaic's PSF
+/// and prediction cells are its imaging cells, and its weight cells share
+/// their support, so Metal's one tap route per mode serves it. Its weight
+/// image keeps f32 precision because the weight owner sums it by
+/// contribution first (#792). Each Metal backend of a pass copies the
+/// cells it meets to the device, which the wave demand admits per backend
+/// (`casa_imaging_metal::kernel_bytes`, #793 review). W-planes and the AW
+/// catalog run on the CPU until #653's rows for them.
+pub(crate) fn metal_kernel_set(problem: &CompiledProblem) -> bool {
+    matches!(
+        kernel_set_kind(problem),
+        KernelSetKind::Standard | KernelSetKind::Mosaic
+    )
 }
 
 /// Which kernel set the compiled problem's measurement equation names.

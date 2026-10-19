@@ -6,10 +6,11 @@
 use casa_imaging_metal::MetalBackend;
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
-    Basis, CellHold, CfKey, ConvolutionFunctionSet, DenseCell, GridAccumulator, GridGeometry,
-    GridPadding, GridPrecision, GridScalar, ImageCorrection, ImageExtent, KernelNormalisation,
-    MeasurementOperator, ModelImages, ModelPlane, MuellerRouting, Placement, PolarizationRouting,
-    RowContext, SampleBuffer, Spheroidal, TapLayout, Tile,
+    AiryDish, Basis, CellHold, CfKey, ConvolutionFunctionSet, DenseCell, DeviceFailure,
+    GridAccumulator, GridGeometry, GridPadding, GridPrecision, GridScalar, ImageCorrection,
+    ImageExtent, KernelNormalisation, MeasurementOperator, ModelImages, ModelPlane, MosaicPb,
+    MosaicWindow, MuellerRouting, OperatorError, Placement, PolarizationRouting, RowContext,
+    SampleBuffer, Spheroidal, TapFootprint, TapLayout, Tile, pair_plane,
 };
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
@@ -22,14 +23,16 @@ const XX_YY_REQUESTED: [PolarizationCoordinate; 2] = [
     PolarizationCoordinate::LinearYy,
 ];
 
-/// `None` (and a note on stderr) when the host has no Metal device.
+/// `None` (and a note on stderr) only when the host has no Metal device;
+/// any other failure to make the backend is the law's (#793 review, Astra).
 pub fn metal(operator: &MeasurementOperator) -> Option<MetalBackend<'_>> {
     match MetalBackend::new(operator.cf(), false) {
         Ok(backend) => Some(backend),
-        Err(error) => {
-            eprintln!("skipped: {error}");
+        Err(OperatorError::Device(DeviceFailure::Unavailable)) => {
+            eprintln!("skipped: no Metal device");
             None
         }
+        Err(error) => panic!("the Metal backend could not be made: {error}"),
     }
 }
 
@@ -89,24 +92,102 @@ pub enum Kernels {
     /// The dense set with eleven taps per axis: wider than one thread
     /// serves, so each sample takes a SIMD group.
     WideDense,
+    /// The real heterogeneous ALMA mosaic primary beams (`MosaicPb`, #787):
+    /// dense complex cells ramped by each placement's pointing gradient,
+    /// weight cells of the imaging cells' support, for the 12 m and 7 m
+    /// dish classes (three pair planes, `CfKey::group`) at two frequency
+    /// cells an octave apart ([`MOSAIC_FREQUENCIES_HZ`], `CfKey::cube`), on
+    /// a [`MOSAIC_IMAGE`]² image wide enough for the keys' supports to
+    /// differ (half supports 6, 7 and 9;
+    /// `the_mosaic_sets_cells_differ_in_support_but_share_it_across_modes`).
+    Mosaic,
 }
 
-pub const ALL_KERNELS: [Kernels; 4] = [
+pub const ALL_KERNELS: [Kernels; 5] = [
     Kernels::Spheroidal,
     Kernels::Separable,
     Kernels::Dense,
     Kernels::WideDense,
+    Kernels::Mosaic,
 ];
 
-/// An `f32` operator over `[XX, YY]` with the kernel set `kernels`.
+/// The mosaic fixture's dish diameters, CASA's ALMA 12 m and ACA 7 m
+/// classes in CASA's order.
+pub const MOSAIC_DISHES_M: [f64; 2] = [12.0, 7.0];
+/// The mosaic fixture's frequency cells, one spectral window each.
+pub const MOSAIC_FREQUENCIES_HZ: [f64; 2] = [0.5e11, 1.0e11];
+/// The mosaic fixture's image side: at [`IMAGE`] the screen's lattice is
+/// too small for any beam's support to pass the six-tap floor, so every
+/// key would lend one support.
+pub const MOSAIC_IMAGE: usize = 96;
+
+impl Kernels {
+    /// Every cell key the set lends: one for the single-cell sets, the two
+    /// cubes of the dense sets, and the mosaic's pair planes by frequency
+    /// cell.
+    pub fn keys(self) -> Vec<CfKey> {
+        match self {
+            Self::Spheroidal | Self::Separable => vec![CfKey::default()],
+            Self::Dense | Self::WideDense => (0..2).map(|cube| CfKey { group: 0, cube }).collect(),
+            Self::Mosaic => {
+                let dishes = MOSAIC_DISHES_M.len();
+                let mut keys = Vec::new();
+                for first in 0..dishes {
+                    for second in first..dishes {
+                        let group = u16::try_from(pair_plane([first as u8, second as u8], dishes))
+                            .expect("pair plane fits u16");
+                        for cube in 0..MOSAIC_FREQUENCIES_HZ.len() as u16 {
+                            keys.push(CfKey { group, cube });
+                        }
+                    }
+                }
+                keys
+            }
+        }
+    }
+}
+
+/// An `f32` operator over `[XX, YY]` with the kernel set `kernels`, on the
+/// [`IMAGE`]² image, or the [`MOSAIC_IMAGE`]² one for the mosaic set.
 pub fn operator(kernels: Kernels, basis: Basis, rng: &mut Rng) -> MeasurementOperator {
-    let cf: Box<dyn ConvolutionFunctionSet> = match kernels {
-        Kernels::Spheroidal => Box::new(Spheroidal::new(&geometry(), &routing())),
-        Kernels::Separable => Box::new(Separable::new(5, 4, rng)),
-        Kernels::Dense => Box::new(Dense::new(5, 4, rng)),
-        Kernels::WideDense => Box::new(Dense::new(11, 4, rng)),
+    let (cf, geometry): (Box<dyn ConvolutionFunctionSet>, _) = match kernels {
+        Kernels::Spheroidal => (
+            Box::new(Spheroidal::new(&geometry(), &routing())),
+            geometry(),
+        ),
+        Kernels::Separable => (Box::new(Separable::new(5, 4, rng)), geometry()),
+        Kernels::Dense => (Box::new(Dense::new(5, 4, rng)), geometry()),
+        Kernels::WideDense => (Box::new(Dense::new(11, 4, rng)), geometry()),
+        Kernels::Mosaic => (Box::new(mosaic_set()), geometry_of(MOSAIC_IMAGE)),
     };
-    MeasurementOperator::new(geometry(), basis, routing(), cf, GridPrecision::F32)
+    MeasurementOperator::new(geometry, basis, routing(), cf, GridPrecision::F32)
+}
+
+/// The heterogeneous ALMA mosaic set on the [`MOSAIC_IMAGE`]² grid
+/// ([`Kernels::Mosaic`]): one spectral window a frequency cell, the screen
+/// sized at the lowest frequency, whose beams are the widest.
+fn mosaic_set() -> MosaicPb {
+    let geometry = geometry_of(MOSAIC_IMAGE);
+    let window = |spectral_window: u32, hz: f64| MosaicWindow {
+        spectral_window,
+        window_frequencies_hz: vec![hz - 1.0e8, hz],
+        channel_width_hz: 1.0e6,
+        selected_frequencies_hz: vec![hz],
+    };
+    let dishes = MOSAIC_DISHES_M.map(|diameter_m| AiryDish::casa_alma(diameter_m, &geometry));
+    let windows = MOSAIC_FREQUENCIES_HZ
+        .iter()
+        .enumerate()
+        .map(|(index, &hz)| window(index as u32, hz))
+        .collect::<Vec<_>>();
+    MosaicPb::new(
+        &geometry,
+        &routing(),
+        MOSAIC_FREQUENCIES_HZ[0],
+        &dishes,
+        &windows,
+    )
+    .expect("mosaic set")
 }
 
 /// A separable real kernel of odd `support` with random positive rows; its
@@ -164,6 +245,10 @@ impl ConvolutionFunctionSet for Separable {
     }
     fn pointing_ramp(&self) -> bool {
         true
+    }
+    /// The rows, lent as the imaging and the weight taps.
+    fn tap_footprint(&self) -> TapFootprint {
+        TapFootprint::of([self.layout(), self.layout()])
     }
 }
 
@@ -235,6 +320,11 @@ impl ConvolutionFunctionSet for Dense {
     fn image_correction(&self) -> &ImageCorrection {
         &self.correction
     }
+    /// Both cells, each lent as a cube's imaging taps and the other cube's
+    /// weight taps.
+    fn tap_footprint(&self) -> TapFootprint {
+        TapFootprint::of(self.cells.iter().chain(&self.cells).map(DenseCell::layout))
+    }
 }
 
 /// xorshift64*: deterministic, dependency-free.
@@ -265,11 +355,42 @@ impl Rng {
     }
 }
 
-/// Random placements whose support lies inside `tile` on `planes` planes,
-/// with random `w` signs, phases, Taylor variables and (for dense kernels)
-/// pointing gradients.
+/// Whether the set's cells are dense (and so carry a pointing ramp).
+fn dense_cells(operator: &MeasurementOperator, keys: &[CfKey]) -> bool {
+    let mut hold = CellHold::new();
+    matches!(
+        operator.cf().taps(keys[0], &mut hold),
+        TapLayout::Dense { .. }
+    )
+}
+
+/// One random placement of cell `cf`, with a random `w` sign, phase, Taylor
+/// variable and (for dense kernels) pointing gradient, on one of `planes`.
+fn placement(cf: CfKey, u: f64, v: f64, planes: u32, dense: bool, rng: &mut Rng) -> Placement {
+    Placement {
+        u,
+        v,
+        w: rng.signed() * 50.0,
+        // Independent of the sign of `w`, as an AW row's can be.
+        prediction_w_positive: rng.next_u64().is_multiple_of(2),
+        phase: rng.signed() * std::f64::consts::PI,
+        plane: (rng.next_u64() % u64::from(planes)) as u32,
+        spectral: (0.3 * rng.signed()) as f32,
+        cf,
+        gradient: if dense {
+            [rng.signed() as f32, rng.signed() as f32]
+        } else {
+            [0.0, 0.0]
+        },
+    }
+}
+
+/// Random placements of the cells `keys`, drawn evenly, whose support lies
+/// inside `tile` on `planes` planes, with random `w` signs, phases, Taylor
+/// variables and (for dense kernels) pointing gradients.
 pub fn placements(
     operator: &MeasurementOperator,
+    keys: &[CfKey],
     tile: Tile,
     count: usize,
     planes: u32,
@@ -279,20 +400,10 @@ pub fn placements(
     let [nx, ny] = geometry.grid_shape();
     let [sx, sy] = geometry.scale();
     let mut hold = CellHold::new();
-    let dense = matches!(
-        operator.cf().taps(CfKey::default(), &mut hold),
-        TapLayout::Dense { .. }
-    );
+    let dense = dense_cells(operator, keys);
     let mut out = Vec::with_capacity(count);
     while out.len() < count {
-        let cf = CfKey {
-            group: 0,
-            cube: if dense {
-                (rng.next_u64() % 2) as u16
-            } else {
-                0
-            },
-        };
+        let cf = keys[(rng.next_u64() % keys.len() as u64) as usize];
         let taps = operator.cf().taps(cf, &mut hold);
         let half = taps.half_support().map(i64::from);
         let u = rng.signed() * 0.5 * nx as f64 / sx.abs();
@@ -306,22 +417,51 @@ pub fn placements(
         {
             continue;
         }
-        out.push(Placement {
-            u,
-            v,
-            w: rng.signed() * 50.0,
-            // Independent of the sign of `w`, as an AW row's can be.
-            prediction_w_positive: rng.next_u64().is_multiple_of(2),
-            phase: rng.signed() * std::f64::consts::PI,
-            plane: (rng.next_u64() % u64::from(planes)) as u32,
-            spectral: (0.3 * rng.signed()) as f32,
-            cf,
-            gradient: if dense {
-                [rng.signed() as f32, rng.signed() as f32]
-            } else {
-                [0.0, 0.0]
-            },
-        });
+        out.push(placement(cf, u, v, planes, dense, rng));
+    }
+    out
+}
+
+/// For every cell of `keys`, the placements whose last tap touches each of
+/// `tile`'s four edges, anchored at a cell centre on the tile's middle row
+/// or column, one per sign of `w` (#793 review): the samples the on-grid
+/// test of each mode decides.
+pub fn edge_placements(
+    operator: &MeasurementOperator,
+    keys: &[CfKey],
+    tile: Tile,
+    rng: &mut Rng,
+) -> Vec<Placement> {
+    let geometry = operator.geometry();
+    let [nx, ny] = geometry.grid_shape();
+    let [sx, sy] = geometry.scale();
+    let mut hold = CellHold::new();
+    let dense = dense_cells(operator, keys);
+    let mut out = Vec::new();
+    for &cf in keys {
+        let half = operator.cf().taps(cf, &mut hold).half_support();
+        let [x0, y0] = tile.origin.map(|origin| origin as i64);
+        let [x1, y1] = [
+            (tile.origin[0] + tile.shape[0]) as i64 - 1,
+            (tile.origin[1] + tile.shape[1]) as i64 - 1,
+        ];
+        let (mid_x, mid_y) = ((x0 + x1) / 2, (y0 + y1) / 2);
+        let anchors = [
+            (x0 + i64::from(half[0]), mid_y),
+            (x1 - i64::from(half[0]), mid_y),
+            (mid_x, y0 + i64::from(half[1])),
+            (mid_x, y1 - i64::from(half[1])),
+        ];
+        for (x, y) in anchors {
+            // `GridGeometry::locate` anchors at `round(u · s_x + n_x / 2)`.
+            let u = (x - (nx / 2) as i64) as f64 / sx;
+            let v = (y - (ny / 2) as i64) as f64 / sy;
+            for w_positive in [false, true] {
+                let mut placed = placement(cf, u, v, 1, dense, rng);
+                placed.w = if w_positive { 25.0 } else { -25.0 };
+                out.push(placed);
+            }
+        }
     }
     out
 }
@@ -348,12 +488,13 @@ pub fn block(placements: &[Placement], rng: &mut Rng) -> SampleBuffer {
 pub fn model(operator: &MeasurementOperator, rng: &mut Rng) -> ModelImages {
     let basis = operator.basis();
     let images = basis.data_terms() * 2;
+    let [width, height] = operator.geometry().image().shape;
     ModelImages {
         first_plane: 0,
         planes: (0..basis.planes())
             .map(|_| ModelPlane {
                 images: (0..images)
-                    .map(|_| Array2::from_shape_fn((IMAGE, IMAGE), |_| rng.signed() as f32))
+                    .map(|_| Array2::from_shape_fn((height, width), |_| rng.signed() as f32))
                     .collect(),
             })
             .collect(),

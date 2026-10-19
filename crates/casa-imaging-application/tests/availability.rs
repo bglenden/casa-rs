@@ -168,19 +168,33 @@ fn aw_projection_runs_on_the_cpu_pass() {
 }
 
 #[test]
-fn mosaic_runs_on_the_cpu_pass() {
+fn mosaic_runs_on_the_cpu_pass_and_on_metal() {
     let mut fixture = ProblemFixture::standard()
         .with_primary_beam(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
     fixture.uvw = UvwCoordinateLaw::MosaicPhaseTrackingCentre;
     fixture.products.push(ProductKind::Sensitivity);
-    on_cpu(&fixture.compile())
-        .expect("mosaic runs with its primary-beam set and sensitivity image");
+    let problem = fixture.compile();
+    on_cpu(&problem).expect("mosaic runs with its primary-beam set and sensitivity image");
+    // #787: Metal grids the mosaic set, in f32, its weight image summed
+    // by contribution first (#792).
+    check(&problem, BackendChoice::Metal, None, &host(true)).expect("mosaic runs on Metal");
+    assert_exactly_unsupported(
+        check(
+            &problem,
+            BackendChoice::Metal,
+            Some(GridPrecision::F64),
+            &host(true),
+        ),
+        [Unsupported::F64GridsOnMetal],
+    );
 }
 
-/// Metal runs the standard kernel set in `f32` on a host with a device;
-/// every other combination is refused, each reason named.
+/// Metal runs the standard set in `f32` on a host with a device, and is
+/// refused without one or for `f64` grids, each reason named. The mosaic
+/// set runs there too (`mosaic_runs_on_the_cpu_pass_and_on_metal`); W and
+/// AW are refused in their own laws.
 #[test]
-fn metal_needs_a_device_single_precision_and_the_standard_kernel_set() {
+fn metal_needs_a_device_and_single_precision() {
     let problem = ProblemFixture::standard().compile();
     check(&problem, BackendChoice::Metal, None, &host(true))
         .expect("standard gridding on a Metal device");
@@ -296,13 +310,14 @@ fn auto_takes_the_gpu_where_it_runs_the_problem_and_the_cpu_otherwise() {
     mosaic.uvw = UvwCoordinateLaw::MosaicPhaseTrackingCentre;
     mosaic.products.push(ProductKind::Sensitivity);
     let mosaic = mosaic.compile();
-    assert_eq!(resolve(&mosaic, BackendRequest::Auto, None, true), Cpu);
+    // #787: a mosaic is eligible on Metal and covered by its Metal laws, so
+    // `auto` takes the GPU where there is one (the owner kept the rule,
+    // 2026-10-19), and the CPU otherwise.
+    assert_eq!(resolve(&mosaic, BackendRequest::Auto, None, true), Metal);
+    assert_eq!(resolve(&mosaic, BackendRequest::Auto, None, false), Cpu);
     let asked = resolve(&mosaic, BackendRequest::Gpu, None, true);
     assert_eq!(asked, Metal);
-    assert_exactly_unsupported(
-        check(&mosaic, asked, None, &host(true)),
-        [Unsupported::KernelSetOnMetal],
-    );
+    check(&mosaic, asked, None, &host(true)).expect("mosaic on Metal");
 }
 
 /// Facets (#664) run with the standard kernel set and a constant basis, on

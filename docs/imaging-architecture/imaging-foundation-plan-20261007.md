@@ -929,7 +929,9 @@ pub fn check(problem: &CompiledProblem, backend: BackendChoice,
 `availability::check` is the one gate for capabilities that are not
 installed: polarized or multi-domain Taylor bases, a non-constant basis or a
 wide-field kernel set with facets, AW cubes (#719), and on Metal a host
-without a device, f64 grids and the W, mosaic and AW kernel sets (#653).
+without a device, f64 grids and the W and AW kernel sets (#653; the mosaic
+set runs on Metal since #793, and `auto` takes it there, owner decision
+2026-10-19).
 Capabilities that are rejected are not in the catalog. `gridprecision =
 auto` resolves beside the backend: f64 on the CPU and f32 on Metal (D2 as
 amended). An image size the facet count does not divide fails validation,

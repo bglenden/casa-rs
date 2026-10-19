@@ -42,6 +42,12 @@ impl<'cf> MetalBackend<'cf> {
     }
 
     /// Unreachable: no backend exists on this host.
+    #[must_use]
+    pub fn kernel_bytes_held(&self) -> u64 {
+        match self.never {}
+    }
+
+    /// Unreachable: no backend exists on this host.
     ///
     /// # Errors
     ///

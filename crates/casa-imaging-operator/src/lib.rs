@@ -68,7 +68,7 @@ pub use continuum::{
 };
 pub use convolution::{
     CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
-    MuellerRouting, RowContext, TapLayout,
+    MuellerRouting, RowContext, TapFootprint, TapLayout,
 };
 pub use cpu::CpuBackend;
 pub use error::{DeviceFailure, OperatorError};

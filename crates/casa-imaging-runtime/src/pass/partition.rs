@@ -267,8 +267,11 @@ impl WaveDemand<'_> {
     /// Throughout the wave, each domain's prepared model grids, with a
     /// model, for the wave's planes and its model halo on each side; on
     /// Metal, their device copy, which the device degrids, and each owner's
-    /// ring ([`casa_imaging_metal::ring_bytes`]); and a region-partitioned
-    /// domain's gridding work by anchor row (#736). The stages, summed over
+    /// ring and its copies of the kernel cells it meets
+    /// ([`casa_imaging_metal::ring_bytes`],
+    /// [`casa_imaging_metal::kernel_bytes`]; #793 review); and a
+    /// region-partitioned domain's gridding work by anchor row (#736). The
+    /// stages, summed over
     /// image domains, since a domain finishes and appends while the others
     /// hold their tiles or images:
     /// - gridding: the owners' tiles of the wave's planes, beside the row
@@ -443,8 +446,12 @@ impl WaveDemand<'_> {
             held += copies * layout(None, ModeSet::DATA) * u64::from(model_planes);
         }
         if self.backend == BackendChoice::Metal {
+            // Each owner's backend keeps a ring and its own copy of every
+            // kernel cell it meets, at most the whole set.
             let npol = operator.polarization().correlations().len();
-            held += domain.partition.owners() as u64 * casa_imaging_metal::ring_bytes(npol);
+            held += domain.partition.owners() as u64
+                * (casa_imaging_metal::ring_bytes(npol)
+                    + casa_imaging_metal::kernel_bytes(operator.cf()));
         }
         // A domain split among region owners measures its gridding work by
         // anchor row, which the pass hands to the next one's partition

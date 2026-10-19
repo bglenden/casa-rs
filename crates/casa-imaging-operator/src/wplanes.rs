@@ -6,7 +6,7 @@ use num_complex::{Complex32, Complex64};
 
 use crate::convolution::{
     CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
-    MuellerRouting, RowContext, TapLayout,
+    MuellerRouting, RowContext, TapFootprint, TapLayout,
 };
 use crate::dense::{dense_cell_from_quadrant, dense_cell_from_quadrant_bytes};
 use crate::error::OperatorError;
@@ -534,6 +534,11 @@ impl ConvolutionFunctionSet for WPlanes {
 
     fn pointing_ramp(&self) -> bool {
         false
+    }
+
+    /// Every plane's cell, all resident; no weight taps.
+    fn tap_footprint(&self) -> TapFootprint {
+        TapFootprint::of(self.planes.iter().map(DenseCell::layout))
     }
 
     fn admits(&self, w_lambda: f64) -> bool {
