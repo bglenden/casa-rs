@@ -403,8 +403,8 @@ caps in that case.
 | `mfs/F2/nat/dirty` and `.../hog` | 1.7x / 2.1x | |
 | `cube18/W8/2f/nat/dirty @512²·6.1M·18pl` | 1.7x | two fields sharing a phase centre |
 | `cube256CS/S/nat/dirty @512²·1.2M·256pl` (ALMA) | 3.8x | fit + `CORRECTED_DATA` |
-| `mfs/M/7f/br/dirty @512²·8.4M` (ALMA) | 0.51x | R2/R6: mosaic CF generation per (frequency, antenna pair, pointing) dominates; casa-rs slower |
-| `cube16/M/7f/br/dirty @512²·16pl` (ALMA) | 0.76x | same |
+| `mfs/M/7f/br/dirty @512²·8.4M` (ALMA) | 0.51x | R2/R6: mosaic CF generation per (frequency, antenna pair, pointing) dominated; 1.43x at `9fad1c4e82` (#787; still the bench's `usepointing` default, #791) |
+| `cube16/M/7f/br/dirty @512²·16pl` (ALMA) | 0.76x | same; 1.79x at `9fad1c4e82` (#787) |
 | `mt2/AW32pcb/9f/br1/dirty @512²·6.0M` | 45x | casa-rs cache warm, CASA cache state unrecorded: not a comparison |
 | `mt2/AW32pcb/9f/br1/mt-ms n30/mu @512²·6.0M` | 19x | same caveat; the drop from 45x says the minor cycle share is large in casa-rs |
 
@@ -438,7 +438,7 @@ clean, at 12,150²; only the two clean ones have frozen CASA times.
 | K | `S` | large |
 | K | `Wn` | small only (dirty, clean, cube); casa-rs ≤ 1.1x |
 | K | `Fn` | small only |
-| K | `M` | small only; casa-rs slower (0.51x, 0.76x) |
+| K | `M` | large (B10, B11 at 1024²: 8.37x and 5.17x on the best plan, #787); small 1.43x, 1.79x |
 | K | `AW32pcb` | large (L5; CPU, 1 worker); dirty and single-field only on old builds |
 | G | `1f` | large |
 | G | `63f` OTF | large (L5) |
@@ -462,7 +462,7 @@ clean, at 12,150²; only the two clean ones have frozen CASA times.
 | X | `-` | large |
 | X | `wM` | small; casa-rs slower (0.63-0.67x) |
 | X | `wC` | small (3.8x) |
-| Backend | Metal W4 | L1, L4 (standard only) |
+| Backend | Metal W4 | L1, L4 (standard); B10, B11 (mosaic, #793) |
 | Backend | CPU W1 | L2, L3, L5 |
 | Backend | CPU W>1 | none on a large row |
 
@@ -491,8 +491,8 @@ frozen once; CASA's own time for each is estimated from the frozen neighbours.
 | B7 | `mfs/S/uni/clk n10000 t0.5mJy @4096²·0.05"·64.7M·cpu W1` | EVLA pilot, 4 of 32 SPWs | Existing 5.49x row; the standard-kernel control for F, P and the Clark minor cycle at 4096²; no CF cost | R3/R4 | The pixel-bound floor: scale by `N_pix log N_pix` (x9.9) for the FFT and normalisation share of every 12,150² pass | frozen: 246 s |
 | B8 | `mfs/S/uni/clk n10000 t5mJy @4096²·0.8"·0.54G·{cpu W1, gpu W4}` | Wave3 MS, 64 of 512 channels | Sample-dominated standard gridding in minutes (an eighth of L4): per-sample throughput and the W1-vs-W4 serial check the owner asks for; L4 itself is 78 minutes | R1 | The per-sample fixed cost that AW kernels multiply; a ceiling on what narrowing kernels could buy | **none** (L4's reference is the full MS). CASA about 15-20 min. Gap |
 | B9 | `cube128/S/nat/clk t0.5mJy @1024²·1.05G·128pl·gpu W4` | the 512-channel VLA C-array MS, 128 channels | Cube residency and per-plane partition at a quarter of L1 (L1 is 69 minutes); the only R5 row that is not a column write | R1 + R5 | Not VLASS; keeps the other large workload class honest while AW work proceeds | **none** (L1's reference is 512 channels). CASA about 1.5 h. Gap |
-| B10 | `mfs/M/7f/br0.5/hog n500/fn pbl0.2 @1024²·8.4M·cpu W1` | ALMA 7-field mosaic MS (the 0.51x row's data) | Mosaic PB kernels share the `FT[PB]`, weight-image and flat-noise machinery with AW; the 512² row is slower than CASA and the cause (CF generation vs fixed cost) is unknown; 1024² moves it out of R6 | R2 (M) | Whether the PB-kernel generation cost seen at 512² is fixed or per sample; a smaller analogue of the AW C term | frozen 2026-10-19 with `usepointing` off: CASA 6.7.6, 59.5 s (#787; workload `b10-mosaic-mfs-alma-1024-clean`). The 2026-10-18 freeze (59.2 s, #732) left `usepointing` on, which collapsed the seven beams onto field 0 (#791) |
-| B11 | `cube16/M/7f/nat/hog n500 pbl0.2 lin @1024²·8.4M·cpu W1` | same MS, the 16 channels B10 images, as a cube | B10's data and size as a cube: mosaic workers run plane owners here and region owners in B10, so the two rows scale by different paths; the products step (16 planes restored and PB-corrected) is a visible share. Natural weighting, because a Briggs mosaic cube with a per-channel density does not yet match CASA (#789) | R2 (M) + R4 | With B10, the mosaic bar of plan #785 Phase 2 (#787: 5× CASA on the best plan) | frozen 2026-10-19 with `usepointing` off: CASA 6.7.6, 27.3 s (#787; workload `b11-mosaic-cube-alma-1024-clean`; #791) |
+| B10 | `mfs/M/7f/br0.5/hog n500/fn pbl0.2 @1024²·8.4M·cpu W1` | ALMA 7-field mosaic MS (the 0.51x row's data) | Mosaic PB kernels share the `FT[PB]`, weight-image and flat-noise machinery with AW; 1024² moves it out of R6 | R2 (M) | Whether the PB-kernel generation cost seen at 512² is fixed or per sample; a smaller analogue of the AW C term | frozen 2026-10-19 with `usepointing` off: CASA 6.7.6, 59.5 s (#787; workload `b10-mosaic-mfs-alma-1024-clean`). The 2026-10-18 freeze (59.2 s, #732) left `usepointing` on, which collapsed the seven beams onto field 0 (#791). casa-rs at `9fad1c4e82`: 7.11 s on Metal W1 (8.37x), 12.15 s on CPU `--parallel`, 28.34 s on CPU W1 (#787's ledger) |
+| B11 | `cube16/M/7f/nat/hog n500 pbl0.2 lin @1024²·8.4M·cpu W1` | same MS, the 16 channels B10 images, as a cube | B10's data and size as a cube: mosaic workers run plane owners here and region owners in B10, so the two rows scale by different paths; the products step (16 planes restored and PB-corrected) is a visible share. Natural weighting, because a Briggs mosaic cube with a per-channel density does not yet match CASA (#789) | R2 (M) + R4 | With B10, the mosaic bar of plan #785 Phase 2 (#787: 5× CASA on the best plan) | frozen 2026-10-19 with `usepointing` off: CASA 6.7.6, 27.3 s, and 26.32 s on a second run (#787; workload `b11-mosaic-cube-alma-1024-clean`; #791). casa-rs at `9fad1c4e82`: 5.09 s on Metal `--parallel` (5.17x against the faster CASA run), 6.10 s on CPU `--parallel`, 10.12 s on CPU W1 |
 
 Optional eleventh row, outside the VLASS path but a known regression:
 `mfs/S/uni/clk n10000/wM @4096²·64.7M` (B7 plus `savemodel=modelcolumn`),
@@ -511,7 +511,7 @@ Reading the set against the target:
 - B9 and B10 keep the cube and mosaic regimes measured without long runs.
 
 Gaps: no frozen CASA time for the single-field or 63-field dirty 12,150²
-rows (two of the four acceptance rows), for B6, B8, B9 or B10; the 63-field
+rows (two of the four acceptance rows), or for B6, B8 or B9 (#827); the 63-field
 12,150² rows cannot be made minutes-long on a laptop by any selection that
 keeps the geometry (casa-b took CASA 22.9 h); no dataset in casatestdata gives
 a W-projection or AW row above R6 (the `refim_*` MSs are 1-183 MB), so the
@@ -544,11 +544,11 @@ files before they can seed anything.
    search is incremental. The small AW rows (45x dirty, 19x clean) suggest
    casa-rs's minor cycle share is larger than CASA's. B1 versus B5 measures
    it.
-4. **Mosaic and W-projection slower than CASA at 512²** (0.51x, 0.76x, 1.1x).
-   Whether `MosaicPb` kernel generation (Lanczos oversampling 10 per
-   frequency, antenna-class pair and pointing) or `WPlanes` generation is a
-   fixed cost or grows with samples is unmeasured above R6. B10 and B6 answer
-   it.
+4. **W-projection at or below CASA at 512²** (1.1x). Whether `WPlanes`
+   generation is a fixed cost or grows with samples is unmeasured above R6;
+   B6 answers it (#827). The mosaic half of this question is closed: #787
+   brought the 512² mosaic rows to 1.43x and 1.79x, and B10 and B11 to 8.37x
+   and 5.17x on their best plans.
 5. **`MODEL_DATA` writes at 0.63-0.67x.** Column write or prediction pass:
    the optional row separates them.
 6. **Equal-work comparisons.** L4 ran 23 major cycles against CASA's 15, and
