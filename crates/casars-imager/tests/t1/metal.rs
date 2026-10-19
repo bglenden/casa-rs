@@ -4,7 +4,8 @@
 //! the CPU route product by product, to 1e-4 of the restored peak. The MFS
 //! case also meets the CPU route's analytic laws (flux, position, beam,
 //! residual noise). The cubes include output channels twice the native
-//! width. Skipped, saying so, on a host without a Metal device.
+//! width. Mosaics, MFS and cube, run on Metal since #787. Skipped, saying
+//! so, on a host without a Metal device.
 
 use serde_json::{Value, json};
 
@@ -92,6 +93,26 @@ fn assert_products_agree(metal: &Products, cpu: &Products, label: &str) {
             worst <= TOLERANCE * scale,
             "{label} {suffix}: largest difference {worst:e} against a peak of {scale:e}"
         );
+    }
+}
+
+/// #787: the mosaic gridder on Metal, MFS and a two-channel cube, matches
+/// the CPU route product by product, `.weight` and `.pb` included. The
+/// weight image is summed by contribution before it is gridded (#792), so
+/// Metal's f32 grid keeps its precision.
+#[test]
+fn metal_mosaics_match_the_cpu() {
+    for cube in [false, true] {
+        let (observation, controls) = super::mosaic::mosaic_run(cube);
+        let label = if cube { "mosaic-cube" } else { "mosaic-mfs" };
+        let mut probe = controls.clone();
+        probe["niter"] = json!(0);
+        if no_device(&observation.try_image(&format!("probe-{label}"), on_metal(probe))) {
+            return;
+        }
+        let (_, metal) = observation.image(&format!("metal-{label}"), on_metal(controls.clone()));
+        let (_, cpu) = observation.image(&format!("cpu-{label}"), controls);
+        assert_products_agree(&metal, &cpu, label);
     }
 }
 

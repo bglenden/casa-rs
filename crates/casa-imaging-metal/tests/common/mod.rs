@@ -6,10 +6,11 @@
 use casa_imaging_metal::MetalBackend;
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
-    Basis, CellHold, CfKey, ConvolutionFunctionSet, DenseCell, GridAccumulator, GridGeometry,
-    GridPadding, GridPrecision, GridScalar, ImageCorrection, ImageExtent, KernelNormalisation,
-    MeasurementOperator, ModelImages, ModelPlane, MuellerRouting, Placement, PolarizationRouting,
-    RowContext, SampleBuffer, Spheroidal, TapLayout, Tile,
+    AiryDish, Basis, CellHold, CfKey, ConvolutionFunctionSet, DenseCell, GridAccumulator,
+    GridGeometry, GridPadding, GridPrecision, GridScalar, ImageCorrection, ImageExtent,
+    KernelNormalisation, MeasurementOperator, ModelImages, ModelPlane, MosaicPb, MosaicWindow,
+    MuellerRouting, Placement, PolarizationRouting, RowContext, SampleBuffer, Spheroidal,
+    TapLayout, Tile,
 };
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
@@ -89,13 +90,19 @@ pub enum Kernels {
     /// The dense set with eleven taps per axis: wider than one thread
     /// serves, so each sample takes a SIMD group.
     WideDense,
+    /// The real ALMA 12 m mosaic primary beams (`MosaicPb`, #787): dense
+    /// complex cells ramped by each placement's pointing gradient, weight
+    /// cells of the imaging cells' support, at two frequency cells 20%
+    /// apart (cube 0 at 80 GHz, cube 1 at 100 GHz), so the beams differ.
+    Mosaic,
 }
 
-pub const ALL_KERNELS: [Kernels; 4] = [
+pub const ALL_KERNELS: [Kernels; 5] = [
     Kernels::Spheroidal,
     Kernels::Separable,
     Kernels::Dense,
     Kernels::WideDense,
+    Kernels::Mosaic,
 ];
 
 /// An `f32` operator over `[XX, YY]` with the kernel set `kernels`.
@@ -105,8 +112,30 @@ pub fn operator(kernels: Kernels, basis: Basis, rng: &mut Rng) -> MeasurementOpe
         Kernels::Separable => Box::new(Separable::new(5, 4, rng)),
         Kernels::Dense => Box::new(Dense::new(5, 4, rng)),
         Kernels::WideDense => Box::new(Dense::new(11, 4, rng)),
+        Kernels::Mosaic => Box::new(mosaic_set()),
     };
     MeasurementOperator::new(geometry(), basis, routing(), cf, GridPrecision::F32)
+}
+
+/// The ALMA 12 m mosaic set on the fixture's grid ([`Kernels::Mosaic`]):
+/// one spectral window a frequency cell, at 80 and 100 GHz.
+fn mosaic_set() -> MosaicPb {
+    let geometry = geometry();
+    let window = |spectral_window: u32, hz: f64| MosaicWindow {
+        spectral_window,
+        window_frequencies_hz: vec![hz - 1.0e8, hz],
+        channel_width_hz: 1.0e6,
+        selected_frequencies_hz: vec![hz],
+    };
+    let dishes = [AiryDish::casa_alma(12.0, &geometry)];
+    MosaicPb::new(
+        &geometry,
+        &routing(),
+        1.0e11,
+        &dishes,
+        &[window(0, 0.8e11), window(1, 1.0e11)],
+    )
+    .expect("mosaic set")
 }
 
 /// A separable real kernel of odd `support` with random positive rows; its

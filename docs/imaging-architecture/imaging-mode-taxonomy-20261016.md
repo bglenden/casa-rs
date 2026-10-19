@@ -221,7 +221,7 @@ These are not modes but they decide which cost term wins (section 2.3).
 | `Kf` + `br` + `+mosw` | Per-field density grids | tclean.xml L1023 |
 | `F` restricted | Facets: standard kernel and constant basis only in casa-rs; CASA refuses AW and mosaic facets | ARCHITECTURE.md L655-657; `availability.rs` L35-40 |
 | `AW` + `cube` | Refused in casa-rs until per-plane weights have a CASA comparison | ARCHITECTURE.md L644-645 |
-| Backend | Metal grids the standard kernel set only, Stokes I, one domain, no visibility write; `gridprecision` f64 on CPU by default | ARCHITECTURE.md L660-692 |
+| Backend | Metal grids the standard and (since #787) mosaic kernel sets, Stokes I, one domain, no visibility write; `gridprecision` f64 on CPU by default | ARCHITECTURE.md L660-695 |
 | D and S | Planes are independent in cubes (one thread each); Taylor terms are solved jointly; a Clark minor cycle on one plane is spread across the team instead | plan §5.5 L826-829 |
 | `wM` and residency | Writing visibilities forces every plane resident in the final pass | ARCHITECTURE.md L601-603 |
 

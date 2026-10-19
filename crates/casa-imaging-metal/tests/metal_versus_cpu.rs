@@ -89,6 +89,40 @@ fn grid_both(
     assert_same_grids(&device, &cpu, label);
 }
 
+/// #787 (#653's mosaic rows): every cell the mosaic set lends for a mode
+/// has the imaging cell's support. That covers the PSF and prediction
+/// cells, which are the imaging taps, and the weight cell, built at the
+/// same support. So the Metal records' one support test per sample holds
+/// for every mode on the mosaic set. AW's PSF and prediction cells differ,
+/// so it waits for a per-mode test (#653).
+#[test]
+fn the_mosaic_sets_cells_share_one_support_in_every_mode() {
+    let mut rng = Rng::new(3);
+    let operator = operator(Kernels::Mosaic, Basis::Constant, &mut rng);
+    let cf = operator.cf();
+    for cube in [0, 1] {
+        let key = casa_imaging_operator::CfKey { group: 0, cube };
+        let mut hold = casa_imaging_operator::CellHold::new();
+        let imaging = cf.taps(key, &mut hold).half_support();
+        let psf = cf.psf_taps(key, &mut hold).half_support();
+        let prediction = cf.prediction_taps(key, &mut hold).half_support();
+        let weight = cf
+            .weight_taps(key, &mut hold)
+            .expect("mosaic weight taps")
+            .half_support();
+        assert_eq!(
+            (psf, prediction, weight),
+            (imaging, imaging, imaging),
+            "cube {cube}"
+        );
+        assert_eq!(
+            cf.placement_half_support(key, &mut hold),
+            imaging,
+            "cube {cube}"
+        );
+    }
+}
+
 #[test]
 fn every_kernel_set_grids_data_psf_and_weight_like_the_cpu() {
     for kernels in ALL_KERNELS {
@@ -111,7 +145,9 @@ fn every_kernel_set_grids_data_psf_and_weight_like_the_cpu() {
             let buffer = block(&placed, &mut rng);
             let modes = match kernels {
                 Kernels::Spheroidal => ModeSet::DATA_PSF,
-                Kernels::Separable | Kernels::Dense | Kernels::WideDense => ModeSet::ALL,
+                Kernels::Separable | Kernels::Dense | Kernels::WideDense | Kernels::Mosaic => {
+                    ModeSet::ALL
+                }
             };
             grid_both(
                 &operator,
@@ -151,7 +187,9 @@ fn parts_grid_as_the_whole_block() {
             .collect::<Vec<_>>();
         let modes = match kernels {
             Kernels::Spheroidal => ModeSet::DATA_PSF,
-            Kernels::Separable | Kernels::Dense | Kernels::WideDense => ModeSet::ALL,
+            Kernels::Separable | Kernels::Dense | Kernels::WideDense | Kernels::Mosaic => {
+                ModeSet::ALL
+            }
         };
         let planes = PlaneRange::new(0, operator.basis().planes());
         let mut cpu = operator.accumulator(planes, None, modes);

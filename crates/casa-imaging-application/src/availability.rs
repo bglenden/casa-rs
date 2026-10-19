@@ -29,8 +29,8 @@ pub enum Unsupported {
     NoMetalDevice,
     /// Metal accumulates its grids in `f32` (plan decision D2).
     F64GridsOnMetal,
-    /// Metal grids the standard kernel set; W, mosaic and AW wait for gate
-    /// R2 (#653).
+    /// Metal grids the standard and mosaic kernel sets (#787); W and AW
+    /// wait for their gate R2 rows (#653).
     KernelSetOnMetal,
     /// Facets image a constant-basis (MFS) image; CASA also facets Taylor
     /// images, which wait for a CASA comparison, and a cube's density rule
@@ -64,8 +64,8 @@ impl fmt::Display for Unsupported {
             }
             Self::F64GridsOnMetal => formatter.write_str("the Metal backend grids in f32 only"),
             Self::KernelSetOnMetal => formatter.write_str(
-                "the Metal backend grids the standard kernel set only; W projection, mosaic and \
-                 AW projection run on the CPU",
+                "the Metal backend grids the standard and mosaic kernel sets only; W projection \
+                 and AW projection run on the CPU",
             ),
             Self::FacetedBasis => {
                 formatter.write_str("facets image a single-term MFS image (specmode mfs)")
@@ -116,9 +116,10 @@ impl Error for ImplementationUnavailable {}
 /// request the device cannot run). `auto` takes the GPU where [`check`]
 /// admits the problem there and the GPU route has been compared with the
 /// CPU's end to end (`gpu_checked`), and the CPU otherwise: off macOS,
-/// without a device, for the W, mosaic and AW kernel sets, for an explicit
+/// without a device, for the W and AW kernel sets, for an explicit
 /// `gridprecision = f64`, and for outlier fields, polarizations other than
-/// Stokes I and visibility writes.
+/// Stokes I and visibility writes. A mosaic goes to the GPU since its
+/// Metal laws landed (#787; the owner kept `auto`'s rule, 2026-10-19).
 #[must_use]
 pub fn resolve_backend(
     problem: &CompiledProblem,
@@ -214,7 +215,7 @@ pub fn check(
         if precision == Some(GridPrecision::F64) {
             unsupported.push(Unsupported::F64GridsOnMetal);
         }
-        if !crate::imaging::standard_kernel_set(problem) {
+        if !crate::imaging::metal_kernel_set(problem) {
             unsupported.push(Unsupported::KernelSetOnMetal);
         }
     }

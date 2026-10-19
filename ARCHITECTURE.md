@@ -690,8 +690,10 @@ interpolates it to the rows' native cells (`Work::PredictNative`) in cells
 from `MetalBackend::native_cells`, and the owners subtract that model at each
 sample's native endpoints as they grid (`Work::NativeResidualGrid`); nothing
 is read back unless a visibility writer asks for the model.
-Metal grids the standard kernel set only; W projection, mosaics and AW
-projection run on the CPU, and `availability::check` refuses them on Metal.
+Metal grids the standard and mosaic kernel sets (#787). A mosaic's weight
+image is summed by contribution before it is gridded, so the f32 grid keeps
+its precision (#792). W projection and AW projection run on the CPU, and
+`availability::check` refuses them on Metal.
 Application availability is the capability boundary: component presence alone
 never makes a route available.
 
