@@ -62,140 +62,154 @@
 <a href=#62 id=62 data-nosnippet>62</a>    components: usize,
 <a href=#63 id=63 data-nosnippet>63</a>    trace: usize,
 <a href=#64 id=64 data-nosnippet>64</a>) -&gt; u64 {
-<a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">let </span>cells = components
-<a href=#66 id=66 data-nosnippet>66</a>        .saturating_mul(solver.component_cells(shape))
-<a href=#67 id=67 data-nosnippet>67</a>        .min(shape.len());
-<a href=#68 id=68 data-nosnippet>68</a>    <span class="kw">let </span>entries = <span class="number">2 </span>* cells <span class="kw">as </span>u64 * terms <span class="kw">as </span>u64;
-<a href=#69 id=69 data-nosnippet>69</a>    (terms * shape.len() * size_of::&lt;f64&gt;()) <span class="kw">as </span>u64
-<a href=#70 id=70 data-nosnippet>70</a>        + entries * DELTA_ENTRY_BYTES
-<a href=#71 id=71 data-nosnippet>71</a>        + (trace.next_power_of_two() * size_of::&lt;Component&gt;()) <span class="kw">as </span>u64
-<a href=#72 id=72 data-nosnippet>72</a>        + solver.working_bytes(shape, terms)
-<a href=#73 id=73 data-nosnippet>73</a>}
-<a href=#74 id=74 data-nosnippet>74</a>
-<a href=#75 id=75 data-nosnippet>75</a><span class="doccomment">/// Run one plane's minor cycle.
-<a href=#76 id=76 data-nosnippet>76</a>///
-<a href=#77 id=77 data-nosnippet>77</a>/// `statistics` is the plane's own measurement before the cycle (its entry
-<a href=#78 id=78 data-nosnippet>78</a>/// peak and noise). The plane is skipped when it has no cleanable pixel or
-<a href=#79 id=79 data-nosnippet>79</a>/// its peak is already at the cycle threshold; otherwise the solver runs in
-<a href=#80 id=80 data-nosnippet>80</a>/// steps of [`CycleControls::step_iterations`] until the plane controller
-<a href=#81 id=81 data-nosnippet>81</a>/// stops it. `trace` asks for the first components.
-<a href=#82 id=82 data-nosnippet>82</a>///
-<a href=#83 id=83 data-nosnippet>83</a>/// # Errors
-<a href=#84 id=84 data-nosnippet>84</a>///
-<a href=#85 id=85 data-nosnippet>85</a>/// [`Error::NonFinite`] when a plane to clean holds a NaN or an infinity in
-<a href=#86 id=86 data-nosnippet>86</a>/// a residual or PSF term; otherwise when the solver fails.
-<a href=#87 id=87 data-nosnippet>87</a></span><span class="kw">pub fn </span>run_plane&lt;S: Solver&gt;(
-<a href=#88 id=88 data-nosnippet>88</a>    solver: <span class="kw-2">&amp;</span>S,
-<a href=#89 id=89 data-nosnippet>89</a>    view: <span class="kw-2">&amp;</span>MinorCycleView&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#90 id=90 data-nosnippet>90</a>    cycle: <span class="kw-2">&amp;</span>CycleControls,
-<a href=#91 id=91 data-nosnippet>91</a>    statistics: <span class="kw-2">&amp;</span>PlaneStatistics,
-<a href=#92 id=92 data-nosnippet>92</a>    trace: usize,
-<a href=#93 id=93 data-nosnippet>93</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PlaneOutcome, Error&gt; {
-<a href=#94 id=94 data-nosnippet>94</a>    <span class="kw">let </span>start_peak = statistics.peak();
-<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">let </span><span class="kw-2">mut </span>control = PlaneControl::new(cycle, statistics, start_peak);
-<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">let </span><span class="kw-2">mut </span>outcome = PlaneOutcome {
-<a href=#97 id=97 data-nosnippet>97</a>        delta: Delta::new(view.residual.len()),
-<a href=#98 id=98 data-nosnippet>98</a>        iterations: <span class="number">0</span>,
-<a href=#99 id=99 data-nosnippet>99</a>        components: <span class="number">0</span>,
-<a href=#100 id=100 data-nosnippet>100</a>        absolute_flux: <span class="number">0.0</span>,
-<a href=#101 id=101 data-nosnippet>101</a>        start_peak,
-<a href=#102 id=102 data-nosnippet>102</a>        peak: start_peak,
-<a href=#103 id=103 data-nosnippet>103</a>        stop: PlaneStop::ZeroMask,
-<a href=#104 id=104 data-nosnippet>104</a>        trace: Vec::new(),
-<a href=#105 id=105 data-nosnippet>105</a>        refreshes: <span class="number">0</span>,
-<a href=#106 id=106 data-nosnippet>106</a>    };
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">let </span><span class="kw-2">mut </span>stop = control.stop(start_peak);
-<a href=#108 id=108 data-nosnippet>108</a>    <span class="kw">if </span>view.support.is_empty() || stop.is_some() {
-<a href=#109 id=109 data-nosnippet>109</a>        outcome.stop = stop.unwrap_or(PlaneStop::ZeroMask);
-<a href=#110 id=110 data-nosnippet>110</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(outcome);
-<a href=#111 id=111 data-nosnippet>111</a>    }
-<a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">if </span>view
-<a href=#113 id=113 data-nosnippet>113</a>        .residual
-<a href=#114 id=114 data-nosnippet>114</a>        .iter()
-<a href=#115 id=115 data-nosnippet>115</a>        .chain(view.psf)
-<a href=#116 id=116 data-nosnippet>116</a>        .flatten()
-<a href=#117 id=117 data-nosnippet>117</a>        .any(|value| !value.is_finite())
-<a href=#118 id=118 data-nosnippet>118</a>    {
-<a href=#119 id=119 data-nosnippet>119</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::NonFinite);
-<a href=#120 id=120 data-nosnippet>120</a>    }
-<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">let </span><span class="kw-2">mut </span>residual = view.residual.to_vec();
-<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">let </span>threshold = control.step_threshold();
-<a href=#123 id=123 data-nosnippet>123</a>    <span class="kw">let </span>step_budget = cycle.step_iterations();
-<a href=#124 id=124 data-nosnippet>124</a>    <span class="kw">while </span>stop.is_none() {
-<a href=#125 id=125 data-nosnippet>125</a>        <span class="comment">// SDAlgorithmBase::deconvolve: setPeakResidual with the previous
-<a href=#126 id=126 data-nosnippet>126</a>        // step's peak, takeOneStep, then checkStop on the new peak.
-<a href=#127 id=127 data-nosnippet>127</a>        </span>control.observe(outcome.peak);
-<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">let </span>step = run_step(
-<a href=#129 id=129 data-nosnippet>129</a>            solver,
-<a href=#130 id=130 data-nosnippet>130</a>            view,
-<a href=#131 id=131 data-nosnippet>131</a>            <span class="kw-2">&amp;mut </span>residual,
-<a href=#132 id=132 data-nosnippet>132</a>            step_budget,
-<a href=#133 id=133 data-nosnippet>133</a>            threshold,
-<a href=#134 id=134 data-nosnippet>134</a>            cycle.gain,
-<a href=#135 id=135 data-nosnippet>135</a>            trace,
-<a href=#136 id=136 data-nosnippet>136</a>            <span class="kw-2">&amp;mut </span>outcome,
-<a href=#137 id=137 data-nosnippet>137</a>        )<span class="question-mark">?</span>;
-<a href=#138 id=138 data-nosnippet>138</a>        control.charge(step);
-<a href=#139 id=139 data-nosnippet>139</a>        stop = control.stop(outcome.peak);
-<a href=#140 id=140 data-nosnippet>140</a>        <span class="kw">if </span>stop.is_none() &amp;&amp; step != step_budget {
-<a href=#141 id=141 data-nosnippet>141</a>            stop = <span class="prelude-val">Some</span>(PlaneStop::Exited);
-<a href=#142 id=142 data-nosnippet>142</a>        }
-<a href=#143 id=143 data-nosnippet>143</a>    }
-<a href=#144 id=144 data-nosnippet>144</a>    outcome.stop = stop.expect(<span class="string">"the step loop ends on a stop"</span>);
-<a href=#145 id=145 data-nosnippet>145</a>    <span class="prelude-val">Ok</span>(outcome)
-<a href=#146 id=146 data-nosnippet>146</a>}
-<a href=#147 id=147 data-nosnippet>147</a>
-<a href=#148 id=148 data-nosnippet>148</a><span class="doccomment">/// One solver step (`takeOneStep`): returns the iterations it charges.
-<a href=#149 id=149 data-nosnippet>149</a></span><span class="attr">#[allow(clippy::too_many_arguments)]
-<a href=#150 id=150 data-nosnippet>150</a></span><span class="kw">fn </span>run_step&lt;S: Solver&gt;(
-<a href=#151 id=151 data-nosnippet>151</a>    solver: <span class="kw-2">&amp;</span>S,
-<a href=#152 id=152 data-nosnippet>152</a>    view: <span class="kw-2">&amp;</span>MinorCycleView&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#153 id=153 data-nosnippet>153</a>    residual: <span class="kw-2">&amp;mut </span>[Vec&lt;f64&gt;],
-<a href=#154 id=154 data-nosnippet>154</a>    budget: usize,
-<a href=#155 id=155 data-nosnippet>155</a>    threshold: f64,
-<a href=#156 id=156 data-nosnippet>156</a>    gain: f64,
-<a href=#157 id=157 data-nosnippet>157</a>    trace: usize,
-<a href=#158 id=158 data-nosnippet>158</a>    outcome: <span class="kw-2">&amp;mut </span>PlaneOutcome,
-<a href=#159 id=159 data-nosnippet>159</a>) -&gt; <span class="prelude-ty">Result</span>&lt;usize, Error&gt; {
-<a href=#160 id=160 data-nosnippet>160</a>    <span class="kw">let </span><span class="kw-2">mut </span>state = solver.initialize(view, residual, threshold)<span class="question-mark">?</span>;
-<a href=#161 id=161 data-nosnippet>161</a>    <span class="kw">let </span><span class="kw-2">mut </span>delta = Delta::new(residual.len());
-<a href=#162 id=162 data-nosnippet>162</a>    <span class="kw">let </span>limit = budget + solver.extra_iterations();
-<a href=#163 id=163 data-nosnippet>163</a>    <span class="kw">let </span><span class="kw-2">mut </span>components = <span class="number">0</span>;
-<a href=#164 id=164 data-nosnippet>164</a>    <span class="kw">let </span><span class="kw-2">mut </span>charged_stop = <span class="number">0</span>;
-<a href=#165 id=165 data-nosnippet>165</a>    <span class="kw">let </span><span class="kw-2">mut </span>fluxes = Vec::new();
-<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">while </span>components &lt; limit {
-<a href=#167 id=167 data-nosnippet>167</a>        <span class="kw">match </span>solver.next(<span class="kw-2">&amp;mut </span>state, view, residual)<span class="question-mark">? </span>{
-<a href=#168 id=168 data-nosnippet>168</a>            Next::Stop =&gt; {
-<a href=#169 id=169 data-nosnippet>169</a>                charged_stop = usize::from(solver.charges_stop());
-<a href=#170 id=170 data-nosnippet>170</a>                <span class="kw">break</span>;
-<a href=#171 id=171 data-nosnippet>171</a>            }
-<a href=#172 id=172 data-nosnippet>172</a>            Next::Clean(candidate) =&gt; {
-<a href=#173 id=173 data-nosnippet>173</a>                fluxes.clear();
-<a href=#174 id=174 data-nosnippet>174</a>                solver.component_fluxes(<span class="kw-2">&amp;</span>state, candidate, gain, <span class="kw-2">&amp;mut </span>fluxes);
-<a href=#175 id=175 data-nosnippet>175</a>                solver.accept(<span class="kw-2">&amp;mut </span>state, view, residual, candidate, gain, <span class="kw-2">&amp;mut </span>delta)<span class="question-mark">?</span>;
-<a href=#176 id=176 data-nosnippet>176</a>                <span class="kw">let </span>Candidate::Pixel { index, scale, .. } = candidate;
-<a href=#177 id=177 data-nosnippet>177</a>                outcome.absolute_flux += fluxes.iter().map(|flux| flux.abs()).sum::&lt;f64&gt;();
-<a href=#178 id=178 data-nosnippet>178</a>                <span class="kw">for </span>(term, <span class="kw-2">&amp;</span>flux) <span class="kw">in </span>fluxes.iter().enumerate() {
-<a href=#179 id=179 data-nosnippet>179</a>                    <span class="kw">if </span>outcome.trace.len() &lt; trace {
-<a href=#180 id=180 data-nosnippet>180</a>                        outcome.trace.push(Component {
-<a href=#181 id=181 data-nosnippet>181</a>                            index,
-<a href=#182 id=182 data-nosnippet>182</a>                            scale,
-<a href=#183 id=183 data-nosnippet>183</a>                            term,
-<a href=#184 id=184 data-nosnippet>184</a>                            flux,
-<a href=#185 id=185 data-nosnippet>185</a>                        });
-<a href=#186 id=186 data-nosnippet>186</a>                    }
-<a href=#187 id=187 data-nosnippet>187</a>                }
-<a href=#188 id=188 data-nosnippet>188</a>                components += <span class="number">1</span>;
-<a href=#189 id=189 data-nosnippet>189</a>            }
-<a href=#190 id=190 data-nosnippet>190</a>        }
-<a href=#191 id=191 data-nosnippet>191</a>    }
-<a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">let </span>end = solver.finalize(state, view, residual, <span class="kw-2">&amp;</span>delta)<span class="question-mark">?</span>;
-<a href=#193 id=193 data-nosnippet>193</a>    outcome.peak = end.peak;
-<a href=#194 id=194 data-nosnippet>194</a>    outcome.refreshes += end.refreshes;
-<a href=#195 id=195 data-nosnippet>195</a>    outcome.delta.merge(<span class="kw-2">&amp;</span>delta);
-<a href=#196 id=196 data-nosnippet>196</a>    outcome.components += components;
-<a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">let </span>charged = components.min(budget) + charged_stop;
-<a href=#198 id=198 data-nosnippet>198</a>    outcome.iterations += charged;
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="prelude-val">Ok</span>(charged)
-<a href=#200 id=200 data-nosnippet>200</a>}
+<a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">let </span>entries = <span class="number">2 </span>* update_entries(solver, shape, terms, components) <span class="kw">as </span>u64;
+<a href=#66 id=66 data-nosnippet>66</a>    (terms * shape.len() * size_of::&lt;f64&gt;()) <span class="kw">as </span>u64
+<a href=#67 id=67 data-nosnippet>67</a>        + entries * DELTA_ENTRY_BYTES
+<a href=#68 id=68 data-nosnippet>68</a>        + (trace.next_power_of_two() * size_of::&lt;Component&gt;()) <span class="kw">as </span>u64
+<a href=#69 id=69 data-nosnippet>69</a>        + solver.working_bytes(shape, terms)
+<a href=#70 id=70 data-nosnippet>70</a>}
+<a href=#71 id=71 data-nosnippet>71</a>
+<a href=#72 id=72 data-nosnippet>72</a><span class="doccomment">/// Entries a [`Delta`] of `terms` terms holds at most after `components`
+<a href=#73 id=73 data-nosnippet>73</a>/// components on a plane of `shape`: for each term, an entry for each pixel
+<a href=#74 id=74 data-nosnippet>74</a>/// a component adds flux to ([`Solver::component_cells`]), and at most
+<a href=#75 id=75 data-nosnippet>75</a>/// every pixel. It bounds the model terms a plane's minor cycle forms.
+<a href=#76 id=76 data-nosnippet>76</a></span><span class="attr">#[must_use]
+<a href=#77 id=77 data-nosnippet>77</a></span><span class="kw">pub fn </span>update_entries&lt;S: Solver&gt;(
+<a href=#78 id=78 data-nosnippet>78</a>    solver: <span class="kw-2">&amp;</span>S,
+<a href=#79 id=79 data-nosnippet>79</a>    shape: PlaneShape,
+<a href=#80 id=80 data-nosnippet>80</a>    terms: usize,
+<a href=#81 id=81 data-nosnippet>81</a>    components: usize,
+<a href=#82 id=82 data-nosnippet>82</a>) -&gt; usize {
+<a href=#83 id=83 data-nosnippet>83</a>    <span class="kw">let </span>cells = components
+<a href=#84 id=84 data-nosnippet>84</a>        .saturating_mul(solver.component_cells(shape))
+<a href=#85 id=85 data-nosnippet>85</a>        .min(shape.len());
+<a href=#86 id=86 data-nosnippet>86</a>    terms.saturating_mul(cells)
+<a href=#87 id=87 data-nosnippet>87</a>}
+<a href=#88 id=88 data-nosnippet>88</a>
+<a href=#89 id=89 data-nosnippet>89</a><span class="doccomment">/// Run one plane's minor cycle.
+<a href=#90 id=90 data-nosnippet>90</a>///
+<a href=#91 id=91 data-nosnippet>91</a>/// `statistics` is the plane's own measurement before the cycle (its entry
+<a href=#92 id=92 data-nosnippet>92</a>/// peak and noise). The plane is skipped when it has no cleanable pixel or
+<a href=#93 id=93 data-nosnippet>93</a>/// its peak is already at the cycle threshold; otherwise the solver runs in
+<a href=#94 id=94 data-nosnippet>94</a>/// steps of [`CycleControls::step_iterations`] until the plane controller
+<a href=#95 id=95 data-nosnippet>95</a>/// stops it. `trace` asks for the first components.
+<a href=#96 id=96 data-nosnippet>96</a>///
+<a href=#97 id=97 data-nosnippet>97</a>/// # Errors
+<a href=#98 id=98 data-nosnippet>98</a>///
+<a href=#99 id=99 data-nosnippet>99</a>/// [`Error::NonFinite`] when a plane to clean holds a NaN or an infinity in
+<a href=#100 id=100 data-nosnippet>100</a>/// a residual or PSF term; otherwise when the solver fails.
+<a href=#101 id=101 data-nosnippet>101</a></span><span class="kw">pub fn </span>run_plane&lt;S: Solver&gt;(
+<a href=#102 id=102 data-nosnippet>102</a>    solver: <span class="kw-2">&amp;</span>S,
+<a href=#103 id=103 data-nosnippet>103</a>    view: <span class="kw-2">&amp;</span>MinorCycleView&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#104 id=104 data-nosnippet>104</a>    cycle: <span class="kw-2">&amp;</span>CycleControls,
+<a href=#105 id=105 data-nosnippet>105</a>    statistics: <span class="kw-2">&amp;</span>PlaneStatistics,
+<a href=#106 id=106 data-nosnippet>106</a>    trace: usize,
+<a href=#107 id=107 data-nosnippet>107</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PlaneOutcome, Error&gt; {
+<a href=#108 id=108 data-nosnippet>108</a>    <span class="kw">let </span>start_peak = statistics.peak();
+<a href=#109 id=109 data-nosnippet>109</a>    <span class="kw">let </span><span class="kw-2">mut </span>control = PlaneControl::new(cycle, statistics, start_peak);
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="kw">let </span><span class="kw-2">mut </span>outcome = PlaneOutcome {
+<a href=#111 id=111 data-nosnippet>111</a>        delta: Delta::new(view.residual.len()),
+<a href=#112 id=112 data-nosnippet>112</a>        iterations: <span class="number">0</span>,
+<a href=#113 id=113 data-nosnippet>113</a>        components: <span class="number">0</span>,
+<a href=#114 id=114 data-nosnippet>114</a>        absolute_flux: <span class="number">0.0</span>,
+<a href=#115 id=115 data-nosnippet>115</a>        start_peak,
+<a href=#116 id=116 data-nosnippet>116</a>        peak: start_peak,
+<a href=#117 id=117 data-nosnippet>117</a>        stop: PlaneStop::ZeroMask,
+<a href=#118 id=118 data-nosnippet>118</a>        trace: Vec::new(),
+<a href=#119 id=119 data-nosnippet>119</a>        refreshes: <span class="number">0</span>,
+<a href=#120 id=120 data-nosnippet>120</a>    };
+<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">let </span><span class="kw-2">mut </span>stop = control.stop(start_peak);
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">if </span>view.support.is_empty() || stop.is_some() {
+<a href=#123 id=123 data-nosnippet>123</a>        outcome.stop = stop.unwrap_or(PlaneStop::ZeroMask);
+<a href=#124 id=124 data-nosnippet>124</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(outcome);
+<a href=#125 id=125 data-nosnippet>125</a>    }
+<a href=#126 id=126 data-nosnippet>126</a>    <span class="kw">if </span>view
+<a href=#127 id=127 data-nosnippet>127</a>        .residual
+<a href=#128 id=128 data-nosnippet>128</a>        .iter()
+<a href=#129 id=129 data-nosnippet>129</a>        .chain(view.psf)
+<a href=#130 id=130 data-nosnippet>130</a>        .flatten()
+<a href=#131 id=131 data-nosnippet>131</a>        .any(|value| !value.is_finite())
+<a href=#132 id=132 data-nosnippet>132</a>    {
+<a href=#133 id=133 data-nosnippet>133</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::NonFinite);
+<a href=#134 id=134 data-nosnippet>134</a>    }
+<a href=#135 id=135 data-nosnippet>135</a>    <span class="kw">let </span><span class="kw-2">mut </span>residual = view.residual.to_vec();
+<a href=#136 id=136 data-nosnippet>136</a>    <span class="kw">let </span>threshold = control.step_threshold();
+<a href=#137 id=137 data-nosnippet>137</a>    <span class="kw">let </span>step_budget = cycle.step_iterations();
+<a href=#138 id=138 data-nosnippet>138</a>    <span class="kw">while </span>stop.is_none() {
+<a href=#139 id=139 data-nosnippet>139</a>        <span class="comment">// SDAlgorithmBase::deconvolve: setPeakResidual with the previous
+<a href=#140 id=140 data-nosnippet>140</a>        // step's peak, takeOneStep, then checkStop on the new peak.
+<a href=#141 id=141 data-nosnippet>141</a>        </span>control.observe(outcome.peak);
+<a href=#142 id=142 data-nosnippet>142</a>        <span class="kw">let </span>step = run_step(
+<a href=#143 id=143 data-nosnippet>143</a>            solver,
+<a href=#144 id=144 data-nosnippet>144</a>            view,
+<a href=#145 id=145 data-nosnippet>145</a>            <span class="kw-2">&amp;mut </span>residual,
+<a href=#146 id=146 data-nosnippet>146</a>            step_budget,
+<a href=#147 id=147 data-nosnippet>147</a>            threshold,
+<a href=#148 id=148 data-nosnippet>148</a>            cycle.gain,
+<a href=#149 id=149 data-nosnippet>149</a>            trace,
+<a href=#150 id=150 data-nosnippet>150</a>            <span class="kw-2">&amp;mut </span>outcome,
+<a href=#151 id=151 data-nosnippet>151</a>        )<span class="question-mark">?</span>;
+<a href=#152 id=152 data-nosnippet>152</a>        control.charge(step);
+<a href=#153 id=153 data-nosnippet>153</a>        stop = control.stop(outcome.peak);
+<a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">if </span>stop.is_none() &amp;&amp; step != step_budget {
+<a href=#155 id=155 data-nosnippet>155</a>            stop = <span class="prelude-val">Some</span>(PlaneStop::Exited);
+<a href=#156 id=156 data-nosnippet>156</a>        }
+<a href=#157 id=157 data-nosnippet>157</a>    }
+<a href=#158 id=158 data-nosnippet>158</a>    outcome.stop = stop.expect(<span class="string">"the step loop ends on a stop"</span>);
+<a href=#159 id=159 data-nosnippet>159</a>    <span class="prelude-val">Ok</span>(outcome)
+<a href=#160 id=160 data-nosnippet>160</a>}
+<a href=#161 id=161 data-nosnippet>161</a>
+<a href=#162 id=162 data-nosnippet>162</a><span class="doccomment">/// One solver step (`takeOneStep`): returns the iterations it charges.
+<a href=#163 id=163 data-nosnippet>163</a></span><span class="attr">#[allow(clippy::too_many_arguments)]
+<a href=#164 id=164 data-nosnippet>164</a></span><span class="kw">fn </span>run_step&lt;S: Solver&gt;(
+<a href=#165 id=165 data-nosnippet>165</a>    solver: <span class="kw-2">&amp;</span>S,
+<a href=#166 id=166 data-nosnippet>166</a>    view: <span class="kw-2">&amp;</span>MinorCycleView&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#167 id=167 data-nosnippet>167</a>    residual: <span class="kw-2">&amp;mut </span>[Vec&lt;f64&gt;],
+<a href=#168 id=168 data-nosnippet>168</a>    budget: usize,
+<a href=#169 id=169 data-nosnippet>169</a>    threshold: f64,
+<a href=#170 id=170 data-nosnippet>170</a>    gain: f64,
+<a href=#171 id=171 data-nosnippet>171</a>    trace: usize,
+<a href=#172 id=172 data-nosnippet>172</a>    outcome: <span class="kw-2">&amp;mut </span>PlaneOutcome,
+<a href=#173 id=173 data-nosnippet>173</a>) -&gt; <span class="prelude-ty">Result</span>&lt;usize, Error&gt; {
+<a href=#174 id=174 data-nosnippet>174</a>    <span class="kw">let </span><span class="kw-2">mut </span>state = solver.initialize(view, residual, threshold)<span class="question-mark">?</span>;
+<a href=#175 id=175 data-nosnippet>175</a>    <span class="kw">let </span><span class="kw-2">mut </span>delta = Delta::new(residual.len());
+<a href=#176 id=176 data-nosnippet>176</a>    <span class="kw">let </span>limit = budget + solver.extra_iterations();
+<a href=#177 id=177 data-nosnippet>177</a>    <span class="kw">let </span><span class="kw-2">mut </span>components = <span class="number">0</span>;
+<a href=#178 id=178 data-nosnippet>178</a>    <span class="kw">let </span><span class="kw-2">mut </span>charged_stop = <span class="number">0</span>;
+<a href=#179 id=179 data-nosnippet>179</a>    <span class="kw">let </span><span class="kw-2">mut </span>fluxes = Vec::new();
+<a href=#180 id=180 data-nosnippet>180</a>    <span class="kw">while </span>components &lt; limit {
+<a href=#181 id=181 data-nosnippet>181</a>        <span class="kw">match </span>solver.next(<span class="kw-2">&amp;mut </span>state, view, residual)<span class="question-mark">? </span>{
+<a href=#182 id=182 data-nosnippet>182</a>            Next::Stop =&gt; {
+<a href=#183 id=183 data-nosnippet>183</a>                charged_stop = usize::from(solver.charges_stop());
+<a href=#184 id=184 data-nosnippet>184</a>                <span class="kw">break</span>;
+<a href=#185 id=185 data-nosnippet>185</a>            }
+<a href=#186 id=186 data-nosnippet>186</a>            Next::Clean(candidate) =&gt; {
+<a href=#187 id=187 data-nosnippet>187</a>                fluxes.clear();
+<a href=#188 id=188 data-nosnippet>188</a>                solver.component_fluxes(<span class="kw-2">&amp;</span>state, candidate, gain, <span class="kw-2">&amp;mut </span>fluxes);
+<a href=#189 id=189 data-nosnippet>189</a>                solver.accept(<span class="kw-2">&amp;mut </span>state, view, residual, candidate, gain, <span class="kw-2">&amp;mut </span>delta)<span class="question-mark">?</span>;
+<a href=#190 id=190 data-nosnippet>190</a>                <span class="kw">let </span>Candidate::Pixel { index, scale, .. } = candidate;
+<a href=#191 id=191 data-nosnippet>191</a>                outcome.absolute_flux += fluxes.iter().map(|flux| flux.abs()).sum::&lt;f64&gt;();
+<a href=#192 id=192 data-nosnippet>192</a>                <span class="kw">for </span>(term, <span class="kw-2">&amp;</span>flux) <span class="kw">in </span>fluxes.iter().enumerate() {
+<a href=#193 id=193 data-nosnippet>193</a>                    <span class="kw">if </span>outcome.trace.len() &lt; trace {
+<a href=#194 id=194 data-nosnippet>194</a>                        outcome.trace.push(Component {
+<a href=#195 id=195 data-nosnippet>195</a>                            index,
+<a href=#196 id=196 data-nosnippet>196</a>                            scale,
+<a href=#197 id=197 data-nosnippet>197</a>                            term,
+<a href=#198 id=198 data-nosnippet>198</a>                            flux,
+<a href=#199 id=199 data-nosnippet>199</a>                        });
+<a href=#200 id=200 data-nosnippet>200</a>                    }
+<a href=#201 id=201 data-nosnippet>201</a>                }
+<a href=#202 id=202 data-nosnippet>202</a>                components += <span class="number">1</span>;
+<a href=#203 id=203 data-nosnippet>203</a>            }
+<a href=#204 id=204 data-nosnippet>204</a>        }
+<a href=#205 id=205 data-nosnippet>205</a>    }
+<a href=#206 id=206 data-nosnippet>206</a>    <span class="kw">let </span>end = solver.finalize(state, view, residual, <span class="kw-2">&amp;</span>delta)<span class="question-mark">?</span>;
+<a href=#207 id=207 data-nosnippet>207</a>    outcome.peak = end.peak;
+<a href=#208 id=208 data-nosnippet>208</a>    outcome.refreshes += end.refreshes;
+<a href=#209 id=209 data-nosnippet>209</a>    outcome.delta.merge(<span class="kw-2">&amp;</span>delta);
+<a href=#210 id=210 data-nosnippet>210</a>    outcome.components += components;
+<a href=#211 id=211 data-nosnippet>211</a>    <span class="kw">let </span>charged = components.min(budget) + charged_stop;
+<a href=#212 id=212 data-nosnippet>212</a>    outcome.iterations += charged;
+<a href=#213 id=213 data-nosnippet>213</a>    <span class="prelude-val">Ok</span>(charged)
+<a href=#214 id=214 data-nosnippet>214</a>}
 </code></pre></div></section></main></body></html>

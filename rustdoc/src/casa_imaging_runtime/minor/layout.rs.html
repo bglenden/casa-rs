@@ -7,7 +7,7 @@
 <a href=#7 id=7 data-nosnippet>7</a>
 <a href=#8 id=8 data-nosnippet>8</a></span><span class="kw">use </span>casa_imaging_deconvolution::{
 <a href=#9 id=9 data-nosnippet>9</a>    Clark, CycleControls, FinalNormalState, Hogbom, ImageDomainReconstructionMaskPlans,
-<a href=#10 id=10 data-nosnippet>10</a>    MajorCycleCompletion, Multiscale, NormalBasis, PlaneShape, PlaneStop, Taylor,
+<a href=#10 id=10 data-nosnippet>10</a>    MajorCycleCompletion, Multiscale, NormalBasis, PlaneShape, PlaneStop, Solver, Taylor,
 <a href=#11 id=11 data-nosnippet>11</a>};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>casa_imaging_model::{CompiledProblem, ReconstructionAlgorithm, ReconstructionBasis};
 <a href=#13 id=13 data-nosnippet>13</a>
@@ -117,186 +117,192 @@
 <a href=#117 id=117 data-nosnippet>117</a>        (support + TRACE * size_of::&lt;<span class="kw">super</span>::TracedComponent&gt;()) <span class="kw">as </span>u64
 <a href=#118 id=118 data-nosnippet>118</a>    }
 <a href=#119 id=119 data-nosnippet>119</a>
-<a href=#120 id=120 data-nosnippet>120</a>    <span class="doccomment">/// Heap bytes the model terms of a minor cycle hold until its refresh
-<a href=#121 id=121 data-nosnippet>121</a>    /// pass takes them: [`super::result_bytes`] for every plane.
-<a href=#122 id=122 data-nosnippet>122</a>    </span><span class="attr">#[must_use]
-<a href=#123 id=123 data-nosnippet>123</a>    </span><span class="kw">pub fn </span>result_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
-<a href=#124 id=124 data-nosnippet>124</a>        <span class="self">self</span>.planes <span class="kw">as </span>u64 * <span class="kw">super</span>::result_bytes(<span class="self">self</span>.terms.<span class="number">0 </span><span class="kw">as </span>usize)
-<a href=#125 id=125 data-nosnippet>125</a>    }
-<a href=#126 id=126 data-nosnippet>126</a>
-<a href=#127 id=127 data-nosnippet>127</a>    <span class="doccomment">/// Heap bytes the Clark refresh a run caches across its minor cycles
-<a href=#128 id=128 data-nosnippet>128</a>    /// holds ([`PsfCache::refresh_bytes`]): a single-plane Clark run keeps
-<a href=#129 id=129 data-nosnippet>129</a>    /// one; any other keeps none.
-<a href=#130 id=130 data-nosnippet>130</a>    </span><span class="attr">#[must_use]
-<a href=#131 id=131 data-nosnippet>131</a>    </span><span class="kw">pub fn </span>refresh_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, setup: <span class="kw-2">&amp;</span>MinorCycleSetup) -&gt; u64 {
-<a href=#132 id=132 data-nosnippet>132</a>        <span class="kw">if </span><span class="macro">matches!</span>(setup.algorithm, ReconstructionAlgorithm::Clark) &amp;&amp; <span class="self">self</span>.planes == <span class="number">1 </span>{
-<a href=#133 id=133 data-nosnippet>133</a>            casa_imaging_deconvolution::LinearRefresh::bytes(<span class="self">self</span>.shape)
-<a href=#134 id=134 data-nosnippet>134</a>        } <span class="kw">else </span>{
-<a href=#135 id=135 data-nosnippet>135</a>            <span class="number">0
-<a href=#136 id=136 data-nosnippet>136</a>        </span>}
-<a href=#137 id=137 data-nosnippet>137</a>    }
-<a href=#138 id=138 data-nosnippet>138</a>
-<a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// Heap bytes one loaded plane holds at most ([`super::load`]): its
-<a href=#140 id=140 data-nosnippet>140</a>    /// residual and PSF terms (`f64`), its support and validity, its
-<a href=#141 id=141 data-nosnippet>141</a>    /// sensitivity under a response and, from a paged channel-local state,
-<a href=#142 id=142 data-nosnippet>142</a>    /// the plane's fields read as `Complex64`; or, before any of them, its
-<a href=#143 id=143 data-nosnippet>143</a>    /// validity beside the one model plane read at a time to find the valid
-<a href=#144 id=144 data-nosnippet>144</a>    /// cells. A constant or Taylor state is resident and its planes are
-<a href=#145 id=145 data-nosnippet>145</a>    /// borrowed, not read (#738).
-<a href=#146 id=146 data-nosnippet>146</a>    </span><span class="kw">fn </span>load_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, response: bool) -&gt; u64 {
-<a href=#147 id=147 data-nosnippet>147</a>        <span class="kw">let </span>terms = <span class="self">self</span>.terms.<span class="number">0 </span>+ <span class="self">self</span>.terms.<span class="number">1</span>;
-<a href=#148 id=148 data-nosnippet>148</a>        <span class="kw">let </span>loaded = terms * size_of::&lt;f64&gt;() <span class="kw">as </span>u64
-<a href=#149 id=149 data-nosnippet>149</a>            + <span class="number">2 </span>* size_of::&lt;bool&gt;() <span class="kw">as </span>u64
-<a href=#150 id=150 data-nosnippet>150</a>            + <span class="kw">if </span>response { size_of::&lt;f64&gt;() <span class="kw">as </span>u64 } <span class="kw">else </span>{ <span class="number">0 </span>}
-<a href=#151 id=151 data-nosnippet>151</a>            + <span class="kw">if </span><span class="self">self</span>.paged {
-<a href=#152 id=152 data-nosnippet>152</a>                terms * size_of::&lt;num_complex::Complex64&gt;() <span class="kw">as </span>u64
-<a href=#153 id=153 data-nosnippet>153</a>            } <span class="kw">else </span>{
-<a href=#154 id=154 data-nosnippet>154</a>                <span class="number">0
-<a href=#155 id=155 data-nosnippet>155</a>            </span>};
-<a href=#156 id=156 data-nosnippet>156</a>        <span class="kw">let </span>validity = (size_of::&lt;casa_imaging_model::ModelSample&gt;() + size_of::&lt;bool&gt;()) <span class="kw">as </span>u64;
-<a href=#157 id=157 data-nosnippet>157</a>        <span class="self">self</span>.shape.len() <span class="kw">as </span>u64 * loaded.max(validity)
-<a href=#158 id=158 data-nosnippet>158</a>    }
-<a href=#159 id=159 data-nosnippet>159</a>
-<a href=#160 id=160 data-nosnippet>160</a>    <span class="doccomment">/// Planes a phase of `workers` loads at once: one when a single plane
-<a href=#161 id=161 data-nosnippet>161</a>    /// spreads over the team.
-<a href=#162 id=162 data-nosnippet>162</a>    </span><span class="kw">fn </span>concurrent(<span class="kw-2">&amp;</span><span class="self">self</span>, workers: usize) -&gt; u64 {
-<a href=#163 id=163 data-nosnippet>163</a>        workers.min(<span class="self">self</span>.planes).max(<span class="number">1</span>) <span class="kw">as </span>u64
+<a href=#120 id=120 data-nosnippet>120</a>    <span class="doccomment">/// Heap bytes the model terms of a minor cycle under `setup` hold, from
+<a href=#121 id=121 data-nosnippet>121</a>    /// the solve until its refresh pass takes them: [`super::result_bytes`]
+<a href=#122 id=122 data-nosnippet>122</a>    /// of every plane's update, cleaning at most `iterations`, at the most
+<a href=#123 id=123 data-nosnippet>123</a>    /// entries its solver's components can make
+<a href=#124 id=124 data-nosnippet>124</a>    /// ([`casa_imaging_deconvolution::update_entries`]). A multiscale
+<a href=#125 id=125 data-nosnippet>125</a>    /// component makes an entry for each cell of its scale, not one (#778
+<a href=#126 id=126 data-nosnippet>126</a>    /// review).
+<a href=#127 id=127 data-nosnippet>127</a>    </span><span class="attr">#[must_use]
+<a href=#128 id=128 data-nosnippet>128</a>    </span><span class="kw">pub fn </span>result_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, setup: <span class="kw-2">&amp;</span>MinorCycleSetup, iterations: usize) -&gt; u64 {
+<a href=#129 id=129 data-nosnippet>129</a>        <span class="kw">let </span>(<span class="kw">_</span>, entries) = solve_bound(<span class="self">self</span>, setup, iterations);
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="self">self</span>.planes <span class="kw">as </span>u64 * <span class="kw">super</span>::result_bytes(entries)
+<a href=#131 id=131 data-nosnippet>131</a>    }
+<a href=#132 id=132 data-nosnippet>132</a>
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="doccomment">/// Heap bytes the Clark refresh a run caches across its minor cycles
+<a href=#134 id=134 data-nosnippet>134</a>    /// holds ([`PsfCache::refresh_bytes`]): a single-plane Clark run keeps
+<a href=#135 id=135 data-nosnippet>135</a>    /// one; any other keeps none.
+<a href=#136 id=136 data-nosnippet>136</a>    </span><span class="attr">#[must_use]
+<a href=#137 id=137 data-nosnippet>137</a>    </span><span class="kw">pub fn </span>refresh_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, setup: <span class="kw-2">&amp;</span>MinorCycleSetup) -&gt; u64 {
+<a href=#138 id=138 data-nosnippet>138</a>        <span class="kw">if </span><span class="macro">matches!</span>(setup.algorithm, ReconstructionAlgorithm::Clark) &amp;&amp; <span class="self">self</span>.planes == <span class="number">1 </span>{
+<a href=#139 id=139 data-nosnippet>139</a>            casa_imaging_deconvolution::LinearRefresh::bytes(<span class="self">self</span>.shape)
+<a href=#140 id=140 data-nosnippet>140</a>        } <span class="kw">else </span>{
+<a href=#141 id=141 data-nosnippet>141</a>            <span class="number">0
+<a href=#142 id=142 data-nosnippet>142</a>        </span>}
+<a href=#143 id=143 data-nosnippet>143</a>    }
+<a href=#144 id=144 data-nosnippet>144</a>
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="doccomment">/// Heap bytes one loaded plane holds at most ([`super::load`]): its
+<a href=#146 id=146 data-nosnippet>146</a>    /// residual and PSF terms (`f64`), its support and validity, its
+<a href=#147 id=147 data-nosnippet>147</a>    /// sensitivity under a response and, from a paged channel-local state,
+<a href=#148 id=148 data-nosnippet>148</a>    /// the plane's fields read as `Complex64`; or, before any of them, its
+<a href=#149 id=149 data-nosnippet>149</a>    /// validity beside the one model plane read at a time to find the valid
+<a href=#150 id=150 data-nosnippet>150</a>    /// cells. A constant or Taylor state is resident and its planes are
+<a href=#151 id=151 data-nosnippet>151</a>    /// borrowed, not read (#738).
+<a href=#152 id=152 data-nosnippet>152</a>    </span><span class="kw">fn </span>load_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>, response: bool) -&gt; u64 {
+<a href=#153 id=153 data-nosnippet>153</a>        <span class="kw">let </span>terms = <span class="self">self</span>.terms.<span class="number">0 </span>+ <span class="self">self</span>.terms.<span class="number">1</span>;
+<a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">let </span>loaded = terms * size_of::&lt;f64&gt;() <span class="kw">as </span>u64
+<a href=#155 id=155 data-nosnippet>155</a>            + <span class="number">2 </span>* size_of::&lt;bool&gt;() <span class="kw">as </span>u64
+<a href=#156 id=156 data-nosnippet>156</a>            + <span class="kw">if </span>response { size_of::&lt;f64&gt;() <span class="kw">as </span>u64 } <span class="kw">else </span>{ <span class="number">0 </span>}
+<a href=#157 id=157 data-nosnippet>157</a>            + <span class="kw">if </span><span class="self">self</span>.paged {
+<a href=#158 id=158 data-nosnippet>158</a>                terms * size_of::&lt;num_complex::Complex64&gt;() <span class="kw">as </span>u64
+<a href=#159 id=159 data-nosnippet>159</a>            } <span class="kw">else </span>{
+<a href=#160 id=160 data-nosnippet>160</a>                <span class="number">0
+<a href=#161 id=161 data-nosnippet>161</a>            </span>};
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">let </span>validity = (size_of::&lt;casa_imaging_model::ModelSample&gt;() + size_of::&lt;bool&gt;()) <span class="kw">as </span>u64;
+<a href=#163 id=163 data-nosnippet>163</a>        <span class="self">self</span>.shape.len() <span class="kw">as </span>u64 * loaded.max(validity)
 <a href=#164 id=164 data-nosnippet>164</a>    }
-<a href=#165 id=165 data-nosnippet>165</a>}
-<a href=#166 id=166 data-nosnippet>166</a>
-<a href=#167 id=167 data-nosnippet>167</a><span class="doccomment">/// Heap bytes [`super::prepare_minor_cycle`] holds at most: the masks it
-<a href=#168 id=168 data-nosnippet>168</a>/// materializes, and on each of the planes loaded at once on `workers`, the
-<a href=#169 id=169 data-nosnippet>169</a>/// load and its measurement (the robust noise's two copies under `nsigma`,
-<a href=#170 id=170 data-nosnippet>170</a>/// the PSF fit's single-precision copies for a plane not yet in `cache`).
-<a href=#171 id=171 data-nosnippet>171</a></span><span class="attr">#[must_use]
-<a href=#172 id=172 data-nosnippet>172</a></span><span class="kw">pub fn </span>prepare_bytes(
-<a href=#173 id=173 data-nosnippet>173</a>    completion: <span class="kw-2">&amp;</span>MajorCycleCompletion,
-<a href=#174 id=174 data-nosnippet>174</a>    mask_plans: <span class="kw-2">&amp;</span>ImageDomainReconstructionMaskPlans,
-<a href=#175 id=175 data-nosnippet>175</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup,
-<a href=#176 id=176 data-nosnippet>176</a>    cache: <span class="kw-2">&amp;</span>PsfCache,
-<a href=#177 id=177 data-nosnippet>177</a>    workers: usize,
-<a href=#178 id=178 data-nosnippet>178</a>) -&gt; u64 {
-<a href=#179 id=179 data-nosnippet>179</a>    <span class="kw">let </span>normal = completion.normal_state();
-<a href=#180 id=180 data-nosnippet>180</a>    <span class="kw">let </span>fits = plane_keys(normal, is_taylor(normal))
-<a href=#181 id=181 data-nosnippet>181</a>        .iter()
-<a href=#182 id=182 data-nosnippet>182</a>        .any(|key| !cache.summaries.contains_key(key));
-<a href=#183 id=183 data-nosnippet>183</a>    prepare_bytes_for(<span class="kw-2">&amp;</span>MinorLayout::of(normal), mask_plans, setup, fits, workers)
-<a href=#184 id=184 data-nosnippet>184</a>}
-<a href=#185 id=185 data-nosnippet>185</a>
-<a href=#186 id=186 data-nosnippet>186</a><span class="doccomment">/// [`prepare_bytes`] for a state of `layout`, with `fits` when some plane's
-<a href=#187 id=187 data-nosnippet>187</a>/// PSF is not yet measured, as before the first minor cycle.
-<a href=#188 id=188 data-nosnippet>188</a></span><span class="attr">#[must_use]
-<a href=#189 id=189 data-nosnippet>189</a></span><span class="kw">pub fn </span>prepare_bytes_for(
-<a href=#190 id=190 data-nosnippet>190</a>    layout: <span class="kw-2">&amp;</span>MinorLayout,
-<a href=#191 id=191 data-nosnippet>191</a>    mask_plans: <span class="kw-2">&amp;</span>ImageDomainReconstructionMaskPlans,
-<a href=#192 id=192 data-nosnippet>192</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup,
-<a href=#193 id=193 data-nosnippet>193</a>    fits: bool,
-<a href=#194 id=194 data-nosnippet>194</a>    workers: usize,
-<a href=#195 id=195 data-nosnippet>195</a>) -&gt; u64 {
-<a href=#196 id=196 data-nosnippet>196</a>    <span class="kw">let </span>measure = layout.shape.len() <span class="kw">as </span>u64
-<a href=#197 id=197 data-nosnippet>197</a>        * <span class="kw">if </span>setup.nsigma &gt; <span class="number">0.0 </span>{
-<a href=#198 id=198 data-nosnippet>198</a>            <span class="number">2 </span>* size_of::&lt;f64&gt;() <span class="kw">as </span>u64
-<a href=#199 id=199 data-nosnippet>199</a>        } <span class="kw">else </span>{
-<a href=#200 id=200 data-nosnippet>200</a>            <span class="number">0
-<a href=#201 id=201 data-nosnippet>201</a>        </span>}
-<a href=#202 id=202 data-nosnippet>202</a>        .max(<span class="kw">if </span>fits { <span class="number">2 </span>* size_of::&lt;f32&gt;() <span class="kw">as </span>u64 } <span class="kw">else </span>{ <span class="number">0 </span>});
-<a href=#203 id=203 data-nosnippet>203</a>    mask_plans.materialize_bytes_for(|domain| layout.domains.get(domain).copied())
-<a href=#204 id=204 data-nosnippet>204</a>        + layout.concurrent(workers) * (layout.load_bytes(setup.response.is_some()) + measure)
-<a href=#205 id=205 data-nosnippet>205</a>}
-<a href=#206 id=206 data-nosnippet>206</a>
-<a href=#207 id=207 data-nosnippet>207</a><span class="doccomment">/// Heap bytes the masks a minor cycle forms keep while the cycle runs and
-<a href=#208 id=208 data-nosnippet>208</a>/// after it: one support per image domain.
-<a href=#209 id=209 data-nosnippet>209</a></span><span class="attr">#[must_use]
-<a href=#210 id=210 data-nosnippet>210</a></span><span class="kw">pub fn </span>mask_bytes(completion: <span class="kw-2">&amp;</span>MajorCycleCompletion) -&gt; u64 {
-<a href=#211 id=211 data-nosnippet>211</a>    MinorLayout::of(completion.normal_state()).mask_bytes()
-<a href=#212 id=212 data-nosnippet>212</a>}
-<a href=#213 id=213 data-nosnippet>213</a>
-<a href=#214 id=214 data-nosnippet>214</a><span class="doccomment">/// Heap bytes [`super::run_minor_cycle`] holds at most under `controls`,
-<a href=#215 id=215 data-nosnippet>215</a>/// besides each plane's terms ([`super::result_bytes`]): on each of the
-<a href=#216 id=216 data-nosnippet>216</a>/// planes solved at once on `workers` (one when a single plane spreads over
-<a href=#217 id=217 data-nosnippet>217</a>/// the team), the load and the solve
-<a href=#218 id=218 data-nosnippet>218</a>/// ([`casa_imaging_deconvolution::solve_bytes`]), and a record of every
-<a href=#219 id=219 data-nosnippet>219</a>/// plane. A Clark refresh already in `cache` is charged with the cache, not
-<a href=#220 id=220 data-nosnippet>220</a>/// here.
-<a href=#221 id=221 data-nosnippet>221</a></span><span class="attr">#[must_use]
-<a href=#222 id=222 data-nosnippet>222</a></span><span class="kw">pub fn </span>run_bytes(
-<a href=#223 id=223 data-nosnippet>223</a>    completion: <span class="kw-2">&amp;</span>MajorCycleCompletion,
-<a href=#224 id=224 data-nosnippet>224</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup,
-<a href=#225 id=225 data-nosnippet>225</a>    controls: <span class="kw-2">&amp;</span>CycleControls,
-<a href=#226 id=226 data-nosnippet>226</a>    cache: <span class="kw-2">&amp;</span>PsfCache,
-<a href=#227 id=227 data-nosnippet>227</a>    workers: usize,
-<a href=#228 id=228 data-nosnippet>228</a>) -&gt; u64 {
-<a href=#229 id=229 data-nosnippet>229</a>    run_bytes_for(
-<a href=#230 id=230 data-nosnippet>230</a>        <span class="kw-2">&amp;</span>MinorLayout::of(completion.normal_state()),
-<a href=#231 id=231 data-nosnippet>231</a>        setup,
-<a href=#232 id=232 data-nosnippet>232</a>        controls.iterations,
-<a href=#233 id=233 data-nosnippet>233</a>        cache.refresh_bytes(completion),
-<a href=#234 id=234 data-nosnippet>234</a>        workers,
-<a href=#235 id=235 data-nosnippet>235</a>    )
-<a href=#236 id=236 data-nosnippet>236</a>}
-<a href=#237 id=237 data-nosnippet>237</a>
-<a href=#238 id=238 data-nosnippet>238</a><span class="doccomment">/// [`run_bytes`] for a state of `layout`, cleaning at most `iterations` per
-<a href=#239 id=239 data-nosnippet>239</a>/// plane beside a cached Clark refresh of `refresh` bytes.
-<a href=#240 id=240 data-nosnippet>240</a></span><span class="attr">#[must_use]
-<a href=#241 id=241 data-nosnippet>241</a></span><span class="kw">pub fn </span>run_bytes_for(
-<a href=#242 id=242 data-nosnippet>242</a>    layout: <span class="kw-2">&amp;</span>MinorLayout,
-<a href=#243 id=243 data-nosnippet>243</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup,
-<a href=#244 id=244 data-nosnippet>244</a>    iterations: usize,
-<a href=#245 id=245 data-nosnippet>245</a>    refresh: u64,
-<a href=#246 id=246 data-nosnippet>246</a>    workers: usize,
-<a href=#247 id=247 data-nosnippet>247</a>) -&gt; u64 {
-<a href=#248 id=248 data-nosnippet>248</a>    <span class="kw">let </span>shape = layout.shape;
-<a href=#249 id=249 data-nosnippet>249</a>    <span class="kw">let </span>terms = layout.terms.<span class="number">0 </span><span class="kw">as </span>usize;
-<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">let </span>components = iterations + <span class="number">1</span>;
-<a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">let </span>solve = <span class="kw">match </span><span class="kw-2">&amp;</span>setup.algorithm {
-<a href=#252 id=252 data-nosnippet>252</a>        ReconstructionAlgorithm::Hogbom =&gt; casa_imaging_deconvolution::solve_bytes(
-<a href=#253 id=253 data-nosnippet>253</a>            <span class="kw-2">&amp;</span>Hogbom::new(<span class="bool-val">false</span>),
-<a href=#254 id=254 data-nosnippet>254</a>            shape,
-<a href=#255 id=255 data-nosnippet>255</a>            terms,
-<a href=#256 id=256 data-nosnippet>256</a>            components,
-<a href=#257 id=257 data-nosnippet>257</a>            TRACE,
-<a href=#258 id=258 data-nosnippet>258</a>        ),
-<a href=#259 id=259 data-nosnippet>259</a>        ReconstructionAlgorithm::Clark =&gt; {
-<a href=#260 id=260 data-nosnippet>260</a>            <span class="kw">let </span>solve = casa_imaging_deconvolution::solve_bytes(
-<a href=#261 id=261 data-nosnippet>261</a>                <span class="kw-2">&amp;</span>Clark::new(<span class="prelude-val">None</span>),
-<a href=#262 id=262 data-nosnippet>262</a>                shape,
-<a href=#263 id=263 data-nosnippet>263</a>                terms,
-<a href=#264 id=264 data-nosnippet>264</a>                components,
-<a href=#265 id=265 data-nosnippet>265</a>                TRACE,
-<a href=#266 id=266 data-nosnippet>266</a>            );
-<a href=#267 id=267 data-nosnippet>267</a>            <span class="kw">if </span>layout.planes == <span class="number">1 </span>{
-<a href=#268 id=268 data-nosnippet>268</a>                solve.saturating_sub(refresh)
-<a href=#269 id=269 data-nosnippet>269</a>            } <span class="kw">else </span>{
-<a href=#270 id=270 data-nosnippet>270</a>                solve
-<a href=#271 id=271 data-nosnippet>271</a>            }
-<a href=#272 id=272 data-nosnippet>272</a>        }
-<a href=#273 id=273 data-nosnippet>273</a>        ReconstructionAlgorithm::Multiscale {
-<a href=#274 id=274 data-nosnippet>274</a>            scales_px,
-<a href=#275 id=275 data-nosnippet>275</a>            small_scale_bias,
-<a href=#276 id=276 data-nosnippet>276</a>        } =&gt; casa_imaging_deconvolution::solve_bytes(
-<a href=#277 id=277 data-nosnippet>277</a>            <span class="kw-2">&amp;</span>Multiscale::new(scales_px.clone(), <span class="kw-2">*</span>small_scale_bias),
-<a href=#278 id=278 data-nosnippet>278</a>            shape,
-<a href=#279 id=279 data-nosnippet>279</a>            terms,
-<a href=#280 id=280 data-nosnippet>280</a>            components,
-<a href=#281 id=281 data-nosnippet>281</a>            TRACE,
-<a href=#282 id=282 data-nosnippet>282</a>        ),
-<a href=#283 id=283 data-nosnippet>283</a>        ReconstructionAlgorithm::Mtmfs {
-<a href=#284 id=284 data-nosnippet>284</a>            scales_px,
-<a href=#285 id=285 data-nosnippet>285</a>            small_scale_bias,
-<a href=#286 id=286 data-nosnippet>286</a>        } =&gt; casa_imaging_deconvolution::solve_bytes(
-<a href=#287 id=287 data-nosnippet>287</a>            <span class="kw-2">&amp;</span>Taylor::new(terms, scales_px.clone(), <span class="kw-2">*</span>small_scale_bias),
-<a href=#288 id=288 data-nosnippet>288</a>            shape,
-<a href=#289 id=289 data-nosnippet>289</a>            terms,
-<a href=#290 id=290 data-nosnippet>290</a>            components,
-<a href=#291 id=291 data-nosnippet>291</a>            TRACE,
+<a href=#165 id=165 data-nosnippet>165</a>
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="doccomment">/// Planes a phase of `workers` loads at once: one when a single plane
+<a href=#167 id=167 data-nosnippet>167</a>    /// spreads over the team.
+<a href=#168 id=168 data-nosnippet>168</a>    </span><span class="kw">fn </span>concurrent(<span class="kw-2">&amp;</span><span class="self">self</span>, workers: usize) -&gt; u64 {
+<a href=#169 id=169 data-nosnippet>169</a>        workers.min(<span class="self">self</span>.planes).max(<span class="number">1</span>) <span class="kw">as </span>u64
+<a href=#170 id=170 data-nosnippet>170</a>    }
+<a href=#171 id=171 data-nosnippet>171</a>}
+<a href=#172 id=172 data-nosnippet>172</a>
+<a href=#173 id=173 data-nosnippet>173</a><span class="doccomment">/// Heap bytes [`super::prepare_minor_cycle`] holds at most: the masks it
+<a href=#174 id=174 data-nosnippet>174</a>/// materializes, and on each of the planes loaded at once on `workers`, the
+<a href=#175 id=175 data-nosnippet>175</a>/// load and its measurement (the robust noise's two copies under `nsigma`,
+<a href=#176 id=176 data-nosnippet>176</a>/// the PSF fit's single-precision copies for a plane not yet in `cache`).
+<a href=#177 id=177 data-nosnippet>177</a></span><span class="attr">#[must_use]
+<a href=#178 id=178 data-nosnippet>178</a></span><span class="kw">pub fn </span>prepare_bytes(
+<a href=#179 id=179 data-nosnippet>179</a>    completion: <span class="kw-2">&amp;</span>MajorCycleCompletion,
+<a href=#180 id=180 data-nosnippet>180</a>    mask_plans: <span class="kw-2">&amp;</span>ImageDomainReconstructionMaskPlans,
+<a href=#181 id=181 data-nosnippet>181</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup,
+<a href=#182 id=182 data-nosnippet>182</a>    cache: <span class="kw-2">&amp;</span>PsfCache,
+<a href=#183 id=183 data-nosnippet>183</a>    workers: usize,
+<a href=#184 id=184 data-nosnippet>184</a>) -&gt; u64 {
+<a href=#185 id=185 data-nosnippet>185</a>    <span class="kw">let </span>normal = completion.normal_state();
+<a href=#186 id=186 data-nosnippet>186</a>    <span class="kw">let </span>fits = plane_keys(normal, is_taylor(normal))
+<a href=#187 id=187 data-nosnippet>187</a>        .iter()
+<a href=#188 id=188 data-nosnippet>188</a>        .any(|key| !cache.summaries.contains_key(key));
+<a href=#189 id=189 data-nosnippet>189</a>    prepare_bytes_for(<span class="kw-2">&amp;</span>MinorLayout::of(normal), mask_plans, setup, fits, workers)
+<a href=#190 id=190 data-nosnippet>190</a>}
+<a href=#191 id=191 data-nosnippet>191</a>
+<a href=#192 id=192 data-nosnippet>192</a><span class="doccomment">/// [`prepare_bytes`] for a state of `layout`, with `fits` when some plane's
+<a href=#193 id=193 data-nosnippet>193</a>/// PSF is not yet measured, as before the first minor cycle.
+<a href=#194 id=194 data-nosnippet>194</a></span><span class="attr">#[must_use]
+<a href=#195 id=195 data-nosnippet>195</a></span><span class="kw">pub fn </span>prepare_bytes_for(
+<a href=#196 id=196 data-nosnippet>196</a>    layout: <span class="kw-2">&amp;</span>MinorLayout,
+<a href=#197 id=197 data-nosnippet>197</a>    mask_plans: <span class="kw-2">&amp;</span>ImageDomainReconstructionMaskPlans,
+<a href=#198 id=198 data-nosnippet>198</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup,
+<a href=#199 id=199 data-nosnippet>199</a>    fits: bool,
+<a href=#200 id=200 data-nosnippet>200</a>    workers: usize,
+<a href=#201 id=201 data-nosnippet>201</a>) -&gt; u64 {
+<a href=#202 id=202 data-nosnippet>202</a>    <span class="kw">let </span>measure = layout.shape.len() <span class="kw">as </span>u64
+<a href=#203 id=203 data-nosnippet>203</a>        * <span class="kw">if </span>setup.nsigma &gt; <span class="number">0.0 </span>{
+<a href=#204 id=204 data-nosnippet>204</a>            <span class="number">2 </span>* size_of::&lt;f64&gt;() <span class="kw">as </span>u64
+<a href=#205 id=205 data-nosnippet>205</a>        } <span class="kw">else </span>{
+<a href=#206 id=206 data-nosnippet>206</a>            <span class="number">0
+<a href=#207 id=207 data-nosnippet>207</a>        </span>}
+<a href=#208 id=208 data-nosnippet>208</a>        .max(<span class="kw">if </span>fits { <span class="number">2 </span>* size_of::&lt;f32&gt;() <span class="kw">as </span>u64 } <span class="kw">else </span>{ <span class="number">0 </span>});
+<a href=#209 id=209 data-nosnippet>209</a>    mask_plans.materialize_bytes_for(|domain| layout.domains.get(domain).copied())
+<a href=#210 id=210 data-nosnippet>210</a>        + layout.concurrent(workers) * (layout.load_bytes(setup.response.is_some()) + measure)
+<a href=#211 id=211 data-nosnippet>211</a>}
+<a href=#212 id=212 data-nosnippet>212</a>
+<a href=#213 id=213 data-nosnippet>213</a><span class="doccomment">/// Heap bytes the masks a minor cycle forms keep while the cycle runs and
+<a href=#214 id=214 data-nosnippet>214</a>/// after it: one support per image domain.
+<a href=#215 id=215 data-nosnippet>215</a></span><span class="attr">#[must_use]
+<a href=#216 id=216 data-nosnippet>216</a></span><span class="kw">pub fn </span>mask_bytes(completion: <span class="kw-2">&amp;</span>MajorCycleCompletion) -&gt; u64 {
+<a href=#217 id=217 data-nosnippet>217</a>    MinorLayout::of(completion.normal_state()).mask_bytes()
+<a href=#218 id=218 data-nosnippet>218</a>}
+<a href=#219 id=219 data-nosnippet>219</a>
+<a href=#220 id=220 data-nosnippet>220</a><span class="doccomment">/// Heap bytes [`super::run_minor_cycle`] holds at most under `controls`,
+<a href=#221 id=221 data-nosnippet>221</a>/// besides each plane's terms ([`super::result_bytes`]): on each of the
+<a href=#222 id=222 data-nosnippet>222</a>/// planes solved at once on `workers` (one when a single plane spreads over
+<a href=#223 id=223 data-nosnippet>223</a>/// the team), the load and the solve
+<a href=#224 id=224 data-nosnippet>224</a>/// ([`casa_imaging_deconvolution::solve_bytes`]), and a record of every
+<a href=#225 id=225 data-nosnippet>225</a>/// plane. A Clark refresh already in `cache` is charged with the cache, not
+<a href=#226 id=226 data-nosnippet>226</a>/// here.
+<a href=#227 id=227 data-nosnippet>227</a></span><span class="attr">#[must_use]
+<a href=#228 id=228 data-nosnippet>228</a></span><span class="kw">pub fn </span>run_bytes(
+<a href=#229 id=229 data-nosnippet>229</a>    completion: <span class="kw-2">&amp;</span>MajorCycleCompletion,
+<a href=#230 id=230 data-nosnippet>230</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup,
+<a href=#231 id=231 data-nosnippet>231</a>    controls: <span class="kw-2">&amp;</span>CycleControls,
+<a href=#232 id=232 data-nosnippet>232</a>    cache: <span class="kw-2">&amp;</span>PsfCache,
+<a href=#233 id=233 data-nosnippet>233</a>    workers: usize,
+<a href=#234 id=234 data-nosnippet>234</a>) -&gt; u64 {
+<a href=#235 id=235 data-nosnippet>235</a>    run_bytes_for(
+<a href=#236 id=236 data-nosnippet>236</a>        <span class="kw-2">&amp;</span>MinorLayout::of(completion.normal_state()),
+<a href=#237 id=237 data-nosnippet>237</a>        setup,
+<a href=#238 id=238 data-nosnippet>238</a>        controls.iterations,
+<a href=#239 id=239 data-nosnippet>239</a>        cache.refresh_bytes(completion),
+<a href=#240 id=240 data-nosnippet>240</a>        workers,
+<a href=#241 id=241 data-nosnippet>241</a>    )
+<a href=#242 id=242 data-nosnippet>242</a>}
+<a href=#243 id=243 data-nosnippet>243</a>
+<a href=#244 id=244 data-nosnippet>244</a><span class="doccomment">/// [`run_bytes`] for a state of `layout`, cleaning at most `iterations` per
+<a href=#245 id=245 data-nosnippet>245</a>/// plane beside a cached Clark refresh of `refresh` bytes.
+<a href=#246 id=246 data-nosnippet>246</a></span><span class="attr">#[must_use]
+<a href=#247 id=247 data-nosnippet>247</a></span><span class="kw">pub fn </span>run_bytes_for(
+<a href=#248 id=248 data-nosnippet>248</a>    layout: <span class="kw-2">&amp;</span>MinorLayout,
+<a href=#249 id=249 data-nosnippet>249</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup,
+<a href=#250 id=250 data-nosnippet>250</a>    iterations: usize,
+<a href=#251 id=251 data-nosnippet>251</a>    refresh: u64,
+<a href=#252 id=252 data-nosnippet>252</a>    workers: usize,
+<a href=#253 id=253 data-nosnippet>253</a>) -&gt; u64 {
+<a href=#254 id=254 data-nosnippet>254</a>    <span class="kw">let </span>(solve, <span class="kw">_</span>) = solve_bound(layout, setup, iterations);
+<a href=#255 id=255 data-nosnippet>255</a>    <span class="kw">let </span>solve = <span class="kw">if </span><span class="macro">matches!</span>(setup.algorithm, ReconstructionAlgorithm::Clark) &amp;&amp; layout.planes == <span class="number">1 </span>{
+<a href=#256 id=256 data-nosnippet>256</a>        solve.saturating_sub(refresh)
+<a href=#257 id=257 data-nosnippet>257</a>    } <span class="kw">else </span>{
+<a href=#258 id=258 data-nosnippet>258</a>        solve
+<a href=#259 id=259 data-nosnippet>259</a>    };
+<a href=#260 id=260 data-nosnippet>260</a>    <span class="comment">// Every plane's slot, solved record and stop, which the cycle keeps
+<a href=#261 id=261 data-nosnippet>261</a>    // until it merges them.
+<a href=#262 id=262 data-nosnippet>262</a>    </span><span class="kw">let </span>records =
+<a href=#263 id=263 data-nosnippet>263</a>        layout.planes * (size_of::&lt;Slot&gt;() + size_of::&lt;Solved&gt;() + size_of::&lt;PlaneStop&gt;());
+<a href=#264 id=264 data-nosnippet>264</a>    layout.concurrent(workers) * (layout.load_bytes(setup.response.is_some()) + solve)
+<a href=#265 id=265 data-nosnippet>265</a>        + records <span class="kw">as </span>u64
+<a href=#266 id=266 data-nosnippet>266</a>}
+<a href=#267 id=267 data-nosnippet>267</a>
+<a href=#268 id=268 data-nosnippet>268</a><span class="doccomment">/// What `setup`'s solver holds for one plane of `layout`, cleaning at most
+<a href=#269 id=269 data-nosnippet>269</a>/// `iterations` and so placing at most one more component
+<a href=#270 id=270 data-nosnippet>270</a>/// ([`casa_imaging_deconvolution::solve_bytes`]), and the entries of the
+<a href=#271 id=271 data-nosnippet>271</a>/// plane's model update ([`casa_imaging_deconvolution::update_entries`]);
+<a href=#272 id=272 data-nosnippet>272</a>/// nothing for an algorithm with no solver here.
+<a href=#273 id=273 data-nosnippet>273</a></span><span class="kw">fn </span>solve_bound(layout: <span class="kw-2">&amp;</span>MinorLayout, setup: <span class="kw-2">&amp;</span>MinorCycleSetup, iterations: usize) -&gt; (u64, usize) {
+<a href=#274 id=274 data-nosnippet>274</a>    <span class="kw">fn </span>bound&lt;S: Solver&gt;(solver: <span class="kw-2">&amp;</span>S, layout: <span class="kw-2">&amp;</span>MinorLayout, components: usize) -&gt; (u64, usize) {
+<a href=#275 id=275 data-nosnippet>275</a>        <span class="kw">let </span>(shape, terms) = (layout.shape, layout.terms.<span class="number">0 </span><span class="kw">as </span>usize);
+<a href=#276 id=276 data-nosnippet>276</a>        (
+<a href=#277 id=277 data-nosnippet>277</a>            casa_imaging_deconvolution::solve_bytes(solver, shape, terms, components, TRACE),
+<a href=#278 id=278 data-nosnippet>278</a>            casa_imaging_deconvolution::update_entries(solver, shape, terms, components),
+<a href=#279 id=279 data-nosnippet>279</a>        )
+<a href=#280 id=280 data-nosnippet>280</a>    }
+<a href=#281 id=281 data-nosnippet>281</a>    <span class="kw">let </span>components = iterations + <span class="number">1</span>;
+<a href=#282 id=282 data-nosnippet>282</a>    <span class="kw">match </span><span class="kw-2">&amp;</span>setup.algorithm {
+<a href=#283 id=283 data-nosnippet>283</a>        ReconstructionAlgorithm::Hogbom =&gt; bound(<span class="kw-2">&amp;</span>Hogbom::new(<span class="bool-val">false</span>), layout, components),
+<a href=#284 id=284 data-nosnippet>284</a>        ReconstructionAlgorithm::Clark =&gt; bound(<span class="kw-2">&amp;</span>Clark::new(<span class="prelude-val">None</span>), layout, components),
+<a href=#285 id=285 data-nosnippet>285</a>        ReconstructionAlgorithm::Multiscale {
+<a href=#286 id=286 data-nosnippet>286</a>            scales_px,
+<a href=#287 id=287 data-nosnippet>287</a>            small_scale_bias,
+<a href=#288 id=288 data-nosnippet>288</a>        } =&gt; bound(
+<a href=#289 id=289 data-nosnippet>289</a>            <span class="kw-2">&amp;</span>Multiscale::new(scales_px.clone(), <span class="kw-2">*</span>small_scale_bias),
+<a href=#290 id=290 data-nosnippet>290</a>            layout,
+<a href=#291 id=291 data-nosnippet>291</a>            components,
 <a href=#292 id=292 data-nosnippet>292</a>        ),
-<a href=#293 id=293 data-nosnippet>293</a>        <span class="kw">_ </span>=&gt; <span class="number">0</span>,
-<a href=#294 id=294 data-nosnippet>294</a>    };
-<a href=#295 id=295 data-nosnippet>295</a>    <span class="comment">// Every plane's slot, solved record and stop, which the cycle keeps
-<a href=#296 id=296 data-nosnippet>296</a>    // until it merges them.
-<a href=#297 id=297 data-nosnippet>297</a>    </span><span class="kw">let </span>records =
-<a href=#298 id=298 data-nosnippet>298</a>        layout.planes * (size_of::&lt;Slot&gt;() + size_of::&lt;Solved&gt;() + size_of::&lt;PlaneStop&gt;());
-<a href=#299 id=299 data-nosnippet>299</a>    layout.concurrent(workers) * (layout.load_bytes(setup.response.is_some()) + solve)
-<a href=#300 id=300 data-nosnippet>300</a>        + records <span class="kw">as </span>u64
-<a href=#301 id=301 data-nosnippet>301</a>}
+<a href=#293 id=293 data-nosnippet>293</a>        ReconstructionAlgorithm::Mtmfs {
+<a href=#294 id=294 data-nosnippet>294</a>            scales_px,
+<a href=#295 id=295 data-nosnippet>295</a>            small_scale_bias,
+<a href=#296 id=296 data-nosnippet>296</a>        } =&gt; bound(
+<a href=#297 id=297 data-nosnippet>297</a>            <span class="kw-2">&amp;</span>Taylor::new(
+<a href=#298 id=298 data-nosnippet>298</a>                layout.terms.<span class="number">0 </span><span class="kw">as </span>usize,
+<a href=#299 id=299 data-nosnippet>299</a>                scales_px.clone(),
+<a href=#300 id=300 data-nosnippet>300</a>                <span class="kw-2">*</span>small_scale_bias,
+<a href=#301 id=301 data-nosnippet>301</a>            ),
+<a href=#302 id=302 data-nosnippet>302</a>            layout,
+<a href=#303 id=303 data-nosnippet>303</a>            components,
+<a href=#304 id=304 data-nosnippet>304</a>        ),
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">_ </span>=&gt; (<span class="number">0</span>, <span class="number">0</span>),
+<a href=#306 id=306 data-nosnippet>306</a>    }
+<a href=#307 id=307 data-nosnippet>307</a>}
 </code></pre></div></section></main></body></html>

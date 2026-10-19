@@ -75,4 +75,7 @@ deviation. <code>None</code> when nothing is supported.</dd><dt><a class="fn" hr
 traces <code>trace</code> of them: its residual copy, the cycle’s and the step’s
 updates, which hold an entry for each pixel a component adds flux to
 (<a href="trait.Solver.html#tymethod.component_cells" title="method casa_imaging_deconvolution::Solver::component_cells"><code>Solver::component_cells</code></a>) and at most every pixel, the trace, and
-the solver’s working state (<a href="trait.Solver.html#tymethod.working_bytes" title="method casa_imaging_deconvolution::Solver::working_bytes"><code>Solver::working_bytes</code></a>).</dd></dl></section></div></main></body></html>
+the solver’s working state (<a href="trait.Solver.html#tymethod.working_bytes" title="method casa_imaging_deconvolution::Solver::working_bytes"><code>Solver::working_bytes</code></a>).</dd><dt><a class="fn" href="fn.update_entries.html" title="fn casa_imaging_deconvolution::update_entries">update_<wbr>entries</a></dt><dd>Entries a <a href="struct.Delta.html" title="struct casa_imaging_deconvolution::Delta"><code>Delta</code></a> of <code>terms</code> terms holds at most after <code>components</code>
+components on a plane of <code>shape</code>: for each term, an entry for each pixel
+a component adds flux to (<a href="trait.Solver.html#tymethod.component_cells" title="method casa_imaging_deconvolution::Solver::component_cells"><code>Solver::component_cells</code></a>), and at most
+every pixel. It bounds the model terms a plane’s minor cycle forms.</dd></dl></section></div></main></body></html>
