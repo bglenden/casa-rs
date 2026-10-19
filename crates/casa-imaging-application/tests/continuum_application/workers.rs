@@ -308,6 +308,54 @@ fn a_count_the_fit_takes_for_scales_or_a_write_is_never_refused_later() {
     }
 }
 
+/// #449 decision 3: a mosaic image's first pass grids the weight image, every
+/// sample's `FT[PB²]` taps at the uv origin, on the owner of the centre row,
+/// whose strip the run narrows by that work
+/// (`casa_imaging_runtime::pass::ModeWork::weighed`). On four workers, three
+/// region owners, the dirty products agree with one worker's to rounding,
+/// relative L2 within 1e-5: the narrowed centre strip's tile still holds
+/// the weight kernel.
+#[test]
+fn a_mosaic_weight_pass_on_region_owners_matches_one_worker() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = synthetic_observation::observation_as(root.path(), 4, "ALMA");
+    let request = |name: &Path| {
+        imaging::request(json!({
+            "vis": measurement_set,
+            "imagename": name,
+            "imsize": 256,
+            "cell": format!("{}arcsec", synthetic_observation::CELL_ARCSEC),
+            "weighting": "natural",
+            "gridder": "mosaic",
+            "niter": 0,
+        }))
+    };
+    let serial = root.path().join("serial");
+    let parallel = root.path().join("parallel");
+    run(&request(&serial), 1, 4 << 30).expect("one worker");
+    let outcome = run(&request(&parallel), 4, 4 << 30).expect("four workers");
+    assert_eq!(outcome.workers, 4);
+    let products = outcome.product_names();
+    assert!(
+        products.iter().any(|name| name.ends_with(".weight")),
+        "{products:?}"
+    );
+    for name in products {
+        let suffix = &name[name.rfind('.').expect("a product suffix")..];
+        let (one, four) = (read_values(&serial, suffix), read_values(&parallel, suffix));
+        assert_eq!(one.len(), four.len(), "{suffix}");
+        let norm = |values: &[f32]| values.iter().map(|&v| f64::from(v).powi(2)).sum::<f64>();
+        let difference = one
+            .iter()
+            .zip(&four)
+            .map(|(&a, &b)| (f64::from(a) - f64::from(b)).powi(2))
+            .sum::<f64>();
+        let relative = (difference / norm(&one).max(f64::MIN_POSITIVE)).sqrt();
+        assert!(relative <= 1e-5, "{suffix}: relative L2 {relative:e}");
+    }
+}
+
 /// #763 review (Astra, finding 3): a setup refused after the fit chose its
 /// workers still reports the choice and why. Briggs weighting at 512 pixels
 /// on a 4,096,000-byte budget: the fit finds that no count fits and takes

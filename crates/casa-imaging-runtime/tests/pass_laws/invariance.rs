@@ -459,8 +459,9 @@ fn first_pass_row_work(
 /// first pass over the same strips reports, on one and three workers: under
 /// natural weighting; under Briggs weighting with the first pass keeping
 /// its weights, as a run's first pass does; and with W-projection kernels,
-/// whose taps vary with w (#742 review, Astra and Fable). Only domains
-/// split among several region owners ask for it.
+/// whose taps vary with w (#742 review, Astra and Fable). Its mode work
+/// agrees with the histogram. Only domains split among several region
+/// owners ask for it.
 #[test]
 fn the_row_work_pass_measures_what_a_first_pass_reports() {
     let spheroidal = operator(GridPrecision::F64, Basis::Constant);
@@ -554,7 +555,20 @@ fn the_row_work_pass_measures_what_a_first_pass_reports() {
             let team = WorkerTeam::new(workers).expect("team");
             let measured = run_row_work_pass(&regions, weighting, rows, &team, &Cancel::new())
                 .expect("row-work pass");
-            assert_eq!(measured, reported, "{label}, {workers} workers");
+            assert_eq!(measured.rows, reported, "{label}, {workers} workers");
+            // The mode work counts the same placements (#783 review,
+            // Fable): the data mode's is the histogram's total, and these
+            // sets grid the PSF with their imaging taps and have no weight
+            // image.
+            let [modes] = measured.modes.as_slice() else {
+                panic!("{label}: one domain's mode work");
+            };
+            let total = measured.rows[0]
+                .as_deref()
+                .map_or(0, |rows| rows.iter().sum());
+            assert_eq!(modes.data, total, "{label}, {workers} workers");
+            assert_eq!(modes.psf, modes.data, "{label}, {workers} workers");
+            assert_eq!(modes.weight, 0, "{label}, {workers} workers");
         }
         assert_eq!(rows.contents, [SampleContent::FlagsAndWeights; 2]);
         assert!(needs_row_work(&regions));

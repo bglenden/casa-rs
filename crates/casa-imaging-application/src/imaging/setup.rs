@@ -37,8 +37,8 @@ use std::path::Path;
 use casa_imaging_model::{CompiledProblem, ReconstructionBasis, WeightingScheme};
 use casa_imaging_operator::{BandwidthTaper, ModeSet, WeightingGeneration};
 use casa_imaging_runtime::pass::{
-    BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, Partition, PassDomain,
-    WaveDemand, WorkerTeam, density_pass_bytes, needs_row_work, row_work_pass_bytes,
+    BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, MeasuredRowWork, Partition,
+    PassDomain, WaveDemand, WorkerTeam, density_pass_bytes, needs_row_work, row_work_pass_bytes,
     run_density_pass,
 };
 use casa_imaging_runtime::{
@@ -206,7 +206,7 @@ impl SetupDemand<'_> {
                 .sum::<usize>();
             (
                 row_work_pass_bytes(&domains, streaming),
-                (rows * size_of::<u64>()) as u64,
+                MeasuredRowWork::kept_bytes(rows, domains.len()),
             )
         } else {
             (0, 0)

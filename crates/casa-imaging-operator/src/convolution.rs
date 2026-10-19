@@ -539,6 +539,23 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// origin; `None` for sets without a weight image.
     fn weight_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> Option<TapLayout<'s>>;
 
+    /// [`TapLayout::half_support`] of the weight taps of `key`
+    /// ([`Self::weight_taps`]) without lending them, as
+    /// [`Self::gridding_half_support`]: a row-work pass reads it for every
+    /// placement to weigh the weight image's work. `None` for sets without
+    /// a weight image.
+    fn weight_half_support(&self, key: CfKey) -> Option<[u16; 2]> {
+        self.weight_taps(key, &mut CellHold::new())
+            .map(|taps| taps.half_support())
+    }
+
+    /// [`TapLayout::half_support`] of the PSF taps of `key`
+    /// ([`Self::psf_taps`]) without lending them, as
+    /// [`Self::gridding_half_support`].
+    fn psf_half_support(&self, key: CfKey) -> [u16; 2] {
+        self.psf_taps(key, &mut CellHold::new()).half_support()
+    }
+
     /// Mueller plane routing for every cell of the set.
     fn mueller(&self) -> &MuellerRouting;
 

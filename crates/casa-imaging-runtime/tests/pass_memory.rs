@@ -214,7 +214,7 @@ fn the_row_work_pass_holds_at_most_its_admission_over_unequal_domains() {
         MEASURING.store(true, Ordering::Relaxed);
         let result = run_row_work_pass(&domains, &weighting, &mut rows, &team, &Cancel::new());
         MEASURING.store(false, Ordering::Relaxed);
-        let work = result.expect("row-work pass");
+        let work = result.expect("row-work pass").rows;
         assert!(work.iter().all(Option::is_some), "both domains are split");
         let held = PEAK.load(Ordering::Relaxed) - baseline;
         assert!(

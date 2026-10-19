@@ -34,7 +34,9 @@ use casa_imaging_operator::{
 
 pub use block::{BlockShape, DomainProjection, NativeBlock, NativeRowHeader, RowAddress};
 pub use partition::{PLACEMENT_WORK, Partition, Region, Residency, WaveDemand};
-pub use row_work::{needs_row_work, row_work_pass_bytes, run_row_work_pass};
+pub use row_work::{
+    MeasuredRowWork, ModeWork, needs_row_work, row_work_pass_bytes, run_row_work_pass,
+};
 pub use team::{WORKER_STACK_BYTES, WorkerTeam, WorkerTeams};
 pub use weights::WeightCache;
 
