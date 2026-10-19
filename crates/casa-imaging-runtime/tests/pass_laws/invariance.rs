@@ -96,6 +96,99 @@ fn region_partition_matches_one_owner() {
     }
 }
 
+/// #449: a region pass on the CPU that pipelines its owners over two sets of
+/// chunks, each owner going on to its next slice once its own earlier
+/// slices are done, grids exactly what one set grids, bit for bit: every
+/// owner accumulates the same samples in the same order. Over blocks of the
+/// fixture's 37 rows, in many small slices and in one slice a block, on two
+/// and four owners, without and with a model subtracted.
+#[test]
+fn pipelined_owners_grid_what_one_set_grids() {
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let mut rows = Rows::random(500, 13, operator.geometry());
+    let model = sparse_model(IMAGE, 1, 59);
+    let prepare = |_: usize, planes: PlaneRange| -> Result<_, PassError> {
+        Ok(window_of(&operator, &model, planes))
+    };
+    for workers in [2, 4] {
+        let domains = [PassDomain {
+            operator: &operator,
+            resampler: &resampler,
+            partition: Partition::regions(&operator, workers),
+        }];
+        for chunk_placements in [8, CHUNK_PLACEMENTS] {
+            for (modes, model) in [
+                (ModeSet::DATA_PSF, None),
+                (ModeSet::DATA, Some(&prepare as &ModelPreparation<'_>)),
+            ] {
+                let pass = |chunk_sets| Run {
+                    workers,
+                    chunk_placements,
+                    chunk_sets,
+                    modes,
+                    model,
+                    ..Run::initial()
+                };
+                let label = format!(
+                    "{workers} owners, chunks of {chunk_placements}, model {}",
+                    model.is_some()
+                );
+                let (one, summary) = try_run(&domains, &mut rows, &pass(1)).expect("one set");
+                assert!(summary.blocks > 1, "{label}: several blocks");
+                let (two, _) = try_run(&domains, &mut rows, &pass(2)).expect("two sets");
+                assert_eq!(one, two, "{label}");
+            }
+        }
+    }
+}
+
+/// #449: a pass whose owners pipeline over two sets of chunks, cancelled
+/// midway, stops within one block with the typed error, every owner's task
+/// joined, as a pass on one set does.
+#[test]
+fn a_pipelined_pass_cancelled_midway_stops_within_a_block() {
+    let operator = operator(GridPrecision::F64, Basis::Constant);
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let weighting = WeightingGeneration::Natural { taper: None };
+    let domains = [PassDomain {
+        operator: &operator,
+        resampler: &resampler,
+        partition: Partition::regions(&operator, 3),
+    }];
+    let pass = MajorCyclePass {
+        domains: &domains,
+        weighting: &weighting,
+        modes: ModeSet::DATA,
+        model: None,
+        residency: Residency::All,
+        native_spacing_hz: WIDTH_HZ,
+        backend: BackendChoice::Cpu,
+        metal_stage_timing: false,
+        weights: None,
+        chunk_placements: 8,
+        chunk_sets: 2,
+    };
+    let cancel = Cancel::new();
+    let mut rows = CancellingRows {
+        rows: Rows::random(9 * 37, 43, operator.geometry()),
+        cancel: cancel.clone(),
+        after: 3,
+        filled: 0,
+    };
+    let team = WorkerTeam::new(3).expect("team");
+    let result = run_major_cycle(
+        &pass,
+        &mut rows,
+        &team,
+        &cancel,
+        &mut |_, _| panic!("a cancelled pass hands back no images"),
+        None,
+    );
+    assert!(matches!(result, Err(PassError::Cancelled)), "{result:?}");
+    assert_eq!(rows.filled, 3);
+}
+
 /// A region pass reports its gridding work by anchor row, and strips cut to
 /// equal shares of it (#736) grid what one owner grids, to rounding. Plane
 /// owners and a lone region owner report none.
@@ -201,6 +294,7 @@ fn first_pass_row_work(
         metal_stage_timing: false,
         weights,
         chunk_placements: CHUNK_PLACEMENTS,
+        chunk_sets: 1,
     };
     let team = WorkerTeam::new(3).expect("team");
     run_major_cycle(&pass, rows, &team, &Cancel::new(), &mut |_, _| Ok(()), None)
@@ -469,6 +563,7 @@ fn writing_pass(
         metal_stage_timing: false,
         weights,
         chunk_placements: CHUNK_PLACEMENTS,
+        chunk_sets: 1,
     };
     let mut written = vec![None; rows.rows.len()];
     let mut write = |block: &NativeBlock, predictions: &[Complex32]| {
@@ -573,6 +668,7 @@ fn a_cancelled_pass_stops_with_a_typed_error() {
         metal_stage_timing: false,
         weights: None,
         chunk_placements: CHUNK_PLACEMENTS,
+        chunk_sets: 1,
     };
     let cancel = Cancel::new();
     cancel.cancel();
@@ -640,6 +736,7 @@ fn a_pass_cancelled_midway_reads_no_further_block() {
         metal_stage_timing: false,
         weights: None,
         chunk_placements: CHUNK_PLACEMENTS,
+        chunk_sets: 1,
     };
     for workers in [1, 3] {
         let cancel = Cancel::new();

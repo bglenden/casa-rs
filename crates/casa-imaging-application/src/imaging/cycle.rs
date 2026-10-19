@@ -136,11 +136,13 @@ struct Run<'a> {
 }
 
 /// What a pass's admission planned ([`Run::admit_pass`]): the waves it
-/// holds, and the placements a row chunk takes (#736).
+/// holds, the placements a row chunk takes (#736) and the sets of chunks its
+/// owners pipeline over (#449).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PassPlan {
     residency: Residency,
     chunk_placements: usize,
+    chunk_sets: usize,
 }
 
 /// One reconciled major cycle.
@@ -860,6 +862,7 @@ impl<'a> Run<'a> {
             backend: self.backend,
             block: self.source.maximum_block(),
             chunk_placements: CHUNK_PLACEMENTS,
+            chunk_sets: 1,
         };
         let free = free_memory(&self.host, &self.policy).saturating_sub(besides);
         let residency = Residency::plan(&demand, free);
@@ -867,9 +870,10 @@ impl<'a> Run<'a> {
             Residency::All => demand.planes(),
             Residency::Waves { planes_per_wave } => planes_per_wave,
         };
-        // Region owners share larger slices more evenly; take the largest
-        // that fits beside the waves just planned (#736).
-        demand.chunk_placements = demand.plan_chunk_placements(planes, free);
+        // Region owners pipeline over a second set of chunks, and share
+        // larger slices more evenly; take what fits beside the waves just
+        // planned (#736, #449).
+        (demand.chunk_placements, demand.chunk_sets) = demand.plan_chunks(planes, free);
         let reservation = admit(
             &self.host,
             &self.policy,
@@ -882,6 +886,7 @@ impl<'a> Run<'a> {
             value: PassPlan {
                 residency,
                 chunk_placements: demand.chunk_placements,
+                chunk_sets: demand.chunk_sets,
             },
             reservation,
         })
@@ -984,6 +989,7 @@ impl<'a> Run<'a> {
         let PassPlan {
             residency,
             chunk_placements,
+            chunk_sets,
         } = plan;
         if self.kept_weights.is_none() {
             self.kept_weights = self.keep_weights(residency);
@@ -1013,6 +1019,7 @@ impl<'a> Run<'a> {
             metal_stage_timing: self.metal_stage_timing,
             weights: self.kept_weights.as_ref().map(|(cache, _)| cache),
             chunk_placements,
+            chunk_sets,
         };
         let predictions = writer.as_deref().map(VisibilityWriter::needs_predictions);
         let mut write = |block: &_, predictions: &[_]| match writer.as_deref_mut() {

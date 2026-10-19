@@ -3,6 +3,8 @@
 //! accumulation by owner for each image domain, and the per-plane
 //! transforms.
 
+mod pipeline;
+
 use std::ops::Range;
 
 use casa_imaging_metal::MetalBackend;
@@ -42,6 +44,64 @@ impl Owner<'_> {
             OwnerBackend::Metal(backend) => Ok(backend.complete()?),
         }
     }
+
+    /// Grid owner `index`'s placements in `chunks`, of `target`'s domain,
+    /// in every mode `pass` holds, less what `subtract` names; and the
+    /// weight image over every placement when this owner holds it
+    /// (`weight_owner`; otherwise each owner grids its own placements'
+    /// weights).
+    fn accumulate(
+        &mut self,
+        pass: &MajorCyclePass<'_>,
+        target: &PassDomain<'_>,
+        (index, weight_owner): (usize, Option<usize>),
+        subtract: Subtract<'_>,
+        chunks: &[Chunk],
+    ) -> Result<(), PassError> {
+        let started = std::time::Instant::now();
+        let acc = self.acc.as_mut().expect("owners accumulate until finished");
+        let own_weight = weight_owner.is_none();
+        let cf = target.operator.cf();
+        match &mut self.backend {
+            OwnerBackend::Cpu(backend) => {
+                for chunk in chunks {
+                    let block = chunk.owned[index].block();
+                    if !block.is_empty() {
+                        let mut apply = |work: Work<'_>| backend.apply(&block, cf, work);
+                        accumulate(pass, &mut apply, subtract, acc, own_weight)?;
+                    }
+                }
+            }
+            OwnerBackend::Metal(backend) => {
+                let parts = chunks
+                    .iter()
+                    .map(|chunk| chunk.owned[index].block())
+                    .collect::<Vec<_>>();
+                if parts.iter().any(|part| !part.is_empty()) {
+                    let mut apply = |work: Work<'_>| backend.apply_parts(&parts, cf, work);
+                    accumulate(pass, &mut apply, subtract, acc, own_weight)?;
+                }
+            }
+        }
+        if pass.modes.weight && weight_owner == Some(index) {
+            for chunk in chunks {
+                let block = chunk.weight_owned.block();
+                if block.is_empty() {
+                    continue;
+                }
+                let work = Work::Grid {
+                    mode: Mode::Weight,
+                    acc,
+                };
+                match &mut self.backend {
+                    OwnerBackend::Cpu(backend) => backend.apply(&block, cf, work)?,
+                    OwnerBackend::Metal(backend) => backend.apply(&block, cf, work)?,
+                }
+            }
+        }
+        self.busy += started.elapsed();
+        Ok(())
+    }
 }
 
 /// The backend an owner dispatches to. The CPU grids each placement chunk
@@ -64,6 +124,145 @@ struct Domain<'w> {
     /// regions ([`Router::owner_and_work`]), for later passes' boundaries
     /// ([`Partition::regions_balanced`]).
     row_work: Option<Vec<u64>>,
+}
+
+impl Domain<'_> {
+    /// Add the gridding work by anchor row `chunks` placed.
+    fn add_row_work(&mut self, chunks: &[Chunk]) {
+        if let Some(total) = &mut self.row_work {
+            for chunk in chunks {
+                for (total, work) in total.iter_mut().zip(&chunk.row_work) {
+                    *total += work;
+                }
+            }
+        }
+    }
+}
+
+/// What placing one block's rows on one domain reads ([`Wave::placer`]).
+struct Placer<'b, 'w, 'p> {
+    pass: &'w MajorCyclePass<'p>,
+    target: &'p PassDomain<'p>,
+    router: &'b Router,
+    owners: usize,
+    planes: PlaneRange,
+    native_residuals: bool,
+    shape: ChunkShape,
+    /// The pass's kept weights, for the first domain.
+    weights: Option<(&'w WeightCache, bool)>,
+    /// The slot of the block's first sample.
+    weight_base: usize,
+    /// Rows of the domain's work histogram, when it is region-split.
+    grid_rows: Option<usize>,
+    block: &'b NativeBlock,
+    index: usize,
+    ordered: bool,
+}
+
+impl Placer<'_, '_, '_> {
+    /// Place the rows `chunks` hold on `team`: each placement into its
+    /// owner's buffer, and every placement into the weight owner's when the
+    /// pass grids the weight image on one owner; each chunk's gridding work
+    /// by anchor row beside them.
+    fn place(&self, team: &WorkerTeam, chunks: &mut [Chunk]) -> Result<(), PassError> {
+        let Self {
+            pass,
+            target,
+            router,
+            owners,
+            planes,
+            native_residuals,
+            shape,
+            weights,
+            weight_base,
+            grid_rows,
+            block,
+            index,
+            ordered,
+        } = *self;
+        let channels = block.channels();
+        // With region owners the weight image has one owner, which must see
+        // every placement; plane owners grid their own samples' weights.
+        let route_weight = pass.modes.weight && router.weight_owner().is_some();
+        team.for_each_mut(chunks, |_, chunk| {
+            chunk.placed = 0;
+            chunk.owned[..owners]
+                .iter_mut()
+                .for_each(SampleBuffer::clear);
+            chunk.weight_owned.clear();
+            chunk.row_work.clear();
+            if let Some(rows) = grid_rows {
+                chunk.row_work.resize(rows, 0);
+            }
+            for position in chunk.rows.clone() {
+                let row_index = row_at(block, ordered, position);
+                let native = block.row(index, row_index);
+                let slots = weights.and_then(|(cache, filled)| {
+                    cache.row(weight_base + row_index * channels, channels, filled)
+                });
+                let mut row_samples = 0;
+                let (owned, weight_owned, placed, row_work) = (
+                    &mut chunk.owned,
+                    &mut chunk.weight_owned,
+                    &mut chunk.placed,
+                    &mut chunk.row_work,
+                );
+                let mut keep = |placement: &Placement, values: &[Complex32], weights: &[f32]| {
+                    row_samples += 1;
+                    if !planes.contains(placement.plane) {
+                        return None;
+                    }
+                    if route_weight {
+                        weight_owned.push(*placement, values, weights);
+                    }
+                    *placed += 1;
+                    let (owner, work) = router.owner_and_work(target.operator, placement);
+                    if let Some((row, work)) = work
+                        && let Some(total) = row_work.get_mut(row)
+                    {
+                        *total += work;
+                    }
+                    Some(owner)
+                };
+                if native_residuals {
+                    target.resampler.place_each_sourced(
+                        target.operator,
+                        pass.weighting,
+                        &native,
+                        cell_of(position, channels),
+                        slots,
+                        |placement, values, weights, source| {
+                            if let Some(owner) = keep(&placement, values, weights) {
+                                owned[owner].push_sourced(placement, values, weights, source);
+                            }
+                        },
+                    )?;
+                } else {
+                    target.resampler.place_each(
+                        target.operator,
+                        pass.weighting,
+                        &native,
+                        slots,
+                        |placement, values, weights| {
+                            if let Some(owner) = keep(&placement, values, weights) {
+                                owned[owner].push(placement, values, weights);
+                            }
+                        },
+                    )?;
+                }
+                debug_assert!(
+                    row_samples <= shape.row,
+                    "a row places within the chunk's per-row bound"
+                );
+            }
+            debug_assert!(
+                chunk.placed as usize <= shape.placements
+                    && chunk.capacity_bytes() == shape.bytes(),
+                "a chunk places within the placements it was allocated for"
+            );
+            Ok::<_, PassError>(())
+        })
+    }
 }
 
 /// One row chunk's placements on the wave's planes, by owner, and its
@@ -599,6 +798,33 @@ impl<'w, 'p> Wave<'w, 'p> {
         Ok(())
     }
 
+    /// What placing `block`'s rows on domain `index` reads: the wave's
+    /// state at this block. Chunks hold positions in the block's locality
+    /// order when `ordered`, else row indices ([`row_at`]).
+    fn placer<'b>(
+        &'b self,
+        block: &'b NativeBlock,
+        index: usize,
+        ordered: bool,
+    ) -> Placer<'b, 'w, 'p> {
+        let domain = &self.domains[index];
+        Placer {
+            pass: self.pass,
+            target: &self.pass.domains[index],
+            router: &domain.router,
+            owners: domain.router.owners(),
+            planes: self.planes,
+            native_residuals: self.native_residuals,
+            shape: self.shape,
+            weights: self.weights.filter(|_| index == 0),
+            weight_base: self.weight_base,
+            grid_rows: domain.row_work.as_ref().map(Vec::len),
+            block,
+            index,
+            ordered,
+        }
+    }
+
     /// Place the rows of `block` on domain `index` and accumulate them;
     /// returns the samples placed. Chunks hold positions in the block's
     /// locality order when `ordered`, else row indices ([`row_at`]).
@@ -610,169 +836,29 @@ impl<'w, 'p> Wave<'w, 'p> {
         index: usize,
         ordered: bool,
     ) -> Result<u64, PassError> {
+        let placing = std::time::Instant::now();
+        let mut chunks = std::mem::take(&mut self.chunks);
+        let placed = self
+            .placer(block, index, ordered)
+            .place(team, &mut chunks[..count]);
+        self.chunks = chunks;
+        placed?;
         let pass = self.pass;
         let target = &pass.domains[index];
         let domain = &mut self.domains[index];
-        let owners = domain.owners.len();
-        let router = &domain.router;
-        let planes = self.planes;
-        let native_residuals = self.native_residuals;
-        let channels = block.channels();
-        let shape = self.shape;
-        // With region owners the weight image has one owner, which must see
-        // every placement; plane owners grid their own samples' weights.
-        let route_weight = pass.modes.weight && router.weight_owner().is_some();
-        // A row's kept weights, at its slots from the block's (one domain).
-        let weights = self.weights.filter(|_| index == 0);
-        let weight_base = self.weight_base;
-        let grid_rows = domain.row_work.as_ref().map(Vec::len);
-        let placing = std::time::Instant::now();
-        team.for_each_mut(&mut self.chunks[..count], |_, chunk| {
-            chunk.placed = 0;
-            chunk.owned[..owners]
-                .iter_mut()
-                .for_each(SampleBuffer::clear);
-            chunk.weight_owned.clear();
-            chunk.row_work.clear();
-            if let Some(rows) = grid_rows {
-                chunk.row_work.resize(rows, 0);
-            }
-            for position in chunk.rows.clone() {
-                let row_index = row_at(block, ordered, position);
-                let native = block.row(index, row_index);
-                let slots = weights.and_then(|(cache, filled)| {
-                    cache.row(weight_base + row_index * channels, channels, filled)
-                });
-                let mut row_samples = 0;
-                let (owned, weight_owned, placed, row_work) = (
-                    &mut chunk.owned,
-                    &mut chunk.weight_owned,
-                    &mut chunk.placed,
-                    &mut chunk.row_work,
-                );
-                let mut keep = |placement: &Placement, values: &[Complex32], weights: &[f32]| {
-                    row_samples += 1;
-                    if !planes.contains(placement.plane) {
-                        return None;
-                    }
-                    if route_weight {
-                        weight_owned.push(*placement, values, weights);
-                    }
-                    *placed += 1;
-                    let (owner, work) = router.owner_and_work(target.operator, placement);
-                    if let Some((row, work)) = work
-                        && let Some(total) = row_work.get_mut(row)
-                    {
-                        *total += work;
-                    }
-                    Some(owner)
-                };
-                if native_residuals {
-                    target.resampler.place_each_sourced(
-                        target.operator,
-                        pass.weighting,
-                        &native,
-                        cell_of(position, channels),
-                        slots,
-                        |placement, values, weights, source| {
-                            if let Some(owner) = keep(&placement, values, weights) {
-                                owned[owner].push_sourced(placement, values, weights, source);
-                            }
-                        },
-                    )?;
-                } else {
-                    target.resampler.place_each(
-                        target.operator,
-                        pass.weighting,
-                        &native,
-                        slots,
-                        |placement, values, weights| {
-                            if let Some(owner) = keep(&placement, values, weights) {
-                                owned[owner].push(placement, values, weights);
-                            }
-                        },
-                    )?;
-                }
-                debug_assert!(
-                    row_samples <= shape.row,
-                    "a row places within the chunk's per-row bound"
-                );
-            }
-            debug_assert!(
-                chunk.placed as usize <= shape.placements
-                    && chunk.capacity_bytes() == shape.bytes(),
-                "a chunk places within the placements it was allocated for"
-            );
-            Ok::<_, PassError>(())
-        })?;
         let chunks = &self.chunks[..count];
-        if let Some(total) = &mut domain.row_work {
-            for chunk in chunks {
-                for (total, work) in total.iter_mut().zip(&chunk.row_work) {
-                    *total += work;
-                }
-            }
-        }
+        domain.add_row_work(chunks);
         self.stages.placing += placing.elapsed();
         let accumulating = std::time::Instant::now();
-        let model = domain.model.filter(|_| !native_residuals);
-        let native = native_residuals.then(|| match &self.predictions {
+        let model = domain.model.filter(|_| !self.native_residuals);
+        let native = self.native_residuals.then(|| match &self.predictions {
             NativeStore::Host(cells) => NativeModel::Host { cells, first: 0 },
             NativeStore::Device(cells) => NativeModel::Device(cells),
         });
-        let weight_owner = router.weight_owner();
+        let weight_owner = domain.router.weight_owner();
         team.for_each_mut(&mut domain.owners, |owner_index, owner| {
-            let started = std::time::Instant::now();
-            let acc = owner
-                .acc
-                .as_mut()
-                .expect("owners accumulate until finished");
-            let operator = target.operator;
-            // Each owner grids the weight image over its own placements
-            // unless the image has one owner, who grids every placement
-            // below.
-            let own_weight = weight_owner.is_none();
             let subtract = Subtract { model, native };
-            let cf = operator.cf();
-            match &mut owner.backend {
-                OwnerBackend::Cpu(backend) => {
-                    for chunk in chunks {
-                        let block = chunk.owned[owner_index].block();
-                        if !block.is_empty() {
-                            let mut apply = |work: Work<'_>| backend.apply(&block, cf, work);
-                            accumulate(pass, &mut apply, subtract, acc, own_weight)?;
-                        }
-                    }
-                }
-                OwnerBackend::Metal(backend) => {
-                    let parts = chunks
-                        .iter()
-                        .map(|chunk| chunk.owned[owner_index].block())
-                        .collect::<Vec<_>>();
-                    if parts.iter().any(|part| !part.is_empty()) {
-                        let mut apply = |work: Work<'_>| backend.apply_parts(&parts, cf, work);
-                        accumulate(pass, &mut apply, subtract, acc, own_weight)?;
-                    }
-                }
-            }
-            if pass.modes.weight && weight_owner == Some(owner_index) {
-                for chunk in chunks {
-                    let block = chunk.weight_owned.block();
-                    if block.is_empty() {
-                        continue;
-                    }
-                    let work = Work::Grid {
-                        mode: Mode::Weight,
-                        acc,
-                    };
-                    match &mut owner.backend {
-                        OwnerBackend::Cpu(backend) => backend.apply(&block, cf, work)?,
-                        OwnerBackend::Metal(backend) => backend.apply(&block, cf, work)?,
-                    }
-                }
-            }
-            owner.busy += started.elapsed();
-            Ok::<_, PassError>(())
+            owner.accumulate(pass, target, (owner_index, weight_owner), subtract, chunks)
         })?;
         self.stages.accumulating += accumulating.elapsed();
         Ok(chunks.iter().map(|chunk| chunk.placed).sum())

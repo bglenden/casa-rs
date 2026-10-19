@@ -57,6 +57,20 @@ impl WorkerTeam {
         self.workers
     }
 
+    /// Run `operation` on the calling thread with a scope whose spawned
+    /// work runs on the team's threads, joined before this returns
+    /// ([`rayon::ThreadPool::in_place_scope`]): the caller may wait on what
+    /// the spawned work releases without holding one of the team's
+    /// threads. `None` for a team of one, which has no threads of its own.
+    pub(crate) fn in_place_scope<'scope, R>(
+        &self,
+        operation: impl FnOnce(&rayon::Scope<'scope>) -> R,
+    ) -> Option<R> {
+        self.pool
+            .as_ref()
+            .map(|pool| pool.in_place_scope(operation))
+    }
+
     /// Run `operation` with the team as the current rayon pool, so that
     /// parallel work inside it (a single plane's sparse refresh) runs on the
     /// team's threads.

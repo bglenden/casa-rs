@@ -111,6 +111,10 @@ pub enum PassError {
     /// The source thread panicked or could not start.
     #[error("the visibility source thread failed")]
     ProducerPanicked,
+    /// An owner's accumulation panicked in a pipelined pass
+    /// ([`MajorCyclePass::chunk_sets`]).
+    #[error("an owner's accumulation failed")]
+    OwnerPanicked,
 }
 
 /// Cooperative cancellation shared between the caller and running passes;
@@ -236,8 +240,15 @@ pub struct MajorCyclePass<'a> {
     /// image domain fills or reads ([`WeightCache`]).
     pub weights: Option<&'a WeightCache>,
     /// Placements a row chunk takes at once: [`CHUNK_PLACEMENTS`], or what
-    /// the pass's admission planned ([`WaveDemand::plan_chunk_placements`]).
+    /// the pass's admission planned ([`WaveDemand::plan_chunks`]).
     pub chunk_placements: usize,
+    /// Sets of row chunks a pass on the CPU whose one domain is split among
+    /// region owners places into while its owners accumulate the others, so
+    /// that each owner moves on to the next slice rather than wait for the
+    /// slowest at every slice (#449): 1, or what the pass's admission
+    /// planned ([`WaveDemand::plan_chunks`]). One set waits for every owner
+    /// at every slice, as any other pass does.
+    pub chunk_sets: usize,
 }
 
 impl MajorCyclePass<'_> {
@@ -248,6 +259,19 @@ impl MajorCyclePass<'_> {
         self.weights
             .filter(|_| self.residency == Residency::All && self.domains.len() == 1)
     }
+}
+
+/// Whether a pass over `domains` on `backend` can pipeline its owners over
+/// sets of row chunks ([`MajorCyclePass::chunk_sets`]): on the CPU, over one
+/// domain split among region owners, whose accumulation reads only its
+/// chunks and the pass's prepared model. A pass that forms residuals at
+/// native channels reads each block's predictions as it accumulates, and a
+/// Metal owner already overlaps its grid work with the next slice's
+/// placement ([`casa_imaging_metal::MetalBackend::with_deferred_grid_completion`]).
+fn pipelines_owners(domains: &[PassDomain<'_>], backend: BackendChoice, with_model: bool) -> bool {
+    backend == BackendChoice::Cpu
+        && matches!(domains, [domain] if domain.partition.splits_rows())
+        && !native_residuals(domains, with_model)
 }
 
 /// Whether a pass over `domains` forms its residual at native channels: with
@@ -370,9 +394,13 @@ pub fn run_major_cycle(
         )?
         .checking_spacing(!restrict && pass.residency != Residency::All);
         let timing = pass.metal_stage_timing && pass.backend == BackendChoice::Metal;
-        summary.blocks += stream_blocks(source, cancel, timing, |block| {
-            wave.consume(block, team, visibilities.as_deref_mut())
-        })?;
+        summary.blocks += if wave.pipelines(visibilities.is_some()) {
+            wave.stream_pipelined(source, cancel, timing, team)?
+        } else {
+            stream_blocks(source, cancel, timing, |block| {
+                wave.consume(block, team, visibilities.as_deref_mut())
+            })?
+        };
         summary.samples += wave.samples();
         let row_work = wave.take_row_work();
         if summary.row_work.is_empty() {
@@ -417,7 +445,7 @@ pub const CHUNK_PLACEMENTS: usize = 1 << 15;
 
 /// The larger chunks a pass whose grid is split among several region
 /// owners takes when memory allows, largest first
-/// ([`WaveDemand::plan_chunk_placements`]). The owners grid each slice and
+/// ([`WaveDemand::plan_chunks`]). The owners grid each slice and
 /// then meet, and a block's rows run baseline by baseline, so a slice of a
 /// few baselines' tracks falls mostly on one owner's strip while the others
 /// wait. Larger slices hold more baselines, so the owners wait less; past

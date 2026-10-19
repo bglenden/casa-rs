@@ -376,11 +376,13 @@ pub struct Run<'a> {
     pub backend: BackendChoice,
     pub weights: Option<&'a WeightCache>,
     pub chunk_placements: usize,
+    pub chunk_sets: usize,
 }
 
 impl Run<'_> {
     /// Data and PSF without a model, every plane resident, one worker, on
-    /// the CPU, weighing every sample, in chunks of the default size.
+    /// the CPU, weighing every sample, in one set of chunks of the default
+    /// size.
     pub fn initial() -> Self {
         Self {
             residency: Residency::All,
@@ -391,6 +393,7 @@ impl Run<'_> {
             backend: BackendChoice::Cpu,
             weights: None,
             chunk_placements: CHUNK_PLACEMENTS,
+            chunk_sets: 1,
         }
     }
 }
@@ -414,6 +417,7 @@ pub fn try_run(
         metal_stage_timing: false,
         weights: run.weights,
         chunk_placements: run.chunk_placements,
+        chunk_sets: run.chunk_sets,
     };
     let team = WorkerTeam::new(run.workers).expect("team");
     let mut joined: Vec<Option<NormalImages>> = (0..domains.len()).map(|_| None).collect();

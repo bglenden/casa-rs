@@ -251,6 +251,7 @@ fn a_pass_with_a_model_holds_at_most_its_admission_over_wide_native_spectra() {
             backend: BackendChoice::Cpu,
             block: rows.maximum_block(),
             chunk_placements: CHUNK_PLACEMENTS,
+            chunk_sets: 1,
         };
         let admitted = demand.bytes(demand.planes()) + source_block_bytes(rows.maximum_block());
         let run = Run {
@@ -268,6 +269,64 @@ fn a_pass_with_a_model_holds_at_most_its_admission_over_wide_native_spectra() {
         MEASURING.store(false, Ordering::Relaxed);
         let (images, summary) = result.expect("pass");
         assert!(summary.samples > 0 && !images.is_empty());
+        let held = PEAK.load(Ordering::Relaxed) - baseline;
+        assert!(
+            held <= admitted,
+            "{workers} workers: the pass held {held} bytes against {admitted} admitted"
+        );
+    }
+}
+
+/// #449: a region pass on the CPU whose owners pipeline over two sets of
+/// chunks, with a model subtracted, holds at most its admission at two
+/// sets ([`WaveDemand::chunk_sets`]): the second set of chunks, the owners'
+/// queues and the locks the placer and the owners share.
+#[test]
+fn a_pipelined_pass_holds_at_most_its_admission_at_two_sets() {
+    const IMAGE: usize = 32;
+    if !alone("a_pipelined_pass_holds_at_most_its_admission_at_two_sets") {
+        return;
+    }
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let operator = operator_of(IMAGE, GridPrecision::F64, Basis::Constant);
+    let model = sparse_model(IMAGE, 1, 11);
+    let prepare = |_: usize, planes: PlaneRange| -> Result<_, PassError> {
+        Ok(window_of(&operator, &model, planes))
+    };
+    for workers in [2, 3] {
+        let mut rows = Rows::random(300, 17, operator.geometry());
+        let domains = [PassDomain {
+            operator: &operator,
+            resampler: &resampler,
+            partition: Partition::regions(&operator, workers),
+        }];
+        let demand = WaveDemand {
+            domains: &domains,
+            modes: ModeSet::DATA,
+            with_model: true,
+            native_spacing_hz: fixture::WIDTH_HZ,
+            workers,
+            backend: BackendChoice::Cpu,
+            block: rows.maximum_block(),
+            chunk_placements: 64,
+            chunk_sets: 2,
+        };
+        let admitted = demand.bytes(demand.planes()) + source_block_bytes(rows.maximum_block());
+        let run = Run {
+            workers,
+            model: Some(&prepare),
+            modes: ModeSet::DATA,
+            chunk_placements: 64,
+            chunk_sets: 2,
+            ..Run::initial()
+        };
+        let baseline = LIVE.load(Ordering::Relaxed);
+        PEAK.store(baseline, Ordering::Relaxed);
+        MEASURING.store(true, Ordering::Relaxed);
+        let result = try_run(&domains, &mut rows, &run);
+        MEASURING.store(false, Ordering::Relaxed);
+        let (images, summary) = result.expect("pass");
+        assert!(summary.blocks > 1 && !images.is_empty());
         let held = PEAK.load(Ordering::Relaxed) - baseline;
         assert!(
             held <= admitted,

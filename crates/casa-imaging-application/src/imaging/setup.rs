@@ -220,6 +220,7 @@ impl SetupDemand<'_> {
             backend: self.backend,
             block: self.block,
             chunk_placements: CHUNK_PLACEMENTS,
+            chunk_sets: 1,
         };
         let refreshing = wave(ModeSet::DATA, true);
         let mut first = wave(self.modes, false).bytes(1) + self.stitch.pass_bytes(true);
