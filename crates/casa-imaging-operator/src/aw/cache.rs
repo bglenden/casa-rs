@@ -111,6 +111,24 @@ impl CacheCharge {
         }
         bound.saturating_add(usize::try_from(spare).unwrap_or(usize::MAX))
     }
+
+    /// Raise `bound` as far as `spare` allows on `holders`
+    /// ([`Self::bound_within`]) and return the charge at the raised bound.
+    /// `spare` gives up what the raise costs, or takes back what it saves:
+    /// every cell can cost less than a bound just below it, which also
+    /// holds a group past the bound and the holders' evicted groups (#781
+    /// review).
+    pub fn raise_within(&self, holders: usize, bound: &CacheBound, spare: &mut u64) -> u64 {
+        let before = self.bytes(holders, bound.bytes());
+        bound.raise(self.bound_within(holders, bound.bytes(), *spare));
+        let after = self.bytes(holders, bound.bytes());
+        *spare = if after >= before {
+            spare.saturating_sub(after - before)
+        } else {
+            spare.saturating_add(before - after)
+        };
+        after
+    }
 }
 
 #[cfg(test)]
@@ -158,6 +176,65 @@ mod tests {
         // No spare, no growth; a bound past every group stays.
         assert_eq!(CHARGE.bound_within(holders, floor, 0), floor);
         assert_eq!(CHARGE.bound_within(holders, usize::MAX, 0), usize::MAX);
+    }
+
+    /// #781 review: a bound within a group of every cell takes every cell
+    /// with no spare at all, and every cell costs less than that bound,
+    /// which also holds a group past it and the holders' evicted groups.
+    /// The saving goes back to the spare; a raise within a tight spare
+    /// spends it exactly.
+    #[test]
+    fn a_raise_spends_what_it_costs_and_returns_what_it_saves() {
+        let holders = 4;
+        let every = CHARGE.every as usize;
+        let near = every - CHARGE.largest as usize;
+        let at_near = CHARGE.bytes(holders, near);
+        let at_every = CHARGE.bytes(holders, every);
+        assert!(
+            at_every < at_near,
+            "every cell costs less than the bound below it"
+        );
+        assert_eq!(CHARGE.bound_within(holders, near, 0), every);
+        let bound = CacheBound::new(near);
+        let mut spare = 0;
+        assert_eq!(CHARGE.raise_within(holders, &bound, &mut spare), at_every);
+        assert_eq!(bound.bytes(), every);
+        assert_eq!(spare, at_near - at_every, "the saving is spare again");
+        // A tight spare below every cell: spent exactly.
+        let floor = 100_000_000;
+        let bound = CacheBound::new(floor);
+        let mut spare = 50_000_000;
+        let charged = CHARGE.raise_within(holders, &bound, &mut spare);
+        assert_eq!(bound.bytes(), floor + 50_000_000);
+        assert_eq!(charged, CHARGE.bytes(holders, floor) + 50_000_000);
+        assert_eq!(spare, 0);
+    }
+
+    /// Two catalogs share one spare first come first served: the second
+    /// takes what the first left, and together they cost at most the spare
+    /// beyond their charges at their floors.
+    #[test]
+    fn catalogs_share_one_spare() {
+        let holders = 2;
+        let floor = 100_000_000;
+        let (first, second) = (CacheBound::new(floor), CacheBound::new(floor));
+        let opened = 2 * CHARGE.bytes(holders, floor);
+        let initial = 600_000_000;
+        let mut spare = initial;
+        let charged = CHARGE.raise_within(holders, &first, &mut spare)
+            + CHARGE.raise_within(holders, &second, &mut spare);
+        assert_eq!(first.bytes(), floor + 600_000_000, "the first takes all");
+        assert_eq!(second.bytes(), floor, "and leaves none");
+        assert_eq!(charged, opened + initial);
+        assert_eq!(spare, 0);
+        // With room for every cell of the first, the second takes the rest.
+        let (first, second) = (CacheBound::new(floor), CacheBound::new(floor));
+        let mut spare = 2_000_000_000;
+        let charged = CHARGE.raise_within(holders, &first, &mut spare)
+            + CHARGE.raise_within(holders, &second, &mut spare);
+        assert_eq!(first.bytes(), CHARGE.every as usize);
+        assert_eq!(second.bytes(), CHARGE.every as usize);
+        assert_eq!(charged + spare, opened + 2_000_000_000);
     }
 
     /// A raised bound is the one every clone of it reads; a lower value

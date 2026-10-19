@@ -70,8 +70,8 @@ impl DomainOperator {
     /// workers, if it is still to be admitted. An automatic cell cache first
     /// takes what it can of `spare`, the bytes the run's chosen workers
     /// leave free: every cell when they fit, otherwise as much more bound as
-    /// `spare` allows ([`CacheCharge::bound_within`]). What it takes comes
-    /// off `spare`.
+    /// `spare` allows. What the raise costs comes off `spare`, and what it
+    /// saves goes back for the next catalog ([`CacheCharge::raise_within`]).
     pub(crate) fn admit_kernels(
         &mut self,
         admission: KernelAdmission<'_>,
@@ -86,11 +86,8 @@ impl DomainOperator {
         } = &self.kernels
         {
             let holders = workers.clamp(1, *ceiling);
-            let before = charge.bytes(holders, bound.bytes());
             if *automatic {
-                bound.raise(charge.bound_within(holders, bound.bytes(), *spare));
-                let after = charge.bytes(holders, bound.bytes());
-                *spare = spare.saturating_sub(after - before);
+                charge.raise_within(holders, bound, spare);
                 tracing::info!(
                     "AW cell cache: {:.0} MB of {:.0} MB of cells resident at most (auto)",
                     bound.bytes().min(charge.every_bytes() as usize) as f64 / 1e6,
