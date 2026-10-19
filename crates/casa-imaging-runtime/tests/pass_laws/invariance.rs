@@ -307,7 +307,7 @@ fn the_row_work_pass_measures_what_a_first_pass_reports() {
             let team = WorkerTeam::new(workers).expect("team");
             let measured = run_row_work_pass(&regions, weighting, rows, &team, &Cancel::new())
                 .expect("row-work pass");
-            assert_eq!(measured, reported, "{label}, {workers} workers");
+            assert_eq!(measured.rows, reported, "{label}, {workers} workers");
         }
         assert_eq!(rows.contents, [SampleContent::FlagsAndWeights; 2]);
         assert!(needs_row_work(&regions));
