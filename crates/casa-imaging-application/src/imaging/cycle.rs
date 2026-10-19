@@ -963,13 +963,7 @@ impl<'a> Run<'a> {
         if self.row_work.is_some() || row_work.rows.iter().all(Option::is_none) {
             return;
         }
-        let bytes = row_work
-            .rows
-            .iter()
-            .flatten()
-            .map(|rows| size_of_val(rows.as_slice()) as u64)
-            .sum::<u64>()
-            + size_of_val(row_work.modes.as_slice()) as u64;
+        let bytes = row_work.bytes();
         match self.admit("region row work", bytes) {
             Ok(charge) => self.row_work = Some((row_work, charge)),
             Err(_) => tracing::info!(
@@ -1084,6 +1078,11 @@ fn kept_weight_bytes(
 /// run has it (`row_work`, per domain; #736), for a pass of the modes given
 /// with it: one that grids the weight image adds that work to the centre
 /// row's owner ([`casa_imaging_runtime::pass::ModeWork::weighed`]).
+///
+/// That weighed histogram is a transient of 8 bytes per grid row for each
+/// region domain, dropped once the strips are cut. It goes uncharged, like
+/// the prefix sums [`Partition::regions_balanced`] builds while cutting:
+/// 32 KB at 4096².
 pub(super) fn pass_domains<'d>(
     domains: &'d [DomainOperator],
     workers: usize,

@@ -40,6 +40,13 @@ use super::{BackendChoice, BlockShape, PassDomain};
 /// [`Partition::regions_balanced`] compares the work exactly.
 pub const PLACEMENT_WORK: u64 = 170;
 
+/// One placement's work for a kernel of half-support `[h_x, h_y]`: its taps
+/// `(2·h_x + 1)(2·h_y + 1)` plus [`PLACEMENT_WORK`]. Routing and the
+/// row-work pass both count with it, so their totals cannot drift apart.
+pub(super) fn placement_work([hx, hy]: [u16; 2]) -> u64 {
+    (2 * u64::from(hx) + 1) * (2 * u64::from(hy) + 1) + PLACEMENT_WORK
+}
+
 /// How one pass divides an image domain's grid accumulation among owners
 /// (one per worker).
 #[derive(Clone, Debug, PartialEq)]
@@ -554,6 +561,12 @@ impl Router {
     /// into regions: the owner of the centre row, where `Mode::Weight`
     /// places every sample's `FT[PB²]` taps. `None` when every owner holds
     /// whole planes and grids its own samples' weights.
+    ///
+    /// However narrow its strip (#783), this owner's tile holds the whole
+    /// weight kernel at the origin. The regions' halo is the set's
+    /// `max_half_support`, which covers the weight cells: the AW catalog
+    /// folds their headers into it, and a mosaic window builds its imaging
+    /// and weight cells at one support.
     pub(super) fn weight_owner(&self) -> Option<usize> {
         match self {
             Self::Planes { .. } => None,
@@ -585,8 +598,8 @@ impl Router {
     }
 
     /// Owner of one placement and, with region owners, its anchor row and
-    /// gridding work, the kernel's taps `(2·h_x + 1)(2·h_y + 1)` plus
-    /// [`PLACEMENT_WORK`], which [`Partition::regions_balanced`] balances;
+    /// gridding work ([`placement_work`]), which
+    /// [`Partition::regions_balanced`] balances;
     /// the placement lies on the wave and fits the grid. The kernel's
     /// support and oversampling come from the set's metadata, so routing
     /// lends no taps and takes no lock (#744).
@@ -613,10 +626,9 @@ impl Router {
                     cf.gridding_oversampling(placement.cf),
                 );
                 let row = anchor.y as usize;
-                let taps = (2 * u64::from(hx) + 1) * (2 * u64::from(hy) + 1);
                 (
                     usize::from(owner_of_row[row]),
-                    Some((row, taps + PLACEMENT_WORK)),
+                    Some((row, placement_work([hx, hy]))),
                 )
             }
         }
