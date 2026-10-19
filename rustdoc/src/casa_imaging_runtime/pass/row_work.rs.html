@@ -69,92 +69,93 @@
 <a href=#69 id=69 data-nosnippet>69</a><span class="doccomment">/// Each domain's gridding work by anchor row over one traversal that reads
 <a href=#70 id=70 data-nosnippet>70</a>/// flags and weights only ([`SampleContent::FlagsAndWeights`]): every row
 <a href=#71 id=71 data-nosnippet>71</a>/// is placed as a pass places it, with `weighting`, and each placement adds
-<a href=#72 id=72 data-nosnippet>72</a>/// its kernel's taps to its anchor row (`Router::owner_and_work`). `None`
-<a href=#73 id=73 data-nosnippet>73</a>/// for a domain of plane owners. It is what a first pass measures
-<a href=#74 id=74 data-nosnippet>74</a>/// ([`super::PassSummary::row_work`]) without reading or gridding the
-<a href=#75 id=75 data-nosnippet>75</a>/// visibilities, so the first pass's strips can be cut balanced
-<a href=#76 id=76 data-nosnippet>76</a>/// ([`Partition::regions_balanced`]). It holds [`row_work_pass_bytes`].
-<a href=#77 id=77 data-nosnippet>77</a></span><span class="kw">pub fn </span>run_row_work_pass(
-<a href=#78 id=78 data-nosnippet>78</a>    domains: <span class="kw-2">&amp;</span>[PassDomain&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#79 id=79 data-nosnippet>79</a>    weighting: <span class="kw-2">&amp;</span>WeightingGeneration,
-<a href=#80 id=80 data-nosnippet>80</a>    source: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>BoundedSource,
-<a href=#81 id=81 data-nosnippet>81</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#82 id=82 data-nosnippet>82</a>    cancel: <span class="kw-2">&amp;</span>Cancel,
-<a href=#83 id=83 data-nosnippet>83</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u64&gt;&gt;&gt;, PassError&gt; {
-<a href=#84 id=84 data-nosnippet>84</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(main) = domains.first() <span class="kw">else </span>{
-<a href=#85 id=85 data-nosnippet>85</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PassError::NoDomains);
-<a href=#86 id=86 data-nosnippet>86</a>    };
-<a href=#87 id=87 data-nosnippet>87</a>    <span class="kw">let </span>planes = PlaneRange::new(<span class="number">0</span>, main.operator.basis().planes());
-<a href=#88 id=88 data-nosnippet>88</a>    source
-<a href=#89 id=89 data-nosnippet>89</a>        .begin(planes, <span class="bool-val">false</span>, SampleContent::FlagsAndWeights)
-<a href=#90 id=90 data-nosnippet>90</a>        .map_err(PassError::Source)<span class="question-mark">?</span>;
-<a href=#91 id=91 data-nosnippet>91</a>    <span class="kw">let </span>routers = domains
-<a href=#92 id=92 data-nosnippet>92</a>        .iter()
-<a href=#93 id=93 data-nosnippet>93</a>        .map(|domain| Router::new(<span class="kw-2">&amp;</span>domain.partition, planes))
-<a href=#94 id=94 data-nosnippet>94</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">let </span><span class="kw-2">mut </span>totals = domains
-<a href=#96 id=96 data-nosnippet>96</a>        .iter()
-<a href=#97 id=97 data-nosnippet>97</a>        .map(|domain| {
-<a href=#98 id=98 data-nosnippet>98</a>            <span class="kw">let </span>rows = measured_rows(domain);
-<a href=#99 id=99 data-nosnippet>99</a>            (rows &gt; <span class="number">0</span>).then(|| <span class="macro">vec!</span>[<span class="number">0_u64</span>; rows])
-<a href=#100 id=100 data-nosnippet>100</a>        })
-<a href=#101 id=101 data-nosnippet>101</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#102 id=102 data-nosnippet>102</a>    <span class="kw">let </span>count = team.workers() * CHUNKS_PER_WORKER;
-<a href=#103 id=103 data-nosnippet>103</a>    <span class="comment">// Each chunk's histogram holds the widest domain's rows from the start,
-<a href=#104 id=104 data-nosnippet>104</a>    // so a later, taller domain never grows it ([`row_work_pass_bytes`]).
-<a href=#105 id=105 data-nosnippet>105</a>    </span><span class="kw">let </span>widest = domains.iter().map(measured_rows).max().unwrap_or(<span class="number">0</span>);
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">let </span><span class="kw-2">mut </span>chunks = (<span class="number">0</span>..count)
-<a href=#107 id=107 data-nosnippet>107</a>        .map(|<span class="kw">_</span>| (<span class="number">0</span>..<span class="number">0</span>, <span class="macro">vec!</span>[<span class="number">0_u64</span>; widest]))
-<a href=#108 id=108 data-nosnippet>108</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#109 id=109 data-nosnippet>109</a>    stream_blocks(source, cancel, <span class="bool-val">false</span>, |block| {
-<a href=#110 id=110 data-nosnippet>110</a>        <span class="kw">for </span>(index, (domain, router)) <span class="kw">in </span>domains.iter().zip(<span class="kw-2">&amp;</span>routers).enumerate() {
-<a href=#111 id=111 data-nosnippet>111</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(total) = <span class="kw-2">&amp;mut </span>totals[index] <span class="kw">else </span>{
-<a href=#112 id=112 data-nosnippet>112</a>                <span class="kw">continue</span>;
-<a href=#113 id=113 data-nosnippet>113</a>            };
-<a href=#114 id=114 data-nosnippet>114</a>            <span class="kw">for </span>slice <span class="kw">in </span>slices(block.len(), count, CHUNK_ROWS) {
-<a href=#115 id=115 data-nosnippet>115</a>                <span class="kw">let </span><span class="kw-2">mut </span>used = <span class="number">0</span>;
-<a href=#116 id=116 data-nosnippet>116</a>                <span class="kw">for </span>((range, <span class="kw">_</span>), rows) <span class="kw">in </span>chunks.iter_mut().zip(chunk_ranges(slice, count)) {
-<a href=#117 id=117 data-nosnippet>117</a>                    <span class="kw-2">*</span>range = rows;
-<a href=#118 id=118 data-nosnippet>118</a>                    used += <span class="number">1</span>;
-<a href=#119 id=119 data-nosnippet>119</a>                }
-<a href=#120 id=120 data-nosnippet>120</a>                <span class="kw">let </span>rows = total.len();
-<a href=#121 id=121 data-nosnippet>121</a>                team.for_each_mut(<span class="kw-2">&amp;mut </span>chunks[..used], |<span class="kw">_</span>, (range, work)| {
-<a href=#122 id=122 data-nosnippet>122</a>                    <span class="kw">let </span>work = <span class="kw-2">&amp;mut </span>work[..rows];
-<a href=#123 id=123 data-nosnippet>123</a>                    work.fill(<span class="number">0</span>);
-<a href=#124 id=124 data-nosnippet>124</a>                    <span class="comment">// In the block's locality order, as a pass places them:
-<a href=#125 id=125 data-nosnippet>125</a>                    // a baseline's rows share kernel cells, which a set that
-<a href=#126 id=126 data-nosnippet>126</a>                    // pages its cells (AW) would otherwise reload row by row.
-<a href=#127 id=127 data-nosnippet>127</a>                    </span><span class="kw">for </span>position <span class="kw">in </span>range.clone() {
-<a href=#128 id=128 data-nosnippet>128</a>                        domain.resampler.place_each(
-<a href=#129 id=129 data-nosnippet>129</a>                            domain.operator,
-<a href=#130 id=130 data-nosnippet>130</a>                            weighting,
-<a href=#131 id=131 data-nosnippet>131</a>                            <span class="kw-2">&amp;</span>block.row(index, block.ordered_row(position)),
-<a href=#132 id=132 data-nosnippet>132</a>                            <span class="prelude-val">None</span>,
-<a href=#133 id=133 data-nosnippet>133</a>                            |placement, <span class="kw">_</span>, <span class="kw">_</span>| {
-<a href=#134 id=134 data-nosnippet>134</a>                                <span class="kw">if </span>!planes.contains(placement.plane) {
-<a href=#135 id=135 data-nosnippet>135</a>                                    <span class="kw">return</span>;
-<a href=#136 id=136 data-nosnippet>136</a>                                }
-<a href=#137 id=137 data-nosnippet>137</a>                                <span class="kw">let </span>(<span class="kw">_</span>, placed) =
-<a href=#138 id=138 data-nosnippet>138</a>                                    router.owner_and_work(domain.operator, <span class="kw-2">&amp;</span>placement);
-<a href=#139 id=139 data-nosnippet>139</a>                                <span class="kw">if let </span><span class="prelude-val">Some</span>((anchor, taps)) = placed
-<a href=#140 id=140 data-nosnippet>140</a>                                    &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(cell) = work.get_mut(anchor)
-<a href=#141 id=141 data-nosnippet>141</a>                                {
-<a href=#142 id=142 data-nosnippet>142</a>                                    <span class="kw-2">*</span>cell += taps;
-<a href=#143 id=143 data-nosnippet>143</a>                                }
-<a href=#144 id=144 data-nosnippet>144</a>                            },
-<a href=#145 id=145 data-nosnippet>145</a>                        )<span class="question-mark">?</span>;
-<a href=#146 id=146 data-nosnippet>146</a>                    }
-<a href=#147 id=147 data-nosnippet>147</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
-<a href=#148 id=148 data-nosnippet>148</a>                })<span class="question-mark">?</span>;
-<a href=#149 id=149 data-nosnippet>149</a>                <span class="kw">for </span>(<span class="kw">_</span>, work) <span class="kw">in </span><span class="kw-2">&amp;</span>chunks[..used] {
-<a href=#150 id=150 data-nosnippet>150</a>                    <span class="kw">for </span>(total, work) <span class="kw">in </span>total.iter_mut().zip(work) {
-<a href=#151 id=151 data-nosnippet>151</a>                        <span class="kw-2">*</span>total += work;
-<a href=#152 id=152 data-nosnippet>152</a>                    }
-<a href=#153 id=153 data-nosnippet>153</a>                }
-<a href=#154 id=154 data-nosnippet>154</a>            }
-<a href=#155 id=155 data-nosnippet>155</a>        }
-<a href=#156 id=156 data-nosnippet>156</a>        <span class="prelude-val">Ok</span>(())
-<a href=#157 id=157 data-nosnippet>157</a>    })<span class="question-mark">?</span>;
-<a href=#158 id=158 data-nosnippet>158</a>    <span class="prelude-val">Ok</span>(totals)
-<a href=#159 id=159 data-nosnippet>159</a>}
+<a href=#72 id=72 data-nosnippet>72</a>/// its work, its kernel's taps and [`PLACEMENT_WORK`](super::PLACEMENT_WORK),
+<a href=#73 id=73 data-nosnippet>73</a>/// to its anchor row (`Router::owner_and_work`). `None`
+<a href=#74 id=74 data-nosnippet>74</a>/// for a domain of plane owners. It is what a first pass measures
+<a href=#75 id=75 data-nosnippet>75</a>/// ([`super::PassSummary::row_work`]) without reading or gridding the
+<a href=#76 id=76 data-nosnippet>76</a>/// visibilities, so the first pass's strips can be cut balanced
+<a href=#77 id=77 data-nosnippet>77</a>/// ([`Partition::regions_balanced`]). It holds [`row_work_pass_bytes`].
+<a href=#78 id=78 data-nosnippet>78</a></span><span class="kw">pub fn </span>run_row_work_pass(
+<a href=#79 id=79 data-nosnippet>79</a>    domains: <span class="kw-2">&amp;</span>[PassDomain&lt;<span class="lifetime">'_</span>&gt;],
+<a href=#80 id=80 data-nosnippet>80</a>    weighting: <span class="kw-2">&amp;</span>WeightingGeneration,
+<a href=#81 id=81 data-nosnippet>81</a>    source: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>BoundedSource,
+<a href=#82 id=82 data-nosnippet>82</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#83 id=83 data-nosnippet>83</a>    cancel: <span class="kw-2">&amp;</span>Cancel,
+<a href=#84 id=84 data-nosnippet>84</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u64&gt;&gt;&gt;, PassError&gt; {
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(main) = domains.first() <span class="kw">else </span>{
+<a href=#86 id=86 data-nosnippet>86</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PassError::NoDomains);
+<a href=#87 id=87 data-nosnippet>87</a>    };
+<a href=#88 id=88 data-nosnippet>88</a>    <span class="kw">let </span>planes = PlaneRange::new(<span class="number">0</span>, main.operator.basis().planes());
+<a href=#89 id=89 data-nosnippet>89</a>    source
+<a href=#90 id=90 data-nosnippet>90</a>        .begin(planes, <span class="bool-val">false</span>, SampleContent::FlagsAndWeights)
+<a href=#91 id=91 data-nosnippet>91</a>        .map_err(PassError::Source)<span class="question-mark">?</span>;
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">let </span>routers = domains
+<a href=#93 id=93 data-nosnippet>93</a>        .iter()
+<a href=#94 id=94 data-nosnippet>94</a>        .map(|domain| Router::new(<span class="kw-2">&amp;</span>domain.partition, planes))
+<a href=#95 id=95 data-nosnippet>95</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">let </span><span class="kw-2">mut </span>totals = domains
+<a href=#97 id=97 data-nosnippet>97</a>        .iter()
+<a href=#98 id=98 data-nosnippet>98</a>        .map(|domain| {
+<a href=#99 id=99 data-nosnippet>99</a>            <span class="kw">let </span>rows = measured_rows(domain);
+<a href=#100 id=100 data-nosnippet>100</a>            (rows &gt; <span class="number">0</span>).then(|| <span class="macro">vec!</span>[<span class="number">0_u64</span>; rows])
+<a href=#101 id=101 data-nosnippet>101</a>        })
+<a href=#102 id=102 data-nosnippet>102</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#103 id=103 data-nosnippet>103</a>    <span class="kw">let </span>count = team.workers() * CHUNKS_PER_WORKER;
+<a href=#104 id=104 data-nosnippet>104</a>    <span class="comment">// Each chunk's histogram holds the widest domain's rows from the start,
+<a href=#105 id=105 data-nosnippet>105</a>    // so a later, taller domain never grows it ([`row_work_pass_bytes`]).
+<a href=#106 id=106 data-nosnippet>106</a>    </span><span class="kw">let </span>widest = domains.iter().map(measured_rows).max().unwrap_or(<span class="number">0</span>);
+<a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">let </span><span class="kw-2">mut </span>chunks = (<span class="number">0</span>..count)
+<a href=#108 id=108 data-nosnippet>108</a>        .map(|<span class="kw">_</span>| (<span class="number">0</span>..<span class="number">0</span>, <span class="macro">vec!</span>[<span class="number">0_u64</span>; widest]))
+<a href=#109 id=109 data-nosnippet>109</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#110 id=110 data-nosnippet>110</a>    stream_blocks(source, cancel, <span class="bool-val">false</span>, |block| {
+<a href=#111 id=111 data-nosnippet>111</a>        <span class="kw">for </span>(index, (domain, router)) <span class="kw">in </span>domains.iter().zip(<span class="kw-2">&amp;</span>routers).enumerate() {
+<a href=#112 id=112 data-nosnippet>112</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(total) = <span class="kw-2">&amp;mut </span>totals[index] <span class="kw">else </span>{
+<a href=#113 id=113 data-nosnippet>113</a>                <span class="kw">continue</span>;
+<a href=#114 id=114 data-nosnippet>114</a>            };
+<a href=#115 id=115 data-nosnippet>115</a>            <span class="kw">for </span>slice <span class="kw">in </span>slices(block.len(), count, CHUNK_ROWS) {
+<a href=#116 id=116 data-nosnippet>116</a>                <span class="kw">let </span><span class="kw-2">mut </span>used = <span class="number">0</span>;
+<a href=#117 id=117 data-nosnippet>117</a>                <span class="kw">for </span>((range, <span class="kw">_</span>), rows) <span class="kw">in </span>chunks.iter_mut().zip(chunk_ranges(slice, count)) {
+<a href=#118 id=118 data-nosnippet>118</a>                    <span class="kw-2">*</span>range = rows;
+<a href=#119 id=119 data-nosnippet>119</a>                    used += <span class="number">1</span>;
+<a href=#120 id=120 data-nosnippet>120</a>                }
+<a href=#121 id=121 data-nosnippet>121</a>                <span class="kw">let </span>rows = total.len();
+<a href=#122 id=122 data-nosnippet>122</a>                team.for_each_mut(<span class="kw-2">&amp;mut </span>chunks[..used], |<span class="kw">_</span>, (range, work)| {
+<a href=#123 id=123 data-nosnippet>123</a>                    <span class="kw">let </span>work = <span class="kw-2">&amp;mut </span>work[..rows];
+<a href=#124 id=124 data-nosnippet>124</a>                    work.fill(<span class="number">0</span>);
+<a href=#125 id=125 data-nosnippet>125</a>                    <span class="comment">// In the block's locality order, as a pass places them:
+<a href=#126 id=126 data-nosnippet>126</a>                    // a baseline's rows share kernel cells, which a set that
+<a href=#127 id=127 data-nosnippet>127</a>                    // pages its cells (AW) would otherwise reload row by row.
+<a href=#128 id=128 data-nosnippet>128</a>                    </span><span class="kw">for </span>position <span class="kw">in </span>range.clone() {
+<a href=#129 id=129 data-nosnippet>129</a>                        domain.resampler.place_each(
+<a href=#130 id=130 data-nosnippet>130</a>                            domain.operator,
+<a href=#131 id=131 data-nosnippet>131</a>                            weighting,
+<a href=#132 id=132 data-nosnippet>132</a>                            <span class="kw-2">&amp;</span>block.row(index, block.ordered_row(position)),
+<a href=#133 id=133 data-nosnippet>133</a>                            <span class="prelude-val">None</span>,
+<a href=#134 id=134 data-nosnippet>134</a>                            |placement, <span class="kw">_</span>, <span class="kw">_</span>| {
+<a href=#135 id=135 data-nosnippet>135</a>                                <span class="kw">if </span>!planes.contains(placement.plane) {
+<a href=#136 id=136 data-nosnippet>136</a>                                    <span class="kw">return</span>;
+<a href=#137 id=137 data-nosnippet>137</a>                                }
+<a href=#138 id=138 data-nosnippet>138</a>                                <span class="kw">let </span>(<span class="kw">_</span>, placed) =
+<a href=#139 id=139 data-nosnippet>139</a>                                    router.owner_and_work(domain.operator, <span class="kw-2">&amp;</span>placement);
+<a href=#140 id=140 data-nosnippet>140</a>                                <span class="kw">if let </span><span class="prelude-val">Some</span>((anchor, taps)) = placed
+<a href=#141 id=141 data-nosnippet>141</a>                                    &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(cell) = work.get_mut(anchor)
+<a href=#142 id=142 data-nosnippet>142</a>                                {
+<a href=#143 id=143 data-nosnippet>143</a>                                    <span class="kw-2">*</span>cell += taps;
+<a href=#144 id=144 data-nosnippet>144</a>                                }
+<a href=#145 id=145 data-nosnippet>145</a>                            },
+<a href=#146 id=146 data-nosnippet>146</a>                        )<span class="question-mark">?</span>;
+<a href=#147 id=147 data-nosnippet>147</a>                    }
+<a href=#148 id=148 data-nosnippet>148</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
+<a href=#149 id=149 data-nosnippet>149</a>                })<span class="question-mark">?</span>;
+<a href=#150 id=150 data-nosnippet>150</a>                <span class="kw">for </span>(<span class="kw">_</span>, work) <span class="kw">in </span><span class="kw-2">&amp;</span>chunks[..used] {
+<a href=#151 id=151 data-nosnippet>151</a>                    <span class="kw">for </span>(total, work) <span class="kw">in </span>total.iter_mut().zip(work) {
+<a href=#152 id=152 data-nosnippet>152</a>                        <span class="kw-2">*</span>total += work;
+<a href=#153 id=153 data-nosnippet>153</a>                    }
+<a href=#154 id=154 data-nosnippet>154</a>                }
+<a href=#155 id=155 data-nosnippet>155</a>            }
+<a href=#156 id=156 data-nosnippet>156</a>        }
+<a href=#157 id=157 data-nosnippet>157</a>        <span class="prelude-val">Ok</span>(())
+<a href=#158 id=158 data-nosnippet>158</a>    })<span class="question-mark">?</span>;
+<a href=#159 id=159 data-nosnippet>159</a>    <span class="prelude-val">Ok</span>(totals)
+<a href=#160 id=160 data-nosnippet>160</a>}
 </code></pre></div></section></main></body></html>
