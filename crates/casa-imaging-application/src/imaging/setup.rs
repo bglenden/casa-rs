@@ -10,19 +10,21 @@
 //! - the paged cube state's cache;
 //! - the region row-work pass, and the gridding work by anchor row it
 //!   keeps (#736);
-//! - the first major-cycle pass at one plane per wave, or at every plane
-//!   for the pass that writes visibilities, on the region strips that hold
-//!   the most of any it may cut from that work;
+//! - the first major-cycle pass at one plane per wave, on the region strips
+//!   that hold the most of any it may cut from that work;
 //! - a minor cycle, or a refresh pass, each beside what the run keeps then:
 //!   the normal state and model, the imaging weights it kept, the masks, a
 //!   cached Clark refresh, the minor cycle's terms and the record of every
 //!   cycle before it, up to `nmajor` (#763 review). A run with no `nmajor`
 //!   is covered to its first refresh: its records grow with each cycle after
 //!   that.
+//! - the pass that writes visibilities, at every plane: the first pass of a
+//!   run that does not clean, or else a refresh pass (#778 review).
 //!
 //! A minor cycle never overlaps the first pass: its masks are admitted, and
 //! its work begins, after the pass's wave is released. So it is charged once,
-//! beside what the run keeps, not on top of the pass ([`setup_stage_bytes`]).
+//! beside what the run keeps, not on top of the pass
+//! ([`StageCharges::largest`]).
 //!
 //! The count is chosen once, from those charges, and each phase is then
 //! admitted as before. A run that no count fits takes one worker, which
@@ -145,7 +147,9 @@ pub(super) struct RefreshDemand {
     pub(super) masks: u64,
     /// The Clark refresh a single-plane Clark run caches.
     pub(super) cached: u64,
-    /// The minor cycle's model terms.
+    /// The minor cycle's model terms, which its solve admits while it still
+    /// holds its own charge and the refresh pass holds until the model
+    /// takes them (#778 review).
     pub(super) results: u64,
     /// The records of the cycles up to the last refresh `nmajor` allows,
     /// or the first when it allows any number.
@@ -156,9 +160,10 @@ impl SetupDemand<'_> {
     /// The bytes the run holds at most on `cores`: the kernel sets and the
     /// cube state throughout, beside the imaging-weights pass or, after it,
     /// its density grid with the region row-work pass, and then with the
-    /// work and imaging weights it keeps, the first major-cycle pass and a
-    /// minor cycle, or a refresh pass beside the normal state and model the
-    /// run keeps and [`RefreshDemand`].
+    /// work and imaging weights it keeps, the first major-cycle pass beside
+    /// the model, and after it a minor cycle or a refresh pass beside the
+    /// normal state and model and [`RefreshDemand`]
+    /// ([`StageCharges::largest`]).
     pub(super) fn bytes(&self, cores: CoreAllocation) -> Result<u64, ImagingError> {
         let streaming = cores.streaming_workers;
         let kernels = self
@@ -216,30 +221,36 @@ impl SetupDemand<'_> {
             block: self.block,
             chunk_placements: CHUNK_PLACEMENTS,
         };
-        let mut pass =
-            wave(self.modes, false).bytes(1) + self.stitch.pass_bytes(true) + self.model_bytes;
+        let refreshing = wave(ModeSet::DATA, true);
+        let mut first = wave(self.modes, false).bytes(1) + self.stitch.pass_bytes(true);
+        let mut refresh = refreshing.bytes(1) + self.stitch.pass_bytes(false);
+        // A run that cleans writes on its last refresh, or on a prediction
+        // after it; one that does not, on its first pass (`write_pass`). The
+        // pass that writes holds every plane (#778 review).
         if let Some((modes, with_model, written)) = self.write {
             let demand = wave(modes, with_model);
-            pass = pass
-                .max(demand.bytes(demand.planes()) + self.stitch.pass_bytes(modes.psf) + written);
+            let writing =
+                demand.bytes(demand.planes()) + self.stitch.pass_bytes(modes.psf) + written;
+            if self.refresh.is_some() {
+                refresh = refresh.max(writing);
+            } else {
+                first = first.max(writing);
+            }
         }
-        let refreshing = wave(ModeSet::DATA, true);
         let stages = StageCharges {
             weighing,
             weights,
             measuring,
             kept: weights + measured + self.kept_weights,
-            first_pass: pass,
+            first_pass: first + self.model_bytes,
             minor: (self.minor)(cores.workers),
-            after: self.refresh.as_ref().map(|refresh| AfterFirstPass {
+            after: self.refresh.as_ref().map(|demand| AfterFirstPass {
                 normal: refreshing.resident_normal_bytes(),
                 model: self.model_bytes,
-                cached: refresh.cached,
-                records: refresh.records,
-                refresh_pass: refresh.masks
-                    + refresh.results
-                    + refreshing.bytes(1)
-                    + self.stitch.pass_bytes(false),
+                cached: demand.cached,
+                records: demand.records,
+                results: demand.results,
+                refresh_pass: demand.masks + refresh,
             }),
         };
         Ok(kernels + cube + stages.largest())
@@ -279,7 +290,10 @@ struct AfterFirstPass {
     cached: u64,
     /// The records of the cycles up to the last refresh `nmajor` allows.
     records: u64,
-    /// A refresh pass with the masks and the minor cycle's model terms.
+    /// The minor cycle's model terms, which its solve and then the refresh
+    /// pass hold.
+    results: u64,
+    /// A refresh pass, or the one that writes visibilities, with the masks.
     refresh_pass: u64,
 }
 
@@ -288,7 +302,7 @@ impl StageCharges {
     /// imaging-weights pass; the density grid beside the row-work pass; the
     /// first pass beside what it keeps; and after it, a minor cycle or a
     /// refresh pass beside the kept charges, the normal state and model, a
-    /// cached refresh and the records.
+    /// cached refresh, the records and the minor cycle's model terms.
     ///
     /// A minor cycle is charged once, after the first pass. It never runs
     /// during one: its masks are admitted and its work begins once the
@@ -301,6 +315,7 @@ impl StageCharges {
                 + after.model
                 + after.cached
                 + after.records
+                + after.results
                 + after.refresh_pass.max(self.minor)
         });
         self.weighing
@@ -505,17 +520,23 @@ mod tests {
 
     /// A minor cycle is charged once, after the first pass, beside what the
     /// run keeps then, never on top of the first pass: B3's charges on four
-    /// workers (MB), whose minor cycle (3,897) is two thirds of its first pass
-    /// (5,952), come to the larger stage, not their sum. A run that does not
-    /// clean charges no minor cycle, and a refresh pass larger than the
-    /// minor cycle is charged in its place.
+    /// workers (MB, rounded), whose minor cycle (3,897) is two thirds of its
+    /// first pass (5,952), come to the larger stage, not their sum. B3's
+    /// normal state is 4096² cells of two residual terms and three PSF
+    /// moments (104 bytes a cell), its record a 4096² mask support, and its
+    /// model terms those of 2,001 components of its largest scale's 729
+    /// cells on each of two terms (#778 review). The minor cycle and the
+    /// terms each decide the stage after the first pass; a run that does not
+    /// clean charges neither, and a refresh pass larger than the minor cycle
+    /// is charged in its place, beside the terms.
     #[test]
     fn a_minor_cycle_is_charged_once_after_the_first_pass() {
         let after = AfterFirstPass {
-            normal: 1_342,
+            normal: 1_745,
             model: 537,
             cached: 0,
-            records: 4,
+            records: 17,
+            results: 340,
             refresh_pass: 2_000,
         };
         let b3 = StageCharges {
@@ -527,12 +548,32 @@ mod tests {
             minor: 3_897,
             after: Some(after),
         };
-        let following = 176 + 1_342 + 537 + 4 + 3_897;
-        assert_eq!(b3.largest(), (176 + 5_952).max(following));
+        let following = 176 + 1_745 + 537 + 17 + 340 + 3_897;
+        assert!(following > 176 + 5_952, "B3's stage after the first pass");
+        assert_eq!(b3.largest(), following);
         assert!(
             b3.largest() < 176 + 5_952 + 3_897,
             "not the pass and the minor cycle"
         );
+        // Whatever the first pass, the minor cycle and its terms count.
+        let alone = StageCharges {
+            first_pass: 1,
+            ..b3
+        };
+        assert_eq!(alone.largest(), following);
+        let larger = StageCharges {
+            minor: 3_997,
+            ..alone
+        };
+        assert_eq!(larger.largest(), following + 100);
+        let termless = StageCharges {
+            after: Some(AfterFirstPass {
+                results: 0,
+                ..after
+            }),
+            ..alone
+        };
+        assert_eq!(termless.largest(), following - 340);
         let dirty = StageCharges { after: None, ..b3 };
         assert_eq!(dirty.largest(), 176 + 5_952);
         let refreshing = StageCharges {
@@ -540,6 +581,6 @@ mod tests {
             first_pass: 1,
             ..b3
         };
-        assert_eq!(refreshing.largest(), 176 + 1_342 + 537 + 4 + 2_000);
+        assert_eq!(refreshing.largest(), 176 + 1_745 + 537 + 17 + 340 + 2_000);
     }
 }
