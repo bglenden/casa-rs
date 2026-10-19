@@ -525,7 +525,8 @@ mod tests {
     /// normal state is 4096² cells of two residual terms and three PSF
     /// moments (104 bytes a cell), its record a 4096² mask support, and its
     /// model terms those of 2,001 components of its largest scale's 729
-    /// cells on each of two terms (#778 review). The minor cycle and the
+    /// cells on each of two terms, 168 bytes an entry (#778 review); with its
+    /// kernels it demands the 8.05 GB its run logs. The minor cycle and the
     /// terms each decide the stage after the first pass; a run that does not
     /// clean charges neither, and a refresh pass larger than the minor cycle
     /// is charged in its place, beside the terms.
@@ -536,7 +537,7 @@ mod tests {
             model: 537,
             cached: 0,
             records: 17,
-            results: 340,
+            results: 490,
             refresh_pass: 2_000,
         };
         let b3 = StageCharges {
@@ -548,7 +549,7 @@ mod tests {
             minor: 3_897,
             after: Some(after),
         };
-        let following = 176 + 1_745 + 537 + 17 + 340 + 3_897;
+        let following = 176 + 1_745 + 537 + 17 + 490 + 3_897;
         assert!(following > 176 + 5_952, "B3's stage after the first pass");
         assert_eq!(b3.largest(), following);
         assert!(
@@ -573,7 +574,7 @@ mod tests {
             }),
             ..alone
         };
-        assert_eq!(termless.largest(), following - 340);
+        assert_eq!(termless.largest(), following - 490);
         let dirty = StageCharges { after: None, ..b3 };
         assert_eq!(dirty.largest(), 176 + 5_952);
         let refreshing = StageCharges {
@@ -581,6 +582,6 @@ mod tests {
             first_pass: 1,
             ..b3
         };
-        assert_eq!(refreshing.largest(), 176 + 1_745 + 537 + 17 + 340 + 2_000);
+        assert_eq!(refreshing.largest(), 176 + 1_745 + 537 + 17 + 490 + 2_000);
     }
 }
