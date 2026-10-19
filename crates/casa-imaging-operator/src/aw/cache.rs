@@ -154,7 +154,7 @@ mod tests {
         // A byte short of it, the bound grows linearly instead.
         let short = CHARGE.bound_within(holders, floor, spare - 1);
         assert_eq!(short, floor + (spare - 1) as usize);
-        assert!(CHARGE.bytes(holders, short) <= at_floor + spare - 1);
+        assert!(CHARGE.bytes(holders, short) < at_floor + spare);
         // No spare, no growth; a bound past every group stays.
         assert_eq!(CHARGE.bound_within(holders, floor, 0), floor);
         assert_eq!(CHARGE.bound_within(holders, usize::MAX, 0), usize::MAX);
