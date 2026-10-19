@@ -319,11 +319,14 @@ impl WaveDemand<'_> {
     /// Placements a row chunk of a wave of `planes` planes takes, and the
     /// sets of chunks it places into, the first whose [`Self::bytes`] fit
     /// `budget`:
-    /// - when the owners can pipeline ([`super::MajorCyclePass::chunk_sets`]),
-    ///   two sets of chunks of each of `REGION_CHUNK_PLACEMENTS` and then of
-    ///   [`super::CHUNK_PLACEMENTS`], largest first: a second set lets each
-    ///   owner go on to the next slice, which saves more than larger slices
-    ///   do (#449);
+    /// - when the owners can pipeline ([`super::MajorCyclePass::chunk_sets`])
+    ///   and the pass writes no visibilities (`sink`, which keeps a pass on
+    ///   one set), two sets of chunks of each of `REGION_CHUNK_PLACEMENTS`
+    ///   and then of [`super::CHUNK_PLACEMENTS`], largest first. A second
+    ///   set lets each owner go on to the next slice. On B3 two sets beat
+    ///   one set of the largest chunks even at a quarter of its chunk size
+    ///   (#784). Whether two sets also beat one set of twice their size at
+    ///   the same memory is not measured (#786);
     /// - when a domain is split among several region owners, one set of
     ///   each of `REGION_CHUNK_PLACEMENTS`, largest first, since the owners
     ///   share larger slices more evenly (#736);
@@ -331,7 +334,7 @@ impl WaveDemand<'_> {
     ///   [`super::CHUNK_PLACEMENTS`]. A pass that fits with one set of the
     ///   default chunks therefore never fails for want of more.
     #[must_use]
-    pub fn plan_chunks(&self, planes: u32, budget: u64) -> (usize, usize) {
+    pub fn plan_chunks(&self, planes: u32, budget: u64, sink: bool) -> (usize, usize) {
         let default = (super::CHUNK_PLACEMENTS, 1);
         if !self
             .domains
@@ -340,15 +343,16 @@ impl WaveDemand<'_> {
         {
             return default;
         }
-        let pipelined = super::pipelines_owners(self.domains, self.backend, self.with_model)
-            .then(|| {
-                super::REGION_CHUNK_PLACEMENTS
-                    .into_iter()
-                    .chain(std::iter::once(super::CHUNK_PLACEMENTS))
-                    .map(|placements| (placements, 2))
-            })
-            .into_iter()
-            .flatten();
+        let pipelined = (!sink
+            && super::pipelines_owners(self.domains, self.backend, self.with_model))
+        .then(|| {
+            super::REGION_CHUNK_PLACEMENTS
+                .into_iter()
+                .chain(std::iter::once(super::CHUNK_PLACEMENTS))
+                .map(|placements| (placements, 2))
+        })
+        .into_iter()
+        .flatten();
         pipelined
             .chain(
                 super::REGION_CHUNK_PLACEMENTS

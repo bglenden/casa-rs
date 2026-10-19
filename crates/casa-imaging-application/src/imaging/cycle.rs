@@ -657,7 +657,7 @@ impl<'a> Run<'a> {
             // rather than after the cycles that precede it.
             let (modes, with_model) = write_pass(problem, initial);
             if run
-                .admit_pass(modes, with_model, run.visibility_write_bytes)?
+                .admit_pass(modes, with_model, run.visibility_write_bytes, true)?
                 .value
                 .residency
                 != Residency::All
@@ -680,6 +680,7 @@ impl<'a> Run<'a> {
             self.initial_modes(),
             false,
             self.lifecycle.resident_bytes() + self.write_bytes(last),
+            self.writes(last),
         )?;
         let model = self
             .lifecycle
@@ -706,7 +707,12 @@ impl<'a> Run<'a> {
         let Admitted {
             value: plan,
             reservation: mut pass,
-        } = self.admit_pass(ModeSet::DATA, true, self.write_bytes(last))?;
+        } = self.admit_pass(
+            ModeSet::DATA,
+            true,
+            self.write_bytes(last),
+            self.writes(last),
+        )?;
         let model = self.lifecycle.prepare_final_model(model, terms)?;
         let cycle = MajorCycle::refresh(
             self.problem,
@@ -724,6 +730,12 @@ impl<'a> Run<'a> {
     /// the last pass, which writes.
     const fn write_bytes(&self, last: bool) -> u64 {
         if last { self.visibility_write_bytes } else { 0 }
+    }
+
+    /// Whether the pass writes visibilities: the last pass of a run with a
+    /// visibility write.
+    const fn writes(&self, last: bool) -> bool {
+        last && self.visibility_write.is_some()
     }
 
     /// Admit `memory` bytes for `phase` under the run's policy.
@@ -843,12 +855,14 @@ impl<'a> Run<'a> {
     /// pass also allocates (an initial model) and the faceted domains'
     /// stitched images ([`ChartStitch::pass_bytes`]), and the reservation of
     /// all three: planned once per major cycle for the pass and its normal
-    /// storage.
+    /// storage. A pass that `writes` visibilities keeps one set of chunks,
+    /// since it does not pipeline its owners.
     fn admit_pass(
         &self,
         modes: ModeSet,
         with_model: bool,
         besides: u64,
+        writes: bool,
     ) -> Result<Admitted<PassPlan>, ImagingError> {
         let besides = besides + self.stitch.pass_bytes(modes.psf);
         let workers = self.teams.streaming().workers();
@@ -873,7 +887,7 @@ impl<'a> Run<'a> {
         // Region owners pipeline over a second set of chunks, and share
         // larger slices more evenly; take what fits beside the waves just
         // planned (#736, #449).
-        (demand.chunk_placements, demand.chunk_sets) = demand.plan_chunks(planes, free);
+        (demand.chunk_placements, demand.chunk_sets) = demand.plan_chunks(planes, free, writes);
         let reservation = admit(
             &self.host,
             &self.policy,

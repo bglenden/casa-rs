@@ -570,12 +570,20 @@ pub(super) struct Wave<'w, 'p> {
     stages: WaveStages,
 }
 
-/// Wall time of a wave's stages ([`Wave::stages`]).
+/// Wall time of a wave's stages ([`Wave::stages`]), as the placing thread
+/// sees them. With one set of chunks, `placing` is the placement and
+/// `accumulating` the owners' accumulation, slice by slice. When the owners
+/// are pipelined (`pipelined`), they accumulate while the placer places
+/// and reads. Then `placing` also counts waits for a free team thread,
+/// including drains a waiting thread steals. `accumulating` is only the
+/// placer's wait for a free set and for the last sets. The owners' own
+/// accumulation times are in the region owners' log line.
 #[derive(Clone, Copy, Default)]
 struct WaveStages {
     predicting: std::time::Duration,
     placing: std::time::Duration,
     accumulating: std::time::Duration,
+    pipelined: bool,
 }
 
 impl<'w, 'p> Wave<'w, 'p> {
@@ -1071,14 +1079,25 @@ impl<'w, 'p> Wave<'w, 'p> {
                 }
             })
             .collect::<Result<Vec<_>, PassError>>()?;
-        tracing::info!(
-            "wave stages: predicting {:.1} s, placing {:.1} s, accumulating {:.1} s, \
-             transforming {:.1} s",
-            stages.predicting.as_secs_f64(),
-            stages.placing.as_secs_f64(),
-            stages.accumulating.as_secs_f64(),
-            transforming.elapsed().as_secs_f64(),
-        );
+        if stages.pipelined {
+            tracing::info!(
+                "wave stages (owners pipelined): predicting {:.1} s, placing with thread \
+                 waits {:.1} s, waiting for owners {:.1} s, transforming {:.1} s",
+                stages.predicting.as_secs_f64(),
+                stages.placing.as_secs_f64(),
+                stages.accumulating.as_secs_f64(),
+                transforming.elapsed().as_secs_f64(),
+            );
+        } else {
+            tracing::info!(
+                "wave stages: predicting {:.1} s, placing {:.1} s, accumulating {:.1} s, \
+                 transforming {:.1} s",
+                stages.predicting.as_secs_f64(),
+                stages.placing.as_secs_f64(),
+                stages.accumulating.as_secs_f64(),
+                transforming.elapsed().as_secs_f64(),
+            );
+        }
         Ok(images)
     }
 }

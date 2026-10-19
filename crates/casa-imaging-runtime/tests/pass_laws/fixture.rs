@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Synthetic native rows, operators and a pass runner for the pass laws.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
-    Basis, CpuBackend, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
-    ModeSet, ModelImages, ModelPlane, ModelPrescale, NativeRow, NormalImages, PlaneRange,
+    Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding,
+    GridPrecision, ImageCorrection, ImageExtent, KernelNormalisation, MeasurementOperator, ModeSet,
+    ModelImages, ModelPlane, ModelPrescale, MuellerRouting, NativeRow, NormalImages, PlaneRange,
     PolarizationRouting, PredictionScratch, PreparedModelGrids, RowContext, RowSpectrum,
-    SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, WeightingGeneration,
+    SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, TapLayout, WeightingGeneration,
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, DomainProjection,
@@ -283,14 +286,151 @@ pub fn geometry(image: usize) -> GridGeometry {
 
 /// A Stokes-I operator from linear feeds on an `image`² grid.
 pub fn operator_of(image: usize, precision: GridPrecision, basis: Basis) -> MeasurementOperator {
+    operator_with(image, precision, basis, |geometry, polarization| {
+        Box::new(Spheroidal::new(geometry, polarization))
+    })
+}
+
+/// A Stokes-I operator from linear feeds on an `image`² grid, gridding with
+/// the kernel set `kernels` builds for its geometry and polarization.
+pub fn operator_with(
+    image: usize,
+    precision: GridPrecision,
+    basis: Basis,
+    kernels: impl FnOnce(&GridGeometry, &PolarizationRouting) -> Box<dyn ConvolutionFunctionSet>,
+) -> MeasurementOperator {
     let geometry = geometry(image);
     let polarization = PolarizationRouting::compile(
         &[CorrelationType::LinearXx, CorrelationType::LinearYy],
         &[PolarizationCoordinate::StokesI],
     )
     .expect("routing");
-    let cf = Spheroidal::new(&geometry, &polarization);
-    MeasurementOperator::new(geometry, basis, polarization, Box::new(cf), precision)
+    let cf = kernels(&geometry, &polarization);
+    MeasurementOperator::new(geometry, basis, polarization, cf, precision)
+}
+
+/// The spheroidal kernels for the pipeline laws (#784 review). With
+/// `weight_image` they also grid a weight image, with the imaging taps, so
+/// a region pass routes every placement to the centre row's owner too. With
+/// `panic_at`, the `n`-th lend of the imaging taps panics: only an owner's
+/// accumulation asks for them, since routing and placement read the
+/// spheroidal's own answers and the PSF and weight image borrow its taps
+/// directly.
+pub struct TestKernels {
+    inner: Spheroidal,
+    weight_image: bool,
+    panic_at: Option<usize>,
+    lent: AtomicUsize,
+}
+
+impl TestKernels {
+    /// The kernels on `geometry` and `polarization`.
+    pub fn new(
+        geometry: &GridGeometry,
+        polarization: &PolarizationRouting,
+        weight_image: bool,
+        panic_at: Option<usize>,
+    ) -> Self {
+        Self {
+            inner: Spheroidal::new(geometry, polarization),
+            weight_image,
+            panic_at,
+            lent: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl ConvolutionFunctionSet for TestKernels {
+    fn key(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> CfKey {
+        self.inner.key(row, freq_hz, w_lambda)
+    }
+
+    fn uniform_key(&self) -> Option<CfKey> {
+        self.inner.uniform_key()
+    }
+
+    fn taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
+        let lent = self.lent.fetch_add(1, Ordering::Relaxed) + 1;
+        assert_ne!(self.panic_at, Some(lent), "the test kernels panic");
+        self.inner.taps(key, hold)
+    }
+
+    fn gridding_half_support(&self, key: CfKey) -> [u16; 2] {
+        self.inner.gridding_half_support(key)
+    }
+
+    fn gridding_oversampling(&self, key: CfKey) -> u16 {
+        self.inner.gridding_oversampling(key)
+    }
+
+    fn max_half_support(&self) -> [u16; 2] {
+        self.inner.max_half_support()
+    }
+
+    fn weight_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> Option<TapLayout<'s>> {
+        self.weight_image.then(|| self.inner.taps(key, hold))
+    }
+
+    fn mueller(&self) -> &MuellerRouting {
+        self.inner.mueller()
+    }
+
+    fn prediction_w(&self, row: &RowContext, freq_hz: f64, w_lambda: f64) -> f64 {
+        self.inner.prediction_w(row, freq_hz, w_lambda)
+    }
+
+    fn image_correction(&self) -> &ImageCorrection {
+        self.inner.image_correction()
+    }
+
+    fn normalisation(&self) -> KernelNormalisation {
+        self.inner.normalisation()
+    }
+
+    fn pointing_ramp(&self) -> bool {
+        self.inner.pointing_ramp()
+    }
+
+    fn psf_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
+        self.inner.psf_taps(key, hold)
+    }
+
+    fn prediction_taps<'s>(&'s self, key: CfKey, hold: &'s mut CellHold) -> TapLayout<'s> {
+        self.inner.prediction_taps(key, hold)
+    }
+
+    fn placement_half_support(&self, key: CfKey, hold: &mut CellHold) -> [u16; 2] {
+        self.inner.placement_half_support(key, hold)
+    }
+
+    fn admits(&self, w_lambda: f64) -> bool {
+        self.inner.admits(w_lambda)
+    }
+
+    fn corrects_weight_image(&self) -> bool {
+        self.inner.corrects_weight_image()
+    }
+
+    fn weight_image_magnitude(&self) -> bool {
+        self.inner.weight_image_magnitude()
+    }
+}
+
+/// [`operator_with`] the [`TestKernels`] on the fixture's `IMAGE`² grid.
+pub fn test_kernels_operator(weight_image: bool, panic_at: Option<usize>) -> MeasurementOperator {
+    operator_with(
+        IMAGE,
+        GridPrecision::F64,
+        Basis::Constant,
+        |geometry, polarization| {
+            Box::new(TestKernels::new(
+                geometry,
+                polarization,
+                weight_image,
+                panic_at,
+            ))
+        },
+    )
 }
 
 pub fn operator(precision: GridPrecision, basis: Basis) -> MeasurementOperator {
@@ -405,6 +545,21 @@ pub fn try_run(
     source: &mut Rows,
     run: &Run<'_>,
 ) -> Result<(Vec<NormalImages>, PassSummary), PassError> {
+    try_run_on(
+        domains,
+        source,
+        run,
+        &WorkerTeam::new(run.workers).expect("team"),
+    )
+}
+
+/// [`try_run`] on `team`, whatever `run.workers` says.
+pub fn try_run_on(
+    domains: &[PassDomain<'_>],
+    source: &mut Rows,
+    run: &Run<'_>,
+    team: &WorkerTeam,
+) -> Result<(Vec<NormalImages>, PassSummary), PassError> {
     let weighting = WeightingGeneration::Natural { taper: None };
     let pass = MajorCyclePass {
         domains,
@@ -419,12 +574,11 @@ pub fn try_run(
         chunk_placements: run.chunk_placements,
         chunk_sets: run.chunk_sets,
     };
-    let team = WorkerTeam::new(run.workers).expect("team");
     let mut joined: Vec<Option<NormalImages>> = (0..domains.len()).map(|_| None).collect();
     let summary = run_major_cycle(
         &pass,
         source,
-        &team,
+        team,
         &Cancel::new(),
         &mut |domain, images| {
             match &mut joined[domain] {

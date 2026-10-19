@@ -33,9 +33,10 @@ const HOST: HostResources = HostResources {
 /// that fit its budget (#736), two sets of them on the CPU so that its
 /// owners pipeline (#449), and one set of the default chunks when nothing
 /// else fits, so a pass that fits with the default is never refused for
-/// more. Two sets of any size come before one of a larger size. A Metal
-/// pass takes one set of the largest chunks; one region owner, or plane
-/// owners, keep one set of the default chunks whatever the budget. The
+/// more. Two sets of any size come before one of a larger size. A pass that
+/// writes visibilities, or on Metal, takes one set of the largest chunks;
+/// one region owner, or plane owners, keep one set of the default chunks
+/// whatever the budget. The
 /// block is wide enough for every chunk size to bind.
 #[test]
 fn region_owners_take_the_largest_chunks_that_fit() {
@@ -78,23 +79,36 @@ fn region_owners_take_the_largest_chunks_that_fit() {
         bytes(CHUNK_PLACEMENTS, 2) > default,
         "a second set costs its chunks"
     );
-    assert_eq!(demand.plan_chunks(1, u64::MAX), (1 << 18, 2));
-    assert_eq!(demand.plan_chunks(1, largest), (1 << 18, 2));
-    assert_eq!(demand.plan_chunks(1, largest - 1), (1 << 17, 2));
+    assert_eq!(demand.plan_chunks(1, u64::MAX, false), (1 << 18, 2));
+    assert_eq!(demand.plan_chunks(1, largest, false), (1 << 18, 2));
+    assert_eq!(demand.plan_chunks(1, largest - 1, false), (1 << 17, 2));
     let two_default = bytes(CHUNK_PLACEMENTS, 2);
-    assert_eq!(demand.plan_chunks(1, two_default), (CHUNK_PLACEMENTS, 2));
-    assert_eq!(demand.plan_chunks(1, default), (CHUNK_PLACEMENTS, 1));
     assert_eq!(
-        demand.plan_chunks(1, 0),
+        demand.plan_chunks(1, two_default, false),
+        (CHUNK_PLACEMENTS, 2)
+    );
+    assert_eq!(demand.plan_chunks(1, default, false), (CHUNK_PLACEMENTS, 1));
+    assert_eq!(
+        demand.plan_chunks(1, 0, false),
         (CHUNK_PLACEMENTS, 1),
         "nothing fits: the default, which admission then refuses"
     );
+    // A pass that writes visibilities does not pipeline (`Wave::pipelines`),
+    // so it keeps one set of the largest chunks that fit rather than two of
+    // smaller ones (#784 review, Astra 3 and Fable 5).
+    for budget in [u64::MAX, largest - 1] {
+        assert_eq!(
+            demand.plan_chunks(1, budget, true),
+            (1 << 18, 1),
+            "a writing pass, budget {budget}"
+        );
+    }
     let metal = WaveDemand {
         backend: BackendChoice::Metal,
         ..demand
     };
     assert_eq!(
-        metal.plan_chunks(1, u64::MAX),
+        metal.plan_chunks(1, u64::MAX, false),
         (1 << 18, 1),
         "Metal owners overlap their grid work already"
     );
@@ -109,7 +123,7 @@ fn region_owners_take_the_largest_chunks_that_fit() {
     let plane_owners = [planes(&cube, &cube_resampler, 3)];
     for domains in [&one_owner[..], &plane_owners[..]] {
         assert_eq!(
-            demand_of(domains).plan_chunks(1, u64::MAX),
+            demand_of(domains).plan_chunks(1, u64::MAX, false),
             (CHUNK_PLACEMENTS, 1)
         );
     }

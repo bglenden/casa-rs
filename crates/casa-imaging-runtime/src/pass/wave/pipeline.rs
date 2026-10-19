@@ -17,10 +17,17 @@
 //! The owners' tasks run on the team's threads and never wait on each other
 //! or on the placer: an owner with nothing queued ends its task, and the
 //! placer, on the calling thread, starts it again with the next set. The
-//! placer waits, off the team's threads, only for a set to come free.
+//! placer waits, off the team's threads, only for a set to come free, so a
+//! wave pipelines only when its caller is not one of the team's threads
+//! ([`WorkerTeam::waits_off_team`]).
+//!
+//! An owner that fails, by error or by panic, stops the pipeline. Every lane
+//! then releases its queued sets without accumulating them, and the placer
+//! returns the failure at its next slice.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, PoisonError, RwLock};
 
 use super::{Chunk, Owner, Subtract, Wave};
@@ -49,34 +56,54 @@ struct Lane<'w> {
 struct Pipeline<'w> {
     sets: Vec<ChunkSet>,
     lanes: Vec<Lane<'w>>,
-    /// Signalled, under `released`, whenever a set comes free.
+    /// Signalled, under `released`, whenever a set comes free or the
+    /// pipeline stops.
     released: Mutex<()>,
     freed: Condvar,
-    /// The first error an owner met; the placer stops at the next slice.
+    /// The first error an owner met, which the placer takes.
     failure: Mutex<Option<PassError>>,
+    /// Set, for good, once an owner has failed: the lanes release their
+    /// sets without accumulating them and the placer stops placing.
+    stopped: AtomicBool,
 }
 
 impl Pipeline<'_> {
-    /// Record `error` unless an earlier one is recorded.
+    /// Record `error` unless an earlier one is recorded, and stop.
     fn fail(&self, error: PassError) {
         self.failure
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get_or_insert(error);
+        let _guard = self.released.lock().unwrap_or_else(PoisonError::into_inner);
+        self.stopped.store(true, Ordering::Release);
+        self.freed.notify_all();
     }
 
-    /// The recorded error, if an owner met one.
-    fn failed(&self) -> Option<PassError> {
+    /// Whether an owner has failed.
+    fn stopped(&self) -> bool {
+        self.stopped.load(Ordering::Acquire)
+    }
+
+    /// Take the recorded error, if an owner met one; the pipeline stays
+    /// stopped.
+    fn take_failure(&self) -> Option<PassError> {
         self.failure
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take()
     }
 
-    /// Wait until no owner holds set `set`.
-    fn wait_free(&self, set: usize) {
+    /// Wait until no owner holds set `set` (`true`) or the pipeline stops
+    /// (`false`).
+    fn wait_free(&self, set: usize) -> bool {
         let mut guard = self.released.lock().unwrap_or_else(PoisonError::into_inner);
-        while self.sets[set].pending.load(Ordering::Acquire) > 0 {
+        loop {
+            if self.stopped() {
+                return false;
+            }
+            if self.sets[set].pending.load(Ordering::Acquire) == 0 {
+                return true;
+            }
             guard = self
                 .freed
                 .wait(guard)
@@ -85,8 +112,8 @@ impl Pipeline<'_> {
     }
 }
 
-/// Releases one owner's hold on a set when dropped, so the placer waking on
-/// it learns of a panicking owner too.
+/// Releases one owner's hold on a set when dropped, whether the owner
+/// accumulated it, skipped it, or unwound past it.
 struct Release<'a, 'w> {
     pipeline: &'a Pipeline<'w>,
     set: usize,
@@ -121,7 +148,11 @@ struct Accumulation<'a> {
     subtract: Subtract<'a>,
 }
 
-/// Accumulate lane `lane`'s queued sets in order until none is queued.
+/// Accumulate lane `lane`'s queued sets in order until none is queued; once
+/// the pipeline has stopped, release them unaccumulated. A panic while
+/// accumulating fails the pipeline with [`PassError::OwnerPanicked`] and
+/// does not end the task, so the lane still releases every set queued
+/// behind it and the placer is never left waiting on one.
 fn drain(pipeline: &Pipeline<'_>, lane: usize, work: Accumulation<'_>) {
     loop {
         let set = {
@@ -136,12 +167,7 @@ fn drain(pipeline: &Pipeline<'_>, lane: usize, work: Accumulation<'_>) {
             set
         };
         let _release = Release { pipeline, set };
-        let has_failed = pipeline
-            .failure
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_some();
-        if has_failed {
+        if pipeline.stopped() {
             continue;
         }
         let chunks = pipeline.sets[set]
@@ -149,16 +175,22 @@ fn drain(pipeline: &Pipeline<'_>, lane: usize, work: Accumulation<'_>) {
             .read()
             .unwrap_or_else(PoisonError::into_inner);
         let filled = pipeline.sets[set].filled.load(Ordering::Acquire);
-        let result = match pipeline.lanes[lane].owner.lock() {
-            Ok(mut owner) => owner.accumulate(
+        // The owner is never used again after a panic: its poisoned mutex
+        // turns into `OwnerPanicked` when the wave takes the owners back.
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let mut owner = pipeline.lanes[lane]
+                .owner
+                .lock()
+                .map_err(|_| PassError::OwnerPanicked)?;
+            owner.accumulate(
                 work.pass,
                 work.target,
                 (lane, work.weight_owner),
                 work.subtract,
                 &chunks[..filled],
-            ),
-            Err(_) => Err(PassError::OwnerPanicked),
-        };
+            )
+        }))
+        .unwrap_or(Err(PassError::OwnerPanicked));
         if let Err(error) = result {
             pipeline.fail(error);
         }
@@ -169,10 +201,14 @@ impl Wave<'_, '_> {
     /// Whether this wave pipelines its owners over its sets of chunks: a
     /// pass that can ([`crate::pass::pipelines_owners`]) with more than one
     /// set, unless it hands its blocks to a visibility sink, which writes
-    /// each block before its placement.
-    pub(in crate::pass) fn pipelines(&self, sink: bool) -> bool {
+    /// each block before its placement, or its caller cannot wait on `team`
+    /// without holding one of its threads ([`WorkerTeam::waits_off_team`]):
+    /// a team of one, or a call from the team's own work. Otherwise it
+    /// places into the first set alone, as one set does.
+    pub(in crate::pass) fn pipelines(&self, sink: bool, team: &WorkerTeam) -> bool {
         self.pass.chunk_sets > 1
             && !sink
+            && team.waits_off_team()
             && crate::pass::pipelines_owners(
                 self.pass.domains,
                 self.pass.backend,
@@ -192,6 +228,9 @@ impl Wave<'_, '_> {
         timing: bool,
         team: &WorkerTeam,
     ) -> Result<u64, PassError> {
+        // Spacing is checked only for whole native rows, which need native
+        // residuals, which a pipelined pass never forms.
+        debug_assert!(!self.check_spacing, "a pipelined pass checks no spacing");
         let pass = self.pass;
         let target = &pass.domains[0];
         let domain = &mut self.domains[0];
@@ -238,6 +277,7 @@ impl Wave<'_, '_> {
             released: Mutex::new(()),
             freed: Condvar::new(),
             failure: Mutex::new(None),
+            stopped: AtomicBool::new(false),
         };
         let mut next = 0;
         let mut waiting = std::time::Duration::ZERO;
@@ -249,10 +289,12 @@ impl Wave<'_, '_> {
                         let set = next;
                         next = (next + 1) % pipeline.sets.len();
                         let started = std::time::Instant::now();
-                        pipeline.wait_free(set);
+                        let free = pipeline.wait_free(set);
                         waiting += started.elapsed();
-                        if let Some(error) = pipeline.failed() {
-                            return Err(error);
+                        if !free {
+                            return Err(pipeline
+                                .take_failure()
+                                .unwrap_or(PassError::OwnerPanicked));
                         }
                         let placing = std::time::Instant::now();
                         let mut chunks = pipeline.sets[set]
@@ -288,17 +330,29 @@ impl Wave<'_, '_> {
                     self.weight_base += rows * block.channels();
                     Ok(())
                 });
+                // Every queued set is accumulated, or released unaccumulated
+                // once the pipeline stops; the scope then joins the tasks.
                 let started = std::time::Instant::now();
                 for set in 0..pipeline.sets.len() {
-                    pipeline.wait_free(set);
+                    if !pipeline.wait_free(set) {
+                        break;
+                    }
                 }
                 waiting += started.elapsed();
                 streamed
             })
             .expect("a pipelined wave's team has threads");
-        let failure = pipeline.failed();
+        let failure = pipeline.take_failure();
         self.stages.accumulating += waiting;
+        self.stages.pipelined = true;
         let Pipeline { sets, lanes, .. } = pipeline;
+        self.chunks = sets
+            .into_iter()
+            .next()
+            .expect("the first set")
+            .chunks
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner);
         self.domains[0].owners = lanes
             .into_iter()
             .map(|lane| {
@@ -307,13 +361,6 @@ impl Wave<'_, '_> {
                     .map_err(|_| PassError::OwnerPanicked)
             })
             .collect::<Result<_, _>>()?;
-        self.chunks = sets
-            .into_iter()
-            .next()
-            .expect("the first set")
-            .chunks
-            .into_inner()
-            .unwrap_or_else(PoisonError::into_inner);
         let blocks = streamed?;
         failure.map_or(Ok(blocks), Err)
     }

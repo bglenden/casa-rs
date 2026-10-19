@@ -23,15 +23,18 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use casa_imaging_operator::{
-    Basis, GridPrecision, ModeSet, PlaneRange, SpectralAxis, SpectralKernel, SpectralResampler,
-    WeightingGeneration,
+    Basis, GridPrecision, MeasurementOperator, ModeSet, PlaneRange, SpectralAxis, SpectralKernel,
+    SpectralResampler, WeightingGeneration,
 };
 use casa_imaging_runtime::pass::{
-    BackendChoice, BoundedSource, CHUNK_PLACEMENTS, Cancel, Partition, PassDomain, PassError,
-    Residency, WaveDemand, WorkerTeam, row_work_pass_bytes, run_row_work_pass, source_block_bytes,
+    BackendChoice, BoundedSource, CHUNK_PLACEMENTS, Cancel, ModelPreparation, Partition,
+    PassDomain, PassError, Residency, WaveDemand, WorkerTeam, row_work_pass_bytes,
+    run_row_work_pass, source_block_bytes,
 };
 
-use fixture::{Rows, Run, operator_of, planes, sparse_model, try_run, window_of};
+use fixture::{
+    Rows, Run, TestKernels, operator_of, operator_with, planes, sparse_model, try_run, window_of,
+};
 
 #[global_allocator]
 static HEAP: CountingHeap = CountingHeap;
@@ -278,9 +281,11 @@ fn a_pass_with_a_model_holds_at_most_its_admission_over_wide_native_spectra() {
 }
 
 /// #449: a region pass on the CPU whose owners pipeline over two sets of
-/// chunks, with a model subtracted, holds at most its admission at two
-/// sets ([`WaveDemand::chunk_sets`]): the second set of chunks, the owners'
-/// queues and the locks the placer and the owners share.
+/// chunks holds at most its admission at two sets
+/// ([`WaveDemand::chunk_sets`]): the second set of chunks, the owners'
+/// queues and the locks the placer and the owners share. With a model
+/// subtracted, and with a weight image, whose owner's buffers every set
+/// holds (#784 review, Astra 4).
 #[test]
 fn a_pipelined_pass_holds_at_most_its_admission_at_two_sets() {
     const IMAGE: usize = 32;
@@ -289,21 +294,39 @@ fn a_pipelined_pass_holds_at_most_its_admission_at_two_sets() {
     }
     let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
     let operator = operator_of(IMAGE, GridPrecision::F64, Basis::Constant);
+    let weighted = operator_with(
+        IMAGE,
+        GridPrecision::F64,
+        Basis::Constant,
+        |geometry, polarization| Box::new(TestKernels::new(geometry, polarization, true, None)),
+    );
     let model = sparse_model(IMAGE, 1, 11);
     let prepare = |_: usize, planes: PlaneRange| -> Result<_, PassError> {
         Ok(window_of(&operator, &model, planes))
     };
-    for workers in [2, 3] {
+    let cases: [(
+        &str,
+        &MeasurementOperator,
+        ModeSet,
+        Option<&ModelPreparation<'_>>,
+    ); 2] = [
+        ("a model", &operator, ModeSet::DATA, Some(&prepare)),
+        ("a weight image", &weighted, ModeSet::ALL, None),
+    ];
+    for ((name, operator, modes, model), workers) in cases
+        .into_iter()
+        .flat_map(|case| [2, 3].map(|workers| (case, workers)))
+    {
         let mut rows = Rows::random(300, 17, operator.geometry());
         let domains = [PassDomain {
-            operator: &operator,
+            operator,
             resampler: &resampler,
-            partition: Partition::regions(&operator, workers),
+            partition: Partition::regions(operator, workers),
         }];
         let demand = WaveDemand {
             domains: &domains,
-            modes: ModeSet::DATA,
-            with_model: true,
+            modes,
+            with_model: model.is_some(),
             native_spacing_hz: fixture::WIDTH_HZ,
             workers,
             backend: BackendChoice::Cpu,
@@ -314,8 +337,8 @@ fn a_pipelined_pass_holds_at_most_its_admission_at_two_sets() {
         let admitted = demand.bytes(demand.planes()) + source_block_bytes(rows.maximum_block());
         let run = Run {
             workers,
-            model: Some(&prepare),
-            modes: ModeSet::DATA,
+            model,
+            modes,
             chunk_placements: 64,
             chunk_sets: 2,
             ..Run::initial()
@@ -330,7 +353,7 @@ fn a_pipelined_pass_holds_at_most_its_admission_at_two_sets() {
         let held = PEAK.load(Ordering::Relaxed) - baseline;
         assert!(
             held <= admitted,
-            "{workers} workers: the pass held {held} bytes against {admitted} admitted"
+            "{name}, {workers} workers: the pass held {held} bytes against {admitted} admitted"
         );
     }
 }

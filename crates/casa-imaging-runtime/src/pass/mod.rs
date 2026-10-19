@@ -112,8 +112,10 @@ pub enum PassError {
     #[error("the visibility source thread failed")]
     ProducerPanicked,
     /// An owner's accumulation panicked in a pipelined pass
-    /// ([`MajorCyclePass::chunk_sets`]).
-    #[error("an owner's accumulation failed")]
+    /// ([`MajorCyclePass::chunk_sets`]). The pass caught the panic, stopped
+    /// placing, released every set its owners held, and joined their
+    /// tasks. A pass on one set lets an owner's panic propagate instead.
+    #[error("an owner's accumulation panicked")]
     OwnerPanicked,
 }
 
@@ -247,7 +249,9 @@ pub struct MajorCyclePass<'a> {
     /// that each owner moves on to the next slice rather than wait for the
     /// slowest at every slice (#449): 1, or what the pass's admission
     /// planned ([`WaveDemand::plan_chunks`]). One set waits for every owner
-    /// at every slice, as any other pass does.
+    /// at every slice, as any other pass does. A pass called on a team of
+    /// one, from the team's own work, or with a visibility sink uses only
+    /// the first set.
     pub chunk_sets: usize,
 }
 
@@ -394,7 +398,7 @@ pub fn run_major_cycle(
         )?
         .checking_spacing(!restrict && pass.residency != Residency::All);
         let timing = pass.metal_stage_timing && pass.backend == BackendChoice::Metal;
-        summary.blocks += if wave.pipelines(visibilities.is_some()) {
+        summary.blocks += if wave.pipelines(visibilities.is_some(), team) {
             wave.stream_pipelined(source, cancel, timing, team)?
         } else {
             stream_blocks(source, cancel, timing, |block| {
