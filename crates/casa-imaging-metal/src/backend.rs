@@ -5,7 +5,7 @@
 use std::ops::Range;
 
 use casa_imaging_operator::{
-    AccumulatorLayout, CellHold, ConvolutionFunctionSet, DeviceCells, DeviceFailure,
+    AccumulatorLayout, CellHold, CfKey, ConvolutionFunctionSet, DeviceCells, DeviceFailure,
     DeviceNativeCells, GridAccumulator, GridBackend, GridScalar, GridStorage, Mode, NativeModel,
     NativeSource, NativeTarget, NativeTerm, OperatorError, PreparedModelGrids, SampleBlock,
     TapLayout, Tile, Work,
@@ -49,7 +49,11 @@ const THREAD_TAPS: usize = 81;
 /// is a programmer error and panics.
 ///
 /// The backend uploads each kernel cell it meets once and serves only the
-/// kernel set it was made for, which outlives it.
+/// kernel set it was made for, which outlives it. Its arena is reserved
+/// whole from the set's declared footprint
+/// ([`ConvolutionFunctionSet::tap_footprint`]) at its first upload, so it
+/// holds at most [`crate::kernel_bytes`] for an honest set and never
+/// grows while commands run.
 pub struct MetalBackend<'cf> {
     device: &'static Device,
     kernels: &'cf dyn ConvolutionFunctionSet,
@@ -60,6 +64,7 @@ pub struct MetalBackend<'cf> {
     table_buffer: Buffer,
     rows: Arena,
     dense: Arena,
+    reserve: Reserve,
     ring: Vec<Slot>,
     next: usize,
     usage: Usage,
@@ -112,6 +117,15 @@ impl Usage {
 struct Arena {
     buffer: Buffer,
     used: usize,
+}
+
+/// What a backend reserves for its kernel copies at their first upload,
+/// from the set's declared footprint: the taps of every cell in one arena
+/// (a set lends one tap layout), and a table record per cell.
+#[derive(Clone, Copy)]
+struct Reserve {
+    taps: usize,
+    tables: usize,
 }
 
 /// One ring slot: the buffers of one sub-block and the command using them.
@@ -196,6 +210,11 @@ impl<'cf> MetalBackend<'cf> {
                 sources: device.buffer(0)?,
             });
         }
+        let footprint = kernels.tap_footprint();
+        let reserve = Reserve {
+            taps: usize::try_from(footprint.tap_bytes).expect("a kernel set's taps fit usize"),
+            tables: footprint.cells * size_of::<TableRecord>(),
+        };
         Ok(Self {
             device,
             kernels,
@@ -211,6 +230,7 @@ impl<'cf> MetalBackend<'cf> {
                 buffer: device.buffer(0)?,
                 used: 0,
             },
+            reserve,
             ring,
             next: 0,
             usage: Usage::default(),
@@ -288,6 +308,24 @@ impl<'cf> MetalBackend<'cf> {
         ))
     }
 
+    /// Bytes this backend holds for its kernel copies now: the device
+    /// arenas and table buffer, and the host's table records, norm tables
+    /// and their map. At most [`crate::kernel_bytes`] of its set, whose
+    /// declared footprint the arena and table buffer were reserved from
+    /// (#793 review).
+    #[must_use]
+    pub fn kernel_bytes_held(&self) -> u64 {
+        let device = self.rows.buffer.bytes + self.dense.buffer.bytes + self.table_buffer.bytes;
+        let norms = self
+            .known
+            .values()
+            .map(KnownTable::norm_bytes)
+            .sum::<usize>();
+        let map = self.known.capacity() * (size_of::<((CfKey, TapsKind), KnownTable)>() + 1);
+        let records = self.tables.capacity() * size_of::<TableRecord>();
+        (device + norms + map + records) as u64
+    }
+
     /// Upload the taps of every cell of `kind` in samples `range` of `block`
     /// the device does not hold yet. `run` calls it for each sub-block just
     /// before preparing it, while its placements are in cache.
@@ -317,7 +355,7 @@ impl<'cf> MetalBackend<'cf> {
                     support,
                     oversampling,
                 } => TableRecord {
-                    offset: self.rows.append(self.device, rows)?,
+                    offset: self.rows.append(self.device, rows, self.reserve.taps)?,
                     support: [support, support],
                     oversampling,
                     mueller_planes: 1,
@@ -330,7 +368,7 @@ impl<'cf> MetalBackend<'cf> {
                     mueller_planes,
                     ..
                 } => TableRecord {
-                    offset: self.dense.append(self.device, data)?,
+                    offset: self.dense.append(self.device, data, self.reserve.taps)?,
                     support,
                     oversampling,
                     mueller_planes: u16::from(mueller_planes),
@@ -350,7 +388,9 @@ impl<'cf> MetalBackend<'cf> {
             // one gains records only after them.
             let bytes = self.tables.len() * size_of::<TableRecord>();
             let from = if self.table_buffer.bytes < bytes {
-                self.table_buffer = self.device.buffer(2 * bytes)?;
+                // The set's declared cell count at the first table; a set
+                // with more cells than it declared doubles from there.
+                self.table_buffer = self.device.buffer((2 * bytes).max(self.reserve.tables))?;
                 0
             } else {
                 known
@@ -834,13 +874,21 @@ impl<'cf> MetalBackend<'cf> {
 
 impl Arena {
     /// Append `values`, growing the device array when full; returns their
-    /// first index. Commands still running read only values appended before
-    /// them, which this never rewrites: a grown array is a new buffer, and
-    /// they keep the old one.
-    fn append<T: Copy>(&mut self, device: &Device, values: &[T]) -> Result<u32, OperatorError> {
+    /// first index. The first growth takes `reserve` bytes, the set's
+    /// declared footprint, so an honest set's arena never grows again; a
+    /// set that lends more than it declared doubles from there. Commands
+    /// still running read only values appended before them, which this
+    /// never rewrites: a grown array is a new buffer, and they keep the
+    /// old one.
+    fn append<T: Copy>(
+        &mut self,
+        device: &Device,
+        values: &[T],
+        reserve: usize,
+    ) -> Result<u32, OperatorError> {
         let needed = (self.used + values.len()) * size_of::<T>();
         if self.buffer.bytes < needed {
-            let mut grown = device.buffer(needed.max(2 * self.buffer.bytes))?;
+            let mut grown = device.buffer(needed.max(2 * self.buffer.bytes).max(reserve))?;
             grown
                 .slice_mut::<T>(self.used)
                 .copy_from_slice(self.buffer.slice::<T>(self.used));

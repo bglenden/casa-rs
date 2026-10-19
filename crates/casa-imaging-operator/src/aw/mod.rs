@@ -32,7 +32,7 @@ use native_cache::{STAGING_PREFIX, write_manifest};
 
 use crate::convolution::{
     CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
-    MuellerRouting, RowContext, TapLayout,
+    MuellerRouting, RowContext, TapFootprint, TapLayout,
 };
 use crate::dense::dense_cell_bytes;
 use crate::geometry::GridGeometry;
@@ -921,6 +921,23 @@ impl ConvolutionFunctionSet for AwCatalog {
 
     fn pointing_ramp(&self) -> bool {
         true
+    }
+
+    /// The catalog pages its cells, so its taps are its cache's bound; the
+    /// norms and the count are every cell's, imaging and weight.
+    fn tap_footprint(&self) -> TapFootprint {
+        let rows = u64::from(self.oversampling) + 1;
+        let planes = self.mueller_elements.len() as u64;
+        let cells = 2 * self.cells.len();
+        TapFootprint {
+            tap_bytes: self.bound.bytes() as u64,
+            norm_bytes: cells as u64
+                * rows
+                * rows
+                * planes
+                * size_of::<num_complex::Complex64>() as u64,
+            cells,
+        }
     }
 
     /// `AWProjectWBFT::makeWBSensitivityImage` publishes `abs` of the

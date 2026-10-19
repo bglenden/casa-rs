@@ -206,8 +206,10 @@ pub(crate) fn standard_kernel_set(problem: &CompiledProblem) -> bool {
 /// and prediction cells are its imaging cells, and its weight cells share
 /// their support, so Metal's one tap route per mode serves it. Its weight
 /// image keeps f32 precision because the weight owner sums it by
-/// contribution first (#792). W-planes and the AW catalog run on the CPU
-/// until #653's rows for them.
+/// contribution first (#792). Each Metal backend of a pass copies the
+/// cells it meets to the device, which the wave demand admits per backend
+/// (`casa_imaging_metal::kernel_bytes`, #793 review). W-planes and the AW
+/// catalog run on the CPU until #653's rows for them.
 pub(crate) fn metal_kernel_set(problem: &CompiledProblem) -> bool {
     matches!(
         kernel_set_kind(problem),

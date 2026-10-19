@@ -5,6 +5,7 @@
 use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use casa_imaging_operator::{DeviceFailure, OperatorError};
 use objc2::rc::Retained;
@@ -132,8 +133,18 @@ impl Device {
         // SAFETY: the buffer was just allocated with `length` bytes and no
         // command uses it yet.
         unsafe { raw.contents().cast::<u8>().as_ptr().write_bytes(0, length) };
+        LIVE_BYTES.fetch_add(length as u64, Ordering::Relaxed);
         Ok(Buffer { raw, bytes: length })
     }
+}
+
+/// Bytes of every [`Buffer`] alive in the process.
+static LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
+
+/// Bytes of every [`Buffer`] alive in the process now: what this crate
+/// holds of the device's memory ([`crate::device_bytes`]).
+pub(crate) fn live_bytes() -> u64 {
+    LIVE_BYTES.load(Ordering::Relaxed)
 }
 
 /// Metal 3 (atomic `float` adds on device memory) and memory shared with
@@ -158,6 +169,12 @@ pub(crate) struct Buffer {
 unsafe impl Send for Buffer {}
 // SAFETY: as for `Send`.
 unsafe impl Sync for Buffer {}
+
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        LIVE_BYTES.fetch_sub(self.bytes as u64, Ordering::Relaxed);
+    }
+}
 
 impl Buffer {
     /// The contents as `len` values of `T`.

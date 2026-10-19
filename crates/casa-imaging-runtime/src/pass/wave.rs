@@ -559,12 +559,14 @@ const fn chunks(workers: usize) -> usize {
 /// Bytes a wave places with on `workers` workers over blocks of `block`,
 /// gridding the weight image when `weight`: its row chunks and, with a
 /// model, its backends' batches. On Metal each chunk's predictors keep a
-/// ring and a prediction batch ([`casa_imaging_metal::ring_bytes`],
-/// [`casa_imaging_metal::batch_bytes`]); on the CPU each chunk's predictors
-/// keep their batch's predictions, and each owner of a pass forming
-/// residuals at native channels the residual values of a chunk's
-/// placements ([`CpuBackend::batch_bytes`]). They grow with the source's
-/// block only up to `placements` a chunk.
+/// ring, a prediction batch and their own copies of the kernel cells they
+/// meet ([`casa_imaging_metal::ring_bytes`],
+/// [`casa_imaging_metal::batch_bytes`], [`casa_imaging_metal::kernel_bytes`];
+/// #793 review); on the CPU each chunk's predictors keep their batch's
+/// predictions, and each owner of a pass forming residuals at native
+/// channels the residual values of a chunk's placements
+/// ([`CpuBackend::batch_bytes`]). They grow with the source's block only up
+/// to `placements` a chunk.
 pub(super) fn chunk_bytes(
     domains: &[PassDomain<'_>],
     backend: BackendChoice,
@@ -592,9 +594,15 @@ pub(super) fn chunk_bytes(
         }
         BackendChoice::Cpu => 0,
         BackendChoice::Metal if with_model => {
-            (count * domains.len()) as u64
-                * (casa_imaging_metal::ring_bytes(shape.npol)
-                    + casa_imaging_metal::batch_bytes(shape.npol, shape.predicted))
+            let kernels = domains
+                .iter()
+                .map(|domain| casa_imaging_metal::kernel_bytes(domain.operator.cf()))
+                .sum::<u64>();
+            count as u64
+                * (domains.len() as u64
+                    * (casa_imaging_metal::ring_bytes(shape.npol)
+                        + casa_imaging_metal::batch_bytes(shape.npol, shape.predicted))
+                    + kernels)
         }
         BackendChoice::Metal => 0,
     };

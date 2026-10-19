@@ -189,11 +189,12 @@ fn mosaic_runs_on_the_cpu_pass_and_on_metal() {
     );
 }
 
-/// Metal runs the standard kernel set in `f32` on a host with a device;
-/// every other combination is refused, each reason named. The mosaic set
-/// also runs there (`mosaic_runs_on_the_cpu_pass_and_on_metal`).
+/// Metal runs the standard set in `f32` on a host with a device, and is
+/// refused without one or for `f64` grids, each reason named. The mosaic
+/// set runs there too (`mosaic_runs_on_the_cpu_pass_and_on_metal`); W and
+/// AW are refused in their own laws.
 #[test]
-fn metal_needs_a_device_single_precision_and_the_standard_kernel_set() {
+fn metal_needs_a_device_and_single_precision() {
     let problem = ProblemFixture::standard().compile();
     check(&problem, BackendChoice::Metal, None, &host(true))
         .expect("standard gridding on a Metal device");

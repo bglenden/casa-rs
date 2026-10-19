@@ -421,6 +421,21 @@ impl ConvolutionFunctionSet for TestKernels {
         self.inner.admits(w_lambda)
     }
 
+    /// The spheroidal's cell, lent again as the weight taps when the
+    /// kernels grid a weight image.
+    fn tap_footprint(&self) -> casa_imaging_operator::TapFootprint {
+        let inner = self.inner.tap_footprint();
+        if self.weight_image {
+            casa_imaging_operator::TapFootprint {
+                tap_bytes: 2 * inner.tap_bytes,
+                norm_bytes: 2 * inner.norm_bytes,
+                cells: 2 * inner.cells,
+            }
+        } else {
+            inner
+        }
+    }
+
     fn corrects_weight_image(&self) -> bool {
         self.inner.corrects_weight_image()
     }

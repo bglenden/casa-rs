@@ -96,6 +96,11 @@ impl ConvolutionFunctionSet for DenseFromRows {
     fn pointing_ramp(&self) -> bool {
         false
     }
+
+    /// The one cell, lent as the imaging and the weight taps.
+    fn tap_footprint(&self) -> casa_imaging_operator::TapFootprint {
+        casa_imaging_operator::TapFootprint::of([self.cell.layout(), self.cell.layout()])
+    }
 }
 
 /// Separable rows of `support` taps with a triangular profile, unit sum.
@@ -175,6 +180,10 @@ impl ConvolutionFunctionSet for SeparableRows {
 
     fn pointing_ramp(&self) -> bool {
         false
+    }
+
+    fn tap_footprint(&self) -> casa_imaging_operator::TapFootprint {
+        casa_imaging_operator::TapFootprint::of([self.taps(CfKey::default(), &mut CellHold::new())])
     }
 }
 

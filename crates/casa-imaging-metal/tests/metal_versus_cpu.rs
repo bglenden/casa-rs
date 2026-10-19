@@ -16,13 +16,13 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use casa_imaging_metal::MetalBackend;
 use casa_imaging_operator::{
-    Basis, CpuBackend, GridBackend, GridScalar, MeasurementOperator, Mode, ModeSet, ModelPrescale,
-    NO_CELL, NativeModel, NativeSource, NativeTarget, NativeTerm, PlaneRange, SampleBlock,
-    SampleBuffer, Tile, Work,
+    Basis, CellHold, CfKey, CpuBackend, GridBackend, GridPrecision, GridScalar,
+    MeasurementOperator, Mode, ModeSet, ModelPrescale, NO_CELL, NativeModel, NativeSource,
+    NativeTarget, NativeTerm, PlaneRange, SampleBlock, SampleBuffer, Tile, Work,
 };
 use common::{
-    ALL_KERNELS, Kernels, Rng, assert_close, assert_same_grids, block, metal, model, operator,
-    placements,
+    ALL_KERNELS, Kernels, MOSAIC_DISHES_M, MOSAIC_FREQUENCIES_HZ, Rng, assert_close,
+    assert_same_grids, block, edge_placements, metal, model, operator, placements,
 };
 use num_complex::Complex32;
 
@@ -89,20 +89,31 @@ fn grid_both(
     assert_same_grids(&device, &cpu, label);
 }
 
-/// #787 (#653's mosaic rows): every cell the mosaic set lends for a mode
-/// has the imaging cell's support. That covers the PSF and prediction
-/// cells, which are the imaging taps, and the weight cell, built at the
-/// same support. So the Metal records' one support test per sample holds
-/// for every mode on the mosaic set. AW's PSF and prediction cells differ,
-/// so it waits for a per-mode test (#653).
+/// #787 (#653's mosaic rows): on every key of the mosaic set, every pair
+/// plane of the two dish classes at every frequency cell, the cells each
+/// mode lends share the imaging cell's support: the PSF and prediction
+/// cells are the imaging taps, and the weight cell is built at the same
+/// support. So the Metal records' one support test per sample holds for
+/// every mode on the mosaic set. AW's PSF and prediction cells differ, so
+/// it waits for a per-mode test (#653). Across keys the supports differ
+/// (#793 review): the 7 m beams are wider than the 12 m ones, and the lower
+/// frequency cell's wider still (half supports 9, 7 and 6), so the laws
+/// over `ALL_KERNELS` put three supports, and three pair planes, in one
+/// dispatch.
 #[test]
-fn the_mosaic_sets_cells_share_one_support_in_every_mode() {
+fn the_mosaic_sets_cells_differ_in_support_but_share_it_across_modes() {
     let mut rng = Rng::new(3);
     let operator = operator(Kernels::Mosaic, Basis::Constant, &mut rng);
     let cf = operator.cf();
-    for cube in [0, 1] {
-        let key = casa_imaging_operator::CfKey { group: 0, cube };
-        let mut hold = casa_imaging_operator::CellHold::new();
+    let keys = Kernels::Mosaic.keys();
+    assert_eq!(
+        keys.len(),
+        MOSAIC_DISHES_M.len() * (MOSAIC_DISHES_M.len() + 1) / 2 * MOSAIC_FREQUENCIES_HZ.len(),
+        "three pair planes at two frequency cells"
+    );
+    let mut supports = Vec::new();
+    for &key in &keys {
+        let mut hold = CellHold::new();
         let imaging = cf.taps(key, &mut hold).half_support();
         let psf = cf.psf_taps(key, &mut hold).half_support();
         let prediction = cf.prediction_taps(key, &mut hold).half_support();
@@ -113,12 +124,140 @@ fn the_mosaic_sets_cells_share_one_support_in_every_mode() {
         assert_eq!(
             (psf, prediction, weight),
             (imaging, imaging, imaging),
-            "cube {cube}"
+            "{key:?}"
         );
         assert_eq!(
             cf.placement_half_support(key, &mut hold),
             imaging,
-            "cube {cube}"
+            "{key:?}"
+        );
+        eprintln!("mosaic {key:?}: half support {imaging:?}");
+        supports.push(imaging);
+    }
+    supports.sort_unstable();
+    supports.dedup();
+    assert!(
+        supports.len() >= 2,
+        "the fixture's keys lend one support, {supports:?}; the laws need several in one dispatch"
+    );
+    let footprint = cf.tap_footprint();
+    assert_eq!(
+        footprint.cells,
+        2 * keys.len(),
+        "an imaging and a weight cell a key"
+    );
+}
+
+/// #793 review (Astra 1): a backend's copies of the kernel cells it meets
+/// stay within `kernel_bytes` of its set, which the pass admits for every
+/// backend it makes, and the device holds no more than every backend's
+/// charge, their accumulators and the model copy together. Two owners grid
+/// every mode over every key of the mosaic set, so each meets every cell of
+/// both kinds, and a predictor meets every imaging cell.
+#[test]
+fn kernel_copies_stay_within_their_charge() {
+    let mut rng = Rng::new(53);
+    let operator = operator(Kernels::Mosaic, TAYLOR, &mut rng);
+    let charge = casa_imaging_metal::kernel_bytes(operator.cf());
+    let footprint = operator.cf().tap_footprint();
+    let before = casa_imaging_metal::device_bytes();
+    let (Some(mut first), Some(mut second), Some(mut predictor)) =
+        (metal(&operator), metal(&operator), metal(&operator))
+    else {
+        return;
+    };
+    let keys = Kernels::Mosaic.keys();
+    let planes = PlaneRange::new(0, operator.basis().planes());
+    let placed = placements(
+        &operator,
+        &keys,
+        full(&operator),
+        SAMPLES,
+        operator.basis().planes(),
+        &mut rng,
+    );
+    let buffer = block(&placed, &mut rng);
+    let layout = operator.accumulator_layout(planes, None, ModeSet::ALL);
+    let mut first_acc = MetalBackend::accumulator(layout.clone()).expect("device");
+    let mut second_acc = MetalBackend::accumulator(layout.clone()).expect("device");
+    for (backend, acc) in [(&mut first, &mut first_acc), (&mut second, &mut second_acc)] {
+        for mode in [Mode::Data, Mode::Psf, Mode::Weight] {
+            backend
+                .apply(&buffer.block(), operator.cf(), Work::Grid { mode, acc })
+                .expect("grid");
+        }
+    }
+    let prepared = operator
+        .prepare_model(&model(&operator, &mut rng), ModelPrescale::Unit)
+        .expect("model");
+    let mut out = vec![Complex32::default(); placed.len() * 2];
+    predictor
+        .apply(
+            &buffer.block(),
+            operator.cf(),
+            Work::Predict {
+                model: &prepared,
+                out: &mut out,
+            },
+        )
+        .expect("predict");
+    for (name, backend) in [
+        ("the first owner", &first),
+        ("the second owner", &second),
+        ("the predictor", &predictor),
+    ] {
+        let held = backend.kernel_bytes_held();
+        assert!(
+            held <= charge,
+            "{name} holds {held} bytes of kernel copies against a charge of {charge}"
+        );
+    }
+    // The owners met every cell of both kinds, so their norm tables are the
+    // whole set's; the arena was reserved whole at the first upload.
+    assert!(
+        first.kernel_bytes_held() >= footprint.tap_bytes + footprint.norm_bytes,
+        "an owner that met every cell holds the set's taps and norms"
+    );
+    let device = casa_imaging_metal::device_bytes() - before;
+    let bound = 3 * (charge + casa_imaging_metal::ring_bytes(2))
+        + 2 * layout.bytes(GridPrecision::F32) as u64
+        + prepared.layout().bytes(GridPrecision::F32) as u64;
+    assert!(
+        device <= bound,
+        "the device holds {device} bytes against {bound} charged"
+    );
+}
+
+/// #793 review (Astra 2, Fable 1): on every key of the mosaic set, the
+/// samples whose last tap touches each edge of the grid, and of a region
+/// tile, grid alike on both backends in every mode. The one sample beyond
+/// is `misplaced_samples_and_host_accumulators_are_refused_before_the_device`.
+#[test]
+fn the_mosaic_sets_edge_placements_grid_alike() {
+    let mut rng = Rng::new(59);
+    let operator = operator(Kernels::Mosaic, Basis::Constant, &mut rng);
+    let Some(mut metal) = metal(&operator) else {
+        return;
+    };
+    let keys = Kernels::Mosaic.keys();
+    for (tile, label) in [
+        (full(&operator), "the grid"),
+        (region(&operator), "a region tile"),
+    ] {
+        let placed = edge_placements(&operator, &keys, tile, &mut rng);
+        assert_eq!(
+            placed.len(),
+            keys.len() * 8,
+            "four edges, both signs of w, every key"
+        );
+        let buffer = block(&placed, &mut rng);
+        grid_both(
+            &operator,
+            &mut metal,
+            &buffer,
+            tile,
+            ModeSet::ALL,
+            &format!("mosaic edges of {label}"),
         );
     }
 }
@@ -141,7 +280,14 @@ fn every_kernel_set_grids_data_psf_and_weight_like_the_cpu() {
             } else {
                 full(&operator)
             };
-            let placed = placements(&operator, tile, SAMPLES, basis.planes(), &mut rng);
+            let placed = placements(
+                &operator,
+                &kernels.keys(),
+                tile,
+                SAMPLES,
+                basis.planes(),
+                &mut rng,
+            );
             let buffer = block(&placed, &mut rng);
             let modes = match kernels {
                 Kernels::Spheroidal => ModeSet::DATA_PSF,
@@ -172,7 +318,14 @@ fn parts_grid_as_the_whole_block() {
         let Some(mut metal) = metal(&operator) else {
             return;
         };
-        let placed = placements(&operator, full(&operator), SAMPLES, 3, &mut rng);
+        let placed = placements(
+            &operator,
+            &kernels.keys(),
+            full(&operator),
+            SAMPLES,
+            3,
+            &mut rng,
+        );
         let whole = block(&placed, &mut rng);
         let whole = whole.block();
         let parts = [0, 1_100, 1_100, 3_000, SAMPLES]
@@ -239,6 +392,7 @@ fn predictions_match_the_cpu_for_both_tap_layouts() {
                 .expect("model");
             let placed = placements(
                 &operator,
+                &kernels.keys(),
                 full(&operator),
                 SAMPLES,
                 basis.planes(),
@@ -307,8 +461,8 @@ fn native_terms(samples: usize, rng: &mut Rng) -> Vec<NativeTerm> {
 
 /// A block of random samples with random native endpoints, one endpoint
 /// for a third of them.
-fn sourced_block(operator: &MeasurementOperator, rng: &mut Rng) -> SampleBuffer {
-    let placed = placements(operator, full(operator), SAMPLES, 1, rng);
+fn sourced_block(operator: &MeasurementOperator, keys: &[CfKey], rng: &mut Rng) -> SampleBuffer {
+    let placed = placements(operator, keys, full(operator), SAMPLES, 1, rng);
     let plain = block(&placed, rng);
     let mut sourced = SampleBuffer::new(2);
     let cell = |rng: &mut Rng| (rng.next_u64() % NATIVE_CELLS as u64) as u32;
@@ -350,7 +504,14 @@ fn native_models_and_residuals_match_the_cpu() {
             .prepare_model(&model(&operator, &mut rng), ModelPrescale::Unit)
             .expect("model");
         let batches = [SAMPLES / 2 + 7, 7 * 32_768 + 5].map(|count| {
-            let placed = placements(&operator, full(&operator), count, 1, &mut rng);
+            let placed = placements(
+                &operator,
+                &kernels.keys(),
+                full(&operator),
+                count,
+                1,
+                &mut rng,
+            );
             block(&placed, &mut rng)
         });
         let terms = batches
@@ -403,7 +564,7 @@ fn native_models_and_residuals_match_the_cpu() {
                 )
                 .expect("metal native model");
         }
-        let samples = sourced_block(&operator, &mut rng);
+        let samples = sourced_block(&operator, &kernels.keys(), &mut rng);
         let planes = PlaneRange::new(0, operator.basis().planes());
         let mut cpu = operator.accumulator(planes, None, ModeSet::DATA);
         CpuBackend::new()
@@ -464,7 +625,14 @@ fn fused_residuals_match_the_cpu_with_and_without_the_residual_samples() {
             } else {
                 full(&operator)
             };
-            let placed = placements(&operator, tile, SAMPLES, basis.planes(), &mut rng);
+            let placed = placements(
+                &operator,
+                &kernels.keys(),
+                tile,
+                SAMPLES,
+                basis.planes(),
+                &mut rng,
+            );
             let buffer = block(&placed, &mut rng);
             let planes = PlaneRange::new(0, basis.planes());
             let tile = Some(tile).filter(|tile| *tile != full(&operator));
@@ -519,7 +687,14 @@ fn sumwt_is_accumulated_in_f64() {
     let Some(mut metal) = metal(&operator) else {
         return;
     };
-    let placed = placements(&operator, full(&operator), 1_001, 1, &mut rng);
+    let placed = placements(
+        &operator,
+        &Kernels::Spheroidal.keys(),
+        full(&operator),
+        1_001,
+        1,
+        &mut rng,
+    );
     let mut buffer = SampleBuffer::new(2);
     for (index, placement) in placed.iter().enumerate() {
         let weight = if index == 0 { 16_777_216.0 } else { 1.0 };
@@ -560,7 +735,14 @@ fn a_zero_kernel_norm_predicts_zero_and_adds_no_weight() {
         .expect("model");
     // Zero weights on one polarization: the pair is skipped on both
     // backends; the other polarization still predicts.
-    let placed = placements(&operator, full(&operator), 600, 1, &mut rng);
+    let placed = placements(
+        &operator,
+        &Kernels::Dense.keys(),
+        full(&operator),
+        600,
+        1,
+        &mut rng,
+    );
     let mut buffer = SampleBuffer::new(2);
     for placement in &placed {
         buffer.push(*placement, &[Complex32::new(1.0, 1.0); 2], &[0.0, 1.0]);
@@ -611,7 +793,14 @@ fn non_finite_values_reach_the_same_cells_on_both_backends() {
     let Some(mut metal) = metal(&operator) else {
         return;
     };
-    let placed = placements(&operator, full(&operator), 64, 1, &mut rng);
+    let placed = placements(
+        &operator,
+        &Kernels::Spheroidal.keys(),
+        full(&operator),
+        64,
+        1,
+        &mut rng,
+    );
     let mut buffer = block(&placed, &mut rng);
     let mut poisoned = SampleBuffer::new(2);
     for (index, placement) in buffer.placements().iter().enumerate() {
@@ -661,7 +850,14 @@ fn one_backend_serves_successive_accumulators_and_empty_blocks() {
     };
     let empty = SampleBuffer::new(2);
     for round in 0..3 {
-        let placed = placements(&operator, full(&operator), 1_500 + 700 * round, 3, &mut rng);
+        let placed = placements(
+            &operator,
+            &Kernels::Dense.keys(),
+            full(&operator),
+            1_500 + 700 * round,
+            3,
+            &mut rng,
+        );
         let buffer = block(&placed, &mut rng);
         let planes = PlaneRange::new(0, 3);
         let layout = operator.accumulator_layout(planes, None, ModeSet::DATA);
@@ -715,7 +911,14 @@ fn deferred_grids_are_whole_at_the_hosts_first_read() {
     let prepared = operator
         .prepare_model(&model(&operator, &mut rng), ModelPrescale::Unit)
         .expect("model");
-    let placed = placements(&operator, full(&operator), 4 * SAMPLES, 3, &mut rng);
+    let placed = placements(
+        &operator,
+        &Kernels::Dense.keys(),
+        full(&operator),
+        4 * SAMPLES,
+        3,
+        &mut rng,
+    );
     let one_cell: Vec<_> = placed
         .iter()
         .filter(|placement| placement.cf.cube == 0)
@@ -781,6 +984,7 @@ fn predictions_between_deferred_grids_read_back_their_own_output() {
     for round in 0..3 {
         let placed = placements(
             &operator,
+            &Kernels::Spheroidal.keys(),
             full(&operator),
             SAMPLES + 500 * round,
             3,
@@ -865,8 +1069,12 @@ fn refused_before_the_device(defer: bool) {
         origin: [0, 0],
         shape: [nx / 4, ny / 3],
     };
-    let mut placed = placements(&operator, tile, 3_000, 1, &mut rng);
-    placed.insert(2_500, placements(&operator, outside, 1, 1, &mut rng)[0]);
+    let keys = Kernels::Spheroidal.keys();
+    let mut placed = placements(&operator, &keys, tile, 3_000, 1, &mut rng);
+    placed.insert(
+        2_500,
+        placements(&operator, &keys, outside, 1, 1, &mut rng)[0],
+    );
     let buffer = block(&placed, &mut rng);
     let planes = PlaneRange::single(0);
     let panic_message = |outcome: Result<(), Box<dyn std::any::Any + Send>>| {

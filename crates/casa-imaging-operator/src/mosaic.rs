@@ -16,7 +16,7 @@ use num_complex::{Complex32, Complex64};
 
 use crate::convolution::{
     CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
-    MuellerRouting, RowContext, TapLayout,
+    MuellerRouting, RowContext, TapFootprint, TapLayout,
 };
 use crate::dense::{OversampledPlane, dense_cell, dense_cell_bytes};
 use crate::error::OperatorError;
@@ -763,6 +763,17 @@ impl ConvolutionFunctionSet for MosaicPb {
 
     fn pointing_ramp(&self) -> bool {
         true
+    }
+
+    /// Every pair plane's imaging and weight cell of every frequency cell,
+    /// all resident.
+    fn tap_footprint(&self) -> TapFootprint {
+        TapFootprint::of(
+            self.imaging
+                .iter()
+                .chain(&self.weight)
+                .map(DenseCell::layout),
+        )
     }
 }
 

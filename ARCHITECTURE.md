@@ -692,8 +692,11 @@ sample's native endpoints as they grid (`Work::NativeResidualGrid`); nothing
 is read back unless a visibility writer asks for the model.
 Metal grids the standard and mosaic kernel sets (#787). A mosaic's weight
 image is summed by contribution before it is gridded, so the f32 grid keeps
-its precision (#792). W projection and AW projection run on the CPU, and
-`availability::check` refuses them on Metal.
+its precision (#792). Each Metal backend copies the kernel cells it meets to
+the device, in an arena reserved whole from the set's declared footprint;
+the wave demand admits one copy of the set per owner and per predictor
+(`casa_imaging_metal::kernel_bytes`, #793). W projection and AW projection
+run on the CPU, and `availability::check` refuses them on Metal.
 Application availability is the capability boundary: component presence alone
 never makes a route available.
 

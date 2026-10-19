@@ -1114,6 +1114,10 @@ impl ConvolutionFunctionSet for Undeclared {
     fn pointing_ramp(&self) -> bool {
         self.0.pointing_ramp()
     }
+
+    fn tap_footprint(&self) -> casa_imaging_operator::TapFootprint {
+        self.0.tap_footprint()
+    }
 }
 
 /// A set that declares its one cell ([`ConvolutionFunctionSet::uniform_key`])

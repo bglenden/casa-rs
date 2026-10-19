@@ -78,6 +78,24 @@ impl TapLayout<'_> {
         }
     }
 
+    /// Bytes of the tap values: what a device backend copies for the cell.
+    #[must_use]
+    pub fn tap_bytes(&self) -> u64 {
+        match self {
+            Self::SeparableReal { rows, .. } => std::mem::size_of_val(*rows) as u64,
+            Self::Dense { data, .. } => std::mem::size_of_val(*data) as u64,
+        }
+    }
+
+    /// Bytes of the norms a backend tabulates for the cell: one `Complex64`
+    /// per fine offset and Mueller plane ([`Self::norm`] at every
+    /// `(ox, oy)`).
+    #[must_use]
+    pub fn norm_bytes(&self) -> u64 {
+        let rows = u64::from(self.oversampling()) + 1;
+        rows * rows * u64::from(self.mueller_planes()) * size_of::<Complex64>() as u64
+    }
+
     /// The kernel norm `Σ (conjugate ? conj(t) : t)` of Mueller plane
     /// `mueller` at the fine offsets of `location`, summed in `f64` without
     /// the pointing ramp: the forward normalisation every backend divides
@@ -86,6 +104,33 @@ impl TapLayout<'_> {
     #[must_use]
     pub fn norm(&self, location: CellLocation, mueller: u8, conjugate: bool) -> Complex64 {
         crate::cpu::kernel::norm(self, location, mueller, conjugate)
+    }
+}
+
+/// The taps of every cell a set can lend, as a device backend that copies
+/// each cell it meets holds them ([`ConvolutionFunctionSet::tap_footprint`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TapFootprint {
+    /// Bytes of the tap values ([`TapLayout::tap_bytes`]).
+    pub tap_bytes: u64,
+    /// Bytes of the per-offset norms a backend tabulates for each cell
+    /// ([`TapLayout::norm_bytes`]).
+    pub norm_bytes: u64,
+    /// Cells: one per key and kind (imaging, weight) the set lends.
+    pub cells: usize,
+}
+
+impl TapFootprint {
+    /// The footprint of `layouts`, one per cell and kind.
+    #[must_use]
+    pub fn of<'a>(layouts: impl IntoIterator<Item = TapLayout<'a>>) -> Self {
+        layouts
+            .into_iter()
+            .fold(Self::default(), |sum, layout| Self {
+                tap_bytes: sum.tap_bytes + layout.tap_bytes(),
+                norm_bytes: sum.norm_bytes + layout.norm_bytes(),
+                cells: sum.cells + 1,
+            })
     }
 }
 
@@ -580,6 +625,16 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// (`Placement::gradient`): the kernels encode a pointing offset from
     /// the image centre as `e^{i(k·g)}` over the taps (mosaic, AW).
     fn pointing_ramp(&self) -> bool;
+
+    /// The taps of every cell the set can lend, imaging and weight: their
+    /// bytes, the bytes of the norms a backend tabulates for each, and
+    /// their count ([`TapFootprint`]). A device backend copies each cell it
+    /// meets once per kind and holds the copies for its life, so a pass
+    /// admits this much for every backend it makes (the Metal crate's
+    /// `kernel_bytes`, #793 review). Every kind a key lends counts a cell,
+    /// even when two kinds lend one storage. A set that pages its cells
+    /// answers for the most it keeps resident.
+    fn tap_footprint(&self) -> TapFootprint;
 
     /// The taps `Mode::Psf` grids a sample with at its uv position: the
     /// imaging taps for `GridFT`, `WProjectFT` and `MosaicFT`; the AW
