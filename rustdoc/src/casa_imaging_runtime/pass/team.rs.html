@@ -57,131 +57,156 @@
 <a href=#57 id=57 data-nosnippet>57</a>        <span class="self">self</span>.workers
 <a href=#58 id=58 data-nosnippet>58</a>    }
 <a href=#59 id=59 data-nosnippet>59</a>
-<a href=#60 id=60 data-nosnippet>60</a>    <span class="doccomment">/// Run `operation` with the team as the current rayon pool, so that
-<a href=#61 id=61 data-nosnippet>61</a>    /// parallel work inside it (a single plane's sparse refresh) runs on the
-<a href=#62 id=62 data-nosnippet>62</a>    /// team's threads.
-<a href=#63 id=63 data-nosnippet>63</a>    </span><span class="kw">pub fn </span>install&lt;R: Send&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, operation: <span class="kw">impl </span>FnOnce() -&gt; R + Send) -&gt; R {
-<a href=#64 id=64 data-nosnippet>64</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.pool {
-<a href=#65 id=65 data-nosnippet>65</a>            <span class="prelude-val">None </span>=&gt; operation(),
-<a href=#66 id=66 data-nosnippet>66</a>            <span class="prelude-val">Some</span>(pool) =&gt; pool.install(operation),
-<a href=#67 id=67 data-nosnippet>67</a>        }
-<a href=#68 id=68 data-nosnippet>68</a>    }
-<a href=#69 id=69 data-nosnippet>69</a>
-<a href=#70 id=70 data-nosnippet>70</a>    <span class="doccomment">/// Run `operation` on every item, one item per job, and join. Items are
-<a href=#71 id=71 data-nosnippet>71</a>    /// independent; the first error in item order is returned.
-<a href=#72 id=72 data-nosnippet>72</a>    </span><span class="kw">pub fn </span>for_each_mut&lt;T: Send, E: Send&gt;(
-<a href=#73 id=73 data-nosnippet>73</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#74 id=74 data-nosnippet>74</a>        items: <span class="kw-2">&amp;mut </span>[T],
-<a href=#75 id=75 data-nosnippet>75</a>        operation: <span class="kw">impl </span>Fn(usize, <span class="kw-2">&amp;mut </span>T) -&gt; <span class="prelude-ty">Result</span>&lt;(), E&gt; + Send + Sync,
-<a href=#76 id=76 data-nosnippet>76</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), E&gt; {
-<a href=#77 id=77 data-nosnippet>77</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.pool {
-<a href=#78 id=78 data-nosnippet>78</a>            <span class="prelude-val">None </span>=&gt; items
-<a href=#79 id=79 data-nosnippet>79</a>                .iter_mut()
-<a href=#80 id=80 data-nosnippet>80</a>                .enumerate()
-<a href=#81 id=81 data-nosnippet>81</a>                .try_for_each(|(index, item)| operation(index, item)),
-<a href=#82 id=82 data-nosnippet>82</a>            <span class="prelude-val">Some</span>(pool) =&gt; {
-<a href=#83 id=83 data-nosnippet>83</a>                <span class="kw">let </span><span class="kw-2">mut </span>results = Vec::with_capacity(items.len());
-<a href=#84 id=84 data-nosnippet>84</a>                pool.install(|| {
-<a href=#85 id=85 data-nosnippet>85</a>                    items
-<a href=#86 id=86 data-nosnippet>86</a>                        .par_iter_mut()
-<a href=#87 id=87 data-nosnippet>87</a>                        .enumerate()
-<a href=#88 id=88 data-nosnippet>88</a>                        .map(|(index, item)| operation(index, item))
-<a href=#89 id=89 data-nosnippet>89</a>                        .collect_into_vec(<span class="kw-2">&amp;mut </span>results);
-<a href=#90 id=90 data-nosnippet>90</a>                });
-<a href=#91 id=91 data-nosnippet>91</a>                results.into_iter().collect()
-<a href=#92 id=92 data-nosnippet>92</a>            }
-<a href=#93 id=93 data-nosnippet>93</a>        }
-<a href=#94 id=94 data-nosnippet>94</a>    }
-<a href=#95 id=95 data-nosnippet>95</a>}
-<a href=#96 id=96 data-nosnippet>96</a>
-<a href=#97 id=97 data-nosnippet>97</a><span class="doccomment">/// A run's worker teams, one per width of its [`CoreAllocation`]: the
-<a href=#98 id=98 data-nosnippet>98</a>/// phases that compute in memory run on [`Self::compute`], the phases that
-<a href=#99 id=99 data-nosnippet>99</a>/// stream the source on [`Self::streaming`]. One team serves both when the
-<a href=#100 id=100 data-nosnippet>100</a>/// widths agree.
-<a href=#101 id=101 data-nosnippet>101</a>///
-<a href=#102 id=102 data-nosnippet>102</a>/// [`CoreAllocation`]: crate::CoreAllocation
-<a href=#103 id=103 data-nosnippet>103</a></span><span class="attr">#[derive(Debug)]
-<a href=#104 id=104 data-nosnippet>104</a></span><span class="kw">pub struct </span>WorkerTeams {
-<a href=#105 id=105 data-nosnippet>105</a>    compute: WorkerTeam,
-<a href=#106 id=106 data-nosnippet>106</a>    streaming: <span class="prelude-ty">Option</span>&lt;WorkerTeam&gt;,
-<a href=#107 id=107 data-nosnippet>107</a>}
-<a href=#108 id=108 data-nosnippet>108</a>
-<a href=#109 id=109 data-nosnippet>109</a><span class="kw">impl </span>WorkerTeams {
-<a href=#110 id=110 data-nosnippet>110</a>    <span class="doccomment">/// The teams of `cores`.
-<a href=#111 id=111 data-nosnippet>111</a>    </span><span class="kw">pub fn </span>new(cores: <span class="kw">crate</span>::CoreAllocation) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, PassError&gt; {
-<a href=#112 id=112 data-nosnippet>112</a>        <span class="kw">let </span>compute = WorkerTeam::new(cores.workers)<span class="question-mark">?</span>;
-<a href=#113 id=113 data-nosnippet>113</a>        <span class="kw">let </span>streaming = (cores.streaming_workers != cores.workers)
-<a href=#114 id=114 data-nosnippet>114</a>            .then(|| WorkerTeam::new(cores.streaming_workers))
-<a href=#115 id=115 data-nosnippet>115</a>            .transpose()<span class="question-mark">?</span>;
-<a href=#116 id=116 data-nosnippet>116</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ compute, streaming })
-<a href=#117 id=117 data-nosnippet>117</a>    }
-<a href=#118 id=118 data-nosnippet>118</a>
-<a href=#119 id=119 data-nosnippet>119</a>    <span class="doccomment">/// The team of the phases that compute on data in memory: minor cycles
-<a href=#120 id=120 data-nosnippet>120</a>    /// and products.
-<a href=#121 id=121 data-nosnippet>121</a>    </span><span class="attr">#[must_use]
-<a href=#122 id=122 data-nosnippet>122</a>    </span><span class="kw">pub const fn </span>compute(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>WorkerTeam {
-<a href=#123 id=123 data-nosnippet>123</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.compute
-<a href=#124 id=124 data-nosnippet>124</a>    }
-<a href=#125 id=125 data-nosnippet>125</a>
-<a href=#126 id=126 data-nosnippet>126</a>    <span class="doccomment">/// The team of the phases that stream the source beside its producer:
-<a href=#127 id=127 data-nosnippet>127</a>    /// the major-cycle and imaging-weight passes.
-<a href=#128 id=128 data-nosnippet>128</a>    </span><span class="attr">#[must_use]
-<a href=#129 id=129 data-nosnippet>129</a>    </span><span class="kw">pub const fn </span>streaming(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>WorkerTeam {
-<a href=#130 id=130 data-nosnippet>130</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.streaming {
-<a href=#131 id=131 data-nosnippet>131</a>            <span class="prelude-val">Some</span>(team) =&gt; team,
-<a href=#132 id=132 data-nosnippet>132</a>            <span class="prelude-val">None </span>=&gt; <span class="kw-2">&amp;</span><span class="self">self</span>.compute,
-<a href=#133 id=133 data-nosnippet>133</a>        }
-<a href=#134 id=134 data-nosnippet>134</a>    }
-<a href=#135 id=135 data-nosnippet>135</a>}
-<a href=#136 id=136 data-nosnippet>136</a>
-<a href=#137 id=137 data-nosnippet>137</a><span class="kw">impl </span>casa_imaging_products::ProductWindowExecutor <span class="kw">for </span>WorkerTeam {
-<a href=#138 id=138 data-nosnippet>138</a>    <span class="kw">fn </span>prepare&lt;T: Send&gt;(
-<a href=#139 id=139 data-nosnippet>139</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#140 id=140 data-nosnippet>140</a>        slots: <span class="kw-2">&amp;mut </span>[<span class="prelude-ty">Option</span>&lt;T&gt;],
-<a href=#141 id=141 data-nosnippet>141</a>        operation: <span class="kw-2">&amp;</span>(<span class="kw">dyn </span>Fn(usize) -&gt; <span class="prelude-ty">Result</span>&lt;T, casa_imaging_products::ProductsError&gt; + Sync),
-<a href=#142 id=142 data-nosnippet>142</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), casa_imaging_products::ProductsError&gt; {
-<a href=#143 id=143 data-nosnippet>143</a>        <span class="self">self</span>.for_each_mut(slots, |index, slot| {
-<a href=#144 id=144 data-nosnippet>144</a>            <span class="kw-2">*</span>slot = <span class="prelude-val">Some</span>(operation(index)<span class="question-mark">?</span>);
-<a href=#145 id=145 data-nosnippet>145</a>            <span class="prelude-val">Ok</span>(())
-<a href=#146 id=146 data-nosnippet>146</a>        })
-<a href=#147 id=147 data-nosnippet>147</a>    }
-<a href=#148 id=148 data-nosnippet>148</a>}
-<a href=#149 id=149 data-nosnippet>149</a>
-<a href=#150 id=150 data-nosnippet>150</a><span class="kw">impl </span>std::fmt::Debug <span class="kw">for </span>WorkerTeam {
-<a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>std::fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; std::fmt::Result {
-<a href=#152 id=152 data-nosnippet>152</a>        f.debug_struct(<span class="string">"WorkerTeam"</span>)
-<a href=#153 id=153 data-nosnippet>153</a>            .field(<span class="string">"workers"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.workers)
-<a href=#154 id=154 data-nosnippet>154</a>            .finish_non_exhaustive()
-<a href=#155 id=155 data-nosnippet>155</a>    }
-<a href=#156 id=156 data-nosnippet>156</a>}
-<a href=#157 id=157 data-nosnippet>157</a>
-<a href=#158 id=158 data-nosnippet>158</a><span class="attr">#[cfg(test)]
-<a href=#159 id=159 data-nosnippet>159</a></span><span class="kw">mod </span>tests {
-<a href=#160 id=160 data-nosnippet>160</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#60 id=60 data-nosnippet>60</a>    <span class="doccomment">/// Whether the calling thread can wait on work spawned onto the team
+<a href=#61 id=61 data-nosnippet>61</a>    /// without holding one of the team's threads: the team has threads of
+<a href=#62 id=62 data-nosnippet>62</a>    /// its own, and the caller is not one of them. A caller on the team's
+<a href=#63 id=63 data-nosnippet>63</a>    /// own work that waited there could take the last thread the waited-on
+<a href=#64 id=64 data-nosnippet>64</a>    /// work needs ([`Self::in_place_scope`]).
+<a href=#65 id=65 data-nosnippet>65</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>waits_off_team(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#66 id=66 data-nosnippet>66</a>        <span class="self">self</span>.pool
+<a href=#67 id=67 data-nosnippet>67</a>            .as_ref()
+<a href=#68 id=68 data-nosnippet>68</a>            .is_some_and(|pool| pool.current_thread_index().is_none())
+<a href=#69 id=69 data-nosnippet>69</a>    }
+<a href=#70 id=70 data-nosnippet>70</a>
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="doccomment">/// Run `operation` on the calling thread with a scope whose spawned
+<a href=#72 id=72 data-nosnippet>72</a>    /// work runs on the team's threads, joined before this returns
+<a href=#73 id=73 data-nosnippet>73</a>    /// ([`rayon::ThreadPool::in_place_scope`]). The caller may wait on what
+<a href=#74 id=74 data-nosnippet>74</a>    /// the spawned work releases only when [`Self::waits_off_team`]. `None`
+<a href=#75 id=75 data-nosnippet>75</a>    /// for a team of one, which has no threads of its own.
+<a href=#76 id=76 data-nosnippet>76</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>in_place_scope&lt;<span class="lifetime">'scope</span>, R&gt;(
+<a href=#77 id=77 data-nosnippet>77</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#78 id=78 data-nosnippet>78</a>        operation: <span class="kw">impl </span>FnOnce(<span class="kw-2">&amp;</span>rayon::Scope&lt;<span class="lifetime">'scope</span>&gt;) -&gt; R,
+<a href=#79 id=79 data-nosnippet>79</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;R&gt; {
+<a href=#80 id=80 data-nosnippet>80</a>        <span class="self">self</span>.pool
+<a href=#81 id=81 data-nosnippet>81</a>            .as_ref()
+<a href=#82 id=82 data-nosnippet>82</a>            .map(|pool| pool.in_place_scope(operation))
+<a href=#83 id=83 data-nosnippet>83</a>    }
+<a href=#84 id=84 data-nosnippet>84</a>
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// Run `operation` with the team as the current rayon pool, so that
+<a href=#86 id=86 data-nosnippet>86</a>    /// parallel work inside it (a single plane's sparse refresh) runs on the
+<a href=#87 id=87 data-nosnippet>87</a>    /// team's threads.
+<a href=#88 id=88 data-nosnippet>88</a>    </span><span class="kw">pub fn </span>install&lt;R: Send&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, operation: <span class="kw">impl </span>FnOnce() -&gt; R + Send) -&gt; R {
+<a href=#89 id=89 data-nosnippet>89</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.pool {
+<a href=#90 id=90 data-nosnippet>90</a>            <span class="prelude-val">None </span>=&gt; operation(),
+<a href=#91 id=91 data-nosnippet>91</a>            <span class="prelude-val">Some</span>(pool) =&gt; pool.install(operation),
+<a href=#92 id=92 data-nosnippet>92</a>        }
+<a href=#93 id=93 data-nosnippet>93</a>    }
+<a href=#94 id=94 data-nosnippet>94</a>
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="doccomment">/// Run `operation` on every item, one item per job, and join. Items are
+<a href=#96 id=96 data-nosnippet>96</a>    /// independent; the first error in item order is returned.
+<a href=#97 id=97 data-nosnippet>97</a>    </span><span class="kw">pub fn </span>for_each_mut&lt;T: Send, E: Send&gt;(
+<a href=#98 id=98 data-nosnippet>98</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#99 id=99 data-nosnippet>99</a>        items: <span class="kw-2">&amp;mut </span>[T],
+<a href=#100 id=100 data-nosnippet>100</a>        operation: <span class="kw">impl </span>Fn(usize, <span class="kw-2">&amp;mut </span>T) -&gt; <span class="prelude-ty">Result</span>&lt;(), E&gt; + Send + Sync,
+<a href=#101 id=101 data-nosnippet>101</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), E&gt; {
+<a href=#102 id=102 data-nosnippet>102</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.pool {
+<a href=#103 id=103 data-nosnippet>103</a>            <span class="prelude-val">None </span>=&gt; items
+<a href=#104 id=104 data-nosnippet>104</a>                .iter_mut()
+<a href=#105 id=105 data-nosnippet>105</a>                .enumerate()
+<a href=#106 id=106 data-nosnippet>106</a>                .try_for_each(|(index, item)| operation(index, item)),
+<a href=#107 id=107 data-nosnippet>107</a>            <span class="prelude-val">Some</span>(pool) =&gt; {
+<a href=#108 id=108 data-nosnippet>108</a>                <span class="kw">let </span><span class="kw-2">mut </span>results = Vec::with_capacity(items.len());
+<a href=#109 id=109 data-nosnippet>109</a>                pool.install(|| {
+<a href=#110 id=110 data-nosnippet>110</a>                    items
+<a href=#111 id=111 data-nosnippet>111</a>                        .par_iter_mut()
+<a href=#112 id=112 data-nosnippet>112</a>                        .enumerate()
+<a href=#113 id=113 data-nosnippet>113</a>                        .map(|(index, item)| operation(index, item))
+<a href=#114 id=114 data-nosnippet>114</a>                        .collect_into_vec(<span class="kw-2">&amp;mut </span>results);
+<a href=#115 id=115 data-nosnippet>115</a>                });
+<a href=#116 id=116 data-nosnippet>116</a>                results.into_iter().collect()
+<a href=#117 id=117 data-nosnippet>117</a>            }
+<a href=#118 id=118 data-nosnippet>118</a>        }
+<a href=#119 id=119 data-nosnippet>119</a>    }
+<a href=#120 id=120 data-nosnippet>120</a>}
+<a href=#121 id=121 data-nosnippet>121</a>
+<a href=#122 id=122 data-nosnippet>122</a><span class="doccomment">/// A run's worker teams, one per width of its [`CoreAllocation`]: the
+<a href=#123 id=123 data-nosnippet>123</a>/// phases that compute in memory run on [`Self::compute`], the phases that
+<a href=#124 id=124 data-nosnippet>124</a>/// stream the source on [`Self::streaming`]. One team serves both when the
+<a href=#125 id=125 data-nosnippet>125</a>/// widths agree.
+<a href=#126 id=126 data-nosnippet>126</a>///
+<a href=#127 id=127 data-nosnippet>127</a>/// [`CoreAllocation`]: crate::CoreAllocation
+<a href=#128 id=128 data-nosnippet>128</a></span><span class="attr">#[derive(Debug)]
+<a href=#129 id=129 data-nosnippet>129</a></span><span class="kw">pub struct </span>WorkerTeams {
+<a href=#130 id=130 data-nosnippet>130</a>    compute: WorkerTeam,
+<a href=#131 id=131 data-nosnippet>131</a>    streaming: <span class="prelude-ty">Option</span>&lt;WorkerTeam&gt;,
+<a href=#132 id=132 data-nosnippet>132</a>}
+<a href=#133 id=133 data-nosnippet>133</a>
+<a href=#134 id=134 data-nosnippet>134</a><span class="kw">impl </span>WorkerTeams {
+<a href=#135 id=135 data-nosnippet>135</a>    <span class="doccomment">/// The teams of `cores`.
+<a href=#136 id=136 data-nosnippet>136</a>    </span><span class="kw">pub fn </span>new(cores: <span class="kw">crate</span>::CoreAllocation) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, PassError&gt; {
+<a href=#137 id=137 data-nosnippet>137</a>        <span class="kw">let </span>compute = WorkerTeam::new(cores.workers)<span class="question-mark">?</span>;
+<a href=#138 id=138 data-nosnippet>138</a>        <span class="kw">let </span>streaming = (cores.streaming_workers != cores.workers)
+<a href=#139 id=139 data-nosnippet>139</a>            .then(|| WorkerTeam::new(cores.streaming_workers))
+<a href=#140 id=140 data-nosnippet>140</a>            .transpose()<span class="question-mark">?</span>;
+<a href=#141 id=141 data-nosnippet>141</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ compute, streaming })
+<a href=#142 id=142 data-nosnippet>142</a>    }
+<a href=#143 id=143 data-nosnippet>143</a>
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="doccomment">/// The team of the phases that compute on data in memory: minor cycles
+<a href=#145 id=145 data-nosnippet>145</a>    /// and products.
+<a href=#146 id=146 data-nosnippet>146</a>    </span><span class="attr">#[must_use]
+<a href=#147 id=147 data-nosnippet>147</a>    </span><span class="kw">pub const fn </span>compute(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>WorkerTeam {
+<a href=#148 id=148 data-nosnippet>148</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.compute
+<a href=#149 id=149 data-nosnippet>149</a>    }
+<a href=#150 id=150 data-nosnippet>150</a>
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="doccomment">/// The team of the phases that stream the source beside its producer:
+<a href=#152 id=152 data-nosnippet>152</a>    /// the major-cycle and imaging-weight passes.
+<a href=#153 id=153 data-nosnippet>153</a>    </span><span class="attr">#[must_use]
+<a href=#154 id=154 data-nosnippet>154</a>    </span><span class="kw">pub const fn </span>streaming(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>WorkerTeam {
+<a href=#155 id=155 data-nosnippet>155</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.streaming {
+<a href=#156 id=156 data-nosnippet>156</a>            <span class="prelude-val">Some</span>(team) =&gt; team,
+<a href=#157 id=157 data-nosnippet>157</a>            <span class="prelude-val">None </span>=&gt; <span class="kw-2">&amp;</span><span class="self">self</span>.compute,
+<a href=#158 id=158 data-nosnippet>158</a>        }
+<a href=#159 id=159 data-nosnippet>159</a>    }
+<a href=#160 id=160 data-nosnippet>160</a>}
 <a href=#161 id=161 data-nosnippet>161</a>
-<a href=#162 id=162 data-nosnippet>162</a>    <span class="attr">#[test]
-<a href=#163 id=163 data-nosnippet>163</a>    </span><span class="kw">fn </span>every_item_runs_once_and_the_first_error_wins() {
-<a href=#164 id=164 data-nosnippet>164</a>        <span class="kw">for </span>workers <span class="kw">in </span>[<span class="number">1</span>, <span class="number">3</span>] {
-<a href=#165 id=165 data-nosnippet>165</a>            <span class="kw">let </span>team = WorkerTeam::new(workers).expect(<span class="string">"team"</span>);
-<a href=#166 id=166 data-nosnippet>166</a>            <span class="kw">let </span><span class="kw-2">mut </span>items = <span class="macro">vec!</span>[<span class="number">0_u32</span>; <span class="number">17</span>];
-<a href=#167 id=167 data-nosnippet>167</a>            team.for_each_mut(<span class="kw-2">&amp;mut </span>items, |index, item| {
-<a href=#168 id=168 data-nosnippet>168</a>                <span class="kw-2">*</span>item += index <span class="kw">as </span>u32 + <span class="number">1</span>;
-<a href=#169 id=169 data-nosnippet>169</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ()&gt;(())
-<a href=#170 id=170 data-nosnippet>170</a>            })
-<a href=#171 id=171 data-nosnippet>171</a>            .expect(<span class="string">"no error"</span>);
-<a href=#172 id=172 data-nosnippet>172</a>            <span class="macro">assert!</span>(items.iter().enumerate().all(|(i, v)| <span class="kw-2">*</span>v == i <span class="kw">as </span>u32 + <span class="number">1</span>));
-<a href=#173 id=173 data-nosnippet>173</a>            <span class="kw">let </span>error = team
-<a href=#174 id=174 data-nosnippet>174</a>                .for_each_mut(<span class="kw-2">&amp;mut </span>items, |index, <span class="kw">_</span>| {
-<a href=#175 id=175 data-nosnippet>175</a>                    <span class="kw">if </span>index == <span class="number">4 </span>|| index == <span class="number">9 </span>{
-<a href=#176 id=176 data-nosnippet>176</a>                        <span class="prelude-val">Err</span>(index)
-<a href=#177 id=177 data-nosnippet>177</a>                    } <span class="kw">else </span>{
-<a href=#178 id=178 data-nosnippet>178</a>                        <span class="prelude-val">Ok</span>(())
-<a href=#179 id=179 data-nosnippet>179</a>                    }
-<a href=#180 id=180 data-nosnippet>180</a>                })
-<a href=#181 id=181 data-nosnippet>181</a>                .expect_err(<span class="string">"errors propagate"</span>);
-<a href=#182 id=182 data-nosnippet>182</a>            <span class="macro">assert_eq!</span>(error, <span class="number">4</span>);
-<a href=#183 id=183 data-nosnippet>183</a>        }
-<a href=#184 id=184 data-nosnippet>184</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(WorkerTeam::new(<span class="number">0</span>), <span class="prelude-val">Err</span>(PassError::Workers)));
-<a href=#185 id=185 data-nosnippet>185</a>    }
-<a href=#186 id=186 data-nosnippet>186</a>}
+<a href=#162 id=162 data-nosnippet>162</a><span class="kw">impl </span>casa_imaging_products::ProductWindowExecutor <span class="kw">for </span>WorkerTeam {
+<a href=#163 id=163 data-nosnippet>163</a>    <span class="kw">fn </span>prepare&lt;T: Send&gt;(
+<a href=#164 id=164 data-nosnippet>164</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#165 id=165 data-nosnippet>165</a>        slots: <span class="kw-2">&amp;mut </span>[<span class="prelude-ty">Option</span>&lt;T&gt;],
+<a href=#166 id=166 data-nosnippet>166</a>        operation: <span class="kw-2">&amp;</span>(<span class="kw">dyn </span>Fn(usize) -&gt; <span class="prelude-ty">Result</span>&lt;T, casa_imaging_products::ProductsError&gt; + Sync),
+<a href=#167 id=167 data-nosnippet>167</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), casa_imaging_products::ProductsError&gt; {
+<a href=#168 id=168 data-nosnippet>168</a>        <span class="self">self</span>.for_each_mut(slots, |index, slot| {
+<a href=#169 id=169 data-nosnippet>169</a>            <span class="kw-2">*</span>slot = <span class="prelude-val">Some</span>(operation(index)<span class="question-mark">?</span>);
+<a href=#170 id=170 data-nosnippet>170</a>            <span class="prelude-val">Ok</span>(())
+<a href=#171 id=171 data-nosnippet>171</a>        })
+<a href=#172 id=172 data-nosnippet>172</a>    }
+<a href=#173 id=173 data-nosnippet>173</a>}
+<a href=#174 id=174 data-nosnippet>174</a>
+<a href=#175 id=175 data-nosnippet>175</a><span class="kw">impl </span>std::fmt::Debug <span class="kw">for </span>WorkerTeam {
+<a href=#176 id=176 data-nosnippet>176</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>std::fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; std::fmt::Result {
+<a href=#177 id=177 data-nosnippet>177</a>        f.debug_struct(<span class="string">"WorkerTeam"</span>)
+<a href=#178 id=178 data-nosnippet>178</a>            .field(<span class="string">"workers"</span>, <span class="kw-2">&amp;</span><span class="self">self</span>.workers)
+<a href=#179 id=179 data-nosnippet>179</a>            .finish_non_exhaustive()
+<a href=#180 id=180 data-nosnippet>180</a>    }
+<a href=#181 id=181 data-nosnippet>181</a>}
+<a href=#182 id=182 data-nosnippet>182</a>
+<a href=#183 id=183 data-nosnippet>183</a><span class="attr">#[cfg(test)]
+<a href=#184 id=184 data-nosnippet>184</a></span><span class="kw">mod </span>tests {
+<a href=#185 id=185 data-nosnippet>185</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#186 id=186 data-nosnippet>186</a>
+<a href=#187 id=187 data-nosnippet>187</a>    <span class="attr">#[test]
+<a href=#188 id=188 data-nosnippet>188</a>    </span><span class="kw">fn </span>every_item_runs_once_and_the_first_error_wins() {
+<a href=#189 id=189 data-nosnippet>189</a>        <span class="kw">for </span>workers <span class="kw">in </span>[<span class="number">1</span>, <span class="number">3</span>] {
+<a href=#190 id=190 data-nosnippet>190</a>            <span class="kw">let </span>team = WorkerTeam::new(workers).expect(<span class="string">"team"</span>);
+<a href=#191 id=191 data-nosnippet>191</a>            <span class="kw">let </span><span class="kw-2">mut </span>items = <span class="macro">vec!</span>[<span class="number">0_u32</span>; <span class="number">17</span>];
+<a href=#192 id=192 data-nosnippet>192</a>            team.for_each_mut(<span class="kw-2">&amp;mut </span>items, |index, item| {
+<a href=#193 id=193 data-nosnippet>193</a>                <span class="kw-2">*</span>item += index <span class="kw">as </span>u32 + <span class="number">1</span>;
+<a href=#194 id=194 data-nosnippet>194</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ()&gt;(())
+<a href=#195 id=195 data-nosnippet>195</a>            })
+<a href=#196 id=196 data-nosnippet>196</a>            .expect(<span class="string">"no error"</span>);
+<a href=#197 id=197 data-nosnippet>197</a>            <span class="macro">assert!</span>(items.iter().enumerate().all(|(i, v)| <span class="kw-2">*</span>v == i <span class="kw">as </span>u32 + <span class="number">1</span>));
+<a href=#198 id=198 data-nosnippet>198</a>            <span class="kw">let </span>error = team
+<a href=#199 id=199 data-nosnippet>199</a>                .for_each_mut(<span class="kw-2">&amp;mut </span>items, |index, <span class="kw">_</span>| {
+<a href=#200 id=200 data-nosnippet>200</a>                    <span class="kw">if </span>index == <span class="number">4 </span>|| index == <span class="number">9 </span>{
+<a href=#201 id=201 data-nosnippet>201</a>                        <span class="prelude-val">Err</span>(index)
+<a href=#202 id=202 data-nosnippet>202</a>                    } <span class="kw">else </span>{
+<a href=#203 id=203 data-nosnippet>203</a>                        <span class="prelude-val">Ok</span>(())
+<a href=#204 id=204 data-nosnippet>204</a>                    }
+<a href=#205 id=205 data-nosnippet>205</a>                })
+<a href=#206 id=206 data-nosnippet>206</a>                .expect_err(<span class="string">"errors propagate"</span>);
+<a href=#207 id=207 data-nosnippet>207</a>            <span class="macro">assert_eq!</span>(error, <span class="number">4</span>);
+<a href=#208 id=208 data-nosnippet>208</a>        }
+<a href=#209 id=209 data-nosnippet>209</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(WorkerTeam::new(<span class="number">0</span>), <span class="prelude-val">Err</span>(PassError::Workers)));
+<a href=#210 id=210 data-nosnippet>210</a>    }
+<a href=#211 id=211 data-nosnippet>211</a>}
 </code></pre></div></section></main></body></html>
