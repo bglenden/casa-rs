@@ -10,6 +10,13 @@
 //! Transforms past 2048² are planned by estimate, since measuring them
 //! takes a minute; measured plans of the same shapes kept at most 0.61 MB
 //! (the prime 8191² real transform) when the bound was set.
+//!
+//! A threaded transform owns its plans ([`casa_fft::Fft2::with_owned_plan`])
+//! and keeps at most [`casa_fft::plan_pair_bytes`] while it lives. The prime
+//! 8191² real pair kept 1.78, 3.43 and 8.32 MB on 2, 4 and 10 threads when
+//! the bound was set, about 0.83 MB a thread, and 4096² kept about 0.1 MB.
+//! Replanning a measured owned 4096² pair on four threads took 18 ms
+//! against 2.0 s the first time, from FFTW's wisdom.
 
 #![cfg(target_os = "macos")]
 
@@ -112,5 +119,60 @@ fn a_plan_pair_keeps_at_most_its_bytes() {
             bytes <= PLAN_PAIR_BYTES,
             "the {label} plan pair keeps {bytes} bytes, more than {PLAN_PAIR_BYTES}"
         );
+    }
+}
+
+/// The C heap the transform `make` builds gains while it lives, once it
+/// has made and used its plans and its data are dropped, and what stays
+/// after it drops.
+fn owned(make: impl FnOnce() -> Box<dyn std::any::Any>) -> (usize, usize) {
+    let before = in_use();
+    let held = make();
+    let alive = in_use().saturating_sub(before);
+    drop(held);
+    (alive, in_use().saturating_sub(before))
+}
+
+/// #780 review: a threaded transform that owns its plans keeps at most
+/// `plan_pair_bytes(threads)` of C heap while it lives, and gives it back
+/// when it drops, for the prime 8191² and the composite 4096² real
+/// transforms on two and four threads and on every thread the host has.
+#[test]
+fn an_owned_threaded_plan_pair_keeps_at_most_its_bytes() {
+    let host = std::thread::available_parallelism().map_or(4, std::num::NonZero::get);
+    let mut counts = vec![2, 4, host];
+    counts.dedup();
+    for threads in counts {
+        // FFTW's thread pool and its first threaded plans are the process's.
+        let mut warm = RealFft2::<f64>::with_threads([8, 8], threads).expect("plan");
+        let mut data = vec![Complex::<f64>::default(); warm.storage_len()];
+        warm.forward(&mut data).expect("forward");
+        for (label, shape) in [
+            ("real f64 8191²", [8191, 8191]),
+            ("real f64 4096²", [4096, 4096]),
+        ] {
+            let (alive, after) = owned(|| {
+                let mut fft = RealFft2::<f64>::with_threads(shape, threads)
+                    .expect("plan")
+                    .with_owned_plan();
+                if shape[0] * shape[1] > MEASURED_CELLS {
+                    fft = fft.with_estimated_plan();
+                }
+                let mut data = vec![Complex::<f64>::default(); fft.storage_len()];
+                fft.forward(&mut data).expect("forward");
+                fft.inverse(&mut data).expect("inverse");
+                Box::new(fft)
+            });
+            let charge = casa_fft::plan_pair_bytes(threads);
+            eprintln!("{label} on {threads} threads: {alive} bytes alive, {after} after");
+            assert!(
+                alive <= charge,
+                "the {label} pair on {threads} threads keeps {alive} bytes, more than {charge}"
+            );
+            assert!(
+                after <= PLAN_PAIR_BYTES / 4,
+                "the {label} pair on {threads} threads leaves {after} bytes after it drops"
+            );
+        }
     }
 }

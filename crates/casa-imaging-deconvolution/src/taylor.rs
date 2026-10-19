@@ -8,7 +8,7 @@ use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 use crate::Error;
 use crate::patch::subtract_window;
 use crate::plane::{PlaneShape, Support, beam_patch, casacore_max_abs};
-use crate::scales::{ScaleBank, convolve_bytes, plane_bytes, spectrum_bytes};
+use crate::scales::{ScaleBank, convolve_bytes, owned_plan_bytes, plane_bytes, spectrum_bytes};
 use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd};
 
 /// The scale-mask threshold of the multi-term cleaner (`setupUserMask`).
@@ -377,11 +377,12 @@ impl Solver for Taylor {
         let patches = terms * (terms + 1) / 2 * scales * (scales + 1) / 2;
         let hessian = patches * patch * patch * size_of::<f64>() as u64;
         let (plane, spectrum) = (plane_bytes(shape), spectrum_bytes(shape));
-        let bank = ScaleBank::resident_bytes(&sizes, shape);
+        // The bank keeps its transform's own plans throughout.
+        let bank = ScaleBank::resident_bytes(&sizes, shape) + owned_plan_bytes(self.fft_threads);
         let masks = scales * shape.len() as u64;
         let held = bank + hessian;
         [
-            ScaleBank::bytes(&sizes, shape),
+            ScaleBank::bytes(&sizes, shape, self.fft_threads),
             bank + (2 * terms).saturating_sub(1) * spectrum + hessian + convolve_bytes(shape),
             held + terms * scales * plane + 2 * spectrum,
             held + terms * scales * plane + ScaleBank::masks_bytes(shape) + masks,

@@ -337,6 +337,30 @@ fn scale_transforms_on_several_threads_clean_as_on_one() {
     }
 }
 
+/// #780 review: the scale solvers' threaded transforms own their plans
+/// outside FFTW's process cache, and their working charge carries them:
+/// `plan_pair_bytes(threads)` more than on one thread, whose plans are the
+/// cache's.
+#[test]
+fn threaded_scale_transforms_charge_their_own_plans() {
+    let shape = PlaneShape::new(256, 256);
+    for threads in [2, 4, 10] {
+        let extra = casa_fft::plan_pair_bytes(threads) as u64;
+        let multiscale = |threads| {
+            Multiscale::new(vec![0.0, 4.0], 0.6)
+                .with_fft_threads(threads)
+                .working_bytes(shape, 1)
+        };
+        assert_eq!(multiscale(threads) - multiscale(1), extra, "multiscale");
+        let taylor = |threads| {
+            Taylor::new(2, vec![0.0, 4.0], 0.0)
+                .with_fft_threads(threads)
+                .working_bytes(shape, 2)
+        };
+        assert_eq!(taylor(threads) - taylor(1), extra, "taylor");
+    }
+}
+
 /// CASA's Högbom step reports the peak magnitude (`SDAlgorithmBase`'s
 /// `findMaxAbsMask`), so a negative source leaves a positive peak.
 #[test]

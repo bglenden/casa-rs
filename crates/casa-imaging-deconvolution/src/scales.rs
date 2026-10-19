@@ -21,6 +21,18 @@ pub(crate) const fn spectrum_bytes(shape: PlaneShape) -> u64 {
     }
 }
 
+/// C heap the plans of a [`PlaneFft`] on `threads` threads hold beside the
+/// process cache: a threaded transform owns its plans
+/// ([`casa_fft::plan_pair_bytes`], #780 review); one thread's are the
+/// cache's ([`casa_fft::PLAN_CACHE_BYTES`]).
+pub(crate) const fn owned_plan_bytes(threads: usize) -> u64 {
+    if threads > 1 {
+        casa_fft::plan_pair_bytes(threads) as u64
+    } else {
+        0
+    }
+}
+
 /// Heap bytes planning the half-spectrum transform of `shape` holds while
 /// FFTW plans it ([`casa_fft::planning_bytes`]).
 pub(crate) const fn planning_bytes(shape: PlaneShape) -> u64 {
@@ -37,7 +49,8 @@ pub(crate) const fn convolve_bytes(shape: PlaneShape) -> u64 {
 }
 
 /// Real two-dimensional transforms of one plane shape, in double precision
-/// on `threads` FFTW threads.
+/// on `threads` FFTW threads. Threaded transforms own their plans, outside
+/// the process cache ([`owned_plan_bytes`]).
 pub(crate) struct PlaneFft {
     shape: PlaneShape,
     fft: RealFft2<f64>,
@@ -45,9 +58,14 @@ pub(crate) struct PlaneFft {
 
 impl PlaneFft {
     pub(crate) fn new(shape: PlaneShape, threads: usize) -> Result<Self, Error> {
+        let fft = RealFft2::with_threads([shape.nx, shape.ny], threads.max(1))?;
         Ok(Self {
             shape,
-            fft: RealFft2::with_threads([shape.nx, shape.ny], threads.max(1))?,
+            fft: if threads > 1 {
+                fft.with_owned_plan()
+            } else {
+                fft
+            },
         })
     }
 
@@ -198,12 +216,14 @@ pub(crate) struct ScaleBank {
 }
 
 impl ScaleBank {
-    /// Heap bytes a bank of `sizes` on `shape` holds, with what building
-    /// it holds besides: each scale's spectrum and samples, and one
-    /// wrapped plane and its spectrum at a time, beside planning their
-    /// transform.
-    pub(crate) fn bytes(sizes: &[f64], shape: PlaneShape) -> u64 {
+    /// Heap bytes a bank of `sizes` on `shape` with transforms on
+    /// `fft_threads` threads holds, with what building it holds besides:
+    /// each scale's spectrum and samples, its transform's own plans when
+    /// threaded ([`owned_plan_bytes`]), and one wrapped plane and its
+    /// spectrum at a time, beside planning their transform.
+    pub(crate) fn bytes(sizes: &[f64], shape: PlaneShape, fft_threads: usize) -> u64 {
         Self::resident_bytes(sizes, shape)
+            + owned_plan_bytes(fft_threads)
             + plane_bytes(shape)
             + spectrum_bytes(shape)
             + planning_bytes(shape)

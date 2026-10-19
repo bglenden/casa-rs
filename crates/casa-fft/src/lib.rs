@@ -43,6 +43,18 @@ pub const PLAN_PAIR_BYTES: usize = 1 << 20;
 /// transform's.
 pub const PLAN_CACHE_BYTES: usize = 2 * CACHED_PLAN_PAIRS_PER_PRECISION * PLAN_PAIR_BYTES;
 
+/// The most C heap FFTW keeps for one plan pair on `threads` threads,
+/// which a transform that owns its plans charges
+/// ([`Fft2::with_owned_plan`]). A threaded plan gives each thread's share
+/// of the problem its own sub-plans and twiddles. Linux FFTW 3.3.10 kept
+/// 0.84 MB for each thread and one more for the prime 8191² real pair (#780
+/// review), so a pair is charged [`PLAN_PAIR_BYTES`] for each thread and
+/// one more (the law `an_owned_threaded_plan_pair_keeps_at_most_its_bytes`).
+#[must_use]
+pub const fn plan_pair_bytes(threads: usize) -> usize {
+    (threads + 1) * PLAN_PAIR_BYTES
+}
+
 /// Heap bytes planning a transform of `elements` values of `T` holds while
 /// FFTW plans it, beside the plans: the aligned scratch plane it plans on.
 /// A transform plans when its plan is not cached.
@@ -398,6 +410,9 @@ pub struct Fft2<T: FftScalar> {
     elements: usize,
     threads: usize,
     estimate: bool,
+    /// Whether the transform plans for itself, outside the process cache
+    /// ([`Self::with_owned_plan`]).
+    owned: bool,
     current: Option<(Key, Arc<Plans<T>>)>,
 }
 
@@ -437,6 +452,7 @@ impl<T: FftScalar> Fft2<T> {
             elements,
             threads,
             estimate: false,
+            owned: false,
             current: None,
         })
     }
@@ -446,6 +462,19 @@ impl<T: FftScalar> Fft2<T> {
     #[doc(hidden)]
     pub fn with_estimated_plan(mut self) -> Self {
         self.estimate = true;
+        self.current = None;
+        self
+    }
+
+    /// Plan for this transform alone, outside the process cache: its plans
+    /// are made at its first transform of a layout and destroyed with it,
+    /// and its owner charges them ([`plan_pair_bytes`]). For a threaded
+    /// transform, whose plans the cache's allowance ([`PLAN_CACHE_BYTES`])
+    /// does not cover (#780 review). FFTW's in-process wisdom keeps
+    /// replanning a measured layout cheap.
+    #[must_use]
+    pub fn with_owned_plan(mut self) -> Self {
+        self.owned = true;
         self.current = None;
         self
     }
@@ -473,7 +502,11 @@ impl<T: FftScalar> Fft2<T> {
             estimate: self.estimate,
         };
         if self.current.as_ref().is_none_or(|(held, _)| *held != key) {
-            let plans = T::get_plan(key, self.elements)?;
+            let plans = if self.owned {
+                Arc::new(Plans::create(key, self.elements)?)
+            } else {
+                T::get_plan(key, self.elements)?
+            };
             self.current = Some((key, plans));
         }
         let plans = &self.current.as_ref().expect("plan exists").1;
@@ -525,6 +558,14 @@ impl<T: FftScalar> RealFft2<T> {
     /// Use FFTW's inexpensive planning policy for a bounded transform sequence.
     pub fn with_estimated_plan(mut self) -> Self {
         self.fft = self.fft.with_estimated_plan();
+        self
+    }
+
+    /// Plan for this transform alone, outside the process cache
+    /// ([`Fft2::with_owned_plan`]).
+    #[must_use]
+    pub fn with_owned_plan(mut self) -> Self {
+        self.fft = self.fft.with_owned_plan();
         self
     }
 

@@ -46,6 +46,14 @@ pub use layout::{
 /// Component records kept per minor cycle for diagnostics.
 const TRACE: usize = 64;
 
+/// FFTW threads a plane's scale transforms take when a minor cycle cleans
+/// `planes` planes on `workers` workers: a plane cleaned alone has the
+/// team's (#449); planes cleaned side by side, one each. The solve and its
+/// charge ([`run_bytes_for`]) both take it from here.
+const fn scale_fft_threads(planes: usize, workers: usize) -> usize {
+    if planes == 1 { workers } else { 1 }
+}
+
 /// A failure of the minor cycle.
 #[derive(Debug, thiserror::Error)]
 pub enum MinorCycleRunError {
@@ -414,6 +422,7 @@ pub fn run_minor_cycle(
         taylor: is_taylor(normal),
     };
     let admission = (host, policy);
+    let fft_threads = scale_fft_threads(planes.len(), team.workers());
     let mut results = Vec::with_capacity(planes.len());
     if let [(key, statistics)] = planes.as_slice() {
         let summary = cache.summaries[key];
@@ -428,7 +437,7 @@ pub fn run_minor_cycle(
                 &summary,
                 statistics,
                 controls,
-                (clark, team.workers()),
+                (clark, fft_threads),
             )
         })?);
     } else {
@@ -450,7 +459,7 @@ pub fn run_minor_cycle(
                 &summary,
                 &slot.statistics,
                 controls,
-                (&mut None, 1),
+                (&mut None, fft_threads),
             )?);
             Ok::<_, MinorCycleRunError>(())
         })?;

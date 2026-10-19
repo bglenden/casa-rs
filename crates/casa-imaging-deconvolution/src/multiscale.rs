@@ -237,13 +237,14 @@ impl Solver for Multiscale {
         })
     }
 
-    /// The bank, the PSF and residual spectra, `S(S+1)/2` cross planes, `S`
-    /// dirty planes and masks, and the largest transient: the terminal
-    /// refresh's model, wrapped PSF and prediction planes with two spectra.
+    /// The bank (with its transform's own plans when threaded), the PSF and
+    /// residual spectra, `S(S+1)/2` cross planes, `S` dirty planes and
+    /// masks, and the largest transient: the terminal refresh's model,
+    /// wrapped PSF and prediction planes with two spectra.
     fn working_bytes(&self, shape: PlaneShape, _terms: usize) -> u64 {
         let scales = self.scales.len() as u64;
         let planes = scales * (scales + 1) / 2 + scales;
-        ScaleBank::bytes(&self.scales, shape)
+        ScaleBank::bytes(&self.scales, shape, self.fft_threads)
             + 2 * spectrum_bytes(shape)
             + planes * plane_bytes(shape)
             + scales * shape.len() as u64
