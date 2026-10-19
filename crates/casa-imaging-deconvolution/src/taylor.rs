@@ -8,7 +8,7 @@ use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 use crate::Error;
 use crate::patch::subtract_window;
 use crate::plane::{PlaneShape, Support, beam_patch, casacore_max_abs};
-use crate::scales::{ScaleBank, convolve_bytes, plane_bytes, spectrum_bytes};
+use crate::scales::{ScaleBank, convolve_bytes, owned_plan_bytes, plane_bytes, spectrum_bytes};
 use crate::solver::{Candidate, Delta, MinorCycleView, Next, Solver, StepEnd};
 
 /// The scale-mask threshold of the multi-term cleaner (`setupUserMask`).
@@ -31,18 +31,29 @@ pub struct Taylor {
     terms: usize,
     scales: Vec<f64>,
     small_scale_bias: f64,
+    fft_threads: usize,
 }
 
 impl Taylor {
     /// Multi-term CLEAN of `terms` coefficients on scales `scales` (pixels,
-    /// ascending) with CASA's small-scale bias.
+    /// ascending) with CASA's small-scale bias, its scale transforms on one
+    /// thread.
     #[must_use]
     pub fn new(terms: usize, scales: Vec<f64>, small_scale_bias: f64) -> Self {
         Self {
             terms,
             scales,
             small_scale_bias,
+            fft_threads: 1,
         }
+    }
+
+    /// The solver with its scale transforms on `threads` FFTW threads: a
+    /// plane cleaned alone may take its team's threads (#449).
+    #[must_use]
+    pub const fn with_fft_threads(mut self, threads: usize) -> Self {
+        self.fft_threads = threads;
+        self
     }
 
     /// The scales a plane of `shape` cleans with: those larger than half the
@@ -141,7 +152,7 @@ impl Solver for Taylor {
         if sizes.is_empty() {
             return Err(Error::NoScale);
         }
-        let mut bank = ScaleBank::new(&sizes, self.small_scale_bias, shape)?;
+        let mut bank = ScaleBank::new(&sizes, self.small_scale_bias, shape, self.fft_threads)?;
         let scales = bank.len();
         let patch = beam_patch(sizes[scales - 1], shape);
         if patch == 0 {
@@ -366,11 +377,12 @@ impl Solver for Taylor {
         let patches = terms * (terms + 1) / 2 * scales * (scales + 1) / 2;
         let hessian = patches * patch * patch * size_of::<f64>() as u64;
         let (plane, spectrum) = (plane_bytes(shape), spectrum_bytes(shape));
-        let bank = ScaleBank::resident_bytes(&sizes, shape);
+        // The bank keeps its transform's own plans throughout.
+        let bank = ScaleBank::resident_bytes(&sizes, shape) + owned_plan_bytes(self.fft_threads);
         let masks = scales * shape.len() as u64;
         let held = bank + hessian;
         [
-            ScaleBank::bytes(&sizes, shape),
+            ScaleBank::bytes(&sizes, shape, self.fft_threads),
             bank + (2 * terms).saturating_sub(1) * spectrum + hessian + convolve_bytes(shape),
             held + terms * scales * plane + 2 * spectrum,
             held + terms * scales * plane + ScaleBank::masks_bytes(shape) + masks,

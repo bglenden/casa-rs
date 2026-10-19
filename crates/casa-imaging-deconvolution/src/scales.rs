@@ -21,6 +21,18 @@ pub(crate) const fn spectrum_bytes(shape: PlaneShape) -> u64 {
     }
 }
 
+/// C heap the plans of a [`PlaneFft`] on `threads` threads hold beside the
+/// process cache: a threaded transform owns its plans
+/// ([`casa_fft::plan_pair_bytes`], #780 review); one thread's are the
+/// cache's ([`casa_fft::PLAN_CACHE_BYTES`]).
+pub(crate) const fn owned_plan_bytes(threads: usize) -> u64 {
+    if threads > 1 {
+        casa_fft::plan_pair_bytes(threads) as u64
+    } else {
+        0
+    }
+}
+
 /// Heap bytes planning the half-spectrum transform of `shape` holds while
 /// FFTW plans it ([`casa_fft::planning_bytes`]).
 pub(crate) const fn planning_bytes(shape: PlaneShape) -> u64 {
@@ -37,17 +49,23 @@ pub(crate) const fn convolve_bytes(shape: PlaneShape) -> u64 {
 }
 
 /// Real two-dimensional transforms of one plane shape, in double precision
-/// on one thread.
+/// on `threads` FFTW threads. Threaded transforms own their plans, outside
+/// the process cache ([`owned_plan_bytes`]).
 pub(crate) struct PlaneFft {
     shape: PlaneShape,
     fft: RealFft2<f64>,
 }
 
 impl PlaneFft {
-    pub(crate) fn new(shape: PlaneShape) -> Result<Self, Error> {
+    pub(crate) fn new(shape: PlaneShape, threads: usize) -> Result<Self, Error> {
+        let fft = RealFft2::with_threads([shape.nx, shape.ny], threads.max(1))?;
         Ok(Self {
             shape,
-            fft: RealFft2::with_threads([shape.nx, shape.ny], 1)?,
+            fft: if threads > 1 {
+                fft.with_owned_plan()
+            } else {
+                fft
+            },
         })
     }
 
@@ -198,12 +216,14 @@ pub(crate) struct ScaleBank {
 }
 
 impl ScaleBank {
-    /// Heap bytes a bank of `sizes` on `shape` holds, with what building
-    /// it holds besides: each scale's spectrum and samples, and one
-    /// wrapped plane and its spectrum at a time, beside planning their
-    /// transform.
-    pub(crate) fn bytes(sizes: &[f64], shape: PlaneShape) -> u64 {
+    /// Heap bytes a bank of `sizes` on `shape` with transforms on
+    /// `fft_threads` threads holds, with what building it holds besides:
+    /// each scale's spectrum and samples, its transform's own plans when
+    /// threaded ([`owned_plan_bytes`]), and one wrapped plane and its
+    /// spectrum at a time, beside planning their transform.
+    pub(crate) fn bytes(sizes: &[f64], shape: PlaneShape, fft_threads: usize) -> u64 {
         Self::resident_bytes(sizes, shape)
+            + owned_plan_bytes(fft_threads)
             + plane_bytes(shape)
             + spectrum_bytes(shape)
             + planning_bytes(shape)
@@ -246,11 +266,13 @@ impl ScaleBank {
 
     /// The scales `sizes` (ascending) with CASA's bias
     /// `1 − bias·size/largest` (1 for a single scale); `small_scale_bias`
-    /// is clamped to [−1, 1] as `SDAlgorithmMSClean` does.
+    /// is clamped to [−1, 1] as `SDAlgorithmMSClean` does. Its transforms
+    /// run on `fft_threads` threads.
     pub(crate) fn new(
         sizes: &[f64],
         small_scale_bias: f64,
         shape: PlaneShape,
+        fft_threads: usize,
     ) -> Result<Self, Error> {
         let small_scale_bias = small_scale_bias.clamp(-1.0, 1.0);
         let largest = sizes.last().copied().unwrap_or(0.0);
@@ -268,7 +290,7 @@ impl ScaleBank {
             .iter()
             .map(|&size| ScaleFunction::new(size, shape))
             .collect::<Vec<_>>();
-        let mut fft = PlaneFft::new(shape)?;
+        let mut fft = PlaneFft::new(shape, fft_threads)?;
         let transforms = functions
             .iter()
             .map(|function| fft.forward(&function.wrapped(shape)))
@@ -377,7 +399,7 @@ mod tests {
     #[test]
     fn convolution_is_centred_and_circular() {
         let shape = PlaneShape::new(15, 12);
-        let mut bank = ScaleBank::new(&[0.0, 3.0], 0.6, shape).unwrap();
+        let mut bank = ScaleBank::new(&[0.0, 3.0], 0.6, shape, 1).unwrap();
         assert_eq!(bank.bias, vec![1.0, 0.4]);
         let mut delta = vec![0.0; shape.len()];
         delta[shape.index(1, 10)] = 2.0;
@@ -397,7 +419,7 @@ mod tests {
     #[test]
     fn scale_masks_drop_the_border_and_partial_overlaps() {
         let shape = PlaneShape::new(32, 32);
-        let mut bank = ScaleBank::new(&[0.0, 4.0], 0.0, shape).unwrap();
+        let mut bank = ScaleBank::new(&[0.0, 4.0], 0.0, shape, 1).unwrap();
         let support = Support::new(
             shape,
             (0..shape.len())

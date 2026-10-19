@@ -46,6 +46,14 @@ pub use layout::{
 /// Component records kept per minor cycle for diagnostics.
 const TRACE: usize = 64;
 
+/// FFTW threads a plane's scale transforms take when a minor cycle cleans
+/// `planes` planes on `workers` workers: a plane cleaned alone has the
+/// team's (#449); planes cleaned side by side, one each. The solve and its
+/// charge ([`run_bytes_for`]) both take it from here.
+const fn scale_fft_threads(planes: usize, workers: usize) -> usize {
+    if planes == 1 { workers } else { 1 }
+}
+
 /// A failure of the minor cycle.
 #[derive(Debug, thiserror::Error)]
 pub enum MinorCycleRunError {
@@ -381,7 +389,8 @@ struct Slot {
 /// Planes are independent: several run concurrently on `team`, each on one
 /// thread, and their terms are merged in model order, so the result does
 /// not depend on the worker count. A single plane spreads Clark's sparse
-/// refresh across the team instead. As each plane finishes, its terms are
+/// refresh, and the multiscale and multi-term transforms, across the team
+/// instead (#449). As each plane finishes, its terms are
 /// admitted under `policy` on `host` ([`result_bytes`]) before they are
 /// formed; the outcome hands their charge on.
 ///
@@ -413,10 +422,13 @@ pub fn run_minor_cycle(
         taylor: is_taylor(normal),
     };
     let admission = (host, policy);
+    let fft_threads = scale_fft_threads(planes.len(), team.workers());
     let mut results = Vec::with_capacity(planes.len());
     if let [(key, statistics)] = planes.as_slice() {
         let summary = cache.summaries[key];
         let clark = &mut cache.clark;
+        // A lone plane has the team to itself: Clark spreads its refresh
+        // across it, and the scale solvers transform on its threads.
         results.push(team.install(|| {
             solve(
                 &inputs,
@@ -425,7 +437,7 @@ pub fn run_minor_cycle(
                 &summary,
                 statistics,
                 controls,
-                clark,
+                (clark, fft_threads),
             )
         })?);
     } else {
@@ -447,7 +459,7 @@ pub fn run_minor_cycle(
                 &summary,
                 &slot.statistics,
                 controls,
-                &mut None,
+                (&mut None, fft_threads),
             )?);
             Ok::<_, MinorCycleRunError>(())
         })?;
@@ -905,7 +917,8 @@ struct Solved {
 /// Read and clean one plane, or clean the load preparation kept for it, and
 /// admit its terms on `host` under `policy` before forming them. Clark
 /// takes `clark`'s refresh, when it serves this PSF, and leaves its own
-/// there for the next cycle.
+/// there for the next cycle; the scale solvers transform on `fft_threads`
+/// threads.
 #[allow(clippy::too_many_arguments)]
 fn solve(
     inputs: &Inputs<'_>,
@@ -914,7 +927,7 @@ fn solve(
     summary: &PsfSummary,
     statistics: &PlaneStatistics,
     controls: &CycleControls,
-    clark: &mut Option<LinearRefresh>,
+    (clark, fft_threads): (&mut Option<LinearRefresh>, usize),
 ) -> Result<Solved, MinorCycleRunError> {
     let setup = inputs.setup;
     let plane = match retained {
@@ -952,7 +965,7 @@ fn solve(
             scales_px,
             small_scale_bias,
         } => clean(
-            &Multiscale::new(scales_px.clone(), *small_scale_bias),
+            &Multiscale::new(scales_px.clone(), *small_scale_bias).with_fft_threads(fft_threads),
             &view,
             controls,
             statistics,
@@ -961,7 +974,8 @@ fn solve(
             scales_px,
             small_scale_bias,
         } => clean(
-            &Taylor::new(plane.residual.len(), scales_px.clone(), *small_scale_bias),
+            &Taylor::new(plane.residual.len(), scales_px.clone(), *small_scale_bias)
+                .with_fft_threads(fft_threads),
             &view,
             controls,
             statistics,

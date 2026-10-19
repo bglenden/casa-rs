@@ -126,7 +126,7 @@ impl MinorLayout {
     /// review).
     #[must_use]
     pub fn result_bytes(&self, setup: &MinorCycleSetup, iterations: usize) -> u64 {
-        let (_, entries) = solve_bound(self, setup, iterations);
+        let (_, entries) = solve_bound(self, setup, iterations, 1);
         self.planes as u64 * super::result_bytes(entries)
     }
 
@@ -242,7 +242,9 @@ pub fn run_bytes(
 }
 
 /// [`run_bytes`] for a state of `layout`, cleaning at most `iterations` per
-/// plane beside a cached Clark refresh of `refresh` bytes.
+/// plane beside a cached Clark refresh of `refresh` bytes. A lone plane's
+/// scale transforms take the team's threads and own their plans
+/// (`scale_fft_threads`, #780 review).
 #[must_use]
 pub fn run_bytes_for(
     layout: &MinorLayout,
@@ -251,7 +253,8 @@ pub fn run_bytes_for(
     refresh: u64,
     workers: usize,
 ) -> u64 {
-    let (solve, _) = solve_bound(layout, setup, iterations);
+    let fft_threads = super::scale_fft_threads(layout.planes, workers);
+    let (solve, _) = solve_bound(layout, setup, iterations, fft_threads);
     let solve = if matches!(setup.algorithm, ReconstructionAlgorithm::Clark) && layout.planes == 1 {
         solve.saturating_sub(refresh)
     } else {
@@ -270,7 +273,12 @@ pub fn run_bytes_for(
 /// ([`casa_imaging_deconvolution::solve_bytes`]), and the entries of the
 /// plane's model update ([`casa_imaging_deconvolution::update_entries`]);
 /// nothing for an algorithm with no solver here.
-fn solve_bound(layout: &MinorLayout, setup: &MinorCycleSetup, iterations: usize) -> (u64, usize) {
+fn solve_bound(
+    layout: &MinorLayout,
+    setup: &MinorCycleSetup,
+    iterations: usize,
+    fft_threads: usize,
+) -> (u64, usize) {
     fn bound<S: Solver>(solver: &S, layout: &MinorLayout, components: usize) -> (u64, usize) {
         let (shape, terms) = (layout.shape, layout.terms.0 as usize);
         (
@@ -286,7 +294,7 @@ fn solve_bound(layout: &MinorLayout, setup: &MinorCycleSetup, iterations: usize)
             scales_px,
             small_scale_bias,
         } => bound(
-            &Multiscale::new(scales_px.clone(), *small_scale_bias),
+            &Multiscale::new(scales_px.clone(), *small_scale_bias).with_fft_threads(fft_threads),
             layout,
             components,
         ),
@@ -298,10 +306,76 @@ fn solve_bound(layout: &MinorLayout, setup: &MinorCycleSetup, iterations: usize)
                 layout.terms.0 as usize,
                 scales_px.clone(),
                 *small_scale_bias,
-            ),
+            )
+            .with_fft_threads(fft_threads),
             layout,
             components,
         ),
         _ => (0, 0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use casa_imaging_model::HogbomIterationAccounting;
+
+    use super::*;
+
+    fn setup(algorithm: ReconstructionAlgorithm) -> MinorCycleSetup {
+        MinorCycleSetup {
+            algorithm,
+            accounting: HogbomIterationAccounting::Strict,
+            response: None,
+            nsigma: 0.0,
+            automask: false,
+        }
+    }
+
+    /// #780 review: a lone plane's scale transforms take the team's threads
+    /// and own their plans, so its minor cycle charges the solver on that
+    /// many threads; planes cleaned side by side transform on one thread
+    /// each and charge as many one-thread solves as run at once.
+    #[test]
+    fn a_lone_plane_charges_its_threaded_transforms() {
+        let shape = PlaneShape::new(256, 256);
+        let scales = vec![0.0, 5.0];
+        let taylor = setup(ReconstructionAlgorithm::Mtmfs {
+            scales_px: scales.clone(),
+            small_scale_bias: 0.0,
+        });
+        let lone = MinorLayout {
+            planes: 1,
+            shape,
+            domains: vec![[256, 256]],
+            terms: (2, 3),
+            paged: false,
+        };
+        let solve = |threads| {
+            casa_imaging_deconvolution::solve_bytes(
+                &Taylor::new(2, scales.clone(), 0.0).with_fft_threads(threads),
+                shape,
+                2,
+                101,
+                TRACE,
+            )
+        };
+        assert!(solve(4) > solve(1), "four threads own their plans");
+        assert_eq!(
+            run_bytes_for(&lone, &taylor, 100, 0, 4) - run_bytes_for(&lone, &taylor, 100, 0, 1),
+            solve(4) - solve(1)
+        );
+        let multiscale = setup(ReconstructionAlgorithm::Multiscale {
+            scales_px: scales,
+            small_scale_bias: 0.6,
+        });
+        let side = MinorLayout {
+            planes: 4,
+            terms: (1, 1),
+            ..lone
+        };
+        let records =
+            (4 * (size_of::<Slot>() + size_of::<Solved>() + size_of::<PlaneStop>())) as u64;
+        let run = |workers| run_bytes_for(&side, &multiscale, 100, 0, workers) - records;
+        assert_eq!(run(4), 4 * run(1), "four one-thread solves at once");
     }
 }
