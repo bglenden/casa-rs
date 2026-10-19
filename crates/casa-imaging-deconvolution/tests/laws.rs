@@ -277,6 +277,66 @@ fn taylor_recovers_two_components_with_their_spectra() {
     assert!((outcome.absolute_flux - traced).abs() < 1e-12 * traced);
 }
 
+/// #449: the scale solvers' transforms on several FFTW threads clean as on
+/// one, apart from rounding. Multiscale and two-term CLEAN place as many
+/// components, each update entry at the same cell with the same flux to a
+/// part in 10⁹ of the largest of any term.
+#[test]
+fn scale_transforms_on_several_threads_clean_as_on_one() {
+    let point = psf(1.5, 1.0);
+    let model = [(SHAPE.index(15, 15), 0.8), (SHAPE.index(40, 30), 1.2)];
+    let single = Plane::new(vec![convolve(&point, &model)], vec![point]);
+    let lobe = |scale| psf(2.0, scale);
+    let moments = vec![lobe(1.0), lobe(0.1), lobe(0.05)];
+    let spectral = (0..2)
+        .map(|term| convolve(&moments[term], &model))
+        .collect::<Vec<_>>();
+    let taylor = Plane::new(spectral, moments);
+    let agree = |label: &str,
+                 one: &casa_imaging_deconvolution::PlaneOutcome,
+                 many: &casa_imaging_deconvolution::PlaneOutcome| {
+        assert!(one.components > 1, "{label} cleans");
+        assert_eq!(one.components, many.components, "{label}");
+        assert_eq!(one.iterations, many.iterations, "{label}");
+        let largest = (0..one.delta.term_count())
+            .flat_map(|term| one.delta.term(term))
+            .map(|(_, flux)| flux.abs())
+            .fold(0.0, f64::max);
+        for term in 0..one.delta.term_count() {
+            let (a, b) = (
+                one.delta.term(term).collect::<Vec<_>>(),
+                many.delta.term(term).collect::<Vec<_>>(),
+            );
+            assert_eq!(a.len(), b.len(), "{label} term {term}");
+            for ((at, x), (bt, y)) in a.iter().zip(&b) {
+                assert_eq!(at, bt, "{label} term {term}");
+                assert!((x - y).abs() <= 1e-9 * largest, "{label}: {x} vs {y}");
+            }
+        }
+    };
+    let scales = vec![0.0, 4.0];
+    for threads in [2, 4] {
+        let multiscale = |threads| {
+            single
+                .run(
+                    &Multiscale::new(scales.clone(), 0.6).with_fft_threads(threads),
+                    &cycle(500, 0.01),
+                )
+                .unwrap()
+        };
+        agree("multiscale", &multiscale(1), &multiscale(threads));
+        let terms = |threads| {
+            taylor
+                .run(
+                    &Taylor::new(2, scales.clone(), 0.0).with_fft_threads(threads),
+                    &cycle(500, 0.01),
+                )
+                .unwrap()
+        };
+        agree("taylor", &terms(1), &terms(threads));
+    }
+}
+
 /// CASA's Högbom step reports the peak magnitude (`SDAlgorithmBase`'s
 /// `findMaxAbsMask`), so a negative source leaves a positive peak.
 #[test]

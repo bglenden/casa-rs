@@ -31,18 +31,29 @@ pub struct Taylor {
     terms: usize,
     scales: Vec<f64>,
     small_scale_bias: f64,
+    fft_threads: usize,
 }
 
 impl Taylor {
     /// Multi-term CLEAN of `terms` coefficients on scales `scales` (pixels,
-    /// ascending) with CASA's small-scale bias.
+    /// ascending) with CASA's small-scale bias, its scale transforms on one
+    /// thread.
     #[must_use]
     pub fn new(terms: usize, scales: Vec<f64>, small_scale_bias: f64) -> Self {
         Self {
             terms,
             scales,
             small_scale_bias,
+            fft_threads: 1,
         }
+    }
+
+    /// The solver with its scale transforms on `threads` FFTW threads: a
+    /// plane cleaned alone may take its team's threads (#449).
+    #[must_use]
+    pub const fn with_fft_threads(mut self, threads: usize) -> Self {
+        self.fft_threads = threads;
+        self
     }
 
     /// The scales a plane of `shape` cleans with: those larger than half the
@@ -141,7 +152,7 @@ impl Solver for Taylor {
         if sizes.is_empty() {
             return Err(Error::NoScale);
         }
-        let mut bank = ScaleBank::new(&sizes, self.small_scale_bias, shape)?;
+        let mut bank = ScaleBank::new(&sizes, self.small_scale_bias, shape, self.fft_threads)?;
         let scales = bank.len();
         let patch = beam_patch(sizes[scales - 1], shape);
         if patch == 0 {

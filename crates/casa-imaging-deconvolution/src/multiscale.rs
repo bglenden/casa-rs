@@ -17,17 +17,27 @@ const SCALE_MASK_THRESHOLD: f64 = 0.9;
 pub struct Multiscale {
     scales: Vec<f64>,
     small_scale_bias: f64,
+    fft_threads: usize,
 }
 
 impl Multiscale {
     /// Multiscale CLEAN on scales `scales` (pixels, ascending) with CASA's
-    /// small-scale bias.
+    /// small-scale bias, its scale transforms on one thread.
     #[must_use]
     pub fn new(scales: Vec<f64>, small_scale_bias: f64) -> Self {
         Self {
             scales,
             small_scale_bias,
+            fft_threads: 1,
         }
+    }
+
+    /// The solver with its scale transforms on `threads` FFTW threads: a
+    /// plane cleaned alone may take its team's threads (#449).
+    #[must_use]
+    pub const fn with_fft_threads(mut self, threads: usize) -> Self {
+        self.fft_threads = threads;
+        self
     }
 }
 
@@ -69,7 +79,8 @@ impl Solver for Multiscale {
         threshold: f64,
     ) -> Result<MultiscaleState, Error> {
         let shape = view.shape;
-        let mut bank = ScaleBank::new(&self.scales, self.small_scale_bias, shape)?;
+        let mut bank =
+            ScaleBank::new(&self.scales, self.small_scale_bias, shape, self.fft_threads)?;
         let scales = bank.len();
         let psf_spectrum = bank.fft.forward(&view.psf[0])?;
         let mut cross = Vec::with_capacity(scales * (scales + 1) / 2);
