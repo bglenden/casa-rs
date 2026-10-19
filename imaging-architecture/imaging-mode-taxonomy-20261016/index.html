@@ -2686,7 +2686,16 @@ frozen once; CASA's own time for each is estimated from the frozen neighbours.</
 <td>Mosaic PB kernels share the <code>FT[PB]</code>, weight-image and flat-noise machinery with AW; the 512² row is slower than CASA and the cause (CF generation vs fixed cost) is unknown; 1024² moves it out of R6</td>
 <td>R2 (M)</td>
 <td>Whether the PB-kernel generation cost seen at 512² is fixed or per sample; a smaller analogue of the AW C term</td>
-<td><strong>none</strong>; CASA a few minutes. Gap</td>
+<td>frozen 2026-10-19 with <code>usepointing</code> off: CASA 6.7.6, 59.5 s (#787; workload <code>b10-mosaic-mfs-alma-1024-clean</code>). The 2026-10-18 freeze (59.2 s, #732) left <code>usepointing</code> on, which collapsed the seven beams onto field 0 (#791)</td>
+</tr>
+<tr>
+<td>B11</td>
+<td><code>cube16/M/7f/nat/hog n500 pbl0.2 lin @1024²·8.4M·cpu W1</code></td>
+<td>same MS, the 16 channels B10 images, as a cube</td>
+<td>B10's data and size as a cube: mosaic workers run plane owners here and region owners in B10, so the two rows scale by different paths; the products step (16 planes restored and PB-corrected) is a visible share. Natural weighting, because a Briggs mosaic cube with a per-channel density does not yet match CASA (#789)</td>
+<td>R2 (M) + R4</td>
+<td>With B10, the mosaic bar of plan #785 Phase 2 (#787: 5× CASA on the best plan)</td>
+<td>frozen 2026-10-19 with <code>usepointing</code> off: CASA 6.7.6, 27.3 s (#787; workload <code>b11-mosaic-cube-alma-1024-clean</code>; #791)</td>
 </tr>
 </tbody>
 </table>
