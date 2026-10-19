@@ -40,6 +40,13 @@ use super::{BackendChoice, BlockShape, PassDomain};
 /// [`Partition::regions_balanced`] compares the work exactly.
 pub const PLACEMENT_WORK: u64 = 170;
 
+/// One placement's work for a kernel of half-support `[h_x, h_y]`: its taps
+/// `(2·h_x + 1)(2·h_y + 1)` plus [`PLACEMENT_WORK`]. Routing and the
+/// row-work pass both count with it, so their totals cannot drift apart.
+pub(super) fn placement_work([hx, hy]: [u16; 2]) -> u64 {
+    (2 * u64::from(hx) + 1) * (2 * u64::from(hy) + 1) + PLACEMENT_WORK
+}
+
 /// How one pass divides an image domain's grid accumulation among owners
 /// (one per worker).
 #[derive(Clone, Debug, PartialEq)]
@@ -554,6 +561,12 @@ impl Router {
     /// into regions: the owner of the centre row, where `Mode::Weight`
     /// places every sample's `FT[PB²]` taps. `None` when every owner holds
     /// whole planes and grids its own samples' weights.
+    ///
+    /// However narrow its strip (#783), this owner's tile holds the whole
+    /// weight kernel at the origin. The regions' halo is the set's
+    /// `max_half_support`, which covers the weight cells: the AW catalog
+    /// folds their headers into it, and a mosaic window builds its imaging
+    /// and weight cells at one support.
     pub(super) fn weight_owner(&self) -> Option<usize> {
         match self {
             Self::Planes { .. } => None,
@@ -585,8 +598,8 @@ impl Router {
     }
 
     /// Owner of one placement and, with region owners, its anchor row and
-    /// gridding work, the kernel's taps `(2·h_x + 1)(2·h_y + 1)` plus
-    /// [`PLACEMENT_WORK`], which [`Partition::regions_balanced`] balances;
+    /// gridding work ([`placement_work`]), which
+    /// [`Partition::regions_balanced`] balances;
     /// the placement lies on the wave and fits the grid. The kernel's
     /// support and oversampling come from the set's metadata, so routing
     /// lends no taps and takes no lock (#744).
@@ -613,10 +626,9 @@ impl Router {
                     cf.gridding_oversampling(placement.cf),
                 );
                 let row = anchor.y as usize;
-                let taps = (2 * u64::from(hx) + 1) * (2 * u64::from(hy) + 1);
                 (
                     usize::from(owner_of_row[row]),
-                    Some((row, taps + PLACEMENT_WORK)),
+                    Some((row, placement_work([hx, hy]))),
                 )
             }
         }
@@ -859,6 +871,71 @@ mod tests {
             ));
             assert_eq!(taps, worked, "{owners} owners over {ny} rows");
         }
+    }
+
+    /// #449 decision 3: a pass that grids the weight image places every
+    /// sample's weight taps at the uv origin, which the centre row's owner
+    /// grids ([`Router::weight_owner`]). With that work on the centre row
+    /// ([`crate::pass::ModeWork::weighed`]), balanced strips narrow the
+    /// centre owner's to its share. Here, with as much weight work as data
+    /// and PSF work each, its strip is the centre row alone, and every
+    /// owner's work comes within one row's of an equal share. Equal data
+    /// strips would have left it twice the others'. A pass without the
+    /// weight mode, or without weight work, cuts the data's own strips.
+    #[test]
+    fn a_weight_pass_narrows_the_centre_owner_by_the_weight_image() {
+        use casa_imaging_operator::ModeSet;
+
+        use crate::pass::ModeWork;
+
+        let operator = spheroidal_operator();
+        let ny = operator.geometry().grid_shape()[1];
+        assert!(ny.is_multiple_of(2), "the centre row halves the grid");
+        let rows = vec![10_u64; ny];
+        let data = 10 * ny as u64;
+        let work = ModeWork {
+            data,
+            psf: data,
+            weight: data,
+        };
+        let first = ModeSet {
+            data: true,
+            psf: true,
+            weight: true,
+        };
+        let weighed = work
+            .weighed(&rows, first)
+            .expect("a pass that grids the weight image");
+        let partition = Partition::regions_balanced(&operator, 3, &weighed);
+        let strips = rows_of(&partition);
+        let router = Router::new(&partition, PlaneRange::single(0));
+        assert_eq!(
+            router.weight_owner(),
+            Some(1),
+            "the middle strip holds the centre row"
+        );
+        assert_eq!(strips[1], ny / 2..ny / 2 + 1, "the centre row alone");
+        let total = weighed.iter().sum::<u64>();
+        for (owner, strip) in strips.iter().enumerate() {
+            let held = strip.clone().map(|row| weighed[row]).sum::<u64>();
+            assert!(
+                held.abs_diff(total / 3) <= 20,
+                "owner {owner} holds {held} of {total}"
+            );
+        }
+        // Equal data strips leave the centre owner its third and the weight.
+        let equal = rows_of(&Partition::regions_balanced(&operator, 3, &rows));
+        let centre = equal[1].len() as u64 * 20 + data;
+        assert!(centre > 2 * equal[0].len() as u64 * 20, "twice the others'");
+        // Without the weight mode or its work, the data's strips.
+        let refresh = ModeSet {
+            psf: false,
+            weight: false,
+            ..first
+        };
+        assert_eq!(work.weighed(&rows, refresh), None);
+        let weightless = ModeWork { weight: 0, ..work };
+        assert_eq!(weightless.weighed(&rows, first), None);
     }
 
     /// #449: a placement's work is its kernel's taps and [`PLACEMENT_WORK`],

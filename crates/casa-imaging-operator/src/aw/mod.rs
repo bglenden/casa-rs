@@ -848,6 +848,15 @@ impl ConvolutionFunctionSet for AwCatalog {
         self.groups[usize::from(key.group)].imaging_half_support
     }
 
+    fn weight_half_support(&self, key: CfKey) -> Option<[u16; 2]> {
+        Some(self.groups[usize::from(key.group)].weight_half_support)
+    }
+
+    /// The PSF grids with the weight cells ([`Self::psf_taps`]).
+    fn psf_half_support(&self, key: CfKey) -> [u16; 2] {
+        self.groups[usize::from(key.group)].weight_half_support
+    }
+
     /// The catalog's one `Sampling`, which every dense cell carries.
     fn gridding_oversampling(&self, _key: CfKey) -> u16 {
         self.oversampling
