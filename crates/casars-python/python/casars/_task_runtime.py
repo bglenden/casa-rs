@@ -1,4 +1,4 @@
-"""Explicit launch resolution shared by Python tasks and sessions."""
+"""Explicit launch resolution for the ``casars`` task runner."""
 
 from __future__ import annotations
 
@@ -25,18 +25,6 @@ class ApplicationLaunch:
     executable: str
     cargo_package: str
     override_env: str
-
-
-def resolve_imexplore_binary(binary: StrPath | None = None) -> str:
-    """Resolve the image-explorer session through the canonical launch policy."""
-
-    return _resolve_task_binary(
-        application_id="imexplore",
-        binary=binary,
-        configured_binary=None,
-        missing_error_cls=FileNotFoundError,
-        description="imexplore",
-    )
 
 
 def _resolve_task_binary(
@@ -146,6 +134,3 @@ def _require_binary(
 def _binary_name(binary_name: str) -> str:
     suffix = ".exe" if os.name == "nt" else ""
     return f"{binary_name}{suffix}"
-
-
-__all__ = ["resolve_imexplore_binary"]

@@ -1,4 +1,4 @@
-"""Unified CASA-named task and session parameters.
+"""CASA-named task parameters.
 
 The Rust parameter catalog remains the only source of defaults, validation,
 normalization, migrations, origins, and sparse TOML rendering.  This module is
@@ -151,7 +151,7 @@ def catalog() -> dict[str, Any]:
 
 
 def definition(surface: str) -> dict[str, Any]:
-    """Return one task or session definition from the built-in catalog."""
+    """Return one task definition from the built-in catalog."""
 
     bundle = _frontend_call(_frontend().parameter_surface_bundle, surface)
     return _contract_data(bundle.surface)
@@ -480,8 +480,6 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
     def provider_invocation(self) -> ProviderInvocation:
         """Project this task through the canonical provider-owned request seam."""
 
-        if self.kind != "task":
-            raise TypeError("provider invocation exists only for task parameters")
         projected = _frontend_call(
             _frontend().parameter_provider_invocation,
             self.surface,
@@ -545,34 +543,10 @@ class TaskParameters(SurfaceParameters):
         return run(self.surface, parameters=self, **options)
 
 
-class SessionParameters(SurfaceParameters):
-    """Mutable startup/profile parameters constrained to a session definition."""
-
-    expected_kind = "session"
-
-    def open(self, **options: Any) -> Any:
-        """Open this draft through the matching catalog session client."""
-
-        if {"parameters", "profile"} & options.keys():
-            raise TypeError("SessionParameters.open supplies its own parameters draft")
-        from .sessions import open as open_session
-
-        return open_session(self.surface, parameters=self, **options)
-
-
-def _surface_class(surface: str) -> type[SurfaceParameters]:
-    kind = definition(surface)["kind"]
-    if kind == "task":
-        return TaskParameters
-    if kind == "session":
-        return SessionParameters
-    raise ValueError(f"unsupported surface kind {kind!r}")
-
-
 def defaults(surface: str, *, workspace: StrPath | None = None) -> SurfaceParameters:
-    """Start the appropriate task/session parameter class from defaults."""
+    """Start a task's parameters from its current contract defaults."""
 
-    return _surface_class(surface).defaults(surface, workspace=workspace)
+    return TaskParameters.defaults(surface, workspace=workspace)
 
 
 def load(
@@ -594,23 +568,20 @@ def load(
     else:
         surface = str(surface_or_path)
         profile_path = Path(path)
-    return _surface_class(surface).load(surface, profile_path, workspace=workspace)
+    return TaskParameters.load(surface, profile_path, workspace=workspace)
 
 
 def last(surface: str, *, workspace: StrPath | None = None) -> SurfaceParameters:
-    """Load Last for a task or session."""
+    """Load Last for a task."""
 
-    return _surface_class(surface).last(surface, workspace=workspace)
+    return TaskParameters.last(surface, workspace=workspace)
 
 
 def last_successful(
     surface: str, *, workspace: StrPath | None = None
-) -> TaskParameters:
-    """Load Last Successful for a one-shot task."""
+) -> SurfaceParameters:
+    """Load Last Successful for a task."""
 
-    cls = _surface_class(surface)
-    if cls is not TaskParameters:
-        raise TypeError(f"session surface {surface!r} does not have Last Successful")
     return TaskParameters.last_successful(surface, workspace=workspace)
 
 
@@ -622,7 +593,6 @@ __all__ = [
     "ParameterDiagnostic",
     "ParameterOrigin",
     "ParameterState",
-    "SessionParameters",
     "SurfaceParameters",
     "TaskParameters",
     "catalog",

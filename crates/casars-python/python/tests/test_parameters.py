@@ -6,7 +6,7 @@ import json
 import pytest
 
 from casars import parameters
-from casars.parameters import ParameterOrigin, SessionParameters, TaskParameters
+from casars.parameters import ParameterOrigin, TaskParameters
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -14,17 +14,8 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 
 def test_catalog_and_definition_are_projected_from_rust() -> None:
     catalog = parameters.catalog()
-    assert len(catalog["surfaces"]) == 29
-    assert (
-        len([surface for surface in catalog["surfaces"] if surface["kind"] == "task"])
-        == 27
-    )
-    assert (
-        len(
-            [surface for surface in catalog["surfaces"] if surface["kind"] == "session"]
-        )
-        == 2
-    )
+    assert len(catalog["surfaces"]) == 27
+    assert {surface["kind"] for surface in catalog["surfaces"]} == {"task"}
 
     imager = parameters.definition("imager")
     assert imager["kind"] == "task"
@@ -138,10 +129,8 @@ def test_last_and_last_successful_use_managed_workspace_slots(
     assert attempted["comment"] == "remember me"
     assert successful["vis"] == ["target.ms"]
 
-    with pytest.raises(TypeError):
-        TaskParameters.defaults("imexplore")
     with pytest.raises(ValueError):
-        SessionParameters.last_successful("imexplore", workspace=tmp_path)
+        TaskParameters.defaults("imexplore")
 
 
 def test_documented_template_is_non_activating_toml_reference() -> None:
@@ -150,22 +139,18 @@ def test_documented_template_is_non_activating_toml_reference() -> None:
     assert "# mode" in template
 
 
-@pytest.mark.parametrize("surface", ["imager", "imexplore", "tablebrowser"])
-def test_shared_cross_surface_profile_matches_canonical_expected_values(
-    surface: str,
-) -> None:
-    profile = REPO_ROOT / f"resources/test-profiles/{surface}-cross-surface.toml"
+def test_shared_cross_surface_profile_matches_canonical_expected_values() -> None:
+    profile = REPO_ROOT / "resources/test-profiles/imager-cross-surface.toml"
     expected_path = profile.with_suffix(".expected.json")
     expected = json.loads(expected_path.read_text(encoding="utf-8"))
     loaded = parameters.load(profile, workspace=REPO_ROOT)
 
     assert loaded.surface == expected["surface"]
     assert {name: loaded[name] for name in expected["values"]} == expected["values"]
-    if surface == "imager":
-        invocation = loaded.provider_invocation()
-        assert invocation.protocol_name == "casa_imager_task"
-        assert invocation.protocol_version == IMAGER_TASK_PROTOCOL_VERSION
-        assert json.loads(invocation.stdin or "null") == expected["request"]
+    invocation = loaded.provider_invocation()
+    assert invocation.protocol_name == "casa_imager_task"
+    assert invocation.protocol_version == IMAGER_TASK_PROTOCOL_VERSION
+    assert json.loads(invocation.stdin or "null") == expected["request"]
 
 
 IMAGER_TASK_PROTOCOL_VERSION = 13
