@@ -107,6 +107,10 @@ name = "msexplore_cli"
 path = "tests/msexplore_cli.rs"
 
 [[test]]
+name = "msexplore_task_completion"
+path = "tests/msexplore_task_completion.rs"
+
+[[test]]
 name = "logging_cli"
 path = "tests/logging_cli.rs"
 
