@@ -6,7 +6,7 @@ use crate::image_oracle_impl::*;
 use crate::oracle_runtime::{OracleError, oracle_operation};
 use crate::{
     Complex32, Complex64, CppImageExprBinaryOp, CppImageExprCompareOp, CppImageExprUnaryOp,
-    CppMaskLogicalOp,
+    CppMaskLogicalOp, CppRegionStatistics, CppUnsupportedRegionKind,
 };
 
 macro_rules! image_operation {
@@ -225,6 +225,115 @@ impl ImageOracle {
             cpp_read_image_default_mask(path, max_size).map_err(|message| OracleError::CppFailure {
                 operation: "image.read_image_default_mask",
                 message,
+            })
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_polygon_region(
+        path: &std::path::Path,
+        region_name: &str,
+        x: &[f64],
+        y: &[f64],
+    ) -> Result<(), OracleError> {
+        image_operation!("image.write_polygon_region", {
+            cpp_write_polygon_region(path, region_name, x, y).map_err(|message| {
+                OracleError::CppFailure {
+                    operation: "image.write_polygon_region",
+                    message,
+                }
+            })
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_union_region(
+        path: &std::path::Path,
+        region_name: &str,
+        x1: &[f64],
+        y1: &[f64],
+        x2: &[f64],
+        y2: &[f64],
+    ) -> Result<(), OracleError> {
+        image_operation!("image.write_union_region", {
+            cpp_write_union_region(path, region_name, x1, y1, x2, y2).map_err(|message| {
+                OracleError::CppFailure {
+                    operation: "image.write_union_region",
+                    message,
+                }
+            })
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_box_region(
+        path: &std::path::Path,
+        region_name: &str,
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+    ) -> Result<(), OracleError> {
+        image_operation!("image.write_box_region", {
+            cpp_write_box_region(path, region_name, x0, y0, x1, y1).map_err(|message| {
+                OracleError::CppFailure {
+                    operation: "image.write_box_region",
+                    message,
+                }
+            })
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_region_class(
+        path: &std::path::Path,
+        region_name: &str,
+    ) -> Result<String, OracleError> {
+        image_operation!("image.read_region_class", {
+            cpp_read_region_class(path, region_name).map_err(|message| OracleError::CppFailure {
+                operation: "image.read_region_class",
+                message,
+            })
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_region_names(path: &std::path::Path) -> Result<Vec<String>, OracleError> {
+        image_operation!("image.read_region_names", {
+            cpp_read_region_names(path).map_err(|message| OracleError::CppFailure {
+                operation: "image.read_region_names",
+                message,
+            })
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_unsupported_region(
+        path: &std::path::Path,
+        region_name: &str,
+        kind: CppUnsupportedRegionKind,
+    ) -> Result<(), OracleError> {
+        image_operation!("image.write_unsupported_region", {
+            cpp_write_unsupported_region(path, region_name, kind).map_err(|message| {
+                OracleError::CppFailure {
+                    operation: "image.write_unsupported_region",
+                    message,
+                }
+            })
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_region_statistics(
+        path: &std::path::Path,
+        region_name: &str,
+    ) -> Result<CppRegionStatistics, OracleError> {
+        image_operation!("image.read_region_statistics", {
+            cpp_read_region_statistics(path, region_name).map_err(|message| {
+                OracleError::CppFailure {
+                    operation: "image.read_region_statistics",
+                    message,
+                }
             })
         })
     }

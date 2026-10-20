@@ -14,6 +14,7 @@
 //! | [`MaskExprBuilder<T>`]          | `LatticeExprNode`       | Lazy boolean expression            |
 //! | [`ImageInfo`]            | `ImageInfo`             | Image metadata (beam, type, etc.)  |
 //! | [`ImageBeamSet`]         | `ImageBeamSet`          | Beam descriptions                  |
+//! | [`PolygonRegion`]        | `WCPolygon`, `WCUnion`  | Saved world-coordinate regions     |
 //!
 //! - [`PagedImage<T>`] stores pixel data in a casacore `Table` with
 //!   `TiledCellStMan`. Suitable for persistent images on disk.
@@ -67,6 +68,7 @@ pub mod image;
 pub mod image_expr;
 mod image_expr_ops;
 pub mod image_info;
+pub mod saved_region;
 pub mod subimage;
 pub mod temp_image;
 
@@ -96,5 +98,6 @@ pub use image_expr::{
     MaskExprBuilder, MaskExpression, MaskLogicalOp, ReductionOp,
 };
 pub use image_info::{ImageInfo, ImageType};
+pub use saved_region::{PolygonRegion, RegionStatistics};
 pub use subimage::{SubImage, SubImageMut};
 pub use temp_image::TempImage;

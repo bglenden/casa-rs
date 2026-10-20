@@ -793,6 +793,67 @@ unsafe extern "C" {
         nread_out: *mut i64,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    #[link_name = "cpp_write_polygon_region"]
+    pub(crate) fn ffi_cpp_write_polygon_region(
+        path: *const std::ffi::c_char,
+        region_name: *const std::ffi::c_char,
+        x: *const f64,
+        y: *const f64,
+        nvertices: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_write_union_region"]
+    pub(crate) fn ffi_cpp_write_union_region(
+        path: *const std::ffi::c_char,
+        region_name: *const std::ffi::c_char,
+        x1: *const f64,
+        y1: *const f64,
+        nvertices1: i32,
+        x2: *const f64,
+        y2: *const f64,
+        nvertices2: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_write_box_region"]
+    pub(crate) fn ffi_cpp_write_box_region(
+        path: *const std::ffi::c_char,
+        region_name: *const std::ffi::c_char,
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_read_region_class"]
+    pub(crate) fn ffi_cpp_read_region_class(
+        path: *const std::ffi::c_char,
+        region_name: *const std::ffi::c_char,
+        buf: *mut std::ffi::c_char,
+        bufsize: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_read_region_names"]
+    pub(crate) fn ffi_cpp_read_region_names(
+        path: *const std::ffi::c_char,
+        buf: *mut std::ffi::c_char,
+        bufsize: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_write_unsupported_region"]
+    pub(crate) fn ffi_cpp_write_unsupported_region(
+        path: *const std::ffi::c_char,
+        region_name: *const std::ffi::c_char,
+        kind: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_read_region_statistics"]
+    pub(crate) fn ffi_cpp_read_region_statistics(
+        path: *const std::ffi::c_char,
+        region_name: *const std::ffi::c_char,
+        stats_out: *mut f64,
+        nstats: i32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     #[link_name = "cpp_write_default_mask"]
     pub(crate) fn ffi_cpp_write_default_mask(
         path: *const std::ffi::c_char,

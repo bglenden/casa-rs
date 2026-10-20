@@ -448,6 +448,255 @@ pub(crate) fn cpp_read_image_default_mask(
     }
 }
 
+/// Writes a native WCPolygon saved region using the C++ casacore implementation.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_write_polygon_region(
+    path: &std::path::Path,
+    region_name: &str,
+    x: &[f64],
+    y: &[f64],
+) -> Result<(), String> {
+    let c_path =
+        CasacoreOracleRuntime::c_path("image path", path).map_err(|error| error.to_string())?;
+    let c_name = CasacoreOracleRuntime::c_string("image region or mask name", region_name)
+        .map_err(|error| error.to_string())?;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        ffi_cpp_write_polygon_region(
+            c_path.as_ptr(),
+            c_name.as_ptr(),
+            x.as_ptr(),
+            y.as_ptr(),
+            x.len() as i32,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) })
+    }
+}
+
+/// Writes a native WCUnion-of-polygons saved region using the C++ casacore implementation.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_write_union_region(
+    path: &std::path::Path,
+    region_name: &str,
+    x1: &[f64],
+    y1: &[f64],
+    x2: &[f64],
+    y2: &[f64],
+) -> Result<(), String> {
+    let c_path =
+        CasacoreOracleRuntime::c_path("image path", path).map_err(|error| error.to_string())?;
+    let c_name = CasacoreOracleRuntime::c_string("image region or mask name", region_name)
+        .map_err(|error| error.to_string())?;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        ffi_cpp_write_union_region(
+            c_path.as_ptr(),
+            c_name.as_ptr(),
+            x1.as_ptr(),
+            y1.as_ptr(),
+            x1.len() as i32,
+            x2.as_ptr(),
+            y2.as_ptr(),
+            x2.len() as i32,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) })
+    }
+}
+
+/// Writes an unsupported WCBox saved region using the C++ casacore implementation.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_write_box_region(
+    path: &std::path::Path,
+    region_name: &str,
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
+) -> Result<(), String> {
+    let c_path =
+        CasacoreOracleRuntime::c_path("image path", path).map_err(|error| error.to_string())?;
+    let c_name = CasacoreOracleRuntime::c_string("image region or mask name", region_name)
+        .map_err(|error| error.to_string())?;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        ffi_cpp_write_box_region(c_path.as_ptr(), c_name.as_ptr(), x0, y0, x1, y1, &mut error)
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) })
+    }
+}
+
+/// Reads the native casacore class name for a saved region.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_read_region_class(
+    path: &std::path::Path,
+    region_name: &str,
+) -> Result<String, String> {
+    let c_path =
+        CasacoreOracleRuntime::c_path("image path", path).map_err(|error| error.to_string())?;
+    let c_name = CasacoreOracleRuntime::c_string("image region or mask name", region_name)
+        .map_err(|error| error.to_string())?;
+    let mut buf = vec![0i8; 256];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        ffi_cpp_read_region_class(
+            c_path.as_ptr(),
+            c_name.as_ptr(),
+            buf.as_mut_ptr() as *mut std::ffi::c_char,
+            256,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        CasacoreOracleRuntime::output_c_char_string("image.read_region_class", &buf)
+            .map_err(|error| error.to_string())
+    } else {
+        Err(unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) })
+    }
+}
+
+/// Reads all saved region names visible to C++ casacore.
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_read_region_names(path: &std::path::Path) -> Result<Vec<String>, String> {
+    let c_path =
+        CasacoreOracleRuntime::c_path("image path", path).map_err(|error| error.to_string())?;
+    let mut buf = vec![0i8; 4096];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        ffi_cpp_read_region_names(
+            c_path.as_ptr(),
+            buf.as_mut_ptr() as *mut std::ffi::c_char,
+            4096,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        let joined = CasacoreOracleRuntime::output_c_char_string("image.read_region_names", &buf)
+            .map_err(|error| error.to_string())?;
+        if joined.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Ok(joined.split(',').map(|name| name.to_string()).collect())
+        }
+    } else {
+        Err(unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CppUnsupportedRegionKind {
+    Ellipsoid,
+    Intersection,
+    Difference,
+    Complement,
+    Concatenation,
+    Extension,
+    LelMask,
+    LcBox,
+}
+
+#[cfg(has_casacore_cpp)]
+impl CppUnsupportedRegionKind {
+    fn ffi_code(self) -> i32 {
+        match self {
+            Self::Ellipsoid => 0,
+            Self::Intersection => 1,
+            Self::Difference => 2,
+            Self::Complement => 3,
+            Self::Concatenation => 4,
+            Self::Extension => 5,
+            Self::LelMask => 6,
+            Self::LcBox => 7,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CppRegionStatistics {
+    pub pixel_count: usize,
+    pub sum: f64,
+    pub mean: f64,
+    pub median: f64,
+    pub rms: f64,
+    pub sigma: f64,
+    pub min: f64,
+    pub max: f64,
+}
+
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_write_unsupported_region(
+    path: &std::path::Path,
+    region_name: &str,
+    kind: CppUnsupportedRegionKind,
+) -> Result<(), String> {
+    let c_path =
+        CasacoreOracleRuntime::c_path("image path", path).map_err(|error| error.to_string())?;
+    let c_name = CasacoreOracleRuntime::c_string("image region or mask name", region_name)
+        .map_err(|error| error.to_string())?;
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        ffi_cpp_write_unsupported_region(
+            c_path.as_ptr(),
+            c_name.as_ptr(),
+            kind.ffi_code(),
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) })
+    }
+}
+
+#[cfg(has_casacore_cpp)]
+pub(crate) fn cpp_read_region_statistics(
+    path: &std::path::Path,
+    region_name: &str,
+) -> Result<CppRegionStatistics, String> {
+    let c_path =
+        CasacoreOracleRuntime::c_path("image path", path).map_err(|error| error.to_string())?;
+    let c_name = CasacoreOracleRuntime::c_string("image region or mask name", region_name)
+        .map_err(|error| error.to_string())?;
+    let mut stats = [0.0f64; 8];
+    let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+    let rc = unsafe {
+        ffi_cpp_read_region_statistics(
+            c_path.as_ptr(),
+            c_name.as_ptr(),
+            stats.as_mut_ptr(),
+            stats.len() as i32,
+            &mut error,
+        )
+    };
+    if rc == 0 {
+        Ok(CppRegionStatistics {
+            pixel_count: stats[0] as usize,
+            sum: stats[1],
+            mean: stats[2],
+            median: stats[3],
+            rms: stats[4],
+            sigma: stats[5],
+            min: stats[6],
+            max: stats[7],
+        })
+    } else {
+        Err(unsafe { CasacoreOracleRuntime::cpp_error_message(error, cpp_table_free_error) })
+    }
+}
+
 /// Writes a named default pixel mask using the C++ casacore implementation.
 #[cfg(has_casacore_cpp)]
 pub(crate) fn cpp_write_default_mask(
