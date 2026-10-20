@@ -4,7 +4,7 @@
     {
       "kind": "task",
       "id": "msexplore",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "MSExplore",
       "category": "MeasurementSet",
       "summary": "explore and export common MeasurementSet plotms-style plots",
@@ -12,18 +12,7 @@
       "execution": {
         "invocation_name": "msexplore",
         "fixed_args": [],
-        "managed_output": {
-          "inject_arguments": [
-            {
-              "flag": "--format",
-              "value": "json"
-            }
-          ],
-          "raw_stderr_available": true,
-          "raw_stdout_available": true,
-          "stdout_format": "json",
-          "decoder": "measurementset-summary-v1"
-        },
+        "managed_output": null,
         "products": {
           "kind": "declared",
           "products": [
@@ -54,14 +43,14 @@
             {
               "id": "flag_output",
               "role": "auxiliary",
-              "resource_kind": "measurement_set",
+              "resource_kind": "file",
               "source": {
                 "kind": "parameter",
                 "parameter": "flag_output"
               },
               "cardinality": "one",
               "optional": true,
-              "probe_supported": true
+              "probe_supported": false
             }
           ]
         }
@@ -3530,6 +3519,12 @@
           "changed_defaults": [
             "plot_format"
           ]
+        },
+        {
+          "from_contract": 5,
+          "to_contract": 6,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },
@@ -22109,7 +22104,7 @@
     {
       "kind": "task",
       "id": "plotms",
-      "contract_version": 5,
+      "contract_version": 6,
       "display_name": "PlotMS",
       "category": "Plotting",
       "summary": "Plot MeasurementSet visibility data with CASA plotms-style selections and axes.",
@@ -22117,18 +22112,7 @@
       "execution": {
         "invocation_name": "msexplore",
         "fixed_args": [],
-        "managed_output": {
-          "inject_arguments": [
-            {
-              "flag": "--format",
-              "value": "json"
-            }
-          ],
-          "raw_stderr_available": true,
-          "raw_stdout_available": true,
-          "stdout_format": "json",
-          "decoder": "measurementset-summary-v1"
-        },
+        "managed_output": null,
         "products": {
           "kind": "declared",
           "products": [
@@ -22159,14 +22143,14 @@
             {
               "id": "flag_output",
               "role": "auxiliary",
-              "resource_kind": "measurement_set",
+              "resource_kind": "file",
               "source": {
                 "kind": "parameter",
                 "parameter": "flag_output"
               },
               "cardinality": "one",
               "optional": true,
-              "probe_supported": true
+              "probe_supported": false
             }
           ]
         }
@@ -25632,6 +25616,12 @@
           "changed_defaults": [
             "plot_format"
           ]
+        },
+        {
+          "from_contract": 5,
+          "to_contract": 6,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },

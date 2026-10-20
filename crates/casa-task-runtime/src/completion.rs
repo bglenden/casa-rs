@@ -111,10 +111,10 @@ pub fn decode_task_completion(
             }
         }
     }
-    let (summary, diagnostics) = match decoded {
-        Some(decoded) => decoded.summary_and_diagnostics(bundle.surface.id(), &products)?,
-        None => (format!("{} completed", bundle.surface.id()), Vec::new()),
-    };
+    let (summary, diagnostics) = decoded.map_or_else(
+        || (format!("{} completed", bundle.surface.id()), Vec::new()),
+        DecodedManagedResult::summary_and_diagnostics,
+    );
     Ok(TaskCompletion {
         surface_id: bundle.surface.id().to_string(),
         summary,
@@ -187,46 +187,13 @@ fn resolve_product_path(workspace: &Path, value: &str) -> PathBuf {
 }
 
 enum DecodedManagedResult {
-    MeasurementSet(MeasurementSetSummaryWire),
-    /// The provider printed nothing because it wrote the summary to the
-    /// surface's primary declared product (msexplore's `output`).
-    MeasurementSetSummaryInPrimaryProduct,
     Calibration(CalibrationResultWire),
     Imager(ImagerOutputWire),
 }
 
 impl DecodedManagedResult {
-    fn summary_and_diagnostics(
-        self,
-        surface: &str,
-        products: &[RunProductReference],
-    ) -> Result<(String, Vec<String>), TaskCompletionError> {
-        Ok(match self {
-            Self::MeasurementSet(result) => (
-                result.measurement_set.path.map_or_else(
-                    || "MeasurementSet summary".to_string(),
-                    |path| format!("MeasurementSet summary for {path}"),
-                ),
-                Vec::new(),
-            ),
-            Self::MeasurementSetSummaryInPrimaryProduct => {
-                let product = products
-                    .iter()
-                    .find(|product| product.role == RunProductRole::Primary)
-                    .ok_or_else(|| TaskCompletionError::MalformedResult {
-                        surface: surface.to_string(),
-                        detail: "the provider printed no MeasurementSet summary and \
-                                 requested no primary output for it"
-                            .to_string(),
-                    })?;
-                (
-                    format!(
-                        "MeasurementSet summary written to {}",
-                        product.path.display()
-                    ),
-                    Vec::new(),
-                )
-            }
+    fn summary_and_diagnostics(self) -> (String, Vec<String>) {
+        match self {
             Self::Calibration(result) => {
                 (format!("Calibration result: {}", result.kind), Vec::new())
             }
@@ -239,7 +206,7 @@ impl DecodedManagedResult {
                 ),
                 result.run.warnings,
             ),
-        })
+        }
     }
 }
 
@@ -253,12 +220,6 @@ fn decode_managed_result(
         detail: error.to_string(),
     };
     match decoder {
-        ManagedResultDecoder::MeasurementSetSummaryV1 if stdout.trim().is_empty() => {
-            Ok(DecodedManagedResult::MeasurementSetSummaryInPrimaryProduct)
-        }
-        ManagedResultDecoder::MeasurementSetSummaryV1 => serde_json::from_str(stdout)
-            .map(DecodedManagedResult::MeasurementSet)
-            .map_err(malformed),
         ManagedResultDecoder::CalibrationReportV1 => serde_json::from_str(stdout)
             .map(DecodedManagedResult::Calibration)
             .map_err(malformed),
@@ -266,18 +227,6 @@ fn decode_managed_result(
             .map(DecodedManagedResult::Imager)
             .map_err(malformed),
     }
-}
-
-/// The part of msexplore's `--format json` listobs summary that a completion
-/// reports; the rest of the summary stays in the raw stdout.
-#[derive(Deserialize)]
-struct MeasurementSetSummaryWire {
-    measurement_set: MeasurementSetInfoWire,
-}
-
-#[derive(Deserialize)]
-struct MeasurementSetInfoWire {
-    path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -409,68 +358,25 @@ mod tests {
     }
 
     #[test]
-    fn measurement_set_summary_reports_the_summarized_path() {
+    fn msexplore_stdout_is_left_in_the_format_the_user_chose() {
         let root = tempdir().unwrap();
-        fs::write(root.path().join("amp.txt"), b"manifest").unwrap();
-        let stdout = serde_json::json!({
-            "schema_version": 1,
-            "measurement_set": {"path": "/data/target.ms", "row_count": 4},
-            "scans": []
-        })
-        .to_string();
-        let completion = decode_task_completion(
-            &builtin_surface_bundle("msexplore").unwrap(),
-            &stdout,
-            root.path(),
-            &[TaskOutputValue {
-                name: "plot_output".into(),
-                value: "amp.txt".into(),
-            }],
-        )
-        .unwrap();
+        fs::write(root.path().join("preview.json"), b"{}").unwrap();
+        for stdout in ["MeasurementSet Name: target.ms\n", ""] {
+            let completion = decode_task_completion(
+                &builtin_surface_bundle("msexplore").unwrap(),
+                stdout,
+                root.path(),
+                &[TaskOutputValue {
+                    name: "flag_output".into(),
+                    value: "preview.json".into(),
+                }],
+            )
+            .unwrap();
 
-        assert_eq!(
-            completion.summary,
-            "MeasurementSet summary for /data/target.ms"
-        );
-        assert_eq!(completion.products.len(), 1);
-        assert_eq!(completion.products[0].id, "plot_output");
-        assert!(completion.products[0].exists);
-    }
-
-    #[test]
-    fn measurement_set_summary_written_to_the_primary_output_leaves_stdout_empty() {
-        let root = tempdir().unwrap();
-        let summary = root.path().join("summary.json");
-        fs::write(&summary, b"{}").unwrap();
-        let completion = decode_task_completion(
-            &builtin_surface_bundle("plotms").unwrap(),
-            "",
-            root.path(),
-            &[TaskOutputValue {
-                name: "output".into(),
-                value: "summary.json".into(),
-            }],
-        )
-        .unwrap();
-
-        assert_eq!(
-            completion.summary,
-            format!("MeasurementSet summary written to {}", summary.display())
-        );
-        assert_eq!(completion.products[0].id, "output");
-        assert!(completion.products[0].exists);
-    }
-
-    #[test]
-    fn empty_measurement_set_summary_without_an_output_is_malformed() {
-        let error = decode_task_completion(
-            &builtin_surface_bundle("msexplore").unwrap(),
-            "\n",
-            Path::new("."),
-            &[],
-        )
-        .unwrap_err();
-        assert!(matches!(error, TaskCompletionError::MalformedResult { .. }));
+            assert_eq!(completion.summary, "msexplore completed");
+            assert_eq!(completion.products.len(), 1);
+            assert_eq!(completion.products[0].resource_kind, RunProductKind::File);
+            assert!(completion.products[0].exists);
+        }
     }
 }

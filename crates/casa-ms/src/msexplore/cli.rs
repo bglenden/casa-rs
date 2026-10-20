@@ -1406,17 +1406,8 @@ mod tests {
             }
         ));
 
-        let managed_output = schema.managed_output.expect("managed output");
-        assert_eq!(managed_output.renderer, "measurementset-summary-v1");
-        assert_eq!(managed_output.stdout_format, "json");
-        assert!(managed_output.raw_stdout_available);
-        assert!(managed_output.raw_stderr_available);
-        assert!(
-            managed_output
-                .inject_arguments
-                .iter()
-                .any(|argument| argument.flag == "--format" && argument.value == "json")
-        );
+        // The runner injects nothing, so the user's `format` decides stdout.
+        assert!(schema.managed_output.is_none());
     }
 
     #[test]
