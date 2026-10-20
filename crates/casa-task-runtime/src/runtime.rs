@@ -3,7 +3,6 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use casa_provider_contracts::{ParameterType, ParameterValue, SurfaceContractBundle};
 use thiserror::Error;
@@ -42,26 +41,12 @@ impl OpenSessionRequest {
 }
 
 /// Sole high-level owner of parameter source resolution and lifecycle policy.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ParameterRuntime {
-    session_debounce: Duration,
-}
-
-impl Default for ParameterRuntime {
-    fn default() -> Self {
-        Self::new(Duration::from_millis(350))
-    }
+    _private: (),
 }
 
 impl ParameterRuntime {
-    pub fn new(session_debounce: Duration) -> Self {
-        Self { session_debounce }
-    }
-
-    pub fn session_debounce(&self) -> Duration {
-        self.session_debounce
-    }
-
     /// Open and fully resolve a session from exactly the requested source.
     /// Missing, unreadable, and corrupt Last state are errors and never switch
     /// the request to Defaults.

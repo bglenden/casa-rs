@@ -26,10 +26,7 @@ pub use completion::{
     decode_task_completion,
 };
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLevel, SourceLocation};
-pub use invocation::{
-    ProviderInvocationError, parameter_value_is_omitted, project_parameter_value,
-    project_provider_invocation, provider_parameter_applies,
-};
+pub use invocation::{ProviderInvocationError, project_provider_invocation};
 pub use normalize::{NormalizationError, normalize_value, semantic_eq, validate_value};
 pub use profile::{
     PROFILE_FORMAT_VERSION, ParameterProfile, ProfileError, ProfileHeader, ResolvedProfile,

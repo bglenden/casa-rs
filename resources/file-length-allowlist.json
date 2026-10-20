@@ -13,7 +13,6 @@
     "crates/casa-images/src/image.rs",
     "crates/casa-images/src/image_expr.rs",
     "crates/casa-images/src/image_expr_compiled.rs",
-    "crates/casa-images/src/image_view.rs",
     "crates/casa-imaging-model/src/compiled_problem.rs",
     "crates/casa-imaging-model/src/geometry.rs",
     "crates/casa-imaging-model/src/observation.rs",

@@ -39,8 +39,9 @@ fn write_image(path: &Path) {
     ));
     let mut image = Image::create(vec![4, 3], coords, path).expect("create image");
     image.set_units("Jy/beam").expect("set units");
-    let pixels = ArrayD::from_shape_vec(IxDyn(&[4, 3]), (1..=12).map(|value| value as f32).collect())
-        .expect("pixel array");
+    let pixels =
+        ArrayD::from_shape_vec(IxDyn(&[4, 3]), (1..=12).map(|value| value as f32).collect())
+            .expect("pixel array");
     image.put_slice(&pixels, &[0, 0]).expect("write pixels");
     image.save().expect("save image");
 }
@@ -117,7 +118,10 @@ fn run_imstat_executes_the_provider_and_records_last_state() {
     assert!(text.contains("12"), "{text}");
 
     let state = workspace.path().join(".casa-rs/parameters/imstat");
-    assert!(state.join("last.toml").is_file(), "missing Last in {state:?}");
+    assert!(
+        state.join("last.toml").is_file(),
+        "missing Last in {state:?}"
+    );
     assert!(
         state.join("last-successful.toml").is_file(),
         "missing Last Successful in {state:?}"

@@ -636,7 +636,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             session.values()["imagename"],
-            ParameterValue::String("input.image".into())
+            ParameterValue::Array(vec![ParameterValue::String("input.image".into())])
         );
     }
 

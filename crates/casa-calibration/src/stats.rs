@@ -4,7 +4,7 @@
 //! The first `calstat`-class surface stays library-first and focuses on
 //! machine-readable statistics over calibration-table values. It deliberately
 //! avoids selection or logging concerns and instead returns a stable report
-//! shape that can back tests and future CLI/TUI surfaces.
+//! shape that can back tests, the CLI and Python.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

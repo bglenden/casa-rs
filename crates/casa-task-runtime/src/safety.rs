@@ -18,11 +18,6 @@ impl RunSafetyRequirements {
         &self.classes
     }
 
-    /// Interactive launchers confirm product creation and destructive writes.
-    pub fn requires_interactive_confirmation(&self) -> bool {
-        !self.classes.is_empty()
-    }
-
     /// Runtime authorization required by `--confirm-overwrite`-style controls.
     pub fn requires_overwrite_confirmation(&self) -> bool {
         self.classes.contains(&RunSafetyClass::Overwrite)
@@ -185,7 +180,6 @@ mod tests {
             .set("overwrite", ParameterValue::Bool(true))
             .unwrap();
         let requirements = session.required_run_safety().unwrap();
-        assert!(requirements.requires_interactive_confirmation());
         assert!(requirements.requires_overwrite_confirmation());
         assert!(!requirements.requires_input_mutation_confirmation());
         assert!(
@@ -202,7 +196,6 @@ mod tests {
             requirements.classes(),
             &BTreeSet::from([RunSafetyClass::ProductWrite])
         );
-        assert!(requirements.requires_interactive_confirmation());
         assert!(!requirements.requires_overwrite_confirmation());
         assert!(!requirements.requires_input_mutation_confirmation());
     }
@@ -217,7 +210,6 @@ mod tests {
             .set("mode", ParameterValue::String("put".to_string()))
             .unwrap();
         let requirements = session.required_run_safety().unwrap();
-        assert!(requirements.requires_interactive_confirmation());
         assert!(requirements.requires_input_mutation_confirmation());
         assert!(!requirements.requires_overwrite_confirmation());
     }

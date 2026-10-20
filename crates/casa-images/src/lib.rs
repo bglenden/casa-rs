@@ -67,7 +67,6 @@ pub mod image;
 pub mod image_expr;
 mod image_expr_ops;
 pub mod image_info;
-pub mod image_view;
 pub mod subimage;
 pub mod temp_image;
 
@@ -97,10 +96,5 @@ pub use image_expr::{
     MaskExprBuilder, MaskExpression, MaskLogicalOp, ReductionOp,
 };
 pub use image_info::{ImageInfo, ImageType};
-pub use image_view::{
-    ImageAxisModel, ImageAxisValue, ImageDisplayAxis, ImageMetadataSection, ImageNonDisplayAxis,
-    ImageProbe, ImageProfile, ImageProfileSample, ImageViewCapabilities, ImageViewWindow,
-    OpenedImageView, PlaneRaster,
-};
 pub use subimage::{SubImage, SubImageMut};
 pub use temp_image::TempImage;

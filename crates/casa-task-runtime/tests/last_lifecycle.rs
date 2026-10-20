@@ -22,7 +22,6 @@ fn task_session(vis: &str, comment: &str) -> ParameterSession {
     session
 }
 
-
 fn read_slot(store: &ManagedStateStore, surface: &str, kind: ManagedProfileKind) -> Option<String> {
     store.read(surface, kind).unwrap()
 }
@@ -122,7 +121,6 @@ fn failed_and_cancelled_tasks_keep_attempted_last_without_promoting() {
         Some(prior_success)
     );
 }
-
 
 #[test]
 fn concurrent_profile_writers_are_observed_as_complete_atomic_snapshots() {

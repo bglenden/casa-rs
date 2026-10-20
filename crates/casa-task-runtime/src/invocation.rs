@@ -81,48 +81,6 @@ where
     Ok(adaptation.invocation)
 }
 
-/// Return whether one binding applies to the provider for the session's
-/// current resolved values.
-///
-/// Interactive consumers use this to render mode-specific fields without
-/// reimplementing provider predicates or failing open when a binding cannot
-/// be resolved.
-pub fn provider_parameter_applies(
-    session: &ParameterSession,
-    parameter: &str,
-) -> Result<bool, ProviderInvocationError> {
-    let binding = session
-        .bundle()
-        .surface
-        .bindings()
-        .iter()
-        .find(|binding| binding.name == parameter)
-        .ok_or_else(|| ProviderInvocationError::Parameter {
-            parameter: parameter.to_string(),
-            reason: "unknown surface parameter".to_string(),
-        })?;
-    let state =
-        session
-            .states()
-            .get(parameter)
-            .ok_or_else(|| ProviderInvocationError::Parameter {
-                parameter: parameter.to_string(),
-                reason: "resolved parameter state is missing".to_string(),
-            })?;
-    if !state.active {
-        return Ok(false);
-    }
-    let Some(predicate) = binding
-        .projections
-        .provider
-        .as_ref()
-        .and_then(|projection| projection.emit_when.as_ref())
-    else {
-        return Ok(true);
-    };
-    Ok(evaluate_provider_predicate(predicate, session) == Some(true))
-}
-
 fn project_direct_cli_args(
     session: &ParameterSession,
 ) -> Result<(Vec<String>, BTreeSet<String>), ProviderInvocationError> {
@@ -568,26 +526,6 @@ mod tests {
         .expect("adapter consumed every active family value");
         assert_eq!(invocation.args, ["--json-run", "-"]);
         assert_eq!(invocation.stdin.as_deref(), Some("{\"kind\":\"family\"}\n"));
-    }
-
-    #[test]
-    fn provider_applicability_uses_the_canonical_mode_predicate_and_fails_closed() {
-        let bundle = builtin_surface_bundle("calibrate").unwrap();
-        let mut session = ParameterSession::defaults(bundle).unwrap();
-
-        session
-            .set("mode", ParameterValue::String("solve_gain".into()))
-            .unwrap();
-        assert!(provider_parameter_applies(&session, "gain_type").unwrap());
-        assert!(!provider_parameter_applies(&session, "fluxscale_input").unwrap());
-        assert!(provider_parameter_applies(&session, "vis").unwrap());
-        assert!(provider_parameter_applies(&session, "misspelled").is_err());
-
-        session
-            .set("mode", ParameterValue::String("fluxscale".into()))
-            .unwrap();
-        assert!(!provider_parameter_applies(&session, "gain_type").unwrap());
-        assert!(provider_parameter_applies(&session, "fluxscale_input").unwrap());
     }
 
     #[test]
