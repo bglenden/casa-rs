@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		00000000000000000000004E /* NotebookMarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001C /* NotebookMarkdownView.swift */; };
 		000000000000000000000040 /* CasarsMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000010 /* CasarsMacApp.swift */; };
 		000000000000000000000041 /* CentralWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000011 /* CentralWorkspaceView.swift */; };
 		000000000000000000000042 /* GUIEvidenceCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000012 /* GUIEvidenceCapture.swift */; };
@@ -35,6 +36,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		00000000000000000000001C /* NotebookMarkdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotebookMarkdownView.swift; sourceTree = "<group>"; };
 		000000000000000000000010 /* CasarsMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CasarsMacApp.swift; sourceTree = "<group>"; };
 		000000000000000000000011 /* CentralWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CentralWorkspaceView.swift; sourceTree = "<group>"; };
 		000000000000000000000012 /* GUIEvidenceCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GUIEvidenceCapture.swift; sourceTree = "<group>"; };
@@ -99,6 +101,7 @@
 				000000000000000000000011 /* CentralWorkspaceView.swift */,
 				000000000000000000000012 /* GUIEvidenceCapture.swift */,
 				000000000000000000000013 /* ScientificNotebookView.swift */,
+				00000000000000000000001C /* NotebookMarkdownView.swift */,
 				000000000000000000000017 /* PersistentScientificNotebookView.swift */,
 				000000000000000000000018 /* PythonNotebookPrototypeView.swift */,
 				000000000000000000000019 /* TutorialNotebookPrototypeView.swift */,
@@ -297,6 +300,7 @@
 				000000000000000000000041 /* CentralWorkspaceView.swift in Sources */,
 				000000000000000000000042 /* GUIEvidenceCapture.swift in Sources */,
 				000000000000000000000043 /* ScientificNotebookView.swift in Sources */,
+				00000000000000000000004E /* NotebookMarkdownView.swift in Sources */,
 				000000000000000000000049 /* PersistentScientificNotebookView.swift in Sources */,
 				00000000000000000000004A /* PythonNotebookPrototypeView.swift in Sources */,
 				00000000000000000000004B /* TutorialNotebookPrototypeView.swift in Sources */,

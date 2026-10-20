@@ -231,9 +231,8 @@ struct AssistantDiscussionView: View {
                     }
                     Spacer()
                 }
-                if let rendered = NotebookMarkdownPresentation.attributedString(message.content) {
-                    Text(rendered).workbenchFont(.body).textSelection(.enabled)
-                }
+                NotebookMarkdownView(blocks: NotebookMarkdownPresentation.blocks(message.content))
+                    .workbenchFont(.body).textSelection(.enabled)
                 ForEach(Array(message.citations.enumerated()), id: \.element.id) { index, citation in
                     Button {
                         sourceCitation = citation

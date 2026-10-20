@@ -680,6 +680,7 @@ struct RichMarkdownBlockEditor: View {
     @FocusState private var editorFocused: Bool
 
     var body: some View {
+        let blocks = isEditing ? [] : NotebookMarkdownPresentation.blocks(source)
         if let headingLevel {
             TextField("Heading", text: Binding(
                 get: { source },
@@ -713,8 +714,8 @@ struct RichMarkdownBlockEditor: View {
                 .onChange(of: editorFocused) { focused in
                     if !focused, !source.isEmpty { isEditing = false }
                 }
-            } else if let rendered = NotebookMarkdownPresentation.attributedString(source) {
-                Text(rendered)
+            } else if !blocks.isEmpty {
+                NotebookMarkdownView(blocks: blocks)
                     .font(.system(size: 15))
                     .foregroundStyle(Color(nsColor: .labelColor))
                     .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)

@@ -81,6 +81,44 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertFalse(try require("task.run").isEnabled)
     }
 
+    func testNotebookMarkdownParagraphAndTableLayout() throws {
+        launchPrototype()
+        let markdown = """
+        # Markdown layout
+
+        First paragraph.
+
+        Second paragraph.
+
+        | Scan | Peak |
+        | --- | ---: |
+        | 4 | 126 |
+        | 26 | 122 |
+
+        Final paragraph.
+        """
+        selectViewMode("Raw")
+        replaceText("notebook.editor.raw", with: markdown)
+        selectViewMode("Rich")
+        let first = app.staticTexts["First paragraph."].firstMatch
+        let second = app.staticTexts["Second paragraph."].firstMatch
+        let scan = app.staticTexts["Scan"].firstMatch
+        let peak = app.staticTexts["Peak"].firstMatch
+        let value = app.staticTexts["126"].firstMatch
+        let final = app.staticTexts["Final paragraph."].firstMatch
+        for text in [first, second, scan, peak, value, final] {
+            XCTAssertTrue(text.waitForExistence(timeout: 5), app.debugDescription)
+        }
+        XCTAssertGreaterThan(second.frame.minY, first.frame.maxY)
+        XCTAssertGreaterThan(scan.frame.minY, second.frame.maxY)
+        XCTAssertGreaterThan(peak.frame.minX, scan.frame.maxX)
+        XCTAssertGreaterThan(value.frame.minY, peak.frame.maxY)
+        XCTAssertGreaterThan(final.frame.minY, value.frame.maxY)
+        selectViewMode("Raw")
+        XCTAssertEqual(try textValue(try require("notebook.editor.raw")), markdown)
+        assertZeroProductionBoundaryCalls()
+    }
+
     func testCompleteDocumentEditingAndTaskProjection() throws {
         launchPrototype()
 
@@ -3246,8 +3284,8 @@ final class CasarsMacUITests: XCTestCase {
                 waitForTextValue(edited, equalTo: value),
                 "Raw editor did not commit the complete pasted document"
             )
-            app.typeKey(.tab, modifierFlags: [])
-            Thread.sleep(forTimeInterval: 0.2)
+            // Tab inserts a literal tab in a multiline editor. The caller's
+            // next control click ends editing without changing the document.
         } else {
             XCTAssertTrue(
                 waitForTextValue(edited, containing: value),
