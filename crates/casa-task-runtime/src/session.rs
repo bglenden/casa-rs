@@ -94,13 +94,6 @@ impl ParameterSession {
                 "a parsed profile cannot be labeled Defaults".to_string(),
             ));
         }
-        if matches!(source, BaseSource::LastSuccessful)
-            && bundle.surface.kind() == casa_provider_contracts::SurfaceKind::Session
-        {
-            return Err(ParameterSessionError::InvalidSource(
-                "session surfaces do not have Last Successful".to_string(),
-            ));
-        }
         let resolved = resolve_profile(profile, &bundle)?;
         let mut session = Self {
             bundle,
@@ -169,13 +162,6 @@ impl ParameterSession {
                 ));
             }
             (_, Some(profile)) => {
-                if matches!(source, BaseSource::LastSuccessful)
-                    && self.bundle.surface.kind() == casa_provider_contracts::SurfaceKind::Session
-                {
-                    return Err(ParameterSessionError::InvalidSource(
-                        "session surfaces do not have Last Successful".to_string(),
-                    ));
-                }
                 let resolved = resolve_profile(profile, &candidate.bundle)?;
                 candidate.base_source = source;
                 candidate.base_overrides = resolved.explicit_overrides;
@@ -508,9 +494,7 @@ niter = 2
     #[test]
     fn incomplete_interactive_draft_cannot_be_saved_or_executed() {
         let mut required_bundle = bundle();
-        let SurfaceDefinition::Task(definition) = &mut required_bundle.surface else {
-            unreachable!()
-        };
+        let SurfaceDefinition::Task(definition) = &mut required_bundle.surface;
         let binding = definition.bindings.first_mut().unwrap();
         binding.default = DefaultSpec::Required;
         binding.required_when = Predicate::Always;
@@ -597,9 +581,7 @@ niter = 2
     #[test]
     fn field_state_predicates_use_catalog_semantic_equality() {
         let mut bundle = builtin_surface_bundle("msexplore").unwrap();
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
-            unreachable!("msexplore is a task")
-        };
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition
             .bindings
             .iter_mut()

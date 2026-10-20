@@ -19,9 +19,6 @@ pub struct ProviderCliMachineActions {
     /// One-shot task execution action.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub json_run: Option<String>,
-    /// Stateful session action.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session: Option<String>,
 }
 
 /// CLI projection metadata.

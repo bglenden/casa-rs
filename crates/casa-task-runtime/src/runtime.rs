@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use casa_provider_contracts::{ParameterType, ParameterValue, SurfaceContractBundle, SurfaceKind};
+use casa_provider_contracts::{ParameterType, ParameterValue, SurfaceContractBundle};
 use thiserror::Error;
 
 use crate::{
@@ -86,11 +86,6 @@ impl ParameterRuntime {
                 ParameterSession::from_profile(request.bundle, BaseSource::Last, &profile)?
             }
             BaseSource::LastSuccessful => {
-                if request.bundle.surface.kind() != SurfaceKind::Task {
-                    return Err(ParameterRuntimeError::InvalidRequest(
-                        "Last Successful exists only for task surfaces".to_string(),
-                    ));
-                }
                 let text = self.profile_text(
                     &request,
                     &surface_id,

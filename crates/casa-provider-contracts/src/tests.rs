@@ -12,7 +12,6 @@ use crate::{
 fn provider_surface_kind_uses_snake_case_wire_names() {
     let cases = [
         (ProviderSurfaceKind::Task, "task"),
-        (ProviderSurfaceKind::Session, "session"),
         (ProviderSurfaceKind::Object, "object"),
     ];
 
@@ -30,15 +29,14 @@ fn cli_machine_actions_omit_absent_projection_flags() {
     let actions = ProviderCliMachineActions {
         json_schema: Some("--json-schema".to_string()),
         protocol_info: None,
-        json_run: None,
-        session: Some("--session".to_string()),
+        json_run: Some("--json-run <SOURCE>".to_string()),
     };
 
     assert_eq!(
         serde_json::to_value(actions).unwrap(),
         json!({
             "json_schema": "--json-schema",
-            "session": "--session"
+            "json_run": "--json-run <SOURCE>"
         })
     );
 }
@@ -51,7 +49,6 @@ fn projection_metadata_omits_absent_projection_sections() {
                 json_schema: Some("--json-schema".to_string()),
                 protocol_info: None,
                 json_run: None,
-                session: None,
             },
         }),
         python: None,

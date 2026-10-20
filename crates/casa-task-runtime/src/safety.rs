@@ -250,9 +250,7 @@ mod tests {
     #[test]
     fn inactive_values_cannot_activate_even_a_negated_safety_predicate() {
         let mut bundle = builtin_surface_bundle("calibrate").unwrap();
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
-            unreachable!("calibrate is a task")
-        };
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.safety_rules = vec![TaskSafetyRule {
             class: RunSafetyClass::InputMutation,
             when: Predicate::Not {
@@ -273,9 +271,7 @@ mod tests {
     #[test]
     fn safety_comparisons_use_concept_semantic_equality() {
         let mut bundle = builtin_surface_bundle("msexplore").unwrap();
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
-            unreachable!("msexplore is a task")
-        };
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.safety_rules = vec![TaskSafetyRule {
             class: RunSafetyClass::InputMutation,
             when: Predicate::Equals {

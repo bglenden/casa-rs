@@ -8,10 +8,10 @@ use serde_json::Value as JsonValue;
 
 use crate::{
     ProviderComponentSchemas, ProviderProjectionMetadata, ProviderSurfaceKind,
-    SessionSemanticContract, SurfaceContractBundle, SurfaceDefinition, TaskSemanticContract,
+    SurfaceContractBundle, TaskSemanticContract,
 };
 
-/// Shared version descriptor for every task and session provider protocol.
+/// Shared version descriptor for every provider protocol.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderProtocolDescriptor {
     /// Stable protocol identifier.
@@ -41,10 +41,10 @@ impl ProviderProtocolDescriptor {
     }
 }
 
-/// Generic top-level provider bundle shared by task and session protocols.
+/// Generic top-level provider bundle.
 ///
-/// `S` retains the task- or session-specific semantic contract. `D` is a
-/// strongly typed schema payload flattened into the historical wire shape.
+/// `S` retains the provider's semantic contract. `D` is a strongly typed
+/// schema payload flattened into the historical wire shape.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProviderContractEnvelope<S, D> {
     /// Compatibility descriptor for the provider protocol.
@@ -73,15 +73,6 @@ pub struct TaskProviderSchemas<E = NoAdditionalProviderSchemas> {
     pub additional: E,
 }
 
-/// Typed request/response schemas for a stateful session provider.
-#[derive(Debug, Clone, Serialize)]
-pub struct SessionProviderSchemas<E = NoAdditionalProviderSchemas> {
-    pub request_schema: RootSchema,
-    pub response_schema: RootSchema,
-    #[serde(flatten)]
-    pub additional: E,
-}
-
 /// Empty typed extension for providers without additional root schemas.
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct NoAdditionalProviderSchemas {}
@@ -89,10 +80,6 @@ pub struct NoAdditionalProviderSchemas {}
 /// Shared task-provider envelope.
 pub type TaskProviderContract<E = NoAdditionalProviderSchemas> =
     ProviderContractEnvelope<TaskSemanticContract, TaskProviderSchemas<E>>;
-
-/// Shared session-provider envelope.
-pub type SessionProviderContract<E = NoAdditionalProviderSchemas> =
-    ProviderContractEnvelope<SessionSemanticContract, SessionProviderSchemas<E>>;
 
 /// Stable validation failure for a provider envelope.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,7 +91,7 @@ pub struct ProviderContractValidationError {
 impl<E> ProviderContractEnvelope<TaskSemanticContract, TaskProviderSchemas<E>> {
     /// Validate shared task-envelope invariants.
     pub fn validate(&self) -> Result<(), Vec<ProviderContractValidationError>> {
-        let mut errors = self.validate_common(ProviderSurfaceKind::Task);
+        let mut errors = self.validate_common();
         if self.semantic.operations.is_empty() {
             errors.push(validation_error(
                 "missing_operations",
@@ -155,36 +142,6 @@ impl<E> ProviderContractEnvelope<TaskSemanticContract, TaskProviderSchemas<E>> {
     }
 }
 
-impl<E> ProviderContractEnvelope<SessionSemanticContract, SessionProviderSchemas<E>> {
-    /// Validate shared session-envelope invariants.
-    pub fn validate(&self) -> Result<(), Vec<ProviderContractValidationError>> {
-        let mut errors = self.validate_common(ProviderSurfaceKind::Session);
-        if self.semantic.transport.trim().is_empty() {
-            errors.push(validation_error(
-                "missing_transport",
-                "session provider declares an empty transport",
-            ));
-        }
-        if self.semantic.request_schema != self.domain_schemas.request_schema {
-            errors.push(validation_error(
-                "request_schema_mismatch",
-                "semantic and flattened session request schemas differ",
-            ));
-        }
-        if self.semantic.response_schema != self.domain_schemas.response_schema {
-            errors.push(validation_error(
-                "response_schema_mismatch",
-                "semantic and flattened session response schemas differ",
-            ));
-        }
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
-    }
-}
-
 impl<S, D> ProviderContractEnvelope<S, D> {
     /// Render the canonical provider bundle deterministically.
     pub fn to_pretty_json(&self) -> Result<String, serde_json::Error>
@@ -195,10 +152,10 @@ impl<S, D> ProviderContractEnvelope<S, D> {
         serde_json::to_string_pretty(self)
     }
 
-    fn validate_common(
-        &self,
-        expected_kind: ProviderSurfaceKind,
-    ) -> Vec<ProviderContractValidationError> {
+    /// Invariants of a task-provider envelope that do not depend on its
+    /// semantic or schema types.
+    fn validate_common(&self) -> Vec<ProviderContractValidationError> {
+        let expected_kind = ProviderSurfaceKind::Task;
         let mut errors = Vec::new();
         if self.protocol.protocol_name.trim().is_empty() {
             errors.push(validation_error(
@@ -242,19 +199,6 @@ impl<S, D> ProviderContractEnvelope<S, D> {
                     format!("duplicate parameter surface {:?}", bundle.surface.id()),
                 ));
             }
-            let surface_kind = match &bundle.surface {
-                SurfaceDefinition::Task(_) => ProviderSurfaceKind::Task,
-                SurfaceDefinition::Session(_) => ProviderSurfaceKind::Session,
-            };
-            if surface_kind != expected_kind {
-                errors.push(validation_error(
-                    "parameter_surface_kind",
-                    format!(
-                        "parameter surface {:?} is {surface_kind:?}, expected {expected_kind:?}",
-                        bundle.surface.id()
-                    ),
-                ));
-            }
             if let Err(surface_errors) = bundle.validate() {
                 errors.extend(surface_errors.into_iter().map(|error| {
                     validation_error(
@@ -281,31 +225,16 @@ impl<S, D> ProviderContractEnvelope<S, D> {
                         "provider CLI must declare protocol-info and schema actions",
                     ));
                 }
-                match expected_kind {
-                    ProviderSurfaceKind::Task
-                        if actions.json_run.as_deref() != Some("--json-run <SOURCE>")
-                            || actions.session.is_some() =>
-                    {
-                        errors.push(validation_error(
-                            "task_actions",
-                            "task provider must declare json-run and no session action",
-                        ));
-                    }
-                    ProviderSurfaceKind::Session
-                        if actions.session.as_deref() != Some("--session")
-                            || actions.json_run.is_some() =>
-                    {
-                        errors.push(validation_error(
-                            "session_actions",
-                            "session provider must declare session and no json-run action",
-                        ));
-                    }
-                    _ => {}
+                if actions.json_run.as_deref() != Some("--json-run <SOURCE>") {
+                    errors.push(validation_error(
+                        "task_actions",
+                        "task provider must declare the json-run action",
+                    ));
                 }
             }
             None => errors.push(validation_error(
                 "missing_cli_projection",
-                "task and session providers must declare CLI discovery actions",
+                "task providers must declare CLI discovery actions",
             )),
         }
         errors
@@ -359,7 +288,6 @@ mod tests {
                         json_schema: Some("--json-schema".to_string()),
                         protocol_info: Some("--protocol-info".to_string()),
                         json_run: Some("--json-run <SOURCE>".to_string()),
-                        session: None,
                     },
                 }),
                 python: None,
@@ -399,10 +327,8 @@ mod tests {
             .json_run = Some("--json-run <SOURCE>".to_string());
 
         let original_surface = bundle.parameter_surfaces[0].clone();
-        match &mut bundle.parameter_surfaces[0].surface {
-            SurfaceDefinition::Task(definition) => definition.id.clear(),
-            SurfaceDefinition::Session(_) => unreachable!(),
-        }
+        let crate::SurfaceDefinition::Task(definition) = &mut bundle.parameter_surfaces[0].surface;
+        definition.id.clear();
         assert!(validation_codes(&bundle).contains("parameter_surface"));
         bundle.parameter_surfaces[0] = original_surface;
 
@@ -411,7 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn task_envelope_rejects_session_surfaces_and_missing_actions() {
+    fn task_envelope_rejects_missing_operations_and_actions() {
         let request_schema = schema_for!(String);
         let result_schema = schema_for!(usize);
         let bundle = TaskProviderContract {
@@ -432,7 +358,7 @@ mod tests {
                 cli: None,
                 python: None,
             },
-            parameter_surfaces: vec![builtin_surface_bundle("imexplore").unwrap()],
+            parameter_surfaces: vec![builtin_surface_bundle("imstat").unwrap()],
             domain_schemas: TaskProviderSchemas {
                 request_schema,
                 result_schema,
@@ -448,7 +374,6 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert!(codes.contains("missing_operations"));
         assert!(codes.contains("missing_cli_projection"));
-        assert!(codes.contains("parameter_surface_kind"));
     }
 
     fn validation_codes<E: Serialize>(

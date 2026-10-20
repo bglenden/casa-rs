@@ -2,13 +2,12 @@
 //! Shared typed parameters, sparse TOML profiles, and managed Last state.
 //!
 //! This crate owns parameter *lifecycle* rather than provider semantics.  The
-//! latter live in [`casa_provider_contracts`], allowing CLI, TUI, GUI/UniFFI,
+//! latter live in [`casa_provider_contracts`], allowing the `casars` CLI,
 //! Python, and providers to resolve the same self-contained surface bundle.
 
 mod cli;
 mod completion;
 mod diagnostic;
-mod edit;
 mod invocation;
 mod normalize;
 mod profile;
@@ -27,10 +26,6 @@ pub use completion::{
     decode_task_completion,
 };
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticLevel, SourceLocation};
-pub use edit::{
-    ParameterEditDiagnostic, ParameterEditDiagnosticCode, ParameterEditResult,
-    ParameterEditSuggestion, validate_parameter_edit,
-};
 pub use invocation::{
     ProviderInvocationError, parameter_value_is_omitted, project_parameter_value,
     project_provider_invocation, provider_parameter_applies,
@@ -51,6 +46,6 @@ pub use session::{
     ResolutionPatch,
 };
 pub use storage::{
-    ManagedProfileKind, ManagedStateError, ManagedStateStore, SessionLastCoordinator,
-    StateWriteOutcome, TaskLastCoordinator, write_parameter_profile_atomic,
+    ManagedProfileKind, ManagedStateError, ManagedStateStore, StateWriteOutcome,
+    TaskLastCoordinator, write_parameter_profile_atomic,
 };

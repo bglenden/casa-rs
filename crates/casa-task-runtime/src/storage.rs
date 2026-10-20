@@ -6,8 +6,6 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
 
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -87,24 +85,16 @@ pub struct StateWriteOutcome {
 }
 
 /// Common result for automatic persistence. Callers surface failures as a
-/// prominent warning without changing the scientific task/session result.
-#[derive(Debug)]
+/// prominent warning without changing the scientific task result.
+#[derive(Debug, Default)]
 struct AutomaticSaveReport {
-    outcome: Option<StateWriteOutcome>,
     warning: Option<String>,
 }
 
 impl AutomaticSaveReport {
     fn from_result(result: Result<StateWriteOutcome, ManagedStateError>) -> Self {
-        match result {
-            Ok(outcome) => Self {
-                outcome: Some(outcome),
-                warning: None,
-            },
-            Err(error) => Self {
-                outcome: None,
-                warning: Some(error.to_string()),
-            },
+        Self {
+            warning: result.err().map(|error| error.to_string()),
         }
     }
 }
@@ -313,10 +303,7 @@ impl TaskLastState {
         let snapshot = session.render_sparse()?;
         self.attempted_snapshot = Some(snapshot.clone());
         if !self.enabled {
-            return Ok(AutomaticSaveReport {
-                outcome: None,
-                warning: None,
-            });
+            return Ok(AutomaticSaveReport::default());
         }
         Ok(AutomaticSaveReport::from_result(self.store.write(
             &self.surface_id,
@@ -329,298 +316,16 @@ impl TaskLastState {
     /// Failure and cancellation deliberately do nothing.
     fn after_completion(&mut self, successful: bool) -> AutomaticSaveReport {
         let Some(snapshot) = self.attempted_snapshot.take() else {
-            return AutomaticSaveReport {
-                outcome: None,
-                warning: None,
-            };
+            return AutomaticSaveReport::default();
         };
         if !successful || !self.enabled {
-            return AutomaticSaveReport {
-                outcome: None,
-                warning: None,
-            };
+            return AutomaticSaveReport::default();
         }
         AutomaticSaveReport::from_result(self.store.write(
             &self.surface_id,
             ManagedProfileKind::LastSuccessful,
             &snapshot,
         ))
-    }
-}
-
-/// Successful-open and debounced accepted-change Last lifecycle for a session.
-#[derive(Debug)]
-struct SessionLastState {
-    store: ManagedStateStore,
-    surface_id: String,
-    enabled: bool,
-    debounce: Duration,
-    opened: bool,
-    persisted_snapshot: Option<String>,
-    pending: Option<(Instant, String)>,
-}
-
-impl SessionLastState {
-    fn new(
-        store: ManagedStateStore,
-        surface_id: impl Into<String>,
-        enabled: bool,
-        debounce: Duration,
-    ) -> Self {
-        Self {
-            store,
-            surface_id: surface_id.into(),
-            enabled,
-            debounce,
-            opened: false,
-            persisted_snapshot: None,
-            pending: None,
-        }
-    }
-
-    /// Record Last only after the backend has successfully opened the root.
-    fn opened(
-        &mut self,
-        session: &ParameterSession,
-    ) -> Result<AutomaticSaveReport, ParameterSessionError> {
-        let snapshot = session.render_sparse()?;
-        self.opened = true;
-        self.pending = None;
-        if !self.enabled {
-            self.persisted_snapshot = Some(snapshot);
-            return Ok(AutomaticSaveReport {
-                outcome: None,
-                warning: None,
-            });
-        }
-        let report = AutomaticSaveReport::from_result(self.store.write(
-            &self.surface_id,
-            ManagedProfileKind::Last,
-            &snapshot,
-        ));
-        if report.outcome.is_some() {
-            self.persisted_snapshot = Some(snapshot);
-        }
-        Ok(report)
-    }
-
-    /// Queue a durable setting only after the backend accepted the change.
-    fn accepted_durable_change(
-        &mut self,
-        session: &ParameterSession,
-        now: Instant,
-    ) -> Result<(), ParameterSessionError> {
-        if self.opened && self.enabled {
-            let snapshot = session.render_sparse()?;
-            if self.persisted_snapshot.as_ref() == Some(&snapshot) {
-                self.pending = None;
-            } else if self
-                .pending
-                .as_ref()
-                .is_none_or(|(_, pending)| pending != &snapshot)
-            {
-                self.pending = Some((now + self.debounce, snapshot));
-            }
-        }
-        Ok(())
-    }
-
-    /// Change automatic persistence policy without reconstructing the
-    /// lifecycle. Disabling it also discards any not-yet-durable edit.
-    fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
-        if !enabled {
-            self.pending = None;
-        }
-    }
-
-    /// Flush a due debounced update. Transient navigation never calls the
-    /// queue method and therefore cannot cause a write.
-    fn flush_if_due(&mut self, now: Instant) -> AutomaticSaveReport {
-        if self
-            .pending
-            .as_ref()
-            .is_none_or(|(deadline, _)| *deadline > now)
-        {
-            return AutomaticSaveReport {
-                outcome: None,
-                warning: None,
-            };
-        }
-        self.flush()
-    }
-
-    /// Flush pending durable state on clean close.
-    fn flush(&mut self) -> AutomaticSaveReport {
-        let Some((_, snapshot)) = self.pending.take() else {
-            return AutomaticSaveReport {
-                outcome: None,
-                warning: None,
-            };
-        };
-        let report = AutomaticSaveReport::from_result(self.store.write(
-            &self.surface_id,
-            ManagedProfileKind::Last,
-            &snapshot,
-        ));
-        if report.outcome.is_some() {
-            self.persisted_snapshot = Some(snapshot);
-        }
-        report
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct SessionLastDestination {
-    workspace: PathBuf,
-    surface_id: String,
-}
-
-impl SessionLastDestination {
-    fn new(workspace: &Path, surface_id: &str) -> Self {
-        let workspace = fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_path_buf());
-        Self {
-            workspace,
-            surface_id: surface_id.to_string(),
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct SessionLastCoordinatorState {
-    destinations: BTreeMap<SessionLastDestination, SessionLastState>,
-    warnings: Vec<String>,
-}
-
-/// Process-local owner of session Last coalescing, deadlines, and writes.
-///
-/// Frontends report only successful opens and accepted durable changes. This
-/// coordinator owns the timer and deduplicated destination state, so no GUI,
-/// TUI, or FFI consumer needs to reimplement debounce policy.
-#[derive(Debug, Clone)]
-pub struct SessionLastCoordinator {
-    debounce: Duration,
-    state: Arc<Mutex<SessionLastCoordinatorState>>,
-}
-
-impl SessionLastCoordinator {
-    pub fn new(debounce: Duration) -> Self {
-        Self {
-            debounce,
-            state: Arc::new(Mutex::new(SessionLastCoordinatorState::default())),
-        }
-    }
-
-    /// Record a successfully opened session and persist its accepted root.
-    pub fn opened(
-        &self,
-        workspace: impl AsRef<Path>,
-        surface_id: &str,
-        enabled: bool,
-        session: &ParameterSession,
-    ) -> Result<(), ParameterSessionError> {
-        let destination = SessionLastDestination::new(workspace.as_ref(), surface_id);
-        let mut state = self
-            .state
-            .lock()
-            .expect("session Last coordinator poisoned");
-        let lifecycle = state.destinations.entry(destination).or_insert_with(|| {
-            SessionLastState::new(
-                ManagedStateStore::for_workspace(workspace.as_ref()),
-                surface_id,
-                enabled,
-                self.debounce,
-            )
-        });
-        lifecycle.set_enabled(enabled);
-        let report = lifecycle.opened(session)?;
-        if let Some(warning) = report.warning {
-            state.warnings.push(warning);
-        }
-        Ok(())
-    }
-
-    /// Queue one backend-accepted durable change. The coordinator schedules
-    /// the due flush and coalesces any newer change for the same destination.
-    pub fn accepted_durable_change(
-        &self,
-        workspace: impl AsRef<Path>,
-        surface_id: &str,
-        enabled: bool,
-        session: &ParameterSession,
-    ) -> Result<(), ParameterSessionError> {
-        let destination = SessionLastDestination::new(workspace.as_ref(), surface_id);
-        {
-            let mut state = self
-                .state
-                .lock()
-                .expect("session Last coordinator poisoned");
-            let lifecycle = state.destinations.get_mut(&destination).ok_or_else(|| {
-                ParameterSessionError::InvalidLifecycle(format!(
-                    "accepted durable change for {surface_id:?} before successful open"
-                ))
-            })?;
-            lifecycle.set_enabled(enabled);
-            if !lifecycle.opened {
-                return Err(ParameterSessionError::InvalidLifecycle(format!(
-                    "accepted durable change for {surface_id:?} before successful open"
-                )));
-            }
-            lifecycle.accepted_durable_change(session, Instant::now())?;
-        }
-        let weak_state = Arc::downgrade(&self.state);
-        let debounce = self.debounce;
-        thread::spawn(move || {
-            thread::sleep(debounce);
-            let Some(state) = weak_state.upgrade() else {
-                return;
-            };
-            let mut state = state.lock().expect("session Last coordinator poisoned");
-            let Some(lifecycle) = state.destinations.get_mut(&destination) else {
-                return;
-            };
-            if let Some(warning) = lifecycle.flush_if_due(Instant::now()).warning {
-                state.warnings.push(warning);
-            }
-        });
-        Ok(())
-    }
-
-    /// Flush one destination during a clean tab/session close.
-    pub fn flush(&self, workspace: impl AsRef<Path>, surface_id: &str) {
-        let destination = SessionLastDestination::new(workspace.as_ref(), surface_id);
-        let mut state = self
-            .state
-            .lock()
-            .expect("session Last coordinator poisoned");
-        if let Some(mut lifecycle) = state.destinations.remove(&destination)
-            && let Some(warning) = lifecycle.flush().warning
-        {
-            state.warnings.push(warning);
-        }
-    }
-
-    /// Flush every pending session during a clean frontend shutdown.
-    pub fn flush_all(&self) {
-        let mut state = self
-            .state
-            .lock()
-            .expect("session Last coordinator poisoned");
-        let destinations = std::mem::take(&mut state.destinations);
-        for (_, mut lifecycle) in destinations {
-            if let Some(warning) = lifecycle.flush().warning {
-                state.warnings.push(warning);
-            }
-        }
-    }
-
-    /// Drain asynchronous persistence warnings for presentation by a frontend.
-    pub fn take_warnings(&self) -> Vec<String> {
-        let mut state = self
-            .state
-            .lock()
-            .expect("session Last coordinator poisoned");
-        std::mem::take(&mut state.warnings)
     }
 }
 
@@ -772,43 +477,5 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(actual.bytes().all(|byte| byte == b'a') || actual.bytes().all(|byte| byte == b'b'));
-    }
-
-    #[test]
-    fn coordinator_owns_debounce_and_coalesces_to_latest_values() {
-        let workspace = tempfile::tempdir().unwrap();
-        let bundle = casa_provider_contracts::builtin_surface_bundle("tablebrowser").unwrap();
-        let mut session = ParameterSession::defaults(bundle).unwrap();
-        let coordinator = SessionLastCoordinator::new(Duration::from_millis(10));
-        session
-            .set(
-                "table",
-                casa_provider_contracts::ParameterValue::String("example.table".into()),
-            )
-            .unwrap();
-
-        coordinator
-            .opened(workspace.path(), "tablebrowser", true, &session)
-            .unwrap();
-        session
-            .set("nrow", casa_provider_contracts::ParameterValue::Integer(10))
-            .unwrap();
-        coordinator
-            .accepted_durable_change(workspace.path(), "tablebrowser", true, &session)
-            .unwrap();
-        session
-            .set("nrow", casa_provider_contracts::ParameterValue::Integer(20))
-            .unwrap();
-        coordinator
-            .accepted_durable_change(workspace.path(), "tablebrowser", true, &session)
-            .unwrap();
-
-        coordinator.flush_all();
-        let saved = ManagedStateStore::for_workspace(workspace.path())
-            .read("tablebrowser", ManagedProfileKind::Last)
-            .unwrap()
-            .unwrap();
-        assert!(saved.contains("nrow = 20"), "{saved}");
-        assert!(!saved.contains("nrow = 10"), "{saved}");
     }
 }

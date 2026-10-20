@@ -4,12 +4,10 @@ use std::fs;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
-use std::time::Duration;
 
 use casa_provider_contracts::{ParameterValue, builtin_surface_bundle};
 use casa_task_runtime::{
-    ManagedProfileKind, ManagedStateStore, ParameterSession, SessionLastCoordinator,
-    TaskLastCoordinator,
+    ManagedProfileKind, ManagedStateStore, ParameterSession, TaskLastCoordinator,
 };
 
 fn task_session(vis: &str, comment: &str) -> ParameterSession {
@@ -24,14 +22,6 @@ fn task_session(vis: &str, comment: &str) -> ParameterSession {
     session
 }
 
-fn image_session(path: &str) -> ParameterSession {
-    let mut session =
-        ParameterSession::defaults(builtin_surface_bundle("imexplore").unwrap()).unwrap();
-    session
-        .set("image", ParameterValue::String(path.to_string()))
-        .unwrap();
-    session
-}
 
 fn read_slot(store: &ManagedStateStore, surface: &str, kind: ManagedProfileKind) -> Option<String> {
     store.read(surface, kind).unwrap()
@@ -133,100 +123,6 @@ fn failed_and_cancelled_tasks_keep_attempted_last_without_promoting() {
     );
 }
 
-#[test]
-fn failed_session_open_and_preopen_changes_preserve_last() {
-    let workspace = tempfile::tempdir().unwrap();
-    let store = ManagedStateStore::for_workspace(workspace.path());
-    let prior = image_session("prior.image").render_sparse().unwrap();
-    store
-        .write("imexplore", ManagedProfileKind::Last, &prior)
-        .unwrap();
-
-    let lifecycle = SessionLastCoordinator::new(Duration::from_secs(60));
-
-    // A valid launch whose backend fails never calls opened(). Pre-open UI
-    // changes are therefore ignored by the lifecycle.
-    let mut backend_rejected = image_session("failed.image");
-    backend_rejected
-        .set("view", ParameterValue::String("spectrum".into()))
-        .unwrap();
-    assert!(lifecycle.take_warnings().is_empty());
-
-    // Validation failure in the success callback likewise cannot replace the
-    // prior complete Last profile or mark the lifecycle opened.
-    let incomplete =
-        ParameterSession::defaults(builtin_surface_bundle("imexplore").unwrap()).unwrap();
-    assert!(
-        lifecycle
-            .opened(workspace.path(), "imexplore", true, &incomplete)
-            .is_err()
-    );
-    assert!(
-        lifecycle
-            .accepted_durable_change(workspace.path(), "imexplore", true, &incomplete)
-            .is_err()
-    );
-    lifecycle.flush_all();
-    assert_eq!(
-        read_slot(&store, "imexplore", ManagedProfileKind::Last),
-        Some(prior)
-    );
-}
-
-#[test]
-fn session_open_debounces_latest_accepted_durable_state_and_flushes_on_close() {
-    let workspace = tempfile::tempdir().unwrap();
-    let store = ManagedStateStore::for_workspace(workspace.path());
-    let mut session = image_session("current.image");
-    let opened_snapshot = session.render_sparse().unwrap();
-    let lifecycle = SessionLastCoordinator::new(Duration::from_secs(60));
-
-    lifecycle
-        .opened(workspace.path(), "imexplore", true, &session)
-        .unwrap();
-    assert!(lifecycle.take_warnings().is_empty());
-    assert_eq!(
-        read_slot(&store, "imexplore", ManagedProfileKind::Last),
-        Some(opened_snapshot.clone())
-    );
-    assert_eq!(
-        read_slot(&store, "imexplore", ManagedProfileKind::LastSuccessful),
-        None
-    );
-
-    session
-        .set("stretch", ParameterValue::String("manual".into()))
-        .unwrap();
-    session
-        .set("clip_low", ParameterValue::String("1".into()))
-        .unwrap();
-    lifecycle
-        .accepted_durable_change(workspace.path(), "imexplore", true, &session)
-        .unwrap();
-    session
-        .set("clip_low", ParameterValue::String("2".into()))
-        .unwrap();
-    lifecycle
-        .accepted_durable_change(workspace.path(), "imexplore", true, &session)
-        .unwrap();
-    let latest_accepted = session.render_sparse().unwrap();
-
-    // A local/transient edit that was not acknowledged by the backend is not
-    // part of the queued snapshot.
-    session
-        .set("clip_high", ParameterValue::String("unaccepted".into()))
-        .unwrap();
-    lifecycle.flush(workspace.path(), "imexplore");
-    assert!(lifecycle.take_warnings().is_empty());
-    assert_eq!(
-        read_slot(&store, "imexplore", ManagedProfileKind::Last),
-        Some(latest_accepted)
-    );
-
-    // A second clean-close notification is harmless.
-    lifecycle.flush(workspace.path(), "imexplore");
-    assert!(lifecycle.take_warnings().is_empty());
-}
 
 #[test]
 fn concurrent_profile_writers_are_observed_as_complete_atomic_snapshots() {

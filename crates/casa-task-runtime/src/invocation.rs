@@ -591,33 +591,20 @@ mod tests {
     }
 
     #[test]
-    fn auto_sentinel_is_omitted_but_a_real_value_is_projected() {
-        let bundle = builtin_surface_bundle("imexplore").unwrap();
-        let mut session = ParameterSession::defaults(bundle).unwrap();
-        let invocation = project_provider_invocation(&session, |_family, _values, direct| {
-            Ok(ProviderInvocationAdaptation::direct(direct))
-        })
-        .unwrap();
-        assert!(
-            !invocation
-                .args
-                .iter()
-                .any(|argument| argument == "--movieaxis")
-        );
-
-        session
-            .set("movieaxis", ParameterValue::String("spectral".into()))
-            .unwrap();
-        let invocation = project_provider_invocation(&session, |_family, _values, direct| {
-            Ok(ProviderInvocationAdaptation::direct(direct))
-        })
-        .unwrap();
-        assert!(
-            invocation
-                .args
-                .windows(2)
-                .any(|pair| pair == ["--movieaxis", "spectral"])
-        );
+    fn auto_and_none_sentinels_are_omitted_but_real_values_are_projected() {
+        let omit_none = Some(&ValueAdapter::OmitNone);
+        for sentinel in ["auto", "none"] {
+            let value = ParameterValue::String(sentinel.into());
+            assert!(parameter_value_is_omitted(&value, omit_none), "{sentinel}");
+            assert!(!parameter_value_is_omitted(
+                &value,
+                Some(&ValueAdapter::Identity)
+            ));
+        }
+        assert!(!parameter_value_is_omitted(
+            &ParameterValue::String("spectral".into()),
+            omit_none
+        ));
     }
 
     #[test]
