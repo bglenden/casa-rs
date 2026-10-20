@@ -39,7 +39,6 @@
     "crates/casa-ms/tests/ms_full_verify_vs_cpp.rs",
     "crates/casa-ms/tests/msexplore_casa_parity.rs",
     "crates/casa-ms/tests/msexplore_cli.rs",
-    "crates/casa-notebook/src/tutorial.rs",
     "crates/casa-provider-contracts/src/parameters.rs",
     "crates/casa-tables/examples/support/table_demos.rs",
     "crates/casa-tables/src/storage/incremental_stman.rs",
@@ -65,13 +64,6 @@
     "crates/casa-types/src/measures/direction.rs",
     "crates/casa-vla/src/importer.rs",
     "crates/casa-vla/src/record.rs",
-    "crates/casars-frontend-services/src/lib.rs",
-    "crates/casars/src/app.rs",
-    "crates/casars/src/browser_render.rs",
-    "crates/casars/src/imagebrowser_runtime.rs",
-    "crates/casars/src/movie_perf.rs",
-    "crates/casars/src/tablebrowser_runtime.rs",
-    "crates/casars/src/tests.rs",
-    "crates/casars/src/ui.rs"
+    "crates/casars-frontend-services/src/lib.rs"
   ]
 }

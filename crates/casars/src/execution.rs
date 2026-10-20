@@ -1,132 +1,37 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
+//! Blocking execution of a task's provider process.
+
 use std::ffi::OsString;
-use std::io::{BufRead, BufReader, Read, Write as _};
+use std::io::Write as _;
 use std::path::PathBuf;
-use std::process::{Child, ExitStatus, Stdio};
-use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::Stdio;
 
 use crate::registry::ResolvedCommand;
 
-/// How long a cancelled child has to exit after SIGINT before it is
-/// killed: a cancelled imaging run stops within one block of a pass, or
-/// before its next phase (#677).
-const CANCEL_GRACE: Duration = Duration::from_secs(5);
-
+/// One provider invocation: the resolved command, its projected arguments
+/// and stdin payload, and the workspace it runs in.
 #[derive(Debug, Clone)]
 pub(crate) struct ExecutionPlan {
     pub command: ResolvedCommand,
     pub arguments: Vec<OsString>,
     pub stdin: Option<String>,
     pub working_directory: PathBuf,
-    pub renderer: Option<String>,
-    pub file_output_path: Option<String>,
 }
 
-#[derive(Debug)]
-pub(crate) enum ExecutionEvent {
-    Stdout(String),
-    Stderr(String),
-    Exited(ExecutionExit),
-}
-
+/// How a provider process ended.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ExecutionExit {
     pub code: Option<i32>,
     pub success: bool,
 }
 
-#[derive(Debug)]
-pub(crate) struct RunningProcess {
-    receiver: Receiver<ExecutionEvent>,
-    child: Arc<Mutex<Child>>,
-}
-
-#[derive(Debug)]
-pub(crate) struct BlockingExecution {
-    pub exit: ExecutionExit,
-    pub stdout: String,
-    pub stderr: String,
-}
-
-impl RunningProcess {
-    pub(crate) fn try_recv(&self) -> Result<ExecutionEvent, mpsc::TryRecvError> {
-        self.receiver.try_recv()
-    }
-
-    /// Stop the child: ask it with SIGINT, and kill it if it has not exited
-    /// within [`CANCEL_GRACE`]. `casars-imager` handles SIGINT by stopping
-    /// the run, removing its product staging and paged cube state and
-    /// exiting with status 130, none of which a kill allows (#677).
-    pub(crate) fn cancel(&self) -> Result<(), String> {
-        self.cancel_within(CANCEL_GRACE)
-    }
-
-    fn cancel_within(&self, grace: Duration) -> Result<(), String> {
-        let mut child = lock(&self.child)?;
-        if child
-            .try_wait()
-            .map_err(|error| format!("wait for child: {error}"))?
-            .is_some()
-        {
-            return Ok(());
-        }
-        if !interrupt(&child) {
-            return child
-                .kill()
-                .map_err(|error| format!("terminate child process: {error}"));
-        }
-        drop(child);
-        let child = Arc::clone(&self.child);
-        thread::spawn(move || {
-            let deadline = Instant::now() + grace;
-            loop {
-                let Ok(mut child) = lock(&child) else {
-                    return;
-                };
-                if !matches!(child.try_wait(), Ok(None)) {
-                    return;
-                }
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    return;
-                }
-                drop(child);
-                thread::sleep(Duration::from_millis(25));
-            }
-        });
-        Ok(())
-    }
-}
-
-fn lock(child: &Mutex<Child>) -> Result<std::sync::MutexGuard<'_, Child>, String> {
-    child
-        .lock()
-        .map_err(|_| "failed to acquire child-process lock".to_string())
-}
-
-/// Send SIGINT to `child`, which the caller holds unreaped, so its process
-/// id is still its own; whether the signal was sent.
-#[cfg(unix)]
-fn interrupt(child: &Child) -> bool {
-    let Ok(pid) = libc::pid_t::try_from(child.id()) else {
-        return false;
-    };
-    // SAFETY: `kill` only sends a signal; the process id names our own
-    // child, which cannot be reaped while the caller holds its lock.
-    unsafe { libc::kill(pid, libc::SIGINT) == 0 }
-}
-
-#[cfg(not(unix))]
-fn interrupt(_child: &Child) -> bool {
-    false
-}
-
-pub(crate) fn spawn_process(plan: &ExecutionPlan) -> Result<RunningProcess, String> {
-    let mut command = plan.command.command();
-    command
+/// Run the plan to completion. The child inherits this process's stdout and
+/// stderr, so its output and progress reach the caller unbuffered; a stdin
+/// payload is written and then closed.
+pub(crate) fn run_process_blocking(plan: &ExecutionPlan) -> Result<ExecutionExit, String> {
+    let mut child = plan
+        .command
+        .command()
         .args(&plan.arguments)
         .current_dir(&plan.working_directory)
         .stdin(if plan.stdin.is_some() {
@@ -134,331 +39,63 @@ pub(crate) fn spawn_process(plan: &ExecutionPlan) -> Result<RunningProcess, Stri
         } else {
             Stdio::null()
         })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut child = command
         .spawn()
         .map_err(|error| format!("spawn subprocess: {error}"))?;
     if let Some(payload) = plan.stdin.as_deref() {
-        child
+        let mut stdin = child
             .stdin
             .take()
-            .ok_or_else(|| "subprocess stdin was not captured".to_string())?
+            .ok_or_else(|| "subprocess stdin was not captured".to_string())?;
+        stdin
             .write_all(payload.as_bytes())
             .map_err(|error| format!("write subprocess stdin: {error}"))?;
     }
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "subprocess stdout was not captured".to_string())?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "subprocess stderr was not captured".to_string())?;
-
-    let child = Arc::new(Mutex::new(child));
-    let (tx, rx) = mpsc::channel();
-
-    let stdout_tx = tx.clone();
-    let stdout_handle = thread::spawn(move || {
-        read_stream(stdout, move |chunk| {
-            let _ = stdout_tx.send(ExecutionEvent::Stdout(chunk));
-        })
-    });
-
-    let stderr_tx = tx.clone();
-    let stderr_handle = thread::spawn(move || {
-        read_stream(stderr, move |chunk| {
-            let _ = stderr_tx.send(ExecutionEvent::Stderr(chunk));
-        })
-    });
-
-    let child_for_wait = Arc::clone(&child);
-    thread::spawn(move || {
-        let exit_status = wait_for_child_exit(&child_for_wait);
-        let _ = stdout_handle.join();
-        let _ = stderr_handle.join();
-        let exit = match exit_status {
-            Ok(status) => exit_from_status(status),
-            Err(_error) => ExecutionExit {
-                code: None,
-                success: false,
-            },
-        };
-        let _ = tx.send(ExecutionEvent::Exited(exit));
-    });
-
-    Ok(RunningProcess {
-        receiver: rx,
-        child,
-    })
-}
-
-pub(crate) fn run_process_blocking(plan: &ExecutionPlan) -> Result<BlockingExecution, String> {
-    let process = spawn_process(plan)?;
-    let mut stdout = String::new();
-    let mut stderr = String::new();
-    loop {
-        match process
-            .receiver
-            .recv()
-            .map_err(|error| format!("receive subprocess output: {error}"))?
-        {
-            ExecutionEvent::Stdout(chunk) => {
-                print!("{chunk}");
-                std::io::stdout()
-                    .flush()
-                    .map_err(|error| format!("flush subprocess stdout: {error}"))?;
-                stdout.push_str(&chunk);
-            }
-            ExecutionEvent::Stderr(chunk) => {
-                eprint!("{chunk}");
-                std::io::stderr()
-                    .flush()
-                    .map_err(|error| format!("flush subprocess stderr: {error}"))?;
-                stderr.push_str(&chunk);
-            }
-            ExecutionEvent::Exited(exit) => {
-                return Ok(BlockingExecution {
-                    exit,
-                    stdout,
-                    stderr,
-                });
-            }
-        }
-    }
-}
-
-fn wait_for_child_exit(child: &Arc<Mutex<Child>>) -> Result<ExitStatus, String> {
-    loop {
-        let status = lock(child)?
-            .try_wait()
-            .map_err(|error| format!("wait for child: {error}"))?;
-        if let Some(status) = status {
-            return Ok(status);
-        }
-        thread::sleep(Duration::from_millis(25));
-    }
-}
-
-fn read_stream<R>(stream: R, mut send: impl FnMut(String))
-where
-    R: Read,
-{
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => send(line.clone()),
-            Err(_) => break,
-        }
-    }
-}
-
-fn exit_from_status(status: ExitStatus) -> ExecutionExit {
-    ExecutionExit {
+    let status = child
+        .wait()
+        .map_err(|error| format!("wait for subprocess: {error}"))?;
+    Ok(ExecutionExit {
         code: status.code(),
         success: status.success(),
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::ResolvedCommand;
-    use std::time::Instant;
+
+    fn sh(script: &str, stdin: Option<&str>, working_directory: PathBuf) -> ExecutionPlan {
+        ExecutionPlan {
+            command: ResolvedCommand::direct("sh"),
+            arguments: vec!["-c".into(), script.into()],
+            stdin: stdin.map(str::to_string),
+            working_directory,
+        }
+    }
 
     #[test]
-    fn spawn_process_reports_stdout_stderr_and_exit() {
-        let plan = ExecutionPlan {
-            command: ResolvedCommand::direct("sh"),
-            arguments: vec![
-                "-c".into(),
-                "printf 'hello\\n'; printf 'oops\\n' >&2; exit 3".into(),
-            ],
-            stdin: None,
-            working_directory: PathBuf::from("."),
-            renderer: None,
-            file_output_path: None,
-        };
-
-        let process = spawn_process(&plan).expect("spawn process");
-        let mut saw_stdout = false;
-        let mut saw_stderr = false;
-        let mut exit = None;
-        for _ in 0..80 {
-            match process.try_recv() {
-                Ok(ExecutionEvent::Stdout(chunk)) => saw_stdout |= chunk.contains("hello"),
-                Ok(ExecutionEvent::Stderr(chunk)) => saw_stderr |= chunk.contains("oops"),
-                Ok(ExecutionEvent::Exited(status)) => {
-                    exit = Some(status);
-                    break;
-                }
-                Err(mpsc::TryRecvError::Empty) => thread::sleep(Duration::from_millis(25)),
-                Err(error) => panic!("unexpected channel error: {error}"),
-            }
-        }
-
-        let exit = exit.expect("process exit event");
-        assert!(saw_stdout);
-        assert!(saw_stderr);
+    fn run_reports_the_exit_code() {
+        let exit = run_process_blocking(&sh("exit 3", None, PathBuf::from("."))).unwrap();
         assert_eq!(exit.code, Some(3));
         assert!(!exit.success);
     }
 
     #[test]
-    fn cancel_stops_running_child() {
-        let plan = ExecutionPlan {
-            command: ResolvedCommand::direct("sh"),
-            arguments: vec!["-c".into(), "sleep 5".into()],
-            stdin: None,
-            working_directory: PathBuf::from("."),
-            renderer: None,
-            file_output_path: None,
-        };
-
-        let process = spawn_process(&plan).expect("spawn process");
-        process.cancel().expect("cancel process");
-
-        let mut exit = None;
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline {
-            match process.try_recv() {
-                Ok(ExecutionEvent::Exited(status)) => {
-                    exit = Some(status);
-                    break;
-                }
-                Ok(_) | Err(mpsc::TryRecvError::Empty) => {
-                    thread::sleep(Duration::from_millis(25));
-                }
-                Err(error) => panic!("unexpected channel error: {error}"),
-            }
-        }
-
-        assert!(!exit.expect("exit after cancel").success);
-    }
-
-    /// Spawn `script` under `sh` and wait for it to print `ready`, which it
-    /// does once its signal trap is set.
-    fn ready(script: &str) -> RunningProcess {
-        let plan = ExecutionPlan {
-            command: ResolvedCommand::direct("sh"),
-            arguments: vec!["-c".into(), script.into()],
-            stdin: None,
-            working_directory: PathBuf::from("."),
-            renderer: None,
-            file_output_path: None,
-        };
-        let process = spawn_process(&plan).expect("spawn process");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline {
-            match process.try_recv() {
-                Ok(ExecutionEvent::Stdout(chunk)) if chunk.contains("ready") => return process,
-                Ok(_) | Err(mpsc::TryRecvError::Empty) => thread::sleep(Duration::from_millis(10)),
-                Err(error) => panic!("unexpected channel error: {error}"),
-            }
-        }
-        panic!("the child never got ready");
-    }
-
-    /// The child's output after `ready` and its exit, within `timeout`.
-    fn finish(process: &RunningProcess, timeout: Duration) -> (String, ExecutionExit) {
-        let mut stdout = String::new();
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            match process.try_recv() {
-                Ok(ExecutionEvent::Stdout(chunk)) => stdout.push_str(&chunk),
-                Ok(ExecutionEvent::Exited(exit)) => return (stdout, exit),
-                Ok(ExecutionEvent::Stderr(_)) | Err(mpsc::TryRecvError::Empty) => {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(error) => panic!("unexpected channel error: {error}"),
-            }
-        }
-        panic!("the child did not exit within {timeout:?}");
-    }
-
-    /// #677: cancelling interrupts the child, which exits through its own
-    /// SIGINT handler (as `casars-imager` does, with status 130) rather
-    /// than being killed.
-    #[cfg(unix)]
-    #[test]
-    fn cancel_interrupts_the_child_before_killing_it() {
-        let process =
-            ready("trap 'echo stopped; exit 130' INT; echo ready; while :; do sleep 0.05; done");
-        let started = Instant::now();
-        process.cancel().expect("cancel process");
-        let (stdout, exit) = finish(&process, Duration::from_secs(10));
-        assert!(stdout.contains("stopped"), "the handler ran: {stdout:?}");
-        assert_eq!(exit.code, Some(130));
-        assert!(
-            started.elapsed() < CANCEL_GRACE,
-            "it stopped itself before the kill"
-        );
-    }
-
-    /// #677: a child that does not exit on SIGINT is killed once the grace
-    /// period ends.
-    #[cfg(unix)]
-    #[test]
-    fn cancel_kills_a_child_that_ignores_the_interrupt() {
-        // `exec`: the child that ignores the interrupt holds the output
-        // pipes itself, so its exit is reported once it is killed.
-        let process = ready("trap '' INT; echo ready; exec sleep 30");
-        process
-            .cancel_within(Duration::from_millis(200))
-            .expect("cancel process");
-        let (_, exit) = finish(&process, Duration::from_secs(10));
-        assert!(!exit.success);
-        assert_eq!(exit.code, None, "killed by a signal");
-    }
-
-    #[test]
-    fn spawn_process_uses_workspace_and_projected_stdin() {
+    fn run_uses_the_workspace_and_the_projected_stdin() {
         let workspace = tempfile::tempdir().unwrap();
-        let plan = ExecutionPlan {
-            command: ResolvedCommand::direct("sh"),
-            arguments: vec![
-                "-c".into(),
-                "pwd; IFS= read -r line; printf 'stdin=%s\\n' \"$line\"".into(),
-            ],
-            stdin: Some("family-request\n".to_string()),
-            working_directory: workspace.path().to_path_buf(),
-            renderer: None,
-            file_output_path: None,
-        };
-
-        let process = spawn_process(&plan).expect("spawn process");
-        let mut stdout = String::new();
-        let mut exit = None;
-        for _ in 0..80 {
-            match process.try_recv() {
-                Ok(ExecutionEvent::Stdout(chunk)) => stdout.push_str(&chunk),
-                Ok(ExecutionEvent::Exited(status)) => {
-                    exit = Some(status);
-                    break;
-                }
-                Ok(ExecutionEvent::Stderr(_)) | Err(mpsc::TryRecvError::Empty) => {
-                    thread::sleep(Duration::from_millis(25));
-                }
-                Err(error) => panic!("unexpected channel error: {error}"),
-            }
-        }
-
-        assert!(exit.expect("process exit").success);
-        let reported_workspace = stdout.lines().next().expect("subprocess pwd output");
+        let script = "pwd > seen.txt; IFS= read -r line; printf '%s\\n' \"$line\" >> seen.txt";
+        let exit = run_process_blocking(&sh(
+            script,
+            Some("family-request\n"),
+            workspace.path().to_path_buf(),
+        ))
+        .unwrap();
+        assert!(exit.success);
+        let seen = std::fs::read_to_string(workspace.path().join("seen.txt")).unwrap();
+        let mut lines = seen.lines();
         assert_eq!(
-            PathBuf::from(reported_workspace)
-                .canonicalize()
-                .expect("canonicalize subprocess workspace"),
-            workspace
-                .path()
-                .canonicalize()
-                .expect("canonicalize expected workspace"),
+            PathBuf::from(lines.next().unwrap()).canonicalize().unwrap(),
+            workspace.path().canonicalize().unwrap()
         );
-        assert!(stdout.contains("stdin=family-request"));
+        assert_eq!(lines.next(), Some("family-request"));
     }
 }

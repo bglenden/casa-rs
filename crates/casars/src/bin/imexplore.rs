@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! `imexplore` - inspect persistent casacore images from the command line.
+//! `imexplore` - the `imhead` and `imstat` task provider for persistent
+//! casacore images. `casars run imhead|imstat` invokes it as
+//! `imexplore imhead|imstat ...`; `--protocol-info`, `--json-schema` and
+//! `--json-run` answer through the shared image-analysis provider contract.
 
 use std::env;
 use std::fmt::Display;
-use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 
-use casa_images::{ImmomentsRequest, ImpvRequest, imhead, imhead_put, immoments, impv, imstat};
-use casars::imagebrowser_runtime::ImageBrowserSession;
-use casars_imagebrowser_protocol::{
-    ImageBrowserCommand, ImageBrowserRequestEnvelope, ImageBrowserResponseEnvelope,
-    ImageBrowserViewport, PROTOCOL_VERSION, image_browser_protocol_descriptor, schema_bundle_json,
-};
+use casa_images::{dispatch_image_analysis_task_cli, imhead, imhead_put, imstat};
 
 fn main() {
     match run() {
@@ -26,31 +23,11 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let raw_args = env::args().skip(1).collect::<Vec<_>>();
+    if let Some(output) = dispatch_image_analysis_task_cli(&raw_args, &usage())? {
+        println!("{output}");
+        return Ok(());
+    }
     let mut args = raw_args.into_iter().peekable();
-    if args.peek().is_some_and(|arg| arg == "--json-schema") {
-        print!(
-            "{}",
-            schema_bundle_json()
-                .map_err(|error| format!("serialize imexplore schema bundle: {error}"))?
-        );
-        return Ok(());
-    }
-    if args.peek().is_some_and(|arg| arg == "--protocol-info") {
-        print!(
-            "{}",
-            serde_json::to_string_pretty(&image_browser_protocol_descriptor())
-                .map_err(|error| format!("serialize imexplore protocol info: {error}"))?
-        );
-        return Ok(());
-    }
-    if args.peek().is_some_and(|arg| arg == "--session") {
-        args.next();
-        if args.peek().is_some() {
-            return Err("--session does not accept positional arguments".to_string());
-        }
-        run_session()?;
-        return Ok(());
-    }
     if args.peek().is_some_and(|arg| arg == "imhead") {
         args.next();
         let imhead_args = parse_imhead_args(args)?;
@@ -140,50 +117,15 @@ fn run() -> Result<(), String> {
         }
         return Ok(());
     }
-    if args.peek().is_some_and(|arg| arg == "immoments") {
-        args.next();
-        let moment_args = parse_immoments_args(args)?;
-        let summary = immoments(&moment_args.request).map_err(|error| {
-            image_operation_error("immoments", &moment_args.request.imagename, error)
-        })?;
-        if moment_args.json {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&summary)
-                    .map_err(|error| format!("serialize immoments summary: {error}"))?
-            );
-        } else {
-            println!("outfile: {}", summary.outfile);
-            println!("moment: {}", summary.moment);
-            println!("shape: {:?}", summary.shape);
-            println!("valid_profiles: {}", summary.valid_profiles);
-            println!("units: {}", summary.units);
-        }
-        return Ok(());
-    }
-    if args.peek().is_some_and(|arg| arg == "impv") {
-        args.next();
-        let pv_args = parse_impv_args(args)?;
-        let summary = impv(&pv_args.request)
-            .map_err(|error| image_operation_error("impv", &pv_args.request.imagename, error))?;
-        if pv_args.json {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&summary)
-                    .map_err(|error| format!("serialize impv summary: {error}"))?
-            );
-        } else {
-            println!("outfile: {}", summary.outfile);
-            println!("shape: {:?}", summary.shape);
-            println!("path_pixels: {}", summary.path_pixels);
-            println!("width: {}", summary.width);
-            println!("units: {}", summary.units);
-        }
-        return Ok(());
-    }
+    Err(usage())
+}
 
-    let image_path = parse_path(args)?;
-    run_snapshot(&image_path)
+fn usage() -> String {
+    format!(
+        "usage: imexplore imhead|imstat ... | imexplore --protocol-info | imexplore --json-schema | imexplore --json-run <SOURCE>\n  {}\n  {}",
+        imhead_usage(),
+        imstat_usage()
+    )
 }
 
 fn image_operation_error(operation: &str, path: &Path, error: impl Display) -> String {
@@ -254,16 +196,6 @@ struct ImstatArgs {
     json: bool,
 }
 
-struct ImmomentsArgs {
-    request: ImmomentsRequest,
-    json: bool,
-}
-
-struct ImpvArgs {
-    request: ImpvRequest,
-    json: bool,
-}
-
 fn parse_imstat_args(args: impl IntoIterator<Item = String>) -> Result<ImstatArgs, String> {
     let args = args.into_iter().collect::<Vec<_>>();
     let mut path = None;
@@ -308,287 +240,4 @@ fn parse_imstat_args(args: impl IntoIterator<Item = String>) -> Result<ImstatArg
 
 fn imstat_usage() -> String {
     "usage: imexplore imstat <image-path> [--box x0,y0,x1,y1] [--region path|box[[x0pix,y0pix],[x1pix,y1pix]]|world CRTF box] [--chans 0~4] [--json]".to_string()
-}
-
-fn parse_immoments_args(args: impl IntoIterator<Item = String>) -> Result<ImmomentsArgs, String> {
-    let args = args.into_iter().collect::<Vec<_>>();
-    let mut path = None;
-    let mut outfile = None;
-    let mut moments = 0;
-    let mut chans = None;
-    let mut includepix = None;
-    let mut overwrite = false;
-    let mut json = false;
-    let mut idx = 0;
-    while idx < args.len() {
-        match args[idx].as_str() {
-            "--outfile" => {
-                idx += 1;
-                outfile = Some(PathBuf::from(args.get(idx).ok_or_else(immoments_usage)?));
-            }
-            "--moments" => {
-                idx += 1;
-                moments = args
-                    .get(idx)
-                    .ok_or_else(immoments_usage)?
-                    .parse::<i32>()
-                    .map_err(|error| format!("invalid --moments: {error}"))?;
-            }
-            "--chans" => {
-                idx += 1;
-                chans = Some(args.get(idx).ok_or_else(immoments_usage)?.clone());
-            }
-            "--includepix" => {
-                idx += 1;
-                includepix = Some(parse_range(args.get(idx).ok_or_else(immoments_usage)?)?);
-            }
-            "--overwrite" => overwrite = true,
-            "--json" => json = true,
-            _ if path.is_none() => path = Some(PathBuf::from(&args[idx])),
-            other => {
-                return Err(format!(
-                    "unknown immoments argument {other:?}\n{}",
-                    immoments_usage()
-                ));
-            }
-        }
-        idx += 1;
-    }
-
-    Ok(ImmomentsArgs {
-        request: ImmomentsRequest {
-            imagename: path.ok_or_else(immoments_usage)?,
-            outfile: outfile.ok_or_else(immoments_usage)?,
-            moments,
-            chans,
-            includepix,
-            mask: None,
-            overwrite,
-        },
-        json,
-    })
-}
-
-fn immoments_usage() -> String {
-    "usage: imexplore immoments <image-path> --outfile <path> [--moments -1|0|1|2|3] [--chans 4~12] [--includepix min,max] [--overwrite] [--json]".to_string()
-}
-
-fn parse_impv_args(args: impl IntoIterator<Item = String>) -> Result<ImpvArgs, String> {
-    let args = args.into_iter().collect::<Vec<_>>();
-    let mut path = None;
-    let mut outfile = None;
-    let mut mode = "coords".to_string();
-    let mut start = None;
-    let mut end = None;
-    let mut width = 1usize;
-    let mut chans = None;
-    let mut overwrite = false;
-    let mut json = false;
-    let mut idx = 0;
-    while idx < args.len() {
-        match args[idx].as_str() {
-            "--outfile" => {
-                idx += 1;
-                outfile = Some(PathBuf::from(args.get(idx).ok_or_else(impv_usage)?));
-            }
-            "--mode" => {
-                idx += 1;
-                mode = args.get(idx).ok_or_else(impv_usage)?.clone();
-            }
-            "--start" => {
-                idx += 1;
-                start = Some(args.get(idx).ok_or_else(impv_usage)?.clone());
-            }
-            "--end" => {
-                idx += 1;
-                end = Some(args.get(idx).ok_or_else(impv_usage)?.clone());
-            }
-            "--width" => {
-                idx += 1;
-                width = args
-                    .get(idx)
-                    .ok_or_else(impv_usage)?
-                    .parse::<usize>()
-                    .map_err(|error| format!("invalid --width: {error}"))?;
-            }
-            "--chans" => {
-                idx += 1;
-                chans = Some(args.get(idx).ok_or_else(impv_usage)?.clone());
-            }
-            "--overwrite" => overwrite = true,
-            "--json" => json = true,
-            _ if path.is_none() => path = Some(PathBuf::from(&args[idx])),
-            other => return Err(format!("unknown impv argument {other:?}\n{}", impv_usage())),
-        }
-        idx += 1;
-    }
-
-    Ok(ImpvArgs {
-        request: ImpvRequest {
-            imagename: path.ok_or_else(impv_usage)?,
-            outfile: outfile.ok_or_else(impv_usage)?,
-            mode,
-            start: start.ok_or_else(impv_usage)?,
-            end: end.ok_or_else(impv_usage)?,
-            width,
-            chans,
-            overwrite,
-        },
-        json,
-    })
-}
-
-fn impv_usage() -> String {
-    "usage: imexplore impv <image-path> --outfile <path> --start x,y --end x,y [--mode coords] [--width pixels] [--chans 4~12] [--overwrite] [--json]".to_string()
-}
-
-fn parse_range(text: &str) -> Result<[f64; 2], String> {
-    let values = text
-        .split(',')
-        .map(|part| {
-            part.trim()
-                .parse::<f64>()
-                .map_err(|error| format!("invalid range {text:?}: {error}"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    if values.len() != 2 {
-        return Err(format!("range must be min,max, got {text:?}"));
-    }
-    Ok([values[0], values[1]])
-}
-
-fn parse_path(args: impl IntoIterator<Item = String>) -> Result<PathBuf, String> {
-    let args = args.into_iter().collect::<Vec<_>>();
-    if args.len() != 1 {
-        return Err(
-            "usage: imexplore <image-path> | imexplore imhead <image-path> [--json] [--mode summary|list|put] [--hdkey bunit --hdvalue <value>] | imexplore imstat <image-path> [--box x0,y0,x1,y1] [--chans 0~4] [--json] | imexplore immoments <image-path> --outfile <path> [--json] | imexplore impv <image-path> --outfile <path> --start x,y --end x,y [--json] | imexplore --session | imexplore --json-schema | imexplore --protocol-info".into(),
-        );
-    }
-    Ok(PathBuf::from(&args[0]))
-}
-
-fn run_snapshot(path: &PathBuf) -> Result<(), String> {
-    let mut session = ImageBrowserSession::open(path, ImageBrowserViewport::new(120, 40))
-        .map_err(|error| error.to_string())?;
-    let snapshot = session.snapshot().map_err(|error| error.to_string())?;
-    println!("{}", snapshot.status_line);
-    for line in snapshot.inspector_lines {
-        println!("{line}");
-    }
-    if !snapshot.content_lines.is_empty() {
-        println!();
-        for line in snapshot.content_lines {
-            println!("{line}");
-        }
-    }
-    Ok(())
-}
-
-fn run_session() -> Result<(), String> {
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-    let mut session: Option<ImageBrowserSession> = None;
-
-    for line_result in stdin.lock().lines() {
-        let line = line_result.map_err(|error| format!("read stdin: {error}"))?;
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        let request: ImageBrowserRequestEnvelope = match serde_json::from_str(&line) {
-            Ok(request) => request,
-            Err(error) => {
-                let response = ImageBrowserResponseEnvelope::error(
-                    "invalid_json",
-                    format!("parse request: {error}"),
-                );
-                writeln!(
-                    stdout,
-                    "{}",
-                    serde_json::to_string(&response)
-                        .map_err(|error| format!("serialize response: {error}"))?
-                )
-                .map_err(|error| format!("write response: {error}"))?;
-                stdout
-                    .flush()
-                    .map_err(|error| format!("flush response: {error}"))?;
-                continue;
-            }
-        };
-
-        let response = if request.version != PROTOCOL_VERSION {
-            ImageBrowserResponseEnvelope::error(
-                "unsupported_version",
-                format!(
-                    "expected protocol version {}, received {}",
-                    PROTOCOL_VERSION, request.version
-                ),
-            )
-        } else {
-            match (&mut session, request.command) {
-                (Some(session), ImageBrowserCommand::PreviewOccurrence { request }) => {
-                    match session.preview_occurrence(&request) {
-                        Ok(preview) => ImageBrowserResponseEnvelope::preview(preview),
-                        Err(error) => {
-                            ImageBrowserResponseEnvelope::error("command_failed", error.to_string())
-                        }
-                    }
-                }
-                (Some(session), command) => match session.handle_command(command) {
-                    Ok(snapshot) => ImageBrowserResponseEnvelope::snapshot(snapshot),
-                    Err(error) => {
-                        ImageBrowserResponseEnvelope::error("command_failed", error.to_string())
-                    }
-                },
-                (
-                    None,
-                    ImageBrowserCommand::OpenRoot {
-                        path,
-                        viewport,
-                        parameters,
-                    },
-                ) => {
-                    match ImageBrowserSession::open_with_parameters(
-                        path,
-                        viewport,
-                        parameters.as_ref(),
-                    ) {
-                        Ok(new_session) => {
-                            let mut new_session = new_session;
-                            let snapshot =
-                                new_session.snapshot().map_err(|error| error.to_string());
-                            session = Some(new_session);
-                            match snapshot {
-                                Ok(snapshot) => ImageBrowserResponseEnvelope::snapshot(snapshot),
-                                Err(error) => {
-                                    ImageBrowserResponseEnvelope::error("open_root_failed", error)
-                                }
-                            }
-                        }
-                        Err(error) => ImageBrowserResponseEnvelope::error(
-                            "open_root_failed",
-                            error.to_string(),
-                        ),
-                    }
-                }
-                (None, _) => ImageBrowserResponseEnvelope::error(
-                    "session_not_open",
-                    "send open_root before any other imexplore command",
-                ),
-            }
-        };
-
-        writeln!(
-            stdout,
-            "{}",
-            serde_json::to_string(&response)
-                .map_err(|error| format!("serialize response: {error}"))?
-        )
-        .map_err(|error| format!("write response: {error}"))?;
-        stdout
-            .flush()
-            .map_err(|error| format!("flush response: {error}"))?;
-    }
-
-    Ok(())
 }
