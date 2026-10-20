@@ -2484,6 +2484,7 @@ fn build_msexplore_payload_internal(
         });
     }
     items.sort_by_key(|item| item.plotindex);
+    validate_page_overplots(&items)?;
     let title = spec
         .page_title
         .clone()
@@ -2519,6 +2520,43 @@ fn build_msexplore_payload_internal(
     } else {
         Ok(payload)
     }
+}
+
+/// Rejects a page whose plots share a grid cell but not its axes.
+///
+/// Plots in one cell are overplotted on one set of axes, so they must agree
+/// on the x, y and secondary-y axes, on any fixed axis bounds, and on the
+/// legend position. `items` must be sorted by `plotindex`; the first plot in
+/// each cell sets the cell's axes.
+fn validate_page_overplots(items: &[MsScatterPageItemPayload]) -> Result<(), String> {
+    let mut first_in_cell = std::collections::BTreeMap::new();
+    for item in items {
+        let cell = (item.rowindex, item.colindex);
+        let first = *first_in_cell.entry(cell).or_insert(&item.plot);
+        let (rowindex, colindex) = cell;
+        if item.plot.x_axis != first.x_axis
+            || item.plot.y_axis != first.y_axis
+            || item.plot.secondary_y_axis != first.secondary_y_axis
+        {
+            return Err(format!(
+                "scatter page cell ({rowindex}, {colindex}) mixes incompatible axes; overplots require matching x/y axis configurations"
+            ));
+        }
+        if item.plot.fixed_x_bounds != first.fixed_x_bounds
+            || item.plot.fixed_y_bounds != first.fixed_y_bounds
+            || item.plot.secondary_fixed_y_bounds != first.secondary_fixed_y_bounds
+        {
+            return Err(format!(
+                "scatter page cell ({rowindex}, {colindex}) mixes incompatible fixed axis bounds"
+            ));
+        }
+        if item.plot.legend_position != first.legend_position {
+            return Err(format!(
+                "scatter page cell ({rowindex}, {colindex}) mixes incompatible legend positions"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Build a plot payload from a full `msexplore` request.
@@ -8308,5 +8346,84 @@ mod tests {
         assert!(manifest.contains("# header_line=Composite header"));
         assert!(manifest.contains("1\t0\t0\tPhase\t"));
         assert!(manifest.contains("2\t0\t1\tAmplitude Detail\t"));
+    }
+
+    fn overplot_item(
+        plotindex: usize,
+        colindex: usize,
+        plot: MsScatterPlotPayload,
+    ) -> MsScatterPageItemPayload {
+        MsScatterPageItemPayload {
+            plotindex,
+            rowindex: 0,
+            colindex,
+            plot,
+        }
+    }
+
+    #[test]
+    fn page_overplots_must_share_axes_bounds_and_legend() {
+        let amplitude = || {
+            scatter_plot_payload(
+                "Amplitude",
+                None,
+                MsLegendPosition::ExteriorRight,
+                vec![scatter_series(
+                    "Amplitude",
+                    "amp",
+                    MsAxis::Amplitude,
+                    &[(0.0, 1.0), (1.0, 1.5)],
+                    100,
+                )],
+            )
+        };
+        let by_channel = MsScatterPlotPayload {
+            x_axis: MsAxis::Channel,
+            x_label: "Channel".to_string(),
+            ..amplitude()
+        };
+
+        let matching = [
+            overplot_item(0, 0, amplitude()),
+            overplot_item(1, 0, amplitude()),
+        ];
+        validate_page_overplots(&matching).expect("matching overplot");
+        let side_by_side = [
+            overplot_item(0, 0, amplitude()),
+            overplot_item(1, 1, by_channel.clone()),
+        ];
+        validate_page_overplots(&side_by_side).expect("different cells may differ");
+
+        let mixed_axes = [
+            overplot_item(0, 0, amplitude()),
+            overplot_item(1, 0, by_channel),
+        ];
+        let error = validate_page_overplots(&mixed_axes).expect_err("mixed axes");
+        assert!(
+            error.contains("cell (0, 0) mixes incompatible axes"),
+            "{error}"
+        );
+
+        let bounded = MsScatterPlotPayload {
+            fixed_y_bounds: Some((0.0, 2.0)),
+            ..amplitude()
+        };
+        let mixed_bounds = [
+            overplot_item(0, 0, amplitude()),
+            overplot_item(1, 0, bounded),
+        ];
+        let error = validate_page_overplots(&mixed_bounds).expect_err("mixed bounds");
+        assert!(error.contains("incompatible fixed axis bounds"), "{error}");
+
+        let legend = MsScatterPlotPayload {
+            legend_position: MsLegendPosition::UpperRight,
+            ..amplitude()
+        };
+        let mixed_legends = [
+            overplot_item(0, 0, amplitude()),
+            overplot_item(1, 0, legend),
+        ];
+        let error = validate_page_overplots(&mixed_legends).expect_err("mixed legends");
+        assert!(error.contains("incompatible legend positions"), "{error}");
     }
 }

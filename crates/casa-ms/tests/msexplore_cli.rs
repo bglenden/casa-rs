@@ -1081,6 +1081,45 @@ fn msexplore_generic_page_spec_builds_side_by_side_page_payload() {
 }
 
 #[test]
+fn msexplore_page_spec_rejects_overplots_with_different_axes() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+    let plot_path = temp.path().join("mixed-overplot.txt");
+    let page_spec_path = temp.path().join("mixed-page.json");
+
+    std::fs::write(
+        &page_spec_path,
+        serde_json::json!({
+            "gridrows": 1,
+            "gridcols": 1,
+            "plots": [
+                {"preset": "amplitude_vs_time", "plotindex": 0, "rowindex": 0, "colindex": 0},
+                {"preset": "amplitude_vs_channel", "plotindex": 1, "rowindex": 0, "colindex": 0}
+            ]
+        })
+        .to_string(),
+    )
+    .expect("write page spec");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_msexplore"))
+        .args(["--page-spec"])
+        .arg(&page_spec_path)
+        .args(["--plot-output"])
+        .arg(&plot_path)
+        .args(["--plot-format", "txt"])
+        .arg(&ms_path)
+        .output()
+        .expect("run msexplore");
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(
+        stderr.contains("cell (0, 0) mixes incompatible axes"),
+        "{stderr}"
+    );
+    assert!(!plot_path.exists());
+}
+
+#[test]
 fn msexplore_page_spec_manifest_emits_multiple_positions_on_one_page() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_msexplore_fixture_ms(temp.path());
