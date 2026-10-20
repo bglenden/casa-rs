@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["PanelInitError","PanelProtocolRenderError","PanelSchedulePolicy","PanelSchedulerError","PanelSubmitError"],"fn":["build_panel_protocol_from_rgba_owned","render_panel_protocol"],"struct":["PanelCompletion","PanelDrain","PanelJob","PanelProtocolRequest","PanelScheduler","PreparedPanelProtocol","PreparedPanelProtocolOnly"]};

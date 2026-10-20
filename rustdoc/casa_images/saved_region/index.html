@@ -1,0 +1,54 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="World-coordinate polygon regions saved with an image."><title>casa_images::saved_region - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_images" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module saved_region</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../casa_images/index.html">casa_<wbr>images</a><span class="version">0.27.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module saved_<wbr>region</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example" title="Example">Example</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate casa_<wbr>images</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">casa_images</a></div><h1>Module <span>saved_<wbr>region</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/casa_images/saved_region.rs.html#2-486">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>World-coordinate polygon regions saved with an image.</p>
+<p>casacore keeps named regions in an image’s <code>regions</code> table keyword
+(C++ <code>ImageInterface::defineRegion</code> and <code>getRegion</code>, through
+<code>RegionHandler</code>). This module reads and writes the world-coordinate
+polygon classes stored there, a single <code>WCPolygon</code> or a <code>WCUnion</code> whose
+members are all <code>WCPolygon</code>s, and turns a region into a pixel mask or into
+statistics over the pixels it selects.</p>
+<div><table><thead><tr><th>Rust</th><th>C++ casacore</th></tr></thead><tbody>
+<tr><td><a href="struct.PolygonRegion.html" title="struct casa_images::saved_region::PolygonRegion"><code>PolygonRegion</code></a></td><td><code>WCPolygon</code>, <code>WCUnion</code> of <code>WCPolygon</code></td></tr>
+<tr><td><a href="../image/struct.PagedImage.html#method.get_polygon_region" title="method casa_images::image::PagedImage::get_polygon_region"><code>PagedImage::get_polygon_region</code></a></td><td><code>ImageInterface::getRegion</code></td></tr>
+<tr><td><a href="../image/struct.PagedImage.html#method.put_polygon_region" title="method casa_images::image::PagedImage::put_polygon_region"><code>PagedImage::put_polygon_region</code></a></td><td><code>ImageInterface::defineRegion</code> (<code>Regions</code>)</td></tr>
+<tr><td><a href="struct.PolygonRegion.html#method.mask" title="method casa_images::saved_region::PolygonRegion::mask"><code>PolygonRegion::mask</code></a></td><td><code>WCRegion::toLCRegion</code> then <code>LCRegion::getMask</code></td></tr>
+<tr><td><a href="../image/struct.PagedImage.html#method.region_statistics" title="method casa_images::image::PagedImage::region_statistics"><code>PagedImage::region_statistics</code></a></td><td>statistics of <code>SubImage(image, region)</code></td></tr>
+</tbody></table>
+</div>
+<p>As in casacore’s <code>WCRegion::toLCRegion</code>, a polygon drawn on two pixel axes
+covers the full extent of every other image axis. Its vertices are
+converted to pixel coordinates plane by plane, at the centre of the
+polygon axes and the plane’s position on the others. A pixel belongs to a
+polygon when its centre lies inside it or on its boundary.</p>
+<p>Other casacore region classes (<code>WCBox</code>, <code>WCEllipsoid</code>, the <code>LC*</code> pixel
+regions and compounds other than a union of polygons) are reported by
+class name and not converted. Removing a saved region is
+<a href="../image/struct.PagedImage.html#method.remove_region" title="method casa_images::image::PagedImage::remove_region"><code>PagedImage::remove_region</code></a>.</p>
+<h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>casa_coordinates::{CoordinateSystem, DirectionCoordinate, Projection, ProjectionType};
+<span class="kw">use </span>casa_images::{PagedImage, PolygonRegion};
+<span class="kw">use </span>casa_types::measures::direction::DirectionRef;
+
+<span class="kw">let </span><span class="kw-2">mut </span>coords = CoordinateSystem::new();
+coords.add_coordinate(DirectionCoordinate::new(
+    DirectionRef::J2000,
+    Projection::new(ProjectionType::SIN),
+    [<span class="number">0.0</span>, <span class="number">0.5</span>],
+    [-<span class="number">1e-4</span>, <span class="number">1e-4</span>],
+    [<span class="number">2.0</span>, <span class="number">2.0</span>],
+));
+<span class="kw">let </span>dir = tempfile::tempdir().unwrap();
+<span class="kw">let </span><span class="kw-2">mut </span>image = PagedImage::&lt;f32&gt;::create(<span class="macro">vec!</span>[<span class="number">5</span>, <span class="number">5</span>], coords.clone(), dir.path().join(<span class="string">"a.image"</span>)).unwrap();
+
+<span class="kw">let </span><span class="kw-2">mut </span>region = PolygonRegion::new(<span class="kw-2">&amp;</span>coords, [<span class="number">0</span>, <span class="number">1</span>]).unwrap();
+<span class="kw">let </span>corners = [[<span class="number">1.0</span>, <span class="number">1.0</span>], [<span class="number">3.0</span>, <span class="number">1.0</span>], [<span class="number">3.0</span>, <span class="number">3.0</span>], [<span class="number">1.0</span>, <span class="number">3.0</span>]];
+region
+    .add_polygon(corners.iter().map(|<span class="kw-2">&amp;</span>[x, y]| {
+        <span class="kw">let </span>world = coords.to_world(<span class="kw-2">&amp;</span>[x, y]).unwrap();
+        [world[<span class="number">0</span>], world[<span class="number">1</span>]]
+    }).collect())
+    .unwrap();
+image.put_polygon_region(<span class="string">"box"</span>, <span class="kw-2">&amp;</span>region).unwrap();
+image.save().unwrap();
+
+<span class="kw">let </span>mask = region.mask(<span class="kw-2">&amp;</span>coords, image.shape()).unwrap();
+<span class="macro">assert_eq!</span>(mask.iter().filter(|&amp;&amp;inside| inside).count(), <span class="number">9</span>);
+<span class="macro">assert_eq!</span>(image.get_polygon_region(<span class="string">"box"</span>).unwrap().polygons.len(), <span class="number">1</span>);</code></pre></div></div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.PolygonRegion.html" title="struct casa_images::saved_region::PolygonRegion">Polygon<wbr>Region</a></dt><dd>A region made of world-coordinate polygons on two pixel axes.</dd><dt><a class="struct" href="struct.RegionStatistics.html" title="struct casa_images::saved_region::RegionStatistics">Region<wbr>Statistics</a></dt><dd>Statistics of the pixels a region selects.</dd></dl></section></div></main></body></html>

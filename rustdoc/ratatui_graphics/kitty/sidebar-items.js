@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["KittyAnimationGap","KittyAnimationPlaybackState","KittyLayerError","KittyPlacementError"],"struct":["KittyAnimationControl","KittyLayerHandle","KittyLayerManager","KittyPaneSlotId","KittyPlacement","KittyStoredImageId","KittyStoredImageInfo","KittyStoredImageStore"]};

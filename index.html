@@ -258,10 +258,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#user-interfaces" class="md-nav__link">
+  <a href="#user-surfaces" class="md-nav__link">
     <span class="md-ellipsis">
       
-        User Interfaces
+        User Surfaces
       
     </span>
   </a>
@@ -463,116 +463,6 @@
   
   
   
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
-        
-          
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Scientific Workbench
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    Scientific Workbench
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="scientific-notebooks-and-assistant/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Notebooks, Tutorials, Python, and AI
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="mac-native-gui-spec/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Native macOS Product Spec
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
     <li class="md-nav__item">
       <a href="rust-api/" class="md-nav__link">
         
@@ -609,10 +499,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
             
   
   
@@ -630,8 +520,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_6">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -815,10 +705,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#user-interfaces" class="md-nav__link">
+  <a href="#user-surfaces" class="md-nav__link">
     <span class="md-ellipsis">
       
-        User Interfaces
+        User Surfaces
       
     </span>
   </a>
@@ -888,39 +778,25 @@
 
 <h1 id="documentation-index">Documentation Index<a class="headerlink" href="#documentation-index" title="Permanent link">&para;</a></h1>
 <p>Truth class: current descriptive
-Last reality check: 2026-07-18
+Last reality check: 2026-10-20
 Verification: just docs-check</p>
 <p>This directory holds stable project documentation.</p>
-<h2 id="user-interfaces">User Interfaces<a class="headerlink" href="#user-interfaces" title="Permanent link">&para;</a></h2>
+<h2 id="user-surfaces">User Surfaces<a class="headerlink" href="#user-surfaces" title="Permanent link">&para;</a></h2>
+<p>casa-rs is used from the Python package <code>casars</code> and the headless <code>casars</code>
+task host (<code>casars run</code>, <code>casars params</code>); see
+<a href="adr/0017-python-first-surface/">ADR-0017</a>.</p>
 <ul>
-<li><a href="mac-native-gui-spec/"><code>mac-native-gui-spec.md</code></a></li>
-<li>proposed product spec for an AI-enhanced native macOS radio astronomy
-    workbench</li>
-<li><a href="mac-native-gui-mockups/"><code>mac-native-gui-mockups.md</code></a></li>
-<li>visual mockups and layout agreement notes for the native macOS workbench</li>
-<li><a href="https://github.com/bglenden/casa-rs/blob/main/apps/casars-mac/README.md"><code>apps/casars-mac/README.md</code></a></li>
-<li>SwiftPM commands for the fixture-backed native macOS clickable prototype</li>
-<li><a href="casars-tui-framework/"><code>casars-tui-framework.md</code></a></li>
-<li>architecture and app-authoring rules for the shell family</li>
+<li><a href="python/"><code>python/index.md</code></a></li>
+<li>the Python package: data access, tasks, parameters, and plotting</li>
 <li><a href="casars-calibrate-user-guide/"><code>casars-calibrate-user-guide.md</code></a></li>
-<li>current user-facing guide for the <code>calibrate</code> workflow app</li>
+<li>user guide for the calibration tasks</li>
 <li><a href="task-parameters/"><code>task-parameters.md</code></a></li>
-<li>accepted sparse TOML profile, Last-state, and cross-surface parameter
+<li>accepted sparse TOML profile, Last-state, and CLI/Python parameter
     contract</li>
-<li><a href="scientific-notebooks-and-assistant/"><code>scientific-notebooks-and-assistant.md</code></a></li>
-<li>accepted Markdown notebook, execution receipt, tutorial, Python, local
-    corpus, assistant, and prototype-first wave design</li>
-<li><a href="assistant-security/"><code>assistant-security.md</code></a></li>
-<li>current Wave 4 sidecar authority, corpus ownership, context-egress,
-    approval, isolated execution, and credential boundaries</li>
 <li><a href="reference/task-parameters/"><code>reference/task-parameters.md</code></a></li>
-<li>generated catalog of every task and session parameter surface</li>
+<li>generated catalog of every task parameter surface</li>
 <li><a href="provider-contracts/"><code>provider-contracts.md</code></a></li>
-<li>canonical provider schema model for task, session, and object surfaces</li>
-<li><a href="tablebrowser-protocol/"><code>tablebrowser-protocol.md</code></a></li>
-<li>protocol contract for <code>tablebrowser --session</code></li>
-<li><a href="kitty-graphics-protocol-details/"><code>kitty-graphics-protocol-details.md</code></a></li>
-<li>notes on the kitty graphics backend used by <code>imexplore</code></li>
+<li>canonical provider schema model for task and object surfaces</li>
 </ul>
 <h2 id="published-docs">Published docs<a class="headerlink" href="#published-docs" title="Permanent link">&para;</a></h2>
 <ul>
@@ -929,19 +805,15 @@ Verification: just docs-check</p>
 <li>install guide: <a href="install/"><code>install.md</code></a></li>
 <li>CASA VLA parity runbook:
   <a href="casa-vla-importvla-parity/"><code>casa-vla-importvla-parity.md</code></a></li>
-<li>tutorial learning packs:
-  <a href="tutorial-parity/tutorial-learning-packs/"><code>tutorial-parity/tutorial-learning-packs.md</code></a></li>
 </ul>
 <h2 id="agent-and-developer-reference">Agent And Developer Reference<a class="headerlink" href="#agent-and-developer-reference" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="agent-reference/"><code>agent-reference.md</code></a></li>
-<li>situational workstation, CASA/C++, shared-data, release, install, and TUI
-    evidence guidance kept out of the always-loaded root <code>AGENTS.md</code></li>
+<li>situational workstation, CASA/C++, shared-data, release, and install
+    guidance kept out of the always-loaded root <code>AGENTS.md</code></li>
 <li><a href="CASA%20%28C%2B%2B%29%20bugs/"><code>CASA (C++) bugs.md</code></a></li>
 <li>canonical CASA parity defect notes, including the
     <a href="CASA%20%28C%2B%2B%29%20bugs/#casa-hogbom-niter-off-by-one-bug">Hogbom <code>niter</code> off-by-one</a></li>
-<li><a href="https://github.com/bglenden/casa-rs/blob/main/apps/casars-mac/AGENTS.md"><code>apps/casars-mac/AGENTS.md</code></a></li>
-<li>scoped native macOS workbench contract</li>
 </ul>
 <h2 id="program-reference">Program Reference<a class="headerlink" href="#program-reference" title="Permanent link">&para;</a></h2>
 <p><code>docs/tutorial-parity/</code> keeps the tutorial-parity reference material that is

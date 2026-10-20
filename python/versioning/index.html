@@ -363,116 +363,6 @@
   
   
   
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
-        
-          
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Scientific Workbench
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    Scientific Workbench
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Notebooks, Tutorials, Python, and AI
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../mac-native-gui-spec/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Native macOS Product Spec
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
     <li class="md-nav__item">
       <a href="../../rust-api/" class="md-nav__link">
         
@@ -511,10 +401,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
             
   
   
@@ -532,8 +422,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_6">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -829,7 +719,7 @@
 <p>Sparse TOML documents carry two independent versions:</p>
 <ul>
 <li><code>casars.format</code> versions the document envelope and TOML conventions.</li>
-<li><code>casars.contract</code> versions the selected task or session definition.</li>
+<li><code>casars.contract</code> versions the selected task definition.</li>
 </ul>
 <p>Loading resolves sparse overrides against the current provider definition.
 Newly added optional parameters receive current defaults. Omitted parameters
@@ -846,7 +736,7 @@ independent migration or default table.</p>
 </code></pre></div>
 
 <p><code>CASA_RS_STATE_DIR</code> redirects the managed root without changing workspace path
-resolution. Session surfaces use only <code>last.toml</code>. An explicit source profile
+resolution. An explicit source profile
 is never overwritten without an explicit save.</p>
 <h2 id="task-runner-compatibility">Task-runner compatibility<a class="headerlink" href="#task-runner-compatibility" title="Permanent link">&para;</a></h2>
 <p>Python has one task transport: every generated <code>casars.tasks.&lt;task&gt;</code> callable
@@ -914,7 +804,7 @@ and <code>casars.data.schema_bundle()</code> is currently:</p>
   calibrate-rc -&gt; ~/.local/opt/casa-rs/rc/bin/calibrate
 </code></pre></div>
 
-<p>That lets Python, the TUI, and standalone executables behave as one installed suite while keeping <code>~/.local/bin</code> as the only <code>PATH</code> entry users generally need.</p>
+<p>That lets Python, <code>casars</code>, and standalone executables behave as one installed suite while keeping <code>~/.local/bin</code> as the only <code>PATH</code> entry users generally need.</p>
 
 
 

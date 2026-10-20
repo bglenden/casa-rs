@@ -363,116 +363,6 @@
   
   
   
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
-        
-          
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Scientific Workbench
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    Scientific Workbench
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../scientific-notebooks-and-assistant/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Notebooks, Tutorials, Python, and AI
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../mac-native-gui-spec/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Native macOS Product Spec
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
     <li class="md-nav__item">
       <a href="../rust-api/" class="md-nav__link">
         
@@ -511,10 +401,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
             
   
   
@@ -532,8 +422,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_6">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -614,6 +504,17 @@
     <span class="md-ellipsis">
       
         Parameter profiles
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plotting-and-image-inspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plotting and image inspection
       
     </span>
   </a>
@@ -785,6 +686,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#plotting-and-image-inspection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plotting and image inspection
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -809,20 +721,20 @@
   tables.</li>
 <li><code>casars.tasks</code> provides higher-level task wrappers backed by the versioned
   provider binaries.</li>
-<li><code>casars.parameters</code> is the accepted common API for typed task and session
-  profiles described by ADR-0006 and the current-only option in ADR-0012.</li>
+<li><code>casars.parameters</code> is the accepted common API for typed task profiles
+  described by ADR-0006 and the current-only option in ADR-0012.</li>
 </ul>
 <p>The generic <code>casars.tasks.run()</code> entry point accepts every catalog task. Every
 task is also exposed exactly once as <code>casars.tasks.&lt;task&gt;</code> through a generated
 CASA-named function. These functions share the Rust-owned parameter and result
-contracts and run through the canonical <code>casars</code> launcher.</p>
+contracts and run through the canonical <code>casars run</code> task host.</p>
 <p><code>casars.data</code> is stateful and file-backed. It is intended for interoperability
 with the Python ecosystem through NumPy-native reads and writes. For images,
 the current object surface includes pixel-slice writes on existing persistent
 images; image creation and coordinate-system authoring remain outside the v1
 object contract.</p>
 <h2 id="parameter-profiles">Parameter profiles<a class="headerlink" href="#parameter-profiles" title="Permanent link">&para;</a></h2>
-<p>The accepted profile API is shared with the CLI, TUI, and native GUI:</p>
+<p>The accepted profile API is shared with the <code>casars</code> command line:</p>
 <div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars</span><span class="w"> </span><span class="kn">import</span> <span class="n">parameters</span><span class="p">,</span> <span class="n">tasks</span>
 
 <span class="n">p</span> <span class="o">=</span> <span class="n">parameters</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"profiles/target-imaging.toml"</span><span class="p">,</span> <span class="n">workspace</span><span class="o">=</span><span class="s2">"project"</span><span class="p">)</span>
@@ -840,21 +752,22 @@ object contract.</p>
 the other common source types. The resulting <code>TaskParameters</code> supports mapping
 updates, reset, reload, sparse TOML save, and run. Rust remains the sole parser,
 normalizer, validator, migration engine, and sparse renderer.</p>
-<p><code>casars.tasks</code> is generated from the 40 task definitions and supplies one
-CASA-named keyword wrapper and typing stub per task. The corresponding
-session conveniences are <code>casars.sessions.imexplore(...)</code> and
-<code>casars.sessions.tablebrowser(...)</code>. Their signatures deliberately use an
-unset sentinel instead of copying catalog defaults into Python.</p>
-<p>Generated UniFFI owns task, parameter, session, and result transport. PyO3 is
-retained only for the <code>casars.data.Image</code> and <code>casars.data.Table</code> NumPy object
-layer; the wheel still ships one native <code>_core</code> library rather than two
-competing application bindings. Numeric MeasurementSet plot documents are
-available as <code>casars.data.measurement_set_plot(...)</code>.</p>
-<p>Session profiles for <code>imexplore</code> and <code>tablebrowser</code> use the same load, validate,
-and save model. <code>casars.sessions.open(...)</code> and <code>SessionParameters.open()</code> apply
-their durable startup configuration; live browser commands remain stateful
-session APIs rather than becoming task calls.</p>
-<p>See <a href="../task-parameters/">Task and Session Parameter Profiles</a> for sparse TOML,
+<p><code>casars.tasks</code> is generated from the 27 task definitions and supplies one
+CASA-named keyword wrapper and typing stub per task. Their signatures
+deliberately use an unset sentinel instead of copying catalog defaults into
+Python.</p>
+<p>Generated UniFFI (<code>casars._frontend</code>, from <code>casars-frontend-services</code>) owns
+task, parameter, and result transport. PyO3 is retained only for the
+<code>casars.data.Image</code> and <code>casars.data.Table</code> NumPy object layer; the wheel still
+ships one native <code>_core</code> library rather than two competing application
+bindings.</p>
+<h2 id="plotting-and-image-inspection">Plotting and image inspection<a class="headerlink" href="#plotting-and-image-inspection" title="Permanent link">&para;</a></h2>
+<p>casa-rs does not rasterise plots. Numeric MeasurementSet plot documents are
+available as <code>casars.data.measurement_set_plot(...)</code> and are drawn with
+Matplotlib by <code>casars.data.plot_matplotlib(...)</code>. <code>casars.imexplore</code> reads
+image planes as NumPy arrays (<code>casars.imexplore.data(...)</code>) and draws them with
+Matplotlib (<code>casars.imexplore.imshow(...)</code>).</p>
+<p>See <a href="../task-parameters/">Task Parameter Profiles</a> for sparse TOML,
 managed Last paths, source precedence, and examples.</p>
 <p>Tagged releases build Python artifacts for Linux <code>x86_64</code> and macOS <code>arm64</code>,
 plus a source distribution for environments that need to build from source.

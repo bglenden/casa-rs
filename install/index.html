@@ -487,116 +487,6 @@
   
   
   
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
-        
-          
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Scientific Workbench
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    Scientific Workbench
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../scientific-notebooks-and-assistant/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Notebooks, Tutorials, Python, and AI
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../mac-native-gui-spec/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Native macOS Product Spec
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
     <li class="md-nav__item">
       <a href="../rust-api/" class="md-nav__link">
         
@@ -633,10 +523,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
             
   
   
@@ -654,8 +544,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_6">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -942,7 +832,7 @@
 <li>creates a suite-local Python environment from the bundled wheel</li>
 <li>updates stable/rc channel links plus optional generic launcher links</li>
 </ol>
-<p>That keeps the <code>casars</code> TUI, the standalone executables, and the Python package
+<p>That keeps the <code>casars</code> task host, the standalone executables, and the Python package
 behaving as one installed suite.</p>
 <h2 id="macos-prerequisites">macOS prerequisites<a class="headerlink" href="#macos-prerequisites" title="Permanent link">&para;</a></h2>
 <p>Install the Apple command-line tools and a supported Python:</p>
@@ -1051,15 +941,9 @@ scripts/package-suite-bundle.sh<span class="w"> </span><span class="se">\</span>
 <div class="codehilite"><pre><span></span><code>just<span class="w"> </span>install-local
 </code></pre></div>
 
-<p>On macOS, <code>just install-local</code> also builds and installs the Swift GUI app under
-the same suite root. Use <code>--force</code> for an ad-hoc reinstall of the same checkout
-version:</p>
+<p><code>just install-local</code> runs <code>just install-local-suite</code>. Use <code>--force</code> for an
+ad-hoc reinstall of the same checkout version:</p>
 <div class="codehilite"><pre><span></span><code>just<span class="w"> </span>install-local<span class="w"> </span>--<span class="w"> </span>--force
-</code></pre></div>
-
-<p>Use the split commands when only one install surface is needed:</p>
-<div class="codehilite"><pre><span></span><code>just<span class="w"> </span>install-local-suite<span class="w"> </span>--<span class="w"> </span>--force
-just<span class="w"> </span>install-local-gui<span class="w"> </span>--<span class="w"> </span>--force
 </code></pre></div>
 
 <p>To install a published release suite without rebuilding the checkout or

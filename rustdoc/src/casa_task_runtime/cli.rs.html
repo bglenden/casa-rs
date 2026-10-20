@@ -12,7 +12,7 @@
 <a href=#12 id=12 data-nosnippet>12</a>};
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>serde::{Serialize, de::DeserializeOwned};
 <a href=#14 id=14 data-nosnippet>14</a>
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use crate</span>::{ResolutionPatch, validate_parameter_edit};
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use crate</span>::{ResolutionPatch, normalize_value, parse_parameter_text, validate_value};
 <a href=#16 id=16 data-nosnippet>16</a>
 <a href=#17 id=17 data-nosnippet>17</a><span class="doccomment">/// Machine-readable task action handled by the shared CLI host.
 <a href=#18 id=18 data-nosnippet>18</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
@@ -268,258 +268,281 @@
 <a href=#268 id=268 data-nosnippet>268</a>        .ok_or_else(|| <span class="macro">format!</span>(<span class="string">"unknown {} parameter {name:?}"</span>, bundle.surface.id()))
 <a href=#269 id=269 data-nosnippet>269</a>}
 <a href=#270 id=270 data-nosnippet>270</a>
-<a href=#271 id=271 data-nosnippet>271</a><span class="kw">fn </span>validated_cli_value(
-<a href=#272 id=272 data-nosnippet>272</a>    bundle: <span class="kw-2">&amp;</span>SurfaceContractBundle,
-<a href=#273 id=273 data-nosnippet>273</a>    binding: <span class="kw-2">&amp;</span>SurfaceParameterBinding,
-<a href=#274 id=274 data-nosnippet>274</a>    text: <span class="kw-2">&amp;</span>str,
-<a href=#275 id=275 data-nosnippet>275</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ParameterValue, String&gt; {
-<a href=#276 id=276 data-nosnippet>276</a>    <span class="kw">let </span>result = validate_parameter_edit(bundle, <span class="kw-2">&amp;</span>binding.name, text, []);
-<a href=#277 id=277 data-nosnippet>277</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(diagnostic) = result.diagnostics.first() {
-<a href=#278 id=278 data-nosnippet>278</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(diagnostic.message.clone());
-<a href=#279 id=279 data-nosnippet>279</a>    }
-<a href=#280 id=280 data-nosnippet>280</a>    result
-<a href=#281 id=281 data-nosnippet>281</a>        .normalized_value
-<a href=#282 id=282 data-nosnippet>282</a>        .ok_or_else(|| <span class="macro">format!</span>(<span class="string">"parameter {:?} has no typed value"</span>, binding.name))
-<a href=#283 id=283 data-nosnippet>283</a>}
-<a href=#284 id=284 data-nosnippet>284</a>
-<a href=#285 id=285 data-nosnippet>285</a><span class="kw">fn </span>is_bool_domain(domain: <span class="kw-2">&amp;</span>ParameterType) -&gt; bool {
-<a href=#286 id=286 data-nosnippet>286</a>    <span class="kw">match </span>domain {
-<a href=#287 id=287 data-nosnippet>287</a>        ParameterType::Bool =&gt; <span class="bool-val">true</span>,
-<a href=#288 id=288 data-nosnippet>288</a>        ParameterType::Optional { value, .. } =&gt; is_bool_domain(value),
-<a href=#289 id=289 data-nosnippet>289</a>        <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
-<a href=#290 id=290 data-nosnippet>290</a>    }
+<a href=#271 id=271 data-nosnippet>271</a><span class="doccomment">/// Parse, normalize and validate one command-line value through the
+<a href=#272 id=272 data-nosnippet>272</a>/// binding's concept and refinements.
+<a href=#273 id=273 data-nosnippet>273</a></span><span class="kw">fn </span>validated_cli_value(
+<a href=#274 id=274 data-nosnippet>274</a>    bundle: <span class="kw-2">&amp;</span>SurfaceContractBundle,
+<a href=#275 id=275 data-nosnippet>275</a>    binding: <span class="kw-2">&amp;</span>SurfaceParameterBinding,
+<a href=#276 id=276 data-nosnippet>276</a>    text: <span class="kw-2">&amp;</span>str,
+<a href=#277 id=277 data-nosnippet>277</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ParameterValue, String&gt; {
+<a href=#278 id=278 data-nosnippet>278</a>    <span class="kw">let </span>concept = bundle
+<a href=#279 id=279 data-nosnippet>279</a>        .catalog
+<a href=#280 id=280 data-nosnippet>280</a>        .concept(<span class="kw-2">&amp;</span>binding.concept)
+<a href=#281 id=281 data-nosnippet>281</a>        .ok_or_else(|| <span class="macro">format!</span>(<span class="string">"missing parameter concept for {:?}"</span>, binding.name))<span class="question-mark">?</span>;
+<a href=#282 id=282 data-nosnippet>282</a>    <span class="kw">if </span>text.trim().is_empty() {
+<a href=#283 id=283 data-nosnippet>283</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(<span class="string">"parameter {:?} has no typed value"</span>, binding.name));
+<a href=#284 id=284 data-nosnippet>284</a>    }
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="kw">let </span>parsed =
+<a href=#286 id=286 data-nosnippet>286</a>        parse_parameter_text(text, <span class="kw-2">&amp;</span>concept.value_domain).map_err(|error| error.to_string())<span class="question-mark">?</span>;
+<a href=#287 id=287 data-nosnippet>287</a>    <span class="kw">let </span>normalized = normalize_value(<span class="kw-2">&amp;</span>parsed, concept).map_err(|error| error.to_string())<span class="question-mark">?</span>;
+<a href=#288 id=288 data-nosnippet>288</a>    validate_value(<span class="kw-2">&amp;</span>normalized, concept, <span class="kw-2">&amp;</span>binding.refinements)
+<a href=#289 id=289 data-nosnippet>289</a>        .map_err(|error| error.to_string())<span class="question-mark">?</span>;
+<a href=#290 id=290 data-nosnippet>290</a>    <span class="prelude-val">Ok</span>(normalized)
 <a href=#291 id=291 data-nosnippet>291</a>}
 <a href=#292 id=292 data-nosnippet>292</a>
-<a href=#293 id=293 data-nosnippet>293</a><span class="doccomment">/// Render the common machine-action help block once for every hosted task.
-<a href=#294 id=294 data-nosnippet>294</a></span><span class="kw">pub fn </span>task_cli_machine_help(request_type: <span class="kw-2">&amp;</span>str) -&gt; String {
-<a href=#295 id=295 data-nosnippet>295</a>    <span class="macro">format!</span>(
-<a href=#296 id=296 data-nosnippet>296</a>        <span class="string">"Machine-readable:\n  --json-schema            Emit the canonical task schema bundle\n  --protocol-info          Emit the task protocol descriptor\n  --json-run &lt;SOURCE&gt;      Execute one JSON {request_type} from SOURCE or - for stdin"
-<a href=#297 id=297 data-nosnippet>297</a>    </span>)
-<a href=#298 id=298 data-nosnippet>298</a>}
-<a href=#299 id=299 data-nosnippet>299</a>
-<a href=#300 id=300 data-nosnippet>300</a><span class="kw">fn </span>pretty_json(value: <span class="kw-2">&amp;</span><span class="kw">impl </span>Serialize) -&gt; <span class="prelude-ty">Result</span>&lt;String, TaskCliError&gt; {
-<a href=#301 id=301 data-nosnippet>301</a>    serde_json::to_string_pretty(value).map_err(TaskCliError::Serialize)
-<a href=#302 id=302 data-nosnippet>302</a>}
-<a href=#303 id=303 data-nosnippet>303</a>
-<a href=#304 id=304 data-nosnippet>304</a><span class="attr">#[cfg(test)]
-<a href=#305 id=305 data-nosnippet>305</a></span><span class="kw">mod </span>tests {
-<a href=#306 id=306 data-nosnippet>306</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#307 id=307 data-nosnippet>307</a>    <span class="kw">use </span>casa_provider_contracts::ParameterValue;
-<a href=#308 id=308 data-nosnippet>308</a>    <span class="kw">use </span>serde::{Deserialize, Serialize, Serializer};
-<a href=#309 id=309 data-nosnippet>309</a>
-<a href=#310 id=310 data-nosnippet>310</a>    <span class="attr">#[derive(Deserialize, schemars::JsonSchema)]
-<a href=#311 id=311 data-nosnippet>311</a>    </span><span class="kw">struct </span>Request {
-<a href=#312 id=312 data-nosnippet>312</a>        value: u32,
-<a href=#313 id=313 data-nosnippet>313</a>    }
-<a href=#314 id=314 data-nosnippet>314</a>
-<a href=#315 id=315 data-nosnippet>315</a>    <span class="attr">#[derive(Serialize, schemars::JsonSchema)]
-<a href=#316 id=316 data-nosnippet>316</a>    </span><span class="kw">struct </span>ResultValue {
-<a href=#317 id=317 data-nosnippet>317</a>        value: u32,
-<a href=#318 id=318 data-nosnippet>318</a>    }
-<a href=#319 id=319 data-nosnippet>319</a>
-<a href=#320 id=320 data-nosnippet>320</a>    <span class="kw">struct </span>SerializationFailure;
-<a href=#321 id=321 data-nosnippet>321</a>
-<a href=#322 id=322 data-nosnippet>322</a>    <span class="kw">impl </span>Serialize <span class="kw">for </span>SerializationFailure {
-<a href=#323 id=323 data-nosnippet>323</a>        <span class="kw">fn </span>serialize&lt;S&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, _serializer: S) -&gt; <span class="prelude-ty">Result</span>&lt;S::Ok, S::Error&gt;
-<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">where
-<a href=#325 id=325 data-nosnippet>325</a>            </span>S: Serializer,
-<a href=#326 id=326 data-nosnippet>326</a>        {
-<a href=#327 id=327 data-nosnippet>327</a>            <span class="prelude-val">Err</span>(serde::ser::Error::custom(
-<a href=#328 id=328 data-nosnippet>328</a>                <span class="string">"deliberate serialization failure"</span>,
-<a href=#329 id=329 data-nosnippet>329</a>            ))
-<a href=#330 id=330 data-nosnippet>330</a>        }
-<a href=#331 id=331 data-nosnippet>331</a>    }
-<a href=#332 id=332 data-nosnippet>332</a>
-<a href=#333 id=333 data-nosnippet>333</a>    <span class="kw">fn </span>contract() -&gt; casa_provider_contracts::TaskProviderContract {
-<a href=#334 id=334 data-nosnippet>334</a>        <span class="kw">let </span>request_schema = <span class="macro">schemars::schema_for!</span>(Request);
-<a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">let </span>result_schema = <span class="macro">schemars::schema_for!</span>(ResultValue);
-<a href=#336 id=336 data-nosnippet>336</a>        casa_provider_contracts::TaskProviderContract {
-<a href=#337 id=337 data-nosnippet>337</a>            protocol: casa_provider_contracts::ProviderProtocolDescriptor::new(
-<a href=#338 id=338 data-nosnippet>338</a>                <span class="string">"test"</span>,
-<a href=#339 id=339 data-nosnippet>339</a>                <span class="number">1</span>,
-<a href=#340 id=340 data-nosnippet>340</a>                casa_provider_contracts::ProviderSurfaceKind::Task,
-<a href=#341 id=341 data-nosnippet>341</a>                <span class="string">"1"</span>,
-<a href=#342 id=342 data-nosnippet>342</a>            ),
-<a href=#343 id=343 data-nosnippet>343</a>            semantic: casa_provider_contracts::TaskSemanticContract {
-<a href=#344 id=344 data-nosnippet>344</a>                request_schema: request_schema.clone(),
-<a href=#345 id=345 data-nosnippet>345</a>                result_schema: result_schema.clone(),
-<a href=#346 id=346 data-nosnippet>346</a>                operations: <span class="macro">vec!</span>[casa_provider_contracts::TaskOperationDescriptor {
-<a href=#347 id=347 data-nosnippet>347</a>                    name: <span class="string">"run"</span>.into(),
-<a href=#348 id=348 data-nosnippet>348</a>                    request_kind: <span class="string">"run"</span>.into(),
-<a href=#349 id=349 data-nosnippet>349</a>                    result_kind: <span class="prelude-val">Some</span>(<span class="string">"run"</span>.into()),
-<a href=#350 id=350 data-nosnippet>350</a>                }],
-<a href=#351 id=351 data-nosnippet>351</a>            },
-<a href=#352 id=352 data-nosnippet>352</a>            components: casa_provider_contracts::merged_components([
-<a href=#353 id=353 data-nosnippet>353</a>                <span class="kw-2">&amp;</span>request_schema,
-<a href=#354 id=354 data-nosnippet>354</a>                <span class="kw-2">&amp;</span>result_schema,
-<a href=#355 id=355 data-nosnippet>355</a>            ]),
-<a href=#356 id=356 data-nosnippet>356</a>            annotations: <span class="macro">serde_json::json!</span>({}),
-<a href=#357 id=357 data-nosnippet>357</a>            projections: casa_provider_contracts::ProviderProjectionMetadata {
-<a href=#358 id=358 data-nosnippet>358</a>                cli: <span class="prelude-val">Some</span>(casa_provider_contracts::ProviderCliProjection {
-<a href=#359 id=359 data-nosnippet>359</a>                    machine_actions: casa_provider_contracts::ProviderCliMachineActions {
-<a href=#360 id=360 data-nosnippet>360</a>                        json_schema: <span class="prelude-val">Some</span>(<span class="string">"--json-schema"</span>.into()),
-<a href=#361 id=361 data-nosnippet>361</a>                        protocol_info: <span class="prelude-val">Some</span>(<span class="string">"--protocol-info"</span>.into()),
-<a href=#362 id=362 data-nosnippet>362</a>                        json_run: <span class="prelude-val">Some</span>(<span class="string">"--json-run &lt;SOURCE&gt;"</span>.into()),
-<a href=#363 id=363 data-nosnippet>363</a>                        session: <span class="prelude-val">None</span>,
-<a href=#364 id=364 data-nosnippet>364</a>                    },
-<a href=#365 id=365 data-nosnippet>365</a>                }),
-<a href=#366 id=366 data-nosnippet>366</a>                python: <span class="prelude-val">None</span>,
-<a href=#367 id=367 data-nosnippet>367</a>            },
-<a href=#368 id=368 data-nosnippet>368</a>            parameter_surfaces: <span class="macro">vec!</span>[
-<a href=#369 id=369 data-nosnippet>369</a>                casa_provider_contracts::builtin_surface_bundle(<span class="string">"imager"</span>).unwrap(),
-<a href=#370 id=370 data-nosnippet>370</a>            ],
-<a href=#371 id=371 data-nosnippet>371</a>            domain_schemas: casa_provider_contracts::TaskProviderSchemas {
-<a href=#372 id=372 data-nosnippet>372</a>                request_schema,
-<a href=#373 id=373 data-nosnippet>373</a>                result_schema,
-<a href=#374 id=374 data-nosnippet>374</a>                additional: casa_provider_contracts::NoAdditionalProviderSchemas {},
-<a href=#375 id=375 data-nosnippet>375</a>            },
-<a href=#376 id=376 data-nosnippet>376</a>        }
-<a href=#377 id=377 data-nosnippet>377</a>    }
-<a href=#378 id=378 data-nosnippet>378</a>
-<a href=#379 id=379 data-nosnippet>379</a>    <span class="attr">#[test]
-<a href=#380 id=380 data-nosnippet>380</a>    </span><span class="kw">fn </span>parses_common_actions_and_rejects_missing_source() {
-<a href=#381 id=381 data-nosnippet>381</a>        <span class="macro">assert_eq!</span>(
-<a href=#382 id=382 data-nosnippet>382</a>            parse_task_cli_action(<span class="kw-2">&amp;</span>[<span class="string">"--json-schema"</span>.into()]).unwrap(),
-<a href=#383 id=383 data-nosnippet>383</a>            <span class="prelude-val">Some</span>(TaskCliAction::JsonSchema)
-<a href=#384 id=384 data-nosnippet>384</a>        );
-<a href=#385 id=385 data-nosnippet>385</a>        <span class="macro">assert_eq!</span>(
-<a href=#386 id=386 data-nosnippet>386</a>            parse_task_cli_action(<span class="kw-2">&amp;</span>[<span class="string">"--json-run"</span>.into(), <span class="string">"request.json"</span>.into()]).unwrap(),
-<a href=#387 id=387 data-nosnippet>387</a>            <span class="prelude-val">Some</span>(TaskCliAction::JsonRun(<span class="string">"request.json"</span>.into()))
-<a href=#388 id=388 data-nosnippet>388</a>        );
-<a href=#389 id=389 data-nosnippet>389</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#390 id=390 data-nosnippet>390</a>            parse_task_cli_action(<span class="kw-2">&amp;</span>[<span class="string">"--json-run"</span>.into()]),
-<a href=#391 id=391 data-nosnippet>391</a>            <span class="prelude-val">Err</span>(TaskCliError::MissingJsonRunSource)
-<a href=#392 id=392 data-nosnippet>392</a>        ));
-<a href=#393 id=393 data-nosnippet>393</a>    }
-<a href=#394 id=394 data-nosnippet>394</a>
-<a href=#395 id=395 data-nosnippet>395</a>    <span class="attr">#[test]
-<a href=#396 id=396 data-nosnippet>396</a>    </span><span class="kw">fn </span>catalog_cli_parser_accepts_only_declared_flags_and_normalizes_values() {
-<a href=#397 id=397 data-nosnippet>397</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"imager"</span>).unwrap();
-<a href=#398 id=398 data-nosnippet>398</a>        <span class="kw">let </span>patch = parse_parameter_cli_overrides(
-<a href=#399 id=399 data-nosnippet>399</a>            <span class="kw-2">&amp;</span>bundle,
-<a href=#400 id=400 data-nosnippet>400</a>            <span class="kw-2">&amp;</span>[
-<a href=#401 id=401 data-nosnippet>401</a>                <span class="string">"--ms"</span>.into(),
-<a href=#402 id=402 data-nosnippet>402</a>                <span class="string">"input.ms"</span>.into(),
-<a href=#403 id=403 data-nosnippet>403</a>                <span class="string">"--imsize"</span>.into(),
-<a href=#404 id=404 data-nosnippet>404</a>                <span class="string">"1024"</span>.into(),
-<a href=#405 id=405 data-nosnippet>405</a>                <span class="string">"--cell-arcsec=0.0002777777777777778deg"</span>.into(),
-<a href=#406 id=406 data-nosnippet>406</a>                <span class="string">"--gridder"</span>.into(),
-<a href=#407 id=407 data-nosnippet>407</a>                <span class="string">"awproject"</span>.into(),
-<a href=#408 id=408 data-nosnippet>408</a>                <span class="string">"--no-parallel"</span>.into(),
-<a href=#409 id=409 data-nosnippet>409</a>                <span class="string">"--gridprecision"</span>.into(),
-<a href=#410 id=410 data-nosnippet>410</a>                <span class="string">"f64"</span>.into(),
-<a href=#411 id=411 data-nosnippet>411</a>            ],
-<a href=#412 id=412 data-nosnippet>412</a>        )
-<a href=#413 id=413 data-nosnippet>413</a>        .unwrap();
-<a href=#414 id=414 data-nosnippet>414</a>
-<a href=#415 id=415 data-nosnippet>415</a>        <span class="macro">assert_eq!</span>(
-<a href=#416 id=416 data-nosnippet>416</a>            patch.values[<span class="string">"vis"</span>],
-<a href=#417 id=417 data-nosnippet>417</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::String(<span class="string">"input.ms"</span>.into())])
-<a href=#418 id=418 data-nosnippet>418</a>        );
-<a href=#419 id=419 data-nosnippet>419</a>        <span class="macro">assert_eq!</span>(
-<a href=#420 id=420 data-nosnippet>420</a>            patch.values[<span class="string">"imsize"</span>],
-<a href=#421 id=421 data-nosnippet>421</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::Integer(<span class="number">1024</span>); <span class="number">2</span>])
-<a href=#422 id=422 data-nosnippet>422</a>        );
-<a href=#423 id=423 data-nosnippet>423</a>        <span class="macro">assert_eq!</span>(
-<a href=#424 id=424 data-nosnippet>424</a>            patch.values[<span class="string">"cell"</span>],
-<a href=#425 id=425 data-nosnippet>425</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::String(<span class="string">"1arcsec"</span>.into()); <span class="number">2</span>])
-<a href=#426 id=426 data-nosnippet>426</a>        );
-<a href=#427 id=427 data-nosnippet>427</a>        <span class="macro">assert_eq!</span>(patch.values[<span class="string">"parallel"</span>], ParameterValue::Bool(<span class="bool-val">false</span>));
-<a href=#428 id=428 data-nosnippet>428</a>        <span class="macro">assert_eq!</span>(
-<a href=#429 id=429 data-nosnippet>429</a>            patch.values[<span class="string">"gridprecision"</span>],
-<a href=#430 id=430 data-nosnippet>430</a>            ParameterValue::String(<span class="string">"f64"</span>.into())
-<a href=#431 id=431 data-nosnippet>431</a>        );
-<a href=#432 id=432 data-nosnippet>432</a>
-<a href=#433 id=433 data-nosnippet>433</a>        <span class="kw">let </span>alias = parse_parameter_cli_overrides(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>[<span class="string">"--threshold"</span>.into(), <span class="string">"1Jy"</span>.into()])
-<a href=#434 id=434 data-nosnippet>434</a>            .unwrap_err();
-<a href=#435 id=435 data-nosnippet>435</a>        <span class="macro">assert!</span>(alias.contains(<span class="string">"unknown imager parameter flag --threshold"</span>));
-<a href=#436 id=436 data-nosnippet>436</a>    }
-<a href=#437 id=437 data-nosnippet>437</a>
-<a href=#438 id=438 data-nosnippet>438</a>    <span class="attr">#[test]
-<a href=#439 id=439 data-nosnippet>439</a>    </span><span class="kw">fn </span>catalog_cli_parser_applies_unsets_in_argument_order() {
-<a href=#440 id=440 data-nosnippet>440</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"imager"</span>).unwrap();
-<a href=#441 id=441 data-nosnippet>441</a>        <span class="kw">let </span>patch = parse_parameter_cli_overrides(
-<a href=#442 id=442 data-nosnippet>442</a>            <span class="kw-2">&amp;</span>bundle,
-<a href=#443 id=443 data-nosnippet>443</a>            <span class="kw-2">&amp;</span>[
-<a href=#444 id=444 data-nosnippet>444</a>                <span class="string">"--niter"</span>.into(),
-<a href=#445 id=445 data-nosnippet>445</a>                <span class="string">"7"</span>.into(),
-<a href=#446 id=446 data-nosnippet>446</a>                <span class="string">"--unset"</span>.into(),
-<a href=#447 id=447 data-nosnippet>447</a>                <span class="string">"niter"</span>.into(),
-<a href=#448 id=448 data-nosnippet>448</a>                <span class="string">"--niter=9"</span>.into(),
-<a href=#449 id=449 data-nosnippet>449</a>            ],
-<a href=#450 id=450 data-nosnippet>450</a>        )
-<a href=#451 id=451 data-nosnippet>451</a>        .unwrap();
-<a href=#452 id=452 data-nosnippet>452</a>        <span class="macro">assert_eq!</span>(patch.values[<span class="string">"niter"</span>], ParameterValue::Integer(<span class="number">9</span>));
-<a href=#453 id=453 data-nosnippet>453</a>        <span class="macro">assert!</span>(!patch.unset.contains(<span class="string">"niter"</span>));
-<a href=#454 id=454 data-nosnippet>454</a>    }
-<a href=#455 id=455 data-nosnippet>455</a>
-<a href=#456 id=456 data-nosnippet>456</a>    <span class="attr">#[test]
-<a href=#457 id=457 data-nosnippet>457</a>    </span><span class="kw">fn </span>host_renders_discovery_and_executes_file_requests() {
-<a href=#458 id=458 data-nosnippet>458</a>        <span class="kw">let </span>temp = tempfile::NamedTempFile::new().unwrap();
-<a href=#459 id=459 data-nosnippet>459</a>        std::fs::write(temp.path(), <span class="string">r#"{"value": 4}"#</span>).unwrap();
-<a href=#460 id=460 data-nosnippet>460</a>        <span class="kw">let </span>host = TaskCliHost::new(contract(), |request: Request| {
-<a href=#461 id=461 data-nosnippet>461</a>            <span class="prelude-val">Ok</span>(ResultValue {
-<a href=#462 id=462 data-nosnippet>462</a>                value: request.value + <span class="number">1</span>,
-<a href=#463 id=463 data-nosnippet>463</a>            })
-<a href=#464 id=464 data-nosnippet>464</a>        });
-<a href=#465 id=465 data-nosnippet>465</a>        <span class="kw">let </span>output = host
-<a href=#466 id=466 data-nosnippet>466</a>            .dispatch(<span class="kw-2">&amp;</span>[<span class="string">"--json-run"</span>.into(), temp.path().as_os_str().to_owned()])
-<a href=#467 id=467 data-nosnippet>467</a>            .unwrap()
-<a href=#468 id=468 data-nosnippet>468</a>            .unwrap();
-<a href=#469 id=469 data-nosnippet>469</a>        <span class="macro">assert_eq!</span>(
-<a href=#470 id=470 data-nosnippet>470</a>            serde_json::from_str::&lt;serde_json::Value&gt;(<span class="kw-2">&amp;</span>output).unwrap()[<span class="string">"value"</span>],
-<a href=#471 id=471 data-nosnippet>471</a>            <span class="number">5
-<a href=#472 id=472 data-nosnippet>472</a>        </span>);
-<a href=#473 id=473 data-nosnippet>473</a>    }
-<a href=#474 id=474 data-nosnippet>474</a>
-<a href=#475 id=475 data-nosnippet>475</a>    <span class="attr">#[test]
-<a href=#476 id=476 data-nosnippet>476</a>    </span><span class="kw">fn </span>host_classifies_common_failure_corpus() {
-<a href=#477 id=477 data-nosnippet>477</a>        <span class="kw">let </span>malformed = tempfile::NamedTempFile::new().unwrap();
-<a href=#478 id=478 data-nosnippet>478</a>        std::fs::write(malformed.path(), <span class="string">"not-json"</span>).unwrap();
-<a href=#479 id=479 data-nosnippet>479</a>        <span class="kw">let </span>host = TaskCliHost::new(contract(), |_request: Request| <span class="prelude-val">Ok</span>(ResultValue { value: <span class="number">1 </span>}));
-<a href=#480 id=480 data-nosnippet>480</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#481 id=481 data-nosnippet>481</a>            host.dispatch(<span class="kw-2">&amp;</span>[<span class="string">"--json-run"</span>.into(), malformed.path().into()]),
-<a href=#482 id=482 data-nosnippet>482</a>            <span class="prelude-val">Err</span>(TaskCliError::ParseRequest(<span class="kw">_</span>))
-<a href=#483 id=483 data-nosnippet>483</a>        ));
-<a href=#484 id=484 data-nosnippet>484</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#485 id=485 data-nosnippet>485</a>            host.dispatch(<span class="kw-2">&amp;</span>[
-<a href=#486 id=486 data-nosnippet>486</a>                <span class="string">"--json-run"</span>.into(),
-<a href=#487 id=487 data-nosnippet>487</a>                <span class="string">"/definitely/missing/request.json"</span>.into()
-<a href=#488 id=488 data-nosnippet>488</a>            ]),
-<a href=#489 id=489 data-nosnippet>489</a>            <span class="prelude-val">Err</span>(TaskCliError::ReadFile { .. })
+<a href=#293 id=293 data-nosnippet>293</a><span class="kw">fn </span>is_bool_domain(domain: <span class="kw-2">&amp;</span>ParameterType) -&gt; bool {
+<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">match </span>domain {
+<a href=#295 id=295 data-nosnippet>295</a>        ParameterType::Bool =&gt; <span class="bool-val">true</span>,
+<a href=#296 id=296 data-nosnippet>296</a>        ParameterType::Optional { value, .. } =&gt; is_bool_domain(value),
+<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
+<a href=#298 id=298 data-nosnippet>298</a>    }
+<a href=#299 id=299 data-nosnippet>299</a>}
+<a href=#300 id=300 data-nosnippet>300</a>
+<a href=#301 id=301 data-nosnippet>301</a><span class="doccomment">/// Render the common machine-action help block once for every hosted task.
+<a href=#302 id=302 data-nosnippet>302</a></span><span class="kw">pub fn </span>task_cli_machine_help(request_type: <span class="kw-2">&amp;</span>str) -&gt; String {
+<a href=#303 id=303 data-nosnippet>303</a>    <span class="macro">format!</span>(
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="string">"Machine-readable:\n  --json-schema            Emit the canonical task schema bundle\n  --protocol-info          Emit the task protocol descriptor\n  --json-run &lt;SOURCE&gt;      Execute one JSON {request_type} from SOURCE or - for stdin"
+<a href=#305 id=305 data-nosnippet>305</a>    </span>)
+<a href=#306 id=306 data-nosnippet>306</a>}
+<a href=#307 id=307 data-nosnippet>307</a>
+<a href=#308 id=308 data-nosnippet>308</a><span class="kw">fn </span>pretty_json(value: <span class="kw-2">&amp;</span><span class="kw">impl </span>Serialize) -&gt; <span class="prelude-ty">Result</span>&lt;String, TaskCliError&gt; {
+<a href=#309 id=309 data-nosnippet>309</a>    serde_json::to_string_pretty(value).map_err(TaskCliError::Serialize)
+<a href=#310 id=310 data-nosnippet>310</a>}
+<a href=#311 id=311 data-nosnippet>311</a>
+<a href=#312 id=312 data-nosnippet>312</a><span class="attr">#[cfg(test)]
+<a href=#313 id=313 data-nosnippet>313</a></span><span class="kw">mod </span>tests {
+<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#315 id=315 data-nosnippet>315</a>    <span class="kw">use </span>casa_provider_contracts::ParameterValue;
+<a href=#316 id=316 data-nosnippet>316</a>    <span class="kw">use </span>serde::{Deserialize, Serialize, Serializer};
+<a href=#317 id=317 data-nosnippet>317</a>
+<a href=#318 id=318 data-nosnippet>318</a>    <span class="attr">#[derive(Deserialize, schemars::JsonSchema)]
+<a href=#319 id=319 data-nosnippet>319</a>    </span><span class="kw">struct </span>Request {
+<a href=#320 id=320 data-nosnippet>320</a>        value: u32,
+<a href=#321 id=321 data-nosnippet>321</a>    }
+<a href=#322 id=322 data-nosnippet>322</a>
+<a href=#323 id=323 data-nosnippet>323</a>    <span class="attr">#[derive(Serialize, schemars::JsonSchema)]
+<a href=#324 id=324 data-nosnippet>324</a>    </span><span class="kw">struct </span>ResultValue {
+<a href=#325 id=325 data-nosnippet>325</a>        value: u32,
+<a href=#326 id=326 data-nosnippet>326</a>    }
+<a href=#327 id=327 data-nosnippet>327</a>
+<a href=#328 id=328 data-nosnippet>328</a>    <span class="kw">struct </span>SerializationFailure;
+<a href=#329 id=329 data-nosnippet>329</a>
+<a href=#330 id=330 data-nosnippet>330</a>    <span class="kw">impl </span>Serialize <span class="kw">for </span>SerializationFailure {
+<a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">fn </span>serialize&lt;S&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, _serializer: S) -&gt; <span class="prelude-ty">Result</span>&lt;S::Ok, S::Error&gt;
+<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">where
+<a href=#333 id=333 data-nosnippet>333</a>            </span>S: Serializer,
+<a href=#334 id=334 data-nosnippet>334</a>        {
+<a href=#335 id=335 data-nosnippet>335</a>            <span class="prelude-val">Err</span>(serde::ser::Error::custom(
+<a href=#336 id=336 data-nosnippet>336</a>                <span class="string">"deliberate serialization failure"</span>,
+<a href=#337 id=337 data-nosnippet>337</a>            ))
+<a href=#338 id=338 data-nosnippet>338</a>        }
+<a href=#339 id=339 data-nosnippet>339</a>    }
+<a href=#340 id=340 data-nosnippet>340</a>
+<a href=#341 id=341 data-nosnippet>341</a>    <span class="kw">fn </span>contract() -&gt; casa_provider_contracts::TaskProviderContract {
+<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">let </span>request_schema = <span class="macro">schemars::schema_for!</span>(Request);
+<a href=#343 id=343 data-nosnippet>343</a>        <span class="kw">let </span>result_schema = <span class="macro">schemars::schema_for!</span>(ResultValue);
+<a href=#344 id=344 data-nosnippet>344</a>        casa_provider_contracts::TaskProviderContract {
+<a href=#345 id=345 data-nosnippet>345</a>            protocol: casa_provider_contracts::ProviderProtocolDescriptor::new(
+<a href=#346 id=346 data-nosnippet>346</a>                <span class="string">"test"</span>,
+<a href=#347 id=347 data-nosnippet>347</a>                <span class="number">1</span>,
+<a href=#348 id=348 data-nosnippet>348</a>                casa_provider_contracts::ProviderSurfaceKind::Task,
+<a href=#349 id=349 data-nosnippet>349</a>                <span class="string">"1"</span>,
+<a href=#350 id=350 data-nosnippet>350</a>            ),
+<a href=#351 id=351 data-nosnippet>351</a>            semantic: casa_provider_contracts::TaskSemanticContract {
+<a href=#352 id=352 data-nosnippet>352</a>                request_schema: request_schema.clone(),
+<a href=#353 id=353 data-nosnippet>353</a>                result_schema: result_schema.clone(),
+<a href=#354 id=354 data-nosnippet>354</a>                operations: <span class="macro">vec!</span>[casa_provider_contracts::TaskOperationDescriptor {
+<a href=#355 id=355 data-nosnippet>355</a>                    name: <span class="string">"run"</span>.into(),
+<a href=#356 id=356 data-nosnippet>356</a>                    request_kind: <span class="string">"run"</span>.into(),
+<a href=#357 id=357 data-nosnippet>357</a>                    result_kind: <span class="prelude-val">Some</span>(<span class="string">"run"</span>.into()),
+<a href=#358 id=358 data-nosnippet>358</a>                }],
+<a href=#359 id=359 data-nosnippet>359</a>            },
+<a href=#360 id=360 data-nosnippet>360</a>            components: casa_provider_contracts::merged_components([
+<a href=#361 id=361 data-nosnippet>361</a>                <span class="kw-2">&amp;</span>request_schema,
+<a href=#362 id=362 data-nosnippet>362</a>                <span class="kw-2">&amp;</span>result_schema,
+<a href=#363 id=363 data-nosnippet>363</a>            ]),
+<a href=#364 id=364 data-nosnippet>364</a>            annotations: <span class="macro">serde_json::json!</span>({}),
+<a href=#365 id=365 data-nosnippet>365</a>            projections: casa_provider_contracts::ProviderProjectionMetadata {
+<a href=#366 id=366 data-nosnippet>366</a>                cli: <span class="prelude-val">Some</span>(casa_provider_contracts::ProviderCliProjection {
+<a href=#367 id=367 data-nosnippet>367</a>                    machine_actions: casa_provider_contracts::ProviderCliMachineActions {
+<a href=#368 id=368 data-nosnippet>368</a>                        json_schema: <span class="prelude-val">Some</span>(<span class="string">"--json-schema"</span>.into()),
+<a href=#369 id=369 data-nosnippet>369</a>                        protocol_info: <span class="prelude-val">Some</span>(<span class="string">"--protocol-info"</span>.into()),
+<a href=#370 id=370 data-nosnippet>370</a>                        json_run: <span class="prelude-val">Some</span>(<span class="string">"--json-run &lt;SOURCE&gt;"</span>.into()),
+<a href=#371 id=371 data-nosnippet>371</a>                    },
+<a href=#372 id=372 data-nosnippet>372</a>                }),
+<a href=#373 id=373 data-nosnippet>373</a>                python: <span class="prelude-val">None</span>,
+<a href=#374 id=374 data-nosnippet>374</a>            },
+<a href=#375 id=375 data-nosnippet>375</a>            parameter_surfaces: <span class="macro">vec!</span>[
+<a href=#376 id=376 data-nosnippet>376</a>                casa_provider_contracts::builtin_surface_bundle(<span class="string">"imager"</span>).unwrap(),
+<a href=#377 id=377 data-nosnippet>377</a>            ],
+<a href=#378 id=378 data-nosnippet>378</a>            domain_schemas: casa_provider_contracts::TaskProviderSchemas {
+<a href=#379 id=379 data-nosnippet>379</a>                request_schema,
+<a href=#380 id=380 data-nosnippet>380</a>                result_schema,
+<a href=#381 id=381 data-nosnippet>381</a>                additional: casa_provider_contracts::NoAdditionalProviderSchemas {},
+<a href=#382 id=382 data-nosnippet>382</a>            },
+<a href=#383 id=383 data-nosnippet>383</a>        }
+<a href=#384 id=384 data-nosnippet>384</a>    }
+<a href=#385 id=385 data-nosnippet>385</a>
+<a href=#386 id=386 data-nosnippet>386</a>    <span class="attr">#[test]
+<a href=#387 id=387 data-nosnippet>387</a>    </span><span class="kw">fn </span>parses_common_actions_and_rejects_missing_source() {
+<a href=#388 id=388 data-nosnippet>388</a>        <span class="macro">assert_eq!</span>(
+<a href=#389 id=389 data-nosnippet>389</a>            parse_task_cli_action(<span class="kw-2">&amp;</span>[<span class="string">"--json-schema"</span>.into()]).unwrap(),
+<a href=#390 id=390 data-nosnippet>390</a>            <span class="prelude-val">Some</span>(TaskCliAction::JsonSchema)
+<a href=#391 id=391 data-nosnippet>391</a>        );
+<a href=#392 id=392 data-nosnippet>392</a>        <span class="macro">assert_eq!</span>(
+<a href=#393 id=393 data-nosnippet>393</a>            parse_task_cli_action(<span class="kw-2">&amp;</span>[<span class="string">"--json-run"</span>.into(), <span class="string">"request.json"</span>.into()]).unwrap(),
+<a href=#394 id=394 data-nosnippet>394</a>            <span class="prelude-val">Some</span>(TaskCliAction::JsonRun(<span class="string">"request.json"</span>.into()))
+<a href=#395 id=395 data-nosnippet>395</a>        );
+<a href=#396 id=396 data-nosnippet>396</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#397 id=397 data-nosnippet>397</a>            parse_task_cli_action(<span class="kw-2">&amp;</span>[<span class="string">"--json-run"</span>.into()]),
+<a href=#398 id=398 data-nosnippet>398</a>            <span class="prelude-val">Err</span>(TaskCliError::MissingJsonRunSource)
+<a href=#399 id=399 data-nosnippet>399</a>        ));
+<a href=#400 id=400 data-nosnippet>400</a>    }
+<a href=#401 id=401 data-nosnippet>401</a>
+<a href=#402 id=402 data-nosnippet>402</a>    <span class="attr">#[test]
+<a href=#403 id=403 data-nosnippet>403</a>    </span><span class="kw">fn </span>catalog_cli_parser_accepts_only_declared_flags_and_normalizes_values() {
+<a href=#404 id=404 data-nosnippet>404</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"imager"</span>).unwrap();
+<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">let </span>patch = parse_parameter_cli_overrides(
+<a href=#406 id=406 data-nosnippet>406</a>            <span class="kw-2">&amp;</span>bundle,
+<a href=#407 id=407 data-nosnippet>407</a>            <span class="kw-2">&amp;</span>[
+<a href=#408 id=408 data-nosnippet>408</a>                <span class="string">"--ms"</span>.into(),
+<a href=#409 id=409 data-nosnippet>409</a>                <span class="string">"input.ms"</span>.into(),
+<a href=#410 id=410 data-nosnippet>410</a>                <span class="string">"--imsize"</span>.into(),
+<a href=#411 id=411 data-nosnippet>411</a>                <span class="string">"1024"</span>.into(),
+<a href=#412 id=412 data-nosnippet>412</a>                <span class="string">"--cell-arcsec=0.0002777777777777778deg"</span>.into(),
+<a href=#413 id=413 data-nosnippet>413</a>                <span class="string">"--gridder"</span>.into(),
+<a href=#414 id=414 data-nosnippet>414</a>                <span class="string">"awproject"</span>.into(),
+<a href=#415 id=415 data-nosnippet>415</a>                <span class="string">"--no-parallel"</span>.into(),
+<a href=#416 id=416 data-nosnippet>416</a>                <span class="string">"--gridprecision"</span>.into(),
+<a href=#417 id=417 data-nosnippet>417</a>                <span class="string">"f64"</span>.into(),
+<a href=#418 id=418 data-nosnippet>418</a>            ],
+<a href=#419 id=419 data-nosnippet>419</a>        )
+<a href=#420 id=420 data-nosnippet>420</a>        .unwrap();
+<a href=#421 id=421 data-nosnippet>421</a>
+<a href=#422 id=422 data-nosnippet>422</a>        <span class="macro">assert_eq!</span>(
+<a href=#423 id=423 data-nosnippet>423</a>            patch.values[<span class="string">"vis"</span>],
+<a href=#424 id=424 data-nosnippet>424</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::String(<span class="string">"input.ms"</span>.into())])
+<a href=#425 id=425 data-nosnippet>425</a>        );
+<a href=#426 id=426 data-nosnippet>426</a>        <span class="macro">assert_eq!</span>(
+<a href=#427 id=427 data-nosnippet>427</a>            patch.values[<span class="string">"imsize"</span>],
+<a href=#428 id=428 data-nosnippet>428</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::Integer(<span class="number">1024</span>); <span class="number">2</span>])
+<a href=#429 id=429 data-nosnippet>429</a>        );
+<a href=#430 id=430 data-nosnippet>430</a>        <span class="macro">assert_eq!</span>(
+<a href=#431 id=431 data-nosnippet>431</a>            patch.values[<span class="string">"cell"</span>],
+<a href=#432 id=432 data-nosnippet>432</a>            ParameterValue::Array(<span class="macro">vec!</span>[ParameterValue::String(<span class="string">"1arcsec"</span>.into()); <span class="number">2</span>])
+<a href=#433 id=433 data-nosnippet>433</a>        );
+<a href=#434 id=434 data-nosnippet>434</a>        <span class="macro">assert_eq!</span>(patch.values[<span class="string">"parallel"</span>], ParameterValue::Bool(<span class="bool-val">false</span>));
+<a href=#435 id=435 data-nosnippet>435</a>        <span class="macro">assert_eq!</span>(
+<a href=#436 id=436 data-nosnippet>436</a>            patch.values[<span class="string">"gridprecision"</span>],
+<a href=#437 id=437 data-nosnippet>437</a>            ParameterValue::String(<span class="string">"f64"</span>.into())
+<a href=#438 id=438 data-nosnippet>438</a>        );
+<a href=#439 id=439 data-nosnippet>439</a>
+<a href=#440 id=440 data-nosnippet>440</a>        <span class="kw">let </span>alias = parse_parameter_cli_overrides(<span class="kw-2">&amp;</span>bundle, <span class="kw-2">&amp;</span>[<span class="string">"--threshold"</span>.into(), <span class="string">"1Jy"</span>.into()])
+<a href=#441 id=441 data-nosnippet>441</a>            .unwrap_err();
+<a href=#442 id=442 data-nosnippet>442</a>        <span class="macro">assert!</span>(alias.contains(<span class="string">"unknown imager parameter flag --threshold"</span>));
+<a href=#443 id=443 data-nosnippet>443</a>    }
+<a href=#444 id=444 data-nosnippet>444</a>
+<a href=#445 id=445 data-nosnippet>445</a>    <span class="attr">#[test]
+<a href=#446 id=446 data-nosnippet>446</a>    </span><span class="kw">fn </span>catalog_cli_parser_applies_unsets_in_argument_order() {
+<a href=#447 id=447 data-nosnippet>447</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"imager"</span>).unwrap();
+<a href=#448 id=448 data-nosnippet>448</a>        <span class="kw">let </span>patch = parse_parameter_cli_overrides(
+<a href=#449 id=449 data-nosnippet>449</a>            <span class="kw-2">&amp;</span>bundle,
+<a href=#450 id=450 data-nosnippet>450</a>            <span class="kw-2">&amp;</span>[
+<a href=#451 id=451 data-nosnippet>451</a>                <span class="string">"--niter"</span>.into(),
+<a href=#452 id=452 data-nosnippet>452</a>                <span class="string">"7"</span>.into(),
+<a href=#453 id=453 data-nosnippet>453</a>                <span class="string">"--unset"</span>.into(),
+<a href=#454 id=454 data-nosnippet>454</a>                <span class="string">"niter"</span>.into(),
+<a href=#455 id=455 data-nosnippet>455</a>                <span class="string">"--niter=9"</span>.into(),
+<a href=#456 id=456 data-nosnippet>456</a>            ],
+<a href=#457 id=457 data-nosnippet>457</a>        )
+<a href=#458 id=458 data-nosnippet>458</a>        .unwrap();
+<a href=#459 id=459 data-nosnippet>459</a>        <span class="macro">assert_eq!</span>(patch.values[<span class="string">"niter"</span>], ParameterValue::Integer(<span class="number">9</span>));
+<a href=#460 id=460 data-nosnippet>460</a>        <span class="macro">assert!</span>(!patch.unset.contains(<span class="string">"niter"</span>));
+<a href=#461 id=461 data-nosnippet>461</a>    }
+<a href=#462 id=462 data-nosnippet>462</a>
+<a href=#463 id=463 data-nosnippet>463</a>    <span class="attr">#[test]
+<a href=#464 id=464 data-nosnippet>464</a>    </span><span class="kw">fn </span>host_renders_discovery_and_executes_file_requests() {
+<a href=#465 id=465 data-nosnippet>465</a>        <span class="kw">let </span>temp = tempfile::NamedTempFile::new().unwrap();
+<a href=#466 id=466 data-nosnippet>466</a>        std::fs::write(temp.path(), <span class="string">r#"{"value": 4}"#</span>).unwrap();
+<a href=#467 id=467 data-nosnippet>467</a>        <span class="kw">let </span>host = TaskCliHost::new(contract(), |request: Request| {
+<a href=#468 id=468 data-nosnippet>468</a>            <span class="prelude-val">Ok</span>(ResultValue {
+<a href=#469 id=469 data-nosnippet>469</a>                value: request.value + <span class="number">1</span>,
+<a href=#470 id=470 data-nosnippet>470</a>            })
+<a href=#471 id=471 data-nosnippet>471</a>        });
+<a href=#472 id=472 data-nosnippet>472</a>        <span class="kw">let </span>output = host
+<a href=#473 id=473 data-nosnippet>473</a>            .dispatch(<span class="kw-2">&amp;</span>[<span class="string">"--json-run"</span>.into(), temp.path().as_os_str().to_owned()])
+<a href=#474 id=474 data-nosnippet>474</a>            .unwrap()
+<a href=#475 id=475 data-nosnippet>475</a>            .unwrap();
+<a href=#476 id=476 data-nosnippet>476</a>        <span class="macro">assert_eq!</span>(
+<a href=#477 id=477 data-nosnippet>477</a>            serde_json::from_str::&lt;serde_json::Value&gt;(<span class="kw-2">&amp;</span>output).unwrap()[<span class="string">"value"</span>],
+<a href=#478 id=478 data-nosnippet>478</a>            <span class="number">5
+<a href=#479 id=479 data-nosnippet>479</a>        </span>);
+<a href=#480 id=480 data-nosnippet>480</a>    }
+<a href=#481 id=481 data-nosnippet>481</a>
+<a href=#482 id=482 data-nosnippet>482</a>    <span class="attr">#[test]
+<a href=#483 id=483 data-nosnippet>483</a>    </span><span class="kw">fn </span>host_classifies_common_failure_corpus() {
+<a href=#484 id=484 data-nosnippet>484</a>        <span class="kw">let </span>malformed = tempfile::NamedTempFile::new().unwrap();
+<a href=#485 id=485 data-nosnippet>485</a>        std::fs::write(malformed.path(), <span class="string">"not-json"</span>).unwrap();
+<a href=#486 id=486 data-nosnippet>486</a>        <span class="kw">let </span>host = TaskCliHost::new(contract(), |_request: Request| <span class="prelude-val">Ok</span>(ResultValue { value: <span class="number">1 </span>}));
+<a href=#487 id=487 data-nosnippet>487</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#488 id=488 data-nosnippet>488</a>            host.dispatch(<span class="kw-2">&amp;</span>[<span class="string">"--json-run"</span>.into(), malformed.path().into()]),
+<a href=#489 id=489 data-nosnippet>489</a>            <span class="prelude-val">Err</span>(TaskCliError::ParseRequest(<span class="kw">_</span>))
 <a href=#490 id=490 data-nosnippet>490</a>        ));
-<a href=#491 id=491 data-nosnippet>491</a>
-<a href=#492 id=492 data-nosnippet>492</a>        <span class="kw">let </span>request = tempfile::NamedTempFile::new().unwrap();
-<a href=#493 id=493 data-nosnippet>493</a>        std::fs::write(request.path(), <span class="string">r#"{"value": 4}"#</span>).unwrap();
-<a href=#494 id=494 data-nosnippet>494</a>        <span class="kw">let </span>execution_failure = TaskCliHost::new(contract(), |_request: Request| {
-<a href=#495 id=495 data-nosnippet>495</a>            <span class="prelude-val">Err</span>::&lt;ResultValue, <span class="kw">_</span>&gt;(<span class="string">"deliberate execution failure"</span>.into())
-<a href=#496 id=496 data-nosnippet>496</a>        });
-<a href=#497 id=497 data-nosnippet>497</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#498 id=498 data-nosnippet>498</a>            execution_failure.dispatch(<span class="kw-2">&amp;</span>[<span class="string">"--json-run"</span>.into(), request.path().into()]),
-<a href=#499 id=499 data-nosnippet>499</a>            <span class="prelude-val">Err</span>(TaskCliError::Execute(<span class="kw">_</span>))
-<a href=#500 id=500 data-nosnippet>500</a>        ));
-<a href=#501 id=501 data-nosnippet>501</a>
-<a href=#502 id=502 data-nosnippet>502</a>        <span class="kw">let </span>serialization_failure =
-<a href=#503 id=503 data-nosnippet>503</a>            TaskCliHost::new(contract(), |_request: Request| <span class="prelude-val">Ok</span>(SerializationFailure));
+<a href=#491 id=491 data-nosnippet>491</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#492 id=492 data-nosnippet>492</a>            host.dispatch(<span class="kw-2">&amp;</span>[
+<a href=#493 id=493 data-nosnippet>493</a>                <span class="string">"--json-run"</span>.into(),
+<a href=#494 id=494 data-nosnippet>494</a>                <span class="string">"/definitely/missing/request.json"</span>.into()
+<a href=#495 id=495 data-nosnippet>495</a>            ]),
+<a href=#496 id=496 data-nosnippet>496</a>            <span class="prelude-val">Err</span>(TaskCliError::ReadFile { .. })
+<a href=#497 id=497 data-nosnippet>497</a>        ));
+<a href=#498 id=498 data-nosnippet>498</a>
+<a href=#499 id=499 data-nosnippet>499</a>        <span class="kw">let </span>request = tempfile::NamedTempFile::new().unwrap();
+<a href=#500 id=500 data-nosnippet>500</a>        std::fs::write(request.path(), <span class="string">r#"{"value": 4}"#</span>).unwrap();
+<a href=#501 id=501 data-nosnippet>501</a>        <span class="kw">let </span>execution_failure = TaskCliHost::new(contract(), |_request: Request| {
+<a href=#502 id=502 data-nosnippet>502</a>            <span class="prelude-val">Err</span>::&lt;ResultValue, <span class="kw">_</span>&gt;(<span class="string">"deliberate execution failure"</span>.into())
+<a href=#503 id=503 data-nosnippet>503</a>        });
 <a href=#504 id=504 data-nosnippet>504</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#505 id=505 data-nosnippet>505</a>            serialization_failure.dispatch(<span class="kw-2">&amp;</span>[<span class="string">"--json-run"</span>.into(), request.path().into()]),
-<a href=#506 id=506 data-nosnippet>506</a>            <span class="prelude-val">Err</span>(TaskCliError::Serialize(<span class="kw">_</span>))
+<a href=#505 id=505 data-nosnippet>505</a>            execution_failure.dispatch(<span class="kw-2">&amp;</span>[<span class="string">"--json-run"</span>.into(), request.path().into()]),
+<a href=#506 id=506 data-nosnippet>506</a>            <span class="prelude-val">Err</span>(TaskCliError::Execute(<span class="kw">_</span>))
 <a href=#507 id=507 data-nosnippet>507</a>        ));
 <a href=#508 id=508 data-nosnippet>508</a>
-<a href=#509 id=509 data-nosnippet>509</a>        <span class="kw">let </span><span class="kw-2">mut </span>invalid = contract();
-<a href=#510 id=510 data-nosnippet>510</a>        invalid.protocol.protocol_name.clear();
-<a href=#511 id=511 data-nosnippet>511</a>        <span class="kw">let </span>invalid_host =
-<a href=#512 id=512 data-nosnippet>512</a>            TaskCliHost::new(invalid, |_request: Request| <span class="prelude-val">Ok</span>(ResultValue { value: <span class="number">1 </span>}));
-<a href=#513 id=513 data-nosnippet>513</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#514 id=514 data-nosnippet>514</a>            invalid_host.dispatch(<span class="kw-2">&amp;</span>[<span class="string">"--protocol-info"</span>.into()]),
-<a href=#515 id=515 data-nosnippet>515</a>            <span class="prelude-val">Err</span>(TaskCliError::InvalidContract(<span class="kw">_</span>))
-<a href=#516 id=516 data-nosnippet>516</a>        ));
-<a href=#517 id=517 data-nosnippet>517</a>    }
-<a href=#518 id=518 data-nosnippet>518</a>
-<a href=#519 id=519 data-nosnippet>519</a>    <span class="attr">#[test]
-<a href=#520 id=520 data-nosnippet>520</a>    </span><span class="kw">fn </span>exit_code_preserves_the_shared_provider_contract() {
-<a href=#521 id=521 data-nosnippet>521</a>        <span class="macro">assert_eq!</span>(TaskCliError::MissingJsonRunSource.exit_code(), <span class="number">1</span>);
-<a href=#522 id=522 data-nosnippet>522</a>        <span class="macro">assert_eq!</span>(TaskCliError::Execute(<span class="string">"failed"</span>.into()).exit_code(), <span class="number">1</span>);
-<a href=#523 id=523 data-nosnippet>523</a>    }
-<a href=#524 id=524 data-nosnippet>524</a>}
+<a href=#509 id=509 data-nosnippet>509</a>        <span class="kw">let </span>serialization_failure =
+<a href=#510 id=510 data-nosnippet>510</a>            TaskCliHost::new(contract(), |_request: Request| <span class="prelude-val">Ok</span>(SerializationFailure));
+<a href=#511 id=511 data-nosnippet>511</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#512 id=512 data-nosnippet>512</a>            serialization_failure.dispatch(<span class="kw-2">&amp;</span>[<span class="string">"--json-run"</span>.into(), request.path().into()]),
+<a href=#513 id=513 data-nosnippet>513</a>            <span class="prelude-val">Err</span>(TaskCliError::Serialize(<span class="kw">_</span>))
+<a href=#514 id=514 data-nosnippet>514</a>        ));
+<a href=#515 id=515 data-nosnippet>515</a>
+<a href=#516 id=516 data-nosnippet>516</a>        <span class="kw">let </span><span class="kw-2">mut </span>invalid = contract();
+<a href=#517 id=517 data-nosnippet>517</a>        invalid.protocol.protocol_name.clear();
+<a href=#518 id=518 data-nosnippet>518</a>        <span class="kw">let </span>invalid_host =
+<a href=#519 id=519 data-nosnippet>519</a>            TaskCliHost::new(invalid, |_request: Request| <span class="prelude-val">Ok</span>(ResultValue { value: <span class="number">1 </span>}));
+<a href=#520 id=520 data-nosnippet>520</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#521 id=521 data-nosnippet>521</a>            invalid_host.dispatch(<span class="kw-2">&amp;</span>[<span class="string">"--protocol-info"</span>.into()]),
+<a href=#522 id=522 data-nosnippet>522</a>            <span class="prelude-val">Err</span>(TaskCliError::InvalidContract(<span class="kw">_</span>))
+<a href=#523 id=523 data-nosnippet>523</a>        ));
+<a href=#524 id=524 data-nosnippet>524</a>    }
+<a href=#525 id=525 data-nosnippet>525</a>
+<a href=#526 id=526 data-nosnippet>526</a>    <span class="attr">#[test]
+<a href=#527 id=527 data-nosnippet>527</a>    </span><span class="kw">fn </span>exit_code_preserves_the_shared_provider_contract() {
+<a href=#528 id=528 data-nosnippet>528</a>        <span class="macro">assert_eq!</span>(TaskCliError::MissingJsonRunSource.exit_code(), <span class="number">1</span>);
+<a href=#529 id=529 data-nosnippet>529</a>        <span class="macro">assert_eq!</span>(TaskCliError::Execute(<span class="string">"failed"</span>.into()).exit_code(), <span class="number">1</span>);
+<a href=#530 id=530 data-nosnippet>530</a>    }
+<a href=#531 id=531 data-nosnippet>531</a>
+<a href=#532 id=532 data-nosnippet>532</a>    <span class="attr">#[test]
+<a href=#533 id=533 data-nosnippet>533</a>    </span><span class="kw">fn </span>cli_values_are_normalized_through_the_binding_concept() {
+<a href=#534 id=534 data-nosnippet>534</a>        <span class="kw">let </span>bundle = casa_provider_contracts::builtin_surface_bundle(<span class="string">"msexplore"</span>).unwrap();
+<a href=#535 id=535 data-nosnippet>535</a>        <span class="kw">let </span>field = ensure_parameter_binding(<span class="kw-2">&amp;</span>bundle, <span class="string">"field"</span>).unwrap();
+<a href=#536 id=536 data-nosnippet>536</a>        <span class="macro">assert_eq!</span>(
+<a href=#537 id=537 data-nosnippet>537</a>            validated_cli_value(<span class="kw-2">&amp;</span>bundle, field, <span class="string">" 0, 2 "</span>).unwrap(),
+<a href=#538 id=538 data-nosnippet>538</a>            ParameterValue::String(<span class="string">"0,2"</span>.to_string())
+<a href=#539 id=539 data-nosnippet>539</a>        );
+<a href=#540 id=540 data-nosnippet>540</a>        <span class="macro">assert!</span>(
+<a href=#541 id=541 data-nosnippet>541</a>            validated_cli_value(<span class="kw-2">&amp;</span>bundle, field, <span class="string">"  "</span>)
+<a href=#542 id=542 data-nosnippet>542</a>                .unwrap_err()
+<a href=#543 id=543 data-nosnippet>543</a>                .contains(<span class="string">"no typed value"</span>)
+<a href=#544 id=544 data-nosnippet>544</a>        );
+<a href=#545 id=545 data-nosnippet>545</a>        <span class="macro">assert!</span>(ensure_parameter_binding(<span class="kw-2">&amp;</span>bundle, <span class="string">"not_a_parameter"</span>).is_err());
+<a href=#546 id=546 data-nosnippet>546</a>    }
+<a href=#547 id=547 data-nosnippet>547</a>}
 </code></pre></div></section></main></body></html>

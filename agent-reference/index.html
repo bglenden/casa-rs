@@ -359,116 +359,6 @@
   
   
   
-    
-    
-    
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
-        
-          
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
-            
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Scientific Workbench
-  
-
-    
-  </span>
-  
-  
-
-            <span class="md-nav__icon md-icon"></span>
-          </label>
-        
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4">
-            <span class="md-nav__icon md-icon"></span>
-            
-  
-    Scientific Workbench
-  
-
-          </label>
-          <ul class="md-nav__list" data-md-scrollfix>
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../scientific-notebooks-and-assistant/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Notebooks, Tutorials, Python, and AI
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../mac-native-gui-spec/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Native macOS Product Spec
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-          </ul>
-        </nav>
-      
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
     <li class="md-nav__item">
       <a href="../rust-api/" class="md-nav__link">
         
@@ -505,10 +395,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
             
   
   
@@ -526,8 +416,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_6">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -793,17 +683,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#tui-evidence" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        TUI Evidence
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -823,7 +702,7 @@
 
 <h1 id="agent-reference">Agent Reference<a class="headerlink" href="#agent-reference" title="Permanent link">&para;</a></h1>
 <p>Truth class: normative
-Last reality check: 2026-10-16
+Last reality check: 2026-10-20
 Verification: just docs-check</p>
 <p>This is situational guidance for agents. Read only the section relevant to the
 task; root <code>AGENTS.md</code> remains the short always-loaded contract.</p>
@@ -925,8 +804,7 @@ and replace superseded runs rather than accumulating them.</p>
 <li>Performance evidence: <code>just release-perf</code></li>
 <li>Slow parity: <code>scripts/test-slow.sh</code></li>
 <li>Release: <code>scripts/release.sh &lt;version-or-flag&gt;</code></li>
-<li>Local installs: <code>just install-local</code>, <code>just install-local-suite</code>, and
-  <code>just install-local-gui</code></li>
+<li>Local installs: <code>just install-local</code> (or <code>just install-local-suite</code>)</li>
 <li>Release install: <code>just install-release &lt;version&gt;</code></li>
 </ul>
 <p>Use <code>TESTING.md</code> to decide when these heavier commands apply. Routine branch
@@ -977,11 +855,6 @@ record. Locations on this workstation:</p>
   with the patch, and reverts the checkout afterwards; IF-11's patch is
   recorded on #660.</li>
 </ul>
-<h2 id="tui-evidence">TUI Evidence<a class="headerlink" href="#tui-evidence" title="Permanent link">&para;</a></h2>
-<p>For tutorial or regression evidence that needs <code>casars</code> TUI screenshots, use
-<code>tools/ghostty-surface-capture</code>, not visible terminal/window screenshots. It
-runs the TUI in an offscreen GhosttyKit surface with <code>TERM=xterm-ghostty</code> and
-captures Kitty graphics and terminal cells from the renderer layer in one PNG.</p>
 
 
 

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["PanelProtocol","ProtocolType","Resize"],"mod":["bitmap","image_ops","kitty","panel","terminal"],"struct":["Picker"]};

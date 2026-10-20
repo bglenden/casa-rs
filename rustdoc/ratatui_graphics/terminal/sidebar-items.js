@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["TerminalDetectError"],"fn":["detect_terminal_background"],"struct":["TerminalCapabilities"]};
