@@ -16,7 +16,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
-| [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 5 | <code>msexplore</code> | 66 | explore and export common MeasurementSet plotms-style plots |
+| [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 6 | <code>msexplore</code> | 66 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 4 | <code>calibration</code> | 49 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
 | [Imager](#surface-imager)<br><code>imager</code> | task | 25 | <code>imager</code> | 81 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
@@ -32,7 +32,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 3 | <code>calibration</code> | 25 | Solve bandpass calibration for a MeasurementSet. |
 | [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 3 | <code>calibration</code> | 10 | Scale gain solutions using reference calibrator fields. |
 | [Gencal](#surface-gencal)<br><code>gencal</code> | task | 3 | <code>calibration</code> | 10 | Generate a calibration table such as antpos, gceff, or opac. |
-| [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 5 | <code>msexplore</code> | 66 | Plot MeasurementSet visibility data with CASA plotms-style selections and axes. |
+| [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 6 | <code>msexplore</code> | 66 | Plot MeasurementSet visibility data with CASA plotms-style selections and axes. |
 | [PlotCal](#surface-plotcal)<br><code>plotcal</code> | task | 4 | <code>plotcal</code> | 15 | Plot calibration tables and corrected-data diagnostics. |
 | [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 3 | <code>flagdata</code> | 18 | Run native CASA-style MeasurementSet flagging. |
 | [Flag Manager](#surface-flagmanager)<br><code>flagmanager</code> | task | 3 | <code>flagmanager</code> | 6 | Manage MeasurementSet flag-version snapshots. |
@@ -49,7 +49,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## MSExplore (<code>msexplore</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: MeasurementSet
 - Provider family: `msexplore`
 - Summary: explore and export common MeasurementSet plotms-style plots
@@ -643,7 +643,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## PlotMS (<code>plotms</code>)
 
 - Kind: `task`
-- Contract version: `5`
+- Contract version: `6`
 - Category: Plotting
 - Provider family: `msexplore`
 - Summary: Plot MeasurementSet visibility data with CASA plotms-style selections and axes.

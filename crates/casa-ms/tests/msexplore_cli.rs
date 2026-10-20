@@ -272,9 +272,7 @@ fn msexplore_presentation_form_describes_launcher_contract() {
     let max_points = schema.argument("max_points").expect("max_points argument");
     assert_eq!(max_points.value_kind, UiValueKind::Float);
 
-    let managed_output = schema.managed_output.expect("managed output");
-    assert_eq!(managed_output.renderer, "measurementset-summary-v1");
-    assert_eq!(managed_output.stdout_format, "json");
+    assert!(schema.managed_output.is_none());
 }
 
 #[test]

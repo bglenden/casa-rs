@@ -769,8 +769,6 @@ pub enum ManagedOutputFormat {
 /// Rust-owned decoder for one structured task result family.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ManagedResultDecoder {
-    #[serde(rename = "measurementset-summary-v1")]
-    MeasurementSetSummaryV1,
     #[serde(rename = "calibration-report-v1")]
     CalibrationReportV1,
     #[serde(rename = "imager-run-v1")]

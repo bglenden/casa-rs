@@ -2844,6 +2844,11 @@
       "fingerprint": "772b3f061b22e0dcb19560e774397ee72040a4aa98c28dc69a8e14fbc011bdeb"
     },
     {
+      "id": "msexplore",
+      "contract_version": 6,
+      "fingerprint": "959958ddaa70b6e2d13294f93323adeff01c02fdb25e973b146b40ff234841d1"
+    },
+    {
       "id": "mstransform",
       "contract_version": 1,
       "fingerprint": "15638e976f8274dfffb535362848375bb7c40079481a2e8d5daa41942502e8be"
@@ -2902,6 +2907,11 @@
       "id": "plotms",
       "contract_version": 5,
       "fingerprint": "af988dffdbf66450c63252378e73663c21923198314026a9769d62b68939128c"
+    },
+    {
+      "id": "plotms",
+      "contract_version": 6,
+      "fingerprint": "ca6adc76b0ee8c19352d5d40a0420ecfc361753212e4b28dd14362769ad1ca09"
     },
     {
       "id": "simalma",
