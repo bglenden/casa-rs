@@ -15,28 +15,18 @@ crate-type = ["cdylib", "rlib"]
 anyhow = "1"
 camino = "1.2"
 cargo_metadata = "0.19"
-casa-coordinates = { path = "../casa-coordinates" }
-casa-images = { path = "../casa-images" }
 casa-ms = { path = "../casa-ms" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
-casa-tables = { path = "../casa-tables" }
 casa-task-runtime = { path = "../casa-task-runtime" }
-casa-types = { path = "../casa-types" }
 casars-imager = { path = "../casars-imager" }
-image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror.workspace = true
-toml = "0.8"
 uniffi = "0.29.5"
 uniffi_bindgen = "0.29.5"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString", "NSObjCRuntime"] }
-
 [dev-dependencies]
 flate2 = "1"
-ndarray.workspace = true
 tar = "0.4"
 tempfile = "3"
 
