@@ -1,10 +1,11 @@
 # ADR-0007: Scientific notebooks and assistant boundary
 
-Status: accepted
+Status: retired
 Date: 2026-07-10
 Truth class: normative
 Supersedes:
-Superseded by:
+Superseded by: ADR-0017 (the notebook and assistant program was removed on
+2026-10-20; tag `ui-experiments-2026-10-20` preserves it)
 
 ## Context
 

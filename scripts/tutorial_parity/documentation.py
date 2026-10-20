@@ -39,7 +39,7 @@ Result status: `{result['status']}`
 - Review record: `{manifest.evidence['review']}`
 
 This document is generated regression evidence. It does not define a tutorial,
-notebook, provider, or persisted task contract.
+provider, or persisted task contract.
 """
 
 

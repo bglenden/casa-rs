@@ -21,9 +21,9 @@ and I am happy to answer questions, but there is no institutional support.
 Independently authored source is LGPL-3.0-or-later; FFTW-linked distributions
 are GPL-3.0-or-later. See [License](#license).
 
-Python is the focus for user-facing work, alongside reusable Rust libraries
-and command-line tasks. The [UI experiments](#ui-experiments) below record
-the terminal and native macOS interfaces we explored.
+Python is the user-facing surface, alongside reusable Rust libraries and
+command-line tasks. The [UI experiments](#ui-experiments) below record the
+terminal and native macOS interfaces we explored and then retired.
 
 ## Current Status
 
@@ -73,10 +73,9 @@ Current work and remaining acceptance obligations live in
   and [Rust API reference](https://bglenden.github.io/casa-rs/rustdoc/).
 - [Python overview](docs/python/index.md), [data API](docs/python/data.md),
   and [API reference](docs/python/api.md).
-- [Task and session parameter profiles](docs/task-parameters.md) and the
+- [Task parameter profiles](docs/task-parameters.md) and the
   [generated parameter reference](docs/reference/task-parameters.md).
-- [Calibration guide](docs/casars-calibrate-user-guide.md) and
-  [tutorial learning packs](docs/tutorial-parity/tutorial-learning-packs.md).
+- [Calibration guide](docs/casars-calibrate-user-guide.md).
 - [Documentation index](docs/README.md), [architecture](ARCHITECTURE.md),
   and [testing and scientific evidence](TESTING.md).
 
@@ -126,9 +125,9 @@ p.update(niter=20000, threshold="1mJy")
 result = tasks.run("imager", parameters=p, workspace="project")
 ```
 
-Task runs normally save Last/Last Successful parameters and notebook execution
-receipts in the workspace. The Python API exposes `save_last` and
-`record_notebook` controls, and explicit mutation/overwrite confirmations.
+Task runs normally save Last/Last Successful parameters in the workspace. The
+Python API exposes the `save_last` control and explicit mutation/overwrite
+confirmations.
 See [task parameters](docs/task-parameters.md) and the
 [generated reference](docs/reference/task-parameters.md) for defaults and
 supported options.
@@ -136,8 +135,8 @@ supported options.
 ## Rust Libraries and Source Layout
 
 `casa-*` crates contain reusable domain libraries and shared contracts;
-`casars-*` crates contain applications and frontend integrations. This is a
-native implementation, not a wrapper around casacore C++.
+`casars-*` crates contain the task host, the imager application and the Python
+package. This is a native implementation, not a wrapper around casacore C++.
 
 | Area | Crates or source |
 |---|---|
@@ -148,13 +147,12 @@ native implementation, not a wrapper around casacore C++.
 | Calibration, simulation, import | `casa-calibration`, `casa-simulation-synthesis`, `casa-vla` |
 | Imaging | `casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`, `casa-imaging-application` |
 | Task contracts and execution | `casa-provider-contracts`, `casa-task-runtime`, `casars`, `casars-imager` |
-| Python | `crates/casars-python/` |
-| Notebook and UI experiments | `casa-notebook`, `casars-frontend-services`, browser protocol crates, `ratatui-graphics`, `apps/casars-mac/` |
+| Python | `crates/casars-python/` and its UniFFI service layer `casars-frontend-services` |
 | Comparison and test support | `casa-test-support`, `tools/perf/`, `tools/science/` |
 
 The [application catalog](crates/casa-provider-contracts/resources/application-catalog.json)
 and [parameter surfaces](crates/casa-provider-contracts/resources/parameter-surfaces.json)
-are shared by task launch, Python, and the UI experiments. The
+are shared by task launch and Python. The
 [architecture document](ARCHITECTURE.md) describes ownership and dependency
 rules in detail.
 
@@ -227,8 +225,12 @@ Jupyter AI.
 
 ![Experimental Swift notebook with a genuine AI conversation, results table, and spectrum](docs/images/ui-experiments/ai-notebook.png)
 
-Python is the focus for continued work. These screenshots record the UI
-experiments; their implementation can be revisited in Git history.
+Python is the focus for continued work. The TUI, the Swift GUI, the notebook
+and assistant, the interactive image and table browsers, and Rust-side plot
+rasterisation were removed in October 2026 (issue #833; see
+[ADR-0017](docs/adr/0017-python-first-surface.md)). Their last state is
+preserved at the tag
+[`ui-experiments-2026-10-20`](https://github.com/bglenden/casa-rs/tree/ui-experiments-2026-10-20).
 
 ## Installation
 
@@ -373,9 +375,7 @@ Install `cargo-nextest` to run the workspace tests in parallel. Raw Cargo
 commands should set `CARGO_INCREMENTAL=0`. Imaging changes also need the
 applicable component, end-to-end, and CASA comparison tiers described in
 `TESTING.md`; the general quick gate is not a substitute for scientific
-acceptance. GUI test and build instructions for the experimental workbench
-are in [`apps/casars-mac/README.md`](apps/casars-mac/README.md), and the TUI
-framework is documented in [`docs/casars-tui-framework.md`](docs/casars-tui-framework.md).
+acceptance.
 
 Build local Rust API docs with
 `CARGO_INCREMENTAL=0 cargo doc --workspace --no-deps`.

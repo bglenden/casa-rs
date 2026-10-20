@@ -301,16 +301,16 @@ Wave #446 stays open and its implementation PR stays draft until the
 single-field warm repeatability and all-fields cold/warm fiducials also satisfy
 acceptance.
 
-### Production parameter and UI contract
+### Production parameter contract
 
 Evidence-manifest fields are not production parameters. Under #450, every new
 science or final execution-control capability must be defined once in the
-canonical `ParameterCatalog` and exposed with identical semantics through CLI,
-TUI, native macOS, Python, sparse profiles, and assistant/task schemas. Suitable
-AW/CF/resource controls belong in an advanced wide-field section. Any resolved-
+canonical `ParameterCatalog` and exposed with identical semantics through the
+CLI, Python, sparse profiles, and task schemas. Suitable AW/CF/resource
+controls belong in an advanced wide-field parameter group. Any resolved-
 plan-only field must instead be explicitly classified internal and
 non-persistable with a recorded rationale; no capability may remain CLI-only,
-schema-only, environment-only, or silently simplified in a UI.
+schema-only, environment-only, or silently simplified in Python.
 
 To validate the Wave 1 simulated-dataset plan:
 

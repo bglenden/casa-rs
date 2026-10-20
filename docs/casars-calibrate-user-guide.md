@@ -1,67 +1,32 @@
-# `casars calibrate` User Guide
+# Calibration Tasks User Guide
 
-This guide documents the current `WorkflowShell`-based `calibrate` app in
-`casars`.
+This guide shows how to run the casa-rs calibration tasks from the `casars`
+command line and from Python.
 
-## What `calibrate` is for
+## The calibration surfaces
 
-`calibrate` is the guided calibration workflow UI for MeasurementSets.
+All calibration work runs through one provider executable, `calibrate`. The
+application catalog exposes it as these task surfaces:
 
-It is organized around:
+- `calibrate`: the general surface; `--mode` selects `apply`,
+  `export_corrected_data`, `fluxscale`, `gencal`, `solve_bandpass`,
+  `solve_gain`, `stats`, or `summary`
+- `gaincal`, `bandpass`, `applycal`, `fluxscale`, `gencal`: CASA-named
+  surfaces that run `calibrate` with a fixed mode
 
-- dataset context
-- staged solve and apply steps
-- calibration products
-- apply-chain management
-- diagnostics and inspection
+Every surface is a one-shot task. Run it with `casars run`, which resolves a
+parameter profile (Defaults, Last, Last Successful, or a TOML file), applies
+overrides, saves Last state, and launches the provider. See
+[Task Parameter Profiles](task-parameters.md) for sources and managed Last
+files, and the [generated parameter reference](reference/task-parameters.md)
+for every parameter and its CLI flag.
 
-It is not intended to be a raw form wrapper around CLI flags.
+Use a writable copy of the dataset when you intend to apply calibration,
+because `applycal` (and `calibrate --mode apply`) writes `CORRECTED_DATA`.
+That mutation is a declared safety rule, so the run needs
+`--confirm-mutation`.
 
-## Launching
-
-Use a writable copy of the dataset when you intend to run `Apply`, because that
-stage writes `CORRECTED_DATA`.
-
-Example with the shared test dataset:
-
-```bash
-workdir=$(mktemp -d /tmp/casars-cal.XXXXXX)
-cp -R "$HOME/SoftwareProjects/casatestdata/measurementset/vla/ngc5921.ms" "$workdir/ngc5921.ms"
-cargo run -p casars -- calibrate "$workdir/ngc5921.ms"
-```
-
-## Shell layout
-
-Left pane:
-
-- `Context`
-- `Products`
-- `Stages`
-- `Stage Parameters`
-
-Right pane:
-
-- `Overview`
-- `Data`
-- `Products`
-- `Diagnostics`
-- `History`
-- `Stdout`
-- `Stderr`
-
-## Core workflow
-
-The shortest useful walkthrough for `ngc5921.ms` is:
-
-1. inspect dataset
-2. solve gain on field `0`
-3. promote the gain table into the chain
-4. solve bandpass on field `0`
-5. promote the bandpass table into the chain
-6. apply to field `0`
-7. inspect corrected-data diagnostics
-
-## Recommended `ngc5921.ms` walkthrough
+## `ngc5921.ms` walkthrough
 
 Expected field roles:
 
@@ -69,117 +34,56 @@ Expected field roles:
 - field `1`: phase calibrator
 - field `2`: target
 
-Recommended reference antenna:
+Recommended reference antenna: `VA15`.
 
-- `VA15`
+```bash
+workdir=$(mktemp -d /tmp/casars-cal.XXXXXX)
+cp -R "$HOME/SoftwareProjects/casatestdata/measurementset/vla/ngc5921.ms" "$workdir/ngc5921.ms"
+cd "$workdir"
+```
 
-### Step 1: Inspect Dataset
+1. Solve a phase-only gain on field `0`:
 
-- start on `Inspect Dataset`
-- press `r`
-- check the `Data` tab for field, SPW, and antenna summaries
-- in `Context`, set:
-  - `Refant = VA15`
-  - `Selected Fields = 0`
+   ```bash
+   casars run gaincal --ms ngc5921.ms --out ngc5921.G0 \
+     --refant VA15 --gain-type g --mode-gain p --solint inf \
+     --field 0 --spw 0
+   ```
 
-### Step 2: Solve Gain
+2. Solve the bandpass on field `0`, applying the gain table on the fly:
 
-- select `Solve Gain` in `Stages`
-- in `Stage Parameters`, use:
-  - `Gain Type = G`
-  - `Solve Mode = p`
-  - `Solution Interval = inf`
-  - `SPW IDs = 0`
-- press `r`
-- inspect diagnostics
-- promote the new gain table with `Shift-P`
+   ```bash
+   casars run bandpass --ms ngc5921.ms --out ngc5921.B0 \
+     --refant VA15 --gaintables ngc5921.G0 --field 0
+   ```
 
-### Step 3: Solve Bandpass
+3. Apply both tables to field `0`:
 
-- keep `Selected Fields = 0`
-- select `Solve Bandpass`
-- press `r`
-- inspect bandpass diagnostics
-- promote the new bandpass table with `Shift-P`
+   ```bash
+   casars run applycal --ms ngc5921.ms \
+     --gaintables ngc5921.G0,ngc5921.B0 --field 0 --confirm-mutation
+   ```
 
-### Step 4: Apply
+4. Inspect the solutions and the corrected data with `calibrate --mode stats`
+   or `--mode summary`, `plotcal`, and `plotms`.
 
-- select `Apply`
-- keep field `0` for the first pass
-- press `r`
-- inspect corrected-data diagnostics
+The apply chain is the ordered `--gaintables` list. Per-table policy is given
+by the aligned `--gainfield`, `--interp`, `--spwmap`, and `--calwt` lists, or by
+a CASA callibrary file through `--callib`.
 
-## Products and chain management
+Use `casars params template gaincal` to see every parameter with its default,
+and `--save-params FILE` to keep a run's resolved profile for reuse with
+`--params FILE`.
 
-The `Products` pane is the center of workflow state.
+## Python
 
-You can:
-
-- inspect produced calibration tables
-- promote solved products into the apply chain
-- reorder chain entries with `Ctrl-K` and `Ctrl-J`
-- remove chain entries with `Delete`
-- edit chain policy rows such as:
-  - `gainfield`
-  - `interp`
-  - `spwmap`
-  - `calwt`
-
-If you use a callibrary file, its entries appear as structured rows in
-`Products`, and their settings can be edited there.
-
-## Diagnostics
-
-`Diagnostics` is contextual.
-
-Typical presets include:
-
-- gain amplitude/phase vs time
-- bandpass amplitude/phase vs frequency
-- corrected amplitude/phase vs time
-- corrected amplitude/phase vs frequency
-
-Choose diagnostics after each solve or apply step rather than waiting until the
-end.
-
-## Important keys
-
-- `Tab` / `Shift-Tab`: move focus between panes
-- `[` / `]`: switch right-pane tabs
-- `Enter`: activate the selected row or open a picker
-- `r`: run the selected stage action
-- `Shift-P`: promote the selected workflow product into the apply chain
-- `Delete`: remove the selected chain row
-- `Ctrl-K`: move selected chain row up
-- `Ctrl-J`: move selected chain row down
-- `q`: quit
-- `?`: help
-
-## Conventions and expectations
-
-The app intentionally follows the `WorkflowShell` conventions documented in:
-
-- [`docs/casars-tui-framework.md`](casars-tui-framework.md)
-
-That means:
-
-- stages are ordered but revisitable
-- products are first-class
-- diagnostics are contextual
-- the shell should guide the next step without hiding the workflow structure
+The same surfaces are generated CASA-named functions under `casars.tasks`
+(`casars.tasks.gaincal(...)`, `casars.tasks.applycal(...)`, and so on), and
+`casars.tasks.run("gaincal", ...)` accepts the same parameters. Runtime safety
+confirmations are keyword arguments such as `confirm_mutation=True`.
 
 ## Current limitations
 
-Current known limitations include:
-
-- there is not yet a dedicated first-class `setjy` stage in the TUI
-- some advanced workflows are still easier from the CLI than entirely in the UI
-- multi-field and more sophisticated role assignment workflows still need more
-  polish than the basic `ngc5921.ms` guided path
-
-## Status of this guide
-
-This is currently the in-repo user manual for `calibrate`.
-
-There is not yet a separate public online manual for the new `casars` TUI shell
-family, so this file is the best canonical user-facing reference in the repo.
+- there is not yet a dedicated `setjy` task
+- multi-field role assignment and more sophisticated workflows need more
+  polish than the basic `ngc5921.ms` path

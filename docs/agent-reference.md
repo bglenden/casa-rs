@@ -1,7 +1,7 @@
 # Agent Reference
 
 Truth class: normative
-Last reality check: 2026-10-16
+Last reality check: 2026-10-20
 Verification: just docs-check
 
 This is situational guidance for agents. Read only the section relevant to the
@@ -115,8 +115,7 @@ and replace superseded runs rather than accumulating them.
 - Performance evidence: `just release-perf`
 - Slow parity: `scripts/test-slow.sh`
 - Release: `scripts/release.sh <version-or-flag>`
-- Local installs: `just install-local`, `just install-local-suite`, and
-  `just install-local-gui`
+- Local installs: `just install-local` (or `just install-local-suite`)
 - Release install: `just install-release <version>`
 
 Use `TESTING.md` to decide when these heavier commands apply. Routine branch
@@ -166,10 +165,3 @@ record. Locations on this workstation:
   and `HostResources::detect` from the committed head, labels the binary
   with the patch, and reverts the checkout afterwards; IF-11's patch is
   recorded on #660.
-
-## TUI Evidence
-
-For tutorial or regression evidence that needs `casars` TUI screenshots, use
-`tools/ghostty-surface-capture`, not visible terminal/window screenshots. It
-runs the TUI in an offscreen GhosttyKit surface with `TERM=xterm-ghostty` and
-captures Kitty graphics and terminal cells from the renderer layer in one PNG.

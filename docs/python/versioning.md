@@ -5,7 +5,7 @@
 Sparse TOML documents carry two independent versions:
 
 - `casars.format` versions the document envelope and TOML conventions.
-- `casars.contract` versions the selected task or session definition.
+- `casars.contract` versions the selected task definition.
 
 Loading resolves sparse overrides against the current provider definition.
 Newly added optional parameters receive current defaults. Omitted parameters
@@ -26,7 +26,7 @@ Managed state normally lives at:
 ```
 
 `CASA_RS_STATE_DIR` redirects the managed root without changing workspace path
-resolution. Session surfaces use only `last.toml`. An explicit source profile
+resolution. An explicit source profile
 is never overwritten without an explicit save.
 
 ## Task-runner compatibility
@@ -100,4 +100,4 @@ The installer-managed suite install layout behind steps 4-6 is:
   calibrate-rc -> ~/.local/opt/casa-rs/rc/bin/calibrate
 ```
 
-That lets Python, the TUI, and standalone executables behave as one installed suite while keeping `~/.local/bin` as the only `PATH` entry users generally need.
+That lets Python, `casars`, and standalone executables behave as one installed suite while keeping `~/.local/bin` as the only `PATH` entry users generally need.

@@ -1,22 +1,22 @@
-# Task and Session Parameter Profiles
+# Task Parameter Profiles
 
 Truth class: normative user contract
 Status: implemented
 Verification: `just docs-check`; `casars params --help`
 
-`casa-rs` uses one parameter model for one-shot tasks and durable browser-session
-startup settings. A profile can be loaded by the CLI, edited in the TUI or
-native GUI, or manipulated from Python without changing the parameter names or
-their meaning.
+`casa-rs` uses one parameter model for its one-shot tasks. A profile can be
+loaded by the `casars` command line or manipulated from Python without changing
+the parameter names or their meaning. Every parameter surface is a task
+(ADR-0017).
 
 This guide describes the implemented interface from ADR-0006, with current-only
-surface evolution defined by ADR-0012. Provider JSON
-requests, results, progress, and session events remain machine transports; TOML
-is the sole human-authored parameter-profile format.
+surface evolution defined by ADR-0012. Provider JSON requests, results, and
+progress remain machine transports; TOML is the sole human-authored
+parameter-profile format.
 
 The [generated parameter reference](reference/task-parameters.md) lists every
-cataloged task and session surface, its parameters, and their canonical concept
-revisions, types, units, defaults, groups, and summaries.
+cataloged task surface, its parameters, and their canonical concept revisions,
+types, units, defaults, groups, and summaries.
 
 ## Sparse TOML format
 
@@ -28,7 +28,7 @@ designed to paste cleanly into Markdown:
 format = 1
 surface = "imager"
 kind = "task"
-contract = 16
+contract = 25
 
 [parameters]
 vis = "data/target.ms"
@@ -61,9 +61,9 @@ aliases are rejected rather than migrated or silently interpreted. Other
 surfaces retain older profiles only when their canonical definition publishes
 an explicit ordered migration chain.
 
-Relative dataset and product paths resolve against the explicit workspace, GUI
-project root, or process current directory. They do not resolve relative to the
-profile file merely because the file lives elsewhere.
+Relative dataset and product paths resolve against the explicit workspace or
+the process current directory. They do not resolve relative to the profile file
+merely because the file lives elsewhere.
 
 ## Native EVLA AW convolution functions
 
@@ -91,11 +91,11 @@ frozen EVLA case, not general telescope support.
 
 ## Sources and precedence
 
-Every parameter session has exactly one base source:
+Every task run resolves its parameters from exactly one base source:
 
 - Defaults
-- Last attempted or last opened
-- Last successful, for task surfaces
+- Last attempted
+- Last successful
 - an explicit profile file
 
 Resolution order is:
@@ -103,22 +103,16 @@ Resolution order is:
 ```text
 current defaults
   -> one base source
-  -> accepted context or startup values
-  -> explicit UI, CLI, or Python overrides
+  -> explicit CLI or Python overrides
 ```
 
-Dataset-derived suggestions are explicit context values, not hidden defaults.
-Loading another base source replaces the current base rather than silently
-merging into a dirty form.
+Dataset-derived suggestions are explicit values, not hidden defaults. Choosing
+another base source replaces the base rather than merging into it.
 
-Noninteractive CLI and Python calls start from Defaults unless a source is
-specified. Interactive TUI and GUI editors may start from a valid Last source,
-but must show the active source, modified state, validation, and per-field
-origins.
-
-A missing managed profile is distinct from an unreadable or invalid profile:
-interactive callers may explicitly choose Defaults when no Last file exists,
-but a present corrupt Last file is reported and is never silently replaced by
+Command-line and Python calls start from Defaults unless a source is specified.
+A missing managed profile is distinct from an unreadable or invalid one:
+asking for Last when no Last file exists is reported as missing, and a present
+corrupt Last file is reported as an error and is never silently replaced by
 Defaults.
 
 ## Managed Last files
@@ -130,96 +124,59 @@ By default, managed state lives under the workspace:
 <workspace>/.casa-rs/parameters/<surface-id>/last-successful.toml
 ```
 
-For a task, Last attempted is saved after resolution and validation immediately
-before execution. Last successful changes only after a successful result.
-Cancellation or failure leaves Last successful unchanged.
+Last attempted is saved after resolution and validation, immediately before
+execution. Last successful changes only after a successful result. Cancellation
+or failure leaves Last successful unchanged. `--no-save-last` (or
+`save_last=False` in Python) skips both writes for one run.
 
-For `imexplore` and `tablebrowser`, `last.toml` is saved only after the root
-opens successfully and after validated durable settings change. Browser
-sessions do not have `last-successful.toml`. Cursor movement, scrolling,
-viewport changes, playback, caches, and command history are live state and do
-not trigger profile writes.
-
-`casa-task-runtime::ParameterRuntime` owns source resolution and
-`SessionLastCoordinator` owns successful-open persistence, the 350 ms debounce,
-coalescing by normalized workspace/surface destination, background writes, and
-clean-close flushing. Swift, Python, CLI, and TUI projections report lifecycle
-events to that boundary rather than carrying independent timers or Last-state
-maps.
-
-`tablebrowser` bookmark values use stable explicit forms:
-`cell:ROW:COLUMN`, `table-keyword:PATH`,
-`column-keyword:COLUMN:PATH`, or `subtable:NAME`.
+`casa-task-runtime::ParameterRuntime` owns source resolution and managed Last
+persistence; the CLI and Python projections call that boundary rather than
+keeping their own Last-state logic.
 
 Set `CASA_RS_STATE_DIR` to redirect managed state in automation. This changes
 the state location, not the workspace used for relative task paths.
 
-An explicitly opened profile is read-only until the user chooses Save As.
-Automatic Last updates never overwrite it.
+Automatic Last updates never overwrite an explicit profile file.
 
 ## CLI contract
 
-The accepted noninteractive shape is:
+The task host is `casars`. Run with no arguments or `--help` it prints usage.
 
 ```text
-casars run <task> [--workspace DIR] [--notebook FILE_OR_ID]
+casars run <task>
   [--defaults | --last | --last-successful | --params FILE]
   [task overrides]
   [--unset NAME]
+  [--workspace DIR]
   [--save-params FILE]
   [--no-save-last]
-  [--no-notebook-recording]
-
-casars open <session> [--workspace DIR]
-  [--defaults | --last | --params FILE]
-  [session overrides]
-  [--unset NAME]
-  [--save-params FILE]
-  [--no-save-last]
+  [--confirm-overwrite]
+  [--confirm-mutation]
 ```
 
 The parameter utilities are:
 
 ```text
 casars params validate <file>
-casars params show <surface> [source options]
-casars params save <surface> <file> [source options]
+casars params show <surface> [source options] [overrides]
+casars params save <surface> <file> [source options] [overrides]
 casars params template <surface>
 casars params describe <parameter-or-surface>
 ```
 
 `template` writes a documented example with defaults and units in comments;
-commented defaults are not active overrides. Direct provider binaries continue
-to expose their idiomatic execution transports; source selection and profile
-lifecycle are owned by the top-level `casars` runner and interactive shells.
-`--notebook` routes one project-aware task attempt to an existing named
-notebook. Without it, the explicit workspace's `default.md` is used.
-`--no-notebook-recording` is a visible one-run bypass and is never persisted in
-a profile.
+commented defaults are not active overrides. Overrides use the generated CLI
+flag spellings listed in the generated parameter reference. `--confirm-overwrite`
+and `--confirm-mutation` are runtime safety confirmations for tasks whose
+safety rules require them; they are never saved in a profile.
 
-The TUI launcher remains `casars` (or its existing short surface-launch form).
-`casars open <session>` launches a browser session from a resolved profile.
-Open, Save As, Revert, Reset to Default, and source selection are
-framework-owned actions.
-
-## TUI and native GUI
-
-Both interactive surfaces use a typed parameter session rather than separate
-string maps and frontend defaults. They must display:
-
-- the selected source and dirty state
-- current values, defaults, units, and validation messages
-- per-field origin and Reset to Default
-- conditional activation and required state
-- Defaults, Last, Last Successful where applicable, Open, Save As, and Revert
-
-Loading another profile or resetting a dirty form requires confirmation.
-Runtime controls such as progress telemetry, executable overrides, and safety
-confirmation remain outside the saved science parameters.
+Direct provider binaries continue to expose their idiomatic execution
+transports (`--protocol-info`, `--json-schema`, `--json-run`); source selection
+and profile lifecycle are owned by `casars run` and `casars params`.
 
 ## Python contract
 
-The accepted Python API exposes the same profile session:
+The Python API exposes the same profile model:
 
 ```python
 from casars import parameters, tasks
@@ -246,26 +203,19 @@ Companion constructors are `parameters.last(...)`,
 `TaskParameters` supports mapping-style updates, `reset(name)`, `reload()`,
 `save(path)`, `provider_invocation()`, and `run()`. The invocation exposes the
 provider protocol name/version and the exact canonical request stdin.
-`tasks.run()` accepts every catalog task and routes through the common runner;
+`tasks.run()` accepts every catalog task and routes through `casars run`;
 a request the catalog refuses, such as a parameter its gridder does not read,
 raises `ValueError` before launch, and the provider reports what the installed
-build cannot run when it runs. Successful completions retain the same provider invocation while
-result and receipt projection remains Rust-owned. Catalog-generated CASA-named
-keyword wrappers and type stubs are available directly under `casars.tasks`
-without copying defaults into Python signatures; there is no second
-provider-specific task API.
-
-Session profiles for `imexplore` and `tablebrowser` use the same constructors
-and validation model. Open them with `sessions.open(surface, parameters=p)` or
-`SessionParameters.open()`. Their live command/event streams remain session
-APIs, not entries in `TaskParameters`.
+build cannot run when it runs. Successful completions retain the same provider
+invocation while result projection remains Rust-owned. Catalog-generated
+CASA-named keyword wrappers and type stubs are available directly under
+`casars.tasks` without copying defaults into Python signatures; there is no
+second provider-specific task API.
 
 ## What profiles intentionally exclude
 
-- `casars` launcher theme, pane sizes, and recent UI state
 - `casars.data.Image` and `casars.data.Table` object-handle lifecycle
 - progress files, executable overrides, confirmations, and telemetry
-- browser focus, viewport, cursor, scroll, cache, current playback, or command history
 - saved region and mask mutations, which are dataset artifacts
 - an exact resolved historical replay record
 

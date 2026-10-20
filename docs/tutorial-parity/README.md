@@ -1,7 +1,7 @@
 # CASA Tutorial Parity Program
 
 Truth class: current descriptive
-Last reality check: 2026-10-05
+Last reality check: 2026-10-20
 Verification: just docs-check
 
 This directory contains the CASA Guide tutorial-parity reference material that
@@ -13,19 +13,19 @@ were removed on 2026-10-05; retrieve them from git history at commit
 ## Current Reference
 
 - [Tutorial capability matrix](capability-matrix.md)
-- [Portable tutorial templates](tutorial-learning-packs.md)
 - [Declarative First-Look section runner](first-look-section-runner.md)
 - [Synthetic MeasurementSet families](synthetic-ms-families.md)
 
 ## Imaging Migration Evidence
 
-The imaging migration matrix
-(`resources/imaging-architecture/migration-matrix.json`) cites these records.
+These records document the imaging migration.
 
 - [VLASS imaging merge-recovery contract](vlass-imaging-recovery-contract.md)
 - [CASA `outlierfile` inventory](outlierfile-inventory.md)
-- [Issue 119 line-imaging evidence](wave-3-issue-119-line-imaging.md)
-- [Issue 167 automasking evidence](wave-6-issue-167-automasking.md)
+
+The Issue 119 line-imaging and Issue 167 automasking evidence records were
+removed with the wave-era scripts on 2026-10-20 (#833); retrieve them from the
+tag `ui-experiments-2026-10-20`.
 
 ## Source Pages
 

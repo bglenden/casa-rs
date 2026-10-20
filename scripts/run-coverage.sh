@@ -48,13 +48,6 @@ fi
 
 export CARGO_INCREMENTAL=0
 
-# Browser-session tests must launch the real tablebrowser process. Build it in
-# an isolated target so the instrumented workspace test process never starts a
-# nested Cargo command while cargo-llvm-cov owns the coverage target lock.
-coverage_launcher_target="$(mktemp -d -t casa-rs-coverage-launchers.XXXXXX)"
-CARGO_TARGET_DIR="$coverage_launcher_target" cargo build -q -p casars --bin tablebrowser
-export CASARS_TEST_TABLEBROWSER_BIN="$coverage_launcher_target/debug/tablebrowser"
-
 run_llvm_cov() {
   # Keep the coverage gate focused on shipped code plus functional tests.
   # Large perf/profile harnesses are useful for benchmarking, but they make
@@ -65,12 +58,8 @@ run_llvm_cov() {
   # shipped imager app; its algorithmic work is covered in casa-imaging,
   # casa-images, task-contract tests, and slow fixture runs, while the remaining
   # direct CLI/workflow plumbing is already checked by functional tests.
-  # The casars library root owns alternate-screen setup, terminal event-loop
-  # lifecycle, and direct terminal overlay plumbing that is not meaningfully
-  # line-coverable in a CI coverage run; the underlying app/runtime behavior
-  # remains covered through focused module tests.
   local ignored_files
-  ignored_files='(^|/)src/bin/|(^|/)src/main\.rs$|(^|/)examples/|(^|/)tests/.*perf.*\.rs$|(^|/)crates/casars-imager/src/lib\.rs$|(^|/)crates/casars/src/lib\.rs$|(^|/)crates/casa-test-support/src/|(^|/)crates/casars-python/src/'
+  ignored_files='(^|/)src/bin/|(^|/)src/main\.rs$|(^|/)examples/|(^|/)tests/.*perf.*\.rs$|(^|/)crates/casars-imager/src/lib\.rs$|(^|/)crates/casa-test-support/src/|(^|/)crates/casars-python/src/'
 
   local coverage_args=(--workspace)
   if cargo run -q -p casa-test-support --bin casatestdata-preflight -- \
@@ -98,7 +87,6 @@ run_llvm_cov() {
 coverage_log="$(mktemp -t casa-rs-llvm-cov.XXXXXX.log)"
 cleanup() {
   rm -f "$coverage_log"
-  rm -rf "$coverage_launcher_target"
 }
 trap cleanup EXIT
 

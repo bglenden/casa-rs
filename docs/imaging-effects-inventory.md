@@ -7,7 +7,10 @@ Verification:
 - `cargo test -p casa-imaging mosaic_pointing_contribution_follows_casa_simple_pb_center_pixel_rule`
 - `cargo test -p casa-imaging mosaic_clean_reduces_residual_peak_and_tracks_pb_weight_image`
 - `cargo test -p casa-imaging-products --test continuum_products flat_noise_normalization_divides_by_the_exact_sensitivity`
-- `CASA_RS_WAVE6_DATASET=alma scripts/run-wave6-issue53-mosaic-panels.sh target/wave6-issue53-mosaic-panels`
+
+The Wave 6 mosaic-panel script `scripts/run-wave6-issue53-mosaic-panels.sh`
+was removed with the wave-era scripts (#833); it remains at the tag
+`ui-experiments-2026-10-20`.
 
 ## Purpose
 

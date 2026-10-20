@@ -1,26 +1,27 @@
 # Provider Contracts and Schema Bundles
 
 This document defines the contract model between functionality providers and
-consumers such as:
+their consumers:
 
-- `casars` TUI
-- native GUI applications
-- Python bindings
-- MCP servers
+- the headless `casars` task host (`casars run`, `casars params`)
+- the Python package `casars`
 - standalone task binaries
 
+ADR-0017 makes these the product surfaces; casa-rs has no terminal UI, native
+GUI, or interactive browser sessions.
+
 The goal is to keep one source of truth for each provider surface while still
-allowing different transports and different UI capabilities.
+allowing different transports.
 
 ## Core Rule
 
 The canonical boundary contract is a versioned, typed provider bundle.
 
-- Providers own request/result, command/response, object, and private adapter
-  semantics. The shared catalog owns reusable public parameter concepts.
+- Providers own request/result, object, and private adapter semantics. The
+  shared catalog owns reusable public parameter concepts.
 - Rust types implement that contract inside the provider.
-- Generated machine artifacts publish that contract to UIs, Python parity
-  checks, MCP projections, and test fixtures.
+- Generated machine artifacts publish that contract to the CLI, Python parity
+  checks, and test fixtures.
 - Presentation hints belong in the same schema bundle as annotations. They do
   not replace the semantic contract.
 
@@ -31,7 +32,6 @@ is sparse TOML.
 The source of truth is therefore not:
 
 - raw CLI flags
-- an app-local TUI form schema
 - hand-maintained Python wrappers
 - an app-local default or alias table
 
@@ -40,8 +40,9 @@ embeds the concepts referenced by its surface definition.
 
 ## Surface Kinds
 
-Not every provider surface should look like a standalone executable task. The
-repo supports three primary surface kinds.
+A provider bundle advertises one of two surface kinds (`ProviderSurfaceKind`).
+Every parameter surface is a task; the profile `SurfaceKind` has the single
+variant `task`.
 
 ### Task Surfaces
 
@@ -52,56 +53,18 @@ Examples:
 - `calibrate`
 - `casars-imager`
 
-Recommended machine-facing shape:
+Machine-facing shape:
 
 - `--protocol-info`
 - `--json-schema`
 - `--json-run <SOURCE>`
 
-The protocol is request/result oriented. CLI flags, TUI forms, native GUI forms,
-and Python wrappers are projections of the same task contract.
+The protocol is request/result oriented. CLI flags and Python wrappers are
+projections of the same task contract.
 
 A task `SurfaceDefinition` also binds its public parameter names to the shared
 `ParameterCatalog` and adapts the resolved set into the provider's private,
 idiomatic Rust request.
-
-### Session Surfaces
-
-Session surfaces are stateful command streams with request/response envelopes.
-
-Examples:
-
-- `tablebrowser --session`
-- `imexplore --session`
-
-These are appropriate when the backend owns interactive state such as:
-
-- current open root
-- selection and scroll position
-- viewport-dependent snapshots
-- prefetch or cache state
-
-Recommended machine-facing shape:
-
-- `--protocol-info`
-- `--json-schema`
-- a stateful transport such as `--session` over JSON Lines
-
-The contract is a versioned command/event/state protocol, not a one-shot task
-request/result pair.
-
-The table and image browser protocols instantiate one shared JSONL session
-foundation in `casa-provider-contracts::session_protocol`. That owner provides
-the common envelope/error shape, protocol metadata, deterministic schema
-generation, and version access; each protocol crate owns only its typed domain
-commands and payloads. The `casars` runtime package owns the browser executables,
-session engines, and generic subprocess client. Reusable `casa-tables` and
-`casa-images` code does not depend on these protocol crates.
-
-A session `SurfaceDefinition` may additionally define durable startup
-parameters. Those parameters open or configure the session; they do not turn
-cursor movement, scrolling, viewport updates, caches, or commands into task
-parameters.
 
 ### Object Surfaces
 
@@ -113,52 +76,45 @@ Examples:
 - `casars.data.Image`
 - `casars.data.Table`
 
-These are appropriate for persistent data access APIs that should be used
-in-process from Rust or Python, and remotely through a stateful bridge such as
-MCP. They should not be forced into the task-binary model if there is no real
-CLI or TUI use case.
+These are persistent data access APIs used in-process from Rust or Python.
+They are not forced into the task-binary model and have no standalone
+executable.
 
-Recommended machine-facing shape:
+Machine-facing shape:
 
 - a versioned schema bundle describing constructors, properties, methods, and
   common value types
 - no standalone executable required
-- handle-based MCP projection for remote access
-
-For object surfaces, the Python binding is normally direct and in-process, while
-the MCP projection is stateful and handle-based.
 
 ## Bundle Shape
 
-Each provider surface should expose one canonical schema bundle. The bundle
-should contain at least:
+Each provider surface exposes one canonical schema bundle. The bundle contains
+at least:
 
 1. `protocol`
    - protocol name
    - protocol version
-   - surface kind: `task`, `session`, or `object`
+   - surface kind: `task` or `object`
 2. semantic contract
    - tasks: operations with request/result schemas
-   - sessions: commands, responses, events, and state snapshots
    - objects: constructors, properties, methods, lifecycle operations
 3. parameter contract where the surface is parameterized
    - shared `ParameterCatalog` concepts
-   - task or session `SurfaceDefinition`
+   - the task `SurfaceDefinition`
    - parameter bindings, defaults, roles, validation, migrations, and aliases
 4. shared component schemas
    - reusable logical value definitions referenced across operations
 5. annotations
-   - labels, descriptions, ordering, groupings, widget hints, examples,
-     advanced/basic flags, units, and other presentation metadata
+   - labels, descriptions, ordering, groupings, examples, advanced/basic and
+     hidden flags, units, and other presentation metadata
 6. projection metadata where needed
-   - CLI flag names
-   - TUI/native GUI rendering hints
-   - MCP tool naming or handle semantics
+   - CLI flag names and positional rules
+   - Python parameter names
 
 The semantic layer is authoritative. Annotations and projections may add
 presentation or mapping metadata, but they must not change semantic meaning.
 
-Task and session providers use the shared
+Task providers use the shared
 `ProviderContractEnvelope<Semantic, Schemas>` implementation in
 `casa-provider-contracts`. The envelope owns protocol identity, semantic
 operations, reusable components, annotations, projections, and embedded
@@ -171,19 +127,23 @@ metadata errors, and semantic/flattened schema drift.
 
 `casa-provider-contracts` also owns the single `ApplicationCatalog`. Every
 parameter surface has exactly one task-application entry that references the
-surface by stable ID; the `casars` launcher is the sole typed exception without
-a surface. Display name, category, and protocol family are projected from the
+surface by stable ID; the `casars` task host is the one application without a
+surface. Display name, category, and protocol family are projected from the
 referenced surface rather than copied into another inventory. Each application
 adds only executable/package identity, its explicit override variable,
-interaction metadata, and packaging visibility.
+interaction and presentation metadata, and packaging visibility. (ADR-0017
+keeps the older presentation fields, such as `shell_kind` and `interaction`,
+until the CASA-shaped Python work reshapes them.) Several surfaces may share one executable: `imhead` and
+`imstat` run `imexplore`, and `gaincal`, `bandpass`, `applycal`, `fluxscale`,
+and `gencal` run `calibrate` with a fixed mode.
 
 The supported launch modes are `installed_suite` and
 `development_workspace`. A process selects one mode at composition/startup.
 Installed resolution uses only the installed-suite configuration; development
 resolution uses only the declared workspace and Cargo package. A missing
 executable is an error in that mode and never triggers a search of the current
-directory, neighboring targets, or another mode. GUI, TUI, Python, MCP,
-packaging scripts, and suite inventory all project from this catalog.
+directory, neighboring targets, or another mode. The CLI, Python, packaging
+scripts, and suite inventory all project from this catalog.
 
 ## Parameter Catalog and Surface Definitions
 
@@ -217,16 +177,12 @@ an output merely because both serialize as strings. Runtime-only controls such
 as executable overrides, progress paths, telemetry, and safety confirmations
 are explicitly non-persistable.
 
-`SurfaceDefinition` is tagged as task or session:
-
-- a task definition maps the resolved CASA-named parameter set into a one-shot
-  provider invocation
-- a session definition maps durable startup parameters into the session open
-  operation and leaves later commands to the session protocol
+A task `SurfaceDefinition` maps the resolved CASA-named parameter set into a
+one-shot provider invocation.
 
 Every optional parameter has an explicit default. Conditional defaults depend
 only on other parameters and form an acyclic graph. Dataset-derived context is
-an explicit suggestion or startup override, never an undeclared default.
+an explicit suggestion or override, never an undeclared default.
 
 Semantic evolution is guarded by the append-only fingerprints in
 `resources/parameter-contract-history.json`. Changing a concept's type,
@@ -239,9 +195,9 @@ reviewing those version bumps; the normal architecture gate is check-only.
 ## Sparse Parameter Documents
 
 The human interchange format is versioned sparse TOML. The `[casars]` table
-identifies format version, surface ID, surface kind, and contract version. The
-`[parameters]` table contains required values and normalized semantic
-differences from current defaults.
+identifies format version, surface ID, surface kind (always `task`), and
+contract version. The `[parameters]` table contains required values and
+normalized semantic differences from current defaults.
 
 This makes additive evolution cheap: a newly added optional parameter receives
 its current default without adding an override to a saved file. A surface may
@@ -254,18 +210,17 @@ contracts are errors.
 Parameter documents do not support includes, environment or shell expansion,
 remote URLs, or executable expressions. Relative task paths resolve against the
 selected workspace or process current directory, not the profile file's parent.
-See [Task and Session Parameter Profiles](task-parameters.md) for the user
-contract and managed-state lifecycle.
+See [Task Parameter Profiles](task-parameters.md) for the user contract and
+managed-state lifecycle.
 
-## Canonical schema discovery and presentation projection
+## Canonical schema discovery
 
 `--json-schema` emits a machine representation of the
 canonical provider bundle, including the parameter catalog and applicable
 surface definition.
 
-Frontends project presentation forms in-process from the embedded canonical
-surface. Providers expose no second schema-discovery action or cached
-presentation payload.
+Consumers project from the embedded canonical surface in-process. Providers
+expose no second schema-discovery action or cached presentation payload.
 
 One-shot provider binaries use `casa-task-runtime::TaskCliHost` for
 `--json-schema`, `--protocol-info`, and `--json-run <SOURCE>`. The host owns
@@ -275,12 +230,9 @@ function.
 
 ## Shared Versioned Component Schemas
 
-Yes: the architecture should include versioned underlying shared schemas for
-protocol-independent basic types.
-
-These shared components should be reused across task, session, and object
-surfaces rather than redefined per app. Candidate shared component families
-include:
+Protocol-independent basic types have versioned shared schemas, reused across
+task and object surfaces rather than redefined per provider. Component
+families include:
 
 - scalar values
   - bool
@@ -305,26 +257,21 @@ include:
 - file/path references
   - file path
   - directory path
-  - path role hints for pickers or validation
-- viewport / region / selection references where relevant to session surfaces
+  - path role hints for validation
 
-These shared schemas should be versioned explicitly. A practical model is:
+These shared schemas are versioned explicitly:
 
 - a versioned family name for the logical type set
 - stable `$defs` / component identifiers within that family
 - additive extension within a compatible protocol version
 - explicit protocol-version bumps for breaking shape changes
 
-The logical schema should describe semantics, not commit every consumer to the
-same transport encoding. For example:
-
-- Python can map image planes directly to NumPy arrays in-process.
-- MCP can project the same logical array type as a structured payload plus a
-  transport-specific binary or JSON representation.
+The logical schema describes semantics, not one transport encoding. For
+example, Python maps image planes directly to NumPy arrays in-process.
 
 ## Projection Rules
 
-All consumers should project from the same canonical schema bundle.
+All consumers project from the same canonical schema bundle.
 
 ### CLI
 
@@ -333,86 +280,35 @@ metadata such as flag names and positional rules.
 
 CLI flags are not the source of truth.
 
-The CLI also projects the common Defaults, Last, Last Successful, explicit
-profile, reset, save, and no-save source operations. Noninteractive invocation
-starts from Defaults unless a source is explicit.
-
-### `casars` TUI
-
-The TUI projects forms, panes, and result rendering from the same schema bundle
-plus TUI-specific annotations. It should not require app-local parallel schemas
-that drift from the provider contract.
-
-Framework-owned parameter sessions expose source selection, origins, dirty
-state, validation, reset, open, Save As, and revert. A browser's live navigation
-state remains in its session model.
-
-### Native GUI
-
-The native macOS GUI reads the same semantic schema bundle and uses
-the annotations as hints, not strict layout instructions. Keep hints coarse:
-
-- section ordering
-- basic vs advanced
-- picker hints
-- enum display labels
-- units and ranges
-
-Do not freeze app-specific pixel layouts into the provider schema.
-
-Native forms use the same typed parameter session and managed Last store as the
-TUI. Swift models may decode a UniFFI projection, but they must not infer
-authoritative types, aliases, or defaults.
+`casars run` and `casars params` also project the common Defaults, Last, Last
+Successful, explicit profile, reset, save, and no-save source operations.
+Invocation starts from Defaults unless a source is explicit.
 
 ### Python
 
-Python should remain ergonomic and typed, but its wrappers and docs should be
-checked against the canonical schema bundle so signatures and enums cannot drift.
+Python stays ergonomic and typed, but its wrappers and docs are checked against
+the canonical schema bundle so signatures and enums cannot drift.
 
 For task surfaces, generated Python callables invoke the canonical `casars run`
 transport; Python does not host a second provider protocol engine. For object
-surfaces, Python can bind directly in-process.
+surfaces, Python binds directly in-process.
 
-`casars.parameters` exposes the common typed profile session, while generated
+`casars.parameters` exposes the common typed task profile, while generated
 task-specific wrappers delegate through the same runtime. Python must not keep
 a second default or migration implementation.
 
-### MCP
-
-MCP should also project from the same schema bundle.
-
-- task surfaces map naturally to MCP tools
-- session surfaces map to stateful command/event protocols
-- object surfaces map to handle-based services such as `image_open`,
-  `image_get_slice`, `image_put_slice`, and `image_close`
-
-Object surfaces should remain stateful over MCP. They should not be forced into
-fake-stateless request patterns that reopen files and discard backend state on
-every call.
-
-The Wave 4 project agent server is an authenticated composition of these MCP
-projections, notebook and receipt operations, open-tab semantic resources, and
-local corpus/source retrieval. Its trust identity is not another provider
-bundle: `casa-rs-agent-profile/v1` binds a unique server name and per-session
-nonce, and only a successful profile handshake grants CASA domain-authority
-status. Agent-specific App Server or ACP envelopes stop outside the provider
-schemas and durable project contracts.
-
 ## Current Repo Mapping
 
-This is the intended classification for current and near-term surfaces.
-
 - `calibrate`: task surface
-- `casars-imager`: task surface
-- `msexplore`: task surface
-- `tablebrowser`: session surface
-- `imexplore`: session surface
+- `casars-imager` (surface `imager`): task surface
+- `msexplore` and `plotms`: task surfaces served by `msexplore`
+- `imhead` and `imstat`: task surfaces served by `imexplore`
 - `casars.data.Image`: object surface
 - `casars.data.Table`: object surface
 
-The first three task examples and all other one-shot catalog tasks have task
-definitions. `tablebrowser` and `imexplore` have session startup definitions.
-The `casars` launcher and the two object surfaces are not parameter-profile
+All 27 catalog surfaces have task definitions; the
+[generated parameter reference](reference/task-parameters.md) lists them. The
+`casars` task host and the two object surfaces are not parameter-profile
 surfaces.
 
 ## Implementation Guidance
@@ -420,23 +316,13 @@ surfaces.
 - Define typed Rust structs and enums that serialize exactly to the canonical
   schema bundle shapes.
 - Define reusable catalog concepts once and bind them explicitly on every
-  parameterized task or session surface.
+  parameterized task surface.
 - Generate schema output from those types rather than hand-maintaining schema
   JSON.
 - Keep presentation hints in the schema bundle as annotations.
 - Keep protocol names and protocol versions explicit and machine-checkable.
 - Add CI parity tests so catalog coverage, wrappers, docs, sparse profiles, and
   projections cannot drift from the canonical schema bundle.
-- Regenerate committed browser-session schemas only through
-  `CASA_RS_REGENERATE_SESSION_SCHEMAS=1 cargo test -p
-  casars-tablebrowser-protocol -p casars-imagebrowser-protocol`, then rerun the
-  tests normally to prove the artifacts are current.
 
-This preserves one source of truth while still supporting:
-
-- direct Rust APIs
-- Python bindings
-- `casars` TUI
-- native GUIs
-- MCP servers
-- standalone binaries where they make sense
+This preserves one source of truth while supporting direct Rust APIs, the
+Python package, the `casars` task host, and standalone binaries.
