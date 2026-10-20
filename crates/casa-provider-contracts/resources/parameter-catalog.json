@@ -261,32 +261,6 @@
       "persistence_class": "profile"
     },
     {
-      "id": "image.browser.contentmode",
-      "semantic_revision": 1,
-      "casa_name": "contentmode",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "raster",
-          "spreadsheet"
-        ]
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "presentation",
-      "documentation": {
-        "summary": "Initial image-plane content representation.",
-        "details": "Choose a rendered raster or a terminal spreadsheet grid without persisting viewport state.",
-        "examples": [
-          "raster"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
       "id": "image.deconvolution.threshold",
       "semantic_revision": 2,
       "casa_name": "threshold",
@@ -591,27 +565,6 @@
           "500kHz",
           "-2km/s"
         ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "imexplore.image",
-      "semantic_revision": 1,
-      "casa_name": "image",
-      "value_domain": {
-        "kind": "path",
-        "resource_kind": "image"
-      },
-      "normalization": {
-        "kind": "path"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Path to the casacore image root directory",
-        "details": null,
-        "examples": []
       },
       "persistence_class": "profile"
     },
@@ -1398,32 +1351,6 @@
       "persistence_class": "profile"
     },
     {
-      "id": "parameter.autoscale",
-      "semantic_revision": 1,
-      "casa_name": "autoscale",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "frozen",
-          "per_plane"
-        ]
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Whether clip bounds update per plane or stay frozen while stepping cubes",
-        "details": null,
-        "examples": [
-          "per_plane"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
       "id": "parameter.avgantenna",
       "semantic_revision": 1,
       "casa_name": "avgantenna",
@@ -1795,50 +1722,6 @@
       "persistence_class": "profile"
     },
     {
-      "id": "parameter.blc",
-      "semantic_revision": 1,
-      "casa_name": "blc",
-      "value_domain": {
-        "kind": "string"
-      },
-      "normalization": {
-        "kind": "trim"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Comma-separated inclusive bottom-left-corner pixel indices",
-        "details": null,
-        "examples": [
-          ""
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.bookmark",
-      "semantic_revision": 1,
-      "casa_name": "bookmark",
-      "value_domain": {
-        "kind": "string"
-      },
-      "normalization": {
-        "kind": "trim"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Stable bookmark or inspect target",
-        "details": "Use cell:ROW:COLUMN, table-keyword:PATH, column-keyword:COLUMN:PATH, or subtable:NAME.",
-        "examples": [
-          "none"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
       "id": "parameter.callib",
       "semantic_revision": 1,
       "casa_name": "callib",
@@ -2113,50 +1996,6 @@
       "persistence_class": "profile"
     },
     {
-      "id": "parameter.clip_high",
-      "semantic_revision": 1,
-      "casa_name": "clip_high",
-      "value_domain": {
-        "kind": "string"
-      },
-      "normalization": {
-        "kind": "trim"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Manual upper clip bound in image value units",
-        "details": null,
-        "examples": [
-          ""
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.clip_low",
-      "semantic_revision": 1,
-      "casa_name": "clip_low",
-      "value_domain": {
-        "kind": "string"
-      },
-      "normalization": {
-        "kind": "trim"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Manual lower clip bound in image value units",
-        "details": null,
-        "examples": [
-          ""
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
       "id": "parameter.clipzeros",
       "semantic_revision": 1,
       "casa_name": "clipzeros",
@@ -2204,33 +2043,6 @@
         "details": null,
         "examples": [
           "field"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.colormap",
-      "semantic_revision": 1,
-      "casa_name": "colormap",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "gray",
-          "inferno",
-          "viridis"
-        ]
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "presentation",
-      "documentation": {
-        "summary": "Initial color map",
-        "details": null,
-        "examples": [
-          "viridis"
         ]
       },
       "persistence_class": "profile"
@@ -2340,33 +2152,6 @@
         "summary": "Concatenated MeasurementSet.",
         "details": null,
         "examples": []
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "tablebrowser.contentmode",
-      "semantic_revision": 1,
-      "casa_name": "contentmode",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "auto",
-          "compact",
-          "detailed"
-        ]
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "presentation",
-      "documentation": {
-        "summary": "Table content verbosity.",
-        "details": "Choose automatic, compact, or detailed table-cell and inspector presentation.",
-        "examples": [
-          "auto"
-        ]
       },
       "persistence_class": "profile"
     },
@@ -3441,28 +3226,6 @@
       "persistence_class": "profile"
     },
     {
-      "id": "parameter.fps",
-      "semantic_revision": 1,
-      "casa_name": "fps",
-      "value_domain": {
-        "kind": "integer"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "presentation",
-      "documentation": {
-        "summary": "Movie playback frames per second",
-        "details": null,
-        "examples": [
-          "1"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
       "id": "parameter.freqcutoff",
       "semantic_revision": 1,
       "casa_name": "freqcutoff",
@@ -4309,28 +4072,6 @@
       "persistence_class": "profile"
     },
     {
-      "id": "parameter.inc",
-      "semantic_revision": 1,
-      "casa_name": "inc",
-      "value_domain": {
-        "kind": "string"
-      },
-      "normalization": {
-        "kind": "trim"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Comma-separated per-axis pixel increments",
-        "details": null,
-        "examples": [
-          ""
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
       "id": "parameter.incell",
       "semantic_revision": 1,
       "casa_name": "incell",
@@ -4768,28 +4509,6 @@
       "persistence_class": "profile"
     },
     {
-      "id": "parameter.linkedtable",
-      "semantic_revision": 1,
-      "casa_name": "linkedtable",
-      "value_domain": {
-        "kind": "string"
-      },
-      "normalization": {
-        "kind": "trim"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Linked-subtable path or name",
-        "details": null,
-        "examples": [
-          "none"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
       "id": "parameter.logfile",
       "semantic_revision": 1,
       "casa_name": "logfile",
@@ -4808,28 +4527,6 @@
         "details": null,
         "examples": [
           ""
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.loop",
-      "semantic_revision": 1,
-      "casa_name": "loop",
-      "value_domain": {
-        "kind": "bool"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "presentation",
-      "documentation": {
-        "summary": "Loop movie playback when started",
-        "details": null,
-        "examples": [
-          "False"
         ]
       },
       "persistence_class": "profile"
@@ -5264,28 +4961,6 @@
       "persistence_class": "profile"
     },
     {
-      "id": "parameter.movieaxis",
-      "semantic_revision": 1,
-      "casa_name": "movieaxis",
-      "value_domain": {
-        "kind": "string"
-      },
-      "normalization": {
-        "kind": "trim"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "presentation",
-      "documentation": {
-        "summary": "Movie axis or auto",
-        "details": null,
-        "examples": [
-          "auto"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
       "id": "parameter.ms_channels",
       "semantic_revision": 1,
       "casa_name": "ms_channels",
@@ -5462,28 +5137,6 @@
         "details": null,
         "examples": [
           "5.0"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.nrow",
-      "semantic_revision": 1,
-      "casa_name": "nrow",
-      "value_domain": {
-        "kind": "integer"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Number of rows in the initial row range",
-        "details": null,
-        "examples": [
-          "100"
         ]
       },
       "persistence_class": "profile"
@@ -6038,13 +5691,11 @@
     },
     {
       "id": "parameter.plot_format",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "plot_format",
       "value_domain": {
         "kind": "choice",
         "values": [
-          "pdf",
-          "png",
           "txt"
         ]
       },
@@ -6055,32 +5706,10 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Plot export format",
+        "summary": "Plot point-manifest export format",
         "details": null,
         "examples": [
-          "png"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.plot_height",
-      "semantic_revision": 1,
-      "casa_name": "plot_height",
-      "value_domain": {
-        "kind": "integer"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Rendered plot height in pixels",
-        "details": null,
-        "examples": [
-          "900"
+          "txt"
         ]
       },
       "persistence_class": "profile"
@@ -6100,31 +5729,9 @@
       "unit_dimension": null,
       "semantic_role": "output_data",
       "documentation": {
-        "summary": "Write the plot export to PATH",
+        "summary": "Write the plot's text point manifest to PATH",
         "details": null,
         "examples": []
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.plot_width",
-      "semantic_revision": 1,
-      "casa_name": "plot_width",
-      "value_domain": {
-        "kind": "integer"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Rendered plot width in pixels",
-        "details": null,
-        "examples": [
-          "1600"
-        ]
       },
       "persistence_class": "profile"
     },
@@ -6377,28 +5984,6 @@
         "details": null,
         "examples": [
           "false"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.profileaxis",
-      "semantic_revision": 1,
-      "casa_name": "profileaxis",
-      "value_domain": {
-        "kind": "string"
-      },
-      "normalization": {
-        "kind": "trim"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "presentation",
-      "documentation": {
-        "summary": "Profile axis or auto",
-        "details": null,
-        "examples": [
-          "auto"
         ]
       },
       "persistence_class": "profile"
@@ -6778,28 +6363,6 @@
         "details": null,
         "examples": [
           "0.5"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.rowstart",
-      "semantic_revision": 1,
-      "casa_name": "rowstart",
-      "value_domain": {
-        "kind": "integer"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "First row in the initial row range",
-        "details": null,
-        "examples": [
-          "0"
         ]
       },
       "persistence_class": "profile"
@@ -7861,27 +7424,6 @@
       "persistence_class": "profile"
     },
     {
-      "id": "parameter.table",
-      "semantic_revision": 1,
-      "casa_name": "table",
-      "value_domain": {
-        "kind": "path",
-        "resource_kind": "table"
-      },
-      "normalization": {
-        "kind": "path"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Path to the casacore table root directory",
-        "details": null,
-        "examples": []
-      },
-      "persistence_class": "profile"
-    },
-    {
       "id": "parameter.table_path",
       "semantic_revision": 1,
       "casa_name": "table_path",
@@ -8197,28 +7739,6 @@
       "persistence_class": "profile"
     },
     {
-      "id": "parameter.trc",
-      "semantic_revision": 1,
-      "casa_name": "trc",
-      "value_domain": {
-        "kind": "string"
-      },
-      "normalization": {
-        "kind": "trim"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Comma-separated inclusive top-right-corner pixel indices",
-        "details": null,
-        "examples": [
-          ""
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
       "id": "parameter.use_flags",
       "semantic_revision": 1,
       "casa_name": "use_flags",
@@ -8425,39 +7945,6 @@
         "summary": "Target flag-version name.",
         "details": null,
         "examples": []
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.view",
-      "semantic_revision": 1,
-      "casa_name": "view",
-      "value_domain": {
-        "kind": "choice",
-        "values": [
-          "columns",
-          "coordinates",
-          "keywords",
-          "metadata",
-          "plane",
-          "rows",
-          "spectrum",
-          "summary"
-        ]
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "presentation",
-      "documentation": {
-        "summary": "Initial content view",
-        "details": null,
-        "examples": [
-          "plane",
-          "summary"
-        ]
       },
       "persistence_class": "profile"
     },

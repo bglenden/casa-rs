@@ -10,7 +10,7 @@ use casa_coordinates::{
     CoordinateSystem, DirectionCoordinate, LinearCoordinate, Projection, ProjectionType,
     SpectralCoordinate, StokesCoordinate, StokesType, TabularCoordinate,
 };
-use casa_images::{Image, OpenedImageView, PagedImage};
+use casa_images::{Image, PagedImage, PolygonRegion};
 use casa_tables::{Table, TableOptions};
 use casa_test_support::{
     CppUnsupportedRegionKind, ImageOracle, casacore_oracle_available, discover_casa_python,
@@ -540,6 +540,46 @@ fn cr_cpp_write_rust_read_complex64() {
     assert_eq!(got, data);
 }
 
+/// World coordinates on the first two axes at the given pixels of the first plane.
+fn world_vertices(coords: &CoordinateSystem, pixels: &[(usize, usize)]) -> Vec<[f64; 2]> {
+    pixels
+        .iter()
+        .map(|&(x, y)| {
+            let mut pixel = vec![0.0; coords.n_pixel_axes()];
+            pixel[0] = x as f64;
+            pixel[1] = y as f64;
+            let world = coords.to_world(&pixel).unwrap();
+            [world[0], world[1]]
+        })
+        .collect()
+}
+
+/// One axis of `vertices` (radians) in arcminutes. The C++ oracle labels the
+/// values it is given with the C++ image's world-axis units, which are
+/// arcminutes for the default direction coordinate of `create_image`.
+fn cpp_arcmin_axis(vertices: &[[f64; 2]], axis: usize) -> Vec<f64> {
+    vertices
+        .iter()
+        .map(|vertex| vertex[axis].to_degrees() * 60.0)
+        .collect()
+}
+
+/// Asserts that the polygon's world vertices sit on the given pixels.
+fn assert_polygon_on_pixels(
+    coords: &CoordinateSystem,
+    polygon: &[[f64; 2]],
+    pixels: &[(usize, usize)],
+) {
+    assert_eq!(polygon.len(), pixels.len());
+    for (vertex, &(x, y)) in polygon.iter().zip(pixels) {
+        let pixel = coords.to_pixel(vertex).unwrap();
+        assert!(
+            (pixel[0] - x as f64).abs() < 1e-6 && (pixel[1] - y as f64).abs() < 1e-6,
+            "vertex at pixel {pixel:?}, expected ({x}, {y})"
+        );
+    }
+}
+
 #[test]
 fn cr_cpp_write_rust_load_saved_polygon_region() {
     if !casacore_oracle_available() {
@@ -553,37 +593,22 @@ fn cr_cpp_write_rust_load_saved_polygon_region() {
     let path = dir.path().join("cpp_polygon_region.image");
     ImageOracle::create_image(&path, &[5, 5], &[0.0; 25], "").unwrap();
 
-    let opened = OpenedImageView::open(&path).unwrap();
-    let window = opened.default_window();
     let pixels = [(1usize, 1usize), (3, 1), (2, 3)];
-    let vertices = pixels
-        .into_iter()
-        .map(|pixel_xy| {
-            opened
-                .region_vertex_for_pixel_with_window_and_axes(pixel_xy, &window, &[])
-                .unwrap()
-        })
-        .collect::<Vec<_>>();
-    let x = vertices
-        .iter()
-        .map(|vertex| vertex.world[0])
-        .collect::<Vec<_>>();
-    let y = vertices
-        .iter()
-        .map(|vertex| vertex.world[1])
-        .collect::<Vec<_>>();
-    ImageOracle::write_polygon_region(&path, "cpp_poly", &x, &y).unwrap();
+    let vertices = world_vertices(Image::open(&path).unwrap().coordinates(), &pixels);
+    ImageOracle::write_polygon_region(
+        &path,
+        "cpp_poly",
+        &cpp_arcmin_axis(&vertices, 0),
+        &cpp_arcmin_axis(&vertices, 1),
+    )
+    .unwrap();
 
-    let loaded = opened.load_saved_region("cpp_poly").unwrap();
-    assert_eq!(loaded.label, "cpp_poly");
-    assert_eq!(loaded.shapes.len(), 1);
-    assert_eq!(loaded.shapes[0].vertices.len(), 3);
-    let overlay = opened
-        .region_overlay_with_window_and_axes(&loaded, &window, &[])
-        .unwrap();
-    assert_eq!(overlay.shapes.len(), 1);
-    assert_eq!(overlay.shapes[0].vertices.len(), 3);
-    assert!(overlay.shapes[0].closed);
+    let image = Image::open(&path).unwrap();
+    let loaded = image.get_polygon_region("cpp_poly").unwrap();
+    assert_eq!(loaded.pixel_axes, [0, 1]);
+    assert_eq!(loaded.units, ["rad".to_string(), "rad".to_string()]);
+    assert_eq!(loaded.polygons.len(), 1);
+    assert_polygon_on_pixels(image.coordinates(), &loaded.polygons[0], &pixels);
 }
 
 #[test]
@@ -597,45 +622,28 @@ fn cr_cpp_write_rust_load_saved_union_region() {
     let path = dir.path().join("cpp_union_region.image");
     ImageOracle::create_image(&path, &[6, 6], &[0.0; 36], "").unwrap();
 
-    let opened = OpenedImageView::open(&path).unwrap();
-    let window = opened.default_window();
-    let tri1 = [(1usize, 1usize), (2, 1), (1, 2)]
-        .into_iter()
-        .map(|pixel_xy| {
-            opened
-                .region_vertex_for_pixel_with_window_and_axes(pixel_xy, &window, &[])
-                .unwrap()
-        })
-        .collect::<Vec<_>>();
-    let tri2 = [(4usize, 4usize), (5, 4), (4, 5)]
-        .into_iter()
-        .map(|pixel_xy| {
-            opened
-                .region_vertex_for_pixel_with_window_and_axes(pixel_xy, &window, &[])
-                .unwrap()
-        })
-        .collect::<Vec<_>>();
-    let x1 = tri1
-        .iter()
-        .map(|vertex| vertex.world[0])
-        .collect::<Vec<_>>();
-    let y1 = tri1
-        .iter()
-        .map(|vertex| vertex.world[1])
-        .collect::<Vec<_>>();
-    let x2 = tri2
-        .iter()
-        .map(|vertex| vertex.world[0])
-        .collect::<Vec<_>>();
-    let y2 = tri2
-        .iter()
-        .map(|vertex| vertex.world[1])
-        .collect::<Vec<_>>();
-    ImageOracle::write_union_region(&path, "cpp_union", &x1, &y1, &x2, &y2).unwrap();
+    let coords = Image::open(&path).unwrap().coordinates().clone();
+    let pixels1 = [(1usize, 1usize), (2, 1), (1, 2)];
+    let pixels2 = [(4usize, 4usize), (5, 4), (4, 5)];
+    let tri1 = world_vertices(&coords, &pixels1);
+    let tri2 = world_vertices(&coords, &pixels2);
+    ImageOracle::write_union_region(
+        &path,
+        "cpp_union",
+        &cpp_arcmin_axis(&tri1, 0),
+        &cpp_arcmin_axis(&tri1, 1),
+        &cpp_arcmin_axis(&tri2, 0),
+        &cpp_arcmin_axis(&tri2, 1),
+    )
+    .unwrap();
 
-    let loaded = opened.load_saved_region("cpp_union").unwrap();
-    assert_eq!(loaded.shapes.len(), 2);
-    assert!(loaded.shapes.iter().all(|shape| shape.closed));
+    let loaded = Image::open(&path)
+        .unwrap()
+        .get_polygon_region("cpp_union")
+        .unwrap();
+    assert_eq!(loaded.polygons.len(), 2);
+    assert_polygon_on_pixels(&coords, &loaded.polygons[0], &pixels1);
+    assert_polygon_on_pixels(&coords, &loaded.polygons[1], &pixels2);
 }
 
 #[test]
@@ -651,39 +659,36 @@ fn rc_rust_write_cpp_reads_saved_region_classes() {
     let path = dir.path().join("rust_region_class.image");
     ImageOracle::create_image(&path, &[6, 6], &[0.0; 36], "").unwrap();
 
-    let opened = OpenedImageView::open(&path).unwrap();
-    let window = opened.default_window();
-    let mut region = opened.default_region("Region 1").unwrap();
-    region.start_shape().unwrap();
-    for pixel_xy in [(1usize, 1usize), (2, 1), (1, 2)] {
-        let vertex = opened
-            .region_vertex_for_pixel_with_window_and_axes(pixel_xy, &window, &[])
-            .unwrap();
-        region.append_vertex(vertex).unwrap();
-    }
-    region.close_active_shape().unwrap();
-    let polygon_name = opened.save_region_definition(&region, None).unwrap();
+    let mut image = Image::open(&path).unwrap();
+    let mut region = PolygonRegion::new(image.coordinates(), [0, 1]).unwrap();
+    region
+        .add_polygon(world_vertices(
+            image.coordinates(),
+            &[(1, 1), (2, 1), (1, 2)],
+        ))
+        .unwrap();
+    image.put_polygon_region("Region 1", &region).unwrap();
+    image.save().unwrap();
     assert_eq!(
-        ImageOracle::read_region_class(&path, &polygon_name).unwrap(),
+        ImageOracle::read_region_class(&path, "Region 1").unwrap(),
         "WCPolygon"
     );
 
-    region.start_shape().unwrap();
-    for pixel_xy in [(4usize, 4usize), (5, 4), (4, 5)] {
-        let vertex = opened
-            .region_vertex_for_pixel_with_window_and_axes(pixel_xy, &window, &[])
-            .unwrap();
-        region.append_vertex(vertex).unwrap();
-    }
-    region.close_active_shape().unwrap();
-    let union_name = opened.save_region_definition(&region, None).unwrap();
+    region
+        .add_polygon(world_vertices(
+            image.coordinates(),
+            &[(4, 4), (5, 4), (4, 5)],
+        ))
+        .unwrap();
+    image.put_polygon_region("Region 2", &region).unwrap();
+    image.save().unwrap();
     assert_eq!(
-        ImageOracle::read_region_class(&path, &union_name).unwrap(),
+        ImageOracle::read_region_class(&path, "Region 2").unwrap(),
         "WCUnion"
     );
     assert_eq!(
         ImageOracle::read_region_names(&path).unwrap(),
-        vec![polygon_name, union_name]
+        vec!["Region 1".to_string(), "Region 2".to_string()]
     );
 }
 
@@ -701,8 +706,10 @@ fn cr_cpp_write_unsupported_region_reports_useful_error() {
     ImageOracle::create_image(&path, &[5, 5], &[0.0; 25], "").unwrap();
 
     ImageOracle::write_box_region(&path, "cpp_box", 0.0, 0.0, 1.0, 1.0).unwrap();
-    let opened = OpenedImageView::open(&path).unwrap();
-    let error = opened.load_saved_region("cpp_box").unwrap_err();
+    let error = Image::open(&path)
+        .unwrap()
+        .get_polygon_region("cpp_box")
+        .unwrap_err();
     assert!(error.to_string().contains("saved region 'cpp_box'"));
     assert!(error.to_string().contains("WCBox"));
 }
@@ -719,7 +726,6 @@ fn cr_cpp_write_unsupported_region_matrix_reports_class_names() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cpp_unsupported_regions.image");
     ImageOracle::create_image(&path, &[6, 6, 4], &[0.0; 144], "").unwrap();
-    let opened = OpenedImageView::open(&path).unwrap();
 
     let cases = [
         (
@@ -762,30 +768,18 @@ fn cr_cpp_write_unsupported_region_matrix_reports_class_names() {
 
     for (name, kind, class_name) in cases {
         ImageOracle::write_unsupported_region(&path, name, kind).unwrap();
-        let error = opened.load_saved_region(name).unwrap_err();
+        let error = Image::open(&path)
+            .unwrap()
+            .get_polygon_region(name)
+            .unwrap_err();
         let error_text = error.to_string();
         assert!(error_text.contains(name), "{name}: {error_text}");
         assert!(error_text.contains(class_name), "{name}: {error_text}");
     }
 }
 
-fn region_vertex_worlds(
-    opened: &OpenedImageView,
-    window: &casa_images::ImageViewWindow,
-    pixels: &[(usize, usize)],
-) -> Vec<casa_images::image_view::ImageRegionVertex> {
-    pixels
-        .iter()
-        .map(|pixel_xy| {
-            opened
-                .region_vertex_for_pixel_with_window_and_axes(*pixel_xy, window, &[])
-                .unwrap()
-        })
-        .collect()
-}
-
 fn assert_region_stats_close(
-    rust: &casa_images::image_view::ImageRegionStats,
+    rust: &casa_images::RegionStatistics,
     cpp: &casa_test_support::CppRegionStatistics,
 ) {
     assert_eq!(rust.pixel_count, cpp.pixel_count);
@@ -837,35 +831,114 @@ fn rc_rust_region_statistics_match_cpp_for_polygon_and_union() {
     image.set_default_mask("quality").unwrap();
     image.save().unwrap();
 
-    let opened = OpenedImageView::open(&path).unwrap();
-    let window = opened.default_window();
-
-    let mut polygon = opened.default_region("Region 1").unwrap();
-    polygon.start_shape().unwrap();
-    for vertex in region_vertex_worlds(&opened, &window, &[(1, 1), (4, 1), (2, 4)]) {
-        polygon.append_vertex(vertex).unwrap();
-    }
-    polygon.close_active_shape().unwrap();
-    let polygon_name = opened.save_region_definition(&polygon, None).unwrap();
-    let rust_polygon = opened
-        .region_stats_with_window_and_axes(&polygon, &window, &[])
-        .unwrap()
+    let mut region = PolygonRegion::new(image.coordinates(), [0, 1]).unwrap();
+    region
+        .add_polygon(world_vertices(
+            image.coordinates(),
+            &[(1, 1), (4, 1), (2, 4)],
+        ))
         .unwrap();
-    let cpp_polygon = ImageOracle::read_region_statistics(&path, &polygon_name).unwrap();
+    image.put_polygon_region("Region 1", &region).unwrap();
+    image.save().unwrap();
+    let rust_polygon = image.region_statistics(&region).unwrap().unwrap();
+    let cpp_polygon = ImageOracle::read_region_statistics(&path, "Region 1").unwrap();
     assert_region_stats_close(&rust_polygon, &cpp_polygon);
 
-    polygon.start_shape().unwrap();
-    for vertex in region_vertex_worlds(&opened, &window, &[(4, 2), (5, 2), (4, 5)]) {
-        polygon.append_vertex(vertex).unwrap();
-    }
-    polygon.close_active_shape().unwrap();
-    let union_name = opened.save_region_definition(&polygon, None).unwrap();
-    let rust_union = opened
-        .region_stats_with_window_and_axes(&polygon, &window, &[])
-        .unwrap()
+    region
+        .add_polygon(world_vertices(
+            image.coordinates(),
+            &[(4, 2), (5, 2), (4, 5)],
+        ))
         .unwrap();
-    let cpp_union = ImageOracle::read_region_statistics(&path, &union_name).unwrap();
+    image.put_polygon_region("Region 2", &region).unwrap();
+    image.save().unwrap();
+    let rust_union = image.region_statistics(&region).unwrap().unwrap();
+    let cpp_union = ImageOracle::read_region_statistics(&path, "Region 2").unwrap();
     assert_region_stats_close(&rust_union, &cpp_union);
+}
+
+#[test]
+fn rc_rust_region_statistics_match_cpp_across_cube_planes() {
+    if !casacore_oracle_available() {
+        eprintln!(
+            "skipping rc_rust_region_statistics_match_cpp_across_cube_planes: C++ casacore not available"
+        );
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rust_region_cube_stats.image");
+    let shape = vec![6usize, 6, 3];
+    ImageOracle::create_image(
+        &path,
+        &[6, 6, 3],
+        &vec![0.0; shape.iter().product()],
+        "Jy/beam",
+    )
+    .unwrap();
+    let mut image = Image::open(&path).unwrap();
+    let mut data = ramp_array(&shape);
+    data[[2, 2, 1]] = f32::NAN;
+    image.put_slice(&data, &[0, 0, 0]).unwrap();
+    let mut mask = ArrayD::from_elem(IxDyn(&shape).f(), true);
+    mask[[2, 1, 2]] = false;
+    image.put_mask("quality", &mask).unwrap();
+    image.set_default_mask("quality").unwrap();
+
+    let mut region = PolygonRegion::new(image.coordinates(), [0, 1]).unwrap();
+    region
+        .add_polygon(world_vertices(
+            image.coordinates(),
+            &[(1, 1), (4, 1), (2, 4)],
+        ))
+        .unwrap();
+    image.put_polygon_region("cube", &region).unwrap();
+    image.save().unwrap();
+
+    let rust = image.region_statistics(&region).unwrap().unwrap();
+    let cpp = ImageOracle::read_region_statistics(&path, "cube").unwrap();
+    assert_region_stats_close(&rust, &cpp);
+    let per_plane = region
+        .mask(image.coordinates(), image.shape())
+        .unwrap()
+        .iter()
+        .filter(|&&inside| inside)
+        .count()
+        / 3;
+    assert_eq!(rust.pixel_count, 3 * per_plane - 2);
+}
+
+#[test]
+fn rc_rust_region_mask_cpp_reads_default_mask() {
+    if !casacore_oracle_available() {
+        eprintln!(
+            "skipping rc_rust_region_mask_cpp_reads_default_mask: C++ casacore not available"
+        );
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rust_region_mask.image");
+    ImageOracle::create_image(&path, &[5, 5], &[0.0; 25], "").unwrap();
+
+    let mut image = Image::open(&path).unwrap();
+    let mut region = PolygonRegion::new(image.coordinates(), [0, 1]).unwrap();
+    region
+        .add_polygon(world_vertices(
+            image.coordinates(),
+            &[(1, 1), (3, 1), (3, 3), (1, 3)],
+        ))
+        .unwrap();
+    image.put_region_mask("roi", &region, true).unwrap();
+    image.save().unwrap();
+
+    assert_eq!(
+        ImageOracle::read_image_default_mask_name(&path).unwrap(),
+        "roi"
+    );
+    let mask = ImageOracle::read_image_default_mask(&path, 25).unwrap();
+    assert_eq!(mask.len(), 25);
+    assert_eq!(mask.iter().filter(|value| **value).count(), 9);
 }
 
 #[test]
@@ -879,18 +952,13 @@ fn rc_rust_write_cpp_reads_default_mask() {
     let path = dir.path().join("rust_mask.image");
     ImageOracle::create_image(&path, &[5, 5], &[0.0; 25], "").unwrap();
 
-    let mut opened = OpenedImageView::open(&path).unwrap();
-    let window = opened.default_window();
-    let mut region = opened.default_region("Region 1").unwrap();
-    region.start_shape().unwrap();
-    for pixel_xy in [(1usize, 1usize), (3, 1), (3, 3), (1, 3)] {
-        let vertex = opened
-            .region_vertex_for_pixel_with_window_and_axes(pixel_xy, &window, &[])
-            .unwrap();
-        region.append_vertex(vertex).unwrap();
-    }
-    region.close_active_shape().unwrap();
-    opened.write_region_mask(&region, "roi", true).unwrap();
+    let roi = ArrayD::from_shape_fn(IxDyn(&[5, 5]), |index| {
+        (1..=3).contains(&index[0]) && (1..=3).contains(&index[1])
+    });
+    let mut image = Image::open(&path).unwrap();
+    image.put_mask("roi", &roi).unwrap();
+    image.set_default_mask("roi").unwrap();
+    image.save().unwrap();
 
     assert_eq!(
         ImageOracle::read_image_default_mask_name(&path).unwrap(),
@@ -898,7 +966,7 @@ fn rc_rust_write_cpp_reads_default_mask() {
     );
     let mask = ImageOracle::read_image_default_mask(&path, 25).unwrap();
     assert_eq!(mask.len(), 25);
-    assert!(mask.iter().any(|value| *value));
+    assert_eq!(mask.iter().filter(|value| **value).count(), 9);
 }
 
 #[test]

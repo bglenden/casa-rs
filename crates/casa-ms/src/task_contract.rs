@@ -225,7 +225,6 @@ fn one_shot_contract<R: JsonSchema, O: JsonSchema>(
                     json_schema: Some("--json-schema".to_string()),
                     protocol_info: Some("--protocol-info".to_string()),
                     json_run: Some("--json-run <SOURCE>".to_string()),
-                    session: None,
                 },
             }),
             python: None,

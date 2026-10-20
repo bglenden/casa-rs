@@ -5,7 +5,7 @@ import importlib.util
 from pathlib import Path
 from typing import Any
 
-from casars import _session_catalog, parameters, sessions, tasks
+from casars import parameters, tasks
 from casars.tasks import _catalog
 
 
@@ -13,11 +13,9 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 def test_catalog_generates_one_wrapper_for_every_task() -> None:
-    task_ids = tuple(
-        surface["id"]
-        for surface in parameters.catalog()["surfaces"]
-        if surface["kind"] == "task"
-    )
+    surfaces = parameters.catalog()["surfaces"]
+    assert {surface["kind"] for surface in surfaces} == {"task"}
+    task_ids = tuple(surface["id"] for surface in surfaces)
     assert len(task_ids) == 27
     assert tasks.TASK_SURFACES == task_ids
     assert all(callable(getattr(tasks, name)) for name in tasks.TASK_SURFACES)
@@ -37,9 +35,7 @@ def test_generated_task_wrapper_forwards_only_explicit_casa_names(monkeypatch) -
         imsize=1024,
         profile="imager.toml",
         base_source="defaults",
-        notebook="Analysis.md",
         save_last=False,
-        record_notebook=False,
     )
 
     assert captured["task"] == "imager"
@@ -50,9 +46,8 @@ def test_generated_task_wrapper_forwards_only_explicit_casa_names(monkeypatch) -
     }
     assert captured["profile"] == "imager.toml"
     assert captured["base_source"] == "defaults"
-    assert captured["notebook"] == "Analysis.md"
     assert captured["save_last"] is False
-    assert captured["record_notebook"] is False
+    assert "notebook" not in captured
 
 
 def test_importvla_wrapper_preserves_the_archive_path_list(monkeypatch) -> None:
@@ -141,31 +136,6 @@ def test_generated_imager_wrapper_preserves_explicit_native_evla_source(monkeypa
     }
 
 
-def test_catalog_generates_one_wrapper_for_every_session(monkeypatch) -> None:
-    session_ids = tuple(
-        surface["id"]
-        for surface in parameters.catalog()["surfaces"]
-        if surface["kind"] == "session"
-    )
-    assert len(session_ids) == 2
-    assert _session_catalog.SESSION_SURFACES == session_ids
-    assert sessions.imexplore is _session_catalog.imexplore
-    assert sessions.tablebrowser is _session_catalog.tablebrowser
-
-    captured: dict[str, Any] = {}
-
-    def fake_open(surface: str, **options: Any) -> object:
-        captured.update(surface=surface, **options)
-        return object()
-
-    monkeypatch.setattr(sessions, "open", fake_open)
-    sessions.imexplore(image="cube.image", colormap="gray", source="defaults")
-
-    assert captured["surface"] == "imexplore"
-    assert captured["start"] == "defaults"
-    assert captured["overrides"] == {"image": "cube.image", "colormap": "gray"}
-
-
 def _stub_functions(path: Path) -> dict[str, ast.FunctionDef]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     return {
@@ -187,13 +157,9 @@ def test_generated_stubs_use_catalog_domains_and_surface_refinements() -> None:
     task_functions = _stub_functions(
         REPO_ROOT / "crates/casars-python/python/casars/tasks/_catalog.pyi"
     )
-    session_functions = _stub_functions(
-        REPO_ROOT / "crates/casars-python/python/casars/_session_catalog.pyi"
-    )
 
     for surface in parameters.catalog()["surfaces"]:
-        functions = task_functions if surface["kind"] == "task" else session_functions
-        annotations = _annotations(functions[surface["id"]])
+        annotations = _annotations(task_functions[surface["id"]])
         for binding in surface["bindings"]:
             # Surface-specific wrappers must expose useful types rather than
             # falling back to the recursive catch-all accepted by Mapping APIs.
@@ -212,13 +178,11 @@ def test_generated_stubs_use_catalog_domains_and_surface_refinements() -> None:
     importvla = _annotations(task_functions["importvla"])
     assert importvla["archivefiles"] == "StrPath | list[StrPath] | tuple[StrPath, ...]"
 
-    tablebrowser = _annotations(session_functions["tablebrowser"])
-    assert tablebrowser["view"] == "Literal['columns', 'keywords', 'rows', 'summary']"
-    assert tablebrowser["rowstart"] == "int"
-    imexplore = _annotations(session_functions["imexplore"])
-    assert imexplore["view"] == "Literal['coordinates', 'metadata', 'plane', 'spectrum']"
-    assert imexplore["contentmode"] == "Literal['raster', 'spreadsheet']"
-    assert imexplore["image"] == "StrPath"
+    for plot_task in ("msexplore", "plotms"):
+        plot = _annotations(task_functions[plot_task])
+        assert "plot_output" in plot
+        assert "plot_width" not in plot
+        assert "plot_height" not in plot
 
 
 def test_generator_honors_explicit_python_type_hint_metadata() -> None:

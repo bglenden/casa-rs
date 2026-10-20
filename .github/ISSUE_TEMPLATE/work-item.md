@@ -27,7 +27,7 @@ Relevant behavior, constraints, evidence, and context.
 - [ ] Behavior:
 - [ ] Edge case or failure mode:
 - [ ] Integration or contract:
-- [ ] Performance / UX / GUI expectation, if relevant:
+- [ ] Performance / UX expectation, if relevant:
 
 ## Stop conditions
 

@@ -4,7 +4,9 @@ Status: accepted
 Date: 2026-04-19
 Truth class: normative
 Supersedes:
-Superseded by:
+Superseded by: ADR-0017, in part (the terminal UI named here as a schema
+consumer was removed on 2026-10-20; the provider schema bundle remains the
+boundary contract for the Python package and headless task providers)
 
 ## Context
 

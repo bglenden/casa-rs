@@ -737,14 +737,12 @@ pub struct SurfaceParameterBinding {
 #[serde(rename_all = "snake_case")]
 pub enum SurfaceKind {
     Task,
-    Session,
 }
 
 impl fmt::Display for SurfaceKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::Task => "task",
-            Self::Session => "session",
         })
     }
 }
@@ -966,106 +964,62 @@ pub struct TaskDefinition {
     pub migrations: Vec<SurfaceMigration>,
 }
 
-/// Stateful surface definition containing durable startup/profile parameters only.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct SessionDefinition {
-    pub id: String,
-    pub contract_version: u32,
-    pub display_name: String,
-    pub category: String,
-    pub summary: String,
-    pub provider_family: String,
-    #[serde(default)]
-    pub execution: SurfaceExecutionProjection,
-    pub bindings: Vec<SurfaceParameterBinding>,
-    #[serde(default)]
-    pub migrations: Vec<SurfaceMigration>,
-}
-
-/// Shared definition for every configurable executable surface.
+/// Shared definition for every configurable executable surface. Every surface
+/// is a one-shot task; the `kind` tag stays in the serialized contract.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SurfaceDefinition {
     Task(TaskDefinition),
-    Session(SessionDefinition),
 }
 
 impl SurfaceDefinition {
+    fn task(&self) -> &TaskDefinition {
+        let Self::Task(definition) = self;
+        definition
+    }
+
     pub fn id(&self) -> &str {
-        match self {
-            Self::Task(definition) => &definition.id,
-            Self::Session(definition) => &definition.id,
-        }
+        &self.task().id
     }
 
     pub fn kind(&self) -> SurfaceKind {
-        match self {
-            Self::Task(_) => SurfaceKind::Task,
-            Self::Session(_) => SurfaceKind::Session,
-        }
+        SurfaceKind::Task
     }
 
     pub fn contract_version(&self) -> u32 {
-        match self {
-            Self::Task(definition) => definition.contract_version,
-            Self::Session(definition) => definition.contract_version,
-        }
+        self.task().contract_version
     }
 
     pub fn provider_family(&self) -> &str {
-        match self {
-            Self::Task(definition) => &definition.provider_family,
-            Self::Session(definition) => &definition.provider_family,
-        }
+        &self.task().provider_family
     }
 
     pub fn bindings(&self) -> &[SurfaceParameterBinding] {
-        match self {
-            Self::Task(definition) => &definition.bindings,
-            Self::Session(definition) => &definition.bindings,
-        }
+        &self.task().bindings
     }
 
     pub fn execution(&self) -> &SurfaceExecutionProjection {
-        match self {
-            Self::Task(definition) => &definition.execution,
-            Self::Session(definition) => &definition.execution,
-        }
+        &self.task().execution
     }
 
     pub fn safety_rules(&self) -> &[TaskSafetyRule] {
-        match self {
-            Self::Task(definition) => &definition.safety_rules,
-            Self::Session(_) => &[],
-        }
+        &self.task().safety_rules
     }
 
     pub fn migrations(&self) -> &[SurfaceMigration] {
-        match self {
-            Self::Task(definition) => &definition.migrations,
-            Self::Session(definition) => &definition.migrations,
-        }
+        &self.task().migrations
     }
 
     pub fn display_name(&self) -> &str {
-        match self {
-            Self::Task(definition) => &definition.display_name,
-            Self::Session(definition) => &definition.display_name,
-        }
+        &self.task().display_name
     }
 
     pub fn category(&self) -> &str {
-        match self {
-            Self::Task(definition) => &definition.category,
-            Self::Session(definition) => &definition.category,
-        }
+        &self.task().category
     }
 
     pub fn summary(&self) -> &str {
-        match self {
-            Self::Task(definition) => &definition.summary,
-            Self::Session(definition) => &definition.summary,
-        }
+        &self.task().summary
     }
 }
 
@@ -2399,10 +2353,8 @@ mod tests {
     }
 
     fn set_surface_id(bundle: &mut SurfaceContractBundle, id: &str) {
-        match &mut bundle.surface {
-            SurfaceDefinition::Task(definition) => definition.id = id.to_string(),
-            SurfaceDefinition::Session(definition) => definition.id = id.to_string(),
-        }
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
+        definition.id = id.to_string();
     }
 
     fn add_binding(
@@ -2411,10 +2363,8 @@ mod tests {
         binding: SurfaceParameterBinding,
     ) {
         bundle.catalog.concepts.push(concept);
-        match &mut bundle.surface {
-            SurfaceDefinition::Task(definition) => definition.bindings.push(binding),
-            SurfaceDefinition::Session(definition) => definition.bindings.push(binding),
-        }
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
+        definition.bindings.push(binding);
     }
 
     #[test]
@@ -2509,9 +2459,7 @@ mod tests {
                 .any(|error| error.code == "missing_overwrite_safety")
         );
 
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
-            unreachable!("test bundle is a task")
-        };
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.safety_rules.push(TaskSafetyRule {
             class: RunSafetyClass::Overwrite,
             when: Predicate::Equals {
@@ -2532,9 +2480,7 @@ mod tests {
             },
         );
         let mut bundle = bundle(concept, binding);
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
-            unreachable!("test bundle is a task")
-        };
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.safety_rules = vec![
             TaskSafetyRule {
                 class: RunSafetyClass::InputMutation,
@@ -2767,9 +2713,7 @@ mod tests {
         let mut second = first;
         second.documentation.summary = "different".to_string();
         let mut second_bundle = bundle(second, binding);
-        if let SurfaceDefinition::Task(definition) = &mut second_bundle.surface {
-            definition.id = "second".to_string();
-        }
+        set_surface_id(&mut second_bundle, "second");
         let errors = validate_surface_bundles(&[first_bundle, second_bundle]).unwrap_err();
         assert!(errors.iter().any(|error| error.code == "divergent_concept"));
     }
@@ -2790,9 +2734,7 @@ mod tests {
 
         let mut redundant = first.clone();
         set_surface_id(&mut redundant, "redundant");
-        let SurfaceDefinition::Task(definition) = &mut redundant.surface else {
-            unreachable!("test bundle is a task")
-        };
+        let SurfaceDefinition::Task(definition) = &mut redundant.surface;
         definition.bindings[0].reviewed_homonym = Some(ReviewedHomonym {
             review_id: "ADR-test".to_string(),
             reason: "Redundant evidence for an identical concept.".to_string(),
@@ -2822,9 +2764,7 @@ mod tests {
 
         let mut reviewed = bundle(alternate, alternate_binding);
         set_surface_id(&mut reviewed, "reviewed");
-        let SurfaceDefinition::Task(definition) = &mut reviewed.surface else {
-            unreachable!("test bundle is a task")
-        };
+        let SurfaceDefinition::Task(definition) = &mut reviewed.surface;
         definition.bindings[0].reviewed_homonym = Some(ReviewedHomonym {
             review_id: "ADR-test".to_string(),
             reason: "The shared spelling has a deliberately distinct meaning.".to_string(),
@@ -3094,17 +3034,13 @@ mod tests {
             },
         );
         let mut current_only_bundle = bundle(concept.clone(), binding.clone());
-        let SurfaceDefinition::Task(definition) = &mut current_only_bundle.surface else {
-            unreachable!()
-        };
+        let SurfaceDefinition::Task(definition) = &mut current_only_bundle.surface;
         definition.contract_version = 2;
         current_only_bundle.validate().unwrap();
 
         binding.aliases.push("legacy_name".to_string());
         let mut aliased_bundle = bundle(concept, binding);
-        let SurfaceDefinition::Task(definition) = &mut aliased_bundle.surface else {
-            unreachable!()
-        };
+        let SurfaceDefinition::Task(definition) = &mut aliased_bundle.surface;
         definition.contract_version = 2;
         let errors = aliased_bundle.validate().unwrap_err();
         assert!(

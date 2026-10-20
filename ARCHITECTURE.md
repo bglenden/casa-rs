@@ -1,7 +1,7 @@
 # Architecture
 
 Truth class: current descriptive
-Last reality check: 2026-10-16
+Last reality check: 2026-10-20
 Verification: just docs-check
 
 ## System purpose
@@ -21,17 +21,16 @@ coordinates, measures, and related workflows.
 | native imaging (`casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`) | The dependency-free request science and compiled problem; the measurement operator (kernel sets, gridding and degridding, FFT and correction, imaging weights, spectral resampling, continuum fitting); image-domain reconstruction (the model lifecycle, the normal state a pass forms, masks and the minor-cycle solvers); normalization, restoration, Taylor, PB and pbcor products, written in bounded windows by the products' CASA image writer with atomic individual-image replacement; host resources, admission, the major-cycle pass, its worker teams and the paged cube state; the Metal backend | ADR-0016 layering, enforced by `scripts/check-imaging-dependencies.py` and `resources/imaging-architecture/dependency-policy.json`: `casa-imaging-model` has no workspace dependencies; the operator depends on the model, `casa-fft`, `casa-numerics` and, for AW convolution-function images, `casa-images`, `casa-coordinates` and `casa-types`; deconvolution depends on the model, `casa-fft` and `casa-numerics`; products depend on the model, deconvolution, `casa-fft` and `casa-numerics` and, for their writer, on `casa-images`, `casa-coordinates` and `casa-types`; runtime composes the operator, deconvolution, products and the Metal crate over `casa-ms`, `casa-tables` and `casa-lattices`; the Metal crate depends only on the operator |
 | imaging application composition (`casa-imaging-application`) | Sole production composition seam across MeasurementSet authority, reconstruction, products, resources, execution, typed installed-implementation availability, and CASA product publication | Native imaging owners only; unavailable requests invoke no execution implementation |
 | domain libraries (`casa-ms`, `casa-simulation-synthesis`, `casa-lattices`, `casa-coordinates`, `casa-images`, `casa-calibration`, `casa-vla`) | Higher-level astronomy data models and algorithms built on table/image persistence; simulation synthesis owns only the serial model predictor and Airy voltage pattern used by MeasurementSet simulation | foundation crates, `casa-tables`, selected peer domain crates where documented |
-| boundary contracts (`casa-provider-contracts`, `casars-imagebrowser-protocol`, `casars-tablebrowser-protocol`) | The generic provider envelope, canonical parameter and application catalogs, task/session surface definitions, and protocol surfaces between providers, apps, and Python/runtime layers | domain libraries and foundation crates; must not become a second source of truth |
-| parameter and task runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, typed task/session lifecycle coordination, managed Last storage, and the common one-shot task CLI host | boundary contracts and `casa-types`; must not implement provider science behavior |
-| notebook runtime (`casa-notebook`) | Source-preserving Markdown/cell parsing, stable notebook/cell/run identity, atomic project persistence, immutable execution receipts, conflict handling, and portable/advanced exports | parameter value serialization and general-purpose ecosystem crates; must not own provider execution or frontend state |
-| apps and runtimes (`casars`, `casars-imager`, `casars-python`, `casars-frontend-services`, `ratatui-graphics`, `apps/casars-mac`) | Terminal shells, orchestration binaries, Python bindings/package, frontend service bindings, rendering/runtime support, and the native macOS GUI prototype | boundary contracts, domain libraries, foundation crates; lightweight frontend services may expose read-only domain-library probes through UniFFI |
+| boundary contracts (`casa-provider-contracts`) | The generic task-provider envelope, canonical parameter and application catalogs, task surface definitions, and protocol surfaces between providers, the task host, and Python | domain libraries and foundation crates; must not become a second source of truth |
+| parameter and task runtime (`casa-task-runtime`) | Format-neutral parameter resolution, sparse TOML profiles, migrations, task Last/Last Successful coordination, managed Last storage, and the common one-shot task CLI host | boundary contracts and `casa-types`; must not implement provider science behavior |
+| apps and runtimes (`casars`, `casars-imager`, `casars-python`, `casars-frontend-services`) | The headless `casars` task host (`casars run`, `casars params`) and the `imexplore`/`casars-plotcal` providers, the imager application, the Python package, and its UniFFI service layer | boundary contracts, domain libraries, foundation crates |
 | test support (`casa-test-support`) | Cross-language parity harnesses, fixtures, integration helpers, and performance guards | any workspace crates needed for testing only |
 
 ## Dependency direction
 
 Preferred direction is:
 
-`core codecs -> foundations -> persistent storage / domain libraries -> boundary contracts -> parameter runtime / notebook runtime -> apps/runtimes`
+`core codecs -> foundations -> persistent storage / domain libraries -> boundary contracts -> parameter runtime -> apps/runtimes`
 
 Native imaging follows its stricter accepted direction:
 
@@ -113,7 +112,7 @@ terminal; there is no alternate
 implementation, retry path, or stage-level delegation. Its input is one
 `ImagingRequest`, deserialized from the imager parameters the provider
 catalog resolves and validated once. Every route (command line,
-`--json-run`, TUI, Python and the workbench) reaches it through the same
+`--json-run`, `casars run` and Python) reaches it through the same
 catalog resolution, so the catalog is the only source of defaults and refuses
 a parameter its gridder does not read. `casars-imager` is a thin frontend over
 this interface: it resolves its parameters through the catalog and presents
@@ -171,16 +170,16 @@ Additional constraints:
   warning, as casacore does for `ENOLCK`. General rollback, snapshots,
   journaling, and copy-on-write generations are not part of the persistence
   contract.
-- Versioned provider bundles are boundary contracts; UI projections are derived
-  views, not separate truth sources.
+- Versioned provider bundles are boundary contracts; CLI parser projections
+  are derived views, not separate truth sources.
 - `casa-provider-contracts::ApplicationCatalog` is the sole application
-  inventory and launch-metadata owner. TUI, Swift, Python, project MCP,
-  assistant, packaging, and generators project it directly. Installed-suite
+  inventory and launch-metadata owner. The `casars` task host, Python,
+  packaging, and generators project it directly. Installed-suite
   and development-workspace launch modes resolve exact paths and never fall
   back to each other, PATH discovery, or repository probing.
 - Parameter concepts live in the checked aggregate `ParameterCatalog` in
   `casa-provider-contracts`. Each provider bundle embeds the exact referenced
-  concepts so the boundary remains self-contained. Task and session
+  concepts so the boundary remains self-contained. Task
   `SurfaceDefinition` bindings supply defaults, conditional activation,
   narrowing refinements, optional ordered migrations, presentation, and
   projection metadata; under ADR-0012, an empty migration set declares the
@@ -189,20 +188,16 @@ Additional constraints:
   locally.
 - `casa-task-runtime` owns profile mechanics, managed state, and application
   lifecycle transitions from source parsing and resolution through Last/
-  LastSuccessful persistence, task completion, and session debounce/coalescing.
-  It also owns task-provider discovery actions, JSON source loading,
-  diagnostics, serialization, exit classification, and the generated common
-  help block. Providers retain typed science adapters, domain-specific human
-  parsing, and session command/event semantics; apps may not add alternate
-  lifecycle maps, timers, writers, CLI hosts, or launch fallbacks.
-- `apps/casars-mac` keeps fixture schemas inside its SwiftPM core when modeling
-  proposed UI behavior. Real, read-only dataset discovery enters through
-  `casars-frontend-services`, whose Rust API is exposed to Swift and Python
-  with UniFFI.
-- `casars-frontend-services` is an apps/runtime boundary crate. It may compose
-  domain-library reads and `casa-notebook` operations into GUI-appropriate
-  projections, but it must not become a second implementation of persistence,
-  task semantics, or provider contracts.
+  LastSuccessful persistence and task completion. It also owns task-provider
+  discovery actions, JSON source loading, diagnostics, serialization, exit
+  classification, and the generated common help block. Providers retain typed
+  science adapters and domain-specific human parsing; apps may not add
+  alternate lifecycle maps, writers, CLI hosts, or launch fallbacks.
+- `casars-frontend-services` is the UniFFI service layer of the Python
+  package (ADR-0017). It projects the parameter runtime, task completion, the
+  application catalog and MeasurementSet plot documents for
+  `casars.parameters`, `casars.tasks` and `casars.data`, and must not become a
+  second implementation of persistence, task semantics, or provider contracts.
 - Native frontends select a versioned request and `ResourcePolicy`; they do not
   inspect hosts or devices, select imaging implementations, allocate work
   buffers, or define scientific products. Native model code depends on no
@@ -337,191 +332,18 @@ no product.
 
 ## Runtime model
 
-Most crates are synchronous Rust libraries with CLI/TUI frontends and test
-harnesses on top. There is no repo-wide async runtime contract today.
+Most crates are synchronous Rust libraries with command-line providers, the
+Python package and test harnesses on top. There is no repo-wide async runtime contract today.
 Long-running interoperability, parity, and packaging work is driven by
 shell/Python scripts, integration tests, or subprocess orchestration rather
 than a shared background service model.
 
-ADR-0006 adds one synchronous parameter lifecycle shared by task and
-browser-session consumers. `casa-task-runtime` is the sole lifecycle owner: a
-task resolves sparse user intent, records its attempted state, and applies the
-completion transition around one provider invocation; a browser session
-resolves durable startup settings and delegates accepted-setting debounce and
-coalescing to the same runtime. The subsequent command/event stream remains
-owned by the session protocol. Parameter resolution and Last persistence do
-not introduce a provider daemon or repo-wide async runtime.
-
-`apps/casars-mac` is a SwiftPM package for the macOS-native GUI prototype. Its
-workbench state remains headlessly testable in SwiftPM. GUI-Wave-1 introduces a
-small UniFFI runtime boundary through `casars-frontend-services` for read-only
-project and dataset probing. GUI-Wave-3 extends that boundary with a narrow
-MeasurementSet explorer plot API: Rust owns `casa-ms` / `msexplore` plot payload
-construction and PNG rendering, while Swift owns native controls, layout, and
-debug-state projection. GUI-Wave-4 adds the first real task-execution vertical:
-the Swift workbench supervises a short-lived `casars-imager --json-run`
-process for dirty imaging, records logs/results/products in processing history,
-and exposes the request/run state through the debug snapshot. This remains a
-narrow process-supervision path, not a shared background service, provider
-daemon, or repo-wide async runtime contract. Issue #194 adds the first durable
-Swift-side workbench job coordinator for independent tab work: MeasurementSet
-plot rendering and dirty-imaging subprocess runs register per-tab jobs with
-pending/running/succeeded/failed/cancelled state, cancellation projection, logs,
-results/errors, and debug-snapshot visibility. The coordinator is intentionally
-local to `apps/casars-mac`; it does not introduce a provider daemon, durable
-project-history format, or repo-wide async runtime contract.
-GUI-Wave-5 keeps that runtime shape and adds the native explorer spine: real
-MeasurementSet, CASA image, and table probes are routed into typed Swift
-explorer tabs, and dirty-imaging artifacts are grouped under their originating
-in-memory run state so generated products can be reopened without adding a
-project-history persistence format or background service.
-
-Issue #368 adds a checked-in Xcode app host and macOS UI Testing Bundle around
-that same SwiftPM package. The host compiles the existing SwiftUI app sources
-and links the local `CasarsMacCore` product solely to provide an application
-boundary for XCTest/XCUIAutomation. It is test infrastructure, not another app
-family, state owner, fixture schema, runtime, or distribution path.
-
-ADR-0007 defines the runtime boundary for the scientific-notebook program.
-`casa-notebook` now owns the Wave 1 Markdown/cell, execution-receipt, locking,
-conflict, export, receipt-v2 Python input/environment, and immutable explorer
-visualization-revision contracts shared by GUI, TUI, CLI, and Python. App surfaces
-record through this crate on an explicitly selected project root; recorder
-failure is a warning and never changes the scientific operation result. Swift
-uses DTO projections from `casars-frontend-services` and does not own the
-persisted schema. Each pending attempt holds an advisory per-run lease for its
-process lifetime, so projection refreshes and other processes cannot classify
-a live run as interrupted; recovery claims only a released lease. Parameter
-replay opens a fresh canonical task tab when no unambiguous target exists,
-replaces a clean matching target, and requires a typed diff confirmation before
-replacing a dirty target. It reports current contract/default drift without
-claiming exact reproduction. GUI and TUI image-region and mask writes use the
-same operation-receipt path as tasks. Direct provider binaries remain outside
-implicit project recording; project-mediated execution enters through `casars
-run` or another app surface with an explicit workspace, and CLI/Python callers
-may route to an existing named notebook explicitly.
-
-Wave 2 adds one persistent, visible, interruptible Python subprocess per open
-notebook. Swift supervises its CASA-RS JSONL protocol and owns interrupt,
-terminate/kill, restart, Run All, and explicit project-environment actions;
-`casa-notebook` owns the durable execution evidence. Wave 4 coding-agent Python
-uses the user-selected or inherited scientific environment under the active
-agent authority preset; it is not forced into a separate fixed worker.
-
-Renderer-neutral MeasurementSet plot data is owned by `casa-ms`; UniFFI and
-PyO3 project that same Rust structure. `casars-python` adds NumPy-native MS
-series and image-plane/WCS records, with Matplotlib and Astropy confined to the
-optional `plot` extra. Swift explorer fixtures and frontend DTOs are not
-persisted contracts. Explicit MS/image snapshots are copied and versioned by
-`casa-notebook`; canonical typed explorer parameters are retained solely as
-reopen intent, never inserted as input forms or live links in Markdown.
-
-`casa-notebook` owns portable tutorial-template v1, immutable template forking,
-the versioned URI-handler registry, exact acquisition approvals, integrity and
-bounded extraction, and `.casa-rs/tutorials/<notebook-id>/lock.toml`.
-`casars-frontend-services` projects those Rust contracts as JSON through
-UniFFI; Swift owns interaction and asynchronous orchestration only. The
-package-internal Wave 3 prototype remains deterministic review state and never
-becomes a persisted or public contract. `tutorial-pack.v0` has no runtime
-reader or GUI state; an explicit Rust one-shot migrator converts its prose,
-native GUI task steps, and regression overlay into v1.
-
-Wave 4 replaces the bespoke model sidecar with a user-installed coding agent.
-A CASA-owned agent-session interface contains the runtime-specific shapes. The
-initial adapter spawns the official Codex App Server directly and speaks its
-JSON-RPC protocol over stdio; a future ACP adapter is the extension point for
-OpenCode and other agents. The metered OpenAI Responses API and Agents SDK are
-not initial backends. The Codex adapter invokes ChatGPT subscription login and
-account state without copying credentials into CASA projects or processes.
-Raw JSON-RPC, method names, IDs, and trusted tool-result decoding stop inside
-that private adapter. One typed request tracker resolves outbound lifecycles,
-and one assistant controller owns transient state, event reduction, timers,
-and host-effect requests outside the general Workbench store.
-The native interaction keeps model, reasoning effort, and subscription usage
-remaining immediately visible. Agent/account, authority, and Python selection
-are consolidated behind one secondary settings surface; AI invocation and
-AI-suggested state use purple consistently, apart from safety-severity colors.
-
-`casa-rs-agent-profile/v1` defines invariant guidance, a bundled CASA skill,
-the verified project MCP identity, backend resume metadata, an agent-neutral
-authority vector, and per-adapter capability declarations. **Explore**,
-**Work**, and **Full access** are GUI projections of that vector, not Codex or
-ACP modes. Explore launches from a neutral directory with project instructions
-disabled. Work uses the trusted project and the user's normal shell/Python
-environment with native Codex approvals. Full access is an explicit visible
-expert opt-in. Behavioral conformance verifies actual denial/escalation,
-profile/MCP identity, cancellation, and resume rather than merely checking a
-capability list.
-
-The project-scoped CASA MCP server exposes typed open-tab state, task schemas
-and parameters, persistent-data semantics, receipts, typed task suggestions,
-host-action descriptions, and cited corpus/source retrieval. Its unique
-nonce-derived session name, host-owned executable registration, and nonce on
-every tool call prevent a user-configured server from shadowing it. Generic
-command, file, network, and Python approval stays with
-App Server. CASA owns only canonical semantic actions such as notebook append,
-task Run, typed data mutation, and tutorial acquisition, avoiding duplicate
-prompts. An explicit **Add to notebook** click is itself sufficient authority
-for one idempotent append at the chronological tail; it does not trigger a
-second confirmation.
-One typed tool registry binds schema, argument decoding, context requirement,
-and dispatch. Nonce authentication occurs once before typed handlers delegate
-catalog and parameter behavior to canonical owners and corpus retrieval to
-`casa-notebook`.
-
-`casa-notebook` continues to own durable agent-neutral visible conversations,
-citations, immutable pins, context-use records, and scientific receipts.
-Hidden reasoning and raw App Server/ACP envelopes are not persisted. A backend
-session is resumed only after the authority vector, profile, capabilities, and
-CASA MCP registration are reverified; otherwise CASA records a visible handoff
-to a new session.
-
-The CASA-RS-owned corpus combines a redistribution-cleared baseline, user
-project documents, release source/docs, and an optional commit-keyed live
-overlay; it never depends on a separate Radio Astronomy Oracle checkout.
-SQLite/FTS5 is the initial replaceable retrieval implementation. The removed
-384-dimensional feature hash is not an embedding; a real local embedding model
-requires retrieval-evaluation evidence. "Full context" means the agent can
-query complete typed semantic projections and retrieval tools as needed, not
-that raw arrays or entire corpora are copied into every prompt. CASA records
-used domain tools/resources and citations but does not claim an exact model-
-egress manifest for a coding agent with shell and filesystem authority. See
-`docs/assistant-security.md` for the executable runtime and authority contract.
-Context projection and corpus-result capacity come from one deterministic
-resource plan using backend-reported model capacity, output and conversation
-reserves, selected-tab priority, and checked UTF-8-unit arithmetic. Missing
-capacity disables both allocations explicitly; there is no fixed fallback.
-
-Project-document maintenance is host-notified but database-correct: recursive
-macOS filesystem events are debounced hints, while a complete metadata-only
-inventory and SQLite-owned fingerprints decide what changed. Fingerprints bind
-the relative path, type, size, mtime, ctime, and filesystem identity so atomic
-replacement and preserved-mtime edits are detected. Only changed sources are
-read or passed through PDF extraction/OCR. The source snapshot atomically
-removes deleted or renamed documents; failed or concurrently changing sources
-retain their last valid indexed content and remain scheduled for retry. Project
-watch events never refresh the independent baseline or source-code layers, and
-there is no periodic full-content scan.
-Each refresh first prepares an immutable reconciliation carrying the complete
-validated source inventory, its digest, scope, and generation. Host extraction
-returns one typed outcome for every requested path, and Rust validates that
-exact prepared value before the single atomic apply. A Swift coordinator owns
-coalescing and rejects stale generations.
-
-The baseline radio-astronomy layer is a versioned `casars-mac` app resource,
-installed once rather than copied into projects. Its schema-v3 manifest binds
-each compact page/slide source to an authoritative origin, source and content
-digests, license metadata, redistribution basis, and exact citation kind. The
-runtime accepts only the current normalized-page representation and verifies
-content digests before indexing. Baseline replacement removes
-only the baseline layer, preserving project documents and conversations. See
-`docs/assistant-standard-corpus.md` for the selected sources, maintenance
-workflow, and measured cost.
-
-Every notebook-program wave starts with a launchable deterministic GUI
-prototype and an explicit approval gate before real adapters are connected.
-The prototype state belongs in `CasarsMacCore`; it may not establish persisted
-or provider semantics that bypass the Rust-owned contracts.
+ADR-0006 adds one synchronous parameter lifecycle shared by every task
+consumer (`casars run` and Python). `casa-task-runtime` is the sole lifecycle
+owner: a task resolves sparse user intent, records its attempted state, and
+applies the completion transition around one provider invocation. Parameter
+resolution and Last persistence do not introduce a provider daemon or
+repo-wide async runtime.
 
 ### Imaging execution
 
@@ -713,32 +535,24 @@ never makes a route available.
   candidates but never installs or repairs them
 - local casacore C++ installations via Homebrew for parity tests and demos when available
 - GitHub Actions as the canonical CI environment, with `scripts/ci-local.sh` as local reproduction support
-- accepted future notebook state from ADR-0007: visible Markdown and assets
-  under `notebooks/`, copied project documents under `documents/`, and versioned
-  managed receipts, transcripts, tutorial locks, Python environments, and local
-  corpus indexes under `.casa-rs/`
 
 ## Public interfaces
 
 - published Rust library crates, especially `casa-types`, `casa-tables`, `casa-ms`, `casa-lattices`, `casa-coordinates`, and `casa-images`
-- CLI/TUI apps such as `casars`, `msexplore`, `tablebrowser`, `imexplore`, `calibrate`, and `importvla`
-- The `casars` runtime package owns the `tablebrowser` and `imexplore` session engines,
-  rendering/movie coordination, and executable targets. `casa-tables` and `casa-images` expose
-  only reusable table/image domain capabilities and do not depend on browser protocol crates.
-- native macOS GUI prototype package `apps/casars-mac`
-- experimental UniFFI frontend service bindings generated from
-  `casars-frontend-services`
-- Python package `casars-python`
+- the headless `casars` task host (`casars run`, `casars params`) and the
+  catalog's task providers, such as `msexplore`, `imexplore` (`imhead`,
+  `imstat`), `calibrate`, `importvla`, and `casars-imager`
+- Python package `casars-python`, including the generated UniFFI module
+  `casars._frontend` built from `casars-frontend-services`
 - persisted CASA-compatible on-disk table, image, and related data formats
 - versioned provider contract bundles and protocol schemas
-- versioned sparse TOML task and session parameter profiles
+- versioned sparse TOML task parameter profiles
 
 ## Approved dependency classes
 
 - N-dimensional arrays and numeric containers: `ndarray`
 - FFT and spectral transforms: direct, in-place FFTW 3 through `casa-fft`
 - error types: `thiserror`
-- terminal rendering and TUI support: `ratatui`, `ratatui-graphics`, `plotters`
 - Adding a second library in the same category requires review.
 
 ## Known constraints
@@ -774,9 +588,9 @@ never makes a route available.
 | 0002 | Native Rust implementation with casacore-compatible persistence | accepted |
 | 0003 | Provider schema bundle as boundary contract | accepted |
 | 0004 | Tiered verification and heavy parity gates | accepted |
-| 0005 | Native macOS GUI prototype boundary | accepted |
+| 0005 | Native macOS GUI prototype boundary | retired |
 | 0006 | Unified parameter catalog and sparse profiles | accepted |
-| 0007 | Scientific notebooks and assistant boundary | accepted |
+| 0007 | Scientific notebooks and assistant boundary | retired |
 | 0008 | Casacore storage and bounded MeasurementSet writes | accepted |
 | 0009 | Mathematical imaging architecture | accepted |
 | 0010 | Unified imaging resource authority | superseded |
@@ -786,3 +600,4 @@ never makes a route available.
 | 0014 | Trusted product generation without content attestation | accepted |
 | 0015 | Run-local imaging ownership without content attestation | accepted |
 | 0016 | Imaging foundation | accepted |
+| 0017 | Python and headless task providers are the product surface | accepted |

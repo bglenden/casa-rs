@@ -4,43 +4,29 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Shared Swift and Python frontend services for casa-rs"
+description = "UniFFI service layer of the casa-rs Python package"
 repository.workspace = true
 publish = false
 
 [lib]
-crate-type = ["cdylib", "rlib", "staticlib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 anyhow = "1"
 camino = "1.2"
 cargo_metadata = "0.19"
-casa-notebook = { path = "../casa-notebook" }
-casa-coordinates = { path = "../casa-coordinates" }
-casa-images = { path = "../casa-images" }
 casa-ms = { path = "../casa-ms" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
-casa-tables = { path = "../casa-tables" }
 casa-task-runtime = { path = "../casa-task-runtime" }
-casa-types = { path = "../casa-types" }
-casars = { path = "../casars" }
 casars-imager = { path = "../casars-imager" }
-casars-imagebrowser-protocol = { path = "../casars-imagebrowser-protocol" }
-casars-tablebrowser-protocol = { path = "../casars-tablebrowser-protocol" }
-image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror.workspace = true
-toml = "0.8"
 uniffi = "0.29.5"
 uniffi_bindgen = "0.29.5"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString", "NSObjCRuntime"] }
-
 [dev-dependencies]
 flate2 = "1"
-ndarray.workspace = true
 tar = "0.4"
 tempfile = "3"
 

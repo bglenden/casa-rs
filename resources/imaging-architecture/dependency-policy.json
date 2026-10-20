@@ -282,20 +282,6 @@
    ],
    "regex": "\\bopen_measures_runtime\\b|\\bcasa_measures_data\\s*::\\s*(?:MeasuresRuntime|\\{[^}]*\\bMeasuresRuntime\\b)|\\bMeasuresRuntime::(?:open|open_discovered|discover_candidates)\\b|\\bopen_discovered\\b",
    "grandfathered": []
-  },
-  {
-   "id": "swift-frontend-device-free",
-   "message": "Swift frontend inspects a device or selects an imaging backend",
-   "roots": [
-    "apps/casars-mac/Sources/CasarsMacApp",
-    "apps/casars-mac/Sources/CasarsMacCore"
-   ],
-   "extensions": [
-    ".swift"
-   ],
-   "regex": "(?m)^\\s*import\\s+(?:Metal|MetalKit)\\b|\\b(?:MTLCreateSystemDefaultDevice|MTLCopyAllDevices|MTLCopyAllDevicesWithObserver|FftBackend|GridBackend|ImagingBackend|BackendEligibility|MetalBackend)\\b|\\bProcessInfo\\.processInfo\\.(?:activeProcessorCount|processorCount)\\b|\\b(?:sysctl|sysctlbyname|host_statistics|host_statistics64)\\s*\\(",
-   "ignore_inline_tests": false,
-   "grandfathered": []
   }
  ]
 }

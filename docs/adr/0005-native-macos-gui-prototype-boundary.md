@@ -1,10 +1,11 @@
 # ADR-0005: Native macOS GUI prototype boundary
 
-Status: accepted
+Status: retired
 Date: 2026-05-04
 Truth class: normative
 Supersedes:
-Superseded by:
+Superseded by: ADR-0017 (the macOS workbench was removed on 2026-10-20; tag
+`ui-experiments-2026-10-20` preserves it)
 
 ## Context
 

@@ -11,7 +11,6 @@
       },
       "shell_kind": "inspect",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "measurement_set"
       ],
@@ -29,7 +28,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "measurement_set",
         "calibration_table"
@@ -48,7 +46,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "archive"
       ],
@@ -66,7 +63,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "measurement_set"
       ],
@@ -84,7 +80,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "image",
         "measurement_set"
@@ -92,44 +87,6 @@
       "show_in_tui": true,
       "show_in_swift": true,
       "include_in_suite": false
-    },
-    {
-      "id": "tablebrowser",
-      "kind": "task",
-      "launch": {
-        "executable": "tablebrowser",
-        "cargo_package": "casars",
-        "override_env": "CASARS_TABLEBROWSER_BIN"
-      },
-      "shell_kind": "browser",
-      "interaction": "browser_session",
-      "browser_kind": "table",
-      "dataset_kinds": [
-        "table",
-        "measurement_set",
-        "calibration_table"
-      ],
-      "show_in_tui": true,
-      "show_in_swift": true,
-      "include_in_suite": false
-    },
-    {
-      "id": "imexplore",
-      "kind": "task",
-      "launch": {
-        "executable": "imexplore",
-        "cargo_package": "casars",
-        "override_env": "CASARS_IMEXPLORE_BIN"
-      },
-      "shell_kind": "browser",
-      "interaction": "browser_session",
-      "browser_kind": "image",
-      "dataset_kinds": [
-        "image"
-      ],
-      "show_in_tui": true,
-      "show_in_swift": true,
-      "include_in_suite": true
     },
     {
       "id": "imhead",
@@ -141,7 +98,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "image"
       ],
@@ -159,7 +115,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "image"
       ],
@@ -177,7 +132,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "image"
       ],
@@ -195,7 +149,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "image"
       ],
@@ -213,7 +166,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "measurement_set"
       ],
@@ -231,7 +183,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "measurement_set"
       ],
@@ -249,7 +200,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "measurement_set",
         "calibration_table"
@@ -268,7 +218,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "measurement_set"
       ],
@@ -286,7 +235,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "measurement_set"
       ],
@@ -304,7 +252,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "calibration_table"
       ],
@@ -322,7 +269,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "measurement_set"
       ],
@@ -340,7 +286,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "measurement_set"
       ],
@@ -358,7 +303,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "calibration_table",
         "measurement_set"
@@ -377,7 +321,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "measurement_set"
       ],
@@ -395,7 +338,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "measurement_set"
       ],
@@ -413,7 +355,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "image"
       ],
@@ -431,7 +372,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "image"
       ],
@@ -449,7 +389,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "image"
       ],
@@ -467,7 +406,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "image"
       ],
@@ -485,7 +423,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "image"
       ],
@@ -503,7 +440,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "image"
       ],
@@ -521,7 +457,6 @@
       },
       "shell_kind": "workflow",
       "interaction": "one_shot",
-      "browser_kind": null,
       "dataset_kinds": [
         "image",
         "fits"
@@ -540,7 +475,6 @@
       },
       "shell_kind": "launcher",
       "interaction": "launcher",
-      "browser_kind": null,
       "dataset_kinds": [],
       "show_in_tui": false,
       "show_in_swift": false,

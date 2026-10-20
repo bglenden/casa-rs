@@ -19,7 +19,7 @@ from tutorial_parity.documentation import write_documentation
 from tutorial_parity.evidence import result_document, review_document, write_json_atomic
 from tutorial_parity.model import RuntimeResources, SectionManifest
 from tutorial_parity.resources import ResourceError, resolve_resources
-from tutorial_parity.schema import ContractError, load_section, validate_result
+from tutorial_parity.schema import SURFACE_ORDER, ContractError, load_section, validate_result
 
 
 SECTIONS_ROOT = Path(__file__).resolve().parent / "sections"
@@ -49,7 +49,6 @@ def resource_summary(resources: RuntimeResources) -> dict[str, Any]:
         "native_python": str(resources.native_python) if resources.native_python else None,
         "casa_python": str(resources.casa_python) if resources.casa_python else None,
         "binary_dir": str(resources.binary_dir),
-        "ghostty_capture": str(resources.ghostty_capture) if resources.ghostty_capture else None,
         "evidence_root": str(resources.evidence_root),
     }
 
@@ -60,14 +59,13 @@ def run_section(
     *,
     selected_surfaces: set[str],
     dry_run: bool,
-    gui_cache: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     registry = adapters()
     surface_results: dict[str, Any] = {}
     artifacts: list[dict[str, Any]] = []
     failed = False
     unavailable = False
-    for name in ("casa", "cli", "python", "tui", "gui"):
+    for name in SURFACE_ORDER:
         if name not in selected_surfaces:
             continue
         surface = manifest.surfaces[name]
@@ -76,12 +74,7 @@ def run_section(
             if dry_run:
                 surface_results[name] = {"status": "dry_run", "operations": [plan.as_dict()], "artifacts": [], "reason": None}
                 continue
-            if name == "gui" and surface.journey in gui_cache:
-                result = gui_cache[surface.journey]
-            else:
-                result = registry[name].execute(plan)
-                if name == "gui" and surface.journey:
-                    gui_cache[surface.journey] = result
+            result = registry[name].execute(plan)
             surface_results[name] = result
             for path in plan.outputs:
                 if path.exists():
@@ -121,12 +114,6 @@ def run_section(
             resources.pack_root / manifest.evidence["review"],
             review_document(manifest_id=manifest.section_id, result_ref=manifest.evidence["result"], result=result),
         )
-        screenshot_paths = [surface.screenshot for surface in manifest.surfaces.values() if surface.screenshot]
-        screenshot_paths.extend(manifest.surfaces["gui"].required_artifacts)
-        write_json_atomic(
-            resources.pack_root / manifest.evidence["screenshot_spec"],
-            {"schema_version": 1, "kind": "tutorial_parity_screenshot_spec", "section_id": manifest.section_id, "paths": screenshot_paths, "gui_journey": manifest.surfaces["gui"].journey},
-        )
         documentation = write_documentation(resources.pack_root, manifest, result)
         result["artifacts"].extend(path_record(path, resources.pack_root) for path in documentation)
         write_json_atomic(result_path, result)
@@ -147,12 +134,11 @@ def main() -> int:
     run_parser = subparsers.add_parser("run")
     add_selector(run_parser)
     run_parser.add_argument("--dry-run", action="store_true")
-    run_parser.add_argument("--surface", action="append", choices=["casa", "cli", "python", "tui", "gui"])
+    run_parser.add_argument("--surface", action="append", choices=list(SURFACE_ORDER))
     run_parser.add_argument("--pack-root", type=Path)
     run_parser.add_argument("--native-python", type=Path)
     run_parser.add_argument("--casa-python", type=Path)
     run_parser.add_argument("--binary-dir", type=Path)
-    run_parser.add_argument("--ghostty-capture", type=Path)
     run_parser.add_argument("--evidence-root", type=Path)
     args = parser.parse_args()
     try:
@@ -163,9 +149,8 @@ def main() -> int:
             return 0
         if args.all_sections and args.pack_root is not None:
             raise ContractError("--pack-root cannot represent both first-look packs; use CASA_RS_TUTORIAL_DATA_ROOT with --all")
-        selected_surfaces = set(args.surface or ["casa", "cli", "python", "tui", "gui"])
+        selected_surfaces = set(args.surface or SURFACE_ORDER)
         results = []
-        gui_cache: dict[str, dict[str, Any]] = {}
         for manifest in selected:
             resources = resolve_resources(
                 manifest,
@@ -173,11 +158,10 @@ def main() -> int:
                 native_python=args.native_python,
                 casa_python=args.casa_python,
                 binary_dir=args.binary_dir,
-                ghostty_capture=args.ghostty_capture,
                 evidence_root=args.evidence_root,
                 require_existing=not args.dry_run,
             )
-            results.append(run_section(manifest, resources, selected_surfaces=selected_surfaces, dry_run=args.dry_run, gui_cache=gui_cache))
+            results.append(run_section(manifest, resources, selected_surfaces=selected_surfaces, dry_run=args.dry_run))
         print(json.dumps(results, indent=2, sort_keys=True))
         return 1 if any(result["status"] == "failed" for result in results) else 0
     except (ContractError, ResourceError, OSError, json.JSONDecodeError) as error:

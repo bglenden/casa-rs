@@ -85,22 +85,12 @@ mod tests {
     #[test]
     fn builtins_cover_exact_current_configurable_catalog() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        assert_eq!(catalog.surfaces.len(), 29);
-        assert_eq!(
+        assert_eq!(catalog.surfaces.len(), 27);
+        assert!(
             catalog
                 .surfaces
                 .iter()
-                .filter(|surface| surface.kind() == SurfaceKind::Task)
-                .count(),
-            27
-        );
-        assert_eq!(
-            catalog
-                .surfaces
-                .iter()
-                .filter(|surface| surface.kind() == SurfaceKind::Session)
-                .count(),
-            2
+                .all(|surface| surface.kind() == SurfaceKind::Task)
         );
         let ids = catalog
             .surfaces
@@ -108,8 +98,9 @@ mod tests {
             .map(|surface| surface.id())
             .collect::<BTreeSet<_>>();
         assert!(ids.contains("msexplore"));
-        assert!(ids.contains("imexplore"));
-        assert!(ids.contains("tablebrowser"));
+        assert!(ids.contains("imstat"));
+        assert!(!ids.contains("imexplore"));
+        assert!(!ids.contains("tablebrowser"));
         assert!(!ids.contains("casars"));
     }
 
@@ -243,48 +234,6 @@ mod tests {
                 surface.id()
             );
         }
-    }
-
-    #[test]
-    fn sessions_do_not_claim_one_shot_run_safety() {
-        let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        assert!(
-            catalog
-                .surfaces
-                .iter()
-                .filter(|surface| surface.kind() == SurfaceKind::Session)
-                .all(|surface| surface.safety_rules().is_empty())
-        );
-    }
-
-    #[test]
-    fn browser_content_modes_are_explicit_reviewed_homonyms() {
-        let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        let mut bindings = catalog
-            .surfaces
-            .iter()
-            .filter_map(|surface| {
-                surface
-                    .bindings()
-                    .iter()
-                    .find(|binding| binding.name == "contentmode")
-                    .map(|binding| (surface.id(), binding))
-            })
-            .collect::<Vec<_>>();
-        bindings.sort_by_key(|(surface, _)| *surface);
-        assert_eq!(bindings.len(), 2);
-        assert_eq!(bindings[0].0, "imexplore");
-        assert_eq!(
-            bindings[0].1.concept.id.as_str(),
-            "image.browser.contentmode"
-        );
-        assert!(bindings[0].1.reviewed_homonym.is_none());
-        assert_eq!(bindings[1].0, "tablebrowser");
-        assert_eq!(
-            bindings[1].1.concept.id.as_str(),
-            "tablebrowser.contentmode"
-        );
-        assert!(bindings[1].1.reviewed_homonym.is_some());
     }
 
     #[test]

@@ -72,10 +72,9 @@ pub fn parse_profile(source: &str) -> Result<ParameterProfile, ProfileError> {
     let surface = required_string(header, "surface")?;
     let kind = match required_string(header, "kind")?.as_str() {
         "task" => SurfaceKind::Task,
-        "session" => SurfaceKind::Session,
         other => {
             return Err(ProfileError::Parse {
-                message: format!("invalid profile kind {other:?}; expected task or session"),
+                message: format!("invalid profile kind {other:?}; expected task"),
                 location: locate_key(source, "kind", false),
             });
         }
@@ -970,9 +969,8 @@ mod tests {
     use casa_provider_contracts::{
         CELL_CONCEPT_ID, ContextRole, ParameterCatalog, ParameterConcept, ParameterConceptId,
         ParameterConceptRef, ParameterDocs, ParameterPresentation, ParameterProjections,
-        ParameterRole, ParameterType, PersistenceClass, SemanticRevision, SessionDefinition,
-        SurfaceDefinition, SurfaceExecutionProjection, SurfaceMigration, TaskDefinition,
-        UnitDimension,
+        ParameterRole, ParameterType, PersistenceClass, SemanticRevision, SurfaceDefinition,
+        SurfaceExecutionProjection, SurfaceMigration, TaskDefinition, UnitDimension,
     };
 
     use super::*;
@@ -1054,17 +1052,6 @@ mod tests {
                 provider_family: "imager".into(),
                 execution: SurfaceExecutionProjection::default(),
                 safety_rules: Vec::new(),
-                bindings,
-                migrations: Vec::new(),
-            }),
-            SurfaceKind::Session => SurfaceDefinition::Session(SessionDefinition {
-                id: "imager".into(),
-                contract_version: 1,
-                display_name: "Imager".into(),
-                category: "Imaging".into(),
-                summary: "Image".into(),
-                provider_family: "imager".into(),
-                execution: SurfaceExecutionProjection::default(),
                 bindings,
                 migrations: Vec::new(),
             }),
@@ -1222,9 +1209,7 @@ cell = "0.0002777777777777778deg"
     #[test]
     fn current_only_surface_rejects_a_stale_contract_without_migration() {
         let mut bundle = bundle(SurfaceKind::Task);
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
-            unreachable!()
-        };
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.contract_version = 2;
         let stale = parse_profile(
             r#"[casars]
@@ -1334,9 +1319,7 @@ imsze = 10
     #[test]
     fn inactive_explicit_parameters_report_their_source_location() {
         let mut bundle = bundle(SurfaceKind::Task);
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
-            unreachable!()
-        };
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition
             .bindings
             .iter_mut()
@@ -1400,9 +1383,7 @@ cell = "2arcsec"
     #[test]
     fn old_sparse_profile_migrates_explicit_values_and_adopts_changed_defaults() {
         let mut bundle = bundle(SurfaceKind::Task);
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
-            unreachable!()
-        };
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.contract_version = 2;
         definition.migrations = vec![SurfaceMigration {
             from_contract: 1,
@@ -1526,9 +1507,7 @@ flag_panel = 17
     #[test]
     fn multi_hop_migrations_transform_and_preserve_explicit_old_values() {
         let mut bundle = bundle(SurfaceKind::Task);
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
-            unreachable!()
-        };
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.contract_version = 3;
         definition.migrations = vec![
             SurfaceMigration {
@@ -1620,9 +1599,7 @@ cell = "60arcsec"
         assert!(saved.contains("cell = [\"60arcsec\", \"60arcsec\"]"));
 
         let mut incompatible = bundle.clone();
-        let SurfaceDefinition::Task(definition) = &mut incompatible.surface else {
-            unreachable!()
-        };
+        let SurfaceDefinition::Task(definition) = &mut incompatible.surface;
         definition.migrations[1].steps = vec![MigrationStep::Transform {
             parameter: "cell".into(),
             transform: MigrationTransform::QuantityUnit {
@@ -1638,9 +1615,7 @@ cell = "60arcsec"
     #[test]
     fn newly_required_parameter_needs_a_migration_or_reports_a_clear_error() {
         let mut bundle = bundle(SurfaceKind::Task);
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
-            unreachable!()
-        };
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.contract_version = 2;
         definition.migrations = vec![SurfaceMigration {
             from_contract: 1,
@@ -1678,9 +1653,7 @@ imsize = 256
                 && diagnostic.parameter.as_deref() == Some("cell")
         }));
 
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
-            unreachable!()
-        };
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.migrations[0].steps = vec![MigrationStep::Rename {
             from: "legacy_cell".into(),
             to: "cell".into(),

@@ -33,7 +33,7 @@ pub enum ParameterOrigin {
     Override,
 }
 
-/// Typed field state consumed by TUI, GUI, and Python.
+/// Typed field state consumed by the CLI and Python.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParameterState {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,13 +94,6 @@ impl ParameterSession {
                 "a parsed profile cannot be labeled Defaults".to_string(),
             ));
         }
-        if matches!(source, BaseSource::LastSuccessful)
-            && bundle.surface.kind() == casa_provider_contracts::SurfaceKind::Session
-        {
-            return Err(ParameterSessionError::InvalidSource(
-                "session surfaces do not have Last Successful".to_string(),
-            ));
-        }
         let resolved = resolve_profile(profile, &bundle)?;
         let mut session = Self {
             bundle,
@@ -148,51 +141,6 @@ impl ParameterSession {
         &self,
     ) -> Result<crate::RunSafetyRequirements, crate::RunSafetyEvaluationError> {
         crate::required_run_safety(&self.bundle, &self.states)
-    }
-
-    /// Replace the draft with another mutually exclusive base source.
-    pub fn replace_base(
-        &mut self,
-        source: BaseSource,
-        profile: Option<&ParameterProfile>,
-    ) -> Result<(), ParameterSessionError> {
-        let mut candidate = self.clone();
-        match (&source, profile) {
-            (BaseSource::Defaults, None) => {
-                candidate.base_source = source;
-                candidate.base_overrides.clear();
-                candidate.diagnostics.clear();
-            }
-            (BaseSource::Defaults, Some(_)) => {
-                return Err(ParameterSessionError::InvalidSource(
-                    "Defaults cannot carry a profile".to_string(),
-                ));
-            }
-            (_, Some(profile)) => {
-                if matches!(source, BaseSource::LastSuccessful)
-                    && self.bundle.surface.kind() == casa_provider_contracts::SurfaceKind::Session
-                {
-                    return Err(ParameterSessionError::InvalidSource(
-                        "session surfaces do not have Last Successful".to_string(),
-                    ));
-                }
-                let resolved = resolve_profile(profile, &candidate.bundle)?;
-                candidate.base_source = source;
-                candidate.base_overrides = resolved.explicit_overrides;
-                candidate.diagnostics = resolved.diagnostics;
-            }
-            (_, None) => {
-                return Err(ParameterSessionError::InvalidSource(
-                    "Last and file sources require a profile".to_string(),
-                ));
-            }
-        }
-        candidate.context_patch = ResolutionPatch::default();
-        candidate.override_patch = ResolutionPatch::default();
-        candidate.recompute()?;
-        candidate.dirty = false;
-        *self = candidate;
-        Ok(())
     }
 
     /// Apply an accepted launch/project-context patch.
@@ -366,7 +314,6 @@ mod tests {
     };
 
     use super::*;
-    use crate::parse_profile;
 
     fn bundle() -> SurfaceContractBundle {
         let concept = ParameterConcept {
@@ -453,35 +400,6 @@ mod tests {
     }
 
     #[test]
-    fn loading_a_new_base_replaces_dirty_draft() {
-        let mut session = ParameterSession::defaults(bundle()).unwrap();
-        session.set("niter", ParameterValue::Integer(10)).unwrap();
-        let profile = parse_profile(
-            r#"[casars]
-format = 1
-surface = "clean"
-kind = "task"
-contract = 1
-[parameters]
-niter = 2
-"#,
-        )
-        .unwrap();
-        session
-            .replace_base(BaseSource::Last, Some(&profile))
-            .unwrap();
-        assert!(!session.is_dirty());
-        assert_eq!(
-            session.states()["niter"].origin,
-            ParameterOrigin::BaseProfile
-        );
-        assert_eq!(
-            session.states()["niter"].value,
-            Some(ParameterValue::Integer(2))
-        );
-    }
-
-    #[test]
     fn failed_mutations_leave_the_prior_draft_unchanged() {
         let mut session = ParameterSession::defaults(bundle()).unwrap();
         let before_states = session.states().clone();
@@ -508,9 +426,7 @@ niter = 2
     #[test]
     fn incomplete_interactive_draft_cannot_be_saved_or_executed() {
         let mut required_bundle = bundle();
-        let SurfaceDefinition::Task(definition) = &mut required_bundle.surface else {
-            unreachable!()
-        };
+        let SurfaceDefinition::Task(definition) = &mut required_bundle.surface;
         let binding = definition.bindings.first_mut().unwrap();
         binding.default = DefaultSpec::Required;
         binding.required_when = Predicate::Always;
@@ -597,9 +513,7 @@ niter = 2
     #[test]
     fn field_state_predicates_use_catalog_semantic_equality() {
         let mut bundle = builtin_surface_bundle("msexplore").unwrap();
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
-            unreachable!("msexplore is a task")
-        };
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition
             .bindings
             .iter_mut()

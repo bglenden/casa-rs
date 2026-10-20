@@ -6,13 +6,13 @@
   tables.
 - `casars.tasks` provides higher-level task wrappers backed by the versioned
   provider binaries.
-- `casars.parameters` is the accepted common API for typed task and session
-  profiles described by ADR-0006 and the current-only option in ADR-0012.
+- `casars.parameters` is the accepted common API for typed task profiles
+  described by ADR-0006 and the current-only option in ADR-0012.
 
 The generic `casars.tasks.run()` entry point accepts every catalog task. Every
 task is also exposed exactly once as `casars.tasks.<task>` through a generated
 CASA-named function. These functions share the Rust-owned parameter and result
-contracts and run through the canonical `casars` launcher.
+contracts and run through the canonical `casars run` task host.
 
 `casars.data` is stateful and file-backed. It is intended for interoperability
 with the Python ecosystem through NumPy-native reads and writes. For images,
@@ -22,7 +22,7 @@ object contract.
 
 ## Parameter profiles
 
-The accepted profile API is shared with the CLI, TUI, and native GUI:
+The accepted profile API is shared with the `casars` command line:
 
 ```python
 from casars import parameters, tasks
@@ -43,24 +43,26 @@ the other common source types. The resulting `TaskParameters` supports mapping
 updates, reset, reload, sparse TOML save, and run. Rust remains the sole parser,
 normalizer, validator, migration engine, and sparse renderer.
 
-`casars.tasks` is generated from the 40 task definitions and supplies one
-CASA-named keyword wrapper and typing stub per task. The corresponding
-session conveniences are `casars.sessions.imexplore(...)` and
-`casars.sessions.tablebrowser(...)`. Their signatures deliberately use an
-unset sentinel instead of copying catalog defaults into Python.
+`casars.tasks` is generated from the 27 task definitions and supplies one
+CASA-named keyword wrapper and typing stub per task. Their signatures
+deliberately use an unset sentinel instead of copying catalog defaults into
+Python.
 
-Generated UniFFI owns task, parameter, session, and result transport. PyO3 is
-retained only for the `casars.data.Image` and `casars.data.Table` NumPy object
-layer; the wheel still ships one native `_core` library rather than two
-competing application bindings. Numeric MeasurementSet plot documents are
-available as `casars.data.measurement_set_plot(...)`.
+Generated UniFFI (`casars._frontend`, from `casars-frontend-services`) owns
+task, parameter, and result transport. PyO3 is retained only for the
+`casars.data.Image` and `casars.data.Table` NumPy object layer; the wheel still
+ships one native `_core` library rather than two competing application
+bindings.
 
-Session profiles for `imexplore` and `tablebrowser` use the same load, validate,
-and save model. `casars.sessions.open(...)` and `SessionParameters.open()` apply
-their durable startup configuration; live browser commands remain stateful
-session APIs rather than becoming task calls.
+## Plotting and image inspection
 
-See [Task and Session Parameter Profiles](../task-parameters.md) for sparse TOML,
+casa-rs does not rasterise plots. Numeric MeasurementSet plot documents are
+available as `casars.data.measurement_set_plot(...)` and are drawn with
+Matplotlib by `casars.data.plot_matplotlib(...)`. `casars.imexplore` reads
+image planes as NumPy arrays (`casars.imexplore.data(...)`) and draws them with
+Matplotlib (`casars.imexplore.imshow(...)`).
+
+See [Task Parameter Profiles](../task-parameters.md) for sparse TOML,
 managed Last paths, source precedence, and examples.
 
 Tagged releases build Python artifacts for Linux `x86_64` and macOS `arm64`,

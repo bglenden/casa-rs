@@ -19,10 +19,6 @@ class Operation:
 class Surface:
     name: str
     operations: tuple[Operation, ...]
-    screenshot: str | None = None
-    input_events: tuple[tuple[int, str], ...] = ()
-    journey: str | None = None
-    required_artifacts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -53,6 +49,5 @@ class RuntimeResources:
     native_python: Path | None
     casa_python: Path | None
     binary_dir: Path
-    ghostty_capture: Path | None
     evidence_root: Path
     dry_run: bool

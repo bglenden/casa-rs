@@ -12,7 +12,6 @@ from .model import RuntimeResources, SectionManifest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TUTORIAL_ROOT_ENV = "CASA_RS_TUTORIAL_DATA_ROOT"
 CASA_PYTHON_ENV = "CASA_RS_CASA_PYTHON"
-GHOSTTY_CAPTURE_ENV = "CASA_RS_GHOSTTY_CAPTURE"
 
 
 class ResourceError(RuntimeError):
@@ -28,7 +27,6 @@ def resolve_resources(
     native_python: Path | None,
     casa_python: Path | None,
     binary_dir: Path | None,
-    ghostty_capture: Path | None,
     evidence_root: Path | None,
     require_existing: bool,
 ) -> RuntimeResources:
@@ -36,7 +34,6 @@ def resolve_resources(
     resolved_native = native_python or _resolve_native_python(require_existing)
     resolved_casa = casa_python or _environment_path(CASA_PYTHON_ENV)
     resolved_binary_dir = (binary_dir or REPO_ROOT / "target" / "debug").expanduser().absolute()
-    resolved_ghostty = ghostty_capture or _environment_path(GHOSTTY_CAPTURE_ENV)
     resolved_evidence = (
         evidence_root.expanduser().absolute()
         if evidence_root is not None
@@ -61,7 +58,6 @@ def resolve_resources(
         native_python=resolved_native,
         casa_python=resolved_casa,
         binary_dir=resolved_binary_dir,
-        ghostty_capture=resolved_ghostty,
         evidence_root=resolved_evidence,
         dry_run=not require_existing,
     )

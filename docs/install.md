@@ -10,7 +10,7 @@ The installer published with each release:
 3. creates a suite-local Python environment from the bundled wheel
 4. updates stable/rc channel links plus optional generic launcher links
 
-That keeps the `casars` TUI, the standalone executables, and the Python package
+That keeps the `casars` task host, the standalone executables, and the Python package
 behaving as one installed suite.
 
 ## macOS prerequisites
@@ -153,19 +153,11 @@ To build, bundle, and install the current checkout in one step, run:
 just install-local
 ```
 
-On macOS, `just install-local` also builds and installs the Swift GUI app under
-the same suite root. Use `--force` for an ad-hoc reinstall of the same checkout
-version:
+`just install-local` runs `just install-local-suite`. Use `--force` for an
+ad-hoc reinstall of the same checkout version:
 
 ```bash
 just install-local -- --force
-```
-
-Use the split commands when only one install surface is needed:
-
-```bash
-just install-local-suite -- --force
-just install-local-gui -- --force
 ```
 
 To install a published release suite without rebuilding the checkout or

@@ -18,11 +18,6 @@ impl RunSafetyRequirements {
         &self.classes
     }
 
-    /// Interactive launchers confirm product creation and destructive writes.
-    pub fn requires_interactive_confirmation(&self) -> bool {
-        !self.classes.is_empty()
-    }
-
     /// Runtime authorization required by `--confirm-overwrite`-style controls.
     pub fn requires_overwrite_confirmation(&self) -> bool {
         self.classes.contains(&RunSafetyClass::Overwrite)
@@ -185,7 +180,6 @@ mod tests {
             .set("overwrite", ParameterValue::Bool(true))
             .unwrap();
         let requirements = session.required_run_safety().unwrap();
-        assert!(requirements.requires_interactive_confirmation());
         assert!(requirements.requires_overwrite_confirmation());
         assert!(!requirements.requires_input_mutation_confirmation());
         assert!(
@@ -202,7 +196,6 @@ mod tests {
             requirements.classes(),
             &BTreeSet::from([RunSafetyClass::ProductWrite])
         );
-        assert!(requirements.requires_interactive_confirmation());
         assert!(!requirements.requires_overwrite_confirmation());
         assert!(!requirements.requires_input_mutation_confirmation());
     }
@@ -217,7 +210,6 @@ mod tests {
             .set("mode", ParameterValue::String("put".to_string()))
             .unwrap();
         let requirements = session.required_run_safety().unwrap();
-        assert!(requirements.requires_interactive_confirmation());
         assert!(requirements.requires_input_mutation_confirmation());
         assert!(!requirements.requires_overwrite_confirmation());
     }
@@ -250,9 +242,7 @@ mod tests {
     #[test]
     fn inactive_values_cannot_activate_even_a_negated_safety_predicate() {
         let mut bundle = builtin_surface_bundle("calibrate").unwrap();
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
-            unreachable!("calibrate is a task")
-        };
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.safety_rules = vec![TaskSafetyRule {
             class: RunSafetyClass::InputMutation,
             when: Predicate::Not {
@@ -273,9 +263,7 @@ mod tests {
     #[test]
     fn safety_comparisons_use_concept_semantic_equality() {
         let mut bundle = builtin_surface_bundle("msexplore").unwrap();
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
-            unreachable!("msexplore is a task")
-        };
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface;
         definition.safety_rules = vec![TaskSafetyRule {
             class: RunSafetyClass::InputMutation,
             when: Predicate::Equals {

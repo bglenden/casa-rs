@@ -1,562 +1,180 @@
 # casa-rs
 
 Truth class: current descriptive
-Last reality check: 2026-08-04
+Last reality check: 2026-10-20
 Verification: just docs-check
 
 ![casa-rs observatory assistant header](branding/headers/casa-rs-header.png)
 
-`casa-rs` is an experiment/hobby project by Brian Glendenning (<i>brian@glendenning.net</i>), NRAO retiree. I
-am happy for people to experiment with it or use the independently authored
-source under the LGPL license (the FFTW-linked distributions are GPLv3+), but
-there is no institutional support. I am also happy to answer questions about it.
+`casa-rs` is an experiment/hobby project by Brian Glendenning
+(<i>brian@glendenning.net</i>), NRAO retiree. It is a from-scratch Rust
+reimplementation of parts of CASA and casacore: persistent astronomical data,
+radio-interferometric processing, and the supporting numerical and coordinate
+infrastructure. CASA and casacore are used for interoperability tests,
+calculation checks, and performance comparisons; they are not required as
+runtime computation engines.
 
-This is a from-scratch Rust experimental re-implementation of pieces of CASA
-and casacore, with Swift for the native macOS UI. It uses CASA and casacore for
-performance comparisons and calculation checks, but does not directly reuse
-their source code. The source code is basically entirely written by AI, first
-Claude and now Codex, prompted by me using various strategies. Generic
-development procedures come from user-level Matt Pocock skills; the repository
-keeps only its project-specific operating contract in [`AGENTS.md`](AGENTS.md).
-Experimenting with development methodology is part of the hobby.
+The source is almost entirely written by AI. I switch between Claude and
+Codex, prompting them using various strategies. Experimenting with development
+methodology is part of the hobby. You are welcome to experiment with the code,
+and I am happy to answer questions, but there is no institutional support.
+Independently authored source is LGPL-3.0-or-later; FFTW-linked distributions
+are GPL-3.0-or-later. See [License](#license).
 
-The project currently has four broad aspects:
+Python is the user-facing surface, alongside reusable Rust libraries and
+command-line tasks. The [UI experiments](#ui-experiments) below record the
+terminal and native macOS interfaces we explored and then retired.
 
-1. Persistent data-structure interoperability with CASA: tables, MeasurementSets,
-   images, calibration tables, and related on-disk artifacts.
-2. Most casacore-style infrastructure needed by those workflows, excluding
-   broad homebrew CASA fitting/scimath surfaces where Rust libraries or narrower
-   native implementations make more sense.
-3. CASA-like imaging, calibration, flagging, simulation, import, and analysis
-   capability in Rust libraries and command-line task binaries.
-4. User surfaces: a native macOS GUI in Swift, a terminal UI with Kitty graphics
-   support, Python bindings, and standalone executables.
+## Current Status
 
-Current status: all of the above exist and are pretty functional, but they are
-not yet easy to use. I will probably tag this as v1.0 when the CASA tutorials
-are straightforward to work through.
+The project implements substantial table, MeasurementSet, image, calibration,
+flagging, simulation, and imaging functionality. It remains experimental:
+implemented functionality is not a claim of complete CASA task or casacore
+module parity, and APIs and workflows are still evolving. The workspace
+version is `0.27.0`; published release assets may lag the checkout.
 
-This README is for users of the repo's libraries and applications.
-Contributor/developer policy is in `AGENTS.md`.
+The central requirements are CASA-compatible persistent data and scientific
+agreement with CASA. Tests compare both implementations' reads and writes,
+and imaging acceptance normally targets normalized RMS differences around
+0.001 together with metadata, mask, beam, flux, and other scientific checks.
+Bitwise reproducibility is not the goal. Acceptance and performance evidence
+are specific to the workload and configuration; passing a small test is not
+blanket scientific validation. See [TESTING.md](TESTING.md).
 
-## Project Process
+| Capability | Current implementation |
+|---|---|
+| Tables and MeasurementSets | CASA-compatible storage managers, typed row/column/cell access, TaQL, MS selection and transformation, flag versions, and plotting/export data. |
+| Images and coordinates | Persistent images, masks, regions, statistics, moments, image arithmetic, regridding, FITS import/export, coordinate systems, units, and measures. |
+| Calibration and flagging | Native gain, bandpass, flux-scale, calibration application/generation, manual/clip/quack/tfcrop/rflag workflows, and diagnostic tasks. |
+| Simulation and import | MeasurementSet simulation and VLA archive import, with comparison harnesses against CASA. |
+| Imaging | Continuum and spectral cubes; standard, W-projection, mosaic, and AW-projection gridders; Högbom, Clark, multiscale, and MT-MFS deconvolution; masks, restoration, and primary-beam products. Not every combination is available. |
+| Python | In-process NumPy-compatible table/image access, generated task wrappers, shared parameter profiles, and numeric MeasurementSet plot documents. |
 
-- `AGENTS.md` is the canonical agent operating contract.
-- `ARCHITECTURE.md` is the current workspace map and boundary summary.
-- `TESTING.md` defines the test strategy and done gate.
-- `docs/adr/` holds accepted architecture decisions.
-- GitHub issues and pull requests are the authoritative work record.
+The imaging foundation uses one compile/plan/run path through
+`casa-imaging-application`, with separate owners for the measurement operator,
+deconvolution, products, execution, and Metal acceleration. Explicitly
+unsupported requests fail before execution. Current limits include:
+
+- AW projection supports continuum/MT-MFS, not spectral cubes; native
+  convolution-function generation is EVLA-specific.
+- MT-MFS reconstructs Stokes I in one image domain.
+- Facets use the standard gridder with single-term MFS.
+- Metal supports standard and mosaic gridding with `f32` grids on suitable
+  macOS hardware; W and AW projection use the CPU.
+
+The authoritative availability checks are in
+[`availability.rs`](crates/casa-imaging-application/src/availability.rs).
+Current work and remaining acceptance obligations live in
+[GitHub issues](https://github.com/bglenden/casa-rs/issues) and pull requests.
 
 ## Documentation
 
-- documentation site: [bglenden.github.io/casa-rs](https://bglenden.github.io/casa-rs/)
-- Rust API docs: [bglenden.github.io/casa-rs/rustdoc](https://bglenden.github.io/casa-rs/rustdoc/)
-- docs index: [`docs/README.md`](docs/README.md)
-- `casars` framework guide:
-  [`docs/casars-tui-framework.md`](docs/casars-tui-framework.md)
-- `casars calibrate` user guide:
-  [`docs/casars-calibrate-user-guide.md`](docs/casars-calibrate-user-guide.md)
+- [Documentation site](https://bglenden.github.io/casa-rs/)
+  and [Rust API reference](https://bglenden.github.io/casa-rs/rustdoc/).
+- [Python overview](docs/python/index.md), [data API](docs/python/data.md),
+  and [API reference](docs/python/api.md).
+- [Task parameter profiles](docs/task-parameters.md) and the
+  [generated parameter reference](docs/reference/task-parameters.md).
+- [Calibration guide](docs/casars-calibrate-user-guide.md).
+- [Documentation index](docs/README.md), [architecture](ARCHITECTURE.md),
+  and [testing and scientific evidence](TESTING.md).
 
-The Rust API docs are generated for the whole workspace with
-`cargo doc --workspace --no-deps`. They are API reference docs, not a polished
-manual or tutorial set, so many crate pages are still mostly rustdoc item
-tables.
+The published docs are built from `main`. For a checkout or release tag, use
+its corresponding source documentation.
 
-## Branding Assets
+## Using Python
 
-Generated project branding assets live under [`branding/`](branding/). The
-current set includes a wide README/docs header, a macOS `.icns` app icon, and
-source PNGs for future revisions.
+The distribution is named `casa-rs-python`; import it as `casars`.
 
-## Source Layout
+### Persistent data in process
 
-![casa-rs source layout](docs/images/casa-rs-source-layout.png)
+```python
+from casars.data import Image, Table
 
-`casa-*` crates are reusable libraries. `casars-*` crates are application,
-runtime, protocol, and frontend-service crates. The repo implements
-CASA/casacore-compatible behavior in native Rust; it is not a Rust wrapper
-around casacore C++.
+ms = Table.open("observation.ms")
+print(ms.row_count, ms.column_names)
 
-| Area | Main code | Current capability |
-|---|---|---|
-| Tables | `casa-tables`, `casars`/`tablebrowser` | Persistent tables, schema and mutation APIs, storage managers, broad practical TaQL support, and application-owned interactive table browsing. |
-| MeasurementSets | `casa-ms`, `msexplore` | Typed MS access, summaries, selections, plotting/export payloads, derived columns, flag versions, and MS-focused inspection. |
-| Images/lattices | `casa-images`, `casa-lattices`, `casars`/`imexplore` | Persistent images, masks, regions, lazy expressions, statistics, image analysis tasks, and application-owned image-browser sessions. |
-| Coordinates/measures | `casa-coordinates`, `casa-measures-data`, `casa-measures-tools`, `casa-types` | Units, quanta, measures, CASA-table-backed runtime data, frame-aware conversions, and coordinate systems. |
-| Imaging | `casars-imager`, `casa-imaging` | Dirty imaging, tclean-style workflows, cube/mosaic/multiscale pieces, automasking pieces, export/import FITS paths, and tutorial parity scripts. |
-| Calibration | `casa-calibration`, `calibrate` | `applycal`, `gaincal`, `bandpass`, `fluxscale`, callib handling, stats, diagnostics, and guided CLI/TUI workflows. |
-| Flagging | `casa-ms`, `flagdata`, `flagmanager`, GUI/TUI task panels | Flag summary and mutation workflows, manual/clip/quack/tfcrop/rflag-family coverage where implemented, flag-version save/list/restore/delete/rename workflows, and frontend confirmation paths. |
-| Simulation/import | `casa-ms`, `casa-vla`, `simobserve`, `importvla` | Simulation and VLA import paths with CASA comparison harnesses and tutorial-backed parity evidence. |
-| Python | `casars-python` | Python package wrappers that launch catalog-owned suite or development executables and expose task protocols. |
-| TUI | `casars`, `casars-*browser-protocol` | Ratatui shells for task operation, table/MS/image browsing, and Kitty-capable graphics workflows. |
-| macOS GUI | `apps/casars-mac`, `casars-frontend-services` | Native SwiftUI workbench backed by Rust frontend services and shared task contracts. |
-| Provider contracts | `casa-provider-contracts`, `application-catalog.json`, `parameter-surfaces.json` | Canonical application, launch, parameter, and provider contracts shared by standalone binaries, TUI, GUI, and Python. |
-
-Approximate source lines of code, measured with `cloc` over `crates/`, `apps/`,
-and `scripts/`, excluding generated build directories:
-
-| Language | Files | Non-test SLOC | Test/example/bench SLOC | Total SLOC |
-|---|---:|---:|---:|---:|
-| Rust | 478 | 283,579 | 73,627 | 357,206 |
-| Swift | 14 | 20,179 | 2,660 | 22,839 |
-| Bourne Shell | 55 | 10,038 | 0 | 10,038 |
-| Python | 26 | 3,901 | 1,055 | 4,956 |
-| C/C++ Header | 2 | 701 | 0 | 701 |
-| **Total** | **575** | **318,398** | **77,342** | **395,740** |
-
-Test/example/bench SLOC is classified by file path, including `tests/`,
-`Tests/`, `benches/`, `examples/`, and `src/tests.rs`.
-
-## Casacore C++ Module Coverage
-
-Status legend:
-- `Available now`: substantial, usable implementation exists in this repo today.
-- `Partial / Available now`: a real subset exists and is usable today, but broad
-  module-wide parity is not claimed.
-- `Deferred/Not planned`: intentionally out of current scope.
-
-| casacore-c++ module | casa-rs status | Notes |
-|---|---|---|
-| `casa` | Partial / Available now | `casa-types` covers the core scalar/array/record value model plus quanta/measures foundations. Broader `casa` utility parity is not a target. |
-| `tables` | Available now | `casa-tables` provides persistent tables, data managers/storage backends, schema/mutation APIs, and a broad TaQL engine for practical table workflows; the `casars` package owns `tablebrowser`. |
-| `measures` | Available now | `casa-types`, `casa-measures-data`, and `casa-coordinates` provide units/quanta, typed measures, CASA-table-backed runtime data, and frame-aware coordinate conversions. |
-| `meas` (TaQL UDF) | Available now | The TaQL `meas.*` UDF surface now covers the upstream conversion families and helper aliases used by current CASA-compatible workflows, including sidereal-time extraction, rise/set evaluation, earth-magnetic/IGRF helpers, and `meas.help`. The remaining gap is full external `ephemerides/Sources` parity for non-built-in source names. |
-| `ms` | Available now | `casa-ms` provides typed MeasurementSet APIs, summaries, selection/grouping, derived columns, plotting support, and `msexplore`. |
-| `derivedmscal` | Available now | `casa-calibration` and `calibrate` cover apply, gaincal, bandpass, fluxscale, stats, callib, and diagnostic inspection workflows. |
-| `coordinates` | Available now | `casa-coordinates` implements `CoordinateSystem` and core coordinate types used by images, measures, and FITS/WCS interop. |
-| `lattices` | Available now | `casa-lattices` provides lattice abstractions, paging/storage, traversal, regions, masks, and statistics. |
-| `images` | Available now | `casa-images` provides persistent images, masks, regions, subimages, lazy expressions, and image analysis; the `casars` package owns image-browser sessions and `imexplore`. |
-| `fits` | Partial / Available now | Targeted FITS/WCS header and coordinate interoperability exists in `casa-coordinates`, and Wave 3 image-analysis tooling includes `exportfits`/`importfits` primary-image paths through the Rust `fitsio` crate. `fitsio` depends on the CFITSIO C library; a future backlog item tracks evaluating pure-Rust FITS alternatives so the workspace can return to an all-Rust dependency stack if practical. There is no full casacore `fits` module parity target. |
-| `msfits` | Deferred | Deferred in planning; depends on broader FITS and MS parity. |
-| `scimath`, `scimath_f` | Deferred/Not planned | Prefer Rust community math/fitting/statistics crates when needed rather than mirroring the casacore module surface. |
-| `python`, `python3` | Deferred until needed | No current parity target for casacore Python converters/bindings. |
-| `mirlib` | Deferred/Not planned | Out of scope for this Rust implementation. |
-
-Active planning and work status live in GitHub issues and pull requests.
-Retired phase plans and finished-wave evidence are available from git history.
-
-## Install on macOS
-
-Current macOS support is `arm64` only. This install story is still more
-hands-on than it should be; I expect it to be simplified before v1.0.
-
-### Prerequisites
-
-Install the Apple command-line tools and a supported Python:
-
-```bash
-xcode-select --install
-python3 --version
+image = Image.open("target.image")
+print(image.shape, image.units)
 ```
 
-The Python package currently supports Python 3.10 through 3.12.
-Source builds additionally require FFTW's single- and double-precision
-development libraries, their threaded/static archives, and `pkg-config`
-(`brew install fftw pkg-config` on macOS; `apt install libfftw3-dev pkg-config`
-on Debian/Ubuntu). The release bundles link FFTW into their imaging binaries;
-installing from a bundle does not require a local FFTW development package.
+Numeric reads return NumPy arrays where the shape permits. Tables support
+cell and column reads/writes; images support pixel-slice writes to existing
+persistent images. Open with `writable=True` when writes are needed. Image
+creation and coordinate-system editing are not part of the current Python
+object API. See the [data API](docs/python/data.md) for the exact scope.
 
-For performance work and release builds, use the pinned SIMD-enabled build:
+### Tasks and reusable parameters
 
-```sh
-bash scripts/build-fftw.sh /absolute/durable/fftw-3.3.11
-export PKG_CONFIG_PATH=/absolute/durable/fftw-3.3.11/lib/pkgconfig
+```python
+from casars import tasks
+
+result = tasks.imstat(imagename="target.image", workspace=".")
+print(result)
 ```
 
-This builds static, position-independent single/double precision and pthread
-libraries with ARM NEON or runtime-dispatched x86 SSE2/AVX/AVX2 kernels, using
-two build jobs. It retains the exact upstream source and build recipe. Choose
-a new prefix rather than overwriting an existing installation. In particular,
-the Homebrew ARM FFTW 3.3.11 bottle does not enable NEON; its presence alone
-does not establish an optimized FFTW build. Official releases build from this
-recipe and include the corresponding FFTW source beside their binary assets.
+Named wrappers and `tasks.run(task_name, ...)` use the shared Rust task and
+parameter contracts through `casars run`. They do not call CASA. Parameters
+can also be loaded, edited, validated, and saved as sparse TOML profiles:
 
-### Install a stable release
+```python
+from casars import parameters, tasks
 
-Choose the version you want and run the installer published with that release:
-
-```bash
-version=0.17.2
-curl -fsSL "https://github.com/bglenden/casa-rs/releases/download/v${version}/install-casa-rs.sh" \
-  | bash -s -- --version "$version"
+p = parameters.load("profiles/target-imaging.toml", workspace="project")
+p.update(niter=20000, threshold="1mJy")
+result = tasks.run("imager", parameters=p, workspace="project")
 ```
 
-That installs the suite into `~/.local/opt/casa-rs/<version>`, creates a
-suite-local Python environment, and points the default `current` symlink plus
-the generic `casars` and `calibrate` launchers at that install.
+Task runs normally save Last/Last Successful parameters in the workspace. The
+Python API exposes the `save_last` control and explicit mutation/overwrite
+confirmations.
+See [task parameters](docs/task-parameters.md) and the
+[generated reference](docs/reference/task-parameters.md) for defaults and
+supported options.
 
-### Install a release candidate side by side
+## Rust Libraries and Source Layout
 
-Release candidates use the same installer, but by default they update the
-`rc` channel links without taking over the generic `current` installation:
+`casa-*` crates contain reusable domain libraries and shared contracts;
+`casars-*` crates contain the task host, the imager application and the Python
+package. This is a native implementation, not a wrapper around casacore C++.
 
-```bash
-version=0.18.0-rc1
-curl -fsSL "https://github.com/bglenden/casa-rs/releases/download/v${version}/install-casa-rs.sh" \
-  | bash -s -- --version "$version"
-```
+| Area | Crates or source |
+|---|---|
+| Values and foundations | `casa-types`, internal `casa-values` and `casa-aipsio`, `casa-logging` |
+| Persistent data | `casa-tables`, `casa-ms`, `casa-lattices`, `casa-images` |
+| Coordinates and runtime catalogs | `casa-coordinates`, `casa-measures-data`, `casa-measures-tools` |
+| Numerics and Fourier transforms | `casa-numerics`, `casa-fft` |
+| Calibration, simulation, import | `casa-calibration`, `casa-simulation-synthesis`, `casa-vla` |
+| Imaging | `casa-imaging-model`, `casa-imaging-operator`, `casa-imaging-deconvolution`, `casa-imaging-products`, `casa-imaging-runtime`, `casa-imaging-metal`, `casa-imaging-application` |
+| Task contracts and execution | `casa-provider-contracts`, `casa-task-runtime`, `casars`, `casars-imager` |
+| Python | `crates/casars-python/` and its UniFFI service layer `casars-frontend-services` |
+| Comparison and test support | `casa-test-support`, `tools/perf/`, `tools/science/` |
 
-That leaves the stable `casars` and `calibrate` commands alone while adding
-channel-specific launchers:
+The [application catalog](crates/casa-provider-contracts/resources/application-catalog.json)
+and [parameter surfaces](crates/casa-provider-contracts/resources/parameter-surfaces.json)
+are shared by task launch and Python. The
+[architecture document](ARCHITECTURE.md) describes ownership and dependency
+rules in detail.
 
-- `~/.local/bin/casars-rc`
-- `~/.local/bin/calibrate-rc`
-
-If you do want the RC install to become the default suite, add `--activate` to
-the installer command.
-
-### Put the executables on `PATH`
-
-The installer creates launcher symlinks in `~/.local/bin`. Add that directory
-to your shell `PATH` if it is not already there:
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Then reload your shell:
-
-```bash
-source ~/.zshrc
-```
-
-### Use Python from the suite
-
-For Python work, activate the suite virtual environment:
-
-```bash
-source "$HOME/.local/opt/casa-rs/current/python/bin/activate"
-python -c "import casars; print(casars.__version__)"
-```
-
-Python task launch defaults to the active suite at
-`~/.local/opt/casa-rs/current`. To target another installed suite root, set:
-
-```bash
-export CASARS_SUITE_ROOT="$HOME/.local/opt/casa-rs/<version>"
-```
-
-Development checkouts use a separate explicit policy:
-
-```bash
-export CASARS_LAUNCH_MODE=development_workspace
-export CASARS_DEVELOPMENT_WORKSPACE="$PWD"
-```
-
-The selected policy must contain the requested catalog executable; launch does
-not fall back to package-relative binaries or `PATH`.
-
-### Stable and RC installs side by side
-
-Stable releases and release candidates can live on the same machine at the same
-time because each install uses its own suite root, for example:
-
-```text
-~/.local/opt/casa-rs/0.17.2/
-~/.local/opt/casa-rs/0.18.0-rc1/
-~/.local/opt/casa-rs/stable -> ~/.local/opt/casa-rs/0.17.2
-~/.local/opt/casa-rs/rc -> ~/.local/opt/casa-rs/0.18.0-rc1
-```
-
-The installer also maintains `~/.local/bin/casars-stable`,
-`~/.local/bin/calibrate-stable`, `~/.local/bin/casars-rc`, and
-`~/.local/bin/calibrate-rc` so both channels can stay runnable at the same
-time. Switch the default CLI/TUI suite by repointing
-`~/.local/opt/casa-rs/current`, reinstalling with `--activate`, or select one
-explicitly with `CASARS_SUITE_ROOT` or that suite's Python environment.
-
-### Build from source instead
-
-If you are working from a local checkout instead of a release asset, install
-Rust and then build the binaries yourself:
-
-```bash
-curl https://sh.rustup.rs -sSf | sh
-source "$HOME/.cargo/env"
-cargo build --release --workspace --bins
-```
-
-From there you can package a release-style bundle locally with:
-
-```bash
-scripts/build-python-dist.sh dist/python
-scripts/package-suite-bundle.sh \
-  --version "$(sed -n 's/^version = \"\\(.*\\)\"/\\1/p' Cargo.toml | head -n 1)" \
-  --platform "$(scripts/install-suite.sh --print-platform)" \
-  --bin-dir target/release \
-  --wheel-dir dist/python \
-  --out-dir dist/python
-```
-
-Or use the convenience wrapper to build, bundle, and install the current
-checkout in one step. On macOS this installs both the CLI/TUI/Python suite and
-the native Swift GUI app:
-
-```bash
-just install-local
-```
-
-For an ad-hoc reinstall of the same checkout version, use:
-
-```bash
-just install-local -- --force
-```
-
-Split install targets are also available:
-
-```bash
-just install-local-suite -- --force
-just install-local-gui -- --force
-```
-
-To install an already-published release suite without rebuilding or rerunning
-release verification gates, use:
-
-```bash
-just install-release 0.17.2
-```
-
-## Terminal Launcher
-
-`casars` is the framework-owned ratatui shell family for supported `casa-rs`
-applications.
-
-Run it from the workspace with:
-
-```bash
-cargo run -p casars
-```
-
-Current shipped apps:
-
-- `msexplore` via `InspectShell`
-- `tablebrowser` via `BrowserShell`
-- `imexplore` via `BrowserShell`
-- `calibrate` via `WorkflowShell`
-
-`imexplore` snapshots its process memory budget when an image session opens.
-By default the budget is the operating system's currently available-memory
-estimate; `CASARS_IMEXPLORE_MEMORY_BUDGET_BYTES` supplies a strict positive-byte
-override and invalid values fail instead of falling back. A process-local
-resource ledger reserves measured browser caches and protocol staging first,
-then derives movie geometry, worker count, queue depth, lookahead, and byte-
-accounted frame-cache capacity from the remaining budget. It reserves only the
-active workload's calculated needs and does not use a generic big-buffer pool.
-
-The framework guide for adding new apps lives at:
-
-- [`docs/casars-tui-framework.md`](docs/casars-tui-framework.md)
-
-The current `calibrate` operator guide lives at:
-
-- [`docs/casars-calibrate-user-guide.md`](docs/casars-calibrate-user-guide.md)
-
-The accepted cross-surface parameter profile and managed Last contract lives
-at:
-
-- [`docs/task-parameters.md`](docs/task-parameters.md)
-
-It defines sparse TOML profiles shared by all cataloged task and browser-session
-surfaces, including managed Last and Last Successful behavior.
-
-Plot text rendering is platform-dependent today. On macOS, `casars` uses
-Plotters' system-font (`ttf`) path so charts pick up real platform fonts. On
-non-macOS targets, it uses Plotters' `ab_glyph` path instead so the workspace
-does not depend on Linux `fontconfig` just to build the launcher and its plots.
-That keeps CI portable, but chart text metrics and font appearance may differ
-slightly across platforms.
-
-Common keys:
-
-- `Tab`: switch focus between the parameter and result panes
-- `Shift-Tab`: move focus backward
-- `Enter`: activate the selected row or open a picker
-- `[` / `]`: switch result tabs
-- `j` / `k` or arrow keys: move through lists and rows
-- `r`: run the selected stage or action
-- `a`: show or hide advanced fields where supported
-- `t`: toggle between `dense_ansi` and `rich_panel` themes
-- `x`: cancel the running command
-- `q`: quit
-
-Mouse interactions:
-
-- single click: focus a pane, select a field, switch result tabs, or toggle a section header
-- double click on a text field: enter edit mode
-- wheel scroll: scroll the pane under the pointer
-- drag the center divider: resize the parameter/result split and persist the ratio
-
-Launcher-integrated commands derive their forms from the canonical parameter
-surface and application catalog. The shell-family conventions in
-`docs/casars-tui-framework.md` are the required UX contract for new `casars`
-applications.
-
-## Minimal Example (`casa-types`)
+For example, the public `casa-types` value model can hold scalar, array, and
+record values:
 
 ```rust
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 let temperature = Value::Scalar(ScalarValue::Float64(273.15));
-
 let spectrum = Value::Array(ArrayValue::from_f32_vec(vec![1.0, 2.0, 3.0]));
-
 let metadata = Value::Record(RecordValue::new(vec![
     RecordField::new("name", Value::Scalar(ScalarValue::String("demo".into()))),
-    RecordField::new("temperature", temperature.clone()),
-    RecordField::new("spectrum", spectrum.clone()),
+    RecordField::new("temperature", temperature),
+    RecordField::new("spectrum", spectrum),
 ]));
 ```
 
-
-## Measures Runtime
-
-casa-rs now uses a CASA-table-backed runtime tree for measures data instead of
-embedded raw text snapshots.
-
-Applications open one fallible `MeasuresRuntime` at a task or operation
-boundary and pass it into measure frames and catalog lookups. They may select
-an explicit root with `MeasuresRuntime::open`; discovery reports complete
-`$CASA_RS_MEASURESPATH` and `~/.casa/data` candidates but never writes or
-installs data. Missing, incomplete, corrupt, stale, and invalid-provenance
-trees are distinct errors.
-
-The standard runtime currently loads:
-
-- `geodetic/IERSeop2000`
-- `geodetic/IERSpredict2000`
-- `geodetic/TAI_UTC`
-- `geodetic/Observatories`
-- `geodetic/IGRF`
-- `ephemerides/DE200`
-- `ephemerides/DE405`
-- `ephemerides/VGEO`
-- `ephemerides/VTOP`
-- `ephemerides/JPL-Horizons`
-- `ephemerides/Sources`
-- `ephemerides/Lines`
-
-Attach the selected runtime explicitly with `MeasFrame::with_measures`. The
-same handle supplies EOP, leap-second, IGRF, observatory, source, and spectral
-line data and caches each catalog per runtime instance.
-
-### Refreshing a runtime tree
-
-Installation is a separate explicit action with a caller-selected destination.
-To populate or refresh a custom measures path from the upstream CASA sources:
-
-```bash
-cargo run --example update_measures -p casa-measures-data --features update
-```
-
-Or target a custom directory explicitly:
-
-```bash
-cargo run --example update_measures -p casa-measures-data --features update -- --data-dir /path/to/.casa/data
-```
-
-This downloads the latest `casarundata` tarball plus the latest
-`WSRT_Measures_*.ztar`, overlays them CASA-style, and preserves the base
-`geodetic/Observatories` table by default.
-
-### Refreshing the packaged fallback snapshot
-
-For maintainers preparing a release, first refresh or verify a local
-`~/.casa/data` tree, then rebuild the packaged fallback archive and provenance:
-
-```bash
-cargo run -p casa-measures-tools --bin package_snapshot -- --input ~/.casa/data
-```
-
-That updates:
-
-- `crates/casa-measures-data/data/casa-measures-runtime.tar.gz`
-- `crates/casa-measures-data/data/casa-measures-runtime.provenance.json`
-
-### Release checklist
-
-The packaged snapshot freshness test runs in the default measures-data test set:
-
-```bash
-cargo test -p casa-measures-data packaged_snapshot_not_stale
-```
-
-If it fails during release prep, rebuild the packaged snapshot before
-publishing.
-
-Python release artifacts are built separately from the Rust tag-cutting script.
-After `scripts/release.sh ... --push` creates and pushes `v<version>`, the
-`Python Release` GitHub Actions workflow builds:
-
-- Linux `x86_64` wheels
-- macOS `arm64` wheels
-- one source distribution
-- platform-specific suite bundles named `casa-rs-suite-<version>-<platform>.tar.gz`
-- platform-specific standalone binary bundles named `casa-rs-binaries-<version>-<platform>.tar.gz`
-- an installer script asset named `install-casa-rs.sh`
-
-The workflow uploads those artifacts to the GitHub release for the tag and
-publishes them to PyPI when `PYPI_API_TOKEN` is configured in the repository
-secrets. To reproduce the artifact build locally, run:
-
-```bash
-scripts/build-python-dist.sh
-```
-
-Release candidates are cut with the same release script using an explicit
-version, for example:
-
-```bash
-scripts/release.sh 0.18.0-rc1 --push
-```
-
-The installer-managed suite layout is:
-
-```text
-~/.local/opt/casa-rs/<version>/
-  bin/
-    casars
-    calibrate
-    importvla
-    msexplore
-    casars-imager
-    imexplore
-    immoments
-    exportfits
-    importfits
-  python/
-    ...
-  wheels/
-    ...
-~/.local/opt/casa-rs/stable -> ~/.local/opt/casa-rs/<stable-version>
-~/.local/opt/casa-rs/rc -> ~/.local/opt/casa-rs/<rc-version>
-~/.local/opt/casa-rs/current -> ~/.local/opt/casa-rs/<active-version>
-~/.local/bin/
-  casars -> ~/.local/opt/casa-rs/current/bin/casars
-  calibrate -> ~/.local/opt/casa-rs/current/bin/calibrate
-  casars-stable -> ~/.local/opt/casa-rs/stable/bin/casars
-  calibrate-stable -> ~/.local/opt/casa-rs/stable/bin/calibrate
-  casars-rc -> ~/.local/opt/casa-rs/rc/bin/casars
-  calibrate-rc -> ~/.local/opt/casa-rs/rc/bin/calibrate
-```
-
-Python task wrappers launch the catalog executable from the selected installed
-suite. Development-workspace mode instead uses the exact checkout selected by
-`CASARS_DEVELOPMENT_WORKSPACE`; neither mode falls back to another suite,
-repo-local binaries, or `PATH`.
-
-## Git Hooks
-
-This repo includes a lightweight pre-commit hook in `.githooks/pre-commit`
-that checks staged Rust files for the required SPDX header:
-`// SPDX-License-Identifier: LGPL-3.0-or-later`.
-
-Enable it once per clone with:
-
-```bash
-git config core.hooksPath .githooks
-```
-
-CI still runs the full-repo SPDX check as a backstop.
+The crate APIs are idiomatic Rust, not a one-to-one copy of casacore's C++ API.
+FITS image I/O currently uses `fitsio`/CFITSIO, and Fourier transforms use
+FFTW. Broad casacore module parity, including its general fitting/scimath
+and Python-converter APIs, is not the goal.
 
 ## License
 
@@ -565,3 +183,208 @@ License v3.0 or later](COPYING.LESSER) (SPDX: `LGPL-3.0-or-later`). Imaging
 applications and Python extensions linked with FFTW are distributed as
 combined works under [GNU GPL v3.0 or later](COPYING). See
 [third-party notices](THIRD_PARTY_NOTICES.md) for FFTW's copyright and license.
+
+## UI Experiments
+
+We explored several user interfaces for casa-rs: Python bindings, a terminal
+user interface (TUI), and a native Swift GUI. These experiments demonstrated
+that multiple interfaces can share the same computational codebase and
+task schemas, without reimplementing the scientific algorithms.
+
+The TUI worked well in Ghostty using the kitty graphics protocol. This
+approach is potentially portable across macOS, Windows, and Linux with a
+compatible terminal, although only macOS was tested. In 2026, I am unsure
+how much value a TUI adds when the cost of creating a native GUI is no longer
+particularly high.
+
+The Swift GUI also worked well and had no difficulty interoperating with
+the main Rust computational codebase. The comparisons below show the TUI
+on the left and the Swift GUI on the right.
+
+*Visibility-amplitude spectra from the same G37.40+1.52 MeasurementSet and
+selection. These are visibility amplitudes, not image-integrated flux.*
+
+![G37.40+1.52 visibility spectrum in the TUI and Swift GUI](docs/images/ui-experiments/spectrum-comparison.png)
+
+*The same plane of a synthetic image cube, with its linked spectrum.
+This is synthetic test data.*
+
+![Synthetic cube plane in the TUI and Swift GUI](docs/images/ui-experiments/cube-comparison.png)
+
+*Imaging parameter controls in the two interfaces.*
+
+![Imaging parameters in the TUI and Swift GUI](docs/images/ui-experiments/parameters-comparison.png)
+
+I also created an experimental notebook system with an integrated AI
+assistant. Keeping discussion, analysis results, and plots together seemed
+very promising. The screenshot below shows a genuine assistant conversation
+that inspected the dataset through tools, with its response and a spectrum
+saved in the notebook. I am still unsure how much this adds over using a
+coding agent with the Python bindings, or a notebook environment such as
+Jupyter AI.
+
+![Experimental Swift notebook with a genuine AI conversation, results table, and spectrum](docs/images/ui-experiments/ai-notebook.png)
+
+Python is the focus for continued work. The TUI, the Swift GUI, the notebook
+and assistant, the interactive image and table browsers, and Rust-side plot
+rasterisation were removed in October 2026 (issue #833; see
+[ADR-0017](docs/adr/0017-python-first-surface.md)). Their last state is
+preserved at the tag
+[`ui-experiments-2026-10-20`](https://github.com/bglenden/casa-rs/tree/ui-experiments-2026-10-20).
+
+## Installation
+
+The suite installer and release workflow target **macOS arm64** and
+**Linux x86_64**. The release workflow builds CPython **3.10, 3.11, and 3.12**
+wheels. Package metadata permits Python 3.10 or newer, but that does not mean
+every newer interpreter has a bundled wheel. Choose an interpreter matching
+the release's wheel assets.
+
+### Install a published suite
+
+Choose a version from the [releases page](https://github.com/bglenden/casa-rs/releases).
+Set `version` to its version number without the leading `v`, then run the
+installer attached to that release. For example, after setting `version`:
+
+```bash
+curl -fsSL "https://github.com/bglenden/casa-rs/releases/download/v${version}/install-casa-rs.sh" \
+  -o install-casa-rs.sh
+bash install-casa-rs.sh --version "$version" --python python3.12
+```
+
+This installs the catalog's binaries and a Python environment together under
+`~/.local/opt/casa-rs/<version>/`. Stable installs normally update the `stable`
+and `current` links; release candidates update `rc` without taking over
+`current` unless `--activate` is supplied. The installer also creates
+channel-specific `casars` and `calibrate` launchers in `~/.local/bin`.
+
+Add that directory to your shell's `PATH`, then activate the suite's Python:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+source "$HOME/.local/opt/casa-rs/current/python/bin/activate"
+python -c "import casars; print(casars.__version__)"
+```
+
+To select another installed suite explicitly, set `CASARS_SUITE_ROOT` to
+its versioned root. Python tasks need the matching suite executables; a wheel
+alone provides the data bindings but is not a complete task installation.
+
+### Build from source
+
+Source builds require Rust **1.99 or newer**, a C/C++ toolchain, `pkg-config`,
+and FFTW single- and double-precision libraries including their threaded/static
+archives. Python packaging additionally needs Python 3.10 or newer and its
+virtual-environment support. Install `just` for the repository commands.
+
+Typical native dependencies:
+
+```bash
+# macOS
+xcode-select --install
+brew install fftw pkg-config just
+
+# Debian/Ubuntu (install just separately if needed)
+sudo apt install build-essential libfftw3-dev pkg-config python3-dev python3-venv
+```
+
+From the repository root:
+
+```bash
+rustup update stable
+CARGO_INCREMENTAL=0 cargo build --release --workspace --bins
+```
+
+To build and install the Python/command-line suite from the checkout:
+
+```bash
+CARGO_INCREMENTAL=0 just install-local-suite
+```
+
+For an editable Python development environment:
+
+```bash
+CARGO_INCREMENTAL=0 cargo build --workspace --bins
+python3 -m venv .venv
+source .venv/bin/activate
+CARGO_INCREMENTAL=0 python -m pip install -e 'crates/casars-python[test,plot]'
+export CASARS_LAUNCH_MODE=development_workspace
+export CASARS_DEVELOPMENT_WORKSPACE="$PWD"
+```
+
+Development mode resolves executables from the selected checkout's
+`target/debug/`, so it needs the debug build shown above even if release
+binaries already exist. Installed-suite mode resolves executables from the
+selected suite. Neither searches `PATH` or silently switches modes.
+
+Before building for performance measurements or release, use the pinned
+SIMD-enabled FFTW recipe rather than assuming the system package has the
+required kernels:
+
+```bash
+bash scripts/build-fftw.sh /absolute/durable/fftw-3.3.11
+export PKG_CONFIG_PATH=/absolute/durable/fftw-3.3.11/lib/pkgconfig
+```
+
+The recipe builds static, position-independent single/double precision and
+pthread libraries with ARM NEON or runtime-dispatched x86 SIMD. It retains
+the source and build recipe. Release bundles include the corresponding FFTW
+source and do not need a local FFTW development installation to run.
+
+## Measures Data
+
+Astronomical conversions use a CASA-table-backed measures runtime containing
+Earth orientation, leap seconds, observatories, geomagnetic data, ephemerides,
+and source/line catalogs. Applications open a fallible `MeasuresRuntime` at an
+operation boundary and pass it to the computations. Discovery checks
+`CASA_RS_MEASURESPATH` and `~/.casa/data`; it does not install or refresh data.
+Missing, incomplete, stale, or corrupt runtimes produce errors.
+
+To download and refresh a runtime explicitly from a source checkout:
+
+```bash
+CARGO_INCREMENTAL=0 cargo run --example update_measures \
+  -p casa-measures-data --features update -- --data-dir /path/to/measures-data
+export CASA_RS_MEASURESPATH=/path/to/measures-data
+```
+
+Omitting `--data-dir` selects `~/.casa/data`. A packaged snapshot can also be
+installed explicitly with `casa_measures_data::install_packaged_snapshot`;
+scientific calls do not silently install it. Maintainers regenerate the
+packaged archive and provenance with:
+
+```bash
+CARGO_INCREMENTAL=0 cargo run -p casa-measures-tools --bin package_snapshot \
+  -- --input /path/to/measures-data
+```
+
+## Development and Verification
+
+[`AGENTS.md`](AGENTS.md) is the repository operating contract;
+[`TESTING.md`](TESTING.md) defines the gates and external test-data requirements.
+Accepted decisions are in [`docs/adr/`](docs/adr/), and issues/PRs are the work
+record.
+
+```bash
+just quick       # architecture, formatting, clippy, workspace tests, tooling checks
+just verify      # quick plus frontend binding and Python package checks
+just docs-check  # documentation and generated-contract consistency
+```
+
+Install `cargo-nextest` to run the workspace tests in parallel. Raw Cargo
+commands should set `CARGO_INCREMENTAL=0`. Imaging changes also need the
+applicable component, end-to-end, and CASA comparison tiers described in
+`TESTING.md`; the general quick gate is not a substitute for scientific
+acceptance.
+
+Build local Rust API docs with
+`CARGO_INCREMENTAL=0 cargo doc --workspace --no-deps`.
+
+The optional staged-file SPDX hook can be enabled with
+`git config core.hooksPath .githooks`.
+
+Tagged `v*` releases trigger the Python release workflow, which builds wheels,
+a source distribution, suite and standalone-binary bundles, and the installer.
+The workflow publishes release assets and can publish Python distributions
+when the PyPI credential is configured. Release procedures are documented in
+[`docs/agent-reference.md`](docs/agent-reference.md).

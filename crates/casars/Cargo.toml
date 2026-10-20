@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Ratatui launcher for casa-rs command-line applications"
+description = "Headless casars task host"
 repository.workspace = true
 publish = false
 
@@ -12,46 +12,21 @@ publish = false
 workspace = true
 
 [dependencies]
-arboard = "3"
 casa-calibration = { path = "../casa-calibration" }
 casa-images = { path = "../casa-images" }
 casa-logging = { path = "../casa-logging" }
-casa-notebook = { path = "../casa-notebook" }
+casa-ms = { path = "../casa-ms" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
-casa-vla = { path = "../casa-vla" }
 casars-imager = { path = "../casars-imager" }
-casars-imagebrowser-protocol = { path = "../casars-imagebrowser-protocol" }
-casa-ms = { path = "../casa-ms" }
-casars-tablebrowser-protocol = { path = "../casars-tablebrowser-protocol" }
-casa-tables = { path = "../casa-tables" }
-casa-types = { path = "../casa-types" }
-crossterm = "0.28"
-directories = "5"
-image = { version = "0.25", default-features = false, features = ["png"] }
-plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "point_series", "full_palette"] }
-ratatui = "0.30"
-ratatui-explorer = "0.3.0"
-ratatui-graphics.workspace = true
-ratatui-image = { version = "10.0.6", default-features = false, features = ["crossterm", "image-defaults"] }
+schemars = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-schemars = "0.8"
 thiserror.workspace = true
-toml = "0.8"
-libc = "0.2"
 tracing.workspace = true
 
 [dev-dependencies]
 casa-coordinates = { path = "../casa-coordinates" }
-casa-test-support = { path = "../casa-test-support" }
-flate2 = "1"
+casa-vla = { path = "../casa-vla" }
 ndarray.workspace = true
-tar = "0.4"
 tempfile = "3"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-plotters = { version = "0.3.7", default-features = false, features = ["ttf"] }
-
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-plotters = { version = "0.3.7", default-features = false, features = ["ab_glyph"] }

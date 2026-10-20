@@ -1,11 +1,12 @@
 # Agent Operating Contract
 
 Truth class: normative
-Last reality check: 2026-10-16
+Last reality check: 2026-10-20
 Verification: just docs-check
 
 casa-rs is a native Rust implementation of casacore/CASA libraries and
-applications.
+applications. Its user-facing surface is the Python package and the headless
+task providers (ADR-0017); there is no GUI or terminal UI.
 
 ## Core Contracts And Priorities
 
@@ -30,11 +31,10 @@ applications.
 ## Where Things Live
 
 - `ARCHITECTURE.md`: crates, boundaries, dependency direction
-- `TESTING.md`: which gates to run, CI, test data, GUI testing
+- `TESTING.md`: which gates to run, CI, test data
 - `docs/agent-reference.md`: workstation, CASA/C++ oracle, data and storage
   locations, release recipes
 - `docs/adr/`: accepted decisions; binding, and not edited without approval
-- `apps/casars-mac/AGENTS.md`: macOS workbench rules
 - `.agents/skills/`: casa-rs domain skills (e.g. imaging performance); generic
   workflows come from the user-level skills
 - `GLOSSARY.md`: domain vocabulary; use its terms
@@ -48,8 +48,9 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
   in parallel; without it `scripts/test-workspace.sh` runs them serially.
 - `just quick` is the normal gate; `just verify` is for milestones and
   releases; `just --list` shows everything else.
-- Swift tests: `cargo build -p casars-frontend-services --lib`, then
-  `swift test --package-path apps/casars-mac`.
+- Python package tests: `scripts/test-python-package.sh`; regenerate the
+  UniFFI module with `scripts/generate-frontend-bindings.sh` after changing
+  `casars-frontend-services`.
 - `scripts/check-imaging-dependencies.py` (in `just arch-check`) enforces the
   imaging crate layering and source rules of ADR-0016; its grandfathered-file
   lists only shrink.

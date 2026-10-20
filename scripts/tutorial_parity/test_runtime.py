@@ -52,7 +52,6 @@ class RuntimeContractTests(unittest.TestCase):
                     native_python=native_python,
                     casa_python=None,
                     binary_dir=root,
-                    ghostty_capture=None,
                     evidence_root=None,
                     require_existing=True,
                 )
@@ -70,7 +69,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertIn("timed out", result.stderr)
         self.assertTrue(result.as_dict()["timed_out"])
 
-    def test_run_section_updates_typed_evidence_docs_and_screenshot_manifest(self) -> None:
+    def test_run_section_updates_typed_evidence_and_docs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             pack_root = Path(directory)
             resources = RuntimeResources(
@@ -79,11 +78,10 @@ class RuntimeContractTests(unittest.TestCase):
                 native_python=Path(sys.executable),
                 casa_python=None,
                 binary_dir=pack_root,
-                ghostty_capture=None,
                 evidence_root=pack_root / ".casa-rs" / "evidence" / "tutorial-parity",
                 dry_run=False,
             )
-            registry = {name: _Adapter() for name in ("casa", "cli", "python", "tui", "gui")}
+            registry = {name: _Adapter() for name in ("casa", "cli", "python")}
             with patch("tutorial_parity.runner.adapters", return_value=registry), patch(
                 "tutorial_parity.runner.run_comparator",
                 return_value={"status": "passed", "plugin": self.manifest.comparison.plugin},
@@ -91,20 +89,16 @@ class RuntimeContractTests(unittest.TestCase):
                 result = run_section(
                     self.manifest,
                     resources,
-                    selected_surfaces={"gui"},
+                    selected_surfaces={"python"},
                     dry_run=False,
-                    gui_cache={},
                 )
 
             result_path = pack_root / self.manifest.evidence["result"]
             persisted = validate_result(json.loads(result_path.read_text(encoding="utf-8")), str(result_path))
             self.assertEqual(persisted["status"], "completed")
             self.assertEqual(result["status"], "completed")
+            self.assertEqual(set(persisted["surfaces"]), {"python"})
             self.assertTrue((pack_root / self.manifest.evidence["review"]).is_file())
-            screenshot_spec = json.loads(
-                (pack_root / self.manifest.evidence["screenshot_spec"]).read_text(encoding="utf-8")
-            )
-            self.assertEqual(screenshot_spec["gui_journey"], "tutorial-journey-gui")
             for relative in self.manifest.evidence["documentation"]:
                 self.assertTrue((pack_root / relative).is_file())
             self.assertEqual(len(persisted["artifacts"]), 2)

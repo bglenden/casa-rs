@@ -12,7 +12,7 @@ use casa_provider_contracts::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::{ResolutionPatch, validate_parameter_edit};
+use crate::{ResolutionPatch, normalize_value, parse_parameter_text, validate_value};
 
 /// Machine-readable task action handled by the shared CLI host.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -268,18 +268,26 @@ fn ensure_parameter_binding<'a>(
         .ok_or_else(|| format!("unknown {} parameter {name:?}", bundle.surface.id()))
 }
 
+/// Parse, normalize and validate one command-line value through the
+/// binding's concept and refinements.
 fn validated_cli_value(
     bundle: &SurfaceContractBundle,
     binding: &SurfaceParameterBinding,
     text: &str,
 ) -> Result<ParameterValue, String> {
-    let result = validate_parameter_edit(bundle, &binding.name, text, []);
-    if let Some(diagnostic) = result.diagnostics.first() {
-        return Err(diagnostic.message.clone());
+    let concept = bundle
+        .catalog
+        .concept(&binding.concept)
+        .ok_or_else(|| format!("missing parameter concept for {:?}", binding.name))?;
+    if text.trim().is_empty() {
+        return Err(format!("parameter {:?} has no typed value", binding.name));
     }
-    result
-        .normalized_value
-        .ok_or_else(|| format!("parameter {:?} has no typed value", binding.name))
+    let parsed =
+        parse_parameter_text(text, &concept.value_domain).map_err(|error| error.to_string())?;
+    let normalized = normalize_value(&parsed, concept).map_err(|error| error.to_string())?;
+    validate_value(&normalized, concept, &binding.refinements)
+        .map_err(|error| error.to_string())?;
+    Ok(normalized)
 }
 
 fn is_bool_domain(domain: &ParameterType) -> bool {
@@ -360,7 +368,6 @@ mod tests {
                         json_schema: Some("--json-schema".into()),
                         protocol_info: Some("--protocol-info".into()),
                         json_run: Some("--json-run <SOURCE>".into()),
-                        session: None,
                     },
                 }),
                 python: None,
@@ -520,5 +527,21 @@ mod tests {
     fn exit_code_preserves_the_shared_provider_contract() {
         assert_eq!(TaskCliError::MissingJsonRunSource.exit_code(), 1);
         assert_eq!(TaskCliError::Execute("failed".into()).exit_code(), 1);
+    }
+
+    #[test]
+    fn cli_values_are_normalized_through_the_binding_concept() {
+        let bundle = casa_provider_contracts::builtin_surface_bundle("msexplore").unwrap();
+        let field = ensure_parameter_binding(&bundle, "field").unwrap();
+        assert_eq!(
+            validated_cli_value(&bundle, field, " 0, 2 ").unwrap(),
+            ParameterValue::String("0,2".to_string())
+        );
+        assert!(
+            validated_cli_value(&bundle, field, "  ")
+                .unwrap_err()
+                .contains("no typed value")
+        );
+        assert!(ensure_parameter_binding(&bundle, "not_a_parameter").is_err());
     }
 }

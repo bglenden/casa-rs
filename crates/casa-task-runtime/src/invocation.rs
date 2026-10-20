@@ -81,48 +81,6 @@ where
     Ok(adaptation.invocation)
 }
 
-/// Return whether one binding applies to the provider for the session's
-/// current resolved values.
-///
-/// Interactive consumers use this to render mode-specific fields without
-/// reimplementing provider predicates or failing open when a binding cannot
-/// be resolved.
-pub fn provider_parameter_applies(
-    session: &ParameterSession,
-    parameter: &str,
-) -> Result<bool, ProviderInvocationError> {
-    let binding = session
-        .bundle()
-        .surface
-        .bindings()
-        .iter()
-        .find(|binding| binding.name == parameter)
-        .ok_or_else(|| ProviderInvocationError::Parameter {
-            parameter: parameter.to_string(),
-            reason: "unknown surface parameter".to_string(),
-        })?;
-    let state =
-        session
-            .states()
-            .get(parameter)
-            .ok_or_else(|| ProviderInvocationError::Parameter {
-                parameter: parameter.to_string(),
-                reason: "resolved parameter state is missing".to_string(),
-            })?;
-    if !state.active {
-        return Ok(false);
-    }
-    let Some(predicate) = binding
-        .projections
-        .provider
-        .as_ref()
-        .and_then(|projection| projection.emit_when.as_ref())
-    else {
-        return Ok(true);
-    };
-    Ok(evaluate_provider_predicate(predicate, session) == Some(true))
-}
-
 fn project_direct_cli_args(
     session: &ParameterSession,
 ) -> Result<(Vec<String>, BTreeSet<String>), ProviderInvocationError> {
@@ -571,53 +529,20 @@ mod tests {
     }
 
     #[test]
-    fn provider_applicability_uses_the_canonical_mode_predicate_and_fails_closed() {
-        let bundle = builtin_surface_bundle("calibrate").unwrap();
-        let mut session = ParameterSession::defaults(bundle).unwrap();
-
-        session
-            .set("mode", ParameterValue::String("solve_gain".into()))
-            .unwrap();
-        assert!(provider_parameter_applies(&session, "gain_type").unwrap());
-        assert!(!provider_parameter_applies(&session, "fluxscale_input").unwrap());
-        assert!(provider_parameter_applies(&session, "vis").unwrap());
-        assert!(provider_parameter_applies(&session, "misspelled").is_err());
-
-        session
-            .set("mode", ParameterValue::String("fluxscale".into()))
-            .unwrap();
-        assert!(!provider_parameter_applies(&session, "gain_type").unwrap());
-        assert!(provider_parameter_applies(&session, "fluxscale_input").unwrap());
-    }
-
-    #[test]
-    fn auto_sentinel_is_omitted_but_a_real_value_is_projected() {
-        let bundle = builtin_surface_bundle("imexplore").unwrap();
-        let mut session = ParameterSession::defaults(bundle).unwrap();
-        let invocation = project_provider_invocation(&session, |_family, _values, direct| {
-            Ok(ProviderInvocationAdaptation::direct(direct))
-        })
-        .unwrap();
-        assert!(
-            !invocation
-                .args
-                .iter()
-                .any(|argument| argument == "--movieaxis")
-        );
-
-        session
-            .set("movieaxis", ParameterValue::String("spectral".into()))
-            .unwrap();
-        let invocation = project_provider_invocation(&session, |_family, _values, direct| {
-            Ok(ProviderInvocationAdaptation::direct(direct))
-        })
-        .unwrap();
-        assert!(
-            invocation
-                .args
-                .windows(2)
-                .any(|pair| pair == ["--movieaxis", "spectral"])
-        );
+    fn auto_and_none_sentinels_are_omitted_but_real_values_are_projected() {
+        let omit_none = Some(&ValueAdapter::OmitNone);
+        for sentinel in ["auto", "none"] {
+            let value = ParameterValue::String(sentinel.into());
+            assert!(parameter_value_is_omitted(&value, omit_none), "{sentinel}");
+            assert!(!parameter_value_is_omitted(
+                &value,
+                Some(&ValueAdapter::Identity)
+            ));
+        }
+        assert!(!parameter_value_is_omitted(
+            &ParameterValue::String("spectral".into()),
+            omit_none
+        ));
     }
 
     #[test]

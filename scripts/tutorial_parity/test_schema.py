@@ -62,7 +62,7 @@ class SectionSchemaTests(unittest.TestCase):
 
     def test_every_surface_is_required(self) -> None:
         value = copy.deepcopy(self.value)
-        del value["surfaces"]["gui"]
+        del value["surfaces"]["python"]
         with self.assertRaisesRegex(ContractError, "must define exactly"):
             parse_section(value)
 

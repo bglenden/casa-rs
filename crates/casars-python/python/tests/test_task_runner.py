@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from casars import tasks
-from casars.parameters import SessionParameters, TaskParameters
+from casars.parameters import TaskParameters
 
 
 def _fake_casars(path: Path) -> Path:
@@ -46,10 +46,8 @@ def test_run_uses_canonical_profile_and_forwards_runtime_controls(
         "flagmanager",
         parameters,
         workspace=tmp_path,
-        notebook="Analysis.md",
         binary=binary,
         save_last=False,
-        record_notebook=False,
         confirm_overwrite=True,
         confirm_mutation=True,
         env={"FAKE_CASARS_LOG": str(log)},
@@ -61,12 +59,7 @@ def test_run_uses_canonical_profile_and_forwards_runtime_controls(
     assert recorded["argv"][4:] == [
         "--workspace",
         str(tmp_path),
-        "--initiating-surface",
-        "python",
-        "--notebook",
-        "Analysis.md",
         "--no-save-last",
-        "--no-notebook-recording",
         "--confirm-overwrite",
         "--confirm-mutation",
     ]
@@ -163,10 +156,10 @@ def test_run_preserves_failure_output_with_and_without_check(tmp_path: Path) -> 
     assert failure.value.completion.stderr == "runner stderr\n"
 
 
-def test_run_rejects_session_parameters_and_ambiguous_sources(tmp_path: Path) -> None:
-    session = SessionParameters.defaults("imexplore", workspace=tmp_path)
-    with pytest.raises(TypeError, match="requires task parameters"):
-        tasks.run("flagmanager", session, workspace=tmp_path)
+def test_run_rejects_mismatched_parameters_and_ambiguous_sources(tmp_path: Path) -> None:
+    other = TaskParameters.defaults("imstat", workspace=tmp_path)
+    with pytest.raises(ValueError, match="not requested task"):
+        tasks.run("flagmanager", other, workspace=tmp_path)
 
     profile = TaskParameters.defaults("flagmanager", workspace=tmp_path)
     profile["vis"] = "input.ms"

@@ -83,8 +83,6 @@ struct CliOptions {
     flag_output: Option<PathBuf>,
     plot_output: Option<PathBuf>,
     plot_format: MsExportFormat,
-    plot_width: u32,
-    plot_height: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -328,14 +326,9 @@ fn run(options: CliOptions) -> Result<(), String> {
             .as_ref()
             .ok_or_else(|| "msexplore plot export lost its prepared explore spec".to_string())?;
         let payload = build_msexplore_payload(&ms, explore_spec)?;
-        export_msexplore_plot(
-            &payload,
-            crate::MeasurementSetPlotTheme::light(),
-            plot_output,
-            options.plot_format,
-            options.plot_width,
-            options.plot_height,
-        )?;
+        match options.plot_format {
+            MsExportFormat::Txt => export_msexplore_plot(&payload, plot_output)?,
+        }
     }
 
     Ok(())
@@ -916,9 +909,7 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
     let mut flag_apply = false;
     let mut flag_output = None;
     let mut plot_output = None;
-    let mut plot_format = MsExportFormat::Png;
-    let mut plot_width = 1600u32;
-    let mut plot_height = 900u32;
+    let mut plot_format = MsExportFormat::Txt;
     let mut plot_control_used = false;
 
     while index < args.len() {
@@ -1197,16 +1188,6 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
                 plot_format =
                     MsExportFormat::parse(&take_value(&mut index, &args, "--plot-format")?)?
             }
-            "--plot-width" => {
-                plot_width = take_value(&mut index, &args, "--plot-width")?
-                    .parse::<u32>()
-                    .map_err(|_| "invalid integer value for --plot-width".to_string())?
-            }
-            "--plot-height" => {
-                plot_height = take_value(&mut index, &args, "--plot-height")?
-                    .parse::<u32>()
-                    .map_err(|_| "invalid integer value for --plot-height".to_string())?
-            }
             value if value.starts_with('-') => return Err(format!("unknown option {value:?}")),
             value => {
                 if ms_path.is_some() {
@@ -1345,8 +1326,6 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<CliAction, Str
         flag_output,
         plot_output,
         plot_format,
-        plot_width: plot_width.max(1),
-        plot_height: plot_height.max(1),
     })))
 }
 
@@ -1518,13 +1497,9 @@ mod tests {
             "--max-points",
             "12345",
             "--plot-output",
-            "plot.pdf",
+            "plot.txt",
             "--plot-format",
-            "pdf",
-            "--plot-width",
-            "1024",
-            "--plot-height",
-            "768",
+            "txt",
             "example.ms",
         ]))
         .expect("parse args");
@@ -1596,11 +1571,9 @@ mod tests {
         assert_eq!(options.max_points, 12345);
         assert_eq!(
             options.plot_output.as_deref(),
-            Some(std::path::Path::new("plot.pdf"))
+            Some(std::path::Path::new("plot.txt"))
         );
-        assert_eq!(options.plot_format, MsExportFormat::Pdf);
-        assert_eq!(options.plot_width, 1024);
-        assert_eq!(options.plot_height, 768);
+        assert_eq!(options.plot_format, MsExportFormat::Txt);
 
         let spec = build_explore_spec(&options).expect("build spec");
         assert_eq!(spec.ms_path, PathBuf::from("example.ms"));
@@ -1747,7 +1720,7 @@ mod tests {
             .contains("--page-spec cannot be combined")
         );
         assert!(
-            parse_args(cli_args(&["--plot-output", "plot.png", "example.ms"]))
+            parse_args(cli_args(&["--plot-output", "plot.txt", "example.ms"]))
                 .unwrap_err()
                 .contains("--plot-output requires either --preset or both --xaxis and --yaxis")
         );

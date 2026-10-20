@@ -31,22 +31,17 @@ with tempfile.TemporaryDirectory() as tmp:
         archive.extractall(project_root, **extract_kwargs)
 
     ms_path = project_root / "mssel_test_small.ms"
-    project = frontend.probe_project(str(project_root))
-    datasets = {dataset.path: dataset for dataset in project.datasets}
 
-    assert str(ms_path) in datasets
-    dataset = datasets[str(ms_path)]
-    assert dataset.kind == frontend.DatasetKind.MEASUREMENT_SET
-    assert dataset.fields
-    assert dataset.spectral_windows
-    assert dataset.antennas
-    assert dataset.data_columns == ["DATA"]
-    assert "ANTENNA (required)" in dataset.subtables
+    applications = {entry.id: entry for entry in frontend.application_catalog().applications}
+    assert applications["imager"].executable == "casars-imager"
+    assert "tablebrowser" not in applications
+    assert "imexplore" not in applications
 
-    direct_probe = frontend.probe_path(str(ms_path))
-    assert direct_probe is not None
-    assert direct_probe.kind == frontend.DatasetKind.MEASUREMENT_SET
-    assert direct_probe.data_columns == ["DATA"]
+    catalog = frontend.parameter_catalog()
+    assert len(catalog.surfaces) == 27
+    imstat = frontend.parameter_surface_bundle("imstat")
+    assert any(binding.name == "imagename" for binding in imstat.surface.bindings)
+    assert "imagename" in frontend.parameter_template_toml("imager")
 
     plot = frontend.build_measurement_set_plot(
         frontend.MeasurementSetPlotRequest(
@@ -75,14 +70,11 @@ with tempfile.TemporaryDirectory() as tmp:
             avgspw=False,
             scalar=False,
             iteraxis=None,
-            width=640,
-            height=420,
             max_plot_points=10000,
         )
     )
     assert plot.preset == frontend.MeasurementSetPlotPreset.AMPLITUDE_VS_FREQUENCY
-    assert plot.render.image_format == "none"
-    assert plot.image_bytes == b""
+    assert plot.document.layers or plot.document.panels
     assert plot.x_axis.label
     assert plot.y_axis.label
     assert plot.series

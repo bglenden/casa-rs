@@ -53,8 +53,6 @@ FLAG_NAMES = {
     "color_by": "color-by",
     "plot_output": "plot-output",
     "plot_format": "plot-format",
-    "plot_width": "plot-width",
-    "plot_height": "plot-height",
 }
 
 TASK_FLAG_NAMES = {
@@ -64,17 +62,14 @@ TASK_FLAG_NAMES = {
 OMIT_FOR_CLI = {"json"}
 
 
-def build_operation_argv(operation: Operation, resources: RuntimeResources, *, tui: bool = False) -> list[str]:
+def build_operation_argv(operation: Operation, resources: RuntimeResources) -> list[str]:
     task = operation.task
     if task not in BINARY_BY_TASK:
         raise ValueError(f"{task} has no native CLI adapter")
-    if tui:
-        argv = [str(binary(resources, "casars", require_existing=not resources.dry_run)), task]
-    else:
-        argv = [
-            str(binary(resources, BINARY_BY_TASK[task], require_existing=not resources.dry_run)),
-            *PREFIX.get(task, ()),
-        ]
+    argv = [
+        str(binary(resources, BINARY_BY_TASK[task], require_existing=not resources.dry_run)),
+        *PREFIX.get(task, ()),
+    ]
     parameters = operation.parameters
     positional = POSITIONAL[task]
     for key in positional:

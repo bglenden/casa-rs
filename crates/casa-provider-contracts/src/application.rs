@@ -23,7 +23,6 @@ pub enum ApplicationKind {
 #[serde(rename_all = "snake_case")]
 pub enum ApplicationShellKind {
     Inspect,
-    Browser,
     Workflow,
     Launcher,
 }
@@ -32,15 +31,7 @@ pub enum ApplicationShellKind {
 #[serde(rename_all = "snake_case")]
 pub enum ApplicationInteraction {
     OneShot,
-    BrowserSession,
     Launcher,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApplicationBrowserKind {
-    Table,
-    Image,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,7 +56,6 @@ pub struct ApplicationDefinition {
     pub launch: ApplicationLaunchDescriptor,
     pub shell_kind: ApplicationShellKind,
     pub interaction: ApplicationInteraction,
-    pub browser_kind: Option<ApplicationBrowserKind>,
     pub dataset_kinds: Vec<String>,
     pub show_in_tui: bool,
     pub show_in_swift: bool,
@@ -160,27 +150,6 @@ impl ApplicationCatalog {
                             application.id
                         ));
                     }
-                    match application.interaction {
-                        ApplicationInteraction::BrowserSession => {
-                            if application.shell_kind != ApplicationShellKind::Browser
-                                || application.browser_kind.is_none()
-                            {
-                                errors.push(format!(
-                                    "browser application {:?} has incomplete browser metadata",
-                                    application.id
-                                ));
-                            }
-                        }
-                        ApplicationInteraction::OneShot => {
-                            if application.browser_kind.is_some() {
-                                errors.push(format!(
-                                    "one-shot application {:?} declares a browser kind",
-                                    application.id
-                                ));
-                            }
-                        }
-                        ApplicationInteraction::Launcher => {}
-                    }
                 }
                 ApplicationKind::Launcher => {
                     launcher_count += 1;
@@ -245,14 +214,14 @@ mod tests {
     #[test]
     fn builtin_catalog_covers_every_surface_and_one_launcher() {
         let catalog = builtin_application_catalog().expect("valid application catalog");
-        assert_eq!(catalog.applications.len(), 30);
+        assert_eq!(catalog.applications.len(), 28);
         assert_eq!(
             catalog
                 .applications
                 .iter()
                 .filter(|application| application.kind == ApplicationKind::Task)
                 .count(),
-            29
+            27
         );
         let launcher = catalog.application("casars").expect("launcher entry");
         assert_eq!(launcher.kind, ApplicationKind::Launcher);
@@ -282,19 +251,19 @@ mod tests {
     }
 
     #[test]
-    fn validation_rejects_incomplete_browser_metadata() {
+    fn validation_rejects_a_task_with_launcher_interaction() {
         let mut catalog = builtin_application_catalog().unwrap().clone();
-        let image = catalog
+        let imstat = catalog
             .applications
             .iter_mut()
-            .find(|application| application.id == "imexplore")
+            .find(|application| application.id == "imstat")
             .unwrap();
-        image.browser_kind = None;
+        imstat.interaction = ApplicationInteraction::Launcher;
         let errors = catalog.validate().unwrap_err();
         assert!(
             errors
                 .iter()
-                .any(|error| error.contains("incomplete browser metadata"))
+                .any(|error| error.contains("uses launcher interaction"))
         );
     }
 

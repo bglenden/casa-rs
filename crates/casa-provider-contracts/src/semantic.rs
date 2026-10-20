@@ -10,8 +10,6 @@ use serde::{Deserialize, Serialize};
 pub enum ProviderSurfaceKind {
     /// One-shot request/result operation.
     Task,
-    /// Stateful command/response protocol.
-    Session,
     /// Handle-oriented object API.
     Object,
 }
@@ -37,17 +35,6 @@ pub struct TaskSemanticContract {
     pub result_schema: RootSchema,
     /// Stable task operations carried by the envelope schemas.
     pub operations: Vec<TaskOperationDescriptor>,
-}
-
-/// Semantic session contract exposed by the canonical bundle.
-#[derive(Debug, Clone, Serialize)]
-pub struct SessionSemanticContract {
-    /// Session transport identifier.
-    pub transport: String,
-    /// Canonical tagged request envelope schema.
-    pub request_schema: RootSchema,
-    /// Canonical tagged response envelope schema.
-    pub response_schema: RootSchema,
 }
 
 /// One constructor exposed by an object surface.

@@ -6,8 +6,8 @@ from importlib import import_module
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from . import parameters, sessions, tasks
-from .parameters import SessionParameters, SurfaceParameters, TaskParameters
+from . import parameters, tasks
+from .parameters import SurfaceParameters, TaskParameters
 
 try:
     __version__ = version("casa-rs-python")
@@ -17,13 +17,11 @@ except PackageNotFoundError:  # pragma: no cover - editable local builds
 __all__ = [
     "Image",
     "imexplore",
-    "SessionParameters",
     "SurfaceParameters",
     "Table",
     "TaskParameters",
     "data",
     "parameters",
-    "sessions",
     "tasks",
     "__version__",
 ]

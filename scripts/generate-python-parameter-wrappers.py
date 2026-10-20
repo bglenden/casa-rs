@@ -20,8 +20,6 @@ APPLICATIONS_PATH = CONTRACT_ROOT / "application-catalog.json"
 TASK_OUTPUT = REPO_ROOT / "crates/casars-python/python/casars/tasks/_catalog.py"
 TASK_STUB = REPO_ROOT / "crates/casars-python/python/casars/tasks/_catalog.pyi"
 TASK_INIT = REPO_ROOT / "crates/casars-python/python/casars/tasks/__init__.py"
-SESSION_OUTPUT = REPO_ROOT / "crates/casars-python/python/casars/_session_catalog.py"
-SESSION_STUB = REPO_ROOT / "crates/casars-python/python/casars/_session_catalog.pyi"
 
 
 class GenerationError(RuntimeError):
@@ -318,9 +316,7 @@ def render_task_module(
                 "    profile: StrPath | None = None," if not stub else "    profile: StrPath | None = ... ,",
                 '    base_source: Literal["defaults", "last", "last_successful"] = "defaults",' if not stub else '    base_source: Literal["defaults", "last", "last_successful"] = ... ,',
                 "    workspace: StrPath | None = None," if not stub else "    workspace: StrPath | None = ... ,",
-                "    notebook: str | None = None," if not stub else "    notebook: str | None = ... ,",
                 "    save_last: bool = True," if not stub else "    save_last: bool = ... ,",
-                "    record_notebook: bool = True," if not stub else "    record_notebook: bool = ... ,",
                 "    binary: StrPath | None = None," if not stub else "    binary: StrPath | None = ... ,",
                 "    check: bool = True," if not stub else "    check: bool = ... ,",
                 "    timeout: float | None = None," if not stub else "    timeout: float | None = ... ,",
@@ -346,9 +342,7 @@ def render_task_module(
                 "        base_source=base_source,",
                 "        overrides=overrides,",
                 "        workspace=workspace,",
-                "        notebook=notebook,",
                 "        save_last=save_last,",
-                "        record_notebook=record_notebook,",
                 "        binary=binary,",
                 "        check=check,",
                 "        timeout=timeout,",
@@ -365,95 +359,6 @@ def render_task_module(
             f"TASK_SURFACES = {tuple(names)!r}",
             "",
             f"__all__ = {['TASK_SURFACES', *names]!r}",
-            "",
-        ]
-    )
-    return "\n".join(lines)
-
-
-def render_session_module(
-    surfaces: list[dict[str, Any]],
-    concepts: dict[tuple[str, int], dict[str, Any]],
-    *,
-    stub: bool,
-) -> str:
-    sessions = [surface for surface in surfaces if surface.get("kind") == "session"]
-    lines = [
-        '"""Generated CASA-named wrappers for every catalog session.',
-        "",
-        "Do not edit by hand; run ``scripts/generate-python-parameter-wrappers.py``.",
-        '"""',
-        "",
-        "from __future__ import annotations",
-        "",
-        "from collections.abc import Mapping",
-        "from os import PathLike",
-        "from typing import Any, Literal, TypeAlias",
-        "",
-        "from .parameters import ParameterData, SessionParameters",
-        *( ["from .sessions import JsonlSession"] if stub else [] ),
-        "",
-        "StrPath: TypeAlias = str | PathLike[str]",
-    ]
-    if not stub:
-        lines.extend(
-            [
-                "_UNSET = object()",
-                "",
-                "",
-                "def _explicit(values: Mapping[str, object], names: tuple[str, ...]) -> dict[str, ParameterData]:",
-                "    return {name: values[name] for name in names if values[name] is not _UNSET}  # type: ignore[misc]",
-            ]
-        )
-    lines.extend(["", ""])
-    for surface in sessions:
-        surface_id = str(surface["id"])
-        bindings = ordered_bindings(surface)
-        names = [str(binding["name"]) for binding in bindings]
-        lines.append(f"def {surface_id}(")
-        lines.append("    *,")
-        lines.extend(parameters_block(bindings, concepts, stub=stub))
-        lines.extend(
-            [
-                "    parameters: SessionParameters | None = None," if not stub else "    parameters: SessionParameters | None = ... ,",
-                "    profile: StrPath | None = None," if not stub else "    profile: StrPath | None = ... ,",
-                '    source: Literal["defaults", "last"] = "defaults",' if not stub else '    source: Literal["defaults", "last"] = ... ,',
-                "    workspace: StrPath | None = None," if not stub else "    workspace: StrPath | None = ... ,",
-                "    save_last: bool = True," if not stub else "    save_last: bool = ... ,",
-                "    **options: Any,",
-                ") -> JsonlSession:" if stub else ") -> Any:",
-            ]
-        )
-        if stub:
-            lines.extend(["    ...", ""])
-            continue
-        summary = str(surface.get("summary", "Open the catalog session.")).replace('"""', "")
-        tuple_text = repr(tuple(names))
-        lines.extend(
-            [
-                f'    """{summary}"""',
-                "    from .sessions import open as open_session",
-                "",
-                f"    overrides = _explicit(locals(), {tuple_text})",
-                "    return open_session(",
-                f'        "{surface_id}",',
-                "        parameters=parameters,",
-                "        profile=profile,",
-                "        start=source,",
-                "        workspace=workspace,",
-                "        save_last=save_last,",
-                "        overrides=overrides,",
-                "        **options,",
-                "    )",
-                "",
-            ]
-        )
-    names = [str(surface["id"]) for surface in sessions]
-    lines.extend(
-        [
-            f"SESSION_SURFACES = {tuple(names)!r}",
-            "",
-            f"__all__ = {['SESSION_SURFACES', *names]!r}",
             "",
         ]
     )
@@ -523,8 +428,6 @@ def main() -> int:
             TASK_OUTPUT: render_task_module(surfaces, concepts, stub=False),
             TASK_STUB: render_task_module(surfaces, concepts, stub=True),
             TASK_INIT: render_task_init(surfaces),
-            SESSION_OUTPUT: render_session_module(surfaces, concepts, stub=False),
-            SESSION_STUB: render_session_module(surfaces, concepts, stub=True),
         }
         for path, content in outputs.items():
             update(path, content, check=args.check)

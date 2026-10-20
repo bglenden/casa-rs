@@ -52,7 +52,7 @@ enforced by `scripts/check-no-casa-runtime.py` in `scripts/arch-check.sh`).
 | CASA task/tool | Current casa-rs status | Library owner | App / Python exposure | Known tutorial gaps | Correctness oracle | Performance oracle | Owning issue / wave |
 |---|---|---|---|---|---|---|---|
 | `listobs` | partial | `casa-ms` | `msexplore` / future Python MS surface | selector grammar and TAQL extraction, reusable selector seam | CASA `listobs` on tutorial MS | timing for summary plus selected-row resolution | #75, #117, #121 |
-| `plotms` | partial | `casa-ms` | `msexplore`, calibration plots | long-tail axes, corrected-data diagnostics, polarization/P-band plots | CASA `plotms` or exported plot data where available | `scripts/bench-msexplore-vs-casa.sh` plus tutorial plot timings | #73, #117, #121 |
+| `plotms` | partial | `casa-ms` | `msexplore`/`plotms` text point manifests, `casars.data` plot documents drawn by Matplotlib | long-tail axes, corrected-data diagnostics, polarization/P-band plots | CASA `plotms` or exported plot data where available | tutorial plot timings | #73, #117, #121 |
 | `plotcal` | partial | `casa-calibration` | `calibrate` diagnostic plots | CASA task-name compatibility is not a target; VLA pages need gain/bandpass/fluxscale diagnostic plot presets and export parity | CASA `plotcal` plots or exported caltable plot data where available | calibration plot timing on VLA tutorial caltables | #122, #128 |
 | `tclean` MFS | partial/available | `casa-imaging`, `casars-imager` | `casars-imager`; every surface takes the imager catalog parameters (protocol v12), including automask, `savemodel=modelcolumn`, supported MFS/Hogbom/multiscale `outlierfile` controls, and the `parallel`, `backend` and `gridprecision` execution controls | broader tutorial parameter mapping; mosaic MT-MFS beyond one MS, `nterms <= 2`, no W term, user masks, and natural/uniform/Briggs weighting; wider outlier variants such as mask images and cubes | CASA `tclean` image products plus MODEL_DATA comparisons; first-slice mosaic MT-MFS compares Taylor-term image/residual/PSF/model/sumwt/PB/pbcor/alpha products | existing GLENDENNING medium/large workload manifests, performance ledger, imager parity scripts, and tutorial timings | #117, #127, #167, #175, #196, #219, #220, #262, #343, #352 |
 | `tclean` cube / spectral | partial | `casa-imaging`, `casars-imager` | `casars-imager`; every surface takes the imager catalog parameters (protocol v12), including automask and `parallel`; memory is admitted from the host, and a cube that does not fit runs in waves | cube seam coverage, spectral transform integration, and full-scale mosaic cube gridding for Antennae Band 7 line products | CASA `tclean` cube outputs plus read-ahead/serial-vs-parallel product equivalence | GLENDENNING medium/large cube/cubedata/mosaic workloads with source-read, overlap, bandwidth, and wall-time telemetry | #56, #74, #76, #119, #123, #161, #167, #343 |
@@ -129,9 +129,8 @@ Correctness:
 Performance:
 
 - Record timings per vertical for CLI/app path and Python path where exposed.
-- Use existing benchmark scripts when available:
-  - `scripts/bench-calibrate-vs-casa.sh`
-  - `scripts/bench-msexplore-vs-casa.sh`
+- Use existing benchmark scripts when available, such as
+  `scripts/bench-calibrate-vs-casa.sh`.
 - Add tutorial-specific timing scripts only in the wave that implements the
   relevant functionality.
 - For imaging-performance waves, reuse the checked-in GLENDENNING medium/large

@@ -10,7 +10,7 @@ from .model import SectionManifest
 
 def render_markdown(manifest: SectionManifest, result: dict[str, Any]) -> str:
     rows = []
-    for name in ("casa", "cli", "python", "tui", "gui"):
+    for name in ("casa", "cli", "python"):
         surface = result["surfaces"].get(name)
         if surface is None:
             continue
@@ -39,7 +39,7 @@ Result status: `{result['status']}`
 - Review record: `{manifest.evidence['review']}`
 
 This document is generated regression evidence. It does not define a tutorial,
-notebook, provider, or persisted task contract.
+provider, or persisted task contract.
 """
 
 

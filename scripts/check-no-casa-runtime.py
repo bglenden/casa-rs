@@ -15,8 +15,8 @@ It fails when:
   package (so every launched program is covered by the source scan below);
 - shipped code mentions `casatasks`, `casatools`, `mpicasa`, or a hard-coded
   CASA install (`CASA.app` or a local CASA build environment) on a code line:
-  non-test Rust and scripts under
-  `crates/*/src`, the `casars` Python package, and `apps/*/Sources` Swift.
+  non-test Rust and scripts under `crates/*/src` and the `casars` Python
+  package.
 
 Test code is exempt: `tests/` directories, `tests.rs` / `*_tests.rs` files,
 inline `#[cfg(test)] mod ...` blocks, and the dev-only `casa-test-support`
@@ -144,8 +144,8 @@ def production_lines(path: Path) -> list[tuple[int, str]]:
     return kept
 
 
-# Shipped non-Rust sources: scripts embedded in crates (e.g. via include_str!),
-# the casars Python package, and the macOS app. Value is the comment prefix.
+# Shipped non-Rust sources: scripts embedded in crates (e.g. via include_str!)
+# and the casars Python package. Value is the comment prefix.
 SCRIPT_COMMENT_PREFIX = {".py": "#", ".sh": "#", ".js": "//", ".mjs": "//", ".ts": "//"}
 
 
@@ -165,9 +165,6 @@ def shipped_sources() -> list[tuple[Path, list[tuple[int, str]], str]]:
                 continue
             lines = path.read_text(encoding="utf-8").splitlines()
             sources.append((path, list(enumerate(lines, start=1)), prefix))
-    for path in sorted((REPO_ROOT / "apps").glob("*/Sources/**/*.swift")):
-        lines = path.read_text(encoding="utf-8").splitlines()
-        sources.append((path, list(enumerate(lines, start=1)), "//"))
     return sources
 
 

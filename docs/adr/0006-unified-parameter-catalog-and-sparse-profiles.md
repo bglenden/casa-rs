@@ -4,7 +4,9 @@ Status: accepted
 Date: 2026-07-09
 Truth class: normative
 Supersedes:
-Superseded by:
+Superseded by: ADR-0017, in part (session surfaces, session Last handling and
+the TUI and GUI consumers were removed on 2026-10-20; the parameter catalog
+and sparse task profiles stand)
 
 ## Context
 

@@ -94,15 +94,12 @@ def measurement_set_plot(
     avgspw: bool = False,
     scalar: bool = False,
     iteraxis: str | None = None,
-    width: int = 1200,
-    height: int = 800,
     max_plot_points: int = 100_000,
 ) -> MeasurementSetPlotData:
     """Return editable numeric plot data from the canonical Rust MS planner.
 
-    This is an in-process data-object operation, not a task invocation. It uses
-    the same typed Rust plot document projected into Swift and other frontends;
-    no rendered image or provider JSON protocol is read by Python.
+    This is an in-process data-object operation, not a task invocation. Rust
+    builds a typed plot document; render it with :func:`plot_matplotlib`.
     """
 
     api = _frontend()
@@ -160,8 +157,6 @@ def measurement_set_plot(
         avgspw=avgspw,
         scalar=scalar,
         iteraxis=iteraxis,
-        width=width,
-        height=height,
         max_plot_points=max_plot_points,
     )
     try:
