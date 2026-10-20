@@ -28,7 +28,6 @@ pub mod cli;
 pub mod task_contract;
 
 use std::fmt;
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -37,11 +36,7 @@ use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::quanta::{MvAngle, MvTime};
 use casa_types::{ArrayValue, Complex64, ScalarValue, Value};
-use image::{DynamicImage, ImageFormat, RgbImage};
 use ndarray::{Ix1, Ix2};
-use plotters::prelude::*;
-use plotters::style::text_anchor::{HPos, Pos, VPos};
-use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, Pt, RawImage, XObjectTransform};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -52,9 +47,8 @@ use crate::columns::{
 use crate::derived::engine::MsCalEngine;
 use crate::listobs::{self, ListObsOptions, ListObsSummary, ListObsUvCoverage};
 use crate::plot::{
-    ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotRenderStyle,
-    ListObsPlotSpec, ListObsPlotTheme, build_listobs_plot_payload_from_summary,
-    build_listobs_uv_plot_payload, export_listobs_plot,
+    ListObsPlotKind, ListObsPlotPayload, ListObsPlotSpec, build_listobs_plot_payload_from_summary,
+    build_listobs_uv_plot_payload,
 };
 use crate::selection::parser::parse_correlation_selector;
 use crate::selection::resolve_row_indices_with_system_budget;
@@ -66,9 +60,7 @@ use crate::subtables::data_description::MsDataDescription;
 use crate::subtables::polarization::MsPolarization;
 use crate::{MeasurementSet, MeasurementSetSummaryOutputFormat, MsSelection};
 
-const EXPORT_DPI: f32 = 72.0;
 const AVG_TIME_BUCKET_EPSILON_SECONDS: f64 = 0.002;
-type BitmapArea<'a> = DrawingArea<BitMapBackend<'a>, plotters::coord::Shift>;
 
 /// The `tracing` target of the visibility-scatter timing (`debug`).
 const MSEXPLORE_TIMING: &str = "casa_ms::msexplore_timing";
@@ -120,40 +112,6 @@ impl VisibilityScatterTiming {
             self.point_push.as_millis()
         );
     }
-}
-
-struct ScatterPanelAxes<'a> {
-    x_axis: MsAxis,
-    y_axis: MsAxis,
-    secondary_y_axis: Option<MsAxis>,
-    x_label: &'a str,
-    y_label: &'a str,
-    secondary_y_label: Option<&'a str>,
-}
-
-struct ScatterPanelBounds {
-    fixed_x_bounds: Option<(f64, f64)>,
-    fixed_y_bounds: Option<(f64, f64)>,
-    secondary_fixed_y_bounds: Option<(f64, f64)>,
-    bounds_override: Option<(f64, f64, f64, f64)>,
-}
-
-struct ScatterPanelPresentation<'a> {
-    panel_title: Option<&'a str>,
-    showlegend: bool,
-    legend_position: MsLegendPosition,
-    showmajorgrid: bool,
-    showminorgrid: bool,
-    symbol_size_px: Option<u32>,
-}
-
-struct ScatterPanelRenderContext<'a> {
-    axes: ScatterPanelAxes<'a>,
-    bounds: ScatterPanelBounds,
-    series: &'a [MsScatterSeries],
-    presentation: ScatterPanelPresentation<'a>,
-    theme: ListObsPlotTheme,
-    style: ListObsPlotRenderStyle,
 }
 
 /// Stable preset identifiers for common MeasurementSet plots.
@@ -742,14 +700,13 @@ impl fmt::Display for MsColorAxis {
 }
 
 /// Plot export format for `msexplore`.
+///
+/// The only format is the text point manifest. PNG and PDF rasterisation was
+/// removed (#833); Python renders typed plot documents with Matplotlib.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MsExportFormat {
-    /// Raster PNG export.
-    Png,
-    /// Raster-backed single-page PDF export.
-    Pdf,
-    /// Text manifest export for parity tests and automation.
+    /// Text point manifest for parity tests and automation.
     Txt,
 }
 
@@ -757,18 +714,21 @@ impl MsExportFormat {
     /// Parse an export-format token.
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
-            "png" => Ok(Self::Png),
-            "pdf" => Ok(Self::Pdf),
             "txt" => Ok(Self::Txt),
-            other => Err(format!("unsupported msexplore export format {other:?}")),
+            "png" | "pdf" => Err(format!(
+                "msexplore {value} plot export was removed (#833); use --plot-format txt for the \
+                 text point manifest, or render the typed plot document with Matplotlib from \
+                 Python (casars.data)"
+            )),
+            other => Err(format!(
+                "unsupported msexplore export format {other:?}; expected txt"
+            )),
         }
     }
 
     /// Conventional lowercase filename extension.
     pub fn extension(self) -> &'static str {
         match self {
-            Self::Png => "png",
-            Self::Pdf => "pdf",
             Self::Txt => "txt",
         }
     }
@@ -931,13 +891,6 @@ impl MsLegendPosition {
             Self::ExteriorTop => "exteriorTop",
             Self::ExteriorBottom => "exteriorBottom",
         }
-    }
-
-    fn is_exterior(self) -> bool {
-        matches!(
-            self,
-            Self::ExteriorRight | Self::ExteriorLeft | Self::ExteriorTop | Self::ExteriorBottom
-        )
     }
 }
 
@@ -3172,91 +3125,20 @@ pub fn build_msexplore_plot_payload_from_path(
     build_msexplore_plot_payload(&ms, selection, spec)
 }
 
-/// Render one plot payload into an in-memory bitmap.
-pub fn render_msexplore_plot_image(
-    payload: &MsPlotPayload,
-    theme: ListObsPlotTheme,
-    width: u32,
-    height: u32,
-) -> Result<DynamicImage, String> {
-    match payload {
-        MsPlotPayload::ListObs(payload) => {
-            crate::plot::render_listobs_plot_image(payload, theme, width, height)
-        }
-        MsPlotPayload::Scatter(payload) => render_scatter_image(payload, theme, width, height),
-        MsPlotPayload::ScatterGrid(payload) => {
-            render_scatter_grid_image(payload, theme, width, height)
-        }
-        MsPlotPayload::ScatterPage(payload) => {
-            render_scatter_page_image(payload, theme, width, height)
-        }
-    }
-}
-
-/// Export one plot payload as `png`, `pdf`, or `txt`.
-pub fn export_msexplore_plot(
-    payload: &MsPlotPayload,
-    theme: ListObsPlotTheme,
-    output_path: &Path,
-    format: MsExportFormat,
-    width: u32,
-    height: u32,
-) -> Result<(), String> {
-    match (payload, format) {
-        (MsPlotPayload::ListObs(payload), MsExportFormat::Png) => export_listobs_plot(
-            payload,
-            theme,
-            output_path,
-            ListObsPlotExportFormat::Png,
-            width,
-            height,
-        ),
-        (MsPlotPayload::ListObs(payload), MsExportFormat::Pdf) => export_listobs_plot(
-            payload,
-            theme,
-            output_path,
-            ListObsPlotExportFormat::Pdf,
-            width,
-            height,
-        ),
-        (MsPlotPayload::ListObs(payload), MsExportFormat::Txt) => {
-            std::fs::write(output_path, render_listobs_manifest(payload)?)
-                .map_err(|error| error.to_string())
-        }
-        (MsPlotPayload::Scatter(_), MsExportFormat::Txt)
-        | (MsPlotPayload::ScatterGrid(_), MsExportFormat::Txt)
-        | (MsPlotPayload::ScatterPage(_), MsExportFormat::Txt) => {
-            std::fs::write(output_path, render_scatter_manifest(payload)?)
-                .map_err(|error| error.to_string())
-        }
-        (MsPlotPayload::Scatter(payload), MsExportFormat::Png) => {
-            render_scatter_image(payload, theme, width, height)?
-                .save_with_format(output_path, ImageFormat::Png)
-                .map_err(|error| error.to_string())
-        }
-        (MsPlotPayload::ScatterGrid(payload), MsExportFormat::Png) => {
-            render_scatter_grid_image(payload, theme, width, height)?
-                .save_with_format(output_path, ImageFormat::Png)
-                .map_err(|error| error.to_string())
-        }
-        (MsPlotPayload::ScatterPage(payload), MsExportFormat::Png) => {
-            render_scatter_page_image(payload, theme, width, height)?
-                .save_with_format(output_path, ImageFormat::Png)
-                .map_err(|error| error.to_string())
-        }
-        (MsPlotPayload::Scatter(payload), MsExportFormat::Pdf) => {
-            let image = render_scatter_image(payload, theme, width, height)?;
-            export_scatter_pdf(&image, output_path, &payload.title)
-        }
-        (MsPlotPayload::ScatterGrid(payload), MsExportFormat::Pdf) => {
-            let image = render_scatter_grid_image(payload, theme, width, height)?;
-            export_scatter_pdf(&image, output_path, &payload.title)
-        }
-        (MsPlotPayload::ScatterPage(payload), MsExportFormat::Pdf) => {
-            let image = render_scatter_page_image(payload, theme, width, height)?;
-            export_scatter_pdf(&image, output_path, &payload.title)
-        }
-    }
+/// Write one plot payload's text point manifest (`--plot-format txt`).
+///
+/// The manifest is a tab-separated list of the plotted points with `#`
+/// header lines naming the axes, layout and series; the CASA-parity
+/// comparator reads it. PNG and PDF rasterisation was removed (#833):
+/// Python renders the typed plot document with Matplotlib instead.
+pub fn export_msexplore_plot(payload: &MsPlotPayload, output_path: &Path) -> Result<(), String> {
+    let manifest = match payload {
+        MsPlotPayload::ListObs(payload) => render_listobs_manifest(payload)?,
+        MsPlotPayload::Scatter(_)
+        | MsPlotPayload::ScatterGrid(_)
+        | MsPlotPayload::ScatterPage(_) => render_scatter_manifest(payload)?,
+    };
+    std::fs::write(output_path, manifest).map_err(|error| error.to_string())
 }
 
 fn render_scatter_manifest(payload: &MsPlotPayload) -> Result<String, String> {
@@ -6559,1245 +6441,6 @@ where
     })
 }
 
-#[derive(Debug, Clone)]
-struct ScatterLegendEntry {
-    label: String,
-    render_style: ScatterSeriesRenderStyle,
-}
-
-fn reserve_scatter_canvas<'a>(
-    root: &BitmapArea<'a>,
-    title: &str,
-    header_lines: &[String],
-    theme: ListObsPlotTheme,
-    style: ListObsPlotRenderStyle,
-) -> Result<BitmapArea<'a>, String> {
-    let mut body = root.clone();
-    if !header_lines.is_empty() {
-        let line_height = u32::try_from(style.axis_label_font_px())
-            .unwrap_or(0)
-            .saturating_add(6);
-        let header_height = (header_lines.len() as u32)
-            .saturating_mul(line_height)
-            .saturating_add(10);
-        let (header_area, remaining) = body.split_vertically(header_height);
-        draw_scatter_header_lines(&header_area, header_lines, theme, style)?;
-        body = remaining;
-    }
-    if !title.trim().is_empty() {
-        let title_height = u32::try_from(style.axis_desc_font_px())
-            .unwrap_or(0)
-            .saturating_add(14);
-        let (title_area, remaining) = body.split_vertically(title_height);
-        draw_scatter_title(&title_area, title, theme, style)?;
-        body = remaining;
-    }
-    Ok(body)
-}
-
-fn draw_scatter_header_lines(
-    area: &BitmapArea<'_>,
-    header_lines: &[String],
-    theme: ListObsPlotTheme,
-    style: ListObsPlotRenderStyle,
-) -> Result<(), String> {
-    let font = ("sans-serif", style.axis_label_font_px())
-        .into_font()
-        .color(&rgb(theme.label));
-    let line_height = style.axis_label_font_px().saturating_add(6);
-    for (index, line) in header_lines.iter().enumerate() {
-        area.draw(&Text::new(
-            line.clone(),
-            (14, 8 + (index as i32) * line_height),
-            font.clone(),
-        ))
-        .map_err(|error| error.to_string())?;
-    }
-    let (width, height) = area.dim_in_pixel();
-    if width > 1 && height > 1 {
-        area.draw(&PathElement::new(
-            vec![(0, height as i32 - 1), (width as i32, height as i32 - 1)],
-            ShapeStyle::from(&rgb(theme.grid)).stroke_width(1),
-        ))
-        .map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-fn draw_scatter_title(
-    area: &BitmapArea<'_>,
-    title: &str,
-    theme: ListObsPlotTheme,
-    style: ListObsPlotRenderStyle,
-) -> Result<(), String> {
-    let (width, height) = area.dim_in_pixel();
-    let font = ("sans-serif", style.axis_desc_font_px().saturating_add(2))
-        .into_font()
-        .color(&rgb(theme.label))
-        .pos(Pos::new(HPos::Center, VPos::Center));
-    area.draw(&Text::new(
-        title.to_string(),
-        (width as i32 / 2, height as i32 / 2),
-        font,
-    ))
-    .map_err(|error| error.to_string())
-}
-
-fn collect_scatter_legend_entries(
-    series: &[MsScatterSeries],
-    primary_y_axis: MsAxis,
-    secondary_y_axis: Option<MsAxis>,
-    theme: ListObsPlotTheme,
-) -> Vec<ScatterLegendEntry> {
-    series
-        .iter()
-        .map(|series| ScatterLegendEntry {
-            label: series.label.clone(),
-            render_style: scatter_series_style(series, primary_y_axis, secondary_y_axis, theme),
-        })
-        .collect()
-}
-
-fn split_scatter_panel_for_legend<'a>(
-    root: &BitmapArea<'a>,
-    showlegend: bool,
-    legend_position: MsLegendPosition,
-    legend_count: usize,
-    style: ListObsPlotRenderStyle,
-) -> (BitmapArea<'a>, Option<BitmapArea<'a>>) {
-    if !showlegend || legend_count <= 1 || !legend_position.is_exterior() {
-        return (root.clone(), None);
-    }
-
-    let (width, height) = root.dim_in_pixel();
-    match legend_position {
-        MsLegendPosition::ExteriorRight => {
-            let legend_width = (width.saturating_mul(26) / 100).clamp(160, 360);
-            let split_at = width.saturating_sub(legend_width.max(1));
-            let (plot_area, legend_area) = root.split_horizontally(split_at.max(1));
-            (plot_area, Some(legend_area))
-        }
-        MsLegendPosition::ExteriorLeft => {
-            let legend_width = (width.saturating_mul(26) / 100).clamp(160, 360);
-            let (legend_area, plot_area) = root.split_horizontally(legend_width.max(1));
-            (plot_area, Some(legend_area))
-        }
-        MsLegendPosition::ExteriorTop => {
-            let legend_height = u32::try_from(style.axis_label_font_px())
-                .unwrap_or(0)
-                .saturating_add(10)
-                .saturating_mul(2)
-                .clamp(42, 96);
-            let (legend_area, plot_area) = root.split_vertically(legend_height.max(1));
-            (plot_area, Some(legend_area))
-        }
-        MsLegendPosition::ExteriorBottom => {
-            let legend_height = u32::try_from(style.axis_label_font_px())
-                .unwrap_or(0)
-                .saturating_add(10)
-                .saturating_mul(2)
-                .clamp(42, 96);
-            let split_at = height.saturating_sub(legend_height.max(1));
-            let (plot_area, legend_area) = root.split_vertically(split_at.max(1));
-            (plot_area, Some(legend_area))
-        }
-        _ => (root.clone(), None),
-    }
-}
-
-fn render_external_scatter_legend(
-    area: &BitmapArea<'_>,
-    legend_entries: &[ScatterLegendEntry],
-    legend_position: MsLegendPosition,
-    theme: ListObsPlotTheme,
-    style: ListObsPlotRenderStyle,
-) -> Result<(), String> {
-    let (width, height) = area.dim_in_pixel();
-    let font = external_scatter_legend_text_style(theme, style);
-    let marker_radius = style.point_radius_px().saturating_sub(1).max(3);
-    let line_height = style.axis_label_font_px().saturating_add(8);
-    let padding = 12i32;
-
-    let draw_marker = |area: &BitmapArea<'_>,
-                       x: i32,
-                       y: i32,
-                       marker: ScatterMarker,
-                       color: RGBColor|
-     -> Result<(), String> {
-        match marker {
-            ScatterMarker::FilledCircle => area
-                .draw(&Circle::new((x, y), marker_radius, color.filled()))
-                .map_err(|error| error.to_string()),
-            ScatterMarker::HollowSquare => area
-                .draw(&Rectangle::new(
-                    [
-                        (x - marker_radius, y - marker_radius),
-                        (x + marker_radius, y + marker_radius),
-                    ],
-                    ShapeStyle::from(&color).stroke_width(2),
-                ))
-                .map_err(|error| error.to_string()),
-        }
-    };
-
-    match legend_position {
-        MsLegendPosition::ExteriorLeft | MsLegendPosition::ExteriorRight => {
-            for (index, entry) in legend_entries.iter().enumerate() {
-                let baseline = padding + (index as i32) * line_height;
-                if baseline > height as i32 - padding {
-                    break;
-                }
-                draw_marker(
-                    area,
-                    padding + marker_radius,
-                    baseline,
-                    entry.render_style.marker,
-                    entry.render_style.color,
-                )?;
-                area.draw(&Text::new(
-                    entry.label.clone(),
-                    (padding + marker_radius * 2 + 8, baseline - marker_radius),
-                    font.clone(),
-                ))
-                .map_err(|error| error.to_string())?;
-            }
-        }
-        MsLegendPosition::ExteriorTop | MsLegendPosition::ExteriorBottom => {
-            let mut x = padding;
-            let mut y = padding + marker_radius;
-            for entry in legend_entries {
-                let estimated_width = (entry.label.len() as i32)
-                    .saturating_mul(style.axis_label_font_px() / 2)
-                    .saturating_add(marker_radius * 2 + 24);
-                if x + estimated_width > width as i32 - padding {
-                    x = padding;
-                    y += line_height;
-                    if y > height as i32 - padding {
-                        break;
-                    }
-                }
-                draw_marker(
-                    area,
-                    x + marker_radius,
-                    y,
-                    entry.render_style.marker,
-                    entry.render_style.color,
-                )?;
-                area.draw(&Text::new(
-                    entry.label.clone(),
-                    (x + marker_radius * 2 + 8, y - marker_radius),
-                    font.clone(),
-                ))
-                .map_err(|error| error.to_string())?;
-                x += estimated_width;
-            }
-        }
-        _ => {}
-    }
-
-    if width > 1 && height > 1 {
-        area.draw(&Rectangle::new(
-            [(0, 0), (width as i32 - 1, height as i32 - 1)],
-            ShapeStyle::from(&rgb(theme.grid)).stroke_width(1),
-        ))
-        .map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-fn render_scatter_image(
-    payload: &MsScatterPlotPayload,
-    theme: ListObsPlotTheme,
-    width: u32,
-    height: u32,
-) -> Result<DynamicImage, String> {
-    #[cfg(not(target_os = "macos"))]
-    crate::plot::ensure_non_macos_plot_font()?;
-
-    if width == 0 || height == 0 {
-        return Err("plot size must be non-zero".to_string());
-    }
-    let style = ListObsPlotRenderStyle::for_bitmap_size(width, height);
-    let mut buffer = vec![0u8; (width as usize) * (height as usize) * 3];
-    let backend = BitMapBackend::with_buffer(&mut buffer, (width, height));
-    let root = backend.into_drawing_area();
-    root.fill(&rgb(theme.background))
-        .map_err(|error| error.to_string())?;
-    let plot_root =
-        reserve_scatter_canvas(&root, &payload.title, &payload.header_lines, theme, style)?;
-    render_scatter_panel(
-        &plot_root,
-        ScatterPanelRenderContext {
-            axes: ScatterPanelAxes {
-                x_axis: payload.x_axis,
-                y_axis: payload.y_axis,
-                secondary_y_axis: payload.secondary_y_axis,
-                x_label: &payload.x_label,
-                y_label: &payload.y_label,
-                secondary_y_label: payload.secondary_y_label.as_deref(),
-            },
-            bounds: ScatterPanelBounds {
-                fixed_x_bounds: payload.fixed_x_bounds,
-                fixed_y_bounds: payload.fixed_y_bounds,
-                secondary_fixed_y_bounds: payload.secondary_fixed_y_bounds,
-                bounds_override: None,
-            },
-            series: &payload.series,
-            presentation: ScatterPanelPresentation {
-                panel_title: None,
-                showlegend: payload.showlegend,
-                legend_position: payload.legend_position,
-                showmajorgrid: payload.showmajorgrid,
-                showminorgrid: payload.showminorgrid,
-                symbol_size_px: payload.symbol_size_px,
-            },
-            theme,
-            style,
-        },
-    )?;
-    drop(plot_root);
-    root.present().map_err(|error| error.to_string())?;
-    drop(root);
-    let image = RgbImage::from_raw(width, height, buffer)
-        .ok_or_else(|| "failed to assemble rendered plot image".to_string())?;
-    Ok(DynamicImage::ImageRgb8(image))
-}
-
-fn render_scatter_grid_image(
-    payload: &MsScatterGridPayload,
-    theme: ListObsPlotTheme,
-    width: u32,
-    height: u32,
-) -> Result<DynamicImage, String> {
-    #[cfg(not(target_os = "macos"))]
-    crate::plot::ensure_non_macos_plot_font()?;
-
-    if width == 0 || height == 0 {
-        return Err("plot size must be non-zero".to_string());
-    }
-    let style = ListObsPlotRenderStyle::for_bitmap_size(width, height);
-    let mut buffer = vec![0u8; (width as usize) * (height as usize) * 3];
-    let backend = BitMapBackend::with_buffer(&mut buffer, (width, height));
-    let root = backend.into_drawing_area();
-    root.fill(&rgb(theme.background))
-        .map_err(|error| error.to_string())?;
-    let titled =
-        reserve_scatter_canvas(&root, &payload.title, &payload.header_lines, theme, style)?;
-    let areas = titled.split_evenly((payload.gridrows, payload.gridcols));
-    let global_bounds = if payload.share_x_bounds || payload.share_y_bounds {
-        Some(scatter_bounds(
-            payload.panels.iter().flat_map(|panel| {
-                panel
-                    .series
-                    .iter()
-                    .flat_map(|series| series.points.iter().copied())
-            }),
-            payload.fixed_x_bounds,
-            payload.fixed_y_bounds,
-        )?)
-    } else {
-        None
-    };
-    for (area, panel) in areas.iter().zip(payload.panels.iter()) {
-        let local_bounds = scatter_bounds(
-            panel
-                .series
-                .iter()
-                .flat_map(|series| series.points.iter().copied()),
-            payload.fixed_x_bounds,
-            payload.fixed_y_bounds,
-        )?;
-        let resolved_bounds = match global_bounds {
-            Some((global_min_x, global_max_x, global_min_y, global_max_y)) => Some((
-                if payload.share_x_bounds {
-                    global_min_x
-                } else {
-                    local_bounds.0
-                },
-                if payload.share_x_bounds {
-                    global_max_x
-                } else {
-                    local_bounds.1
-                },
-                if payload.share_y_bounds {
-                    global_min_y
-                } else {
-                    local_bounds.2
-                },
-                if payload.share_y_bounds {
-                    global_max_y
-                } else {
-                    local_bounds.3
-                },
-            )),
-            None => Some(local_bounds),
-        };
-        render_scatter_panel(
-            area,
-            ScatterPanelRenderContext {
-                axes: ScatterPanelAxes {
-                    x_axis: payload.x_axis,
-                    y_axis: payload.y_axis,
-                    secondary_y_axis: None,
-                    x_label: &payload.x_label,
-                    y_label: &payload.y_label,
-                    secondary_y_label: None,
-                },
-                bounds: ScatterPanelBounds {
-                    fixed_x_bounds: payload.fixed_x_bounds,
-                    fixed_y_bounds: payload.fixed_y_bounds,
-                    secondary_fixed_y_bounds: None,
-                    bounds_override: resolved_bounds,
-                },
-                series: &panel.series,
-                presentation: ScatterPanelPresentation {
-                    panel_title: Some(&panel.label),
-                    showlegend: payload.showlegend,
-                    legend_position: payload.legend_position,
-                    showmajorgrid: payload.showmajorgrid,
-                    showminorgrid: payload.showminorgrid,
-                    symbol_size_px: payload.symbol_size_px,
-                },
-                theme,
-                style,
-            },
-        )?;
-    }
-    root.present().map_err(|error| error.to_string())?;
-    drop(areas);
-    drop(titled);
-    drop(root);
-    let image = RgbImage::from_raw(width, height, buffer)
-        .ok_or_else(|| "failed to assemble rendered plot image".to_string())?;
-    Ok(DynamicImage::ImageRgb8(image))
-}
-
-#[derive(Debug, Clone)]
-struct ScatterPageCellRender {
-    rowindex: usize,
-    colindex: usize,
-    x_axis: MsAxis,
-    y_axis: MsAxis,
-    secondary_y_axis: Option<MsAxis>,
-    x_label: String,
-    y_label: String,
-    secondary_y_label: Option<String>,
-    fixed_x_bounds: Option<(f64, f64)>,
-    fixed_y_bounds: Option<(f64, f64)>,
-    secondary_fixed_y_bounds: Option<(f64, f64)>,
-    showlegend: bool,
-    legend_position: MsLegendPosition,
-    showmajorgrid: bool,
-    showminorgrid: bool,
-    symbol_size_px: Option<u32>,
-    title: String,
-    series: Vec<MsScatterSeries>,
-}
-
-fn resolve_scatter_page_cells(
-    payload: &MsScatterPagePayload,
-) -> Result<Vec<ScatterPageCellRender>, String> {
-    let mut cells =
-        std::collections::BTreeMap::<(usize, usize), Vec<&MsScatterPageItemPayload>>::new();
-    for item in &payload.items {
-        cells
-            .entry((item.rowindex, item.colindex))
-            .or_default()
-            .push(item);
-    }
-
-    let mut resolved = Vec::with_capacity(cells.len());
-    for ((rowindex, colindex), mut items) in cells {
-        items.sort_by_key(|item| item.plotindex);
-        let first = &items[0].plot;
-        let legend_position = first.legend_position;
-        for item in items.iter().skip(1) {
-            if item.plot.x_axis != first.x_axis
-                || item.plot.y_axis != first.y_axis
-                || item.plot.secondary_y_axis != first.secondary_y_axis
-            {
-                return Err(format!(
-                    "scatter page cell ({rowindex}, {colindex}) mixes incompatible axes; overplots currently require matching x/y axis configurations"
-                ));
-            }
-            if item.plot.fixed_x_bounds != first.fixed_x_bounds
-                || item.plot.fixed_y_bounds != first.fixed_y_bounds
-                || item.plot.secondary_fixed_y_bounds != first.secondary_fixed_y_bounds
-            {
-                return Err(format!(
-                    "scatter page cell ({rowindex}, {colindex}) mixes incompatible fixed axis bounds"
-                ));
-            }
-            if item.plot.legend_position != legend_position {
-                return Err(format!(
-                    "scatter page cell ({rowindex}, {colindex}) mixes incompatible legend positions"
-                ));
-            }
-        }
-
-        let overplotted = items.len() > 1;
-        let mut title_parts = Vec::<String>::new();
-        let mut series = Vec::<MsScatterSeries>::new();
-        let showlegend = items.iter().any(|item| item.plot.showlegend);
-        let showmajorgrid = items.iter().any(|item| item.plot.showmajorgrid);
-        let showminorgrid = items.iter().any(|item| item.plot.showminorgrid);
-        let symbol_size_px = first.symbol_size_px;
-
-        for item in items {
-            let item_title = if item.plot.title.trim().is_empty() {
-                format!("Plot {}", item.plotindex)
-            } else {
-                item.plot.title.clone()
-            };
-            let child_series_count = item.plot.series.len();
-            if !title_parts.iter().any(|part| part == &item_title) {
-                title_parts.push(item_title.clone());
-            }
-            for child_series in &item.plot.series {
-                let (label, color_group) = if overplotted {
-                    let label = if child_series_count == 1 {
-                        item_title.clone()
-                    } else {
-                        format!("{} · {}", item_title, child_series.label)
-                    };
-                    (
-                        label,
-                        format!(
-                            "plot{}::{}::{}",
-                            item.plotindex, item_title, child_series.color_group
-                        ),
-                    )
-                } else {
-                    (child_series.label.clone(), child_series.color_group.clone())
-                };
-                series.push(MsScatterSeries {
-                    label,
-                    color_group,
-                    y_axis: child_series.y_axis,
-                    points: child_series.points.clone(),
-                    provenance: child_series.provenance.clone(),
-                });
-            }
-        }
-
-        resolved.push(ScatterPageCellRender {
-            rowindex,
-            colindex,
-            x_axis: first.x_axis,
-            y_axis: first.y_axis,
-            secondary_y_axis: first.secondary_y_axis,
-            x_label: first.x_label.clone(),
-            y_label: first.y_label.clone(),
-            secondary_y_label: first.secondary_y_label.clone(),
-            fixed_x_bounds: first.fixed_x_bounds,
-            fixed_y_bounds: first.fixed_y_bounds,
-            secondary_fixed_y_bounds: first.secondary_fixed_y_bounds,
-            showlegend,
-            legend_position,
-            showmajorgrid,
-            showminorgrid,
-            symbol_size_px,
-            title: title_parts.join(", "),
-            series,
-        });
-    }
-    resolved.sort_by_key(|cell| (cell.rowindex, cell.colindex));
-    Ok(resolved)
-}
-
-fn render_scatter_page_image(
-    payload: &MsScatterPagePayload,
-    theme: ListObsPlotTheme,
-    width: u32,
-    height: u32,
-) -> Result<DynamicImage, String> {
-    #[cfg(not(target_os = "macos"))]
-    crate::plot::ensure_non_macos_plot_font()?;
-
-    if width == 0 || height == 0 {
-        return Err("plot size must be non-zero".to_string());
-    }
-    let style = ListObsPlotRenderStyle::for_bitmap_size(width, height);
-    let mut buffer = vec![0u8; (width as usize) * (height as usize) * 3];
-    let backend = BitMapBackend::with_buffer(&mut buffer, (width, height));
-    let root = backend.into_drawing_area();
-    root.fill(&rgb(theme.background))
-        .map_err(|error| error.to_string())?;
-    let titled =
-        reserve_scatter_canvas(&root, &payload.title, &payload.header_lines, theme, style)?;
-    let areas = titled.split_evenly((payload.gridrows, payload.gridcols));
-    let cells = resolve_scatter_page_cells(payload)?;
-    let global_bounds = if payload.exprange == MsPageExportRange::All {
-        Some(scatter_bounds(
-            cells.iter().flat_map(|cell| {
-                cell.series
-                    .iter()
-                    .flat_map(|series| series.points.iter().copied())
-            }),
-            None,
-            None,
-        )?)
-    } else {
-        None
-    };
-    for cell in &cells {
-        if cell.rowindex >= payload.gridrows || cell.colindex >= payload.gridcols {
-            return Err(format!(
-                "scatter page cell ({}, {}) is placed outside the {}x{} page grid",
-                cell.rowindex, cell.colindex, payload.gridrows, payload.gridcols
-            ));
-        }
-        let area_index = cell.rowindex * payload.gridcols + cell.colindex;
-        let area = areas.get(area_index).ok_or_else(|| {
-            format!(
-                "scatter page cell ({}, {}) could not resolve drawing area {}",
-                cell.rowindex, cell.colindex, area_index
-            )
-        })?;
-        render_scatter_panel(
-            area,
-            ScatterPanelRenderContext {
-                axes: ScatterPanelAxes {
-                    x_axis: cell.x_axis,
-                    y_axis: cell.y_axis,
-                    secondary_y_axis: cell.secondary_y_axis,
-                    x_label: &cell.x_label,
-                    y_label: &cell.y_label,
-                    secondary_y_label: cell.secondary_y_label.as_deref(),
-                },
-                bounds: ScatterPanelBounds {
-                    fixed_x_bounds: cell.fixed_x_bounds,
-                    fixed_y_bounds: cell.fixed_y_bounds,
-                    secondary_fixed_y_bounds: cell.secondary_fixed_y_bounds,
-                    bounds_override: global_bounds,
-                },
-                series: &cell.series,
-                presentation: ScatterPanelPresentation {
-                    panel_title: Some(&cell.title),
-                    showlegend: cell.showlegend,
-                    legend_position: cell.legend_position,
-                    showmajorgrid: cell.showmajorgrid,
-                    showminorgrid: cell.showminorgrid,
-                    symbol_size_px: cell.symbol_size_px,
-                },
-                theme,
-                style,
-            },
-        )?;
-    }
-    root.present().map_err(|error| error.to_string())?;
-    drop(areas);
-    drop(titled);
-    drop(root);
-    let image = RgbImage::from_raw(width, height, buffer)
-        .ok_or_else(|| "failed to assemble rendered plot image".to_string())?;
-    Ok(DynamicImage::ImageRgb8(image))
-}
-
-fn export_scatter_pdf(image: &DynamicImage, output_path: &Path, title: &str) -> Result<(), String> {
-    let mut png_bytes = Vec::new();
-    image
-        .write_to(&mut Cursor::new(&mut png_bytes), ImageFormat::Png)
-        .map_err(|error| error.to_string())?;
-    let raw = RawImage::decode_from_bytes(&png_bytes, &mut Vec::new())
-        .map_err(|error| error.to_string())?;
-
-    let page_width_mm = Mm((image.width() as f32) * 25.4 / EXPORT_DPI);
-    let page_height_mm = Mm((image.height() as f32) * 25.4 / EXPORT_DPI);
-
-    let mut document = PdfDocument::new(title);
-    let image_id = document.add_image(&raw);
-    let page = PdfPage::new(
-        page_width_mm,
-        page_height_mm,
-        vec![Op::UseXobject {
-            id: image_id,
-            transform: XObjectTransform {
-                translate_x: Some(Pt(0.0)),
-                translate_y: Some(Pt(0.0)),
-                rotate: None,
-                scale_x: None,
-                scale_y: None,
-                dpi: Some(EXPORT_DPI),
-            },
-        }],
-    );
-    let bytes = document
-        .with_pages(vec![page])
-        .save(&PdfSaveOptions::default(), &mut Vec::new());
-    std::fs::write(output_path, bytes).map_err(|error| error.to_string())
-}
-
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
-fn render_scatter_panel(
-    root: &BitmapArea<'_>,
-    context: ScatterPanelRenderContext<'_>,
-) -> Result<(), String> {
-    let ScatterPanelRenderContext {
-        axes,
-        bounds,
-        series,
-        presentation,
-        theme,
-        style,
-    } = context;
-    let ScatterPanelAxes {
-        x_axis,
-        y_axis,
-        secondary_y_axis,
-        x_label,
-        y_label,
-        secondary_y_label,
-    } = axes;
-    let ScatterPanelBounds {
-        fixed_x_bounds,
-        fixed_y_bounds,
-        secondary_fixed_y_bounds,
-        bounds_override,
-    } = bounds;
-    let ScatterPanelPresentation {
-        panel_title,
-        showlegend,
-        legend_position,
-        showmajorgrid,
-        showminorgrid,
-        symbol_size_px,
-    } = presentation;
-
-    let legend_entries = collect_scatter_legend_entries(series, y_axis, secondary_y_axis, theme);
-    let (chart_root, legend_area) = split_scatter_panel_for_legend(
-        root,
-        showlegend,
-        legend_position,
-        legend_entries.len(),
-        style,
-    );
-    let mut chart_builder = ChartBuilder::on(&chart_root);
-    chart_builder
-        .margin(style.margin_px())
-        .x_label_area_size(style.label_area_px())
-        .y_label_area_size(style.wide_y_label_area_px());
-    if secondary_y_axis.is_some() {
-        chart_builder.right_y_label_area_size(style.wide_y_label_area_px());
-    }
-    if let Some(panel_title) = panel_title {
-        chart_builder.caption(panel_title, ("sans-serif", style.axis_desc_font_px()));
-    }
-    let point_radius = symbol_size_px
-        .map(|size| i32::try_from(size).unwrap_or(i32::MAX).max(1))
-        .unwrap_or_else(|| style.point_radius_px().saturating_sub(1).max(3));
-    if let Some(secondary_y_axis) = secondary_y_axis {
-        let primary_axis_label_color =
-            scatter_axis_color(y_axis, y_axis, Some(secondary_y_axis), theme);
-        let secondary_axis_label_color =
-            scatter_axis_color(secondary_y_axis, y_axis, Some(secondary_y_axis), theme);
-        let primary_series = series
-            .iter()
-            .filter(|series| series.y_axis == y_axis)
-            .collect::<Vec<_>>();
-        let secondary_series = series
-            .iter()
-            .filter(|series| series.y_axis == secondary_y_axis)
-            .collect::<Vec<_>>();
-        let (min_x, max_x) = axis_bounds(
-            series
-                .iter()
-                .flat_map(|series| series.points.iter().map(|(x, _)| *x)),
-            fixed_x_bounds,
-        )?;
-        let (min_y, max_y) = axis_bounds(
-            primary_series
-                .iter()
-                .flat_map(|series| series.points.iter().map(|(_, y)| *y)),
-            fixed_y_bounds,
-        )?;
-        let (secondary_min_y, secondary_max_y) = axis_bounds(
-            secondary_series
-                .iter()
-                .flat_map(|series| series.points.iter().map(|(_, y)| *y)),
-            secondary_fixed_y_bounds,
-        )?;
-        let x_offset = if x_axis == MsAxis::Time {
-            scan_timeline_axis_offset(min_x, max_x)
-        } else {
-            0.0
-        };
-        let rendered_x_label = if x_offset == 0.0 {
-            x_label.to_string()
-        } else {
-            format!("Time (MJD seconds - {:.0})", x_offset)
-        };
-        let x_span = (max_x - min_x).abs();
-        let y_span = (max_y - min_y).abs();
-        let secondary_y_span = (secondary_max_y - secondary_min_y).abs();
-        let x_range = (min_x - x_offset)..(max_x - x_offset);
-        let x_label_formatter = |value: &f64| format_numeric_tick(*value, x_span);
-        let y_label_formatter = |value: &f64| format_numeric_tick(*value, y_span);
-        let secondary_y_label_formatter =
-            |value: &f64| format_numeric_tick(*value, secondary_y_span);
-
-        let mut chart = chart_builder
-            .build_cartesian_2d(x_range.clone(), min_y..max_y)
-            .map_err(|error| error.to_string())?
-            .set_secondary_coord(x_range, secondary_min_y..secondary_max_y);
-
-        let mut mesh = chart.configure_mesh();
-        mesh.x_desc(&rendered_x_label)
-            .y_desc(y_label)
-            .axis_desc_style(
-                ("sans-serif", style.axis_desc_font_px())
-                    .into_font()
-                    .color(&rgb(theme.axis)),
-            )
-            .axis_style(rgb(theme.axis))
-            .x_label_style(
-                ("sans-serif", style.axis_label_font_px())
-                    .into_font()
-                    .color(&rgb(theme.label)),
-            )
-            .y_label_style(
-                ("sans-serif", style.axis_label_font_px())
-                    .into_font()
-                    .color(&primary_axis_label_color),
-            )
-            .x_labels(6)
-            .y_labels(6)
-            .x_label_formatter(&x_label_formatter)
-            .y_label_formatter(&y_label_formatter);
-        if !showmajorgrid && !showminorgrid {
-            mesh.disable_mesh();
-        } else {
-            mesh.bold_line_style(if showmajorgrid {
-                ShapeStyle::from(&rgb(theme.grid))
-            } else {
-                ShapeStyle::from(&TRANSPARENT)
-            })
-            .light_line_style(if showminorgrid {
-                rgb(theme.grid).mix(0.55)
-            } else {
-                TRANSPARENT
-            });
-        }
-        mesh.draw().map_err(|error| error.to_string())?;
-
-        let mut secondary_axes = chart.configure_secondary_axes();
-        secondary_axes
-            .y_desc(secondary_y_label.unwrap_or_else(|| secondary_y_axis.display_name()))
-            .axis_desc_style(
-                ("sans-serif", style.axis_desc_font_px())
-                    .into_font()
-                    .color(&secondary_axis_label_color),
-            )
-            .axis_style(secondary_axis_label_color)
-            .label_style(
-                ("sans-serif", style.axis_label_font_px())
-                    .into_font()
-                    .color(&secondary_axis_label_color),
-            )
-            .y_label_formatter(&secondary_y_label_formatter)
-            .draw()
-            .map_err(|error| error.to_string())?;
-
-        for series in secondary_series {
-            let render_style = scatter_series_style(series, y_axis, Some(secondary_y_axis), theme);
-            let drawn = chart
-                .draw_secondary_series(PointSeries::of_element(
-                    series.points.iter().map(|(x, y)| (*x - x_offset, *y)),
-                    point_radius,
-                    render_style.shape_style(),
-                    &|coord, size, draw_style| {
-                        EmptyElement::at(coord)
-                            + Rectangle::new([(-size, -size), (size, size)], draw_style)
-                    },
-                ))
-                .map_err(|error| error.to_string())?;
-            if showlegend {
-                let legend_color = render_style.color;
-                drawn.label(series.label.clone()).legend(move |(x, y)| {
-                    Rectangle::new(
-                        [
-                            (x - point_radius, y - point_radius),
-                            (x + point_radius, y + point_radius),
-                        ],
-                        ShapeStyle::from(&legend_color).stroke_width(2),
-                    )
-                });
-            }
-        }
-        for series in primary_series {
-            let render_style = scatter_series_style(series, y_axis, Some(secondary_y_axis), theme);
-            let drawn = chart
-                .draw_series(PointSeries::of_element(
-                    series.points.iter().map(|(x, y)| (*x - x_offset, *y)),
-                    point_radius,
-                    render_style.shape_style(),
-                    &|coord, size, draw_style| {
-                        EmptyElement::at(coord) + Circle::new((0, 0), size, draw_style)
-                    },
-                ))
-                .map_err(|error| error.to_string())?;
-            if showlegend {
-                let legend_color = render_style.color;
-                drawn
-                    .label(series.label.clone())
-                    .legend(move |(x, y)| Circle::new((x, y), point_radius, legend_color.filled()));
-            }
-        }
-        if showlegend && series.len() > 1 {
-            if legend_position.is_exterior() {
-                if let Some(legend_area) = legend_area.as_ref() {
-                    render_external_scatter_legend(
-                        legend_area,
-                        &legend_entries,
-                        legend_position,
-                        theme,
-                        style,
-                    )?;
-                }
-            } else {
-                chart
-                    .configure_series_labels()
-                    .position(match legend_position {
-                        MsLegendPosition::UpperLeft => SeriesLabelPosition::UpperLeft,
-                        MsLegendPosition::LowerRight => SeriesLabelPosition::LowerRight,
-                        MsLegendPosition::LowerLeft => SeriesLabelPosition::LowerLeft,
-                        _ => SeriesLabelPosition::UpperRight,
-                    })
-                    .background_style(rgb(theme.background).mix(0.92))
-                    .border_style(rgb(theme.axis))
-                    .label_font(internal_scatter_legend_text_style(theme, style))
-                    .draw()
-                    .map_err(|error| error.to_string())?;
-            }
-        }
-        return Ok(());
-    }
-
-    let (min_x, max_x, min_y, max_y) = match bounds_override {
-        Some(bounds) => bounds,
-        None => scatter_bounds(
-            series
-                .iter()
-                .flat_map(|series| series.points.iter().copied()),
-            fixed_x_bounds,
-            fixed_y_bounds,
-        )?,
-    };
-    let x_offset = if x_axis == MsAxis::Time {
-        scan_timeline_axis_offset(min_x, max_x)
-    } else {
-        0.0
-    };
-    let rendered_x_label = if x_offset == 0.0 {
-        x_label.to_string()
-    } else {
-        format!("Time (MJD seconds - {:.0})", x_offset)
-    };
-    let x_span = (max_x - min_x).abs();
-    let y_span = (max_y - min_y).abs();
-    let x_label_formatter = |value: &f64| format_numeric_tick(*value, x_span);
-    let y_label_formatter = |value: &f64| format_numeric_tick(*value, y_span);
-
-    let mut chart = chart_builder
-        .build_cartesian_2d((min_x - x_offset)..(max_x - x_offset), min_y..max_y)
-        .map_err(|error| error.to_string())?;
-    let mut mesh = chart.configure_mesh();
-    mesh.x_desc(&rendered_x_label)
-        .y_desc(y_label)
-        .axis_desc_style(
-            ("sans-serif", style.axis_desc_font_px())
-                .into_font()
-                .color(&rgb(theme.axis)),
-        )
-        .axis_style(rgb(theme.axis))
-        .label_style(
-            ("sans-serif", style.axis_label_font_px())
-                .into_font()
-                .color(&rgb(theme.label)),
-        )
-        .x_labels(6)
-        .y_labels(6)
-        .x_label_formatter(&x_label_formatter)
-        .y_label_formatter(&y_label_formatter);
-    if !showmajorgrid && !showminorgrid {
-        mesh.disable_mesh();
-    } else {
-        mesh.bold_line_style(if showmajorgrid {
-            ShapeStyle::from(&rgb(theme.grid))
-        } else {
-            ShapeStyle::from(&TRANSPARENT)
-        })
-        .light_line_style(if showminorgrid {
-            rgb(theme.grid).mix(0.55)
-        } else {
-            TRANSPARENT
-        });
-    }
-    mesh.draw().map_err(|error| error.to_string())?;
-
-    for series in series {
-        let render_style = scatter_series_style(series, y_axis, None, theme);
-        let drawn = chart
-            .draw_series(PointSeries::of_element(
-                series.points.iter().map(|(x, y)| (*x - x_offset, *y)),
-                point_radius,
-                render_style.shape_style(),
-                &|coord, size, draw_style| {
-                    EmptyElement::at(coord) + Circle::new((0, 0), size, draw_style)
-                },
-            ))
-            .map_err(|error| error.to_string())?;
-        if showlegend {
-            let legend_color = render_style.color;
-            drawn
-                .label(series.label.clone())
-                .legend(move |(x, y)| Circle::new((x, y), point_radius, legend_color.filled()));
-        }
-    }
-    if showlegend && series.len() > 1 {
-        if legend_position.is_exterior() {
-            if let Some(legend_area) = legend_area.as_ref() {
-                render_external_scatter_legend(
-                    legend_area,
-                    &legend_entries,
-                    legend_position,
-                    theme,
-                    style,
-                )?;
-            }
-        } else {
-            chart
-                .configure_series_labels()
-                .position(match legend_position {
-                    MsLegendPosition::UpperLeft => SeriesLabelPosition::UpperLeft,
-                    MsLegendPosition::LowerRight => SeriesLabelPosition::LowerRight,
-                    MsLegendPosition::LowerLeft => SeriesLabelPosition::LowerLeft,
-                    _ => SeriesLabelPosition::UpperRight,
-                })
-                .background_style(rgb(theme.background).mix(0.92))
-                .border_style(rgb(theme.axis))
-                .label_font(internal_scatter_legend_text_style(theme, style))
-                .draw()
-                .map_err(|error| error.to_string())?;
-        }
-    }
-    Ok(())
-}
-
-fn external_scatter_legend_text_style(
-    theme: ListObsPlotTheme,
-    style: ListObsPlotRenderStyle,
-) -> TextStyle<'static> {
-    ("sans-serif", style.axis_label_font_px())
-        .into_font()
-        .color(&rgb(theme.label))
-}
-
-fn internal_scatter_legend_text_style(
-    theme: ListObsPlotTheme,
-    style: ListObsPlotRenderStyle,
-) -> TextStyle<'static> {
-    ("sans-serif", style.axis_label_font_px())
-        .into_font()
-        .color(&rgb(theme.axis))
-}
-
-fn scatter_bounds<I>(
-    points: I,
-    fixed_x_bounds: Option<(f64, f64)>,
-    fixed_y_bounds: Option<(f64, f64)>,
-) -> Result<(f64, f64, f64, f64), String>
-where
-    I: IntoIterator<Item = (f64, f64)>,
-{
-    let (mut min_x, mut max_x, mut min_y, mut max_y) =
-        bounds(points).ok_or_else(|| "scatter plot has no finite points".to_string())?;
-    if let Some((fixed_min, fixed_max)) = fixed_x_bounds {
-        min_x = fixed_min;
-        max_x = fixed_max;
-    } else {
-        (min_x, max_x) = padded_range(min_x, max_x);
-    }
-    if let Some((fixed_min, fixed_max)) = fixed_y_bounds {
-        min_y = fixed_min;
-        max_y = fixed_max;
-    } else {
-        (min_y, max_y) = padded_range(min_y, max_y);
-    }
-    Ok((min_x, max_x, min_y, max_y))
-}
-
-fn axis_bounds<I>(values: I, fixed_bounds: Option<(f64, f64)>) -> Result<(f64, f64), String>
-where
-    I: IntoIterator<Item = f64>,
-{
-    let mut iter = values.into_iter().filter(|value| value.is_finite());
-    let first = iter
-        .next()
-        .ok_or_else(|| "scatter plot has no finite points".to_string())?;
-    let (mut min_value, mut max_value) = (first, first);
-    for value in iter {
-        min_value = min_value.min(value);
-        max_value = max_value.max(value);
-    }
-    Ok(match fixed_bounds {
-        Some(bounds) => bounds,
-        None => padded_range(min_value, max_value),
-    })
-}
-
-fn bounds<I>(points: I) -> Option<(f64, f64, f64, f64)>
-where
-    I: IntoIterator<Item = (f64, f64)>,
-{
-    let mut iter = points
-        .into_iter()
-        .filter(|(x, y)| x.is_finite() && y.is_finite());
-    let (first_x, first_y) = iter.next()?;
-    let mut min_x = first_x;
-    let mut max_x = first_x;
-    let mut min_y = first_y;
-    let mut max_y = first_y;
-    for (x, y) in iter {
-        min_x = min_x.min(x);
-        max_x = max_x.max(x);
-        min_y = min_y.min(y);
-        max_y = max_y.max(y);
-    }
-    Some((min_x, max_x, min_y, max_y))
-}
-
-fn padded_range(min: f64, max: f64) -> (f64, f64) {
-    let span = (max - min).abs();
-    let padding = if span == 0.0 {
-        min.abs().max(max.abs()).max(1.0) * 1e-6
-    } else {
-        span * 0.05
-    };
-    (min - padding, max + padding)
-}
-
-fn scan_timeline_axis_offset(min: f64, max: f64) -> f64 {
-    ((min + max) / 2.0 / 10.0).round() * 10.0
-}
-
-fn format_numeric_tick(value: f64, span: f64) -> String {
-    let decimals = if span >= 1000.0 {
-        0
-    } else if span >= 10.0 {
-        1
-    } else if span >= 1.0 {
-        2
-    } else {
-        4
-    };
-    format!("{value:.decimals$}")
-}
-
-fn palette_color_with_offset(group: &str, theme: ListObsPlotTheme, offset: usize) -> RGBColor {
-    if group == "all" {
-        return rgb(theme.accents[offset % theme.accents.len()]);
-    }
-    let mut hash = 0u64;
-    for byte in group.as_bytes() {
-        hash = hash.wrapping_mul(109).wrapping_add(u64::from(*byte));
-    }
-    rgb(theme.accents[((hash as usize) + offset) % theme.accents.len()])
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ScatterMarker {
-    FilledCircle,
-    HollowSquare,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ScatterSeriesRenderStyle {
-    color: RGBColor,
-    marker: ScatterMarker,
-}
-
-impl ScatterSeriesRenderStyle {
-    fn shape_style(self) -> ShapeStyle {
-        match self.marker {
-            ScatterMarker::FilledCircle => self.color.filled(),
-            ScatterMarker::HollowSquare => ShapeStyle::from(&self.color).stroke_width(2),
-        }
-    }
-}
-
-fn scatter_axis_color(
-    axis: MsAxis,
-    primary_y_axis: MsAxis,
-    secondary_y_axis: Option<MsAxis>,
-    theme: ListObsPlotTheme,
-) -> RGBColor {
-    let offset =
-        if secondary_y_axis.is_some_and(|secondary| axis == secondary && axis != primary_y_axis) {
-            1
-        } else {
-            0
-        };
-    palette_color_with_offset("all", theme, offset)
-}
-
-fn scatter_series_style(
-    series: &MsScatterSeries,
-    primary_y_axis: MsAxis,
-    secondary_y_axis: Option<MsAxis>,
-    theme: ListObsPlotTheme,
-) -> ScatterSeriesRenderStyle {
-    let offset = if secondary_y_axis
-        .is_some_and(|secondary| series.y_axis == secondary && secondary != primary_y_axis)
-    {
-        1
-    } else {
-        0
-    };
-    let marker = if offset == 0 {
-        ScatterMarker::FilledCircle
-    } else {
-        ScatterMarker::HollowSquare
-    };
-    ScatterSeriesRenderStyle {
-        color: palette_color_with_offset(&series.color_group, theme, offset),
-        marker,
-    }
-}
-
-fn rgb(color: [u8; 3]) -> RGBColor {
-    RGBColor(color[0], color[1], color[2])
-}
-
-impl ListObsPlotRenderStyle {
-    fn margin_px(&self) -> u32 {
-        self.margin_px
-    }
-
-    fn label_area_px(&self) -> u32 {
-        self.label_area_px
-    }
-
-    fn wide_y_label_area_px(&self) -> u32 {
-        self.wide_y_label_area_px
-    }
-
-    fn axis_desc_font_px(&self) -> i32 {
-        self.axis_desc_font_px
-    }
-
-    fn axis_label_font_px(&self) -> i32 {
-        self.axis_label_font_px
-    }
-
-    fn point_radius_px(&self) -> i32 {
-        self.point_radius_px
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7811,7 +6454,6 @@ mod tests {
     use casa_types::{RecordField, RecordValue};
     use ndarray::ArrayD;
     use num_complex::Complex32;
-    use plotters::style::Color;
     use tempfile::tempdir;
 
     fn scatter_point_ref(row: usize) -> MsScatterPointRef {
@@ -8446,13 +7088,12 @@ mod tests {
                 .contains("unsupported")
         );
 
-        for (format, raw, extension) in [
-            (MsExportFormat::Png, "png", "png"),
-            (MsExportFormat::Pdf, "pdf", "pdf"),
-            (MsExportFormat::Txt, "txt", "txt"),
-        ] {
-            assert_eq!(MsExportFormat::parse(raw).unwrap(), format);
-            assert_eq!(format.extension(), extension);
+        assert_eq!(MsExportFormat::parse("txt").unwrap(), MsExportFormat::Txt);
+        assert_eq!(MsExportFormat::Txt.extension(), "txt");
+        for removed in ["png", "pdf"] {
+            let error = MsExportFormat::parse(removed).unwrap_err();
+            assert!(error.contains("removed (#833)"), "{error}");
+            assert!(error.contains("--plot-format txt"), "{error}");
         }
         assert!(
             MsExportFormat::parse("jpg")
@@ -8505,17 +7146,16 @@ mod tests {
             assert_eq!(range.to_string(), raw);
         }
 
-        for (position, is_exterior) in [
-            (MsLegendPosition::UpperRight, false),
-            (MsLegendPosition::UpperLeft, false),
-            (MsLegendPosition::LowerRight, false),
-            (MsLegendPosition::LowerLeft, false),
-            (MsLegendPosition::ExteriorRight, true),
-            (MsLegendPosition::ExteriorLeft, true),
-            (MsLegendPosition::ExteriorTop, true),
-            (MsLegendPosition::ExteriorBottom, true),
+        for position in [
+            MsLegendPosition::UpperRight,
+            MsLegendPosition::UpperLeft,
+            MsLegendPosition::LowerRight,
+            MsLegendPosition::LowerLeft,
+            MsLegendPosition::ExteriorRight,
+            MsLegendPosition::ExteriorLeft,
+            MsLegendPosition::ExteriorTop,
+            MsLegendPosition::ExteriorBottom,
         ] {
-            assert_eq!(position.is_exterior(), is_exterior);
             assert_eq!(
                 serde_json::from_str::<MsLegendPosition>(&format!("\"{}\"", position.as_str()))
                     .unwrap(),
@@ -9481,69 +8121,7 @@ mod tests {
     }
 
     #[test]
-    fn dual_axis_series_styles_use_distinct_markers_and_colors() {
-        let theme = ListObsPlotTheme::light();
-        let primary = MsScatterSeries {
-            label: "Amplitude".to_string(),
-            color_group: "all".to_string(),
-            y_axis: MsAxis::Amplitude,
-            points: vec![(0.0, 1.0)],
-            provenance: vec![MsScatterPointRef {
-                row: 0,
-                corr: 0,
-                chan_start: 0,
-                chan_end: 1,
-            }],
-        };
-        let secondary = MsScatterSeries {
-            label: "Phase".to_string(),
-            color_group: "all".to_string(),
-            y_axis: MsAxis::Phase,
-            points: vec![(0.0, 2.0)],
-            provenance: vec![MsScatterPointRef {
-                row: 0,
-                corr: 0,
-                chan_start: 0,
-                chan_end: 1,
-            }],
-        };
-
-        let primary_style =
-            scatter_series_style(&primary, MsAxis::Amplitude, Some(MsAxis::Phase), theme);
-        let secondary_style =
-            scatter_series_style(&secondary, MsAxis::Amplitude, Some(MsAxis::Phase), theme);
-
-        assert_eq!(primary_style.marker, ScatterMarker::FilledCircle);
-        assert_eq!(secondary_style.marker, ScatterMarker::HollowSquare);
-        assert_ne!(primary_style.color, secondary_style.color);
-    }
-
-    #[test]
-    fn internal_legend_text_style_uses_theme_axis_color() {
-        let theme = ListObsPlotTheme::dark();
-        let style = ListObsPlotRenderStyle::for_bitmap_size(1200, 800);
-
-        let text_style = internal_scatter_legend_text_style(theme, style);
-
-        assert_eq!(text_style.color.rgb, rgb(theme.axis).to_backend_color().rgb);
-    }
-
-    #[test]
-    fn zero_span_large_time_axis_uses_local_padding() {
-        let value = 4_304_481_700.0;
-        let (min, max) = padded_range(value, value);
-
-        assert!(min < value);
-        assert!(max > value);
-        assert!(
-            (max - min) < 20_000.0,
-            "unexpectedly wide zero-span padding: {}",
-            max - min
-        );
-    }
-
-    #[test]
-    fn scatter_rendering_covers_dual_axis_and_grid_legend_paths() {
+    fn scatter_manifests_cover_dual_axis_and_grid_payloads() {
         let dual_axis = scatter_plot_payload(
             "Dual Axis Scatter",
             Some(MsAxis::Phase),
@@ -9572,10 +8150,12 @@ mod tests {
                 ),
             ],
         );
-        let image = render_scatter_image(&dual_axis, ListObsPlotTheme::light(), 960, 640)
-            .expect("render dual-axis scatter image");
-        assert_eq!(image.width(), 960);
-        assert_eq!(image.height(), 640);
+        let manifest = render_scatter_manifest(&MsPlotPayload::Scatter(dual_axis))
+            .expect("dual-axis scatter manifest");
+        assert!(manifest.contains("# secondary_y_axis=phase"));
+        assert!(manifest.contains("series_key\tseries_label\ty_axis\tx\ty\n"));
+        assert!(manifest.contains("phase\tPhase\tphase\t"));
+        assert!(manifest.contains("amp-b\tAmplitude B\tamplitude\t"));
 
         let grid = MsScatterGridPayload {
             title: "Grid Scatter".to_string(),
@@ -9642,14 +8222,17 @@ mod tests {
             header_lines: vec!["Grid header".to_string()],
             summary: "Grid summary".to_string(),
         };
-        let image = render_scatter_grid_image(&grid, ListObsPlotTheme::dark(), 1280, 720)
-            .expect("render scatter grid image");
-        assert_eq!(image.width(), 1280);
-        assert_eq!(image.height(), 720);
+        let manifest = render_scatter_manifest(&MsPlotPayload::ScatterGrid(grid))
+            .expect("grid scatter manifest");
+        assert!(manifest.contains("# iteraxis=field"));
+        assert!(manifest.contains("# gridcols=2"));
+        assert!(manifest.contains("# header_line=Grid header"));
+        assert!(manifest.contains("panel_key\tpanel_label\tseries_key\tseries_label\tx\ty\n"));
+        assert!(manifest.contains("field=1\tField 1\tll\tField 1 LL\t"));
     }
 
     #[test]
-    fn scatter_page_rendering_overplots_matching_cells_and_exports() {
+    fn scatter_page_exports_text_manifest_for_every_item() {
         let shared_series = vec![scatter_series(
             "Amplitude",
             "amp",
@@ -9714,109 +8297,16 @@ mod tests {
             summary: "Composite summary".to_string(),
         };
 
-        let resolved = resolve_scatter_page_cells(&page).expect("resolve scatter page cells");
-        assert_eq!(resolved.len(), 2);
-        assert_eq!(resolved[0].title, "Amplitude, Phase");
-        assert_eq!(resolved[0].series.len(), 2);
-
-        let image = render_scatter_page_image(&page, ListObsPlotTheme::light(), 1440, 720)
-            .expect("render scatter page image");
-        assert_eq!(image.width(), 1440);
-        assert_eq!(image.height(), 720);
-
         let output_dir = tempdir().expect("tempdir");
         let txt_path = output_dir.path().join("page.txt");
-        let png_path = output_dir.path().join("page.png");
-        let pdf_path = output_dir.path().join("page.pdf");
         let payload = MsPlotPayload::ScatterPage(page.clone());
-        export_msexplore_plot(
-            &payload,
-            ListObsPlotTheme::light(),
-            &txt_path,
-            MsExportFormat::Txt,
-            1440,
-            720,
-        )
-        .expect("export scatter manifest");
-        export_msexplore_plot(
-            &payload,
-            ListObsPlotTheme::light(),
-            &png_path,
-            MsExportFormat::Png,
-            1440,
-            720,
-        )
-        .expect("export scatter png");
-        export_msexplore_plot(
-            &payload,
-            ListObsPlotTheme::light(),
-            &pdf_path,
-            MsExportFormat::Pdf,
-            1440,
-            720,
-        )
-        .expect("export scatter pdf");
+        export_msexplore_plot(&payload, &txt_path).expect("export scatter manifest");
 
         let manifest = std::fs::read_to_string(&txt_path).expect("read manifest");
         assert!(manifest.contains("# msexplore-manifest-v1"));
         assert!(manifest.contains("Composite Page"));
-        assert!(png_path.exists());
-        assert!(pdf_path.exists());
-        assert!(std::fs::metadata(&pdf_path).expect("pdf metadata").len() > 0);
-    }
-
-    #[test]
-    fn scatter_page_rejects_mismatched_overplot_axes() {
-        let page = MsScatterPagePayload {
-            title: "Bad Page".to_string(),
-            exprange: MsPageExportRange::Current,
-            gridrows: 1,
-            gridcols: 1,
-            header_lines: Vec::new(),
-            items: vec![
-                MsScatterPageItemPayload {
-                    plotindex: 0,
-                    rowindex: 0,
-                    colindex: 0,
-                    plot: scatter_plot_payload(
-                        "Amplitude",
-                        None,
-                        MsLegendPosition::ExteriorRight,
-                        vec![scatter_series(
-                            "Amplitude",
-                            "amp",
-                            MsAxis::Amplitude,
-                            &[(0.0, 1.0), (1.0, 1.5)],
-                            100,
-                        )],
-                    ),
-                },
-                MsScatterPageItemPayload {
-                    plotindex: 1,
-                    rowindex: 0,
-                    colindex: 0,
-                    plot: MsScatterPlotPayload {
-                        x_axis: MsAxis::Channel,
-                        x_label: "Channel".to_string(),
-                        ..scatter_plot_payload(
-                            "Weight",
-                            None,
-                            MsLegendPosition::ExteriorRight,
-                            vec![scatter_series(
-                                "Weight",
-                                "weight",
-                                MsAxis::Weight,
-                                &[(0.0, 2.0), (1.0, 3.0)],
-                                110,
-                            )],
-                        )
-                    },
-                },
-            ],
-            summary: "Bad summary".to_string(),
-        };
-
-        let error = resolve_scatter_page_cells(&page).expect_err("mismatched page should fail");
-        assert!(error.contains("mixes incompatible axes"));
+        assert!(manifest.contains("# header_line=Composite header"));
+        assert!(manifest.contains("1\t0\t0\tPhase\t"));
+        assert!(manifest.contains("2\t0\t1\tAmplitude Detail\t"));
     }
 }

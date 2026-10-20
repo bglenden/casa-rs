@@ -22,7 +22,10 @@ use crate::{MeasurementSet, MeasurementSetSummary};
 /// Stable protocol name advertised by `msexplore --protocol-info`.
 pub const MSEXPLORE_TASK_PROTOCOL_NAME: &str = "casa_msexplore_task";
 /// Stable protocol version advertised by `msexplore --protocol-info`.
-pub const MSEXPLORE_TASK_PROTOCOL_VERSION: u32 = 1;
+///
+/// Version 2 (#833) drops the raster `width`/`height` from plot export
+/// requests and artifacts; `txt` is the only export format.
+pub const MSEXPLORE_TASK_PROTOCOL_VERSION: u32 = 2;
 
 /// Build the current shared `msexplore` protocol descriptor.
 pub fn msexplore_protocol_descriptor() -> ProviderProtocolDescriptor {
@@ -51,12 +54,8 @@ pub struct MsExploreFlagEditRequest {
 pub struct MsExplorePlotExportRequest {
     /// Destination path for the exported plot.
     pub output_path: PathBuf,
-    /// Export format.
+    /// Export format (the text point manifest, `txt`).
     pub format: MsExportFormat,
-    /// Raster width in pixels.
-    pub width: u32,
-    /// Raster height in pixels.
-    pub height: u32,
 }
 
 /// One end-to-end `msexplore` task request.
@@ -128,19 +127,12 @@ impl MsExploreRunTaskRequest {
 
         let plot_export = if let Some(plot_export) = &self.plot_export {
             let payload = build_msexplore_payload(&ms, &self.spec)?;
-            export_msexplore_plot(
-                &payload,
-                crate::MeasurementSetPlotTheme::light(),
-                &plot_export.output_path,
-                plot_export.format,
-                plot_export.width,
-                plot_export.height,
-            )?;
+            match plot_export.format {
+                MsExportFormat::Txt => export_msexplore_plot(&payload, &plot_export.output_path)?,
+            }
             Some(MsExplorePlotArtifact {
                 output_path: plot_export.output_path.clone(),
                 format: plot_export.format,
-                width: plot_export.width,
-                height: plot_export.height,
             })
         } else {
             None
@@ -164,12 +156,8 @@ impl MsExploreRunTaskRequest {
 pub struct MsExplorePlotArtifact {
     /// Destination path for the exported plot.
     pub output_path: PathBuf,
-    /// Export format.
+    /// Export format (the text point manifest, `txt`).
     pub format: MsExportFormat,
-    /// Raster width in pixels.
-    pub width: u32,
-    /// Raster height in pixels.
-    pub height: u32,
 }
 
 /// Structured result for one `msexplore` task execution.
@@ -336,6 +324,7 @@ mod tests {
         let info = msexplore_protocol_descriptor();
         assert_eq!(info.protocol_name, MSEXPLORE_TASK_PROTOCOL_NAME);
         assert_eq!(info.protocol_version, MSEXPLORE_TASK_PROTOCOL_VERSION);
+        assert_eq!(MSEXPLORE_TASK_PROTOCOL_VERSION, 2);
         assert_eq!(info.surface_kind, ProviderSurfaceKind::Task);
     }
 

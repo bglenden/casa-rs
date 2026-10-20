@@ -1,42 +1,19 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Shared plot specification, payload building, rendering, and export support
-//! for `listobs` metadata plots plus curated raw MeasurementSet visibility
-//! plots analogous to the common CASA `plotms` views.
+//! Shared plot specification and typed payload building for `listobs`
+//! metadata plots plus curated raw MeasurementSet visibility plots analogous
+//! to the common CASA `plotms` views.
+//!
+//! The payloads are typed plot data, not pictures: Python renders them with
+//! Matplotlib, and `msexplore`/`plotms` can write them as a text point
+//! manifest. PNG and PDF rasterisation was removed (#833).
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::io::Cursor;
-use std::path::Path;
 
-use image::{DynamicImage, ImageFormat, RgbImage};
-use plotters::coord::types::RangedCoordf64;
-use plotters::prelude::*;
-use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, Pt, RawImage, XObjectTransform};
 use serde::{Deserialize, Serialize};
 
 use crate::listobs::SpectralWindowSummary;
 use crate::{ListObsOptions, ListObsSummary, ListObsUvCoverage, MeasurementSet};
-
-const EXPORT_DPI: f32 = 72.0;
-#[cfg(not(target_os = "macos"))]
-const NON_MACOS_PLOT_FONT: &[u8] = include_bytes!("../assets/NotoSans-Regular.ttf");
-
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn ensure_non_macos_plot_font() -> Result<(), String> {
-    use std::sync::OnceLock;
-
-    use plotters::style::{FontStyle, register_font};
-
-    static FONT_REGISTRATION: OnceLock<Result<(), String>> = OnceLock::new();
-
-    FONT_REGISTRATION
-        .get_or_init(|| {
-            // Plotters' ab_glyph backend does not discover system fonts on its own.
-            register_font("sans-serif", FontStyle::Normal, NON_MACOS_PLOT_FONT)
-                .map_err(|_| "failed to register bundled sans-serif plot font".to_string())
-        })
-        .clone()
-}
 
 /// Stable plot identifiers supported by `listobs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -83,7 +60,7 @@ impl ListObsPlotKind {
         }
     }
 
-    /// Human-readable label suitable for TUI catalogs and export filenames.
+    /// Human-readable label suitable for plot catalogs and titles.
     pub fn display_name(self) -> &'static str {
         match self {
             Self::UvCoverage => "UV Coverage",
@@ -173,38 +150,7 @@ impl fmt::Display for ListObsPlotKind {
     }
 }
 
-/// Supported file formats for saved plots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ListObsPlotExportFormat {
-    /// Save the rendered bitmap as `PNG`.
-    Png,
-    /// Save the rendered bitmap inside a single-page raster-backed `PDF`.
-    Pdf,
-}
-
-impl ListObsPlotExportFormat {
-    /// Parse a CLI / serialized export format.
-    pub fn parse(value: &str) -> Result<Self, String> {
-        match value {
-            "png" => Ok(Self::Png),
-            "pdf" => Ok(Self::Pdf),
-            other => Err(format!(
-                "unsupported plot format {other:?}; expected one of: png, pdf"
-            )),
-        }
-    }
-
-    /// Conventional lowercase filename extension without a leading dot.
-    pub fn extension(self) -> &'static str {
-        match self {
-            Self::Png => "png",
-            Self::Pdf => "pdf",
-        }
-    }
-}
-
-/// Serializable plot specification shared by the CLI and TUI.
+/// Serializable plot specification shared by the CLI and Python.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListObsPlotSpec {
     /// Selected plot kind.
@@ -263,117 +209,8 @@ impl ListObsPlotSpec {
     }
 }
 
-/// Simple RGB theme used by both TUI image rendering and file export.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ListObsPlotTheme {
-    /// Background color.
-    pub background: [u8; 3],
-    /// Axis / outline color.
-    pub axis: [u8; 3],
-    /// Secondary label color.
-    pub label: [u8; 3],
-    /// Grid color.
-    pub grid: [u8; 3],
-    /// Accent palette used for series / bars / points.
-    pub accents: [[u8; 3]; 6],
-}
-
-/// Rendering defaults for plot typography and symbols.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ListObsPlotRenderStyle {
-    pub(crate) margin_px: u32,
-    pub(crate) label_area_px: u32,
-    pub(crate) wide_y_label_area_px: u32,
-    pub(crate) axis_desc_font_px: i32,
-    pub(crate) axis_label_font_px: i32,
-    pub(crate) annotation_font_px: i32,
-    pub(crate) point_radius_px: i32,
-    pub(crate) mirror_point_radius_px: i32,
-    pub(crate) line_width_px: u32,
-    pub(crate) mirror_line_width_px: u32,
-    pub(crate) antenna_marker_scale_pct: u32,
-}
-
-impl ListObsPlotRenderStyle {
-    /// Heuristic defaults for off-screen bitmap/PDF export.
-    pub fn for_bitmap_size(_width: u32, height: u32) -> Self {
-        let base = (height / 28).clamp(18, 34) as i32;
-        let label_area = ((base as u32) * 3).clamp(56, 112);
-        Self {
-            margin_px: ((base as u32) / 2).clamp(10, 20),
-            label_area_px: label_area,
-            wide_y_label_area_px: (label_area + (base as u32) * 2).clamp(92, 160),
-            axis_desc_font_px: base + 4,
-            axis_label_font_px: base,
-            annotation_font_px: base,
-            point_radius_px: (base / 4).clamp(4, 10),
-            mirror_point_radius_px: ((base - 2) / 4).clamp(3, 8),
-            line_width_px: ((base as u32) / 7).clamp(2, 5),
-            mirror_line_width_px: ((base as u32) / 10).clamp(1, 3),
-            antenna_marker_scale_pct: 160,
-        }
-    }
-
-    /// Defaults aligned to the actual terminal cell size reported by the backend.
-    pub fn for_terminal_cells(cell_width_px: u16, cell_height_px: u16) -> Self {
-        let base = u32::from(cell_height_px.max(16));
-        let label_area = (base * 3).clamp(56, 132);
-        let _ = cell_width_px;
-        Self {
-            margin_px: (base / 2).clamp(10, 22),
-            label_area_px: label_area,
-            wide_y_label_area_px: (label_area + base * 2).clamp(96, 180),
-            axis_desc_font_px: (base + 4) as i32,
-            axis_label_font_px: base as i32,
-            annotation_font_px: base as i32,
-            point_radius_px: ((base as i32) / 4).clamp(5, 12),
-            mirror_point_radius_px: (((base as i32) - 2) / 4).clamp(4, 10),
-            line_width_px: (base / 7).clamp(2, 6),
-            mirror_line_width_px: (base / 10).clamp(1, 4),
-            antenna_marker_scale_pct: 180,
-        }
-    }
-}
-
-impl ListObsPlotTheme {
-    /// Light export-oriented theme.
-    pub fn light() -> Self {
-        Self {
-            background: [248, 246, 239],
-            axis: [38, 45, 55],
-            label: [87, 94, 103],
-            grid: [207, 213, 220],
-            accents: [
-                [32, 111, 145],
-                [191, 96, 58],
-                [83, 143, 61],
-                [122, 83, 161],
-                [191, 146, 29],
-                [71, 93, 168],
-            ],
-        }
-    }
-
-    /// Dark terminal-oriented theme.
-    pub fn dark() -> Self {
-        Self {
-            background: [16, 18, 20],
-            axis: [210, 214, 220],
-            label: [170, 176, 186],
-            grid: [64, 72, 82],
-            accents: [
-                [88, 196, 221],
-                [244, 167, 89],
-                [136, 207, 98],
-                [182, 152, 229],
-                [250, 219, 94],
-                [118, 143, 226],
-            ],
-        }
-    }
-}
-
-/// Typed data prepared for one plot render / export.
+/// Typed data prepared for one plot (rendered by Python, or exported as a
+/// text point manifest).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ListObsPlotPayload {
     /// UV-coverage series grouped by baseline / field / SPW.
@@ -629,129 +466,6 @@ pub fn build_listobs_visibility_plot_payload(
     crate::plot_visibility::build_listobs_visibility_plot_payload(ms, options, spec)
 }
 
-/// Render one plot payload into a bitmap image.
-pub fn render_listobs_plot_image(
-    payload: &ListObsPlotPayload,
-    theme: ListObsPlotTheme,
-    width: u32,
-    height: u32,
-) -> Result<DynamicImage, String> {
-    render_listobs_plot_image_with_style(
-        payload,
-        theme,
-        width,
-        height,
-        ListObsPlotRenderStyle::for_bitmap_size(width, height),
-    )
-}
-
-/// Render one plot payload into a bitmap image using explicit terminal/export style metrics.
-pub fn render_listobs_plot_image_with_style(
-    payload: &ListObsPlotPayload,
-    theme: ListObsPlotTheme,
-    width: u32,
-    height: u32,
-    style: ListObsPlotRenderStyle,
-) -> Result<DynamicImage, String> {
-    #[cfg(not(target_os = "macos"))]
-    ensure_non_macos_plot_font()?;
-
-    if width == 0 || height == 0 {
-        return Err("plot size must be non-zero".to_string());
-    }
-    let mut buffer = vec![0u8; (width as usize) * (height as usize) * 3];
-    let backend = BitMapBackend::with_buffer(&mut buffer, (width, height));
-    let root = backend.into_drawing_area();
-    root.fill(&rgb(theme.background))
-        .map_err(|error| error.to_string())?;
-
-    match payload {
-        ListObsPlotPayload::UvCoverage(payload) => {
-            render_uv_coverage_plot(&root, payload, theme, style)?
-        }
-        ListObsPlotPayload::VisibilityScatter(payload) => {
-            render_visibility_scatter_plot(&root, payload, theme, style)?
-        }
-        ListObsPlotPayload::AntennaLayout(payload) => {
-            render_antenna_layout_plot(&root, payload, theme, style)?
-        }
-        ListObsPlotPayload::ScanTimeline(payload) => {
-            render_scan_timeline_plot(&root, payload, theme, style)?
-        }
-        ListObsPlotPayload::SpectralWindowCoverage(payload) => {
-            render_spectral_window_coverage_plot(&root, payload, theme, style)?
-        }
-    }
-
-    root.present().map_err(|error| error.to_string())?;
-    drop(root);
-    let image = RgbImage::from_raw(width, height, buffer)
-        .ok_or_else(|| "failed to assemble rendered plot image".to_string())?;
-    Ok(DynamicImage::ImageRgb8(image))
-}
-
-/// Export a plot payload as `PNG` or raster-backed single-page `PDF`.
-pub fn export_listobs_plot(
-    payload: &ListObsPlotPayload,
-    theme: ListObsPlotTheme,
-    output_path: &Path,
-    format: ListObsPlotExportFormat,
-    width: u32,
-    height: u32,
-) -> Result<(), String> {
-    let image = render_listobs_plot_image_with_style(
-        payload,
-        theme,
-        width,
-        height,
-        ListObsPlotRenderStyle::for_bitmap_size(width, height),
-    )?;
-    match format {
-        ListObsPlotExportFormat::Png => image
-            .save_with_format(output_path, ImageFormat::Png)
-            .map_err(|error| error.to_string()),
-        ListObsPlotExportFormat::Pdf => export_plot_pdf(&image, output_path, payload.kind()),
-    }
-}
-
-fn export_plot_pdf(
-    image: &DynamicImage,
-    output_path: &Path,
-    kind: ListObsPlotKind,
-) -> Result<(), String> {
-    let mut png_bytes = Vec::new();
-    image
-        .write_to(&mut Cursor::new(&mut png_bytes), ImageFormat::Png)
-        .map_err(|error| error.to_string())?;
-    let raw = RawImage::decode_from_bytes(&png_bytes, &mut Vec::new())
-        .map_err(|error| error.to_string())?;
-
-    let page_width_mm = Mm((image.width() as f32) * 25.4 / EXPORT_DPI);
-    let page_height_mm = Mm((image.height() as f32) * 25.4 / EXPORT_DPI);
-
-    let mut document = PdfDocument::new(kind.display_name());
-    let image_id = document.add_image(&raw);
-    let page = PdfPage::new(
-        page_width_mm,
-        page_height_mm,
-        vec![Op::UseXobject {
-            id: image_id,
-            transform: XObjectTransform {
-                translate_x: Some(Pt(0.0)),
-                translate_y: Some(Pt(0.0)),
-                rotate: None,
-                scale_x: None,
-                scale_y: None,
-                dpi: Some(EXPORT_DPI),
-            },
-        }],
-    );
-    let bytes = document
-        .with_pages(vec![page])
-        .save(&PdfSaveOptions::default(), &mut Vec::new());
-    std::fs::write(output_path, bytes).map_err(|error| error.to_string())
-}
-
 fn build_antenna_layout_payload(
     summary: &ListObsSummary,
     spec: &ListObsPlotSpec,
@@ -986,419 +700,6 @@ fn build_spectral_window_coverage_payload(
     ))
 }
 
-fn render_uv_coverage_plot(
-    root: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
-    payload: &UvCoveragePlotPayload,
-    theme: ListObsPlotTheme,
-    style: ListObsPlotRenderStyle,
-) -> Result<(), String> {
-    let axis_scale = uv_axis_scale(payload.axis_extent_lambda);
-    let extent = (payload.axis_extent_lambda / axis_scale.lambda_scale).max(1.0);
-    let chart_root = centered_square_chart_area(root.clone(), style);
-    let mut chart = ChartBuilder::on(&chart_root)
-        .margin(0)
-        .x_label_area_size(style.label_area_px)
-        .y_label_area_size(style.label_area_px)
-        .build_cartesian_2d(-extent..extent, -extent..extent)
-        .map_err(|error| error.to_string())?;
-    configure_mesh(
-        &mut chart,
-        theme,
-        style,
-        &format!("u ({})", axis_scale.unit_label),
-        &format!("v ({})", axis_scale.unit_label),
-    )?;
-
-    for (index, series) in payload.tracks.iter().enumerate() {
-        let color = rgb(theme.accents[index % theme.accents.len()]);
-        let points = series
-            .points
-            .iter()
-            .map(|(u, v)| (*u / axis_scale.lambda_scale, *v / axis_scale.lambda_scale))
-            .collect::<Vec<_>>();
-        if payload.draw_points {
-            chart
-                .draw_series(PointSeries::of_element(
-                    points.iter().copied(),
-                    style.point_radius_px,
-                    color.filled(),
-                    &|coord, size, style| {
-                        EmptyElement::at(coord) + Circle::new((0, 0), size, style)
-                    },
-                ))
-                .map_err(|error| error.to_string())?;
-            if payload.mirror {
-                chart
-                    .draw_series(PointSeries::of_element(
-                        points.iter().map(|(u, v)| (-u, -v)),
-                        style.mirror_point_radius_px,
-                        color.mix(0.5).filled(),
-                        &|coord, size, style| {
-                            EmptyElement::at(coord) + Circle::new((0, 0), size, style)
-                        },
-                    ))
-                    .map_err(|error| error.to_string())?;
-            }
-        } else if points.len() >= 2 {
-            chart
-                .draw_series(LineSeries::new(
-                    points.iter().copied(),
-                    color.stroke_width(style.line_width_px),
-                ))
-                .map_err(|error| error.to_string())?;
-            if payload.mirror {
-                chart
-                    .draw_series(LineSeries::new(
-                        points.iter().map(|(u, v)| (-u, -v)),
-                        color.mix(0.5).stroke_width(style.mirror_line_width_px),
-                    ))
-                    .map_err(|error| error.to_string())?;
-            }
-        } else if let Some(point) = points.first().copied() {
-            chart
-                .draw_series(PointSeries::of_element(
-                    [point],
-                    style.point_radius_px,
-                    color.filled(),
-                    &|coord, size, style| {
-                        EmptyElement::at(coord) + Circle::new((0, 0), size, style)
-                    },
-                ))
-                .map_err(|error| error.to_string())?;
-        }
-    }
-
-    Ok(())
-}
-
-fn render_visibility_scatter_plot(
-    root: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
-    payload: &VisibilityScatterPlotPayload,
-    theme: ListObsPlotTheme,
-    style: ListObsPlotRenderStyle,
-) -> Result<(), String> {
-    let (mut min_x, mut max_x, mut min_y, mut max_y) = bounds(
-        payload
-            .series
-            .iter()
-            .flat_map(|series| series.points.iter().copied()),
-    )
-    .ok_or_else(|| "visibility scatter plot has no finite points".to_string())?;
-    if let Some((fixed_min, fixed_max)) = payload.fixed_y_bounds {
-        min_y = fixed_min;
-        max_y = fixed_max;
-    } else {
-        (min_y, max_y) = padded_range(min_y, max_y);
-    }
-    (min_x, max_x) = padded_range(min_x, max_x);
-
-    let x_offset = if matches!(
-        payload.kind,
-        ListObsPlotKind::AmplitudeVsTime | ListObsPlotKind::PhaseVsTime
-    ) {
-        scan_timeline_axis_offset(min_x, max_x)
-    } else {
-        0.0
-    };
-    let x_label = if x_offset == 0.0 {
-        payload.x_label.clone()
-    } else if matches!(
-        payload.kind,
-        ListObsPlotKind::AmplitudeVsTime | ListObsPlotKind::PhaseVsTime
-    ) {
-        format!("Time (MJD seconds - {:.0})", x_offset)
-    } else {
-        format!("{} - {:.0}", payload.x_label, x_offset)
-    };
-    let x_span = (max_x - min_x).abs();
-    let y_span = (max_y - min_y).abs();
-
-    let mut chart = ChartBuilder::on(root)
-        .margin(style.margin_px)
-        .x_label_area_size(style.label_area_px)
-        .y_label_area_size(style.wide_y_label_area_px)
-        .build_cartesian_2d((min_x - x_offset)..(max_x - x_offset), min_y..max_y)
-        .map_err(|error| error.to_string())?;
-    chart
-        .configure_mesh()
-        .x_desc(&x_label)
-        .y_desc(&payload.y_label)
-        .axis_desc_style(
-            ("sans-serif", style.axis_desc_font_px)
-                .into_font()
-                .color(&rgb(theme.axis)),
-        )
-        .axis_style(rgb(theme.axis))
-        .label_style(
-            ("sans-serif", style.axis_label_font_px)
-                .into_font()
-                .color(&rgb(theme.label)),
-        )
-        .light_line_style(rgb(theme.grid).mix(0.55))
-        .bold_line_style(rgb(theme.grid))
-        .x_labels(6)
-        .y_labels(6)
-        .x_label_formatter(&|value| format_numeric_tick(*value, x_span))
-        .y_label_formatter(&|value| format_numeric_tick(*value, y_span))
-        .draw()
-        .map_err(|error| error.to_string())?;
-
-    let point_radius = style.point_radius_px.saturating_sub(1).max(3);
-    for series in &payload.series {
-        let color = palette_color(&series.color_group, theme);
-        chart
-            .draw_series(PointSeries::of_element(
-                series
-                    .points
-                    .iter()
-                    .map(|(x, y)| (*x - x_offset, *y))
-                    .collect::<Vec<_>>(),
-                point_radius,
-                color.filled(),
-                &|coord, size, draw_style| {
-                    EmptyElement::at(coord) + Circle::new((0, 0), size, draw_style)
-                },
-            ))
-            .map_err(|error| error.to_string())?;
-    }
-
-    Ok(())
-}
-
-fn render_antenna_layout_plot(
-    root: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
-    payload: &AntennaLayoutPlotPayload,
-    theme: ListObsPlotTheme,
-    style: ListObsPlotRenderStyle,
-) -> Result<(), String> {
-    let (min_x, max_x, min_y, max_y) =
-        bounds(payload.antennas.iter().map(|point| (point.x, point.y)))
-            .unwrap_or((-1.0, 1.0, -1.0, 1.0));
-    let ((x_min, x_max), (y_min, y_max)) = equal_axis_ranges(min_x, max_x, min_y, max_y);
-    let chart_root = centered_square_chart_area(root.clone(), style);
-    let mut chart = ChartBuilder::on(&chart_root)
-        .margin(0)
-        .x_label_area_size(style.label_area_px)
-        .y_label_area_size(style.label_area_px)
-        .build_cartesian_2d(x_min..x_max, y_min..y_max)
-        .map_err(|error| error.to_string())?;
-    let axis_span = (x_max - x_min).abs().max((y_max - y_min).abs()).max(1.0);
-    chart
-        .configure_mesh()
-        .x_desc(&payload.x_label)
-        .y_desc(&payload.y_label)
-        .axis_desc_style(
-            ("sans-serif", style.axis_desc_font_px)
-                .into_font()
-                .color(&rgb(theme.axis)),
-        )
-        .axis_style(rgb(theme.axis))
-        .label_style(
-            ("sans-serif", style.axis_label_font_px)
-                .into_font()
-                .color(&rgb(theme.label)),
-        )
-        .light_line_style(rgb(theme.grid).mix(0.55))
-        .bold_line_style(rgb(theme.grid))
-        .x_labels(5)
-        .y_labels(5)
-        .x_label_formatter(&|value| format_numeric_tick(*value, axis_span))
-        .y_label_formatter(&|value| format_numeric_tick(*value, axis_span))
-        .draw()
-        .map_err(|error| error.to_string())?;
-
-    for (index, point) in payload.antennas.iter().enumerate() {
-        let color = rgb(theme.accents[index % theme.accents.len()]);
-        let marker_radius = (point.marker_radius * (style.antenna_marker_scale_pct as i32) / 100)
-            .clamp(style.point_radius_px, style.point_radius_px * 3);
-        chart
-            .draw_series(std::iter::once(
-                EmptyElement::at((point.x, point.y))
-                    + Circle::new((0, 0), marker_radius, color.filled())
-                    + if payload.labels_enabled && !point.label.is_empty() {
-                        Text::new(
-                            point.label.clone(),
-                            (marker_radius + 6, -(marker_radius + 4)),
-                            ("sans-serif", style.annotation_font_px)
-                                .into_font()
-                                .color(&rgb(theme.axis)),
-                        )
-                    } else {
-                        Text::new(String::new(), (0, 0), ("sans-serif", 1).into_font())
-                    },
-            ))
-            .map_err(|error| error.to_string())?;
-    }
-
-    Ok(())
-}
-
-fn render_scan_timeline_plot(
-    root: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
-    payload: &ScanTimelinePlotPayload,
-    theme: ListObsPlotTheme,
-    style: ListObsPlotRenderStyle,
-) -> Result<(), String> {
-    let lane_count = payload.lane_labels.len().max(1);
-    let axis_offset = scan_timeline_axis_offset(payload.start_mjd_seconds, payload.end_mjd_seconds);
-    let x_label = if axis_offset == 0.0 {
-        "Time (MJD seconds)".to_string()
-    } else {
-        format!("Time (MJD seconds - {:.0})", axis_offset)
-    };
-    let mut chart = ChartBuilder::on(root)
-        .margin(style.margin_px)
-        .x_label_area_size(style.label_area_px)
-        .y_label_area_size(style.wide_y_label_area_px)
-        .build_cartesian_2d(
-            (payload.start_mjd_seconds - axis_offset)..(payload.end_mjd_seconds - axis_offset),
-            0f64..lane_count as f64,
-        )
-        .map_err(|error| error.to_string())?;
-    chart
-        .configure_mesh()
-        .x_desc(&x_label)
-        .y_desc("Lane")
-        .axis_desc_style(
-            ("sans-serif", style.axis_desc_font_px)
-                .into_font()
-                .color(&rgb(theme.axis)),
-        )
-        .axis_style(rgb(theme.axis))
-        .label_style(
-            ("sans-serif", style.axis_label_font_px)
-                .into_font()
-                .color(&rgb(theme.label)),
-        )
-        .light_line_style(rgb(theme.grid).mix(0.55))
-        .bold_line_style(rgb(theme.grid))
-        .x_labels(6)
-        .x_label_formatter(&|value| {
-            format_numeric_tick(*value, payload.end_mjd_seconds - payload.start_mjd_seconds)
-        })
-        .y_labels(lane_count)
-        .y_label_formatter(&|value| {
-            let lane = (*value).floor() as usize;
-            payload
-                .lane_labels
-                .get(lane)
-                .cloned()
-                .unwrap_or_else(String::new)
-        })
-        .draw()
-        .map_err(|error| error.to_string())?;
-
-    for bar in &payload.bars {
-        let color = palette_color(&bar.color_group, theme);
-        let lane = bar.lane as f64;
-        chart
-            .draw_series(std::iter::once(Rectangle::new(
-                [
-                    (bar.start_mjd_seconds - axis_offset, lane + 0.15),
-                    (bar.end_mjd_seconds - axis_offset, lane + 0.85),
-                ],
-                color.filled(),
-            )))
-            .map_err(|error| error.to_string())?;
-        if !bar.label.is_empty() {
-            chart
-                .draw_series(std::iter::once(Text::new(
-                    bar.label.clone(),
-                    (bar.start_mjd_seconds - axis_offset, lane + 0.5),
-                    ("sans-serif", style.annotation_font_px)
-                        .into_font()
-                        .color(&rgb(theme.axis)),
-                )))
-                .map_err(|error| error.to_string())?;
-        }
-    }
-
-    Ok(())
-}
-
-fn render_spectral_window_coverage_plot(
-    root: &DrawingArea<BitMapBackend<'_>, plotters::coord::Shift>,
-    payload: &SpectralWindowCoveragePlotPayload,
-    theme: ListObsPlotTheme,
-    style: ListObsPlotRenderStyle,
-) -> Result<(), String> {
-    let (min_x, max_x) = payload
-        .bars
-        .iter()
-        .fold((f64::INFINITY, f64::NEG_INFINITY), |(min_x, max_x), bar| {
-            (min_x.min(bar.start), max_x.max(bar.end))
-        });
-    let min_x = if min_x.is_finite() { min_x } else { 0.0 };
-    let max_x = if max_x.is_finite() && max_x > min_x {
-        max_x
-    } else {
-        min_x + 1.0
-    };
-    let lane_count = payload.bars.len().max(1);
-    let mut chart = ChartBuilder::on(root)
-        .margin(style.margin_px)
-        .x_label_area_size(style.label_area_px)
-        .y_label_area_size(style.wide_y_label_area_px)
-        .build_cartesian_2d(min_x..max_x, 0f64..lane_count as f64)
-        .map_err(|error| error.to_string())?;
-    chart
-        .configure_mesh()
-        .x_desc(&payload.x_label)
-        .y_desc("SPW")
-        .axis_desc_style(
-            ("sans-serif", style.axis_desc_font_px)
-                .into_font()
-                .color(&rgb(theme.axis)),
-        )
-        .axis_style(rgb(theme.axis))
-        .label_style(
-            ("sans-serif", style.axis_label_font_px)
-                .into_font()
-                .color(&rgb(theme.label)),
-        )
-        .light_line_style(rgb(theme.grid).mix(0.55))
-        .bold_line_style(rgb(theme.grid))
-        .y_labels(lane_count)
-        .y_label_formatter(&|value| {
-            let lane = (*value).floor() as usize;
-            payload
-                .bars
-                .get(lane)
-                .map(spectral_window_lane_label)
-                .unwrap_or_default()
-        })
-        .draw()
-        .map_err(|error| error.to_string())?;
-
-    for bar in &payload.bars {
-        let color = palette_color(&bar.color_group, theme);
-        let lane = bar.lane as f64;
-        chart
-            .draw_series(std::iter::once(Rectangle::new(
-                [(bar.start, lane + 0.2), (bar.end, lane + 0.8)],
-                color.filled(),
-            )))
-            .map_err(|error| error.to_string())?;
-        if !bar.label.is_empty() {
-            chart
-                .draw_series(std::iter::once(Text::new(
-                    bar.label.clone(),
-                    (bar.start, lane + 0.5),
-                    ("sans-serif", style.annotation_font_px)
-                        .into_font()
-                        .color(&rgb(theme.axis)),
-                )))
-                .map_err(|error| error.to_string())?;
-        }
-    }
-
-    Ok(())
-}
-
-fn spectral_window_lane_label(bar: &SpectralWindowCoverageBar) -> String {
-    format!("SPW {}", bar.spectral_window_id)
-}
-
 fn spectral_window_polarization_group(spw: &SpectralWindowSummary) -> String {
     if spw.polarization_ids.is_empty() {
         "pol-none".to_string()
@@ -1477,34 +778,6 @@ fn validate_option(kind: ListObsPlotKind, key: &str, value: &str) -> Result<(), 
     }
 }
 
-fn configure_mesh<DB: DrawingBackend>(
-    chart: &mut ChartContext<'_, DB, Cartesian2d<RangedCoordf64, RangedCoordf64>>,
-    theme: ListObsPlotTheme,
-    style: ListObsPlotRenderStyle,
-    x_desc: &str,
-    y_desc: &str,
-) -> Result<(), String> {
-    chart
-        .configure_mesh()
-        .x_desc(x_desc)
-        .y_desc(y_desc)
-        .axis_desc_style(
-            ("sans-serif", style.axis_desc_font_px)
-                .into_font()
-                .color(&rgb(theme.axis)),
-        )
-        .axis_style(rgb(theme.axis))
-        .label_style(
-            ("sans-serif", style.axis_label_font_px)
-                .into_font()
-                .color(&rgb(theme.label)),
-        )
-        .light_line_style(rgb(theme.grid).mix(0.55))
-        .bold_line_style(rgb(theme.grid))
-        .draw()
-        .map_err(|error| error.to_string())
-}
-
 fn parse_on_off(value: &str, key: &str) -> Result<bool, String> {
     match value {
         "on" | "true" => Ok(true),
@@ -1512,130 +785,6 @@ fn parse_on_off(value: &str, key: &str) -> Result<bool, String> {
         other => Err(format!(
             "invalid value {other:?} for {key}; expected on/off"
         )),
-    }
-}
-
-fn rgb(color: [u8; 3]) -> RGBColor {
-    RGBColor(color[0], color[1], color[2])
-}
-
-fn palette_color(group: &str, theme: ListObsPlotTheme) -> RGBColor {
-    let mut hash = 0usize;
-    for byte in group.bytes() {
-        hash = hash.wrapping_mul(131).wrapping_add(byte as usize);
-    }
-    rgb(theme.accents[hash % theme.accents.len()])
-}
-
-fn centered_square_chart_area<'a>(
-    root: DrawingArea<BitMapBackend<'a>, plotters::coord::Shift>,
-    style: ListObsPlotRenderStyle,
-) -> DrawingArea<BitMapBackend<'a>, plotters::coord::Shift> {
-    let (width, height) = root.dim_in_pixel();
-    let available_width = width.saturating_sub(style.margin_px * 2 + style.label_area_px);
-    let available_height = height.saturating_sub(style.margin_px * 2 + style.label_area_px);
-    let square = available_width.min(available_height).max(1);
-    let extra_width = available_width.saturating_sub(square);
-    let extra_height = available_height.saturating_sub(square);
-    root.margin(
-        style.margin_px + extra_height / 2,
-        style.margin_px + (extra_height - extra_height / 2),
-        style.margin_px + extra_width / 2,
-        style.margin_px + (extra_width - extra_width / 2),
-    )
-}
-
-fn equal_axis_ranges(min_x: f64, max_x: f64, min_y: f64, max_y: f64) -> ((f64, f64), (f64, f64)) {
-    let center_x = (min_x + max_x) / 2.0;
-    let center_y = (min_y + max_y) / 2.0;
-    let span = (max_x - min_x).abs().max((max_y - min_y).abs()).max(1.0);
-    let padding = (span * 0.1).max(1.0);
-    let half_extent = span / 2.0 + padding;
-    (
-        (center_x - half_extent, center_x + half_extent),
-        (center_y - half_extent, center_y + half_extent),
-    )
-}
-
-fn padded_range(min_value: f64, max_value: f64) -> (f64, f64) {
-    let span = (max_value - min_value).abs();
-    if !min_value.is_finite() || !max_value.is_finite() {
-        return (-1.0, 1.0);
-    }
-    if span < 1e-9 {
-        let padding = min_value.abs().max(max_value.abs()).max(1.0) * 1e-6;
-        (min_value - padding, max_value + padding)
-    } else {
-        let padding = span * 0.08;
-        (min_value - padding, max_value + padding)
-    }
-}
-
-fn bounds(points: impl Iterator<Item = (f64, f64)>) -> Option<(f64, f64, f64, f64)> {
-    let mut min_x = f64::INFINITY;
-    let mut max_x = f64::NEG_INFINITY;
-    let mut min_y = f64::INFINITY;
-    let mut max_y = f64::NEG_INFINITY;
-    let mut seen = false;
-    for (x, y) in points {
-        if !x.is_finite() || !y.is_finite() {
-            continue;
-        }
-        seen = true;
-        min_x = min_x.min(x);
-        max_x = max_x.max(x);
-        min_y = min_y.min(y);
-        max_y = max_y.max(y);
-    }
-    seen.then_some((min_x, max_x, min_y, max_y))
-}
-
-fn format_numeric_tick(value: f64, span: f64) -> String {
-    let decimals = if span >= 1_000.0 {
-        0
-    } else if span >= 100.0 {
-        1
-    } else if span >= 10.0 {
-        2
-    } else {
-        3
-    };
-    trim_numeric_label(format!("{value:.precision$}", precision = decimals))
-}
-
-fn trim_numeric_label(label: String) -> String {
-    if label.contains('.') {
-        let trimmed = label.trim_end_matches('0').trim_end_matches('.');
-        if trimmed == "-0" {
-            "0".to_string()
-        } else {
-            trimmed.to_string()
-        }
-    } else {
-        label
-    }
-}
-
-fn scan_timeline_axis_offset(start_mjd_seconds: f64, end_mjd_seconds: f64) -> f64 {
-    let span = (end_mjd_seconds - start_mjd_seconds).abs();
-    if !start_mjd_seconds.is_finite() || !end_mjd_seconds.is_finite() || span < 1.0 {
-        return 0.0;
-    }
-    let step = 10f64.powi(span.log10().floor() as i32);
-    (start_mjd_seconds / step).floor() * step
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct UvAxisScale {
-    unit_label: &'static str,
-    lambda_scale: f64,
-}
-
-fn uv_axis_scale(max_abs_uv_lambda: f64) -> UvAxisScale {
-    let _ = max_abs_uv_lambda;
-    UvAxisScale {
-        unit_label: "kλ",
-        lambda_scale: 1_000.0,
     }
 }
 
@@ -1670,14 +819,9 @@ fn should_fallback_to_absolute_antenna_coordinates(summary: &ListObsSummary) -> 
 
 #[cfg(test)]
 mod tests {
-    #[cfg(not(target_os = "macos"))]
-    use super::ensure_non_macos_plot_font;
     use super::{
-        ListObsPlotExportFormat, ListObsPlotKind, ListObsPlotPayload, ListObsPlotRenderStyle,
-        ListObsPlotSpec, ListObsPlotTheme, UvAxisScale, build_listobs_plot_payload_from_summary,
-        build_listobs_uv_plot_payload, export_listobs_plot, format_numeric_tick, padded_range,
-        palette_color, parse_on_off, render_listobs_plot_image, scan_timeline_axis_offset,
-        uv_axis_scale,
+        ListObsPlotKind, ListObsPlotPayload, ListObsPlotSpec,
+        build_listobs_plot_payload_from_summary, build_listobs_uv_plot_payload, parse_on_off,
     };
     use crate::listobs::{
         AntennaSummary, DataDescriptionSummary, FieldSummary, MeasurementSetInfo,
@@ -1685,7 +829,6 @@ mod tests {
     };
     use crate::listobs::{ListObsUvPoint, ListObsUvTrack};
     use crate::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
-    use tempfile::tempdir;
 
     #[test]
     fn default_specs_can_round_trip_cli_assignments() {
@@ -1698,7 +841,7 @@ mod tests {
     }
 
     #[test]
-    fn plot_kinds_and_export_formats_parse_aliases_and_errors() {
+    fn plot_kinds_parse_aliases_and_errors() {
         let aliases = [
             ("uv_coverage", ListObsPlotKind::UvCoverage),
             ("uv", ListObsPlotKind::UvCoverage),
@@ -1721,54 +864,16 @@ mod tests {
 
         let error = ListObsPlotKind::parse("bogus").unwrap_err();
         assert!(error.contains("unsupported plot kind"));
-
-        assert_eq!(
-            ListObsPlotExportFormat::parse("png").unwrap(),
-            ListObsPlotExportFormat::Png
-        );
-        assert_eq!(
-            ListObsPlotExportFormat::parse("pdf").unwrap(),
-            ListObsPlotExportFormat::Pdf
-        );
-        assert_eq!(ListObsPlotExportFormat::Png.extension(), "png");
-        assert_eq!(ListObsPlotExportFormat::Pdf.extension(), "pdf");
-        let error = ListObsPlotExportFormat::parse("svg").unwrap_err();
-        assert!(error.contains("unsupported plot format"));
     }
 
     #[test]
-    fn render_styles_and_palette_helpers_cover_non_render_paths() {
-        let bitmap = ListObsPlotRenderStyle::for_bitmap_size(1280, 720);
-        let terminal = ListObsPlotRenderStyle::for_terminal_cells(9, 21);
-        assert!(bitmap.margin_px >= 10);
-        assert!(bitmap.label_area_px >= 56);
-        assert!(bitmap.wide_y_label_area_px >= bitmap.label_area_px);
-        assert!(bitmap.axis_desc_font_px > bitmap.axis_label_font_px);
-        assert!(terminal.point_radius_px >= 5);
-        assert!(terminal.mirror_point_radius_px >= 4);
-        assert!(terminal.line_width_px >= 2);
-        assert!(terminal.antenna_marker_scale_pct > bitmap.antenna_marker_scale_pct);
-
+    fn parse_on_off_accepts_boolean_tokens() {
         assert!(parse_on_off("on", "labels").unwrap());
         assert!(parse_on_off("true", "labels").unwrap());
         assert!(!parse_on_off("off", "labels").unwrap());
         assert!(!parse_on_off("false", "labels").unwrap());
         let error = parse_on_off("maybe", "labels").unwrap_err();
         assert!(error.contains("expected on/off"));
-
-        let theme = ListObsPlotTheme::light();
-        let color = palette_color("field-a", theme);
-        assert_eq!(color, palette_color("field-a", theme));
-        assert!(
-            theme
-                .accents
-                .iter()
-                .any(|accent| color == super::rgb(*accent))
-        );
-        assert_ne!(
-            ListObsPlotTheme::light().background,
-            ListObsPlotTheme::dark().background
-        );
     }
 
     #[test]
@@ -1808,7 +913,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_plot_payloads_render_png_images() {
+    fn metadata_plot_payloads_build_for_each_metadata_kind() {
         let summary = synthetic_summary();
         for kind in [
             ListObsPlotKind::AntennaLayout,
@@ -1817,15 +922,12 @@ mod tests {
         ] {
             let spec = kind.default_spec();
             let payload = build_listobs_plot_payload_from_summary(&summary, &spec).unwrap();
-            let image =
-                render_listobs_plot_image(&payload, ListObsPlotTheme::light(), 800, 480).unwrap();
-            assert_eq!(image.width(), 800);
-            assert_eq!(image.height(), 480);
+            assert_eq!(payload.kind(), kind);
         }
     }
 
     #[test]
-    fn uv_plot_payload_renders_png_image() {
+    fn uv_plot_payload_defaults_to_mirrored_points() {
         let coverage = synthetic_uv_coverage();
         let spec = ListObsPlotKind::UvCoverage.default_spec();
         let payload = build_listobs_uv_plot_payload(&coverage, &spec).unwrap();
@@ -1833,14 +935,12 @@ mod tests {
             panic!("expected uv payload");
         };
         assert!(uv_payload.draw_points);
-        let image =
-            render_listobs_plot_image(&payload, ListObsPlotTheme::dark(), 640, 640).unwrap();
-        assert_eq!(image.width(), 640);
-        assert_eq!(image.height(), 640);
+        assert!(uv_payload.mirror);
+        assert_eq!(uv_payload.tracks.len(), coverage.tracks.len());
     }
 
     #[test]
-    fn uv_points_mode_and_single_sample_tracks_render() {
+    fn uv_points_mode_and_single_sample_tracks_build() {
         let mut coverage = synthetic_uv_coverage();
         coverage.tracks[0].samples.truncate(1);
         let spec = ListObsPlotSpec::from_cli_assignments(
@@ -1849,10 +949,12 @@ mod tests {
         )
         .unwrap();
         let payload = build_listobs_uv_plot_payload(&coverage, &spec).unwrap();
-        let image =
-            render_listobs_plot_image(&payload, ListObsPlotTheme::dark(), 512, 512).unwrap();
-        assert_eq!(image.width(), 512);
-        assert_eq!(image.height(), 512);
+        let ListObsPlotPayload::UvCoverage(payload) = payload else {
+            panic!("expected uv payload");
+        };
+        assert!(payload.draw_points);
+        assert!(!payload.mirror);
+        assert_eq!(payload.tracks[0].points.len(), 1);
     }
 
     #[test]
@@ -1911,68 +1013,6 @@ mod tests {
             .insert("draw_mode".to_string(), "bogus".to_string());
         let error = build_listobs_uv_plot_payload(&coverage, &invalid_draw_mode).unwrap_err();
         assert!(error.contains("invalid draw_mode"));
-    }
-
-    #[test]
-    fn uv_axis_scale_is_fixed_to_kilolambda() {
-        assert_eq!(
-            uv_axis_scale(42.0),
-            UvAxisScale {
-                unit_label: "kλ",
-                lambda_scale: 1_000.0,
-            }
-        );
-        assert_eq!(
-            uv_axis_scale(5_000_000.0),
-            UvAxisScale {
-                unit_label: "kλ",
-                lambda_scale: 1_000.0,
-            }
-        );
-    }
-
-    #[test]
-    fn plot_export_writes_png_and_pdf_files() {
-        let temp = tempdir().unwrap();
-        let summary = synthetic_summary();
-        let spec = ListObsPlotKind::AntennaLayout.default_spec();
-        let payload = build_listobs_plot_payload_from_summary(&summary, &spec).unwrap();
-        let png_path = temp.path().join("antenna-layout.png");
-        let pdf_path = temp.path().join("antenna-layout.pdf");
-
-        export_listobs_plot(
-            &payload,
-            ListObsPlotTheme::light(),
-            &png_path,
-            ListObsPlotExportFormat::Png,
-            640,
-            360,
-        )
-        .unwrap();
-        export_listobs_plot(
-            &payload,
-            ListObsPlotTheme::light(),
-            &pdf_path,
-            ListObsPlotExportFormat::Pdf,
-            640,
-            360,
-        )
-        .unwrap();
-
-        assert!(png_path.exists());
-        assert!(pdf_path.exists());
-        assert!(std::fs::metadata(&png_path).unwrap().len() > 0);
-        assert!(std::fs::metadata(&pdf_path).unwrap().len() > 0);
-    }
-
-    #[test]
-    fn render_listobs_plot_image_rejects_zero_dimensions() {
-        let summary = synthetic_summary();
-        let spec = ListObsPlotKind::AntennaLayout.default_spec();
-        let payload = build_listobs_plot_payload_from_summary(&summary, &spec).unwrap();
-        let error =
-            render_listobs_plot_image(&payload, ListObsPlotTheme::light(), 0, 360).unwrap_err();
-        assert!(error.contains("plot size must be non-zero"));
     }
 
     #[test]
@@ -2063,7 +1103,6 @@ mod tests {
         assert_eq!(bar.end, 10.5);
         assert!(bar.start < summary.spectral_windows[0].center_frequency_hz / 1.0e9);
         assert!(bar.end > summary.spectral_windows[0].center_frequency_hz / 1.0e9);
-        assert_eq!(super::spectral_window_lane_label(bar), "SPW 7");
     }
 
     #[test]
@@ -2110,12 +1149,12 @@ mod tests {
             panic!("expected spectral window payload");
         };
 
-        let labels = payload
+        let ids = payload
             .bars
             .iter()
-            .map(super::spectral_window_lane_label)
+            .map(|bar| bar.spectral_window_id)
             .collect::<Vec<_>>();
-        assert_eq!(labels, vec!["SPW 1".to_string(), "SPW 2".to_string()]);
+        assert_eq!(ids, vec![1, 2]);
     }
 
     #[test]
@@ -2301,43 +1340,6 @@ mod tests {
         assert_eq!(payload.bars.len(), 1);
         assert_eq!(payload.bars[0].label, "SPW 9");
         assert_eq!(payload.bars[0].color_group, "pol-none");
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    #[test]
-    fn non_macos_plot_font_registration_is_idempotent() {
-        ensure_non_macos_plot_font().expect("first registration");
-        ensure_non_macos_plot_font().expect("second registration");
-    }
-
-    #[test]
-    fn numeric_tick_formatter_trims_noise_for_large_axes() {
-        assert_eq!(format_numeric_tick(2_000.0, 10_000.0), "2000");
-        assert_eq!(format_numeric_tick(160.0, 200.0), "160");
-        assert_eq!(format_numeric_tick(12.340, 20.0), "12.34");
-    }
-
-    #[test]
-    fn scan_timeline_axis_offset_removes_common_prefix() {
-        assert_eq!(
-            scan_timeline_axis_offset(4_197_926_160.0, 4_197_926_280.0),
-            4_197_926_100.0
-        );
-        assert_eq!(scan_timeline_axis_offset(10.0, 10.4), 0.0);
-    }
-
-    #[test]
-    fn zero_span_large_time_axis_uses_local_padding() {
-        let value = 4_304_481_700.0;
-        let (min, max) = padded_range(value, value);
-
-        assert!(min < value);
-        assert!(max > value);
-        assert!(
-            (max - min) < 20_000.0,
-            "unexpectedly wide zero-span padding: {}",
-            max - min
-        );
     }
 
     fn synthetic_summary() -> ListObsSummary {

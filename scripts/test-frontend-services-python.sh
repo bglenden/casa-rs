@@ -70,14 +70,11 @@ with tempfile.TemporaryDirectory() as tmp:
             avgspw=False,
             scalar=False,
             iteraxis=None,
-            width=640,
-            height=420,
             max_plot_points=10000,
         )
     )
     assert plot.preset == frontend.MeasurementSetPlotPreset.AMPLITUDE_VS_FREQUENCY
-    assert plot.render.image_format == "none"
-    assert plot.image_bytes == b""
+    assert plot.document.layers or plot.document.panels
     assert plot.x_axis.label
     assert plot.y_axis.label
     assert plot.series

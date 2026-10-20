@@ -4,7 +4,7 @@
     {
       "kind": "task",
       "id": "msexplore",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "MSExplore",
       "category": "MeasurementSet",
       "summary": "explore and export common MeasurementSet plotms-style plots",
@@ -2840,14 +2840,14 @@
           "name": "plot_format",
           "concept": {
             "id": "parameter.plot_format",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 53,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "png"
+              "value": "txt"
             }
           },
           "required_when": {
@@ -2880,106 +2880,6 @@
               "label": "Plot Format",
               "group": "Export",
               "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "plot_width",
-          "concept": {
-            "id": "parameter.plot_width",
-            "semantic_revision": 1
-          },
-          "order": 54,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "integer",
-              "value": 1600
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--plot-width"
-              ],
-              "false_flags": [],
-              "metavar": "PIXELS"
-            },
-            "provider": {
-              "field": "plot_width",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "plot_width",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Plot Width",
-              "group": "Export",
-              "advanced": true,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "plot_height",
-          "concept": {
-            "id": "parameter.plot_height",
-            "semantic_revision": 1
-          },
-          "order": 55,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "integer",
-              "value": 900
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--plot-height"
-              ],
-              "false_flags": [],
-              "metavar": "PIXELS"
-            },
-            "provider": {
-              "field": "plot_height",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "plot_height",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Plot Height",
-              "group": "Export",
-              "advanced": true,
               "hidden": false
             }
           },
@@ -3613,6 +3513,23 @@
           "to_contract": 4,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 4,
+          "to_contract": 5,
+          "steps": [
+            {
+              "kind": "remove",
+              "parameter": "plot_width"
+            },
+            {
+              "kind": "remove",
+              "parameter": "plot_height"
+            }
+          ],
+          "changed_defaults": [
+            "plot_format"
+          ]
         }
       ]
     },
@@ -22192,7 +22109,7 @@
     {
       "kind": "task",
       "id": "plotms",
-      "contract_version": 4,
+      "contract_version": 5,
       "display_name": "PlotMS",
       "category": "Plotting",
       "summary": "Plot MeasurementSet visibility data with CASA plotms-style selections and axes.",
@@ -25025,14 +24942,14 @@
           "name": "plot_format",
           "concept": {
             "id": "parameter.plot_format",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 53,
           "default": {
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "png"
+              "value": "txt"
             }
           },
           "required_when": {
@@ -25065,106 +24982,6 @@
               "label": "Plot Format",
               "group": "Export",
               "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "plot_width",
-          "concept": {
-            "id": "parameter.plot_width",
-            "semantic_revision": 1
-          },
-          "order": 54,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "integer",
-              "value": 1600
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--plot-width"
-              ],
-              "false_flags": [],
-              "metavar": "PIXELS"
-            },
-            "provider": {
-              "field": "plot_width",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "plot_width",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Plot Width",
-              "group": "Export",
-              "advanced": true,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "plot_height",
-          "concept": {
-            "id": "parameter.plot_height",
-            "semantic_revision": 1
-          },
-          "order": 55,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "integer",
-              "value": 900
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--plot-height"
-              ],
-              "false_flags": [],
-              "metavar": "PIXELS"
-            },
-            "provider": {
-              "field": "plot_height",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "plot_height",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Plot Height",
-              "group": "Export",
-              "advanced": true,
               "hidden": false
             }
           },
@@ -25798,6 +25615,23 @@
           "to_contract": 4,
           "steps": [],
           "changed_defaults": []
+        },
+        {
+          "from_contract": 4,
+          "to_contract": 5,
+          "steps": [
+            {
+              "kind": "remove",
+              "parameter": "plot_width"
+            },
+            {
+              "kind": "remove",
+              "parameter": "plot_height"
+            }
+          ],
+          "changed_defaults": [
+            "plot_format"
+          ]
         }
       ]
     },

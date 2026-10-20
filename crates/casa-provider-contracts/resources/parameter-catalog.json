@@ -5691,13 +5691,11 @@
     },
     {
       "id": "parameter.plot_format",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "plot_format",
       "value_domain": {
         "kind": "choice",
         "values": [
-          "pdf",
-          "png",
           "txt"
         ]
       },
@@ -5708,32 +5706,10 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Plot export format",
+        "summary": "Plot point-manifest export format",
         "details": null,
         "examples": [
-          "png"
-        ]
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.plot_height",
-      "semantic_revision": 1,
-      "casa_name": "plot_height",
-      "value_domain": {
-        "kind": "integer"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Rendered plot height in pixels",
-        "details": null,
-        "examples": [
-          "900"
+          "txt"
         ]
       },
       "persistence_class": "profile"
@@ -5753,31 +5729,9 @@
       "unit_dimension": null,
       "semantic_role": "output_data",
       "documentation": {
-        "summary": "Write the plot export to PATH",
+        "summary": "Write the plot's text point manifest to PATH",
         "details": null,
         "examples": []
-      },
-      "persistence_class": "profile"
-    },
-    {
-      "id": "parameter.plot_width",
-      "semantic_revision": 1,
-      "casa_name": "plot_width",
-      "value_domain": {
-        "kind": "integer"
-      },
-      "normalization": {
-        "kind": "identity"
-      },
-      "base_constraints": [],
-      "unit_dimension": null,
-      "semantic_role": "algorithm",
-      "documentation": {
-        "summary": "Rendered plot width in pixels",
-        "details": null,
-        "examples": [
-          "1600"
-        ]
       },
       "persistence_class": "profile"
     },

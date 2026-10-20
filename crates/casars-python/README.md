@@ -6,37 +6,37 @@
 The public surface is split into three concerns:
 
 - `casars.data` for in-process access to persistent CASA-style images, tables,
-  and typed MeasurementSet plot documents
-- `casars.parameters` and `casars.sessions` for the shared task/session profile
-  lifecycle
+  and typed MeasurementSet plot documents (drawn with Matplotlib by
+  `casars.data.plot_matplotlib`)
+- `casars.parameters` for the shared task profile lifecycle
 - `casars.tasks` for the generated CASA-named task functions and generic
   `run()` entry point
 
+`casars.imexplore` adds NumPy/Matplotlib helpers for reading and drawing image
+planes.
+
 The generated task wrappers render a current-contract TOML draft through the Rust
 runtime and delegate execution, safety controls, and Last persistence to
-`casars run`. They record project-aware attempts as Python-initiated receipts,
-accept an optional existing notebook filename or stable ID, and expose a
-one-run recording bypass. Every task draft also exposes the exact versioned
-Rust provider invocation; completions retain that projection, and requests
-the catalog refuses raise `ValueError` before process launch. Python does not
-own provider schemas,
-parameter defaults, capability interpretation, task-result decoding, or a
-second provider subprocess engine.
+`casars run`. Every task draft also exposes the exact versioned Rust provider
+invocation; completions retain that projection, and requests the catalog
+refuses raise `ValueError` before process launch. Python does not own provider
+schemas, parameter defaults, capability interpretation, task-result decoding,
+or a second provider subprocess engine.
 
 ADR-0006 defines the implemented `casars.parameters` API and sparse TOML
-profile contract shared with CLI, TUI, and GUI surfaces. All 40 catalog tasks
+profile contract shared with the `casars` command line. All 27 catalog tasks
 have generated CASA-named wrappers and concrete typing stubs under the single
-`casars.tasks` namespace; the generated implementation stays private. The two
-browser sessions have generated
-conveniences in `casars.sessions`. These profile-aware wrappers support
-Defaults, Last, Last Successful, a named TOML file, or an existing typed draft.
+`casars.tasks` namespace; the generated implementation stays private. These
+profile-aware wrappers support Defaults, Last, Last Successful, a named TOML
+file, or an existing typed draft.
 
-Generated UniFFI is the primary Python application binding. The wheel contains
-one native `_core` library that exports both the generated frontend symbols and
-the deliberately retained PyO3 object layer. PyO3 remains only for `Image` and
-`Table`, where high-volume NumPy array transfer is the required exception;
-tasks, parameters, sessions, task results, and MeasurementSet plot documents
-all use the generated Rust boundary. See the profile guide for source
+Generated UniFFI (`casars._frontend`, from `casars-frontend-services`) is the
+primary Python application binding. The wheel contains one native `_core`
+library that exports both the generated frontend symbols and the deliberately
+retained PyO3 object layer. PyO3 remains only for `Image` and `Table`, where
+high-volume NumPy array transfer is the required exception; tasks, parameters,
+task results, and MeasurementSet plot documents all use the generated Rust
+boundary. See the profile guide for source
 precedence, versioning, and managed Last paths.
 
 Documentation:

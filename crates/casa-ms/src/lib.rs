@@ -110,7 +110,7 @@ pub use msexplore::{
     apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request, build_msexplore_payload,
     build_msexplore_payload_from_spec, build_msexplore_plot_payload,
     build_msexplore_plot_payload_from_path, export_msexplore_plot, preview_msexplore_flag_edit,
-    preview_msexplore_flag_edit_for_request, render_msexplore_plot_image,
+    preview_msexplore_flag_edit_for_request,
 };
 pub use observation_owner::{
     ObservationOwnerError, ResolvedSelectedObservation, ResolvedSelectedObservationAccess,
@@ -119,16 +119,11 @@ pub use observation_owner::{
 #[cfg(unix)]
 pub use observation_owner::{SelectedVisibilityWrite, SelectedVisibilityWriteTargets};
 pub use plot::{
-    ListObsPlotExportFormat as MeasurementSetPlotExportFormat,
     ListObsPlotKind as MeasurementSetPlotKind, ListObsPlotPayload as MeasurementSetPlotPayload,
-    ListObsPlotRenderStyle as MeasurementSetPlotRenderStyle,
-    ListObsPlotSpec as MeasurementSetPlotSpec, ListObsPlotTheme as MeasurementSetPlotTheme,
+    ListObsPlotSpec as MeasurementSetPlotSpec,
     build_listobs_plot_payload_from_summary as build_measurement_set_plot_payload_from_summary,
     build_listobs_uv_plot_payload as build_measurement_set_uv_plot_payload,
     build_listobs_visibility_plot_payload as build_measurement_set_visibility_plot_payload,
-    export_listobs_plot as export_measurement_set_plot,
-    render_listobs_plot_image as render_measurement_set_plot_image,
-    render_listobs_plot_image_with_style as render_measurement_set_plot_image_with_style,
 };
 pub use plot_data::{
     MS_PLOT_DATA_SCHEMA_VERSION, MsPlotData, MsPlotDataAxis, MsPlotDataPanel,

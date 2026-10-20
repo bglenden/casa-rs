@@ -10,16 +10,14 @@
 
 use std::env;
 use std::hint::black_box;
-use std::io::Cursor;
 use std::path::PathBuf;
 use std::time::Instant;
 
 use casa_ms::{
-    MeasurementSet, MeasurementSetPlotTheme, MeasurementSetSummary,
-    MeasurementSetSummaryOutputFormat, MsColorAxis, MsIterationAxis, MsPlotPayload, MsPlotPreset,
-    MsPlotSpec, MsSelection, build_msexplore_plot_payload, render_msexplore_plot_image,
+    MeasurementSet, MeasurementSetSummary, MeasurementSetSummaryOutputFormat, MsColorAxis,
+    MsIterationAxis, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelection,
+    build_msexplore_plot_payload,
 };
-use image::ImageFormat;
 
 #[derive(Debug, Clone)]
 struct Options {
@@ -39,8 +37,6 @@ struct Options {
     yselfscale: bool,
     xsharedaxis: bool,
     ysharedaxis: bool,
-    plot_width: u32,
-    plot_height: u32,
     repeats: usize,
     warmups: usize,
 }
@@ -49,7 +45,6 @@ struct Options {
 enum ProfileStage {
     Pipeline,
     Build,
-    Render,
     Full,
 }
 
@@ -60,10 +55,6 @@ fn main() {
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
 fn run() -> Result<(), String> {
     let options = parse_args(env::args().skip(1))?;
     let selection = MsSelection {
@@ -107,13 +98,8 @@ fn run() -> Result<(), String> {
         selection.field, selection.spw, selection.scan, selection.correlation, selection.msselect
     );
     println!(
-        "render size={}x{} xselfscale={} yselfscale={} xsharedaxis={} ysharedaxis={}",
-        options.plot_width,
-        options.plot_height,
-        options.xselfscale,
-        options.yselfscale,
-        options.xsharedaxis,
-        options.ysharedaxis
+        "xselfscale={} yselfscale={} xsharedaxis={} ysharedaxis={}",
+        options.xselfscale, options.yselfscale, options.xsharedaxis, options.ysharedaxis
     );
 
     let open = measure("open_ms", options.repeats, options.warmups, || {
@@ -193,21 +179,6 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
 
-    if options.stage == ProfileStage::Render {
-        let render = measure("render_bitmap", options.repeats, options.warmups, || {
-            let image = render_msexplore_plot_image(
-                &payload,
-                MeasurementSetPlotTheme::light(),
-                options.plot_width,
-                options.plot_height,
-            )?;
-            Ok((image.width() as usize) * (image.height() as usize))
-        })?;
-        println!();
-        println!("render-only median={:.2} ms", render.median_ms);
-        return Ok(());
-    }
-
     let build_reused = measure(
         "build_reused_open_ms",
         options.repeats,
@@ -228,34 +199,6 @@ fn run() -> Result<(), String> {
         },
     )?;
 
-    let render = measure("render_bitmap", options.repeats, options.warmups, || {
-        let image = render_msexplore_plot_image(
-            &payload,
-            MeasurementSetPlotTheme::light(),
-            options.plot_width,
-            options.plot_height,
-        )?;
-        Ok((image.width() as usize) * (image.height() as usize))
-    })?;
-
-    let rendered = render_msexplore_plot_image(
-        &payload,
-        MeasurementSetPlotTheme::light(),
-        options.plot_width,
-        options.plot_height,
-    )?;
-    let encode = measure(
-        "encode_png_in_memory",
-        options.repeats,
-        options.warmups,
-        || {
-            let mut bytes = Vec::new();
-            rendered
-                .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
-                .map_err(|error| error.to_string())?;
-            Ok(bytes.len())
-        },
-    )?;
     let full_reused = measure(
         "full_reused_open_ms",
         options.repeats,
@@ -270,17 +213,7 @@ fn run() -> Result<(), String> {
                 .render(MeasurementSetSummaryOutputFormat::Json)
                 .map_err(|error| error.to_string())?;
             let payload = build_msexplore_plot_payload(&open_ms, &selection, &spec)?;
-            let image = render_msexplore_plot_image(
-                &payload,
-                MeasurementSetPlotTheme::light(),
-                options.plot_width,
-                options.plot_height,
-            )?;
-            let mut bytes = Vec::new();
-            image
-                .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
-                .map_err(|error| error.to_string())?;
-            Ok(rendered_summary.len() ^ bytes.len() ^ payload_point_count(&payload))
+            Ok(rendered_summary.len() ^ payload_point_count(&payload))
         },
     )?;
 
@@ -297,17 +230,7 @@ fn run() -> Result<(), String> {
                 .render(MeasurementSetSummaryOutputFormat::Json)
                 .map_err(|error| error.to_string())?;
             let payload = build_msexplore_plot_payload(&ms, &selection, &spec)?;
-            let image = render_msexplore_plot_image(
-                &payload,
-                MeasurementSetPlotTheme::light(),
-                options.plot_width,
-                options.plot_height,
-            )?;
-            let mut bytes = Vec::new();
-            image
-                .write_to(&mut Cursor::new(&mut bytes), ImageFormat::Png)
-                .map_err(|error| error.to_string())?;
-            Ok(rendered_summary.len() ^ bytes.len() ^ payload_point_count(&payload))
+            Ok(rendered_summary.len() ^ payload_point_count(&payload))
         },
     )?;
 
@@ -322,23 +245,16 @@ fn run() -> Result<(), String> {
 
     println!();
     println!(
-        "stage shares of fresh full pipeline: open={:.1}% summary(reused/fresh)={:.1}%/{:.1}% build(reused/fresh)={:.1}%/{:.1}% render={:.1}% encode={:.1}%",
+        "stage shares of fresh full pipeline: open={:.1}% summary(reused/fresh)={:.1}%/{:.1}% build(reused/fresh)={:.1}%/{:.1}%",
         percent(open.median_ms, full.median_ms),
         percent(summary_reused.median_ms, full.median_ms),
         percent(summary_fresh.median_ms, full.median_ms),
         percent(build_reused.median_ms, full.median_ms),
         percent(build_fresh.median_ms, full.median_ms),
-        percent(render.median_ms, full.median_ms),
-        percent(encode.median_ms, full.median_ms),
     );
     println!(
         "full pipeline reused/fresh ratio = {:.2}x",
         full_reused.median_ms / full.median_ms.max(0.001)
-    );
-    println!(
-        "render_vs_reused_library ratio: render / (open + summary + build) = {:.2}x",
-        render.median_ms
-            / (open.median_ms + summary_reused.median_ms + build_reused.median_ms).max(0.001)
     );
 
     Ok(())
@@ -461,8 +377,6 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
     let mut yselfscale = false;
     let mut xsharedaxis = false;
     let mut ysharedaxis = false;
-    let mut plot_width = 1600u32;
-    let mut plot_height = 900u32;
     let mut repeats = 5usize;
     let mut warmups = 1usize;
 
@@ -511,18 +425,6 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
             "--yselfscale" => yselfscale = true,
             "--xsharedaxis" => xsharedaxis = true,
             "--ysharedaxis" => ysharedaxis = true,
-            "--plot-width" => {
-                plot_width = take_value(&mut index, &args, "--plot-width")?
-                    .parse::<u32>()
-                    .map_err(|_| "invalid integer value for --plot-width".to_string())?
-                    .max(1)
-            }
-            "--plot-height" => {
-                plot_height = take_value(&mut index, &args, "--plot-height")?
-                    .parse::<u32>()
-                    .map_err(|_| "invalid integer value for --plot-height".to_string())?
-                    .max(1)
-            }
             "--repeats" => {
                 repeats = take_value(&mut index, &args, "--repeats")?
                     .parse::<usize>()
@@ -564,8 +466,6 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Options, String>
         yselfscale,
         xsharedaxis,
         ysharedaxis,
-        plot_width,
-        plot_height,
         repeats,
         warmups,
     })
@@ -579,7 +479,7 @@ Usage:\n\
   profile_msexplore <ms-path> [OPTIONS]\n\
 \n\
 Options:\n\
-  --stage <MODE>            Stage subset: pipeline, build, render, full (default: pipeline)\n\
+  --stage <MODE>            Stage subset: pipeline, build, full (default: pipeline)\n\
   --preset <PRESET>          Plot preset to profile (default: amplitude_vs_time)\n\
   --field <EXPR>             FIELD selection\n\
   --spw <EXPR>               SPW selection\n\
@@ -594,8 +494,6 @@ Options:\n\
   --yselfscale               Use self-scaled Y bounds per panel\n\
   --xsharedaxis              Force shared X bounds across panels\n\
   --ysharedaxis              Force shared Y bounds across panels\n\
-  --plot-width <PIXELS>      Render width (default: 1600)\n\
-  --plot-height <PIXELS>     Render height (default: 900)\n\
   --repeats <N>              Timed repeats (default: 5)\n\
   --warmups <N>              Warmup repeats (default: 1)\n\
   -h, --help                 Show this help\n"
@@ -607,7 +505,6 @@ impl ProfileStage {
         match value.trim().to_ascii_lowercase().as_str() {
             "pipeline" => Ok(Self::Pipeline),
             "build" => Ok(Self::Build),
-            "render" => Ok(Self::Render),
             "full" => Ok(Self::Full),
             _ => Err(format!("invalid value for --stage: {value}")),
         }
@@ -617,7 +514,6 @@ impl ProfileStage {
         match self {
             Self::Pipeline => "pipeline",
             Self::Build => "build",
-            Self::Render => "render",
             Self::Full => "full",
         }
     }

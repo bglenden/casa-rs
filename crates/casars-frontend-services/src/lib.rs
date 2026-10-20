@@ -13,10 +13,10 @@ use std::time::Instant;
 
 use casa_ms::plot::UvCoverageSeries;
 use casa_ms::{
-    MeasurementSetPlotPayload, MeasurementSetSummaryOutputFormat, MsExploreSpec,
-    MsPageExportRange, MsPlotData, MsPlotDataPanel, MsPlotPayload, MsPlotPreset, MsPlotSpec,
-    MsScatterGridPayload, MsScatterPagePayload, MsScatterPlotPayload, MsScatterSeries,
-    MsSelection, build_msexplore_payload_from_spec,
+    MeasurementSetPlotPayload, MeasurementSetSummaryOutputFormat, MsExploreSpec, MsPageExportRange,
+    MsPlotData, MsPlotDataPanel, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsScatterGridPayload,
+    MsScatterPagePayload, MsScatterPlotPayload, MsScatterSeries, MsSelection,
+    build_msexplore_payload_from_spec,
 };
 use casa_provider_contracts::{
     ParameterValue, ProviderInvocationAdaptation, RunProductKind, RunProductRole,
@@ -32,12 +32,8 @@ use casa_task_runtime::{
 use serde::Serialize;
 use thiserror::Error;
 
-const DEFAULT_GUI_MAX_PLOT_POINTS: u64 = 250_000;
+const DEFAULT_MAX_PLOT_POINTS: u64 = 250_000;
 const FRONTEND_POINT_PROVENANCE_LIMIT: usize = 8_000;
-#[cfg(test)]
-const DEFAULT_PLOT_WIDTH: u32 = 960;
-#[cfg(test)]
-const DEFAULT_PLOT_HEIGHT: u32 = 600;
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum TaskProductRole {
@@ -344,7 +340,6 @@ pub struct SurfaceParameterDiagnostic {
     pub suggestions: Vec<String>,
 }
 
-
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct SurfaceParameterSnapshot {
     pub schema_version: u64,
@@ -490,11 +485,8 @@ pub struct MeasurementSetPlotRequest {
     pub avgspw: bool,
     pub scalar: bool,
     pub iteraxis: Option<String>,
-    pub width: u32,
-    pub height: u32,
     pub max_plot_points: u64,
 }
-
 
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct PlotAxisMetadata {
@@ -615,15 +607,8 @@ pub struct PlotSamplingDiagnostics {
     pub diagnostics: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct PlotRenderProvenance {
-    pub renderer: String,
-    pub image_format: String,
-    pub width: u32,
-    pub height: u32,
-    pub source: String,
-}
-
+/// A typed MeasurementSet plot document and its metadata; Python renders it
+/// with Matplotlib.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct MeasurementSetPlotResult {
     pub preset: MeasurementSetPlotPreset,
@@ -638,8 +623,6 @@ pub struct MeasurementSetPlotResult {
     pub series: Vec<PlotSeriesMetadata>,
     pub sampling: PlotSamplingDiagnostics,
     pub document: PlotDocumentPayload,
-    pub render: PlotRenderProvenance,
-    pub image_bytes: Vec<u8>,
 }
 
 #[derive(Debug, Error, uniffi::Error)]
@@ -714,7 +697,6 @@ pub fn application_catalog() -> FrontendResult<ApplicationCatalogEnvelope> {
     })
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
 pub struct SurfaceParameterWriteResult {
     pub path: String,
@@ -722,7 +704,6 @@ pub struct SurfaceParameterWriteResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub managed_kind: Option<String>,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
 pub struct SurfaceProviderInvocation {
@@ -1035,7 +1016,6 @@ fn parameter_bundle(surface_id: &str) -> FrontendResult<SurfaceContractBundle> {
         .map_err(|error| parameter_error("load parameter surface", error))
 }
 
-
 fn parameter_session_from_source(
     surface_id: &str,
     source: &str,
@@ -1107,7 +1087,6 @@ fn parameter_session_from_typed_values(
         .map_err(|error| parameter_error("resolve parameter values", error))
 }
 
-
 /// Return one self-contained surface definition and its referenced concepts.
 #[uniffi::export]
 pub fn parameter_surface_bundle(surface_id: String) -> FrontendResult<SurfaceParameterBundle> {
@@ -1144,7 +1123,6 @@ pub fn parameter_template_toml(surface_id: String) -> FrontendResult<String> {
     render_documented_template(&parameter_bundle(&surface_id)?)
         .map_err(|error| parameter_error("render parameter template", error))
 }
-
 
 /// Load Last or Last Successful from the managed store, if present.
 #[uniffi::export]
@@ -1217,8 +1195,7 @@ pub fn parameter_render_toml(
         .map_err(|error| parameter_error("render sparse parameter profile", error))
 }
 
-
-/// Project one complete task invocation for CLI/TUI/GUI consumers.
+/// Project one complete task invocation for the CLI and Python.
 #[uniffi::export]
 pub fn parameter_provider_invocation(
     surface_id: String,
@@ -1333,27 +1310,27 @@ pub fn task_completion(
         .products
         .into_iter()
         .map(|product| TaskCompletionProduct {
-                id: product.id,
-                role: match product.role {
-                    RunProductRole::Primary => TaskProductRole::Primary,
-                    RunProductRole::Auxiliary => TaskProductRole::Auxiliary,
-                    RunProductRole::Preview => TaskProductRole::Preview,
-                },
-                resource_kind: match product.resource_kind {
-                    RunProductKind::MeasurementSet => TaskProductKind::MeasurementSet,
-                    RunProductKind::CasaImage => TaskProductKind::CasaImage,
-                    RunProductKind::CasaTable => TaskProductKind::CasaTable,
-                    RunProductKind::FitsImage => TaskProductKind::FitsImage,
-                    RunProductKind::File => TaskProductKind::File,
-                },
-                label: product.label,
-                path: product.path.to_string_lossy().into_owned(),
-                exists: product.exists,
-                preview_path: product
-                    .preview_path
-                    .map(|path| path.to_string_lossy().into_owned()),
-                preview_exists: product.preview_exists,
-                diagnostic: product.diagnostic,
+            id: product.id,
+            role: match product.role {
+                RunProductRole::Primary => TaskProductRole::Primary,
+                RunProductRole::Auxiliary => TaskProductRole::Auxiliary,
+                RunProductRole::Preview => TaskProductRole::Preview,
+            },
+            resource_kind: match product.resource_kind {
+                RunProductKind::MeasurementSet => TaskProductKind::MeasurementSet,
+                RunProductKind::CasaImage => TaskProductKind::CasaImage,
+                RunProductKind::CasaTable => TaskProductKind::CasaTable,
+                RunProductKind::FitsImage => TaskProductKind::FitsImage,
+                RunProductKind::File => TaskProductKind::File,
+            },
+            label: product.label,
+            path: product.path.to_string_lossy().into_owned(),
+            exists: product.exists,
+            preview_path: product
+                .preview_path
+                .map(|path| path.to_string_lossy().into_owned()),
+            preview_exists: product.preview_exists,
+            diagnostic: product.diagnostic,
         })
         .collect();
     Ok(TaskCompletionProjection {
@@ -1363,7 +1340,6 @@ pub fn task_completion(
         diagnostics: completion.diagnostics,
     })
 }
-
 
 #[uniffi::export]
 pub fn build_measurement_set_plot(
@@ -1379,10 +1355,8 @@ pub fn build_measurement_set_plot(
         });
     }
 
-    let width = request.width.clamp(320, 4096);
-    let height = request.height.clamp(240, 4096);
     let max_plot_points = if request.max_plot_points == 0 {
-        DEFAULT_GUI_MAX_PLOT_POINTS
+        DEFAULT_MAX_PLOT_POINTS
     } else {
         request.max_plot_points
     };
@@ -1479,17 +1453,8 @@ pub fn build_measurement_set_plot(
         series: metadata.series,
         sampling: metadata.sampling,
         document,
-        render: PlotRenderProvenance {
-            renderer: "casa-rs plot document".to_string(),
-            image_format: "none".to_string(),
-            width,
-            height,
-            source: "Rust casa-ms MeasurementSet payload converted to a structured plot document through UniFFI".to_string(),
-        },
-        image_bytes: Vec::new(),
     })
 }
-
 
 struct PayloadMetadata {
     title: String,
@@ -2557,7 +2522,6 @@ fn normalized_optional(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty() && value != "all")
 }
 
-
 fn selection_summary(request: &MeasurementSetPlotRequest) -> String {
     let mut parts = vec![format!(
         "data column {}",
@@ -2574,7 +2538,6 @@ fn selection_summary(request: &MeasurementSetPlotRequest) -> String {
     }
     parts.join(", ")
 }
-
 
 uniffi::setup_scaffolding!();
 
@@ -2616,7 +2579,11 @@ mod tests {
         .expect("defaults")
     }
 
-    fn profile_snapshot(surface_id: &str, profile_toml: &str, path: &Path) -> SurfaceParameterSnapshot {
+    fn profile_snapshot(
+        surface_id: &str,
+        profile_toml: &str,
+        path: &Path,
+    ) -> SurfaceParameterSnapshot {
         parameter_resolve(
             surface_id.to_string(),
             SurfaceParameterBaseSource::File,
@@ -2656,7 +2623,6 @@ mod tests {
                 && application.include_in_suite
         }));
     }
-
 
     #[test]
     fn parameter_catalog_projects_every_task_surface() {
@@ -2725,7 +2691,6 @@ mod tests {
                 .contains("niter = 7")
         );
     }
-
 
     #[test]
     fn parameter_provider_invocation_uses_simobserve_family_stdin() {
@@ -3008,9 +2973,8 @@ mod tests {
         assert!(error.to_string().contains("open parameter session"));
     }
 
-
     #[test]
-    fn measurement_set_plot_builds_typed_document_without_gui_png_work() {
+    fn measurement_set_plot_builds_a_typed_document_for_every_preset() {
         let (_dir, ms_path) = unpack_small_ms();
 
         assert_eq!(
@@ -3044,8 +3008,6 @@ mod tests {
                 avgspw: false,
                 scalar: false,
                 iteraxis: None,
-                width: DEFAULT_PLOT_WIDTH,
-                height: DEFAULT_PLOT_HEIGHT,
                 max_plot_points: 10_000,
             }) {
                 Ok(plot) => plot,
@@ -3063,10 +3025,6 @@ mod tests {
 
             assert_eq!(plot.preset, preset);
             assert_eq!(plot.data_column, "data");
-            assert_eq!(plot.render.image_format, "none");
-            assert_eq!(plot.render.width, DEFAULT_PLOT_WIDTH);
-            assert_eq!(plot.render.height, DEFAULT_PLOT_HEIGHT);
-            assert!(plot.image_bytes.is_empty());
             assert!(!plot.title.is_empty());
             assert!(!plot.x_axis.label.is_empty());
             assert!(!plot.y_axis.label.is_empty());
@@ -3166,8 +3124,6 @@ mod tests {
                 avgspw: false,
                 scalar: false,
                 iteraxis: None,
-                width: DEFAULT_PLOT_WIDTH,
-                height: DEFAULT_PLOT_HEIGHT,
                 max_plot_points: 250_000,
             })
             .unwrap_or_else(|error| panic!("plot {preset:?}: {error}"));

@@ -10,19 +10,17 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 389
-- Surfaces: 29 (27 task, 2 session)
-- Surface bindings: 560
+- Concepts: 367
+- Surfaces: 27 (27 task, 0 session)
+- Surface bindings: 532
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
-| [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 4 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
+| [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 5 | <code>msexplore</code> | 66 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 4 | <code>calibration</code> | 49 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
 | [Imager](#surface-imager)<br><code>imager</code> | task | 25 | <code>imager</code> | 81 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 4 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
-| [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 3 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
-| [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 3 | <code>image_browser</code> | 17 | browse persistent casacore images |
 | [Image Header](#surface-imhead)<br><code>imhead</code> | task | 3 | <code>image_analysis</code> | 4 | Inspect or update CASA image header metadata. |
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 3 | <code>image_analysis</code> | 4 | Compute CASA image statistics over optional pixel, region, and channel selections. |
 | [Image Moments](#surface-immoments)<br><code>immoments</code> | task | 3 | <code>image_analysis</code> | 7 | Create CASA-style image moment maps |
@@ -34,7 +32,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 3 | <code>calibration</code> | 25 | Solve bandpass calibration for a MeasurementSet. |
 | [Fluxscale](#surface-fluxscale)<br><code>fluxscale</code> | task | 3 | <code>calibration</code> | 10 | Scale gain solutions using reference calibrator fields. |
 | [Gencal](#surface-gencal)<br><code>gencal</code> | task | 3 | <code>calibration</code> | 10 | Generate a calibration table such as antpos, gceff, or opac. |
-| [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 4 | <code>msexplore</code> | 68 | Plot MeasurementSet visibility data with CASA plotms-style selections and axes. |
+| [PlotMS](#surface-plotms)<br><code>plotms</code> | task | 5 | <code>msexplore</code> | 66 | Plot MeasurementSet visibility data with CASA plotms-style selections and axes. |
 | [PlotCal](#surface-plotcal)<br><code>plotcal</code> | task | 4 | <code>plotcal</code> | 15 | Plot calibration tables and corrected-data diagnostics. |
 | [Flag Data](#surface-flagdata)<br><code>flagdata</code> | task | 3 | <code>flagdata</code> | 18 | Run native CASA-style MeasurementSet flagging. |
 | [Flag Manager](#surface-flagmanager)<br><code>flagmanager</code> | task | 3 | <code>flagmanager</code> | 6 | Manage MeasurementSet flag-version snapshots. |
@@ -51,7 +49,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## MSExplore (<code>msexplore</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: MeasurementSet
 - Provider family: `msexplore`
 - Summary: explore and export common MeasurementSet plotms-style plots
@@ -110,10 +108,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>showminorgrid</code> | <code>parameter.showminorgrid@r1</code> | <code>bool</code> | <code>false</code>; optional | Style | Show minor grid lines |
 | <code>headeritems</code> | <code>parameter.headeritems@r1</code> | <code>string</code> | <code>"none"</code>; optional | Style | Comma-separated CASA-style page header items |
 | <code>max_points</code> | <code>parameter.max_points@r1</code> | <code>integer</code> | <code>10000000</code>; optional | Export | Hard cap on the total plotted points rendered by one request |
-| <code>plot_output</code> | <code>parameter.plot_output@r1</code> | <code>path (any)</code> | <code>"none"</code>; optional | Export | Write the plot export to PATH |
-| <code>plot_format</code> | <code>parameter.plot_format@r1</code> | <code>choice (3 values)</code> | <code>"png"</code>; optional | Export | Plot export format |
-| <code>plot_width</code> | <code>parameter.plot_width@r1</code> | <code>integer</code> | <code>1600</code>; optional | Export | Rendered plot width in pixels |
-| <code>plot_height</code> | <code>parameter.plot_height@r1</code> | <code>integer</code> | <code>900</code>; optional | Export | Rendered plot height in pixels |
+| <code>plot_output</code> | <code>parameter.plot_output@r1</code> | <code>path (any)</code> | <code>"none"</code>; optional | Export | Write the plot's text point manifest to PATH |
+| <code>plot_format</code> | <code>parameter.plot_format@r2</code> | <code>choice (1 values)</code> | <code>"txt"</code>; optional | Export | Plot point-manifest export format |
 | <code>flag_action</code> | <code>parameter.flag_action@r1</code> | <code>choice (3 values)</code> | <code>"none"</code>; optional | Flag Editing | Stage a rectangular flag or unflag edit against the plotted scatter points |
 | <code>flag_xmin</code> | <code>parameter.flag_xmin@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Flag Editing | Inclusive minimum X value for the staged edit region |
 | <code>flag_xmax</code> | <code>parameter.flag_xmax@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Flag Editing | Inclusive maximum X value for the staged edit region |
@@ -363,56 +359,6 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>imaging_mode</code> | <code>parameter.imaging_mode@r1</code> | <code>choice (12 values)</code> | <code>"mfs"</code>; optional | Family Dimensions | Family imaging mode. |
 | <code>observation_mode</code> | <code>parameter.observation_mode@r1</code> | <code>choice (2 values)</code> | <code>"interferometric"</code>; optional | Family Dimensions | Native simulator row topology. |
 | <code>measure_actual_size</code> | <code>parameter.measure_actual_size@r1</code> | <code>bool</code> | <code>false</code>; optional | Family Workers | Measure generated MeasurementSet size by walking the output directory. |
-
-<a id="surface-tablebrowser"></a>
-
-## Table Browser (<code>tablebrowser</code>)
-
-- Kind: `session`
-- Contract version: `3`
-- Category: Tables
-- Provider family: `table_browser`
-- Summary: browse arbitrary casacore tables
-
-| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
-|---|---|---|---|---|---|
-| <code>table</code> | <code>parameter.table@r1</code> | <code>path (table)</code> | no default; required | Input | Path to the casacore table root directory<br><em>Surface:</em> Canonical table maps to provider field table_path. |
-| <code>view</code> | <code>parameter.view@r1</code> | <code>choice (4 values; surface-narrowed)</code> | <code>"summary"</code>; optional | Startup | Initial content view |
-| <code>bookmark</code> | <code>parameter.bookmark@r1</code> | <code>string</code> | <code>"none"</code>; optional | Startup | Stable bookmark or inspect target |
-| <code>rowstart</code> | <code>parameter.rowstart@r1</code> | <code>integer</code> | <code>0</code>; optional | Startup | First row in the initial row range |
-| <code>nrow</code> | <code>parameter.nrow@r1</code> | <code>integer</code> | <code>100</code>; optional | Startup | Number of rows in the initial row range |
-| <code>linkedtable</code> | <code>parameter.linkedtable@r1</code> | <code>string</code> | <code>"none"</code>; optional | Startup | Linked-subtable path or name |
-| <code>contentmode</code> | <code>tablebrowser.contentmode@r1</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Startup | Table content verbosity. |
-
-<a id="surface-imexplore"></a>
-
-## ImExplore (<code>imexplore</code>)
-
-- Kind: `session`
-- Contract version: `3`
-- Category: Images
-- Provider family: `image_browser`
-- Summary: browse persistent casacore images
-
-| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
-|---|---|---|---|---|---|
-| <code>image</code> | <code>imexplore.image@r1</code> | <code>path (image)</code> | no default; required | Input | Path to the casacore image root directory<br><em>Surface:</em> Canonical image maps to provider field image_path. |
-| <code>blc</code> | <code>parameter.blc@r1</code> | <code>string</code> | <code>""</code>; optional | View | Comma-separated inclusive bottom-left-corner pixel indices |
-| <code>trc</code> | <code>parameter.trc@r1</code> | <code>string</code> | <code>""</code>; optional | View | Comma-separated inclusive top-right-corner pixel indices |
-| <code>inc</code> | <code>parameter.inc@r1</code> | <code>string</code> | <code>""</code>; optional | View | Comma-separated per-axis pixel increments |
-| <code>stretch</code> | <code>parameter.stretch@r1</code> | <code>string</code> | <code>"percentile99"</code>; optional | Display | Stretch mask. |
-| <code>autoscale</code> | <code>parameter.autoscale@r1</code> | <code>choice (2 values)</code> | <code>"per_plane"</code>; optional | Display | Whether clip bounds update per plane or stay frozen while stepping cubes |
-| <code>clip_low</code> | <code>parameter.clip_low@r1</code> | <code>string</code> | <code>""</code>; optional | Display | Manual lower clip bound in image value units |
-| <code>clip_high</code> | <code>parameter.clip_high@r1</code> | <code>string</code> | <code>""</code>; optional | Display | Manual upper clip bound in image value units |
-| <code>fps</code> | <code>parameter.fps@r1</code> | <code>integer</code> | <code>1</code>; optional | Display | Movie playback frames per second |
-| <code>view</code> | <code>parameter.view@r1</code> | <code>choice (4 values; surface-narrowed)</code> | <code>"plane"</code>; optional | Startup | Initial content view |
-| <code>contentmode</code> | <code>image.browser.contentmode@r1</code> | <code>choice (2 values)</code> | <code>"raster"</code>; optional | Startup | Initial image-plane content representation. |
-| <code>colormap</code> | <code>parameter.colormap@r1</code> | <code>choice (3 values)</code> | <code>"gray"</code>; optional | Startup | Initial color map |
-| <code>movieaxis</code> | <code>parameter.movieaxis@r1</code> | <code>string</code> | <code>"auto"</code>; optional | Startup | Movie axis or auto |
-| <code>profileaxis</code> | <code>parameter.profileaxis@r1</code> | <code>string</code> | <code>"auto"</code>; optional | Startup | Profile axis or auto |
-| <code>loop</code> | <code>parameter.loop@r1</code> | <code>bool</code> | <code>false</code>; optional | Startup | Loop movie playback when started |
-| <code>region</code> | <code>image.selection.region@r1</code> | <code>string</code> | <code>"none"</code>; optional | Startup | Region file or expression. |
-| <code>mask</code> | <code>parameter.mask@r1</code> | <code>string</code> | <code>"none"</code>; optional | Startup | Mask expression.<br><em>Surface:</em> A named persistent mask attached to the opened image, or `none`. imexplore does not accept inline mask expressions; region expressions remain supported by `region`. |
 
 <a id="surface-imhead"></a>
 
@@ -697,7 +643,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## PlotMS (<code>plotms</code>)
 
 - Kind: `task`
-- Contract version: `4`
+- Contract version: `5`
 - Category: Plotting
 - Provider family: `msexplore`
 - Summary: Plot MeasurementSet visibility data with CASA plotms-style selections and axes.
@@ -756,10 +702,8 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>showminorgrid</code> | <code>parameter.showminorgrid@r1</code> | <code>bool</code> | <code>false</code>; optional | Style | Show minor grid lines |
 | <code>headeritems</code> | <code>parameter.headeritems@r1</code> | <code>string</code> | <code>"none"</code>; optional | Style | Comma-separated CASA-style page header items |
 | <code>max_points</code> | <code>parameter.max_points@r1</code> | <code>integer</code> | <code>10000000</code>; optional | Export | Hard cap on the total plotted points rendered by one request |
-| <code>plot_output</code> | <code>parameter.plot_output@r1</code> | <code>path (any)</code> | <code>"none"</code>; optional | Export | Write the plot export to PATH |
-| <code>plot_format</code> | <code>parameter.plot_format@r1</code> | <code>choice (3 values)</code> | <code>"png"</code>; optional | Export | Plot export format |
-| <code>plot_width</code> | <code>parameter.plot_width@r1</code> | <code>integer</code> | <code>1600</code>; optional | Export | Rendered plot width in pixels |
-| <code>plot_height</code> | <code>parameter.plot_height@r1</code> | <code>integer</code> | <code>900</code>; optional | Export | Rendered plot height in pixels |
+| <code>plot_output</code> | <code>parameter.plot_output@r1</code> | <code>path (any)</code> | <code>"none"</code>; optional | Export | Write the plot's text point manifest to PATH |
+| <code>plot_format</code> | <code>parameter.plot_format@r2</code> | <code>choice (1 values)</code> | <code>"txt"</code>; optional | Export | Plot point-manifest export format |
 | <code>flag_action</code> | <code>parameter.flag_action@r1</code> | <code>choice (3 values)</code> | <code>"none"</code>; optional | Flag Editing | Stage a rectangular flag or unflag edit against the plotted scatter points |
 | <code>flag_xmin</code> | <code>parameter.flag_xmin@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Flag Editing | Inclusive minimum X value for the staged edit region |
 | <code>flag_xmax</code> | <code>parameter.flag_xmax@r1</code> | <code>optional&lt;float&gt; (states: none)</code> | <code>"none"</code>; optional | Flag Editing | Inclusive maximum X value for the staged edit region |

@@ -13,15 +13,14 @@ use casa_ms::msexplore::cli::{UiArgumentParser, UiValueKind};
 use casa_ms::subtables::SubTable;
 use casa_ms::{
     DEFAULT_MAX_PLOT_POINTS, MSEXPLORE_TASK_PROTOCOL_NAME, MeasurementSet, MeasurementSetPlotKind,
-    MeasurementSetPlotSpec, MeasurementSetPlotTheme, MeasurementSetSummaryOutputFormat,
-    MeasurementSetUvCoverage, MsAxis, MsColorAxis, MsDataColumn, MsExploreFlagEditRequest,
-    MsExploreRunTaskRequest, MsExploreSpec, MsFlagAction, MsFlagEditSpec, MsFlagRegion,
-    MsIterationAxis, MsLayoutSpec, MsLegendPosition, MsPageExportRange, MsPageHeaderItem,
-    MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelection, apply_msexplore_flag_edit,
-    apply_msexplore_flag_edit_for_request, build_measurement_set_uv_plot_payload,
-    build_msexplore_payload, build_msexplore_payload_from_spec, build_msexplore_plot_payload,
-    export_msexplore_plot, preview_msexplore_flag_edit, preview_msexplore_flag_edit_for_request,
-    render_msexplore_plot_image,
+    MeasurementSetPlotSpec, MeasurementSetSummaryOutputFormat, MeasurementSetUvCoverage, MsAxis,
+    MsColorAxis, MsDataColumn, MsExploreFlagEditRequest, MsExploreRunTaskRequest, MsExploreSpec,
+    MsFlagAction, MsFlagEditSpec, MsFlagRegion, MsIterationAxis, MsLayoutSpec, MsLegendPosition,
+    MsPageExportRange, MsPageHeaderItem, MsPlotPayload, MsPlotPreset, MsPlotSpec, MsSelection,
+    apply_msexplore_flag_edit, apply_msexplore_flag_edit_for_request,
+    build_measurement_set_uv_plot_payload, build_msexplore_payload,
+    build_msexplore_payload_from_spec, build_msexplore_plot_payload, export_msexplore_plot,
+    preview_msexplore_flag_edit, preview_msexplore_flag_edit_for_request,
 };
 use casa_types::ArrayValue;
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
@@ -207,7 +206,7 @@ fn msexplore_json_schema_emits_canonical_task_bundle() {
         schema["protocol"]["protocol_name"],
         MSEXPLORE_TASK_PROTOCOL_NAME
     );
-    assert_eq!(schema["protocol"]["protocol_version"], 1);
+    assert_eq!(schema["protocol"]["protocol_version"], 2);
     assert_eq!(schema["protocol"]["surface_kind"], "task");
     assert_eq!(schema["semantic"]["operations"][0]["request_kind"], "run");
     assert_eq!(
@@ -226,7 +225,7 @@ fn msexplore_protocol_info_reports_task_surface() {
 
     let info = serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("parse info");
     assert_eq!(info["protocol_name"], MSEXPLORE_TASK_PROTOCOL_NAME);
-    assert_eq!(info["protocol_version"], 1);
+    assert_eq!(info["protocol_version"], 2);
     assert_eq!(info["surface_kind"], "task");
 }
 
@@ -1167,7 +1166,7 @@ fn msexplore_page_spec_manifest_emits_multiple_positions_on_one_page() {
 }
 
 #[test]
-fn msexplore_generic_page_spec_allows_same_cell_overplot_render() {
+fn msexplore_generic_page_spec_allows_same_cell_overplot_manifest() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_msexplore_fixture_ms(temp.path());
     let ms = MeasurementSet::open(&ms_path).expect("open fixture");
@@ -1219,10 +1218,17 @@ fn msexplore_generic_page_spec_allows_same_cell_overplot_render() {
     assert_eq!(page.items[0].colindex, 0);
     assert_eq!(page.items[1].colindex, 0);
 
-    let image = render_msexplore_plot_image(&payload, MeasurementSetPlotTheme::light(), 1200, 800)
-        .expect("render overplot image");
-    assert_eq!(image.width(), 1200);
-    assert_eq!(image.height(), 800);
+    let output = temp.path().join("overplot.txt");
+    export_msexplore_plot(&payload, &output).expect("export overplot manifest");
+    let rows = page_manifest_rows(&output);
+    assert!(
+        rows.iter()
+            .any(|row| row.0 == 0 && row.1 == 0 && row.2 == 0)
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.0 == 1 && row.1 == 0 && row.2 == 0)
+    );
 }
 
 #[test]
@@ -1283,7 +1289,7 @@ fn msexplore_payload_from_spec_opens_disk_backed_ms_for_scatter_pages() {
 }
 
 #[test]
-fn msexplore_export_api_writes_grid_page_png_pdf_and_manifest_outputs() {
+fn msexplore_export_api_writes_grid_and_page_manifests() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_msexplore_fixture_ms(temp.path());
     let ms = MeasurementSet::open(&ms_path).expect("open fixture");
@@ -1299,28 +1305,8 @@ fn msexplore_export_api_writes_grid_page_png_pdf_and_manifest_outputs() {
         panic!("expected scatter grid payload");
     };
 
-    let grid_png = temp.path().join("iter-grid.png");
-    export_msexplore_plot(
-        &grid_payload,
-        MeasurementSetPlotTheme::light(),
-        &grid_png,
-        casa_ms::MsExportFormat::Png,
-        1200,
-        800,
-    )
-    .expect("export grid png");
-    assert!(grid_png.exists());
-
     let grid_txt = temp.path().join("iter-grid.txt");
-    export_msexplore_plot(
-        &grid_payload,
-        MeasurementSetPlotTheme::dark(),
-        &grid_txt,
-        casa_ms::MsExportFormat::Txt,
-        1200,
-        800,
-    )
-    .expect("export grid txt");
+    export_msexplore_plot(&grid_payload, &grid_txt).expect("export grid txt");
     let grid_manifest = std::fs::read_to_string(&grid_txt).expect("read grid manifest");
     assert_eq!(
         manifest_header_value(&grid_manifest, "iteraxis"),
@@ -1371,34 +1357,8 @@ fn msexplore_export_api_writes_grid_page_png_pdf_and_manifest_outputs() {
         panic!("expected scatter page payload");
     };
 
-    let page_pdf = temp.path().join("page.pdf");
-    export_msexplore_plot(
-        &page_payload,
-        MeasurementSetPlotTheme::light(),
-        &page_pdf,
-        casa_ms::MsExportFormat::Pdf,
-        1200,
-        800,
-    )
-    .expect("export page pdf");
-    assert!(page_pdf.exists());
-    assert!(
-        std::fs::metadata(&page_pdf)
-            .expect("page pdf metadata")
-            .len()
-            > 0
-    );
-
     let page_txt = temp.path().join("page.txt");
-    export_msexplore_plot(
-        &page_payload,
-        MeasurementSetPlotTheme::light(),
-        &page_txt,
-        casa_ms::MsExportFormat::Txt,
-        1200,
-        800,
-    )
-    .expect("export page txt");
+    export_msexplore_plot(&page_payload, &page_txt).expect("export page txt");
     let page_manifest = std::fs::read_to_string(&page_txt).expect("read page manifest");
     assert_eq!(manifest_header_value(&page_manifest, "gridrows"), Some("1"));
     assert_eq!(manifest_header_value(&page_manifest, "gridcols"), Some("2"));
@@ -1420,15 +1380,7 @@ fn msexplore_export_api_writes_uv_coverage_manifest() {
     );
 
     let output = temp.path().join("uv.txt");
-    export_msexplore_plot(
-        &payload,
-        MeasurementSetPlotTheme::light(),
-        &output,
-        casa_ms::MsExportFormat::Txt,
-        1200,
-        800,
-    )
-    .expect("export uv coverage manifest");
+    export_msexplore_plot(&payload, &output).expect("export uv coverage manifest");
     let manifest = std::fs::read_to_string(&output).expect("read uv coverage manifest");
     assert!(manifest.contains("# payload=listobs_uv_coverage"));
     assert!(manifest.contains("# x_axis=u_lambda"));

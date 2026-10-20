@@ -1512,6 +1512,11 @@
       "fingerprint": "c9f92d9a45aac1093d9059fc2be9a45151358b0c2b4f3fb74b076210dbcd84f3"
     },
     {
+      "id": "parameter.plot_format",
+      "semantic_revision": 2,
+      "fingerprint": "73faa0280810a5d12b776193861b0e140a08738d3cd18197e8503276638126ca"
+    },
+    {
       "id": "parameter.plot_height",
       "semantic_revision": 1,
       "fingerprint": "2e511d9a2cb7bfe24333b3749743068822deb099f3fa1990a7ded5f0322bbf68"
@@ -2834,6 +2839,11 @@
       "fingerprint": "3bb073d15a0180f66280bd82d48ad0843312ed70054c814a5632367332695614"
     },
     {
+      "id": "msexplore",
+      "contract_version": 5,
+      "fingerprint": "772b3f061b22e0dcb19560e774397ee72040a4aa98c28dc69a8e14fbc011bdeb"
+    },
+    {
       "id": "mstransform",
       "contract_version": 1,
       "fingerprint": "15638e976f8274dfffb535362848375bb7c40079481a2e8d5daa41942502e8be"
@@ -2887,6 +2897,11 @@
       "id": "plotms",
       "contract_version": 4,
       "fingerprint": "b15bc38ccf08d83d735e73801aa101ebb5ede79317e2b6b827db0b2c2f6e0fe2"
+    },
+    {
+      "id": "plotms",
+      "contract_version": 5,
+      "fingerprint": "af988dffdbf66450c63252378e73663c21923198314026a9769d62b68939128c"
     },
     {
       "id": "simalma",
