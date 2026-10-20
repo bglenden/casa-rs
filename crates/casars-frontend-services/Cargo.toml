@@ -4,12 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Shared Swift and Python frontend services for casa-rs"
+description = "UniFFI service layer of the casa-rs Python package"
 repository.workspace = true
 publish = false
 
 [lib]
-crate-type = ["cdylib", "rlib", "staticlib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 anyhow = "1"

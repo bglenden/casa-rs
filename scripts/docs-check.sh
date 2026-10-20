@@ -12,7 +12,6 @@ required_headers=(
   "TESTING.md:Truth class: normative"
   "docs/README.md:Truth class: current descriptive"
   "docs/agent-reference.md:Truth class: normative"
-  "apps/casars-mac/AGENTS.md:Truth class: normative"
   "docs/imaging-effects-inventory.md:Truth class: current descriptive"
 )
 
@@ -29,8 +28,6 @@ for spec in "${required_headers[@]}"; do
   }
 done
 
-python3 scripts/check-tutorial-pack-contract.py
-python3 scripts/assistant-corpus-pack.py check
 python3 scripts/generate-parameter-reference.py --check
 python3 scripts/generate-python-parameter-wrappers.py --check
 

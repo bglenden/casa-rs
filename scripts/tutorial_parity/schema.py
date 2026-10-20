@@ -11,7 +11,8 @@ from .model import Comparison, Operation, SectionManifest, Surface
 
 SECTION_SCHEMA_VERSION = 1
 RESULT_SCHEMA_VERSION = 1
-SURFACES = {"casa", "cli", "python", "tui", "gui"}
+SURFACES = {"casa", "cli", "python"}
+SURFACE_ORDER = ("casa", "cli", "python")
 RESULT_STATUSES = {"completed", "dry_run", "unavailable", "failed"}
 
 TOP_FIELDS = {
@@ -21,12 +22,11 @@ TOP_FIELDS = {
 PACK_FIELDS = {"id", "relative_path"}
 SOURCE_FIELDS = {"url", "anchor"}
 PREREQUISITE_FIELDS = {"kind", "path"}
-SURFACE_FIELDS = {"operations", "screenshot", "input_events", "journey", "required_artifacts"}
+SURFACE_FIELDS = {"operations"}
 OPERATION_REQUIRED_FIELDS = {"task", "parameters", "outputs"}
 OPERATION_FIELDS = OPERATION_REQUIRED_FIELDS | {"capture_stdout"}
-INPUT_EVENT_FIELDS = {"after_ms", "text"}
 COMPARISON_FIELDS = {"plugin", "config", "inputs"}
-EVIDENCE_FIELDS = {"result", "review", "documentation", "screenshot_spec"}
+EVIDENCE_FIELDS = {"result", "review", "documentation"}
 
 TASK_PARAMETERS: dict[str, set[str]] = {
     "imhead": {"imagename", "mode", "json"},
@@ -34,7 +34,7 @@ TASK_PARAMETERS: dict[str, set[str]] = {
     "immoments": {"imagename", "outfile", "moments", "axis", "region", "box", "chans", "stokes", "mask", "includepix", "excludepix", "overwrite"},
     "exportfits": {"imagename", "fitsimage", "velocity", "optical", "bitpix", "minpix", "maxpix", "overwrite", "dropstokes", "stokeslast", "history", "dropdeg"},
     "listobs": {"vis", "listfile", "overwrite", "verbose", "listunfl", "cachesize", "json"},
-    "msexplore": {"vis", "format", "output", "preset", "avgchannel", "avgspw", "avgtime", "avgscan", "color_by", "iteraxis", "plot_output", "plot_format", "plot_width", "plot_height", "overwrite", "json"},
+    "msexplore": {"vis", "format", "output", "preset", "avgchannel", "avgspw", "avgtime", "avgscan", "color_by", "iteraxis", "plot_output", "plot_format", "overwrite", "json"},
     "plotms": {"vis", "field", "xaxis", "yaxis", "avgchannel", "avgspw", "avgtime", "avgscan", "coloraxis", "iteraxis", "plotfile", "expformat", "exprange", "overwrite", "showgui"},
     "imager": {"vis", "imagename", "imsize", "cell_arcsec", "cell", "field", "phasecenter_field", "spw", "specmode", "gridder", "deconvolver", "weighting", "robust", "niter", "threshold_jy", "threshold", "mask_box", "mask", "pblimit", "write_pb", "pbcor", "dirty_only", "interactive", "overwrite"},
     "tclean": {"vis", "imagename", "imsize", "cell", "field", "spw", "specmode", "gridder", "deconvolver", "weighting", "robust", "niter", "threshold", "mask", "pblimit", "pbcor", "interactive"},
@@ -47,7 +47,7 @@ COMPARATORS: dict[str, set[str]] = {
     "json_fields": {"fields", "absolute_tolerance", "relative_tolerance"},
     "image_products": {"products", "absolute_tolerance", "relative_tolerance", "metadata_fields"},
     "measurement_set": {"fields", "absolute_tolerance", "relative_tolerance"},
-    "plot_products": {"fields", "absolute_tolerance", "relative_tolerance", "require_png", "panel_labels"},
+    "plot_products": {"fields", "absolute_tolerance", "relative_tolerance", "panel_labels"},
     "fits_products": {"products", "absolute_tolerance", "relative_tolerance", "header_fields"},
 }
 
@@ -121,7 +121,6 @@ def parse_section(value: Any, source: Path | str = "<section>") -> SectionManife
             _relative_path(item, f"{source}.evidence.documentation[{index}]")
             for index, item in enumerate(_list(evidence["documentation"], f"{source}.evidence.documentation"))
         ),
-        "screenshot_spec": _relative_path(evidence["screenshot_spec"], f"{source}.evidence.screenshot_spec"),
     }
     return SectionManifest(
         path=Path(source),
@@ -194,45 +193,9 @@ def _parse_surface(name: str, value: Any, source: str) -> Surface:
                 raise ContractError(f"{op_source}.capture_stdout: must also be declared in outputs")
         operations.append(Operation(task=task, parameters=dict(parameters), outputs=outputs, capture_stdout=capture_stdout))
 
-    screenshot = obj.get("screenshot")
-    if screenshot is not None:
-        screenshot = _relative_path(screenshot, f"{source}.screenshot")
-    events = []
-    for index, item in enumerate(_list(obj.get("input_events", []), f"{source}.input_events")):
-        event_source = f"{source}.input_events[{index}]"
-        event = _object(item, event_source)
-        _exact_fields(event, INPUT_EVENT_FIELDS, event_source)
-        after_ms = event["after_ms"]
-        text = event["text"]
-        if not isinstance(after_ms, int) or after_ms < 0:
-            raise ContractError(f"{event_source}.after_ms: expected non-negative integer")
-        if text not in {"r", "y", "\r", "\n", "\t"}:
-            raise ContractError(f"{event_source}.text: unsupported bounded UI event")
-        events.append((after_ms, text))
-    journey = obj.get("journey")
-    if journey is not None and journey != "tutorial-journey-gui":
-        raise ContractError(f"{source}.journey: unsupported GUI journey")
-    required_artifacts = tuple(
-        _relative_path(path, f"{source}.required_artifacts[{index}]")
-        for index, path in enumerate(_list(obj.get("required_artifacts", []), f"{source}.required_artifacts"))
-    )
-    if name == "gui":
-        if operations or screenshot or events or journey is None:
-            raise ContractError(f"{source}: GUI must delegate only to the approved XCUITest journey")
-    elif journey is not None or required_artifacts:
-        raise ContractError(f"{source}: journey fields are GUI-only")
-    elif not operations:
+    if not operations:
         raise ContractError(f"{source}: surface requires at least one operation")
-    if name == "tui" and screenshot is None:
-        raise ContractError(f"{source}: TUI requires a Ghostty screenshot path")
-    return Surface(
-        name=name,
-        operations=tuple(operations),
-        screenshot=screenshot,
-        input_events=tuple(events),
-        journey=journey,
-        required_artifacts=required_artifacts,
-    )
+    return Surface(name=name, operations=tuple(operations))
 
 
 def _object(value: Any, source: str) -> dict[str, Any]:

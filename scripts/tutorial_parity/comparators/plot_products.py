@@ -93,8 +93,7 @@ def compare(manifest: SectionManifest, resources: RuntimeResources) -> dict[str,
     native_path = resources.pack_root / inputs["native"]
     oracle_values = inputs["oracle"] if isinstance(inputs["oracle"], list) else [inputs["oracle"]]
     oracle_paths = [resources.pack_root / value for value in oracle_values]
-    pngs = [resources.pack_root / value for value in inputs.get("pngs", [])]
-    required = [native_path, *oracle_paths, *(pngs if manifest.comparison.config.get("require_png") else [])]
+    required = [native_path, *oracle_paths]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         return {"status": "unavailable", "plugin": "plot_products", "reason": f"missing inputs: {', '.join(missing)}"}
@@ -119,5 +118,4 @@ def compare(manifest: SectionManifest, resources: RuntimeResources) -> dict[str,
         "plugin": "plot_products",
         "native": str(native_path),
         "comparisons": comparisons,
-        "rendered_products": [str(path) for path in pngs],
     }

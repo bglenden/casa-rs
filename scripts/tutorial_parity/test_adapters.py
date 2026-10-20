@@ -19,7 +19,6 @@ class CliPlanningTests(unittest.TestCase):
             native_python=None,
             casa_python=None,
             binary_dir=Path("/bin"),
-            ghostty_capture=None,
             evidence_root=Path("/evidence"),
             dry_run=True,
         )

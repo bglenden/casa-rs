@@ -1,15 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/casa-notebook",
     "crates/casa-provider-contracts",
     "crates/casa-task-runtime",
     "crates/casars",
     "crates/casars-imager",
     "crates/casars-python",
     "crates/casars-frontend-services",
-    "crates/casars-imagebrowser-protocol",
-    "crates/casars-tablebrowser-protocol",
     "crates/casa-types",
     "crates/casa-vla",
     "crates/casa-values",
@@ -34,7 +31,6 @@ members = [
     "crates/casa-measures-data",
     "crates/casa-test-support",
     "crates/casa-ms",
-    "crates/ratatui-graphics",
 ]
 
 [workspace.package]
@@ -50,7 +46,6 @@ nalgebra = "0.33"
 ndarray = "0.17"
 num-complex = "0.4"
 pkg-config = "0.3"
-ratatui-graphics = { path = "crates/ratatui-graphics", default-features = false, features = ["panel", "plotters", "kitty"] }
 sha2 = { version = "0.10", features = ["asm"] }
 smallvec = "1.15"
 sofars = "0.6"

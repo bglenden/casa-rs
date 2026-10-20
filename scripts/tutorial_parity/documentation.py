@@ -10,7 +10,7 @@ from .model import SectionManifest
 
 def render_markdown(manifest: SectionManifest, result: dict[str, Any]) -> str:
     rows = []
-    for name in ("casa", "cli", "python", "tui", "gui"):
+    for name in ("casa", "cli", "python"):
         surface = result["surfaces"].get(name)
         if surface is None:
             continue
