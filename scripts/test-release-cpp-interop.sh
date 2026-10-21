@@ -48,6 +48,10 @@ run_timed_step \
     --test ms_full_verify_vs_cpp \
     --test spectral_frame_parity
 run_timed_step \
+  "Running simulator MeasurementSet C++ interop" \
+  cargo test -p casa-simulation --features cpp-interop-tests \
+    --test simulator_cpp_interop
+run_timed_step \
   "Running imaging product replacement C++ interop" \
   cargo test -p casa-imaging-products --features cpp-interop-tests \
     --test replacement_interop

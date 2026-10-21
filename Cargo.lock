@@ -493,6 +493,7 @@ dependencies = [
  "casa-ms",
  "casa-numerics",
  "casa-tables",
+ "casa-test-support",
  "casa-types",
  "ndarray",
  "num-complex",

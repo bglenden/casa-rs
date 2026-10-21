@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use casa_ms::MeasurementSetWriteResources;
 use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{MEpoch, MeasFrame, MeasuresProvider};
+use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
 
 use crate::write;
 use array::{Antenna, ArrayConfig};
@@ -49,6 +49,44 @@ pub struct SimulatorOptions {
     /// `settimes`.
     pub now: MEpoch,
 }
+
+impl SimulatorOptions {
+    /// The production options: the discovered measures data, a write budget
+    /// from the machine's physical memory (two live batches), and the system
+    /// clock as "now".
+    ///
+    /// # Errors
+    ///
+    /// No measures data was found, or the memory budget could not be read.
+    pub fn from_system() -> SimulatorResult<Self> {
+        let measures = casa_ms::open_measures_runtime()
+            .map_err(|error| SimulatorError::raised(format!("measures data: {error}")))?;
+        let write_resources = MeasurementSetWriteResources::from_system_memory(2)
+            .map_err(|error| SimulatorError::raised(format!("memory budget: {error}")))?;
+        Ok(Self {
+            measures,
+            write_resources,
+            now: system_now(),
+        })
+    }
+}
+
+/// The system clock as a UTC epoch.
+fn system_now() -> MEpoch {
+    /// MJD of the Unix epoch, 1970-01-01.
+    const UNIX_EPOCH_MJD: f64 = 40_587.0;
+    let since_unix_s = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+    MEpoch::from_mjd(UNIX_EPOCH_MJD + since_unix_s / 86_400.0, EpochRef::UTC)
+}
+
+// A session moves between threads, so the Python tool can release the GIL
+// while it writes (ADR-0019).
+const _: () = {
+    const fn assert_send<T: Send>() {}
+    assert_send::<Simulator>();
+};
 
 /// A simulator session writing one new MeasurementSet.
 pub struct Simulator {
@@ -98,6 +136,12 @@ impl Simulator {
     /// `sm.name()`: the MeasurementSet's path, as given to `open`.
     pub fn name(&self) -> &Path {
         &self.path
+    }
+
+    /// The number of scans `observe` has planned. They are written only at
+    /// [`close`](Self::close); a session dropped without it writes nothing.
+    pub fn scan_count(&self) -> usize {
+        self.scans.len()
     }
 
     /// `sm.setconfig(...)`: append the antennas.
