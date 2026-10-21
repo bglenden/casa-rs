@@ -15,7 +15,10 @@
 //! model's grids, and `close` what it holds, against the imaging runtime's
 //! resource policy, and `close` computes each write batch's geometry,
 //! prediction and noise on the runtime's worker team, so the MeasurementSet
-//! is bitwise the same for any budget or worker count.
+//! is bitwise the same for any budget or worker count. A model is predicted
+//! on the CPU or the host's Metal device ([`SessionResources`]), whose
+//! predictions agree with the CPU's to `1e-4` of the largest; noise is
+//! drawn on the CPU on either.
 //!
 //! The setters keep CASA's semantics, including order-dependent ones:
 //! `setfield` records the reference time and first spectral window in force

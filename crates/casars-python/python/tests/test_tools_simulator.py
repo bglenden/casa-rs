@@ -14,6 +14,7 @@ import inspect
 import json
 import logging
 from pathlib import Path
+import subprocess
 from typing import Any
 import warnings
 
@@ -609,6 +610,51 @@ def test_predict_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCaptureF
         sm.predict(imagename=str(tmp_path / "missing.image"))
     sm.close()
     assert np.all(np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA")) == 0)
+
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+def sky_model(tmp_path: Path) -> Path:
+    """The one-plane Stokes I model around DIRECTION that the fixture
+    example writes."""
+    root = tmp_path / "fixtures"
+    subprocess.run(
+        ["cargo", "run", "-q", "-p", "casars-python", "--example", "make_python_fixtures", "--",
+         str(root)],
+        cwd=REPO_ROOT,
+        check=True,
+    )
+    return root / "simulator_model.image"
+
+
+@needs_measures
+def test_auto_predicts_on_the_metal_device_as_the_cpu_does(tmp_path: Path) -> None:
+    # 'auto' predicts on the machine's Metal device when it has one, which
+    # agrees with the CPU to 1e-4 of the largest visibility.
+    try:
+        simulator(backend="metal")
+    except RuntimeError as error:
+        pytest.skip(f"no Metal device: {error}")
+    model = sky_model(tmp_path)
+
+    def predicted(name: str, backend: str) -> np.ndarray:
+        sm = simulator(backend=backend)
+        sm.open(str(tmp_path / name))
+        configure(sm)
+        assert sm.observe("F", "L", starttime="0s", stoptime="300s")
+        assert sm.predict(imagename=str(model)) is True
+        sm.close()
+        return np.asarray(Table.open(tmp_path / name).get_column("DATA"))
+
+    cpu = predicted("cpu.ms", "cpu")
+    auto = predicted("auto.ms", "auto")
+    scale = np.abs(cpu).max()
+    assert scale > 0.5
+    difference = np.abs(auto - cpu).max()
+    assert difference <= 1e-4 * scale
+    # The device rounds differently: the CPU's bits would mean it predicted both.
+    assert difference > 0
 
 
 @needs_measures

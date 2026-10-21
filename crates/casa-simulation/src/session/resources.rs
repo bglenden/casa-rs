@@ -20,11 +20,13 @@
 //! (`write::resources`). The worker count is the runtime's: threads kept
 //! busy, the MeasurementSet writer's among them.
 //!
-//! The backend is where a session predicts its model; noise never runs on
-//! a device. Until the law comparing the session's Metal prediction with
-//! its CPU prediction lands (#841), `close` predicts on the CPU whatever the
-//! request ([`SessionResources::prediction_backend`]): a `Metal` request is
-//! accepted, on a host with a device, and computes on the CPU.
+//! The backend is where a session predicts its model
+//! ([`SessionResources::prediction_backend`]); noise never runs on a device,
+//! so a session that predicts nothing writes the same MeasurementSet
+//! whatever the request. Every kernel set a session predicts with is the
+//! standard `GridFT` one, which the imaging runtime's Metal laws and the
+//! simulator's own (`tests/backends.rs`) cover, so `Auto` takes the host's
+//! Metal device whenever there is one.
 
 use std::num::NonZeroUsize;
 use std::str::FromStr;
@@ -192,13 +194,14 @@ impl SessionResources {
         }
     }
 
-    /// The backend `close` predicts the session's rows on: the CPU, whatever
-    /// [`Self::resolved_backend`] resolves, until the law comparing the
-    /// session's Metal prediction with its CPU prediction lands (#841). The
-    /// prediction stage and its admission already take either backend.
+    /// The backend `close` predicts a session's model on, once it predicts
+    /// one: [`Self::resolved_backend`] of a session that predicts. `Auto`
+    /// is Metal on a host with a device and the CPU otherwise; `Metal` and
+    /// `Cpu` are what they ask for. On Metal, `close` also admits the
+    /// device copies of the model grids and the device predictor's bytes.
     #[must_use]
     pub fn prediction_backend(&self) -> BackendChoice {
-        BackendChoice::Cpu
+        self.resolved_backend(true)
     }
 }
 
@@ -248,9 +251,16 @@ mod tests {
                 .expect("auto");
         assert_eq!(auto.resolved_backend(false), BackendChoice::Cpu);
         assert_eq!(auto.resolved_backend(true), BackendChoice::Metal);
+        assert_eq!(auto.prediction_backend(), BackendChoice::Metal);
+        assert_eq!(metal.prediction_backend(), BackendChoice::Metal);
         let cpu = SessionResources::pinned(HOST, ResourcePolicy::Balanced, BackendRequest::Auto)
             .expect("auto");
         assert_eq!(cpu.resolved_backend(true), BackendChoice::Cpu);
+        assert_eq!(cpu.prediction_backend(), BackendChoice::Cpu);
+        let asked =
+            SessionResources::pinned(with_device, ResourcePolicy::Balanced, BackendRequest::Cpu)
+                .expect("cpu");
+        assert_eq!(asked.prediction_backend(), BackendChoice::Cpu);
     }
 
     #[test]

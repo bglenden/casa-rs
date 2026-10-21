@@ -62,15 +62,17 @@ pub(crate) struct Session {
 ///   `close` writes: the MeasurementSet writer gets half of it and the
 ///   geometry and noise the rest. `None` takes three quarters of the
 ///   machine's free memory.
-/// - `backend` is the device to predict on: `'auto'`, `'cpu'` or `'metal'`.
-///   Noise is computed on the CPU whatever the backend, and so, until the
-///   Metal prediction is enabled (#841), is the prediction; `'metal'` on a
-///   machine without a Metal device raises `RuntimeError`.
+/// - `backend` is the device to predict on: `'auto'` (the machine's Metal
+///   device when it has one, else the CPU), `'cpu'` or `'metal'`; `'metal'`
+///   on a machine without a Metal device raises `RuntimeError`. Noise is
+///   computed on the CPU whatever the backend.
 /// - `workers` is the number of threads `close` keeps busy, the writer's
 ///   among them; `None` takes three quarters of the machine's threads, at
 ///   most its performance cores.
 ///
-/// The MeasurementSet is bitwise the same whatever the controls.
+/// The MeasurementSet is bitwise the same for any budget or workers, and
+/// for any backend when nothing is predicted; a Metal prediction agrees with
+/// the CPU's to `1e-4` of the largest visibility.
 #[pyclass(name = "simulator", module = "casars.tools", frozen)]
 pub(crate) struct PySimulator {
     state: Mutex<Option<Session>>,

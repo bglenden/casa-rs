@@ -3,9 +3,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_coordinates::{CoordinateSystem, LinearCoordinate};
+use casa_coordinates::{
+    CoordinateSystem, DirectionCoordinate, LinearCoordinate, Projection, ProjectionType,
+    SpectralCoordinate, StokesCoordinate, StokesType,
+};
 use casa_images::{GaussianBeam, Image, ImageBeamSet, ImageInfo, ImageType};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
+use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{
     ArrayD, ArrayValue, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue, Value,
 };
@@ -20,12 +25,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let table_path = output_dir.join("python_fixture.table");
     let image_path = output_dir.join("python_fixture.image");
+    let model_path = output_dir.join("simulator_model.image");
 
     create_table_fixture(&table_path)?;
     create_image_fixture(&image_path)?;
+    create_sky_model_fixture(&model_path)?;
 
     println!("{}", table_path.display());
     println!("{}", image_path.display());
+    println!("{}", model_path.display());
+    Ok(())
+}
+
+/// A sky model `sm.predict` reads: 32 × 32 pixels of 4″ around J2000
+/// 23h30m +34° (the simulator tests' field), Stokes I, one plane spanning
+/// 1.4 GHz to 1.404 GHz, with three points.
+fn create_sky_model_fixture(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    const PIXELS: usize = 32;
+    if path.exists() {
+        fs::remove_dir_all(path)?;
+    }
+    let cell = 2.0e-5;
+    let mut coords = CoordinateSystem::new();
+    coords.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        [352.5_f64.to_radians(), 34.0_f64.to_radians()],
+        [-cell, cell],
+        [(PIXELS / 2) as f64, (PIXELS / 2) as f64],
+    ));
+    coords.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+    coords.add_coordinate(SpectralCoordinate::new(
+        FrequencyRef::LSRK,
+        1.4015e9,
+        4.0e6,
+        0.0,
+        1.4015e9,
+    ));
+    let shape = vec![PIXELS, PIXELS, 1, 1];
+    let mut image = Image::create(shape.clone(), coords, path)?;
+    let mut pixels = ArrayD::zeros(IxDyn(&shape));
+    for (x, y, flux) in [(16, 16, 1.0_f32), (20, 13, 0.5), (5, 27, 0.25)] {
+        pixels[IxDyn(&[x, y, 0, 0])] = flux;
+    }
+    image.put_slice(&pixels, &[0, 0, 0, 0])?;
+    image.set_units("Jy/pixel")?;
+    image.save()?;
     Ok(())
 }
 

@@ -175,6 +175,19 @@ pub fn session(
     stokes: &str,
     resources: SessionResources,
 ) -> Simulator {
+    session_with_channels(path, telescope, stokes, CHANNELS, resources)
+}
+
+/// [`session`] with a window of `channels` channels of [`CHANNEL_HZ`] from
+/// [`FREQUENCY_HZ`]: a model of as many planes ([`write_model`]) has one
+/// plane per channel.
+pub fn session_with_channels(
+    path: &Path,
+    telescope: &str,
+    stokes: &str,
+    channels: usize,
+    resources: SessionResources,
+) -> Simulator {
     let mut session = Simulator::open(
         path,
         SimulatorOptions {
@@ -210,7 +223,7 @@ pub fn session(
             channel_width_hz: CHANNEL_HZ,
             resolution_hz: CHANNEL_HZ,
             frame: FrequencyRef::TOPO,
-            channel_count: CHANNELS,
+            channel_count: channels,
             stokes: stokes.to_string(),
         })
         .expect("setspwindow");
