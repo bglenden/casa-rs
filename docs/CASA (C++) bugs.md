@@ -22,6 +22,7 @@ Simulator behaviours casa-rs does not follow:
 [shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
 [relabelled spectral-window frames](#setspwindow-relabels-every-spectral-windows-frame),
 [unconvertible coordinate systems](#setconfig-accepts-coordinate-systems-it-cannot-convert),
+[quantities in the wrong units](#the-tools-convert-quantities-whose-units-do-not-conform),
 [calls before `setconfig`](#simulator-calls-before-setconfig-abort-the-process),
 [a zero integration time](#a-zero-integration-time-adds-rows-without-bound),
 [`readantenna`'s observatory fallback](#simutilreadantenna-averages-a-stale-loop-variable),
@@ -478,7 +479,26 @@ For `coordsystem='longlat'`, `longlat2global` logs SEVERE "not yet
 implemented"; for an unknown name, `initAnt` logs SEVERE "Unknown coordinate
 system type". In both cases the antennas are added at the Earth's centre and
 `setconfig` returns True, so the script continues with an array whose
-geometry is meaningless. casa-rs raises RuntimeError in both cases.
+geometry is meaningless. In casa-rs, `longlat` raises RuntimeError and an
+unknown name logs CASA's message and returns False; neither adds antennas.
+
+## The tools convert quantities whose units do not conform
+
+- Date noted: 2026-10-21
+- Status: CASA bug; casa-rs does not follow it (#841)
+- Affected code: casatools' argument conversion (`casaQuantity`,
+  `casaMDirection`) used by `simulator_cmpt.cc` and the other tools
+
+A tool argument such as `integrationtime` or `freq` is read as a quantity
+and converted to the unit the method needs without checking that the units
+conform. CASA 6.7.6 takes `integrationtime='10Jy'` as 1e-25 s,
+`integrationtime='10m'` (metres, perhaps meant as minutes) as 10 s and
+`freq='1s'` as 1 Hz. A direction string whose second or third token does
+not read keeps the previous value, so `'J2000 12h00m00 garbage'` has a
+declination of 180°. casa-rs refuses both with casacore's "From/to units
+not consistent" or a parse error. The conversions CASA defines between
+dimensions are kept: a dimensionless number is the SI unit, an angle is a
+time at 360° a day, and a length is a frequency through c.
 
 ## Simulator calls before `setconfig` abort the process
 
