@@ -271,8 +271,12 @@ def test_observatories_are_the_measures_datas() -> None:
     me = measures()
     close(me.observatory("VLA"), VLA, rel=1e-14)
     assert me.observatory() == ALMA == me.observatory("alma")
-    assert me.observatory("gbt") == position("WGS84", -1.3934679600924218, 0.6707844683607905, 824.595)
-    assert me.observatory("MeerKAT") == position("WGS84", 0.374266659468412, -0.5360464638235224, 1050.0)
+    # Degree-tabulated entries are converted to radians by the platform's
+    # libm, which may round the last bit differently (Linux CI against macOS).
+    close(me.observatory("gbt"), position("WGS84", -1.3934679600924218, 0.6707844683607905, 824.595),
+          rel=1e-14)
+    close(me.observatory("MeerKAT"), position("WGS84", 0.374266659468412, -0.5360464638235224, 1050.0),
+          rel=1e-14)
     close(me.observatory("ATCA"), position("ITRF", 2.6101423190348916, -0.5261379196128062,
                                            6372960.257723439), rel=1e-14)
 
