@@ -285,14 +285,15 @@ pub use storage::{
 };
 pub use table::{
     ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride, ColumnOverrides,
-    DataManagerKind, EndianFormat, GeneratedScalarColumn, GeneratedScalarValueRun,
-    PreparedRowAppender, PreparedTableRow, PreparedTableRowMut, QueryResult, RecordColumnCell,
-    RecordColumnIter, RequiredScalarColumnDestination, RequiredScalarColumnValues,
-    RequiredScalarColumnValuesMut, RowRange, STREAMING_SCALAR_COLUMN_BUFFER_BYTES,
-    SelectedArray1DCells, SelectedArray1DCellsMut, SelectedArray1DShape, SelectedArray2D,
-    SelectedArray2DCells, SelectedArray2DCellsMut, SelectedArray2DShape, SelectedReadFootprint,
-    Slicer, SortOrder, StreamedScalarColumn, StreamedScalarType, StreamedScalarValues,
-    StreamingScalarColumnWriter, Table, TableCell, TableCellMut, TableColumn, TableColumnMut,
-    TableError, TableKind, TableOptions, TableRow, TableRowMut, TableWritePlan,
+    DataManagerKind, EndianFormat, GeneratedArrayColumn, GeneratedArrayValueRun,
+    GeneratedScalarColumn, GeneratedScalarValueRun, PreparedRowAppender, PreparedTableRow,
+    PreparedTableRowMut, QueryResult, RecordColumnCell, RecordColumnIter,
+    RequiredScalarColumnDestination, RequiredScalarColumnValues, RequiredScalarColumnValuesMut,
+    RowRange, STREAMING_SCALAR_COLUMN_BUFFER_BYTES, SelectedArray1DCells, SelectedArray1DCellsMut,
+    SelectedArray1DShape, SelectedArray2D, SelectedArray2DCells, SelectedArray2DCellsMut,
+    SelectedArray2DShape, SelectedReadFootprint, Slicer, SortOrder, StreamedScalarColumn,
+    StreamedScalarType, StreamedScalarValues, StreamingScalarColumnWriter, Table, TableCell,
+    TableCellMut, TableColumn, TableColumnMut, TableError, TableKind, TableOptions, TableRow,
+    TableRowMut, TableWritePlan,
 };
 pub use table_path::{add_directory, strip_directory};

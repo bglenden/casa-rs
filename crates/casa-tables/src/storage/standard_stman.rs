@@ -23,7 +23,6 @@ use casa_aipsio::{AipsIo, ByteOrder};
 use ndarray::ShapeBuilder;
 
 use casa_types::{ArrayValue, ScalarValue, Value};
-use ndarray::{ArrayD, IxDyn};
 
 use super::canonical::{
     canonical_element_size, read_bool_bits, read_f32_be, read_f32_le, read_f32_slice_be,
@@ -38,7 +37,9 @@ use super::data_type::CasacoreDataType;
 use super::stman_aipsio::{ColumnRawData, extract_row_value};
 use super::stman_array_file::{StManArrayFileReader, StManArrayFileWriter};
 use super::table_control::ColumnDescContents;
-use super::{RequiredScalarColumnData, ScalarColumnSources, StorageError};
+use super::{ColumnSources, RequiredScalarColumnData, StorageError};
+
+mod column_writer;
 
 const SSM_HEADER_SIZE: u64 = 512;
 const DEFAULT_SSM_BUCKET_SIZE: u32 = 32768;
@@ -2075,7 +2076,7 @@ pub(crate) fn write_ssm_file(
     rows: &[casa_types::RecordValue],
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
-    write_ssm_file_impl(file_path, col_descs, rows, None, None, big_endian)
+    write_ssm_file_impl(file_path, col_descs, rows, None, big_endian)
 }
 
 pub(crate) fn write_ssm_file_indexed(
@@ -2085,14 +2086,7 @@ pub(crate) fn write_ssm_file_indexed(
     field_indices: &[usize],
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
-    write_ssm_file_impl(
-        file_path,
-        col_descs,
-        rows,
-        Some(field_indices),
-        None,
-        big_endian,
-    )
+    write_ssm_file_impl(file_path, col_descs, rows, Some(field_indices), big_endian)
 }
 
 pub(crate) fn write_ssm_file_scalar_columns(
@@ -2124,55 +2118,66 @@ pub(crate) fn write_ssm_file_scalar_columns(
             "SSM scalar column writer only supports scalar non-record columns".to_string(),
         ));
     }
-    let column_sources = ScalarColumnSources::materialized(nrrow, scalar_columns);
-    write_ssm_file_scalar_column_sources(file_path, col_descs, &column_sources, big_endian)
+    let column_sources = ColumnSources::materialized(nrrow, scalar_columns);
+    write_ssm_file_column_sources(file_path, col_descs, &column_sources, big_endian)
 }
 
-pub(crate) fn write_ssm_file_scalar_column_sources(
+/// Write a StandardStMan data file from column sources: fixed-width scalar
+/// groups a bucket at a time, any other mix of scalars, strings and arrays
+/// column by column. Both hold a bounded amount whatever the row count.
+pub(crate) fn write_ssm_file_column_sources(
     file_path: &Path,
     col_descs: &[ColumnDescContents],
-    scalar_columns: &ScalarColumnSources<'_>,
+    sources: &ColumnSources<'_>,
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
-    if scalar_columns.column_count() != col_descs.len() {
+    if sources.column_count() != col_descs.len() {
         return Err(StorageError::FormatMismatch(format!(
-            "SSM scalar column count mismatch: expected {}, got {}",
+            "SSM column source count mismatch: expected {}, got {}",
             col_descs.len(),
-            scalar_columns.column_count()
+            sources.column_count()
         )));
     }
-    if col_descs
-        .iter()
-        .any(|col_desc| col_desc.is_array || col_desc.is_record())
-    {
-        return Err(StorageError::FormatMismatch(
-            "SSM scalar column writer only supports scalar non-record columns".to_string(),
-        ));
+    if col_descs.iter().all(|desc| {
+        !desc.is_array && !desc.is_record() && desc.data_type != CasacoreDataType::TpString
+    }) {
+        return write_ssm_fixed_scalar_sources_streaming(file_path, col_descs, sources, big_endian);
     }
-    write_ssm_file_impl(
-        file_path,
-        col_descs,
-        &[],
-        None,
-        Some(scalar_columns),
-        big_endian,
-    )
+    column_writer::write_ssm_file_columns(file_path, col_descs, sources, big_endian)
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
 fn write_ssm_file_impl(
     file_path: &Path,
     col_descs: &[ColumnDescContents],
     rows: &[casa_types::RecordValue],
     field_indices: Option<&[usize]>,
-    scalar_columns: Option<&ScalarColumnSources<'_>>,
+    big_endian: bool,
+) -> Result<Vec<u8>, StorageError> {
+    column_writer::write_ssm_file_columns(
+        file_path,
+        col_descs,
+        &column_writer::RowCells::new(rows, field_indices, col_descs),
+        big_endian,
+    )
+}
+
+/// The writer [`column_writer`] replaced, which assembles every bucket in
+/// memory; kept to check the two write the same bytes.
+#[cfg(test)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
+fn write_ssm_file_in_memory(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    rows: &[casa_types::RecordValue],
+    field_indices: Option<&[usize]>,
+    scalar_columns: Option<&ColumnSources<'_>>,
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
     let nrrow = scalar_columns
-        .map(ScalarColumnSources::row_count)
+        .map(ColumnSources::row_count)
         .unwrap_or(rows.len());
     let ncol = col_descs.len();
 
@@ -2311,31 +2316,31 @@ fn write_ssm_file_impl(
                         })
                 };
 
-                let offset: i64 =
-                    match value {
-                        Some(Value::Record(record)) if col_desc.is_record() => {
-                            let bytes = super::table_control::serialize_record_to_uchar(record)?;
-                            let payload = Value::Array(ArrayValue::UInt8(
-                            ArrayD::from_shape_vec(IxDyn(&[bytes.len()]), bytes).map_err(|err| {
-                                StorageError::FormatMismatch(format!(
-                                    "SSM record column '{}': invalid byte payload shape: {err}",
-                                    col_desc.col_name
-                                ))
-                            })?,
+                let offset: i64 = match value {
+                    Some(Value::Record(record)) if col_desc.is_record() => {
+                        let bytes = super::table_control::serialize_record_to_uchar(record)?;
+                        let payload = Value::Array(ArrayValue::UInt8(
+                            ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&[bytes.len()]), bytes)
+                                .map_err(|err| {
+                                    StorageError::FormatMismatch(format!(
+                                        "SSM record column '{}': invalid byte payload shape: {err}",
+                                        col_desc.col_name
+                                    ))
+                                })?,
                         ));
-                            writer.write_array(&payload, dt)?
-                        }
-                        Some(val @ Value::Array(_)) if !col_desc.is_record() => {
-                            writer.write_array(val, dt)?
-                        }
-                        Some(Value::Array(_)) | Some(Value::Record(_)) => {
-                            return Err(StorageError::FormatMismatch(format!(
-                                "SSM indirect column '{}' received incompatible value type",
-                                col_desc.col_name
-                            )));
-                        }
-                        _ => 0i64, // undefined cell
-                    };
+                        writer.write_array(&payload, dt)?
+                    }
+                    Some(val @ Value::Array(_)) if !col_desc.is_record() => {
+                        writer.write_array(val, dt)?
+                    }
+                    Some(Value::Array(_)) | Some(Value::Record(_)) => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "SSM indirect column '{}' received incompatible value type",
+                            col_desc.col_name
+                        )));
+                    }
+                    _ => 0i64, // undefined cell
+                };
 
                 // Write i64 offset in canonical byte order.
                 if big_endian {
@@ -2505,7 +2510,7 @@ fn write_ssm_file_impl(
 fn write_ssm_fixed_scalar_sources_streaming(
     file_path: &Path,
     col_descs: &[ColumnDescContents],
-    scalar_columns: &ScalarColumnSources<'_>,
+    scalar_columns: &ColumnSources<'_>,
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
     let nrrow = scalar_columns.row_count();
@@ -2726,7 +2731,7 @@ fn repeat_fixed_scalar_bytes(
 }
 
 /// Write a column's consecutive cells, encoded as
-/// [`ScalarColumnSources::encoded_cells`] gives them, from the start of `dst`:
+/// [`ColumnSources::encoded_cells`] gives them, from the start of `dst`:
 /// a `Bool` as one bit per cell, other types as their bytes.
 fn write_encoded_cells_to_bucket(dst: &mut [u8], data_type: CasacoreDataType, encoded: &[u8]) {
     if data_type == CasacoreDataType::TpBool {

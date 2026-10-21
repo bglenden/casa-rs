@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![allow(dead_code)]
 
+mod array_sources;
 pub(crate) mod canonical;
 pub(crate) mod data_type;
 pub(crate) mod incremental_stman;
@@ -49,21 +50,22 @@ use crate::table::{
 };
 use crate::table_path::add_directory_for_link;
 
+use self::array_sources::generated_array_group_sources;
 use self::data_type::CasacoreDataType;
 use self::incremental_stman::{
     IsmColumnResult, read_ism_file, read_ism_file_columns, read_ism_required_scalar_columns_rows,
     read_ism_required_scalar_columns_rows_reusing, read_ism_scalar_column,
-    read_ism_scalar_column_rows, write_ism_file, write_ism_file_indexed,
-    write_ism_file_scalar_column_sources,
+    read_ism_scalar_column_rows, write_ism_file, write_ism_file_column_sources,
+    write_ism_file_indexed,
 };
 use self::scalar_sources::scalar_override_columns_for_group;
-pub(crate) use self::scalar_sources::{EncodedCells, ScalarColumnSources};
+pub(crate) use self::scalar_sources::{ColumnSources, EncodedCells};
 pub(crate) use self::selected_cells::{cell_read_footprint, channel_read_footprint};
 use self::standard_stman::{
     read_ssm_array_column_rows, read_ssm_file, read_ssm_file_columns,
     read_ssm_required_scalar_columns_rows, read_ssm_required_scalar_columns_rows_reusing,
-    read_ssm_scalar_column_rows, write_ssm_file, write_ssm_file_indexed,
-    write_ssm_file_scalar_column_sources,
+    read_ssm_scalar_column_rows, write_ssm_file, write_ssm_file_column_sources,
+    write_ssm_file_indexed,
 };
 use self::stman_aipsio::scalar_value_is_default;
 use self::stman_aipsio::{
@@ -388,6 +390,7 @@ fn override_value_for_row(
     match column_overrides.get(column)? {
         ColumnOverride::Values(values) => values.get(row_idx).cloned().unwrap_or(None),
         ColumnOverride::GeneratedScalar(column) => column.value(row_idx).map(Value::Scalar),
+        ColumnOverride::GeneratedArray(column) => column.value(row_idx).map(Value::Array),
         ColumnOverride::StreamedScalar(_) => None,
         ColumnOverride::Deferred => None,
     }
@@ -4074,6 +4077,14 @@ impl CompositeStorage {
                     .collect();
                 (indices.len() == group_col_descs.len()).then_some(indices)
             });
+            // A group holding a generated array column is written from its
+            // sources, or refused before any of its rows are projected.
+            let generated_array_sources = generated_array_group_sources(
+                group.dm_kind,
+                &group_col_descs,
+                column_overrides,
+                effective_row_count,
+            )?;
             let deferred_group = group_col_descs.iter().all(|desc| {
                 matches!(
                     column_overrides.get(&desc.col_name),
@@ -4115,6 +4126,12 @@ impl CompositeStorage {
                             group_col_descs[0].col_name
                         )));
                     }
+                    Some(ColumnOverride::GeneratedArray(_)) => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "tiled column override {} cannot be generated array",
+                            group_col_descs[0].col_name
+                        )));
+                    }
                     Some(ColumnOverride::StreamedScalar(_)) => {
                         return Err(StorageError::FormatMismatch(format!(
                             "tiled column override {} cannot be streamed scalar",
@@ -4139,17 +4156,20 @@ impl CompositeStorage {
             } else {
                 None
             };
-            let scalar_override_columns = if matches!(
-                group.dm_kind,
-                DataManagerKind::StandardStMan | DataManagerKind::IncrementalStMan
-            ) {
-                scalar_override_columns_for_group(
-                    &group_col_descs,
-                    column_overrides,
-                    effective_row_count,
-                )?
-            } else {
-                None
+            let override_sources = match generated_array_sources {
+                Some(sources) => Some(sources),
+                None if matches!(
+                    group.dm_kind,
+                    DataManagerKind::StandardStMan | DataManagerKind::IncrementalStMan
+                ) =>
+                {
+                    scalar_override_columns_for_group(
+                        &group_col_descs,
+                        column_overrides,
+                        effective_row_count,
+                    )?
+                }
+                None => None,
             };
             if deferred_group {
                 if let Some(profiler) = profiler.as_mut() {
@@ -4177,20 +4197,19 @@ impl CompositeStorage {
                 }
                 continue;
             }
-            let group_rows = if group_values.is_none()
-                && !use_direct_indexed_rows
-                && scalar_override_columns.is_none()
-            {
-                Some(project_rows_for_group(
-                    filtered_rows,
-                    effective_row_count,
-                    &group_col_descs,
-                    group_col_indices.as_deref(),
-                    column_overrides,
-                ))
-            } else {
-                None
-            };
+            let group_rows =
+                if group_values.is_none() && !use_direct_indexed_rows && override_sources.is_none()
+                {
+                    Some(project_rows_for_group(
+                        filtered_rows,
+                        effective_row_count,
+                        &group_col_descs,
+                        group_col_indices.as_deref(),
+                        column_overrides,
+                    ))
+                } else {
+                    None
+                };
             if let Some(profiler) = profiler.as_mut() {
                 profiler.mark_with_detail(
                     "group_projection",
@@ -4205,8 +4224,8 @@ impl CompositeStorage {
                             "borrowed_values"
                         } else if use_direct_indexed_rows {
                             "direct_rows"
-                        } else if scalar_override_columns.is_some() {
-                            "scalar_override_columns"
+                        } else if override_sources.is_some() {
+                            "override_sources"
                         } else {
                             "projected_rows"
                         }
@@ -4225,32 +4244,31 @@ impl CompositeStorage {
                     )?;
                 }
                 DataManagerKind::StandardStMan => {
-                    let dm_data =
-                        if let Some(scalar_override_columns) = scalar_override_columns.as_ref() {
-                            write_ssm_file_scalar_column_sources(
-                                &data_path,
-                                &group_col_descs,
-                                scalar_override_columns,
-                                big_endian,
-                            )?
-                        } else if let Some(group_col_indices) = group_col_indices.as_ref() {
-                            write_ssm_file_indexed(
-                                &data_path,
-                                &group_col_descs,
-                                filtered_rows,
-                                group_col_indices,
-                                big_endian,
-                            )?
-                        } else {
-                            write_ssm_file(
-                                &data_path,
-                                &group_col_descs,
-                                group_rows
-                                    .as_ref()
-                                    .expect("row projection for StandardStMan"),
-                                big_endian,
-                            )?
-                        };
+                    let dm_data = if let Some(override_sources) = override_sources.as_ref() {
+                        write_ssm_file_column_sources(
+                            &data_path,
+                            &group_col_descs,
+                            override_sources,
+                            big_endian,
+                        )?
+                    } else if let Some(group_col_indices) = group_col_indices.as_ref() {
+                        write_ssm_file_indexed(
+                            &data_path,
+                            &group_col_descs,
+                            filtered_rows,
+                            group_col_indices,
+                            big_endian,
+                        )?
+                    } else {
+                        write_ssm_file(
+                            &data_path,
+                            &group_col_descs,
+                            group_rows
+                                .as_ref()
+                                .expect("row projection for StandardStMan"),
+                            big_endian,
+                        )?
+                    };
                     // Update the DM blob in the table_dat.
                     if let Some(entry) = table_dat
                         .column_set
@@ -4262,32 +4280,31 @@ impl CompositeStorage {
                     }
                 }
                 DataManagerKind::IncrementalStMan => {
-                    let dm_data =
-                        if let Some(scalar_override_columns) = scalar_override_columns.as_ref() {
-                            write_ism_file_scalar_column_sources(
-                                &data_path,
-                                &group_col_descs,
-                                scalar_override_columns,
-                                big_endian,
-                            )?
-                        } else if let Some(group_col_indices) = group_col_indices.as_ref() {
-                            write_ism_file_indexed(
-                                &data_path,
-                                &group_col_descs,
-                                filtered_rows,
-                                group_col_indices,
-                                big_endian,
-                            )?
-                        } else {
-                            write_ism_file(
-                                &data_path,
-                                &group_col_descs,
-                                group_rows
-                                    .as_ref()
-                                    .expect("row projection for IncrementalStMan"),
-                                big_endian,
-                            )?
-                        };
+                    let dm_data = if let Some(override_sources) = override_sources.as_ref() {
+                        write_ism_file_column_sources(
+                            &data_path,
+                            &group_col_descs,
+                            override_sources,
+                            big_endian,
+                        )?
+                    } else if let Some(group_col_indices) = group_col_indices.as_ref() {
+                        write_ism_file_indexed(
+                            &data_path,
+                            &group_col_descs,
+                            filtered_rows,
+                            group_col_indices,
+                            big_endian,
+                        )?
+                    } else {
+                        write_ism_file(
+                            &data_path,
+                            &group_col_descs,
+                            group_rows
+                                .as_ref()
+                                .expect("row projection for IncrementalStMan"),
+                            big_endian,
+                        )?
+                    };
                     if let Some(entry) = table_dat
                         .column_set
                         .data_managers

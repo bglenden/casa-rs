@@ -38,7 +38,7 @@ use super::stman_aipsio::ColumnRawData;
 use super::stman_aipsio::scalar_value_is_default;
 use super::stman_array_file::StManArrayFileReader;
 use super::table_control::ColumnDescContents;
-use super::{EncodedCells, RequiredScalarColumnData, ScalarColumnSources, StorageError};
+use super::{ColumnSources, EncodedCells, RequiredScalarColumnData, StorageError};
 use crate::table::GeneratedScalarValueRun;
 
 const ISM_HEADER_SIZE: u64 = 512;
@@ -2183,54 +2183,46 @@ pub(crate) fn write_ism_file_scalar_columns(
             "ISM scalar column writer only supports scalar non-record columns".to_string(),
         ));
     }
-    let column_sources = ScalarColumnSources::materialized(nrrow, scalar_columns);
-    write_ism_file_scalar_column_sources(file_path, col_descs, &column_sources, big_endian)
+    let column_sources = ColumnSources::materialized(nrrow, scalar_columns);
+    write_ism_file_column_sources(file_path, col_descs, &column_sources, big_endian)
 }
 
-pub(crate) fn write_ism_file_scalar_column_sources(
-    file_path: &Path,
+/// Each column's element type and element count, and the bucket size, of
+/// an IncrementalStMan file of scalars and fixed-shape arrays, sized as the
+/// row writer sizes its buckets. Variable-shape arrays, which casacore
+/// keeps in an indirect array file, and record columns are refused.
+fn ism_source_layout(
     col_descs: &[ColumnDescContents],
-    scalar_columns: &ScalarColumnSources<'_>,
-    big_endian: bool,
-) -> Result<Vec<u8>, StorageError> {
-    if scalar_columns.column_count() != col_descs.len() {
+) -> Result<(Vec<(CasacoreDataType, usize)>, u32), StorageError> {
+    if let Some(col_desc) = col_descs
+        .iter()
+        .find(|col_desc| col_desc.is_record() || (col_desc.is_array && col_desc.shape.is_empty()))
+    {
         return Err(StorageError::FormatMismatch(format!(
-            "ISM scalar column count mismatch: expected {}, got {}",
-            col_descs.len(),
-            scalar_columns.column_count()
+            "ISM column source writer stores scalars and fixed-shape arrays, not column {}",
+            col_desc.col_name
         )));
     }
-    if col_descs
-        .iter()
-        .any(|col_desc| col_desc.is_array || col_desc.is_record())
-    {
-        return Err(StorageError::FormatMismatch(
-            "ISM scalar column writer only supports scalar non-record columns".to_string(),
-        ));
-    }
-
-    let nrrow = scalar_columns.row_count();
-    let ncol = col_descs.len();
     let col_info: Vec<(CasacoreDataType, usize)> = col_descs
         .iter()
         .map(|c| {
             let dt = CasacoreDataType::from_primitive_type(c.require_primitive_type()?, false);
-            Ok((dt, 1usize))
+            let nrelem = c.shape.iter().map(|&dim| dim as usize).product::<usize>();
+            Ok((dt, if c.is_array { nrelem } else { 1 }))
         })
         .collect::<Result<_, StorageError>>()?;
-
     let fixed_bytes_per_row: usize = col_info
         .iter()
-        .map(|&(dt, _)| {
+        .map(|&(dt, nrelem)| {
             if dt == CasacoreDataType::TpBool {
-                1
+                nrelem.div_ceil(8)
             } else {
                 let elem = ism_element_size(dt);
-                if elem > 0 { elem } else { 12 }
+                if elem > 0 { elem * nrelem } else { nrelem * 12 }
             }
         })
         .sum();
-    let index_overhead_per_row = ncol * 8;
+    let index_overhead_per_row = col_descs.len() * 8;
     let bytes_per_row = fixed_bytes_per_row + index_overhead_per_row;
     let bucket_size = if bytes_per_row == 0 {
         128u32
@@ -2238,6 +2230,28 @@ pub(crate) fn write_ism_file_scalar_column_sources(
         let target = (bytes_per_row * 32 + 4) as u32;
         target.clamp(128, 327680)
     };
+    Ok((col_info, bucket_size))
+}
+
+/// Write an IncrementalStMan file from column sources, a block of cells at
+/// a time: scalars and fixed-shape arrays, stored in the buckets as the row
+/// writer stores them (see [`ism_source_layout`]).
+pub(crate) fn write_ism_file_column_sources(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    scalar_columns: &ColumnSources<'_>,
+    big_endian: bool,
+) -> Result<Vec<u8>, StorageError> {
+    if scalar_columns.column_count() != col_descs.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "ISM column source count mismatch: expected {}, got {}",
+            col_descs.len(),
+            scalar_columns.column_count()
+        )));
+    }
+    let (col_info, bucket_size) = ism_source_layout(col_descs)?;
+    let nrrow = scalar_columns.row_count();
+    let ncol = col_descs.len();
 
     if let Some(scalar_runs) = (0..ncol)
         .map(|col_idx| scalar_columns.scalar_runs(col_idx))
@@ -2343,7 +2357,15 @@ pub(crate) fn write_ism_file_scalar_column_sources(
                     block.clone(),
                     dt,
                     big_endian,
-                    |value| encode_scalar_column_value_bytes(value, dt, nrelem, big_endian),
+                    |value| match value {
+                        Some(casa_types::Value::Scalar(scalar)) => {
+                            encode_scalar_column_value_bytes(Some(scalar), dt, nrelem, big_endian)
+                        }
+                        None if !col_descs[col_idx].is_array => {
+                            encode_scalar_column_value_bytes(None, dt, nrelem, big_endian)
+                        }
+                        array => encode_value_bytes(array, dt, nrelem, big_endian),
+                    },
                 )?;
             }
             for row_idx in block {
