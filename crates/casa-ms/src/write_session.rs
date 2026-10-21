@@ -2280,13 +2280,19 @@ fn write_visibility_batches(
                 uvw_writer
                     .push_f64_rows(&columns.uvw)
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                visibility_columns::push_per_row_cells(
+                    &mut weight_writer,
+                    &columns.weight,
+                    &weight_row,
+                    row_count,
+                )?;
+                visibility_columns::push_per_row_cells(
+                    &mut sigma_writer,
+                    &columns.sigma,
+                    &sigma_row,
+                    row_count,
+                )?;
                 visibility_columns::recycle(returns, columns);
-                weight_writer
-                    .push_repeated_f32_row(&weight_row, row_count)
-                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-                sigma_writer
-                    .push_repeated_f32_row(&sigma_row, row_count)
-                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
             }
             #[cfg(test)]
             MeasurementSetWriteBatch::Repeated {
@@ -2686,6 +2692,7 @@ mod tests {
                 data: vec![Complex32::new(1.0, 0.0); 2],
                 flag_row: vec![false; 2],
                 uvw: vec![[0.0; 3]; 2],
+                ..VisibilityColumns::default()
             })
             .expect_err("oversized batch must be rejected");
         assert!(error.to_string().contains("plan permits at most 1"));

@@ -1017,10 +1017,13 @@ impl MeasurementSet {
     }
 
     fn sync_main_metadata(&mut self, base_path: &Path) {
+        // The type is always a MeasurementSet; the writer's subtype and
+        // readme (casacore's simulator writes "simulator") are kept.
+        let info = self.main.info();
         self.main.set_info(TableInfo {
             table_type: CASACORE_MS_TABLE_TYPE.to_string(),
-            sub_type: String::new(),
-            readme: Vec::new(),
+            sub_type: info.sub_type.clone(),
+            readme: info.readme.clone(),
         });
         apply_column_metadata(&mut self.main, crate::schema::main_table::REQUIRED_COLUMNS);
         apply_column_metadata(&mut self.main, crate::schema::main_table::OPTIONAL_COLUMNS);

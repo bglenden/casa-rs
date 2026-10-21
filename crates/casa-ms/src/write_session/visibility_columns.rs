@@ -12,6 +12,7 @@
 
 use std::sync::mpsc;
 
+use casa_tables::StreamingTiledPrimitiveWriter;
 use num_complex::Complex32;
 
 use super::{
@@ -22,9 +23,7 @@ use super::{
 /// One batch of standard visibility rows, column by column, for
 /// [`MeasurementSetWriteSession::send_visibility_columns`].
 ///
-/// WEIGHT and SIGMA are 1 and FLAG_CATEGORY is empty in every row. The write
-/// plan already charges a per-row WEIGHT and SIGMA, should a producer need
-/// them as further columns here.
+/// FLAG_CATEGORY is empty in every row.
 #[derive(Debug, Default)]
 pub struct VisibilityColumns {
     /// Each row's DATA cell, `correlations × channels` samples with the
@@ -35,6 +34,12 @@ pub struct VisibilityColumns {
     pub flag_row: Vec<bool>,
     /// One coordinate triple per row, in metres.
     pub uvw: Vec<[f64; 3]>,
+    /// One value per row, which every correlation of the row's WEIGHT cell
+    /// takes; empty for a weight of 1 in every row.
+    pub weight: Vec<f32>,
+    /// One value per row, which every correlation of the row's SIGMA cell
+    /// takes; empty for a sigma of 1 in every row.
+    pub sigma: Vec<f32>,
 }
 
 impl VisibilityColumns {
@@ -50,6 +55,8 @@ impl VisibilityColumns {
             data: Vec::with_capacity(rows.saturating_mul(samples)),
             flag_row: Vec::with_capacity(rows),
             uvw: Vec::with_capacity(rows),
+            weight: Vec::with_capacity(rows),
+            sigma: Vec::with_capacity(rows),
         }
     }
 
@@ -57,17 +64,26 @@ impl VisibilityColumns {
         self.data.clear();
         self.flag_row.clear();
         self.uvw.clear();
+        self.weight.clear();
+        self.sigma.clear();
     }
 
     /// Check that every column holds the batch's rows of `samples`-sample
     /// cells.
     pub(super) fn validate(&self, samples: usize) -> Result<(), MeasurementSetWriteError> {
         let rows = self.row_count();
-        if self.uvw.len() != rows || Some(self.data.len()) != rows.checked_mul(samples) {
+        let per_row_or_empty = |len: usize| len == rows || len == 0;
+        if self.uvw.len() != rows
+            || Some(self.data.len()) != rows.checked_mul(samples)
+            || !per_row_or_empty(self.weight.len())
+            || !per_row_or_empty(self.sigma.len())
+        {
             return Err(MeasurementSetWriteError::InvalidPlan(format!(
-                "batch columns differ: FLAG_ROW has {rows} rows, UVW {}, and DATA {} samples \
-                 where {rows} rows of {samples} need {}",
+                "batch columns differ: FLAG_ROW has {rows} rows, UVW {}, WEIGHT {}, SIGMA {}, \
+                 and DATA {} samples where {rows} rows of {samples} need {}",
                 self.uvw.len(),
+                self.weight.len(),
+                self.sigma.len(),
                 self.data.len(),
                 rows.saturating_mul(samples)
             )));
@@ -107,6 +123,30 @@ impl MeasurementSetWriteSession {
     ) -> Result<(), MeasurementSetWriteError> {
         self.send_batch(MeasurementSetWriteBatch::Columns(batch))
     }
+}
+
+/// Write `row_count` WEIGHT or SIGMA cells: each row's value in every
+/// correlation, or `unit` (every correlation 1) in every row when `per_row`
+/// is empty.
+pub(super) fn push_per_row_cells(
+    writer: &mut StreamingTiledPrimitiveWriter,
+    per_row: &[f32],
+    unit: &[f32],
+    row_count: usize,
+) -> Result<(), MeasurementSetWriteError> {
+    let column_error =
+        |error: casa_tables::StorageError| MeasurementSetWriteError::Column(error.to_string());
+    if per_row.is_empty() {
+        return writer
+            .push_repeated_f32_row(unit, row_count)
+            .map_err(column_error);
+    }
+    let mut cell = vec![0.0f32; unit.len()];
+    for &value in per_row {
+        cell.fill(value);
+        writer.push_f32_row(&cell).map_err(column_error)?;
+    }
+    Ok(())
 }
 
 /// Hand a written batch's buffers back to the producer, unless one is
