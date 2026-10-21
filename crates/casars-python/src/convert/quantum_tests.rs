@@ -44,6 +44,29 @@ fn conversions_follow_quantum_convert() {
 }
 
 #[test]
+fn an_empty_array_converts_its_unit() {
+    // CASA 6.7.6: `qa.convert({'unit': 'km', 'value': numpy.empty((0, 2))},
+    // outunit)` keeps the shape and takes the converted unit.
+    let empty = |unit: &str| Quantum {
+        values: Vec::new(),
+        shape: Some(vec![0, 2]),
+        unit: casacore_unit(unit).unwrap(),
+    };
+    for (unit, target, expected) in [
+        ("km", "m", "m"),
+        ("km", "", "m"),
+        ("km", "s", "s.m.s-1"),
+        ("h", "deg", "deg"),
+    ] {
+        let target = (!target.is_empty()).then(|| casacore_unit(target).unwrap());
+        let converted = empty(unit).convert(target.as_ref()).unwrap();
+        assert_eq!(converted.unit.name(), expected, "{unit} to {target:?}");
+        assert_eq!(converted.shape, Some(vec![0, 2]));
+        assert!(converted.values.is_empty());
+    }
+}
+
+#[test]
 fn arithmetic_follows_quantum_operators() {
     let (km, m, s) = (read("1km"), read("1m"), read("3s"));
     assert_eq!(

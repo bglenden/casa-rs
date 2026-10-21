@@ -83,8 +83,10 @@ The `casars.data` classes are persistent data access APIs; the `casars.tools`
 classes are CASA tools with CASA's method names, parameter order and
 effective defaults. All are used in-process from Python, are not forced into
 the task-binary model and have no standalone executable. One bundle,
-`casars_data_objects` (`casars.data.schema_bundle()`), describes them all;
-its tool entries all come from one list of the `casars.tools` classes.
+`casars_data_objects` (`casars.data.schema_bundle()`, protocol version 1),
+describes them all; its tool entries all come from one list of the
+`casars.tools` classes, and each names its own module in its projection
+entry ([Compatibility](python/versioning.md)).
 `casars.simutil`, a port of CASA's `simutil` helper class rather than a CASA
 tool, is not an object surface and is not in the bundle.
 

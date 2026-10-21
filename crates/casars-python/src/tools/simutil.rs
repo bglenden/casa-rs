@@ -4,10 +4,10 @@
 //! [`casa_simulation::readantenna`].
 //!
 //! `simutil` is a Python class of CASA's tasks, not a CASA tool, so it is
-//! not under `casars.tools`. Its module path is provisional: where CASA's
-//! private task helpers live in casa-rs is open with the owner. ADR-0018
-//! puts its computation in Rust, so the class is declared here like the
-//! tools, with CASA's constructor signature.
+//! not under `casars.tools`; `casars.simutil` is its public import (CASA's
+//! is `casatasks.private.simutil`). ADR-0018 puts its computation in Rust,
+//! so the class is declared here like the tools, with CASA's constructor
+//! signature.
 //!
 //! Only `readantenna` is declared; the rest of `simutil` (pointings,
 //! sensitivities, sky-model handling) comes with `simobserve` in simulation
@@ -31,7 +31,7 @@
 
 use std::path::PathBuf;
 
-use casa_simulation::readantenna::{ReadAntennaError, read_antenna_config};
+use casa_simulation::readantenna::{AntennaConfigFile, ReadAntennaError, read_antenna_config};
 use pyo3::exceptions::{PyFileNotFoundError, PyOSError, PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 
@@ -99,28 +99,33 @@ impl PySimutil {
                 path.display()
             ))],
         )?;
-        let config = py.detach(|| {
+        // The file is read and CASA's tuple built without the GIL; only the
+        // Python objects are made with it.
+        let value = py.detach(move || -> PyResult<CasaValue> {
             let measures = casa_ms::open_measures_runtime()
                 .map_err(|error| PyRuntimeError::new_err(format!("measures data: {error}")))?;
-            read_antenna_config(&path, &*measures).map_err(|error| raised(&error))
+            let config = read_antenna_config(&path, &*measures).map_err(|error| raised(&error))?;
+            Ok(readantenna_value(config))
         })?;
-        let floats = |values: &[f64]| {
-            CasaValue::List(values.iter().copied().map(CasaValue::Float).collect())
-        };
-        let texts = |values: &[String]| {
-            CasaValue::List(values.iter().cloned().map(CasaValue::Text).collect())
-        };
-        let observatory = Measure::from_casa(&CasaMeasure::Position(config.observatory.clone()));
-        CasaValue::Tuple(vec![
-            floats(&config.x),
-            floats(&config.y),
-            floats(&config.z),
-            CasaValue::floats(config.dish_diameter.clone()),
-            texts(&config.pad_names),
-            texts(&config.antenna_names),
-            CasaValue::Text(config.telescope.clone()),
-            observatory.to_value(),
-        ])
-        .into_python(py)
+        value.into_python(py)
     }
+}
+
+/// CASA's `readantenna` tuple, made from the configuration's own vectors.
+fn readantenna_value(config: AntennaConfigFile) -> CasaValue {
+    let floats =
+        |values: Vec<f64>| CasaValue::List(values.into_iter().map(CasaValue::Float).collect());
+    let texts =
+        |values: Vec<String>| CasaValue::List(values.into_iter().map(CasaValue::Text).collect());
+    let observatory = Measure::from_casa(&CasaMeasure::Position(config.observatory)).to_value();
+    CasaValue::Tuple(vec![
+        floats(config.x),
+        floats(config.y),
+        floats(config.z),
+        CasaValue::floats(config.dish_diameter),
+        texts(config.pad_names),
+        texts(config.antenna_names),
+        CasaValue::Text(config.telescope),
+        observatory,
+    ])
 }
