@@ -251,9 +251,13 @@ impl Simulator {
 
     /// `sm.settimes(integrationtime, usehourangle, referencetime)`.
     ///
+    /// A reference epoch in another time scale is converted to UTC, which
+    /// the session works in.
+    ///
     /// # Errors
     ///
-    /// A negative integration time (CASA's assertion raises).
+    /// A negative integration time (CASA's assertion raises), or a
+    /// reference epoch that does not convert to UTC.
     pub fn set_times(
         &mut self,
         integration_s: f64,
@@ -265,6 +269,19 @@ impl Simulator {
                 "Failed AlwaysAssert qIntTime.getValue(\"s\")>=0",
             ));
         }
+        let reference = if reference.refer() == EpochRef::UTC {
+            reference
+        } else {
+            let frame = MeasFrame::new().with_measures(self.options.measures.clone());
+            reference
+                .convert_to(EpochRef::UTC, &frame)
+                .map_err(|error| {
+                    SimulatorError::raised(format!(
+                        "Could not convert the {} reference time to UTC: {error}",
+                        reference.refer()
+                    ))
+                })?
+        };
         tracing::info!("Times");
         tracing::info!("     Integration time {integration_s}s");
         if use_hour_angle {
