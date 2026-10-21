@@ -2653,6 +2653,13 @@ fn push_synthetic_scalar_rows(
     };
     let error =
         |error: crate::MeasurementSetWriteError| MsError::SyntheticObservation(error.to_string());
+    if flag_rows.len() != row_pairs.len() {
+        return Err(MsError::SyntheticObservation(format!(
+            "{} row flags for {} baseline rows",
+            flag_rows.len(),
+            row_pairs.len()
+        )));
+    }
     // One batch is one time sample: only the baseline and its flag vary.
     let antenna1 = row_pairs
         .iter()

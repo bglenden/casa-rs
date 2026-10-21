@@ -83,32 +83,23 @@ impl StreamedScalarValues<'_> {
         }
     }
 
-    /// Append the construction records of cells `range` to `out`.
-    fn encode(&self, range: std::ops::Range<usize>, out: &mut Vec<u8>) {
+    /// Write the construction records of cells `range` to the start of
+    /// `out`, which must hold them; returns their length in bytes.
+    fn encode(&self, range: std::ops::Range<usize>, out: &mut [u8]) -> usize {
+        fn records<const N: usize>(values: impl Iterator<Item = [u8; N]>, out: &mut [u8]) -> usize {
+            let mut length = 0;
+            for (payload, record) in values.zip(out.chunks_exact_mut(N + 1)) {
+                record[0] = 1;
+                record[1..].copy_from_slice(&payload);
+                length += N + 1;
+            }
+            length
+        }
         match self {
-            Self::Bool(values) => {
-                for value in &values[range] {
-                    out.extend_from_slice(&[1, u8::from(*value)]);
-                }
-            }
-            Self::Int32(values) => {
-                for value in &values[range] {
-                    out.push(1);
-                    out.extend_from_slice(&value.to_le_bytes());
-                }
-            }
-            Self::Float32(values) => {
-                for value in &values[range] {
-                    out.push(1);
-                    out.extend_from_slice(&value.to_le_bytes());
-                }
-            }
-            Self::Float64(values) => {
-                for value in &values[range] {
-                    out.push(1);
-                    out.extend_from_slice(&value.to_le_bytes());
-                }
-            }
+            Self::Bool(values) => records(values[range].iter().map(|&v| [u8::from(v)]), out),
+            Self::Int32(values) => records(values[range].iter().map(|v| v.to_le_bytes()), out),
+            Self::Float32(values) => records(values[range].iter().map(|v| v.to_le_bytes()), out),
+            Self::Float64(values) => records(values[range].iter().map(|v| v.to_le_bytes()), out),
         }
     }
 }
@@ -155,16 +146,17 @@ pub struct StreamingScalarColumnWriter {
     expected_rows: usize,
     rows_written: usize,
     scalar_type: StreamedScalarType,
-    /// Encoded records of one bulk append, at most [`BULK_CELLS`] of them.
-    records: Vec<u8>,
 }
 
 /// Resident buffer reserved by each [`StreamingScalarColumnWriter`].
 #[doc(hidden)]
 pub const STREAMING_SCALAR_COLUMN_BUFFER_BYTES: usize = 64 * 1024;
 
-/// Cells a bulk append encodes per write.
-const BULK_CELLS: usize = 4096;
+/// Cells a bulk append encodes per write, in a buffer on the stack.
+const CHUNK_CELLS: usize = 256;
+
+/// Bytes of [`CHUNK_CELLS`] records of the widest type.
+const CHUNK_BYTES: usize = CHUNK_CELLS * StreamedScalarType::Float64.record_bytes();
 
 impl StreamingScalarColumnWriter {
     /// Create a temporary scalar construction source.
@@ -198,7 +190,6 @@ impl StreamingScalarColumnWriter {
             expected_rows,
             rows_written: 0,
             scalar_type,
-            records: Vec::new(),
         })
     }
 
@@ -222,16 +213,14 @@ impl StreamingScalarColumnWriter {
             )));
         }
         self.reserve_rows(values.len())?;
-        let mut records = std::mem::take(&mut self.records);
+        let mut chunk = [0u8; CHUNK_BYTES];
         let mut first = 0;
         while first < values.len() {
-            let end = values.len().min(first + BULK_CELLS);
-            records.clear();
-            values.encode(first..end, &mut records);
-            self.write(&records)?;
+            let end = values.len().min(first + CHUNK_CELLS);
+            let length = values.encode(first..end, &mut chunk);
+            self.write(&chunk[..length])?;
             first = end;
         }
-        self.records = records;
         self.rows_written += values.len();
         Ok(())
     }
@@ -245,18 +234,16 @@ impl StreamingScalarColumnWriter {
         let record = self.record(value.as_ref())?;
         let record = &record[..self.scalar_type.record_bytes()];
         self.reserve_rows(count)?;
-        let mut records = std::mem::take(&mut self.records);
-        records.clear();
-        for _ in 0..count.min(BULK_CELLS) {
-            records.extend_from_slice(record);
+        let mut chunk = [0u8; CHUNK_BYTES];
+        for copy in chunk.chunks_exact_mut(record.len()).take(count) {
+            copy.copy_from_slice(record);
         }
         let mut remaining = count;
         while remaining > 0 {
-            let cells = remaining.min(BULK_CELLS);
-            self.write(&records[..cells * record.len()])?;
+            let cells = remaining.min(CHUNK_CELLS);
+            self.write(&chunk[..cells * record.len()])?;
             remaining -= cells;
         }
-        self.records = records;
         self.rows_written += count;
         Ok(())
     }
@@ -335,7 +322,7 @@ mod tests {
     use super::*;
 
     /// More cells than one bulk chunk, so the chunk boundary is exercised.
-    const ROWS: usize = 2 * BULK_CELLS + 17;
+    const ROWS: usize = 2 * CHUNK_CELLS + 17;
 
     fn construction_bytes(
         dir: &Path,
@@ -408,7 +395,7 @@ mod tests {
             });
             let bulk = construction_bytes(dir.path(), &format!("{index}.n"), scalar_type, |w| {
                 // Two uneven runs, so a run boundary falls inside a chunk.
-                let (head, tail) = split(values, BULK_CELLS + 5);
+                let (head, tail) = split(values, CHUNK_CELLS + 5);
                 w.push_values(head).expect("push head");
                 w.push_values(tail).expect("push tail");
             });
