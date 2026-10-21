@@ -10,14 +10,13 @@ use std::thread;
 use std::time::Instant;
 
 use casa_tables::{
-    ColumnBinding, ColumnOverrides, STREAMING_SCALAR_COLUMN_BUFFER_BYTES,
-    STREAMING_TILED_COLUMN_BUFFER_BYTES, StreamedScalarType, StreamedTiledPrimitiveColumn,
-    StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column, StreamedTiledShapeCubeLayout,
-    StreamedTiledShapeValueType, StreamingTiledPrimitiveWriter, StreamingTiledShapeComplex32Writer,
-    StreamingTiledShapeWriter, Table, TableError, TableOptions, TableWriteLock,
-    install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
+    ColumnBinding, ColumnOverrides, STREAMING_TILED_COLUMN_BUFFER_BYTES, StreamedScalarType,
+    StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column,
+    StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledPrimitiveWriter,
+    StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter, Table, TableError, TableOptions,
+    TableWriteLock, install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
     install_streamed_tiled_shape_column, install_streamed_tiled_shape_complex32_column,
-    install_streamed_tiled_shape_primitive_column,
+    install_streamed_tiled_shape_primitive_column, streamed_scalar_columns_resident_bytes,
 };
 use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use num_complex::Complex32;
@@ -378,9 +377,9 @@ impl MeasurementSetWritePlan {
                 .checked_add(column.bytes_per_row())
                 .ok_or(MeasurementSetWriteError::ByteOverflow)
         })?;
-        let scalar_buffer_bytes = scalar_columns
-            .len()
-            .checked_mul(STREAMING_SCALAR_COLUMN_BUFFER_BYTES)
+        // The scalar writers' buffers while rows stream, and the save's
+        // finalization scratch after them.
+        let scalar_buffer_bytes = streamed_scalar_columns_resident_bytes(scalar_columns.len())
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
         let tiled_writer_bytes = [
             (
@@ -759,9 +758,9 @@ impl MeasurementSetWritePlan {
         let bytes_per_row = array_bytes_per_row
             .checked_add(scalar_bytes_per_row)
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
-        let scalar_buffer_bytes = scalar_columns
-            .len()
-            .checked_mul(STREAMING_SCALAR_COLUMN_BUFFER_BYTES)
+        // The scalar writers' buffers while rows stream, and the save's
+        // finalization scratch after them.
+        let scalar_buffer_bytes = streamed_scalar_columns_resident_bytes(scalar_columns.len())
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
         if scalar_buffer_bytes > resources.available_bytes {
             return Err(MeasurementSetWriteError::InvalidPlan(format!(
@@ -2694,7 +2693,8 @@ mod tests {
 
     #[test]
     fn columnar_plan_accounts_for_every_scalar_writer_buffer() {
-        let scalar_buffer_bytes = 2 * STREAMING_SCALAR_COLUMN_BUFFER_BYTES;
+        let scalar_buffer_bytes =
+            streamed_scalar_columns_resident_bytes(2).expect("two scalar columns");
         let arrays = vec![MeasurementSetArrayColumnPlan {
             name: "DATA".to_string(),
             value_type: StreamedTiledShapeValueType::Complex32,

@@ -374,7 +374,7 @@ mod casacore_tiled_data_tests;
 #[cfg(test)]
 mod casacore_tiled_order_tests;
 mod shape_cube;
-use shape_cube::DirectShapeCubeWriter;
+use shape_cube::{DirectShapeCubeWriter, ShapeCubeWorkingSet};
 mod tile_columns;
 use tile_columns::{
     TileColumns, bound_tile_layout, in_tile_order, rows_reached, tile_columns, tile_target,
@@ -6906,6 +6906,9 @@ pub struct StreamingTiledShapeWriter {
     rows_written: usize,
     shape_to_cube: HashMap<Vec<usize>, usize>,
     cubes: Vec<DirectShapeCubeWriter>,
+    /// The tile-row scratch every cube writes its rows through, sized for
+    /// the largest cube's tile row.
+    tile_row: Vec<u8>,
     row_map: Vec<u32>,
     cube_map: Vec<u32>,
     pos_map: Vec<u32>,
@@ -6941,7 +6944,7 @@ impl StreamingTiledShapeWriter {
         let mut row_count = 0usize;
         let mut cell_rank = None;
         let mut default_tile_shape = Vec::new();
-        let mut working_bytes = 0usize;
+        let mut working_set = ShapeCubeWorkingSet::default();
 
         for (cube_index, layout) in layouts.into_iter().enumerate() {
             if layout.row_count == 0 {
@@ -6996,15 +6999,23 @@ impl StreamingTiledShapeWriter {
                     "streamed TiledShape row maps support at most u32::MAX rows".to_string(),
                 ));
             }
-            let (cube, cube_working_bytes) = DirectShapeCubeWriter::create(
+            let (cube, cube_working_set) = DirectShapeCubeWriter::create(
                 streamed_shape_cube_temp_path(&temp_data_path, cube_index),
                 layout,
                 value_type,
             )?;
-            working_bytes = working_bytes.max(cube_working_bytes);
+            working_set = working_set.max(cube_working_set);
             cubes.push(cube);
         }
 
+        // The largest encoded row, tile row and packed Bool tile row are
+        // held at once, though they may belong to different cubes: the
+        // tile-row scratch is shared and sized for the largest.
+        let mut working_bytes = working_set.bytes().ok_or_else(|| {
+            StorageError::FormatMismatch(
+                "streamed TiledShape working set overflows usize".to_string(),
+            )
+        })?;
         if working_bytes > memory_budget_bytes {
             return Err(StorageError::FormatMismatch(format!(
                 "streamed TiledShape working set {working_bytes} exceeds memory budget {memory_budget_bytes}"
@@ -7037,6 +7048,7 @@ impl StreamingTiledShapeWriter {
             rows_written: 0,
             shape_to_cube,
             cubes,
+            tile_row: vec![0; working_set.tile_row_bytes],
             row_map: Vec::new(),
             cube_map: Vec::new(),
             pos_map: Vec::new(),
@@ -7254,7 +7266,7 @@ impl StreamingTiledShapeWriter {
         let global_row = self.rows_written as u32;
         let pos_in_cube = cube.rows_written as u32;
         let write_started = Instant::now();
-        cube.write_row(self.value_type, encoded)?;
+        cube.write_row(self.value_type, encoded, &mut self.tile_row)?;
         self.write_seconds += write_started.elapsed().as_secs_f64();
         self.rows_written += 1;
         self.append_row_mapping(global_row, (cube_index + 1) as u32, pos_in_cube)?;

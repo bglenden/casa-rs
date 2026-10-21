@@ -57,6 +57,7 @@ use self::incremental_stman::{
     write_ism_file_scalar_column_sources,
 };
 use self::scalar_sources::scalar_override_columns_for_group;
+pub use self::scalar_sources::streamed_scalar_columns_resident_bytes;
 pub(crate) use self::scalar_sources::{EncodedCells, ScalarColumnSources};
 pub(crate) use self::selected_cells::{cell_read_footprint, channel_read_footprint};
 use self::standard_stman::{
