@@ -602,3 +602,4 @@ never makes a route available.
 | 0016 | Imaging foundation | accepted |
 | 0017 | Python and headless task providers are the product surface | accepted |
 | 0018 | Rust computes; Python is the interface | accepted |
+| 0019 | CASA tools are Rust-declared pyo3 objects in `casars.tools` | accepted |
