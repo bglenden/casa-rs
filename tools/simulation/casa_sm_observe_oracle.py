@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""CASA oracle for simulation Phase 1c (#841): observe-only `sm` MSs.
+"""CASA oracle for simulation Phases 1c and 1d (#841): `sm` MSs.
 
 Run with CASA's Python (for example `/Applications/CASA.app/Contents/MacOS/python3`).
-For each scenario in `sm_observe_scenarios.json` the script creates an MS with
-CASA's `sm` tool: `setconfig` (from a CASA `.cfg` through
+For each scenario in a scenario file (`sm_observe_scenarios.json` by default,
+`sm_predict_scenarios.json` for prediction and noise) the script creates an MS
+with CASA's `sm` tool: `setconfig` (from a CASA `.cfg` through
 `simutil.readantenna`, or local coordinates), then the scenario's calls, then
 `close`. It writes `<out>/<scenario>.ms` and `<out>/manifest.json`.
 
@@ -12,7 +13,16 @@ The manifest records every call with its arguments resolved to plain numbers:
 quantities in SI units, J2000 directions in radians, UTC epochs as MJD days and
 antenna positions as ITRF metres. The casa-rs driver runs the same calls from
 those numbers, so it needs no CASA string parsing, and `compare_sm_ms.py`
-compares the two MSs.
+compares the two MSs. Each call records what CASA returned, or the exception
+it raised.
+
+`predict` names its model images relative to `--model-root`. CASA's predict
+rewrites the image it reads (its spectral units and frame, in `table.dat`), so
+CASA predicts from a copy in `<out>/`, and the manifest records the pristine
+image for casa-rs. A scenario's `data` (`zero`, `model` or `noisy`), `twin`
+(the noise-free scenario a noisy one is compared with) and `noise_variance`
+(the variance its noise should have, Jy²) are copied to the manifest for
+`compare_sm_ms.py`.
 """
 
 from __future__ import annotations
@@ -42,6 +52,11 @@ def parse_args() -> argparse.Namespace:
         default=os.path.expanduser("~/.casa/data/alma/simmos"),
         help="directory holding CASA antenna configuration files",
     )
+    parser.add_argument(
+        "--model-root",
+        default=os.getcwd(),
+        help="directory the scenarios' predict image names are relative to",
+    )
     parser.add_argument("--only", nargs="*", help="run only these scenarios")
     return parser.parse_args()
 
@@ -54,6 +69,7 @@ QUANTITY_UNITS = {
     "starttime": "s",
     "stoptime": "s",
     "elevationlimit": "rad",
+    "simplenoise": "Jy",
 }
 
 
@@ -111,6 +127,24 @@ def itrf_metres(position: dict) -> list[float]:
     ]
 
 
+def model_images(names, args: argparse.Namespace, out_prefix: str) -> tuple[list[str], list[str]]:
+    """The copies CASA predicts from and the pristine images, for `imagename`."""
+    names = [names] if isinstance(names, str) else list(names)
+    copies, pristine = [], []
+    for index, name in enumerate(names):
+        if not name:
+            copies.append(name)
+            pristine.append(name)
+            continue
+        source = os.path.abspath(os.path.join(args.model_root, name))
+        copy = f"{out_prefix}.model{index}.image"
+        shutil.rmtree(copy, ignore_errors=True)
+        shutil.copytree(source, copy)
+        copies.append(copy)
+        pristine.append(source)
+    return copies, pristine
+
+
 def resolve_call(call: dict, me, qa) -> tuple[str, dict, dict]:
     """CASA keyword arguments and their resolved numbers for one call."""
     op = call["op"]
@@ -143,24 +177,31 @@ def run_scenario(scenario: dict, args: argparse.Namespace) -> dict:
     config = resolve_config(scenario["config"], args, me)
     returned = sm.setconfig(**config["kwargs"])
     calls.append({"op": "setconfig", "resolved": config["resolved"], "returned": bool(returned)})
-    for call in scenario["calls"]:
+    for number, call in enumerate(scenario["calls"]):
         op, kwargs, resolved = resolve_call(call, me, qa)
+        if op == "predict":
+            prefix = os.path.join(args.out, f"{scenario['name']}.call{number}")
+            kwargs["imagename"], resolved["imagename"] = model_images(
+                kwargs.get("imagename", []), args, prefix
+            )
         call_started = time.perf_counter()
-        returned = getattr(sm, op)(**kwargs)
-        calls.append(
-            {
-                "op": op,
-                "resolved": resolved,
-                "returned": bool(returned),
-                "seconds": time.perf_counter() - call_started,
-            }
-        )
+        record = {"op": op, "resolved": resolved}
+        try:
+            record["returned"] = bool(getattr(sm, op)(**kwargs))
+        except RuntimeError as error:
+            record["returned"] = None
+            record["raised"] = str(error).split("\n", 1)[0]
+        record["seconds"] = time.perf_counter() - call_started
+        calls.append(record)
     sm.close()
     calls.append({"op": "close", "resolved": {}, "returned": True})
     return {
         "name": scenario["name"],
         "ms": ms,
         "ignore": scenario.get("ignore", []),
+        "data": scenario.get("data", "zero"),
+        "twin": scenario.get("twin"),
+        "noise_variance": scenario.get("noise_variance"),
         "calls": calls,
         "seconds": time.perf_counter() - started,
     }
@@ -181,7 +222,7 @@ def main() -> int:
         print(result["name"], f"{result['seconds']:.2f} s")
     manifest = {
         "schema_version": 1,
-        "purpose": "simulation Phase 1c observe-only oracle (#841)",
+        "purpose": f"simulation Phase 1 sm oracle (#841): {os.path.basename(args.scenarios)}",
         "casa_tai_minus_utc_s": 37.0,
         "scenarios": results,
     }
