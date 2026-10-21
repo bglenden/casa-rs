@@ -15,8 +15,10 @@
 //! | `sm.predict` with `GridFT` (`setoptions(ftmachine='ft')`) | [`predict::ModelPredictor`] |
 //! | the model image `sm.predict` reads | [`predict::SkyModel`] |
 //! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`predict::PrimaryBeam`] |
+//! | `sm.setseed`, `sm.setnoise(mode='simplenoise')`, `sm.corrupt`, `sm.reset` | [`Simulator::set_seed`], [`Simulator::set_noise`], [`Simulator::corrupt`], [`Simulator::reset`] |
 //! | `simutil.readantenna(antab)` | [`readantenna::read_antenna_config`] |
 
+mod corrupt;
 pub mod predict;
 pub mod readantenna;
 pub mod session;
@@ -26,4 +28,4 @@ pub use session::array::{ArrayConfig, CoordinateSystem};
 pub use session::error::{CasaOutcome, SimulatorError, SimulatorResult};
 pub use session::observe::{ObserveSpec, StateSpec};
 pub use session::spectral::SpectralWindowSpec;
-pub use session::{Simulator, SimulatorOptions};
+pub use session::{DEFAULT_SEED, NoiseSpec, Simulator, SimulatorOptions};

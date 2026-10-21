@@ -7,7 +7,10 @@
 //! casa-rs's conventional one: IncrementalStMan and StandardStMan scalars,
 //! TiledShapeStMan visibility columns with CASA's tile shapes, and
 //! TiledColumnStMan for UVW. Following plan decision 6, MAIN has DATA but
-//! no MODEL_DATA or CORRECTED_DATA. DATA is zero until `predict` (Phase 1d).
+//! no MODEL_DATA or CORRECTED_DATA. DATA is zero (until `predict`, Phase 1d)
+//! plus the noise of every `corrupt` step covering the row's scan, added as
+//! the row is written: noise depends only on the row's MAIN index, so the
+//! batching does not change it.
 
 mod geometry;
 mod subtables;
@@ -20,6 +23,7 @@ use casa_ms::{
 use casa_tables::{ColumnOverrides, StreamedScalarValues, TableInfo};
 use casa_types::{Complex32, ScalarValue};
 
+use crate::corrupt::NoiseApplication;
 use crate::session::Simulator;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
@@ -57,8 +61,8 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
         readme: MAIN_README.iter().map(|line| (*line).to_string()).collect(),
     });
     subtables::write_subtables(&mut ms, session)?;
-    subtables::write_pointing(&mut ms, session)?;
-    write_main(&mut ms, session, &staging)?;
+    let generated = subtables::subtable_overrides(session)?;
+    write_main(&mut ms, session, &staging, &generated)?;
     target
         .commit()
         .map_err(write_error("publish the MeasurementSet"))
@@ -84,10 +88,13 @@ fn cell_shape(session: &Simulator) -> SimulatorResult<Option<(usize, usize)>> {
     Ok(shape)
 }
 
+/// Write MAIN and save the MeasurementSet, with the subtable columns
+/// `generated` holds (POINTING).
 fn write_main(
     ms: &mut MeasurementSet,
     session: &Simulator,
     staging: &std::path::Path,
+    generated: &casa_ms::SubtableColumnOverrides,
 ) -> SimulatorResult<()> {
     let row_count = session.scans().iter().map(Scan::row_count).sum::<usize>();
     let Some((correlations, channels)) = cell_shape(session)? else {
@@ -104,20 +111,21 @@ fn write_main(
     )
     .map_err(write_error("plan the MAIN write"))?;
     let batch_rows = plan.batch_rows().max(1);
-    let mut writer = MainWriter::start(staging, plan, correlations * channels)?;
+    let mut writer = MainWriter::start(staging, plan, correlations, channels)?;
     let geometry = ArrayGeometry::new(
         session.telescope(),
         session.antennas(),
         session.options().measures.clone(),
     )?;
     let mut rows = Vec::new();
-    for scan in session.scans() {
+    for (index, scan) in session.scans().iter().enumerate() {
+        let noise = session.data_plan().noise_for_scan(index);
         for time_s in scan.integration_times_s() {
             geometry.integration_rows(scan, time_s, &mut rows)?;
-            writer.push_integration(scan, time_s, &rows, batch_rows)?;
+            writer.push_integration(scan, time_s, &rows, &noise, batch_rows)?;
         }
     }
-    writer.finish(ms, row_count)
+    writer.finish(ms, row_count, generated)
 }
 
 /// The resolved MAIN scalar columns.
@@ -135,7 +143,10 @@ struct ScalarColumns {
 struct MainWriter {
     session: MeasurementSetWriteSession,
     columns: ScalarColumns,
+    correlations: usize,
     samples: usize,
+    /// The MAIN index of the next row pushed.
+    next_row: u64,
     batch: casa_ms::VisibilityColumns,
     antenna1: Vec<i32>,
     antenna2: Vec<i32>,
@@ -146,7 +157,8 @@ impl MainWriter {
     fn start(
         staging: &std::path::Path,
         plan: MeasurementSetWritePlan,
-        samples: usize,
+        correlations: usize,
+        channels: usize,
     ) -> SimulatorResult<Self> {
         let session = MeasurementSetWriteSession::start(staging, plan)
             .map_err(write_error("start the MAIN write"))?;
@@ -180,7 +192,9 @@ impl MainWriter {
         Ok(Self {
             session,
             columns,
-            samples,
+            correlations,
+            samples: correlations * channels,
+            next_row: 0,
             batch,
             antenna1: Vec::new(),
             antenna2: Vec::new(),
@@ -189,12 +203,14 @@ impl MainWriter {
     }
 
     /// Append one integration's rows: scalars as runs, visibility columns
-    /// into batches of at most `batch_rows`.
+    /// into batches of at most `batch_rows`, each row's DATA zero plus
+    /// `noise`.
     fn push_integration(
         &mut self,
         scan: &Scan,
         time_s: f64,
         rows: &[RowGeometry],
+        noise: &[NoiseApplication],
         batch_rows: usize,
     ) -> SimulatorResult<()> {
         self.antenna1.clear();
@@ -204,10 +220,20 @@ impl MainWriter {
             self.antenna1.push(row.antenna1 as i32);
             self.antenna2.push(row.antenna2 as i32);
             self.flag_row.push(row.flagged);
-            self.batch.data.resize(
-                self.batch.data.len() + self.samples,
-                Complex32::new(0.0, 0.0),
-            );
+            let start = self.batch.data.len();
+            self.batch
+                .data
+                .resize(start + self.samples, Complex32::new(0.0, 0.0));
+            let cell = &mut self.batch.data[start..];
+            for application in noise {
+                application.add_to_row(
+                    self.next_row,
+                    row.antenna1 == row.antenna2,
+                    self.correlations,
+                    cell,
+                );
+            }
+            self.next_row += 1;
             self.batch.flag_row.push(row.flagged);
             self.batch.uvw.push(row.uvw_m);
             self.batch.weight.push(row.weight);
@@ -268,7 +294,12 @@ impl MainWriter {
             .map_err(write_error("MAIN visibility batch"))
     }
 
-    fn finish(mut self, ms: &mut MeasurementSet, row_count: usize) -> SimulatorResult<()> {
+    fn finish(
+        mut self,
+        ms: &mut MeasurementSet,
+        row_count: usize,
+        generated: &casa_ms::SubtableColumnOverrides,
+    ) -> SimulatorResult<()> {
         if self.batch.row_count() > 0 {
             self.send_batch()?;
         }
@@ -277,7 +308,7 @@ impl MainWriter {
             overrides.insert_deferred(column);
         }
         self.session
-            .save_and_finish(ms, &overrides)
+            .save_and_finish_with_subtables(ms, &overrides, generated)
             .map_err(write_error("finish the MAIN write"))?;
         Ok(())
     }

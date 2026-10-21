@@ -13,9 +13,15 @@
 //! observe's start and stop. The reference time is left unchanged, so the
 //! hour-angle offset and SOURCE.TIME stay the same.
 //!
+//! Scenarios may also call `setseed`, `setnoise` (`simplenoise` in Jy),
+//! `corrupt` and `reset` (Phase 1d). `--simplenoise-jy` adds a `setnoise`
+//! and a `corrupt` after every scenario's own calls, with the seed of
+//! `--seed` when given, so a noise-free scenario can be timed with noise.
+//!
 //! ```text
 //! cargo run --release -p casa-simulation --example observe_scenarios -- \
-//!     <casa-oracle-dir>/manifest.json <out-dir> [--casa-time-shift-s 37]
+//!     <casa-oracle-dir>/manifest.json <out-dir> [--casa-time-shift-s 37] \
+//!     [--simplenoise-jy 0.1 [--seed 11111]]
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -24,8 +30,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_ms::MeasurementSetWriteResources;
 use casa_simulation::{
-    ArrayConfig, CoordinateSystem, ObserveSpec, Simulator, SimulatorOptions, SpectralWindowSpec,
-    StateSpec,
+    ArrayConfig, CoordinateSystem, NoiseSpec, ObserveSpec, Simulator, SimulatorOptions,
+    SpectralWindowSpec, StateSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
@@ -116,7 +122,36 @@ fn observe(session: &mut Simulator, call: &Value, shift_s: f64) {
     session.observe(&spec).expect("observe");
 }
 
-fn run_scenario(scenario: &Value, out: &Path, shift_s: f64) {
+/// Noise added after a scenario's own calls (`--simplenoise-jy`, `--seed`).
+#[derive(Clone, Copy)]
+struct ExtraNoise {
+    sigma_jy: f64,
+    seed: Option<i32>,
+}
+
+fn simple_noise(sigma_jy: f64) -> NoiseSpec {
+    NoiseSpec {
+        mode: "simplenoise".to_string(),
+        simple_noise_jy: sigma_jy,
+        on_the_fly: true,
+    }
+}
+
+fn set_noise(session: &mut Simulator, call: &Value) {
+    session
+        .set_noise(&NoiseSpec {
+            mode: text(call, "mode", "simplenoise").to_string(),
+            on_the_fly: call.get("OTF").and_then(Value::as_bool).unwrap_or(true),
+            ..simple_noise(
+                call.get("simplenoise")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0),
+            )
+        })
+        .expect("setnoise");
+}
+
+fn run_scenario(scenario: &Value, out: &Path, shift_s: f64, extra_noise: Option<ExtraNoise>) {
     let name = scenario["name"].as_str().expect("scenario name");
     let options = SimulatorOptions {
         measures: casa_ms::open_measures_runtime().expect("measures runtime"),
@@ -167,8 +202,21 @@ fn run_scenario(scenario: &Value, out: &Path, shift_s: f64) {
                     .expect("setfield");
             }
             "observe" => observe(&mut session, call, shift_s),
+            "setseed" => session.set_seed(number(call, "seed") as i32),
+            "setnoise" => set_noise(&mut session, call),
+            "corrupt" => session.corrupt().expect("corrupt"),
+            "reset" => session.reset(),
             other => panic!("unsupported call {other}"),
         }
+    }
+    if let Some(extra) = extra_noise {
+        if let Some(seed) = extra.seed {
+            session.set_seed(seed);
+        }
+        session
+            .set_noise(&simple_noise(extra.sigma_jy))
+            .expect("setnoise");
+        session.corrupt().expect("corrupt");
     }
     let started = std::time::Instant::now();
     session.close().expect("close");
@@ -183,19 +231,26 @@ fn main() {
     let manifest = PathBuf::from(args.next().expect("manifest.json"));
     let out = PathBuf::from(args.next().expect("output directory"));
     let mut shift_s = 37.0;
+    let mut sigma_jy = None;
+    let mut seed = None;
     while let Some(flag) = args.next() {
         match flag.as_str() {
             "--casa-time-shift-s" => {
                 shift_s = args.next().expect("seconds").parse().expect("a number");
             }
+            "--simplenoise-jy" => {
+                sigma_jy = Some(args.next().expect("Jy").parse().expect("a number"));
+            }
+            "--seed" => seed = Some(args.next().expect("seed").parse().expect("an integer")),
             other => panic!("unknown argument {other}"),
         }
     }
+    let extra_noise = sigma_jy.map(|sigma_jy| ExtraNoise { sigma_jy, seed });
     let manifest: Value =
         serde_json::from_str(&std::fs::read_to_string(&manifest).expect("read manifest"))
             .expect("manifest JSON");
     std::fs::create_dir_all(&out).expect("output directory");
     for scenario in manifest["scenarios"].as_array().expect("scenarios") {
-        run_scenario(scenario, &out, shift_s);
+        run_scenario(scenario, &out, shift_s, extra_noise);
     }
 }

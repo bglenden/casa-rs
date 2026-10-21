@@ -6,7 +6,9 @@
 //! and the scans `observe` plans. It writes nothing until
 //! [`Simulator::close`], which creates the MeasurementSet in one streamed
 //! pass (plan §4, deferred single-pass execution), so no reader can see an
-//! intermediate state.
+//! intermediate state. The steps that change DATA (`corrupt`) are recorded
+//! in a plan of which scans each covers, and applied as `close` writes each
+//! row (`plan`, `corruption`).
 //!
 //! The setters keep CASA's semantics, including order-dependent ones:
 //! `setfield` records the reference time and first spectral window in force
@@ -16,13 +18,17 @@
 //! or diverges, as recorded in `docs/CASA (C++) bugs.md`.
 
 pub mod array;
+mod corruption;
 pub mod error;
 mod feeds;
 pub mod fields;
 pub mod observe;
+pub(crate) mod plan;
 pub mod spectral;
 #[cfg(test)]
 mod tests;
+
+pub use corruption::{DEFAULT_SEED, NoiseSpec};
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -37,6 +43,7 @@ use error::{SimulatorError, SimulatorResult};
 use feeds::Feed;
 use fields::Field;
 use observe::{Observation, ObserveSpec, Scan, StateSpec, Times};
+use plan::{DataPlan, NoiseTerm};
 use spectral::{SpectralWindow, SpectralWindowSpec};
 
 /// Controls CASA's `sm` lacks: the session's measures data, memory and the
@@ -108,6 +115,12 @@ pub struct Simulator {
     observations: Vec<Observation>,
     states: Vec<StateSpec>,
     scans: Vec<Scan>,
+    /// The seed of noise terms set from now on (`setseed`).
+    seed: i32,
+    /// The noise terms `setnoise` set, until `reset`.
+    noise_terms: Vec<NoiseTerm>,
+    /// The DATA steps (`corrupt`), applied at `close`.
+    data_plan: DataPlan,
 }
 
 impl Simulator {
@@ -132,6 +145,9 @@ impl Simulator {
             observations: Vec::new(),
             states: Vec::new(),
             scans: Vec::new(),
+            seed: DEFAULT_SEED,
+            noise_terms: Vec::new(),
+            data_plan: DataPlan::default(),
         }
     }
 
@@ -486,5 +502,9 @@ impl Simulator {
 
     pub(crate) fn scans(&self) -> &[Scan] {
         &self.scans
+    }
+
+    pub(crate) fn data_plan(&self) -> &DataPlan {
+        &self.data_plan
     }
 }
