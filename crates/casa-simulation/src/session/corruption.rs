@@ -110,18 +110,7 @@ impl Simulator {
         if self.noise_terms.is_empty() {
             return Ok(());
         }
-        for scan in &self.scans {
-            let correlations = self.spectral_windows[scan.spectral_window_id]
-                .correlations
-                .len();
-            if !matches!(correlations, 1 | 2 | 4) {
-                return Err(SimulatorError::raised(format!(
-                    "No such VisVector type: scan {} has {correlations} correlations; \
-                     only 1, 2 or 4 can be corrupted",
-                    scan.scan_number
-                )));
-            }
-        }
+        self.check_visibility_correlations("corrupted")?;
         if self
             .noise_terms
             .iter()
@@ -161,7 +150,30 @@ impl Simulator {
     }
 
     /// MAIN rows of the scans observed so far.
-    fn planned_rows(&self) -> usize {
+    pub(super) fn planned_rows(&self) -> usize {
         self.scans.iter().map(|scan| scan.row_count()).sum()
+    }
+
+    /// CASA's visibility vectors hold 1, 2 or 4 correlations: a scan
+    /// observed so far with another count cannot be `what` (corrupted,
+    /// predicted).
+    ///
+    /// # Errors
+    ///
+    /// Raised: "No such VisVector type".
+    pub(super) fn check_visibility_correlations(&self, what: &str) -> SimulatorResult<()> {
+        for scan in &self.scans {
+            let correlations = self.spectral_windows[scan.spectral_window_id]
+                .correlations
+                .len();
+            if !matches!(correlations, 1 | 2 | 4) {
+                return Err(SimulatorError::raised(format!(
+                    "No such VisVector type: scan {} has {correlations} correlations; \
+                     only 1, 2 or 4 can be {what}",
+                    scan.scan_number
+                )));
+            }
+        }
+        Ok(())
     }
 }

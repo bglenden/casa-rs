@@ -20,10 +20,11 @@
 //! (`write::resources`). The worker count is the runtime's: threads kept
 //! busy, the MeasurementSet writer's among them.
 //!
-//! The backend is where a session predicts its model. Until `predict`
-//! exists every session runs on the CPU: noise never runs on a device, so a
-//! `Metal` request is accepted, on a host with a device, and computes on
-//! the CPU.
+//! The backend is where a session predicts its model; noise never runs on
+//! a device. Until the law comparing the session's Metal prediction with
+//! its CPU prediction lands (#841), `close` predicts on the CPU whatever the
+//! request ([`SessionResources::prediction_backend`]): a `Metal` request is
+//! accepted, on a host with a device, and computes on the CPU.
 
 use std::num::NonZeroUsize;
 use std::str::FromStr;
@@ -189,6 +190,15 @@ impl SessionResources {
             BackendRequest::Auto if predicts && self.host.metal => BackendChoice::Metal,
             BackendRequest::Auto => BackendChoice::Cpu,
         }
+    }
+
+    /// The backend `close` predicts the session's rows on: the CPU, whatever
+    /// [`Self::resolved_backend`] resolves, until the law comparing the
+    /// session's Metal prediction with its CPU prediction lands (#841). The
+    /// prediction stage and its admission already take either backend.
+    #[must_use]
+    pub fn prediction_backend(&self) -> BackendChoice {
+        BackendChoice::Cpu
     }
 }
 

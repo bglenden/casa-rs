@@ -9,11 +9,13 @@
 //!    batches are tile bands of about [`casa_ms::TARGET_BATCH_BYTES`], so
 //!    the budget is a ceiling that only a small budget reaches.
 //! 2. **The pipeline.** The batch being filled, the geometry of the
-//!    integrations it spans and each worker's scratch, for as many of the
-//!    policy's streaming workers as fit what is then free (#737's rule:
-//!    workers shrink first). With one worker that does not fit, `close` is
-//!    refused.
+//!    integrations it spans, each worker's scratch and, when the session
+//!    predicts, the predictor, its block of native rows and (on Metal) the
+//!    device copies of the model grids, for as many of the policy's
+//!    streaming workers as fit what is then free (#737's rule: workers
+//!    shrink first). With one worker that does not fit, `close` is refused.
 //!
+//! The model grids themselves were admitted by `predict`, and are held.
 //! A refusal is a typed [`Admission`] carried by the session error.
 
 use casa_imaging_runtime::{Admission, CoreAllocation, Demand, Reservation, admit, free_memory};
@@ -23,6 +25,7 @@ use casa_types::Complex32;
 
 use super::geometry::RowGeometry;
 use super::pipeline::Integration;
+use super::prediction::PredictionStage;
 use crate::session::SessionResources;
 use crate::session::error::{SimulatorError, SimulatorResult};
 
@@ -30,7 +33,7 @@ use crate::session::error::{SimulatorError, SimulatorResult};
 pub(super) const WRITER_PHASE: &str = "the simulator's MeasurementSet writer";
 
 /// The pipeline's phase, as an admission refusal names it.
-pub(super) const PIPELINE_PHASE: &str = "the simulator's geometry and noise";
+pub(super) const PIPELINE_PHASE: &str = "the simulator's geometry, prediction and noise";
 
 /// Batches the writer holds at once: the one it writes and one queued.
 const WRITER_LIVE_BATCHES: usize = 2;
@@ -67,7 +70,8 @@ pub(super) struct MainAdmission {
     pub(super) reservation: Reservation,
 }
 
-/// Admit `close`'s writer and pipeline for `shape` within `resources`.
+/// Admit `close`'s writer and pipeline for `shape` within `resources`, the
+/// pipeline predicting with `prediction` when the session predicts.
 ///
 /// # Errors
 ///
@@ -77,6 +81,7 @@ pub(super) struct MainAdmission {
 pub(super) fn admit_main_write(
     resources: &SessionResources,
     shape: &MainShape<'_>,
+    prediction: Option<&PredictionStage<'_>>,
 ) -> SimulatorResult<MainAdmission> {
     let (host, policy) = (resources.host(), resources.policy());
     let free = free_memory(host, policy);
@@ -96,7 +101,12 @@ pub(super) fn admit_main_write(
     .map_err(SimulatorError::admission)?;
     let policy_cores = resources.cores();
     let free = free_memory(host, policy);
-    let demand = |cores: CoreAllocation| pipeline_bytes(shape, plan.batch_rows(), cores);
+    let demand = |cores: CoreAllocation| {
+        pipeline_bytes(shape, plan.batch_rows(), cores)
+            + prediction.map_or(0, |stage| {
+                stage.bytes(plan.batch_rows(), cores.streaming_workers)
+            })
+    };
     let cores = (1..=policy_cores.streaming_workers)
         .rev()
         .map(|workers| policy_cores.at_most(workers))
@@ -234,7 +244,7 @@ mod tests {
 
     #[test]
     fn the_writer_takes_half_the_budget_and_the_pipeline_fits_the_rest() {
-        let admitted = admit_main_write(&resources(1 << 30, 5), &shape()).expect("fits");
+        let admitted = admit_main_write(&resources(1 << 30, 5), &shape(), None).expect("fits");
         assert_eq!(admitted.cores.streaming_workers, 4);
         let writer = admitted.plan.maximum_resident_bytes() as u64;
         assert!(writer <= 1 << 29);
@@ -246,7 +256,8 @@ mod tests {
 
     #[test]
     fn a_budget_too_small_for_the_writer_is_a_typed_refusal() {
-        let error = admit_main_write(&resources(1 << 20, 4), &shape()).expect_err("too small");
+        let error =
+            admit_main_write(&resources(1 << 20, 4), &shape(), None).expect_err("too small");
         let refusal = error.admission_refused().expect("an admission refusal");
         assert_eq!(refusal.phase, WRITER_PHASE);
         assert_eq!(refusal.available, 1 << 20);
@@ -279,7 +290,7 @@ mod tests {
         let two = pipeline_bytes(&shape, plan.batch_rows(), four.at_most(2));
         assert!(two <= left, "two workers fit: {two} of {left}");
         assert!(pipeline_bytes(&shape, plan.batch_rows(), four.at_most(3)) > left);
-        let admitted = admit_main_write(&resources(budget, 5), &shape).expect("two fit");
+        let admitted = admit_main_write(&resources(budget, 5), &shape, None).expect("two fit");
         assert_eq!(admitted.policy_cores, four);
         assert_eq!(admitted.cores, four.at_most(2));
         drop(admitted);
@@ -289,6 +300,7 @@ mod tests {
                 antennas: shape.antennas * 4,
                 ..shape
             },
+            None,
         )
         .expect_err("one worker does not fit");
         let refusal = error.admission_refused().expect("an admission refusal");

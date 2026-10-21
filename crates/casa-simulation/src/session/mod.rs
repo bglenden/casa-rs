@@ -6,14 +6,16 @@
 //! and the scans `observe` plans. It writes nothing until
 //! [`Simulator::close`], which creates the MeasurementSet in one streamed
 //! pass (plan §4, deferred single-pass execution), so no reader can see an
-//! intermediate state. The steps that change DATA (`corrupt`) are recorded
-//! in a plan of which scans each covers, and applied as `close` writes each
-//! row (`plan`, `corruption`).
+//! intermediate state. The steps that change DATA (`predict`, `corrupt`) are
+//! recorded in a plan of which scans each covers, and applied as `close`
+//! writes each row (`plan`, `prediction`, `corruption`); `predict` prepares
+//! its model's grids when it is called.
 //!
-//! `close` runs within the session's [`SessionResources`]: it admits what it
-//! holds against the imaging runtime's resource policy and computes each
-//! write batch's geometry and noise on the runtime's worker team, so the
-//! MeasurementSet is bitwise the same for any budget or worker count.
+//! The session runs within its [`SessionResources`]: `predict` admits its
+//! model's grids, and `close` what it holds, against the imaging runtime's
+//! resource policy, and `close` computes each write batch's geometry,
+//! prediction and noise on the runtime's worker team, so the MeasurementSet
+//! is bitwise the same for any budget or worker count.
 //!
 //! The setters keep CASA's semantics, including order-dependent ones:
 //! `setfield` records the reference time and first spectral window in force
@@ -29,17 +31,20 @@ mod feeds;
 pub mod fields;
 pub mod observe;
 pub(crate) mod plan;
+pub(crate) mod prediction;
 pub mod resources;
 pub mod spectral;
 #[cfg(test)]
 mod tests;
 
 pub use corruption::{DEFAULT_SEED, NoiseSpec};
+pub use prediction::{PredictSpec, PredictionOptions, VoltagePatternSpec};
 pub use resources::{BackendRequest, ExecutionControls, SessionResources, UnknownBackend};
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use casa_imaging_operator::PaddingFactor;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
 
@@ -122,7 +127,11 @@ pub struct Simulator {
     seed: i32,
     /// The noise terms `setnoise` set, until `reset`.
     noise_terms: Vec<NoiseTerm>,
-    /// The DATA steps (`corrupt`), applied at `close`.
+    /// `predict`'s grid padding (`setoptions`).
+    padding: PaddingFactor,
+    /// Whether `predict` applies the primary beam (`setvp(dovp)`).
+    voltage_pattern: bool,
+    /// The DATA steps (`predict`, `corrupt`), applied at `close`.
     data_plan: DataPlan,
 }
 
@@ -150,6 +159,8 @@ impl Simulator {
             scans: Vec::new(),
             seed: DEFAULT_SEED,
             noise_terms: Vec::new(),
+            padding: PaddingFactor::SIMULATOR,
+            voltage_pattern: false,
             data_plan: DataPlan::default(),
         }
     }

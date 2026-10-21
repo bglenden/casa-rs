@@ -9,11 +9,16 @@
 //! the order they were taken, over the zero DATA `observe` writes. Nothing
 //! is read back from disk, and a sequence of steps costs one pass.
 //!
-//! Phase 1d's steps add noise; the fold applies each step to the running
-//! DATA (`D ← step(D)`), so prediction (`D ← P`, or `D ← D + P` when
-//! incremental) and multiplicative gains (`D ← G(D)`) slot in as further
-//! [`DataStep`] variants.
+//! A `predict` that replaces DATA covers every scan an earlier step covers
+//! (each covers a prefix of the scans), so it clears the plan before it is
+//! recorded; every step left then adds: DATA is the sum of the predictions
+//! covering the scan and the noise of the corruptions covering it. The fold
+//! applies each step to the running DATA (`D ← step(D)`), so multiplicative
+//! gains (`D ← G(D)`) slot in as further [`DataStep`] variants.
 
+use std::sync::Arc;
+
+use super::prediction::Prediction;
 use crate::corrupt::NoiseApplication;
 
 /// One `setnoise` term: CASA's `ANoise` calibration term, kept until
@@ -29,8 +34,16 @@ pub(crate) struct NoiseTerm {
 }
 
 /// A step that changes DATA, covering the scans observed before it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) enum DataStep {
+    /// `predict`: add the model's prediction. A replacing `predict` is the
+    /// first step of the plan, so adding to the zero DATA replaces it.
+    Predict {
+        /// The prepared model.
+        prediction: Arc<Prediction>,
+        /// The step covers scans `0..scans`.
+        scans: usize,
+    },
     /// `corrupt`: add each application's noise.
     Corrupt {
         /// One per noise term, in the order the terms were set.
@@ -44,13 +57,13 @@ impl DataStep {
     /// The step covers scans `0..scans()`.
     pub(crate) fn scans(&self) -> usize {
         match self {
-            Self::Corrupt { scans, .. } => *scans,
+            Self::Predict { scans, .. } | Self::Corrupt { scans, .. } => *scans,
         }
     }
 }
 
 /// The session's DATA steps, in the order they were taken.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct DataPlan {
     steps: Vec<DataStep>,
 }
@@ -61,19 +74,46 @@ impl DataPlan {
         self.steps.push(step);
     }
 
+    /// Forget every step: a replacing `predict` overwrites what they did.
+    pub(crate) fn clear(&mut self) {
+        self.steps.clear();
+    }
+
     /// The steps covering scan `scan`, in the order they were taken.
     pub(crate) fn steps_for_scan(&self, scan: usize) -> impl Iterator<Item = &DataStep> {
         self.steps.iter().filter(move |step| step.scans() > scan)
     }
 
     /// The noise to add to scan `scan`'s rows, in the order it was asked
-    /// for: the fold of its steps, all of which add.
+    /// for: the fold of its corruptions, all of which add.
     pub(crate) fn noise_for_scan(&self, scan: usize) -> Vec<NoiseApplication> {
         self.steps_for_scan(scan)
             .flat_map(|step| match step {
-                DataStep::Corrupt { applications, .. } => applications.iter().copied(),
+                DataStep::Corrupt { applications, .. } => applications.as_slice(),
+                DataStep::Predict { .. } => &[],
             })
+            .copied()
             .collect()
+    }
+
+    /// The predict steps covering scan `scan`, as indices of
+    /// [`Self::predictions`], in the order they were taken: their
+    /// predictions add.
+    pub(crate) fn predictions_for_scan(&self, scan: usize) -> Vec<usize> {
+        self.predictions()
+            .enumerate()
+            .filter(|(_, (_, scans))| *scans > scan)
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// Every predict step's prepared model and the scans it covers, in the
+    /// order they were taken.
+    pub(crate) fn predictions(&self) -> impl Iterator<Item = (&Prediction, usize)> {
+        self.steps.iter().filter_map(|step| match step {
+            DataStep::Predict { prediction, scans } => Some((prediction.as_ref(), *scans)),
+            DataStep::Corrupt { .. } => None,
+        })
     }
 }
 
@@ -107,5 +147,8 @@ mod tests {
         assert_eq!(plan.noise_for_scan(2), vec![noise(1, 1), noise(2, 0)]);
         assert_eq!(plan.noise_for_scan(3), Vec::new());
         assert_eq!(plan.steps_for_scan(1).count(), 1);
+        assert!(plan.predictions_for_scan(0).is_empty());
+        plan.clear();
+        assert_eq!(plan.noise_for_scan(0), Vec::new());
     }
 }

@@ -12,9 +12,9 @@
 //! | CASA | casa-rs |
 //! |---|---|
 //! | the `sm` tool's session (`open`, the setters, `observe`, `close`) | [`session::Simulator`] |
-//! | `sm.predict` with `GridFT` (`setoptions(ftmachine='ft')`) | [`predict::ModelPredictor`] |
+//! | `sm.predict` with `GridFT` (`setoptions(ftmachine='ft')`) | [`Simulator::predict`], [`Simulator::set_options`]; one row at a time, [`predict::ModelPredictor`] |
 //! | the model image `sm.predict` reads | [`predict::SkyModel`] |
-//! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`predict::PrimaryBeam`] |
+//! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`Simulator::set_vp`], [`predict::PrimaryBeam`] |
 //! | `sm.setseed`, `sm.setnoise(mode='simplenoise')`, `sm.corrupt`, `sm.reset` | [`Simulator::set_seed`], [`Simulator::set_noise`], [`Simulator::corrupt`], [`Simulator::reset`] |
 //! | `simutil.readantenna(antab)` | [`readantenna::read_antenna_config`] |
 
@@ -29,6 +29,6 @@ pub use session::error::{CasaOutcome, SimulatorError, SimulatorResult};
 pub use session::observe::{ObserveSpec, StateSpec};
 pub use session::spectral::SpectralWindowSpec;
 pub use session::{
-    BackendRequest, DEFAULT_SEED, ExecutionControls, NoiseSpec, SessionResources, Simulator,
-    SimulatorOptions, UnknownBackend,
+    BackendRequest, DEFAULT_SEED, ExecutionControls, NoiseSpec, PredictSpec, PredictionOptions,
+    SessionResources, Simulator, SimulatorOptions, UnknownBackend, VoltagePatternSpec,
 };

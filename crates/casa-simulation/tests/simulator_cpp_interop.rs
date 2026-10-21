@@ -8,7 +8,8 @@
 //! sessions cover what the writer varies: global and local antenna
 //! coordinates, two and four correlations, autocorrelations on and off,
 //! several fields, spectral windows, observations and states, elevation
-//! flags, and the optional SOURCE subtable.
+//! flags, and the optional SOURCE subtable. A third predicts a model and
+//! adds noise (Phase 1d), so DATA holds values other than zero.
 
 #![cfg(feature = "cpp-interop-tests")]
 
@@ -16,8 +17,8 @@ use std::path::Path;
 
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_simulation::{
-    ArrayConfig, BackendRequest, CoordinateSystem, ObserveSpec, SessionResources, Simulator,
-    SimulatorOptions, SpectralWindowSpec, StateSpec,
+    ArrayConfig, BackendRequest, CoordinateSystem, NoiseSpec, ObserveSpec, PredictSpec,
+    SessionResources, Simulator, SimulatorOptions, SpectralWindowSpec, StateSpec,
 };
 use casa_test_support::ms_digest;
 use casa_test_support::ms_interop::MeasurementSetOracle;
@@ -254,4 +255,107 @@ fn casacore_reads_a_vla_session() {
 #[test]
 fn casacore_reads_an_alma_session_in_local_coordinates() {
     assert_cpp_reads("alma_session", write_alma_session);
+}
+
+/// A one-plane Stokes I model next to `ms`, centred on the VLA session's
+/// first field and spanning its window.
+fn write_model(ms: &Path) -> std::path::PathBuf {
+    use casa_coordinates::{
+        CoordinateSystem as ImageCoordinates, DirectionCoordinate, Projection, ProjectionType,
+        SpectralCoordinate, StokesCoordinate, StokesType,
+    };
+    use ndarray::{ArrayD, IxDyn};
+
+    let path = ms.with_extension("model");
+    let cell = 2.0e-5;
+    let mut coordinates = ImageCoordinates::new();
+    coordinates.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        [150.0_f64.to_radians(), 34.0_f64.to_radians()],
+        [-cell, cell],
+        [16.0, 16.0],
+    ));
+    coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+    coordinates.add_coordinate(SpectralCoordinate::new(
+        FrequencyRef::LSRK,
+        1.407e9,
+        16.0e6,
+        0.0,
+        1.407e9,
+    ));
+    let shape = vec![32, 32, 1, 1];
+    let mut image = casa_images::PagedImage::<f32>::create(shape.clone(), coordinates, &path)
+        .expect("create model");
+    let mut pixels = ArrayD::zeros(IxDyn(&shape));
+    for (x, y, flux) in [(16, 16, 1.0_f32), (21, 12, 0.5), (4, 25, 0.25)] {
+        pixels[IxDyn(&[x, y, 0, 0])] = flux;
+    }
+    image.put_slice(&pixels, &[0, 0, 0, 0]).expect("pixels");
+    image.save().expect("save model");
+    path
+}
+
+/// The VLA session with its first scan predicted from a model and both
+/// corrupted with noise: DATA that is neither zero nor uniform.
+fn write_predicted_session(path: &Path) {
+    let model = write_model(path);
+    let mut session = Simulator::open(path, options());
+    let centre = [-1_601_185.0, -5_041_977.0, 3_554_875.0];
+    let offsets = [
+        [0.0, 0.0, 0.0],
+        [120.0, -40.0, 15.0],
+        [-80.0, 210.0, -30.0],
+        [400.0, 90.0, 120.0],
+    ];
+    session
+        .set_config(&ArrayConfig {
+            telescope: "VLA".to_string(),
+            x: offsets.iter().map(|offset| centre[0] + offset[0]).collect(),
+            y: offsets.iter().map(|offset| centre[1] + offset[1]).collect(),
+            z: offsets.iter().map(|offset| centre[2] + offset[2]).collect(),
+            dish_diameter: vec![25.0],
+            offset: vec![0.0],
+            mount: vec!["alt-az".to_string()],
+            antenna_names: (1..=4).map(|index| format!("ea{index:02}")).collect(),
+            pad_names: (1..=4).map(|index| format!("W{index:02}")).collect(),
+            coordinate_system: CoordinateSystem::Global,
+        })
+        .expect("setconfig");
+    session
+        .set_spectral_window(&window("LBand", 1.4e9, FrequencyRef::TOPO, "RR RL LR LL"))
+        .expect("setspwindow");
+    session
+        .set_field("first", &direction(150.0, 34.0), "", 0.0)
+        .expect("setfield");
+    session
+        .set_times(10.0, true, MEpoch::from_mjd(60_462.0, EpochRef::UTC))
+        .expect("settimes");
+    session
+        .observe(&scan("first", "LBand", -60.0, 0.0, false))
+        .expect("observe");
+    session
+        .predict(&PredictSpec {
+            images: vec![model],
+            component_list: None,
+            incremental: false,
+        })
+        .expect("predict");
+    session
+        .observe(&scan("first", "LBand", 0.0, 30.0, false))
+        .expect("observe");
+    session
+        .set_noise(&NoiseSpec {
+            mode: "simplenoise".to_string(),
+            simple_noise_jy: 0.1,
+            on_the_fly: true,
+        })
+        .expect("setnoise");
+    session.corrupt().expect("corrupt");
+    session.close().expect("close");
+}
+
+#[test]
+fn casacore_reads_a_predicted_and_corrupted_session() {
+    assert_cpp_reads("predicted_session", write_predicted_session);
 }

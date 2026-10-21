@@ -1,21 +1,24 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! MAIN's rows at `close`: each write batch's geometry and noise computed on
-//! the session's worker team, then handed to the writer's thread.
+//! MAIN's rows at `close`: each write batch's geometry, prediction and noise
+//! computed on the session's worker team, then handed to the writer's
+//! thread.
 //!
 //! Per batch of the write plan's rows (whole bands of DATA tiles):
 //! 1. **Geometry.** The integrations the batch reaches beyond the rows the
 //!    last batch left are computed, one job per integration:
 //!    [`ArrayGeometry::integration_rows`] depends only on the scan and the
 //!    time.
-//! 2. **Cells and columns.** DATA is zeroed in the writer's recycled batch.
-//!    Then, on the team at once:
+//! 2. **Prediction.** DATA is zeroed in the writer's recycled batch, and
+//!    the rows of scans a `predict` covers are predicted into it, in blocks
+//!    on the team ([`super::prediction`]).
+//! 3. **Cells and columns.** Then, on the team at once:
 //!    - each scan's noise is added to its rows, a run of rows per job: a
 //!      draw depends only on the term, the MAIN row, the channel and the
 //!      correlation ([`crate::corrupt`]);
 //!    - one job copies FLAG_ROW, UVW, WEIGHT and SIGMA from the geometry and
 //!      pushes the scalar columns of the integrations computed for the
 //!      batch, in MAIN order.
-//! 3. **Send.** The writer's thread writes the batch while the next one is
+//! 4. **Send.** The writer's thread writes the batch while the next one is
 //!    computed.
 //!
 //! No result depends on which worker computes what or where batches split,
@@ -31,6 +34,7 @@ use casa_types::Complex32;
 
 use super::MainWriter;
 use super::geometry::{ArrayGeometry, RowGeometry};
+use super::prediction::PredictionStage;
 use crate::corrupt::NoiseApplication;
 use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
@@ -57,6 +61,8 @@ pub(super) struct StageTimes {
     pub(super) geometry: Duration,
     /// Zeroing DATA.
     pub(super) zero: Duration,
+    /// Predicting the model into DATA.
+    pub(super) predict: Duration,
     /// Noise, the per-row columns and the scalar columns.
     pub(super) cells: Duration,
     /// Waiting for the writer to take a batch.
@@ -69,6 +75,8 @@ pub(super) struct Pipeline<'s> {
     scans: &'s [Scan],
     geometry: &'s ArrayGeometry<'s>,
     team: &'s WorkerTeam,
+    /// The model's prediction, when a `predict` covers any scan.
+    prediction: Option<PredictionStage<'s>>,
     /// Each scan's noise, in the order its steps add it.
     noise: Vec<Vec<NoiseApplication>>,
     correlations: usize,
@@ -88,13 +96,14 @@ impl<'s> Pipeline<'s> {
         scans: &'s [Scan],
         geometry: &'s ArrayGeometry<'s>,
         team: &'s WorkerTeam,
-        noise: Vec<Vec<NoiseApplication>>,
+        (prediction, noise): (Option<PredictionStage<'s>>, Vec<Vec<NoiseApplication>>),
         (correlations, channels): (usize, usize),
     ) -> Self {
         Self {
             scans,
             geometry,
             team,
+            prediction,
             noise,
             correlations,
             samples: correlations * channels,
@@ -126,6 +135,9 @@ impl<'s> Pipeline<'s> {
                 .data
                 .resize(rows * self.samples, Complex32::new(0.0, 0.0));
             self.times.zero += started.elapsed();
+            let started = Instant::now();
+            self.predict(&mut batch.data, first_row as u64, rows)?;
+            self.times.predict += started.elapsed();
             let started = Instant::now();
             self.fill(writer, &mut batch, first_row as u64, rows)?;
             self.times.cells += started.elapsed();
@@ -174,9 +186,28 @@ impl<'s> Pipeline<'s> {
         })
     }
 
+    /// Predict the model into the batch's `rows` rows of `data` (zero), the
+    /// first of which is MAIN row `first_row`.
+    fn predict(
+        &mut self,
+        data: &mut [Complex32],
+        first_row: u64,
+        rows: usize,
+    ) -> SimulatorResult<()> {
+        if self.prediction.is_none() {
+            return Ok(());
+        }
+        let runs = self.segments(rows);
+        let Some(stage) = &mut self.prediction else {
+            return Ok(());
+        };
+        stage.predict(self.team, self.scans, &self.rows, &runs, first_row, data)
+    }
+
     /// Fill the batch's `rows` rows, the first of which is MAIN row
-    /// `first_row`: the noise of DATA (already zero), the per-row columns,
-    /// and the scalar columns of the integrations computed for the batch.
+    /// `first_row`: the noise of DATA (already holding the model), the
+    /// per-row columns, and the scalar columns of the integrations computed
+    /// for the batch.
     fn fill(
         &self,
         writer: &mut MainWriter,

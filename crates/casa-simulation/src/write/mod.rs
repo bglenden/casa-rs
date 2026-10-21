@@ -7,15 +7,18 @@
 //! casa-rs's conventional one: IncrementalStMan and StandardStMan scalars,
 //! TiledShapeStMan visibility columns with CASA's tile shapes, and
 //! TiledColumnStMan for UVW. Following plan decision 6, MAIN has DATA but
-//! no MODEL_DATA or CORRECTED_DATA. DATA is zero (until `predict`, Phase 1d)
-//! plus the noise of every `corrupt` step covering the row's scan.
+//! no MODEL_DATA or CORRECTED_DATA. DATA is the sum of the predictions of
+//! every `predict` step covering the row's scan (zero without one) plus the
+//! noise of every `corrupt` step covering it.
 //!
 //! Before anything is written, what the pass holds is admitted against the
-//! session's resource policy ([`resources`]); each batch's geometry and
-//! noise are then computed on the session's worker team ([`pipeline`]).
+//! session's resource policy ([`resources`]); each batch's geometry,
+//! prediction ([`prediction`]) and noise are then computed on the session's
+//! worker team ([`pipeline`]).
 
 mod geometry;
 mod pipeline;
+mod prediction;
 mod resources;
 mod subtables;
 #[cfg(test)]
@@ -39,6 +42,7 @@ use crate::session::error::{SimulatorError, SimulatorResult};
 use crate::session::observe::Scan;
 use geometry::{ArrayGeometry, RowGeometry};
 use pipeline::Pipeline;
+use prediction::PredictionStage;
 use resources::{MainAdmission, MainShape};
 
 /// The readme CASA's simulator gives MAIN.
@@ -54,11 +58,17 @@ fn write_error(what: &str) -> impl Fn(casa_ms::MeasurementSetWriteError) -> Simu
 /// Create the session's MeasurementSet.
 pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> {
     let window = ReservationWindow::open();
-    let shape = cell_shape(session)?.map(|cell| main_shape(session, cell));
+    let cell = cell_shape(session)?;
+    let shape = cell.map(|cell| main_shape(session, cell));
+    let resources = &session.options().resources;
+    let prediction = match cell {
+        Some(cell) => PredictionStage::new(session, cell, resources.prediction_backend())?,
+        None => None,
+    };
     // Admitted before anything is written, so a refusal leaves nothing.
     let admission = shape
         .as_ref()
-        .map(|shape| resources::admit_main_write(&session.options().resources, shape))
+        .map(|shape| resources::admit_main_write(resources, shape, prediction.as_ref()))
         .transpose()?;
     let target = MeasurementSetCreateTarget::prepare(session.path(), true)
         .map_err(write_error("prepare the MeasurementSet"))?;
@@ -88,7 +98,7 @@ pub(crate) fn write_measurement_set(session: &Simulator) -> SimulatorResult<()> 
                 generated: &generated,
                 window: &window,
             };
-            write_main(&mut ms, session, &main, &shape, admission)?;
+            write_main(&mut ms, session, &main, &shape, (admission, prediction))?;
         }
         None => ms
             .save()
@@ -145,16 +155,24 @@ struct MainTarget<'a> {
     window: &'a ReservationWindow,
 }
 
-/// Write MAIN and save the MeasurementSet, holding `admission` until done.
-fn write_main(
+/// Write MAIN and save the MeasurementSet, holding `admission` until done,
+/// predicting with `prediction` when the session predicts.
+fn write_main<'s>(
     ms: &mut MeasurementSet,
-    session: &Simulator,
+    session: &'s Simulator,
     target: &MainTarget<'_>,
     shape: &MainShape<'_>,
-    admission: MainAdmission,
+    (admission, mut prediction): (MainAdmission, Option<PredictionStage<'s>>),
 ) -> SimulatorResult<()> {
     let started = Instant::now();
     let batch_rows = admission.plan.batch_rows().max(1);
+    if let Some(stage) = &mut prediction {
+        stage.start(batch_rows, admission.cores.streaming_workers);
+    }
+    let backend = prediction.as_ref().map_or_else(
+        || session.options().resources.resolved_backend(false),
+        PredictionStage::backend,
+    );
     let mut writer = MainWriter::start(target.staging, admission.plan.clone())?;
     let geometry = ArrayGeometry::new(
         session.telescope(),
@@ -171,7 +189,7 @@ fn write_main(
         scans,
         &geometry,
         &team,
-        noise,
+        (prediction, noise),
         (shape.correlations, shape.channels),
     );
     let integrations = scans
@@ -191,11 +209,12 @@ fn write_main(
         batches = times.batches,
         workers = admission.cores.streaming_workers,
         policy_workers = admission.policy_cores.streaming_workers,
-        backend = ?session.options().resources.resolved_backend(false),
+        backend = ?backend,
         reserved_bytes = admission.reservation.memory(),
         peak_reserved_bytes = target.window.close(),
         geometry_s = times.geometry.as_secs_f64(),
         zero_s = times.zero.as_secs_f64(),
+        predict_s = times.predict.as_secs_f64(),
         cells_s = times.cells.as_secs_f64(),
         send_wait_s = times.send.as_secs_f64(),
         setup_s = setup.as_secs_f64(),

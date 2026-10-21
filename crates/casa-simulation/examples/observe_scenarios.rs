@@ -14,9 +14,12 @@
 //! hour-angle offset and SOURCE.TIME stay the same.
 //!
 //! Scenarios may also call `setseed`, `setnoise` (`simplenoise` in Jy),
-//! `corrupt` and `reset` (Phase 1d). `--simplenoise-jy` adds a `setnoise`
-//! and a `corrupt` after every scenario's own calls, with the seed of
-//! `--seed` when given, so a noise-free scenario can be timed with noise.
+//! `corrupt`, `reset`, `setoptions`, `setvp` and `predict` (Phase 1d;
+//! `tools/simulation/sm_predict_scenarios.json`). Each of those must end as
+//! CASA's did: `True`, `False`, or raised, as the manifest records; a call
+//! that does not stops the run. `--simplenoise-jy` adds a `setnoise` and a
+//! `corrupt` after every scenario's own calls, with the seed of `--seed`
+//! when given, so a noise-free scenario can be timed with noise.
 //!
 //! `--workers`, `--memory-budget` (bytes) and `--backend` are the Python
 //! tool's constructor controls; the session's streaming workers are printed,
@@ -36,8 +39,9 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_simulation::{
-    ArrayConfig, BackendRequest, CoordinateSystem, ExecutionControls, NoiseSpec, ObserveSpec,
-    SessionResources, Simulator, SimulatorOptions, SpectralWindowSpec, StateSpec,
+    ArrayConfig, BackendRequest, CasaOutcome, CoordinateSystem, ExecutionControls, NoiseSpec,
+    ObserveSpec, PredictSpec, PredictionOptions, SessionResources, Simulator, SimulatorOptions,
+    SimulatorResult, SpectralWindowSpec, StateSpec, VoltagePatternSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
@@ -146,18 +150,80 @@ fn simple_noise(sigma_jy: f64) -> NoiseSpec {
     }
 }
 
-fn set_noise(session: &mut Simulator, call: &Value) {
-    session
-        .set_noise(&NoiseSpec {
-            mode: text(call, "mode", "simplenoise").to_string(),
-            on_the_fly: call.get("OTF").and_then(Value::as_bool).unwrap_or(true),
-            ..simple_noise(
-                call.get("simplenoise")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0),
-            )
-        })
-        .expect("setnoise");
+fn set_noise(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
+    session.set_noise(&NoiseSpec {
+        mode: text(call, "mode", "simplenoise").to_string(),
+        on_the_fly: call.get("OTF").and_then(Value::as_bool).unwrap_or(true),
+        ..simple_noise(
+            call.get("simplenoise")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
+        )
+    })
+}
+
+fn flag(call: &Value, key: &str, default: bool) -> bool {
+    call.get(key).and_then(Value::as_bool).unwrap_or(default)
+}
+
+fn predict(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
+    let images = match call.get("imagename") {
+        Some(Value::String(name)) => vec![PathBuf::from(name)],
+        Some(Value::Array(names)) => names
+            .iter()
+            .map(|name| PathBuf::from(name.as_str().expect("an image name")))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let component_list = Some(text(call, "complist", ""))
+        .filter(|list| !list.is_empty())
+        .map(PathBuf::from);
+    session.predict(&PredictSpec {
+        images,
+        component_list,
+        incremental: flag(call, "incremental", false),
+    })
+}
+
+fn set_options(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
+    let defaults = PredictionOptions::default();
+    session.set_options(&PredictionOptions {
+        ftmachine: text(call, "ftmachine", &defaults.ftmachine).to_string(),
+        grid_function: text(call, "gridfunction", &defaults.grid_function).to_string(),
+        padding: call
+            .get("padding")
+            .and_then(Value::as_f64)
+            .unwrap_or(defaults.padding),
+    })
+}
+
+fn set_vp(session: &mut Simulator, call: &Value) -> SimulatorResult<()> {
+    let defaults = VoltagePatternSpec::default();
+    session.set_vp(&VoltagePatternSpec {
+        dovp: flag(call, "dovp", defaults.dovp),
+        use_default_vp: flag(call, "usedefaultvp", defaults.use_default_vp),
+        vp_table: text(call, "vptable", "").to_string(),
+        do_squint: flag(call, "dosquint", defaults.do_squint),
+        ..defaults
+    })
+}
+
+/// Panic unless `result` is what CASA's call returned (`True` or `False`)
+/// or raised, as the manifest's `entry` records it.
+fn expect_casas_outcome(entry: &Value, result: SimulatorResult<()>) {
+    let op = entry["op"].as_str().unwrap_or("?");
+    let casa = match (&entry["returned"], entry.get("raised")) {
+        (Value::Bool(returned), _) => format!("returned {returned}"),
+        (_, Some(raised)) => format!("raised {raised}"),
+        (other, None) => format!("returned {other}"),
+    };
+    let ours = match &result {
+        Ok(()) => "returned true".to_string(),
+        Err(error) if error.outcome() == CasaOutcome::ReturnsFalse => "returned false".to_string(),
+        Err(error) => format!("raised {error}"),
+    };
+    let agree = casa == ours || (casa.starts_with("raised") && ours.starts_with("raised"));
+    assert!(agree, "{op}: CASA {casa}, casa-rs {ours}");
 }
 
 fn run_scenario(
@@ -217,9 +283,12 @@ fn run_scenario(
             }
             "observe" => observe(&mut session, call, shift_s),
             "setseed" => session.set_seed(number(call, "seed") as i32),
-            "setnoise" => set_noise(&mut session, call),
-            "corrupt" => session.corrupt().expect("corrupt"),
+            "setnoise" => expect_casas_outcome(entry, set_noise(&mut session, call)),
+            "corrupt" => expect_casas_outcome(entry, session.corrupt()),
             "reset" => session.reset(),
+            "setoptions" => expect_casas_outcome(entry, set_options(&mut session, call)),
+            "setvp" => expect_casas_outcome(entry, set_vp(&mut session, call)),
+            "predict" => expect_casas_outcome(entry, predict(&mut session, call)),
             other => panic!("unsupported call {other}"),
         }
     }

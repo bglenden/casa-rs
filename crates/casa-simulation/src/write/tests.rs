@@ -8,26 +8,79 @@
 //! a batch and integrations that straddle batches, scans with and without
 //! autocorrelations (so integrations of two sizes), a scan boundary inside a
 //! batch between scans with different noise, flagged rows, and the four
-//! correlations that draw from two counter pairs.
+//! correlations that draw from two counter pairs. With a model predicted
+//! too, the digests agree as well: a predict covering the first scan, and
+//! an incremental one covering the first three, so the batches meet scans
+//! predicted from two domains, from one, and from none.
 //!
 //! Admission is the process's, so these tests assume no other test holds
 //! memory at once (nextest runs each test in its own process).
 
 use std::path::{Path, PathBuf};
 
+use casa_coordinates::{
+    CoordinateSystem as ImageCoordinates, DirectionCoordinate, Projection, ProjectionType,
+    SpectralCoordinate, StokesCoordinate, StokesType,
+};
+use casa_images::PagedImage;
+use casa_imaging_runtime::pass::BackendChoice;
 use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_test_support::ms_digest::measurement_set_manifest;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{EpochRef, MEpoch};
+use ndarray::{ArrayD, IxDyn};
 
+use super::prediction::PredictionStage;
 use super::resources::{MainShape, admit_main_write, writer_plan};
 use super::{cell_shape, main_shape};
 use crate::session::{BackendRequest, SessionResources};
 use crate::{
-    ArrayConfig, CoordinateSystem, NoiseSpec, ObserveSpec, Simulator, SimulatorOptions,
-    SpectralWindowSpec, StateSpec,
+    ArrayConfig, CoordinateSystem, NoiseSpec, ObserveSpec, PredictSpec, Simulator,
+    SimulatorOptions, SpectralWindowSpec, StateSpec,
 };
+
+/// The field, and the centre of the model.
+fn field_rad() -> [f64; 2] {
+    [150.0_f64.to_radians(), 34.0_f64.to_radians()]
+}
+
+/// Pixels a side of the model, of 4″: the 720 m baselines at 1.4 GHz fall
+/// inside its padded grid.
+const MODEL_PIXELS: usize = 32;
+
+/// A one-plane Stokes I model spanning the session's band: a few points
+/// around the field.
+fn write_model(dir: &Path) -> PathBuf {
+    let path = dir.join("model.image");
+    let cell = 2.0e-5;
+    let mut coordinates = ImageCoordinates::new();
+    coordinates.add_coordinate(DirectionCoordinate::new(
+        DirectionRef::J2000,
+        Projection::new(ProjectionType::SIN),
+        field_rad(),
+        [-cell, cell],
+        [(MODEL_PIXELS / 2) as f64, (MODEL_PIXELS / 2) as f64],
+    ));
+    coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+    coordinates.add_coordinate(SpectralCoordinate::new(
+        FrequencyRef::LSRK,
+        1.401e9,
+        3.0e6,
+        0.0,
+        1.401e9,
+    ));
+    let shape = vec![MODEL_PIXELS, MODEL_PIXELS, 1, 1];
+    let mut image =
+        PagedImage::<f32>::create(shape.clone(), coordinates, &path).expect("create model");
+    let mut pixels = ArrayD::zeros(IxDyn(&shape));
+    for (x, y, flux) in [(16, 16, 1.0_f32), (20, 13, 0.5), (5, 27, 0.25)] {
+        pixels[IxDyn(&[x, y, 0, 0])] = flux;
+    }
+    image.put_slice(&pixels, &[0, 0, 0, 0]).expect("pixels");
+    image.save().expect("save model");
+    path
+}
 
 /// 2024-06-01 00:00 UTC.
 const REFERENCE_MJD: f64 = 60_462.0;
@@ -85,6 +138,28 @@ fn simple_noise(sigma_jy: f64) -> NoiseSpec {
 /// - The second `corrupt` adds a second term with another seed; scan 4
 ///   (50 s) is observed after it, without noise.
 fn session(path: &Path, resources: SessionResources, noise: bool) -> Simulator {
+    session_predicting(path, resources, noise, None)
+}
+
+/// [`session`], with `model`, when given, predicted into scan 1 before its
+/// first `corrupt`, and incrementally into scans 1 to 3 before the second.
+fn session_predicting(
+    path: &Path,
+    resources: SessionResources,
+    noise: bool,
+    model: Option<&Path>,
+) -> Simulator {
+    let predict = |session: &mut Simulator, incremental: bool| {
+        if let Some(model) = model {
+            session
+                .predict(&PredictSpec {
+                    images: vec![model.to_path_buf()],
+                    component_list: None,
+                    incremental,
+                })
+                .expect("predict");
+        }
+    };
     let options = SimulatorOptions {
         measures: casa_test_support::deterministic_measures_provider(),
         resources,
@@ -138,6 +213,7 @@ fn session(path: &Path, resources: SessionResources, noise: bool) -> Simulator {
         .set_times(10.0, false, MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC))
         .expect("settimes");
     session.observe(&scan(0.0, 300.0)).expect("observe");
+    predict(&mut session, false);
     if noise {
         session.set_noise(&simple_noise(0.1)).expect("setnoise");
         session.corrupt().expect("corrupt");
@@ -147,6 +223,7 @@ fn session(path: &Path, resources: SessionResources, noise: bool) -> Simulator {
     session.set_limits(1.0e-6, 8.0_f64.to_radians());
     session.set_auto(0.0);
     session.observe(&scan(400.0, 500.0)).expect("observe");
+    predict(&mut session, true);
     if noise {
         session.set_seed(7);
         session.set_noise(&simple_noise(0.3)).expect("setnoise");
@@ -199,7 +276,8 @@ fn the_measurement_set_is_the_same_for_any_worker_count_and_budget() {
     let large = 4_u64 << 30;
     let small = budget_for_batches_of(&shape, 97);
     let batch_rows = |memory: u64, workers: usize| {
-        let admitted = admit_main_write(&resources(workers, memory), &shape).expect("admitted");
+        let admitted =
+            admit_main_write(&resources(workers, memory), &shape, None).expect("admitted");
         (admitted.plan.batch_rows(), admitted.cores.streaming_workers)
     };
     let (large_rows, four) = batch_rows(large, 5);
@@ -244,6 +322,79 @@ fn the_measurement_set_is_the_same_for_any_worker_count_and_budget() {
         measurement_set_manifest(&clean),
         first,
         "the sessions add noise"
+    );
+}
+
+#[test]
+fn the_predicted_measurement_set_is_the_same_for_any_worker_count_and_budget() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let model = write_model(directory.path());
+    let large = 4_u64 << 30;
+    // The smallest budget that admits four workers and batches of at least
+    // 97 rows beside the model's grids and the process caches, which the
+    // probe holds as every session does: monotone in the budget.
+    let small = {
+        let probe = session_predicting(
+            &directory.path().join("probe.ms"),
+            resources(5, large),
+            true,
+            Some(&model),
+        );
+        let cell = cell_shape(&probe).expect("one shape").expect("scans");
+        let shape = main_shape(&probe, cell);
+        let stage = PredictionStage::new(&probe, cell, BackendChoice::Cpu)
+            .expect("stage")
+            .expect("the session predicts");
+        let fits = |budget: u64| {
+            admit_main_write(&resources(5, budget), &shape, Some(&stage)).is_ok_and(|admitted| {
+                admitted.cores.streaming_workers == 4 && admitted.plan.batch_rows() >= 97
+            })
+        };
+        let (mut low, mut high) = (1_u64, large);
+        while high - low > 1 {
+            let middle = low + (high - low) / 2;
+            if fits(middle) {
+                high = middle;
+            } else {
+                low = middle;
+            }
+        }
+        let admitted = admit_main_write(&resources(5, high), &shape, Some(&stage)).expect("fits");
+        let rows = admitted.plan.batch_rows();
+        assert!(
+            rows < 136 && !shape.rows.is_multiple_of(rows) && !136_usize.is_multiple_of(rows),
+            "small batches split integrations: {rows} rows of {}",
+            shape.rows
+        );
+        high
+    };
+    let manifest = |name: &str, workers: usize, memory: u64| {
+        let path = directory.path().join(name);
+        session_predicting(&path, resources(workers, memory), true, Some(&model))
+            .close()
+            .expect("close");
+        measurement_set_manifest(&path)
+    };
+    let first = manifest("first.ms", 1, large);
+    for (name, workers, memory) in [
+        ("four.ms", 5, large),
+        ("small.ms", 1, small),
+        ("small-four.ms", 5, small),
+    ] {
+        assert_eq!(
+            manifest(name, workers, memory),
+            first,
+            "{name}: a policy of {workers} workers and {memory} bytes"
+        );
+    }
+    let noise_only = directory.path().join("noise-only.ms");
+    session(&noise_only, resources(1, large), true)
+        .close()
+        .expect("close");
+    assert_ne!(
+        measurement_set_manifest(&noise_only),
+        first,
+        "the sessions predict the model"
     );
 }
 
