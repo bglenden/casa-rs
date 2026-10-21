@@ -8,7 +8,8 @@ CASA behaviours casa-rs follows for parity:
 [AW-projection prediction w](#aw-projection-predicts-with-the-unrotated-w),
 [MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it),
 [exact peak comparisons](#peak-searches-let-rounding-choose-between-equal-pixels),
-[multi-term weight normalization](#the-multi-term-weight-normalization-override-is-never-called).
+[multi-term weight normalization](#the-multi-term-weight-normalization-override-is-never-called),
+[the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio).
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
@@ -388,3 +389,28 @@ A facet of an `n`-pixel image split `N` ways is `n / N` pixels (integer
 division) from `facet · (n / N)`, so when `N` does not divide `n` the top and
 right remainder strips belong to no facet: CASA grids and cleans nothing
 there, silently. casa-rs refuses such a layout (`NonDivisibleFacetLayout`).
+
+## The Airy beam's blockage term uses the inverse length ratio
+
+- Date noted: 2026-10-21
+- Status: likely CASA bug; casa-rs follows it (#841, PR #843)
+- Affected code: `synthesis/TransformMachines/PBMath1DAiry.cc` (`fillPBArray`)
+
+For a dish of diameter `D` with a central blockage of diameter `b`, the
+voltage pattern is proportional to `D²·jinc(x) − b²·jinc(x·b/D)`, where
+`jinc(x) = 2J₁(x)/x` and `x = πDθ/λ`. `fillPBArray` tabulates
+`(areaRatio·jinc(x) − jinc(x·lengthRatio)) / (areaRatio − 1)` with
+`lengthRatio = D/b`, so it evaluates the blockage term at `x·D/b` instead of
+`x·b/D`.
+
+For ALMA's default pattern (10.7 m, 0.75 m blockage), the power in the main
+lobe comes out about 1% above the physical pattern: 0.507 against 0.500 at
+the physical half-power radius, and 0.901 against 0.892 at 42% of that
+radius. Every Airy pattern CASA builds this way is affected: the simulator's
+`setvp`, imaging's primary beams and the mosaic gridder's `HetArrayConvFunc`
+dishes.
+
+ALMA's 10.7 m effective diameter was chosen against CASA's beam, so casa-rs
+tabulates the same expression (`casa_numerics::AnnularApertureVoltageTable`)
+and its predictions match CASA's to 1.6e-7. The simulator's beam test checks
+CASA's formula rather than the physical one.

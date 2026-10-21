@@ -9,8 +9,8 @@ use casa_imaging_operator::{
     AiryDish, Basis, CellHold, CfKey, ConvolutionFunctionSet, DenseCell, DeviceFailure,
     GridAccumulator, GridGeometry, GridPadding, GridPrecision, GridScalar, ImageCorrection,
     ImageExtent, KernelNormalisation, MeasurementOperator, ModelImages, ModelPlane, MosaicPb,
-    MosaicWindow, MuellerRouting, OperatorError, Placement, PolarizationRouting, RowContext,
-    SampleBuffer, Spheroidal, TapFootprint, TapLayout, Tile, pair_plane,
+    MosaicWindow, MuellerRouting, OperatorError, PaddingFactor, Placement, PolarizationRouting,
+    RowContext, SampleBuffer, Spheroidal, TapFootprint, TapLayout, Tile, pair_plane,
 };
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
@@ -47,7 +47,7 @@ fn geometry_of(image: usize) -> GridGeometry {
             increment_rad: INCREMENT_RAD,
             reference_pixel: [image / 2, image / 2],
         },
-        GridPadding::CasaComposite,
+        GridPadding::CasaComposite(PaddingFactor::TCLEAN),
     )
     .expect("valid geometry")
 }

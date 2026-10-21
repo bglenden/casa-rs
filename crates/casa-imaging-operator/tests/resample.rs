@@ -9,9 +9,10 @@ use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
     Basis, CellHold, CfKey, ConvolutionFunctionSet, DensityCellRule, DensityGridShape, DensityUv,
     GridGeometry, GridPadding, GridPrecision, ImageCorrection, ImageExtent, KernelNormalisation,
-    MeasurementOperator, MuellerRouting, NativeRow, OperatorError, PolarizationRouting, RowContext,
-    RowSpectrum, SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal,
-    TapLayout, WPlaneCount, WPlanes, WeightingGeneration, build_density_grid,
+    MeasurementOperator, MuellerRouting, NativeRow, OperatorError, PaddingFactor,
+    PolarizationRouting, RowContext, RowSpectrum, SampleBuffer, SpectralAxis, SpectralKernel,
+    SpectralResampler, Spheroidal, TapLayout, WPlaneCount, WPlanes, WeightingGeneration,
+    build_density_grid,
 };
 use common::{Rng, geometry, operator};
 use num_complex::Complex32;
@@ -983,7 +984,7 @@ fn standard_density_cells_use_casa_single_precision_coordinates() {
             increment_rad: [increment, increment],
             reference_pixel: [32, 32],
         },
-        GridPadding::CasaComposite,
+        GridPadding::CasaComposite(PaddingFactor::TCLEAN),
     )
     .expect("geometry");
     let polarization = PolarizationRouting::compile(&XX_YY, &STOKES_I).expect("routing");

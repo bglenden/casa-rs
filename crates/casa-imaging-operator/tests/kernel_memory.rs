@@ -21,8 +21,8 @@ use casa_imaging_model::{
 };
 use casa_imaging_operator::{
     AiryDish, AwCatalog, AwIndexing, CellHold, CfKey, ConvolutionFunctionSet, GridGeometry,
-    GridPadding, ImageExtent, MosaicPb, MosaicWindow, PolarizationRouting, Spheroidal, WPlaneCount,
-    WPlanes,
+    GridPadding, ImageExtent, MosaicPb, MosaicWindow, PaddingFactor, PolarizationRouting,
+    Spheroidal, WPlaneCount, WPlanes,
 };
 
 #[global_allocator]
@@ -206,7 +206,11 @@ fn w_projection_stages_hold_at_most_what_they_state() {
     }
     let routing = routing();
     for (image, planes) in [(64, 1), (64, 8), (200, 16)] {
-        let geometry = geometry(image, 1.0e-3, GridPadding::CasaComposite);
+        let geometry = geometry(
+            image,
+            1.0e-3,
+            GridPadding::CasaComposite(PaddingFactor::TCLEAN),
+        );
         let count = WPlaneCount::Fixed(planes);
         let label = format!("{image} px, {planes} planes");
         let stated = WPlanes::screens_bytes(&geometry, count).expect("screens bytes");
@@ -301,7 +305,11 @@ fn a_spheroidal_set_holds_what_it_states() {
     }
     let routing = routing();
     for image in [64, 1000] {
-        let geometry = geometry(image, 1.0e-5, GridPadding::CasaComposite);
+        let geometry = geometry(
+            image,
+            1.0e-5,
+            GridPadding::CasaComposite(PaddingFactor::TCLEAN),
+        );
         let (peak, _, set) = measure(|| Spheroidal::new(&geometry, &routing));
         assert!(
             peak <= Spheroidal::bytes(&geometry),

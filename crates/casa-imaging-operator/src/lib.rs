@@ -72,7 +72,7 @@ pub use convolution::{
 };
 pub use cpu::CpuBackend;
 pub use error::{DeviceFailure, OperatorError};
-pub use geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent};
+pub use geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent, PaddingFactor};
 pub use mosaic::{
     AiryDish, MOSAIC_OVERSAMPLING, MosaicPb, MosaicScreens, MosaicWindow, pair_plane,
 };

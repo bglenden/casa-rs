@@ -7,7 +7,7 @@
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
     Basis, CfKey, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
-    Placement, PolarizationRouting, SampleBuffer, Spheroidal,
+    PaddingFactor, Placement, PolarizationRouting, SampleBuffer, Spheroidal,
 };
 use num_complex::{Complex32, Complex64};
 
@@ -21,7 +21,7 @@ pub fn geometry() -> GridGeometry {
             increment_rad: INCREMENT_RAD,
             reference_pixel: [IMAGE / 2, IMAGE / 2],
         },
-        GridPadding::CasaComposite,
+        GridPadding::CasaComposite(PaddingFactor::TCLEAN),
     )
     .expect("valid geometry")
 }
