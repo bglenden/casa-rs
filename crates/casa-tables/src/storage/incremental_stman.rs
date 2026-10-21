@@ -34,6 +34,7 @@ use super::canonical::{
     write_u32_be, write_u32_le,
 };
 use super::data_type::CasacoreDataType;
+use super::scalar_sources::SCALAR_BLOCK_CELLS;
 use super::stman_aipsio::ColumnRawData;
 use super::stman_aipsio::scalar_value_is_default;
 use super::stman_array_file::StManArrayFileReader;
@@ -43,8 +44,18 @@ use crate::table::GeneratedScalarValueRun;
 
 const ISM_HEADER_SIZE: u64 = 512;
 
-/// Rows of each scalar column a source writer encodes at a time.
-const ISM_ENCODED_BLOCK_ROWS: usize = 4096;
+/// Rows of values a scalar bucket is sized for.
+const ISM_BUCKET_TARGET_ROWS: usize = 32;
+
+/// The most a fixed-width scalar column adds to a bucket's size per row:
+/// an 8-byte value and its 8-byte index entry.
+const ISM_MAX_SCALAR_ROW_BYTES: usize = 16;
+
+/// Heap the scalar source writer holds per column while it assembles a
+/// bucket: the bucket it writes, beside the data and index it is building,
+/// which grow by doubling to at most twice their bytes.
+pub(super) const ISM_SCALAR_BUCKET_BYTES_PER_COLUMN: usize =
+    4 * ISM_BUCKET_TARGET_ROWS * ISM_MAX_SCALAR_ROW_BYTES;
 
 type SparseScalarRowValues = Vec<(usize, Option<casa_types::ScalarValue>)>;
 
@@ -2227,7 +2238,7 @@ fn ism_source_layout(
     let bucket_size = if bytes_per_row == 0 {
         128u32
     } else {
-        let target = (bytes_per_row * 32 + 4) as u32;
+        let target = (bytes_per_row * ISM_BUCKET_TARGET_ROWS + 4) as u32;
         target.clamp(128, 327680)
     };
     Ok((col_info, bucket_size))
@@ -2347,8 +2358,8 @@ pub(crate) fn write_ism_file_column_sources(
         let mut cells = (0..ncol)
             .map(|_| EncodedCells::default())
             .collect::<Vec<_>>();
-        for block_start in (0..nrrow).step_by(ISM_ENCODED_BLOCK_ROWS) {
-            let block = block_start..nrrow.min(block_start + ISM_ENCODED_BLOCK_ROWS);
+        for block_start in (0..nrrow).step_by(SCALAR_BLOCK_CELLS) {
+            let block = block_start..nrrow.min(block_start + SCALAR_BLOCK_CELLS);
             for (col_idx, cells) in cells.iter_mut().enumerate() {
                 let (dt, nrelem) = col_info[col_idx];
                 cells.fill(

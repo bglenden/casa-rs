@@ -17,7 +17,7 @@
   `None` takes the machine's balanced share, and the MeasurementSet written
   is the same whatever the controls. `casars.simutil` provides `readantenna`
   of CASA's `simutil` helper class (`casatasks.private.simutil`), which is
-  not a tool; its module path is provisional.
+  not a tool; `from casars import simutil` is its public import.
 - `casars.parameters` is the accepted common API for typed task profiles
   described by ADR-0006 and the current-only option in ADR-0012.
 

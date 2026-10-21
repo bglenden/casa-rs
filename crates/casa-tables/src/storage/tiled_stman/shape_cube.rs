@@ -8,7 +8,8 @@
 //! fits the writer's budget assembles each band in memory and writes it with
 //! one call when its last row arrives. Otherwise each tile row is written in
 //! place as it is pushed, a Bool tile row by reading back the bytes it
-//! shares with its neighbours.
+//! shares with its neighbours. The cubes of a column share one tile-row
+//! scratch, held by the column's writer ([`ShapeCubeWorkingSet`]).
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -37,19 +38,51 @@ pub(super) struct DirectShapeCubeWriter {
     /// Every tile of the band being assembled; empty when the cube writes
     /// each tile row in place.
     band: Vec<u8>,
-    /// One tile row of the row being written.
-    tile_row: Vec<u8>,
+}
+
+/// The bytes a cube works in while it writes a row.
+///
+/// The encoded row and a Bool tile row's packed bytes live only while the
+/// row is written; the tile row is the writer's scratch, shared by every
+/// cube and sized for the largest. A column holds, at once, its largest
+/// encoded row, its largest tile row and its largest packed Bool tile row,
+/// which may come from different cubes ([`Self::max`], [`Self::bytes`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct ShapeCubeWorkingSet {
+    /// One row's cell, encoded.
+    pub(super) row_bytes: usize,
+    /// One tile row of the cell.
+    pub(super) tile_row_bytes: usize,
+    /// One Bool tile row's packed bits and the byte they may share.
+    pub(super) packed_bool_bytes: usize,
+}
+
+impl ShapeCubeWorkingSet {
+    /// The larger of each part of `self` and `other`.
+    pub(super) fn max(self, other: Self) -> Self {
+        Self {
+            row_bytes: self.row_bytes.max(other.row_bytes),
+            tile_row_bytes: self.tile_row_bytes.max(other.tile_row_bytes),
+            packed_bool_bytes: self.packed_bool_bytes.max(other.packed_bool_bytes),
+        }
+    }
+
+    /// Every part, held at once.
+    pub(super) fn bytes(self) -> Option<usize> {
+        self.row_bytes
+            .checked_add(self.tile_row_bytes)?
+            .checked_add(self.packed_bool_bytes)
+    }
 }
 
 impl DirectShapeCubeWriter {
     /// Create the cube's file at `temp_data_path`, sized for every planned
-    /// row, and return the writer with the bytes it works in per row (the
-    /// encoded row, a tile row, and a Bool tile row's packed bytes).
+    /// row, and return the writer with the bytes it works in per row.
     pub(super) fn create(
         temp_data_path: PathBuf,
         layout: StreamedTiledShapeCubeLayout,
         value_type: StreamedTiledShapeValueType,
-    ) -> Result<(Self, usize), StorageError> {
+    ) -> Result<(Self, ShapeCubeWorkingSet), StorageError> {
         let elem_size = value_type.elem_size();
         let overflow = |what: &str| {
             StorageError::FormatMismatch(format!("streamed TiledShape {what} overflows usize"))
@@ -74,10 +107,12 @@ impl DirectShapeCubeWriter {
         } else {
             0
         };
-        let working_bytes = row_bytes
-            .checked_add(tile_row_bytes)
-            .and_then(|bytes| bytes.checked_add(packed_bool_bytes))
-            .ok_or_else(|| overflow("working set"))?;
+        let working_set = ShapeCubeWorkingSet {
+            row_bytes,
+            tile_row_bytes,
+            packed_bool_bytes,
+        };
+        working_set.bytes().ok_or_else(|| overflow("working set"))?;
 
         let mut cube_shape = layout.cell_shape.clone();
         cube_shape.push(layout.row_count);
@@ -135,9 +170,8 @@ impl DirectShapeCubeWriter {
             tile_cell_nelem,
             bucket_size,
             band: Vec::new(),
-            tile_row: Vec::new(),
         };
-        Ok((cube, working_bytes))
+        Ok((cube, working_set))
     }
 
     /// Bytes of one band: every tile across the cell, one tile along the row
@@ -151,24 +185,27 @@ impl DirectShapeCubeWriter {
         self.band = vec![0; self.band_bytes()];
     }
 
-    /// Write the next row's cell, `encoded` in the cube's cell order.
+    /// Write the next row's cell, `encoded` in the cube's cell order, one
+    /// tile row at a time through `tile_row`, the column's scratch of at
+    /// least this cube's tile-row bytes.
     pub(super) fn write_row(
         &mut self,
         value_type: StreamedTiledShapeValueType,
         encoded: &[u8],
+        tile_row: &mut [u8],
     ) -> Result<(), StorageError> {
         let elem_size = value_type.elem_size();
         let cell_rank = self.cell_shape.len();
         let row_tile_index = self.rows_written / self.rows_per_tile;
         let row_in_tile = self.rows_written % self.rows_per_tile;
         let tile_row_bytes = self.tile_cell_nelem * elem_size;
-        self.tile_row.resize(tile_row_bytes, 0);
+        let tile_row = &mut tile_row[..tile_row_bytes];
         for (cell_tile_index, plan) in self.tile_plans.iter().enumerate() {
-            self.tile_row.fill(0);
+            tile_row.fill(0);
             copy_cube_to_tile(
                 encoded,
                 &self.cell_shape,
-                &mut self.tile_row,
+                tile_row,
                 &self.tile_shape[..cell_rank],
                 &plan.cell_start,
                 &plan.actual_extent,
@@ -186,7 +223,7 @@ impl DirectShapeCubeWriter {
                     self.file
                         .seek(SeekFrom::Start((bucket_start + byte_offset) as u64))?;
                     self.file.read_exact(&mut packed)?;
-                    write_bool_bits_from_bytes(&mut packed, bit_in_byte, &self.tile_row);
+                    write_bool_bits_from_bytes(&mut packed, bit_in_byte, tile_row);
                     self.file
                         .seek(SeekFrom::Start((bucket_start + byte_offset) as u64))?;
                     self.file.write_all(&packed)?;
@@ -195,7 +232,7 @@ impl DirectShapeCubeWriter {
                     write_bool_bits_from_bytes(
                         &mut self.band[start..start + byte_count],
                         bit_in_byte,
-                        &self.tile_row,
+                        tile_row,
                     );
                 }
             } else {
@@ -203,10 +240,10 @@ impl DirectShapeCubeWriter {
                 if self.band.is_empty() {
                     self.file
                         .seek(SeekFrom::Start((bucket_start + row_offset) as u64))?;
-                    self.file.write_all(&self.tile_row)?;
+                    self.file.write_all(tile_row)?;
                 } else {
                     let start = band_offset + row_offset;
-                    self.band[start..start + tile_row_bytes].copy_from_slice(&self.tile_row);
+                    self.band[start..start + tile_row_bytes].copy_from_slice(tile_row);
                 }
             }
         }

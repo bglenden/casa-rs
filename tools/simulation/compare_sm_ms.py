@@ -10,10 +10,13 @@ oracle's manifest, the comparison opens `<casa>/<name>.ms` and
 - **the descriptors:** each table's TableInfo (type and subType), its
   non-table keywords, and every column's value type, dimensionality,
   fixed-shape option and keywords (units and MEASINFO);
-- **the cells:** every column, row by row. Floats pass within a per-column
-  tolerance, and UVW's largest difference is reported.
-- **DATA**, by the scenario's `data` (default `zero`):
-  - `zero` (observe only): DATA is zero in both.
+- **the cells:** every column, row by row: which cells are defined, their
+  shapes and their values. Floats pass within a per-column tolerance, and
+  UVW's largest difference is reported.
+- **DATA**: which cells are defined and their shapes, as every column; its
+  values by the scenario's `data` (default `zero`):
+  - `zero` (observe only): DATA is zero in both, and its cells are compared
+    as every column's are.
   - `model` (predicted, no noise): the normalized RMS of casa-rs against
     CASA, NRMS = sqrt(sum |casa-rs - CASA|^2 / sum |CASA|^2) over every
     complex sample of the rows FLAG_ROW leaves unflagged in both MSs (the
@@ -36,6 +39,9 @@ oracle's manifest, the comparison opens `<casa>/<name>.ms` and
 Data managers are not compared; the plan lets them differ. A scenario's
 `ignore` entries (`TABLE.COLUMN`) are skipped. The exit status is 1 if any
 scenario differs.
+
+`test_compare_sm_ms.py` tests the cell comparison; it needs only NumPy, as
+`casatools` is imported only to read tables.
 """
 
 from __future__ import annotations
@@ -46,7 +52,6 @@ import os
 import sys
 
 import numpy as np
-from casatools import table
 
 # Absolute tolerances by column, added to RELATIVE_TOLERANCE times the
 # value; other float columns use DEFAULT_TOLERANCE. Times are seconds near
@@ -192,6 +197,32 @@ def compare_values(a, b, tolerance: float) -> tuple[str | None, float | None, st
     return None, (largest if numeric else None), ""
 
 
+def data_differences(casa: list, casars: list) -> list[tuple[str, str]]:
+    """MAIN.DATA's differences, as (`TABLE.COLUMN:aspect`, message) pairs:
+    nonzero data on either side, then the comparison every column gets
+    (which cells are defined, their shapes and their values)."""
+    found = []
+    for side, values in (("CASA", casa), ("casa-rs", casars)):
+        if any(value is not None and np.any(np.asarray(value) != 0) for value in values):
+            found.append(("MAIN.DATA:nonzero", f"MAIN.DATA: {side} has nonzero data"))
+    aspect, _, note = compare_values(casa, casars, TOLERANCES.get("DATA", DEFAULT_TOLERANCE))
+    if aspect is not None:
+        found.append((f"MAIN.DATA:{aspect}", f"MAIN.DATA: {note}"))
+    return found
+
+
+def data_cell_differences(casa: list, casars: list) -> list[tuple[str, str]]:
+    """MAIN.DATA's cells compared by definedness and shape only, for
+    scenarios whose values differ by design (predicted or noisy); their
+    values are compared by NRMS or noise statistics instead."""
+    for row, (a, b) in enumerate(zip(casa, casars)):
+        if (a is None) != (b is None):
+            return [("MAIN.DATA:defined", f"MAIN.DATA: row {row} defined {a is not None} against {b is not None}")]
+        if a is not None and np.shape(a) != np.shape(b):
+            return [("MAIN.DATA:shape", f"MAIN.DATA: row {row} shape {np.shape(a)} against {np.shape(b)}")]
+    return []
+
+
 def normalise_keywords(value):
     """Keywords as JSON-comparable values (NumPy arrays become lists)."""
     if isinstance(value, dict):
@@ -311,6 +342,8 @@ def noise_classes(noise: np.ndarray, auto: np.ndarray, expected: float) -> tuple
 
 def compare_noisy_data(paths: dict, expected: float | None) -> tuple[dict, list[str]]:
     """Noise statistics of both implementations against their twins."""
+    from casatools import table
+
     tb = table()
     if expected is None:
         return {}, ["MAIN.DATA: a noisy scenario needs noise_variance"]
@@ -360,6 +393,8 @@ def compare_data(tb, scenario: dict, paths: dict, limit: float) -> tuple[dict, l
 def compare_scenario(
     scenario: dict, casa_ms: str, casars_ms: str, args: argparse.Namespace, twins: dict | None = None
 ) -> dict:
+    from casatools import table
+
     name = scenario["name"]
     ignore = set(scenario.get("ignore", []))
     uvw_tol = args.uvw_tolerance_m
@@ -412,14 +447,23 @@ def compare_scenario(
                 differ(f"{qualified}:keywords", f"{qualified}: column keywords {ka} against {kb}")
             if a["rows"] != b["rows"]:
                 continue
+            values_a = cells(tb, casa_path, column, a["rows"])
+            values_b = cells(tb, casars_path, column, b["rows"])
             if label == "MAIN" and column == "DATA":
+                kind = scenario.get("data") or "zero"
+                if kind == "zero":
+                    # Definedness, shapes, values, and zero in both (#848 review).
+                    for key, message in data_differences(values_a, values_b):
+                        differ(key, message)
+                    report["data"] = {"kind": kind}
+                    continue
+                for key, message in data_cell_differences(values_a, values_b):
+                    differ(key, message)
                 paths = {"casa": casa_ms, "casa-rs": casars_ms, **(twins or {})}
                 report["data"], failures = compare_data(tb, scenario, paths, args.data_nrms)
                 for failure in failures:
                     differ("MAIN.DATA:values", failure)
                 continue
-            values_a = cells(tb, casa_path, column, a["rows"])
-            values_b = cells(tb, casars_path, column, b["rows"])
             tolerance = uvw_tol if column == "UVW" else TOLERANCES.get(column, DEFAULT_TOLERANCE)
             aspect, largest, note = compare_values(values_a, values_b, tolerance)
             if largest is not None:

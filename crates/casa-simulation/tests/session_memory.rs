@@ -287,13 +287,18 @@ struct Case {
     budget: u64,
 }
 
+/// What a MAIN plan reserves for saving its 16 streamed scalar columns beyond
+/// their append buffers (#844 review: 2,260,992 against 1,048,576 bytes);
+/// the budgets carry it so the batches stay the sizes the law was set for.
+const SCALAR_SAVE_RESERVATION: u64 = 2_260_992 - 1_048_576;
+
 /// The session budget of the 32-channel cases: batches of about 730 rows,
 /// small enough that one write batch (about 0.4 MB) leaves the comparison
 /// of ten times the rows sensitive to some 20 bytes a row.
-const BUDGET_32: u64 = (90 << 20) + (512 << 10);
+const BUDGET_32: u64 = (90 << 20) + (512 << 10) + SCALAR_SAVE_RESERVATION;
 
 /// The session budget of the 320-channel cases: batches of about 460 rows.
-const BUDGET_320: u64 = 120 << 20;
+const BUDGET_320: u64 = (120 << 20) + SCALAR_SAVE_RESERVATION;
 
 /// Measured runs of each case, of which the least peak is compared.
 const MEASURED_RUNS: usize = 3;

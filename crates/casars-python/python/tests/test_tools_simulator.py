@@ -15,6 +15,9 @@ import json
 import logging
 from pathlib import Path
 import subprocess
+import sys
+import threading
+import time
 from typing import Any
 import warnings
 
@@ -678,3 +681,48 @@ def test_setoptions_and_setvp_follow_casa(tmp_path: Path, caplog: pytest.LogCapt
     with pytest.raises(RuntimeError, match="in converting quantity"):
         sm.setvp(parangleinc="10 furlong")
     sm.close()
+
+
+@needs_measures
+def test_setconfig_lets_other_threads_run_while_the_session_works(tmp_path: Path) -> None:
+    """The session's work runs without the GIL (ADR-0019 §4).
+
+    With a switch interval longer than the test, this thread keeps the GIL
+    until a call releases it, so the counting thread, which counts only while
+    it holds the GIL, counts during `setconfig` only if `setconfig` releases
+    it. The tool is dropped without scans, so nothing is written.
+    """
+    sm = opened(tmp_path)
+    antennas = 100_000
+    x = np.linspace(-5000.0, 5000.0, antennas)
+    y = np.linspace(5000.0, -5000.0, antennas)
+    z = np.zeros(antennas)
+    counted = 0
+    stop = threading.Event()
+
+    def count() -> None:
+        nonlocal counted
+        while not stop.is_set():
+            counted += 1
+            time.sleep(0.0002)
+
+    interval = sys.getswitchinterval()
+    counter = threading.Thread(target=count)
+    sys.setswitchinterval(1000.0)
+    try:
+        counter.start()
+        during = []
+        for _ in range(5):
+            before = counted
+            assert sm.setconfig(
+                x=x, y=y, z=z, dishdiameter=[25.0], antname=["A"], padname=["P"],
+                coordsystem="local", referencelocation="VLA",
+            )
+            during.append(counted - before)
+            if during[-1]:
+                break
+    finally:
+        stop.set()
+        counter.join()
+        sys.setswitchinterval(interval)
+    assert any(during), f"no other thread ran during setconfig: {during}"

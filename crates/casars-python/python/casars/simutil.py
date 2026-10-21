@@ -11,8 +11,8 @@ In CASA, `simutil` is a Python helper class in the private `simutil` module of
 CASA's task package, not a CASA tool, so it is not in `casars.tools` or in the
 object-surface bundle. casa-rs implements its `readantenna` in Rust (the class
 lives in the `casars._core` extension, ADR-0018); the rest of `simutil` comes
-with `simobserve`. This module path is provisional: where CASA's private task
-helpers belong in casa-rs is an open question.
+with `simobserve`. `casars.simutil` is the class's public import: CASA's
+`private` path would mislabel a supported entry point.
 """
 
 # CASA's import is `from casatasks.private import simutil`.

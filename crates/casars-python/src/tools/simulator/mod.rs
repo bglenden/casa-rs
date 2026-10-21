@@ -93,21 +93,28 @@ impl PySimulator {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Runs `work` on the open session and logs what it reports once the lock
-    /// is released. Before `open`, returns `None` without running it.
-    fn on_session<T>(
+    /// Runs `work` on the open session with the GIL released, and logs what
+    /// it reports once the GIL is back. Before `open`, returns `None` without
+    /// running it.
+    ///
+    /// The method has converted its Python arguments to Rust values (the
+    /// signature's `Variant`s and lists) before it calls this; `work` turns
+    /// them into the session's types, which can need the session's measures,
+    /// and does the session's work, all without the GIL (ADR-0019 §4). An
+    /// error it returns is created lazily and raised once the GIL is back.
+    fn on_session<T: Send>(
         &self,
         py: Python<'_>,
-        work: impl FnOnce(&mut Session, &mut Vec<LogLine>) -> PyResult<T>,
+        work: impl FnOnce(&mut Session, &mut Vec<LogLine>) -> PyResult<T> + Send,
     ) -> PyResult<Option<T>> {
-        let mut lines = Vec::new();
-        let result = {
-            let mut state = self.lock_attached(py);
-            match state.as_mut() {
+        let (result, lines) = py.detach(|| {
+            let mut lines = Vec::new();
+            let result = match self.lock().as_mut() {
                 Some(session) => work(session, &mut lines).map(Some),
                 None => Ok(None),
-            }
-        };
+            };
+            (result, lines)
+        });
         emit(py, LOGGER, &lines)?;
         result
     }

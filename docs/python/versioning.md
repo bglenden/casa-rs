@@ -77,6 +77,20 @@ and `casars.data.schema_bundle()` is currently:
 
 That boundary is intentional. The v1 compatibility promise covers file-backed data access and pixel updates, not the full CASA image-authoring surface.
 
+The same bundle, still at protocol version 1, also describes the `casars.tools`
+classes (`simulator`, `measures`, `quanta`). The bundle's Python projection
+names `casars.data` as its module; a tool's projection entry names its own
+module (`casars.tools`) and class, and records the parameter order of its
+constructor's keyword-only controls and of each method, which the JSON Schema
+properties do not keep. Its `annotations.python` entry records whether casa-rs
+implements each method. A consumer reads an object's module from its own
+projection entry and falls back to the bundle's. The provider contract
+(`docs/provider-contracts.md`, "Object Surfaces") describes a tool's entry.
+
+`casars.simutil` is the public import of CASA's `simutil` helper class
+(`from casars import simutil`, for CASA's `from casatasks.private import
+simutil`). It is not a CASA tool and is not in the bundle.
+
 The installer-managed suite install layout behind steps 4-6 is:
 
 ```text

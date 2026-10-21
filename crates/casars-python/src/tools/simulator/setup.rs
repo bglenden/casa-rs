@@ -4,7 +4,10 @@
 //!
 //! Each method converts its arguments only once a session is open, as CASA
 //! does (before `open`, even unreadable arguments give `False`), and in
-//! CASA's order, so the first error is CASA's.
+//! CASA's order, so the first error is CASA's. Python's values are read into
+//! Rust ones at the call; turning those into the session's types and the
+//! session's work run with the GIL released (`PySimulator::on_session`), and
+//! messages are logged once it is back.
 
 use casa_simulation::{ArrayConfig, CoordinateSystem, ObserveSpec, SpectralWindowSpec, StateSpec};
 use casa_types::measures::direction::{DirectionRef, MDirection};

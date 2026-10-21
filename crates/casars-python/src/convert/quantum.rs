@@ -79,16 +79,16 @@ impl Quantum {
         ])
     }
 
-    /// `Quantum::convert`: to `target`, or to SI base units for `None`.
+    /// `Quantum::convert`: to `target`, or to SI base units for `None`. The
+    /// new unit depends only on the units, so an empty array gets it too.
     pub(crate) fn convert(&self, target: Option<&Unit>) -> ConvertResult<Self> {
-        let (mut values, mut unit) = (self.values.clone(), self.unit.clone());
-        for value in &mut values {
-            let (converted, converted_unit) = convert_value(*value, &self.unit, target)?;
-            *value = converted;
-            unit = converted_unit;
-        }
+        let (scaling, unit) = conversion(&self.unit, target)?;
         Ok(Self {
-            values,
+            values: self
+                .values
+                .iter()
+                .map(|&value| scaling.apply(value))
+                .collect(),
             shape: self.shape.clone(),
             unit,
         })
@@ -126,31 +126,46 @@ fn record_quantum(record: &BTreeMap<String, Variant>) -> ConvertResult<Quantum> 
     }
 }
 
-/// `Quantum<Double>::convert` of one value: the value and its new unit.
-pub(crate) fn convert_value(
-    value: f64,
-    unit: &Unit,
-    target: Option<&Unit>,
-) -> ConvertResult<(f64, Unit)> {
+/// What `Quantum<Double>::convert` does to each value, which depends only on
+/// the units: a product with the ratio of their factors, and between an
+/// angle and a time the day's turn.
+#[derive(Debug, Clone, Copy)]
+enum Scaling {
+    /// `value * ratio`.
+    By(f64),
+    /// `value * ratio * C::day / C::circle`.
+    AngleToTime(f64),
+    /// `value * ratio * C::circle / C::day`.
+    TimeToAngle(f64),
+}
+
+impl Scaling {
+    fn apply(self, value: f64) -> f64 {
+        match self {
+            Self::By(ratio) => value * ratio,
+            Self::AngleToTime(ratio) => value * ratio * DAY_S / CIRCLE,
+            Self::TimeToAngle(ratio) => value * ratio * CIRCLE / DAY_S,
+        }
+    }
+}
+
+/// `Quantum<Double>::convert` from `unit` to `target` (SI base units for
+/// `None`): how each value scales and the new unit.
+fn conversion(unit: &Unit, target: Option<&Unit>) -> ConvertResult<(Scaling, Unit)> {
     let mine = *unit.val();
     let theirs = target.map_or(UnitVal::NODIM, |target| *target.val());
     let target_unit = || target.cloned().unwrap_or_else(Unit::dimensionless);
     let angle = UnitDim::basis(Dimension::Angle);
     let time = UnitDim::basis(Dimension::Time);
+    let ratio = mine.factor / theirs.factor;
     if mine.dim == theirs.dim {
-        return Ok((value * (mine.factor / theirs.factor), target_unit()));
+        return Ok((Scaling::By(ratio), target_unit()));
     }
     if mine.dim == angle && theirs.dim == time {
-        return Ok((
-            value * (mine.factor / theirs.factor) * DAY_S / CIRCLE,
-            target_unit(),
-        ));
+        return Ok((Scaling::AngleToTime(ratio), target_unit()));
     }
     if mine.dim == time && theirs.dim == angle {
-        return Ok((
-            value * (mine.factor / theirs.factor) * CIRCLE / DAY_S,
-            target_unit(),
-        ));
+        return Ok((Scaling::TimeToAngle(ratio), target_unit()));
     }
     let remainder = mine / theirs;
     let dimensions = remainder.dim.to_string();
@@ -159,7 +174,7 @@ pub(crate) fn convert_value(
         _ => dimensions,
     };
     let unit = casacore_unit(&name).map_err(ConvertError::runtime)?;
-    Ok((value * remainder.factor, unit))
+    Ok((Scaling::By(remainder.factor), unit))
 }
 
 /// casacore's `Quantum::operator+` (`subtract` for `operator-`): the second

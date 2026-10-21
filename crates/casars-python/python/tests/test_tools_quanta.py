@@ -134,6 +134,18 @@ def test_arrays_stay_arrays(call: Any, unit: str, values: list[Any]) -> None:
     assert found["value"].tolist() == values
 
 
+@pytest.mark.parametrize(
+    ("unit", "outunit", "expected"),
+    [("km", "m", "m"), ("km", "", "m"), ("km", "s", "s.m.s-1"), ("h", "deg", "deg")],
+)
+def test_an_empty_array_converts_its_unit(unit: str, outunit: str, expected: str) -> None:
+    # The unit does not depend on how many values there are; `''` is SI.
+    found = quanta().convert(q(np.empty((0, 2)), unit), outunit)
+    assert found["unit"] == expected
+    assert isinstance(found["value"], np.ndarray) and found["value"].dtype == np.float64
+    assert found["value"].shape == (0, 2)
+
+
 def test_values_and_units_are_read_back() -> None:
     qa = quanta()
     for value, expected in (("1.5km", [1.5]), (qa.quantity([1, 2], "m"), [1.0, 2.0]), (5, [5.0])):
