@@ -69,6 +69,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="width of the one-plane model (default: the whole band)",
     )
+    parser.add_argument(
+        "--spectral-unit",
+        default="Hz",
+        help="unit of the model's spectral axis (CASA normalizes it to Hz)",
+    )
     parser.add_argument("--autocorr", action="store_true", help="write autocorrelations")
     parser.add_argument("--no-vp", action="store_true", help="skip the setvp cases")
     return parser.parse_args()
@@ -107,6 +112,8 @@ def write_model(path: str, args: argparse.Namespace, planes: int) -> None:
         csys.setreferencevalue([args.freq_ghz * 1e9], type="spectral")
         csys.setincrement([width_hz], type="spectral")
     csys.setreferencecode("LSRK", type="spectral")
+    # setunits converts the stored values, so the model is unchanged physically.
+    csys.setunits(["rad", "rad", "", args.spectral_unit])
 
     y, x = np.mgrid[0:n, 0:n]
     pixels = np.zeros((n, n, 1, planes), dtype=np.float32)

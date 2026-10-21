@@ -26,13 +26,15 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 SIMMOS = pathlib.Path("~/.casa/data/alma/simmos").expanduser()
 
-# name -> oracle arguments, and whether autocorrelations are expected to differ
+# name -> oracle arguments. alma-autocorr is a known gap: casa-rs does not
+# predict autocorrelations yet (Phase 1d).
 CASES: dict[str, list[str]] = {
     "alma-centred": [],
     "alma-offset": ["--offset-arcsec", "1.5", "-0.8"],
     "alma-crpix": ["--crpix-shift", "-10", "7"],
     "alma-narrow-mfs": ["--mfs-width-mhz", "20", "--no-vp"],
     "alma-250": ["--imsize", "250"],
+    "alma-ghz-axis": ["--spectral-unit", "GHz"],
     "alma-autocorr": ["--autocorr", "--no-vp"],
     "vla-circular": [
         "--config", str(SIMMOS / "vla.d.cfg"),

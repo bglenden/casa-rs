@@ -491,7 +491,7 @@ dependencies = [
  "casa-imaging-model",
  "casa-imaging-operator",
  "casa-ms",
- "casa-simulation-synthesis",
+ "casa-numerics",
  "casa-types",
  "ndarray",
  "num-complex",

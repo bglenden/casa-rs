@@ -26,7 +26,7 @@
 
 use std::path::Path;
 
-use casa_coordinates::{CoordinateError, CoordinateType};
+use casa_coordinates::{CoordinateError, CoordinateModel, CoordinateSystem, CoordinateType};
 use casa_images::{ImageError, PagedImage};
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
@@ -35,7 +35,9 @@ use casa_imaging_operator::{
     PolarizationRouting, PredictionScratch, PreparedModelGrids, RowContext, SpectralAxis,
     SpectralKernel, SpectralResampler, Spheroidal,
 };
-use casa_simulation_synthesis::{AiryPrimaryBeam, AiryVoltagePattern};
+use casa_numerics::AnnularApertureVoltageTable;
+use casa_types::measures::direction::DirectionRef;
+use casa_types::quanta::{Quantity, Unit};
 use ndarray::{Array2, IxDyn};
 use num_complex::Complex32;
 use thiserror::Error;
@@ -58,7 +60,7 @@ pub enum PredictError {
     /// The model image has a shape or coordinate system this predictor does
     /// not support yet.
     #[error("unsupported model image: {0}")]
-    UnsupportedModel(&'static str),
+    UnsupportedModel(String),
     /// The measurement operator refused the model or a row.
     #[error(transparent)]
     Operator(#[from] OperatorError),
@@ -81,7 +83,9 @@ pub struct SkyModel {
     frequency_increment_hz: f64,
     /// The image's coordinate system, which places the pointing (the beam
     /// centre) on the model's pixels.
-    coordinates: casa_coordinates::CoordinateSystem,
+    coordinates: CoordinateSystem,
+    /// Plane 0's spectral world value in the coordinate system's own unit.
+    first_spectral_world: f64,
 }
 
 impl SkyModel {
@@ -89,9 +93,15 @@ impl SkyModel {
     /// spectral]`, one Stokes plane (I), as `simobserve` writes its sky
     /// model.
     ///
+    /// The spectral axis may be in any frequency unit; it is normalized to
+    /// Hz, as `Simulator::predict` normalizes it before it builds the sky
+    /// equation.
+    ///
     /// # Errors
     ///
-    /// An unreadable image, or one whose axes are not those above.
+    /// An unreadable image, one whose axes are not those above, a direction
+    /// coordinate other than J2000, or a spectral axis that is not in
+    /// frequency units.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, PredictError> {
         let path = path.as_ref();
         let image = PagedImage::<f32>::open(path).map_err(|source| PredictError::Image {
@@ -100,20 +110,35 @@ impl SkyModel {
         })?;
         let shape = image.shape().to_vec();
         let coordinates = image.coordinates().clone();
+        let unsupported = |reason: String| Err(PredictError::UnsupportedModel(reason));
         if shape.len() != 4
             || coordinates.find_coordinate(CoordinateType::Direction) != Some(0)
             || coordinates.find_coordinate(CoordinateType::Stokes) != Some(1)
             || coordinates.find_coordinate(CoordinateType::Spectral) != Some(2)
         {
-            return Err(PredictError::UnsupportedModel(
-                "axes must be direction, Stokes and spectral, in that order",
-            ));
+            return unsupported(
+                "axes must be direction, Stokes and spectral, in that order".into(),
+            );
         }
         if shape[2] != 1 || coordinates.coordinate(1).to_world(&[0.0])?[0] != 1.0 {
-            return Err(PredictError::UnsupportedModel(
-                "the model must be Stokes I only",
+            return unsupported("the model must be Stokes I only".into());
+        }
+        // Rows and pointings are J2000; other frames need a conversion this
+        // predictor does not make yet.
+        if let CoordinateModel::Direction(direction) = coordinates.coordinate(0)
+            && direction.direction_ref() != DirectionRef::J2000
+        {
+            return unsupported(format!(
+                "the direction frame is {:?}, not J2000",
+                direction.direction_ref()
             ));
         }
+        let spectral_unit = coordinates.coordinate(2).axis_units()[0].clone();
+        let Some(hz_per_unit) = hz_per_unit(&spectral_unit) else {
+            return unsupported(format!(
+                "the spectral axis is in {spectral_unit:?}, not a frequency unit"
+            ));
+        };
         let [nx, ny, nplanes] = [shape[0], shape[1], shape[3]];
         let pixels =
             image
@@ -131,9 +156,10 @@ impl SkyModel {
             planes,
             increment_rad: [increment[0], increment[1]],
             centre_rad: [centre[0], centre[1]],
-            first_frequency_hz: centre[3],
-            frequency_increment_hz: coordinates.coordinate(2).increment()[0],
+            first_frequency_hz: centre[3] * hz_per_unit,
+            frequency_increment_hz: coordinates.coordinate(2).increment()[0] * hz_per_unit,
             coordinates,
+            first_spectral_world: centre[3],
         })
     }
 
@@ -167,31 +193,43 @@ impl SkyModel {
             direction_rad[0],
             direction_rad[1],
             1.0,
-            self.first_frequency_hz,
+            self.first_spectral_world,
         ])?;
         Ok([pixel[0], pixel[1]])
     }
+}
+
+/// Hz in one `unit`, or `None` when `unit` is not a frequency.
+fn hz_per_unit(unit: &str) -> Option<f64> {
+    let hz = Unit::new("Hz").ok()?;
+    Quantity::new(1.0, unit).ok()?.get_value_in(&hz).ok()
 }
 
 /// The primary-beam voltage pattern `setvp(dovp=True)` applies.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PrimaryBeam {
     /// CASA `PBMath1DAiry`: an Airy pattern for a dish with a central
-    /// blockage.
+    /// blockage, tabulated out to a maximum radius.
     Airy {
         /// Effective dish diameter in metres.
         dish_diameter_m: f64,
         /// Blockage diameter in metres.
         blockage_diameter_m: f64,
+        /// Radius of the tabulated pattern at 1 GHz, in arcmin (scaled as
+        /// 1/frequency). The pattern is zero beyond it, and CASA's 10,000
+        /// table samples span it, so it also sets the lookup quantization.
+        maximum_radius_arcmin_ghz: f64,
     },
 }
 
 impl PrimaryBeam {
-    /// ALMA 12 m antennas as CASA's voltage-pattern manager models them:
-    /// 10.7 m effective diameter, 0.75 m blockage.
+    /// ALMA 12 m antennas as CASA's default voltage patterns give them
+    /// (`PBMath::initByTelescope`): 10.7 m effective diameter, 0.75 m
+    /// blockage, 1.784° at 1 GHz.
     pub const ALMA: Self = Self::Airy {
         dish_diameter_m: 10.7,
         blockage_diameter_m: 0.75,
+        maximum_radius_arcmin_ghz: 1.784 * 60.0,
     };
 
     /// The power pattern on each model plane, `[y][x]`, centred on the
@@ -201,19 +239,26 @@ impl PrimaryBeam {
         let Self::Airy {
             dish_diameter_m,
             blockage_diameter_m,
+            maximum_radius_arcmin_ghz,
         } = self;
-        let pattern = AiryVoltagePattern::new(AiryPrimaryBeam {
+        let table = AnnularApertureVoltageTable::new(
             dish_diameter_m,
             blockage_diameter_m,
-        });
+            maximum_radius_arcmin_ghz,
+        );
         let [nx, ny] = model.shape();
         (0..model.planes())
             .map(|plane| {
-                let frequency_hz = model.plane_frequency_hz(plane);
+                let ghz = model.plane_frequency_hz(plane) / 1.0e9;
                 Array2::from_shape_fn((ny, nx), |(y, x)| {
-                    let l = (x as f64 - centre[0]) * model.increment_rad[0];
-                    let m = (y as f64 - centre[1]) * model.increment_rad[1];
-                    let voltage = pattern.evaluate_offsets(l, m, frequency_hz);
+                    // PBMath1D works in `Float` degrees: keep its rounding of
+                    // the radius at the lookup boundaries.
+                    let l_deg = ((x as f64 - centre[0]) * model.increment_rad[0]).to_degrees();
+                    let m_deg = ((y as f64 - centre[1]) * model.increment_rad[1]).to_degrees();
+                    let [l_deg, m_deg] = [l_deg as f32, m_deg as f32];
+                    let radius_deg = (l_deg * l_deg + m_deg * m_deg).sqrt();
+                    let radius = (f64::from(radius_deg) * 60.0 * ghz) as f32;
+                    let voltage = table.evaluate(f64::from(radius));
                     voltage * voltage
                 })
             })
@@ -304,7 +349,7 @@ impl ModelPredictor {
         let polarization =
             PolarizationRouting::compile(correlations, &[PolarizationCoordinate::StokesI])?;
         let planes = u32::try_from(model.planes())
-            .map_err(|_| PredictError::UnsupportedModel("too many model planes"))?;
+            .map_err(|_| PredictError::UnsupportedModel("too many model planes".into()))?;
         let axis = SpectralAxis::new(
             model.first_frequency_hz,
             model.frequency_increment_hz,
