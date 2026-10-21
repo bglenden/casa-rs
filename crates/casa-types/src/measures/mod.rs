@@ -53,6 +53,7 @@
 mod casacore_aberration;
 mod casacore_nutation;
 
+pub mod baseline;
 pub mod direction;
 pub mod doppler;
 pub mod earth_magnetic;
@@ -66,6 +67,7 @@ pub mod radial_velocity;
 pub mod record;
 
 // Re-exports for convenience.
+pub use baseline::UvwFrame;
 pub use earth_magnetic::{EarthMagneticRef, IgrfSample, MEarthMagnetic, calculate_igrf};
 pub use epoch::{EpochRef, MEpoch, MjdHighPrec};
 pub use error::MeasureError;
