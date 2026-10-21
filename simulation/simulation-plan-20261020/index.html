@@ -1,0 +1,1514 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Simulation programme: CASA's sm, simobserve, simanalyze and simalma in Rust - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#simulation-programme-casas-sm-simobserve-simanalyze-and-simalma-in-rust" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Simulation programme: CASA's sm, simobserve, simanalyze and simalma in Rust
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-goal-and-requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Goal and requirements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-starting-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Starting point
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Starting point">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#casa-rs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        casa-rs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-owner-decisions-accepted-2026-10-20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Owner decisions (accepted 2026-10-20)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-design-decided-in-planning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Design decided in planning
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Design decided in planning">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tool-binding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool binding
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deferred-single-pass-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deferred, single-pass execution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#prediction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prediction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#random-numbers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Random numbers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#casa-quirks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CASA quirks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#code-shape" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code shape
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-tool-pattern-is-adr-0019" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The tool pattern is ADR-0019
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-performance-and-io-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Performance and I/O targets
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Performance and I/O targets">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#per-mode-targets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-mode targets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#io-target" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        I/O target
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#benchmark-cases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Benchmark cases
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-phases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Phases
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Phases">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#phase-1-the-first-example-an-sm-script-runs-unchanged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 1, the first example: an sm script runs unchanged
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-2-complete-observe-and-predict" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 2: complete observe and predict
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-3-corruptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 3: corruptions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-4-atm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 4: ATM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-5-simutil-and-simobserve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 5: simutil and simobserve
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-6-simanalyze-and-simalma" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 6: simanalyze and simalma
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#phase-7-retire-the-old-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Phase 7: retire the old code
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-risks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Risks
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="simulation-programme-casas-sm-simobserve-simanalyze-and-simalma-in-rust">Simulation programme: CASA's <code>sm</code>, <code>simobserve</code>, <code>simanalyze</code> and <code>simalma</code> in Rust<a class="headerlink" href="#simulation-programme-casas-sm-simobserve-simanalyze-and-simalma-in-rust" title="Permanent link">&para;</a></h1>
+<p>Truth class: normative plan
+Date: 2026-10-20
+Work issue: #841
+Status: accepted by the owner on 2026-10-20, after a Fable xhigh review.</p>
+<h2 id="1-goal-and-requirements">1. Goal and requirements<a class="headerlink" href="#1-goal-and-requirements" title="Permanent link">&para;</a></h2>
+<p>Make CASA simulation scripts run on casa-rs with only their imports changed,
+and run them dramatically faster:</p>
+<ul>
+<li>the <code>simulator</code> tool (<code>sm</code>), with every user-facing method under CASA's
+  name, signature and effective default;</li>
+<li>the <code>simobserve</code>, <code>simanalyze</code> and <code>simalma</code> tasks, with CASA's parameters
+  and defaults.</li>
+</ul>
+<p>Requirements:</p>
+<ul>
+<li><strong>ADR-0018 applies.</strong> All computation is in Rust, including the parts CASA
+  writes in Python (<code>task_simobserve.py</code>, <code>simutil.py</code>). Python only presents
+  CASA's interface.</li>
+<li><strong>ADR-0017 applies.</strong> Tasks are one-shot surfaces, and tools are in-process
+  objects.</li>
+<li><strong>Agreement with CASA follows AGENTS.md.</strong></li>
+<li>The MS has the same columns, subtables and keywords as CASA's, apart from
+    decision 6. Data managers may differ; see the storage layout below.</li>
+<li>Predicted visibilities agree to about 1e-3 normalized RMS.</li>
+<li>Noise and corruptions are statistically equivalent, not bit-identical.</li>
+<li>Every divergence is justified and recorded in <code>docs/CASA (C++) bugs.md</code>.</li>
+<li><strong>casacore C++ can read the MS.</strong> An interop test proves it.</li>
+<li><strong>Performance is the point</strong> (owner, 2026-10-20).</li>
+<li>Prediction uses Metal where it pays.</li>
+<li>Geometry, prediction, corruption and writing use multiple workers.</li>
+<li>Results do not depend on the worker count or the backend.</li>
+<li>Every benchmark reports wall time, single-worker (W1) user CPU and peak
+    RSS, so parallelism cannot mask serial cost.</li>
+<li>The targets for each mode are in §5.</li>
+<li><strong>Memory is bounded</strong> (owner, 2026-10-20).</li>
+<li>Peak resident memory stays under a declared budget, whatever the number
+    of rows, channels or fields. A counting-law test proves it, as in imaging.</li>
+<li>Work is streamed in time and channel chunks sized from the budget, and
+    Metal device buffers count against the same budget.</li>
+<li>The MS write session stays bounded (ADR-0008).</li>
+<li><strong>The MS I/O routines are open to optimization</strong> (owner, 2026-10-20).</li>
+<li>Once prediction runs on Metal, writing the MS is likely the bottleneck,
+    so the <code>casa-ms</code> and <code>casa-tables</code> write path may be reworked.</li>
+<li><strong>What is on disk does not change:</strong> the same storage managers, tile
+    formats and table metadata, guarded by the casacore C++ interop tests.</li>
+<li><strong>What can change is how the bytes get there:</strong> larger tile-aligned batch
+    writes, fewer copies and system calls, write-behind that overlaps
+    prediction with I/O, and buffers sized from the memory budget.</li>
+<li>Every casa-rs MS writer gains: <code>split</code>, <code>mstransform</code>, <code>importvla</code>,
+    <code>flagdata</code>, and imaging's MODEL_DATA writes.</li>
+<li><strong>The storage layout is conventional</strong> (owner, 2026-10-20).</li>
+<li>The simulator uses the layout casa-rs's other MS writers share
+    (<code>casa-ms/src/ms.rs:1183-1234</code>), and writes every row:<ul>
+<li>IncrementalStMan for the slowly varying scalar columns;</li>
+<li>StandardStMan for ANTENNA1/2, DATA_DESC_ID and FLAG_ROW;</li>
+<li>TiledShapeStMan, with CASA's standard tile shapes, for the data, flag
+  and weight columns;</li>
+<li>TiledColumnStMan for UVW.</li>
+</ul>
+</li>
+<li>It does not copy <code>NewMSSimulator</code>, which binds every other column to
+    IncrementalStMan (UVW included) and writes the scalar columns only at the
+    first row of each integration.</li>
+</ul>
+<h2 id="2-starting-point">2. Starting point<a class="headerlink" href="#2-starting-point" title="Permanent link">&para;</a></h2>
+<h3 id="casa">CASA<a class="headerlink" href="#casa" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>sm</code> is C++</strong> (<code>Simulator.cc</code>), and casacore's <code>NewMSSimulator</code> writes the
+  MS.</li>
+<li><strong><code>predict</code> builds a SkyEquation.</strong></li>
+<li>Its FTMachine is <code>GridFT</code> by default, with padding 1.3 from <code>setoptions</code>.
+    The alternatives are <code>mosaic</code>, <code>wproject</code>, <code>sd</code> and <code>both</code>.</li>
+<li>The primary beam is a separate <code>VPSkyJones</code>. It is attached only after
+    <code>setvp(dovp=True)</code>; <code>doVP_p</code> is false at construction
+    (<code>Simulator.cc:327</code>, <code>:2549</code>). <code>simobserve</code> always calls
+    <code>setvp(dovp=True, usedefaultvp=False)</code> for interferometric runs
+    (<code>task_simobserve.py:1045</code>).</li>
+<li>Default voltage patterns: <code>PBMath1DEVLA</code> for EVLA, a polynomial for the old
+    VLA, and Airy only for ALMA and ACA (<code>PBMath.cc</code>).</li>
+<li><strong><code>corrupt</code> runs <code>VisEquation::collapseForSim</code>.</strong> Its terms:</li>
+<li>noise: <code>ANoise</code>, scaled by a <code>T</code> or <code>Tf</code> term for Tsys noise;</li>
+<li>gain: <code>G</code>, in fBM or random mode;</li>
+<li>troposphere: a <code>Tf</code> phase screen;</li>
+<li>leakage: <code>Dlin</code>;</li>
+<li>any calibration table, through <code>setapply</code>.</li>
+</ul>
+<p><code>setbandpass</code>, <code>setpa</code> and <code>setpointingerror</code> are disabled in CASA itself and
+  throw "temporarily disabled".
+- <strong>Defaults come from the installed binding, not the XML.</strong>
+  - Parameters of "any" type default to <code>[]</code>, which the C++ reads as 0 before
+    applying its own fallbacks: <code>setnoise()</code> gives simplenoise 0 Jy, and
+    <code>settimes()</code> gives a 0 s integration.
+  - If <code>setlimits</code> is never called, the limits are 8° elevation and 1e-6
+    shadowing. If <code>setauto</code> is never called, autocorrelations are written
+    with weight 1.
+  - The seed is 11111 until <code>setseed</code> is called. <code>setseed()</code> with no argument
+    sets 185349251.
+  - Task defaults are the Python signature defaults; casashell's differ.
+- <strong>TIME is TAI labelled UTC.</strong> Verified 2026-10-20 with CASA 6.7: data start
+  37 s after the requested epoch. UVW is computed with that stored number read
+  as UT1, so the data are self-consistent; only the schedule is shifted.
+- <strong><code>simobserve</code>, <code>simanalyze</code>, <code>simalma</code> and <code>simutil</code> are Python.</strong> They
+  cover:
+  - sky-model rescaling;
+  - antenna <code>.cfg</code> reading in XYZ, LOC and UTM coordinates;
+  - pointing generation: hexagonal, square, and ALMA OT tiling;
+  - scheduling;
+  - <code>noisetemp</code> efficiencies;
+  - imaging and the fidelity analysis.</p>
+<p><code>simanalyze</code> itself calls <code>concat</code> and <code>tsdimaging</code>
+  (<code>task_simanalyze.py:7</code>, <code>:231</code>).
+- <strong>ATM.</strong> <code>tsys-atm</code> noise, which is <code>simobserve</code>'s default, and <code>settrop</code>
+  need ATM: about 27,000 lines of C++ in 53 files under
+  <code>casatools/src/code/atmosphere</code>.</p>
+<h3 id="casa-rs">casa-rs<a class="headerlink" href="#casa-rs" title="Permanent link">&para;</a></h3>
+<p><strong>Existing simulator.</strong> <code>casa-ms/src/simulation.rs</code> (6,660 lines) and
+<code>simulation_task.rs</code> (2,669 lines) are both on the file-length allowlist.
+- It generates in one shot: one request writes one new MS.
+- It handles several spectral windows, mosaics, analytic and FITS models, and
+  total power.
+- Its corruptions are simple noise, gain, bandpass, leakage and a global
+  pointing offset.
+- MS writes are streamed and bounded.
+- Prediction uses its own serial spheroidal degridder
+  (<code>casa-simulation-synthesis</code>), with no w-term and one beam for the whole
+  array.</p>
+<p><strong>Evidence on record.</strong>
+- Same-input CASA comparisons from July (#257) are 3.9× (VLA) and 4.5×
+  (ALMA) for image models.
+- The July analytic-model family runs wrote 1,253 MB/s end to end on the
+  internal disk (1 GiB; it probably fits in the page cache), or 1,243 MB/s
+  with prediction disabled. They reached 0.77 GB/s on a 100 GiB run to an
+  external drive. CASA's small ACA and simalma runs wrote 4.1–4.6 MB/s, but
+  that is not a same-input comparison.</p>
+<p><strong>Gaps.</strong>
+- a stateful <code>sm</code>-style API, and appending rows to an MS: the write plan fixes
+  the row count up front (<code>write_session.rs:335</code>, <code>:1559</code>);
+- corrupting an existing MS;
+- CASA images and CASA component lists as input (nothing in casa-rs reads
+  component lists);
+- <code>tsys-*</code> noise, <code>settrop</code> and <code>setapply</code>;
+- pointing generation, <code>simutil</code>, <code>simanalyze</code> and <code>simalma</code>;
+- CASA parameter names;
+- a casacore C++ interop test;
+- bounded prediction memory;
+- two defects (#840);
+- packaging: <code>simobserve</code> is missing from the installed suite.</p>
+<p><strong>Prediction in the imaging operator.</strong>
+- It provides row-level degridding (<code>SpectralResampler::predict_row</code> over
+  prepared model grids, with a <code>ModelPrescale</code> hook for image-plane weighting)
+  and four kernel sets: standard, W, AW and mosaic.
+- Metal grids only the standard and mosaic sets; W and AW wait on #653
+  (<code>availability.rs:32-34</code>).
+- <code>GridGeometry</code> hard-codes CASA's tclean padding of 1.2 (<code>geometry.rs:29</code>).
+- ADR-0016 fixes the kernel sets at exactly four.
+- No entry point predicts from an external model.
+- Worker teams, Metal backends and the memory budget (<code>HostResources</code>,
+  <code>ResourcePolicy</code>, <code>admit</code>/<code>Reservation</code>, <code>WorkerTeam</code>) live in
+  <code>casa-imaging-runtime</code>.</p>
+<p><strong>Python.</strong> <code>casars._core</code> (pyo3) provides <code>Image</code> and <code>Table</code>. Both are
+<code>unsendable</code> and hold the GIL (#839).</p>
+<h2 id="3-owner-decisions-accepted-2026-10-20">3. Owner decisions (accepted 2026-10-20)<a class="headerlink" href="#3-owner-decisions-accepted-2026-10-20" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>Namespace.</strong></li>
+<li>CASA tool classes go in <code>casars.tools</code> under casatools' names, so
+     <code>from casars.tools import simulator; sm = simulator()</code>.</li>
+<li>Tasks stay in <code>casars.tasks</code>.</li>
+<li>There are no <code>casatools</code> or <code>casatasks</code> alias packages.</li>
+<li><strong>Replace the <code>simobserve</code> task surface.</strong></li>
+<li>The new surface has CASA's parameters and defaults, at contract 5.</li>
+<li>Profiles that use today's casa-rs-only parameters fail with a clear
+     diagnostic.</li>
+<li>The family generator, used for benchmark and fixture datasets, becomes a
+     developer binary outside the catalog, <code>synthetic-ms</code>.</li>
+<li><em>Consequence found in review:</em> <code>synthetic-ms</code> needs predicted
+     visibilities, so it must live in <code>casa-simulation</code>, not <code>casa-ms</code>.
+     The imaging T1 fixtures and the perf fixtures depend on it through a
+     dev-dependency, which the layer check allows.</li>
+<li><strong>New crate <code>casa-simulation</code> at the application layer.</strong></li>
+<li>It depends on <code>casa-ms</code>, <code>casa-images</code>, <code>casa-imaging-operator</code> and
+     <code>casa-imaging-runtime</code> (worker teams, Metal, the budget), and later
+     <code>casa-calibration</code> and <code>casa-atmosphere</code>.</li>
+<li><code>casa-ms</code> keeps the MS primitives.</li>
+<li><code>simulation.rs</code>, <code>simulation_task.rs</code> and <code>casa-simulation-synthesis</code>
+     are deleted at the end.</li>
+<li>The crate is added to ADR-0016's dependency policy. The edges it needs
+     (application → observation, reconstruction and execution) are already
+     allowed.</li>
+<li><strong>Port ATM to Rust</strong> as <code>casa-atmosphere</code>, in its own phase. Until it lands,
+   <code>tsys-atm</code> and <code>settrop</code> raise a clear "not yet implemented" error.</li>
+<li><strong>TIME honours the requested UTC.</strong></li>
+<li>The divergence is recorded.</li>
+<li>CASA computed its geometry at the requested time + (TAI − UTC). A parity
+     run therefore requests a start 37 s later, and compares rows at equal
+     stored TIME.</li>
+<li><strong>DATA only, unless a later step needs MODEL_DATA.</strong></li>
+<li>MODEL_DATA is created when something needs it, such as
+     <code>predict(incremental=True)</code>.</li>
+<li>CORRECTED_DATA is not written.</li>
+<li>casa-rs's <code>imager</code> falls back from <code>datacolumn='corrected'</code> to DATA, as
+     CASA's <code>tclean</code> does.</li>
+</ol>
+<h2 id="4-design-decided-in-planning">4. Design decided in planning<a class="headerlink" href="#4-design-decided-in-planning" title="Permanent link">&para;</a></h2>
+<p>These choices are open to objection.</p>
+<h3 id="tool-binding">Tool binding<a class="headerlink" href="#tool-binding" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>simulator</code> is a pyo3 class in <code>casars._core</code>.</li>
+<li>Its method signatures and defaults are declared in Rust (pyo3 <code>signature</code>),
+  copying the installed CASA binding's effective defaults. The object-surface
+  bundle describes the methods from the same Rust types.</li>
+<li>Session state is <code>Send</code>, so long calls release the GIL; #839 brings <code>Image</code>
+  and <code>Table</code> to the same pattern.</li>
+<li>The memory budget and the backend are constructor arguments, such as
+  <code>simulator(memory_budget=..., backend='auto')</code>. No environment variables are
+  read (ADR-0016).</li>
+<li>Every method in <code>simulator.xml</code> exists:</li>
+<li><code>setbandpass</code>, <code>setpa</code> and <code>setpointingerror</code> raise CASA's "temporarily
+    disabled" error;</li>
+<li><code>oldsetnoise</code> raises a deprecation error;</li>
+<li><code>name</code>, <code>type</code> and <code>summary</code> are implemented.</li>
+</ul>
+<h3 id="deferred-single-pass-execution">Deferred, single-pass execution<a class="headerlink" href="#deferred-single-pass-execution" title="Permanent link">&para;</a></h3>
+<ul>
+<li>CASA's <code>sm</code> writes DATA three times: zeros at <code>observe</code>, again at <code>predict</code>
+  and again at <code>corrupt</code>.</li>
+<li>The casa-rs session records <code>observe</code>, <code>predict</code> and <code>corrupt</code> as a plan.
+  At <code>close</code>/<code>done</code> it materializes the MS in one streamed pass: geometry,
+  prediction, corruption and the write for each chunk.</li>
+<li>The MS is published at <code>close</code>, as ADR-0008 staging requires, so no reader
+  can see an intermediate state.</li>
+<li><strong>A call that needs data on disk</strong> forces the pending pass. These are a
+  second <code>predict</code> or <code>corrupt</code> after one has already run, <code>openfromms</code> on
+  the output, and <code>setdata</code> selections that depend on written rows.</li>
+<li><strong>Corrupting an existing MS</strong> (<code>openfromms</code> + <code>corrupt</code>) patches it in place
+  through the bounded selected-row mutation path (<code>write_session.rs:541</code>). The
+  chunks are aligned to the DATA tile's channel extent, so each tile is
+  written once.</li>
+<li><code>simobserve</code>'s noise-free and noisy MSs are written in the same pass, rather
+  than CASA's copy-then-<code>corrupt</code>.</li>
+</ul>
+<h3 id="prediction">Prediction<a class="headerlink" href="#prediction" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Prediction goes through the imaging operator:</li>
+<li>a new application-layer entry point prepares model grids from an
+    external sky model (cell, frequency axis, Stokes);</li>
+<li>the padding factor becomes a parameter of the operator's geometry, set
+    from <code>setoptions</code> with default 1.3;</li>
+<li>the primary beam is applied through <code>ModelPrescale</code> only after
+    <code>setvp(dovp=True)</code>, using CASA's voltage pattern for the telescope;</li>
+<li>the EVLA model is shared from <code>casa-imaging-products</code> rather than copied.</li>
+<li>Execution uses <code>casa-imaging-runtime</code>'s worker teams and Metal backends.
+  The budget is <code>HostResources</code>/<code>ResourcePolicy</code> with <code>admit</code>/<code>Reservation</code>.
+  The simulator builds no second budget or worker model.</li>
+<li><strong>Backends.</strong> <code>auto</code> chooses Metal where it is available and pays: standard
+  and mosaic kernels. W-projection is CPU-only until Metal W lands (#653).</li>
+<li><strong>Total power (<code>sd</code>)</strong> is image-plane sampling of the model convolved with
+  the primary beam, inside <code>casa-simulation</code>. ADR-0016 keeps the operator to
+  four kernel sets.</li>
+<li><code>casa-simulation-synthesis</code> and the old predictor are deleted once nothing
+  uses them.</li>
+</ul>
+<h3 id="random-numbers">Random numbers<a class="headerlink" href="#random-numbers" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A counter-based generator keys each draw by seed, row, channel, correlation
+  and real/imaginary part. Results are therefore bitwise identical for any
+  worker count, chunking or backend, and need no shared state.</li>
+<li>Its statistical quality is tested, including independence across rows,
+  channels and correlations.</li>
+<li>It is not CASA's MLCG stream; AGENTS.md says bitwise reproducibility is not
+  a goal.</li>
+</ul>
+<h3 id="casa-quirks">CASA quirks<a class="headerlink" href="#casa-quirks" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Matched</strong>, where they shape outputs users compare:</li>
+<li>default limits;</li>
+<li>SIGMA and WEIGHT left at their geometric values after <code>corrupt</code>;</li>
+<li>noise scaling: independent real and imaginary draws for
+    cross-correlations, one real draw for autocorrelations, and no noise in
+    the cross-hands of 4-correlation data;</li>
+<li>fBM normalisation;</li>
+<li>scan numbering;</li>
+<li>autocorrelation defaults.</li>
+<li><strong>Diverged and recorded</strong>, only for crashes, undefined behaviour or data
+  corruption:</li>
+<li>2-D fBM out-of-bounds writes;</li>
+<li>UVW throwing for non-J2000 fields;</li>
+<li>the integer-division bug in <code>setmosaicfield</code>.</li>
+</ul>
+<p>These three are checked against CASA when their phase starts.
+- Other quirks are decided phase by phase and recorded.</p>
+<h3 id="code-shape">Code shape<a class="headerlink" href="#code-shape" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The crate's module split is planned before any code, so every file stays
+  under 1,500 lines.</li>
+<li>Plotting in <code>simobserve</code> and <code>simanalyze</code> (their <code>graphics</code> option) is
+  rendered in Python (ADR-0018 item 4).</li>
+<li>Every new binary and surface is in the installed suite.</li>
+</ul>
+<h3 id="the-tool-pattern-is-adr-0019">The tool pattern is ADR-0019<a class="headerlink" href="#the-tool-pattern-is-adr-0019" title="Permanent link">&para;</a></h3>
+<ul>
+<li>ADR-0019 (accepted 2026-10-20) records, for every tool:</li>
+<li>decision 1's <code>casars.tools</code> namespace;</li>
+<li>the binding pattern above: Rust-declared signatures and defaults;</li>
+<li>budget and backend as constructor arguments;</li>
+<li>the GIL rule.</li>
+<li>Decision 6 stays in this plan, under ADR-0008's existing rule that casa-rs
+  writes nothing CASA does not.</li>
+</ul>
+<h2 id="5-performance-and-io-targets">5. Performance and I/O targets<a class="headerlink" href="#5-performance-and-io-targets" title="Permanent link">&para;</a></h2>
+<h3 id="per-mode-targets">Per-mode targets<a class="headerlink" href="#per-mode-targets" title="Permanent link">&para;</a></h3>
+<p>Each benchmark is timed for CASA, today's simulator, and casa-rs on CPU and on
+Metal. CASA's time is measured in-process, per <code>sm</code> call, excluding Python
+start-up.</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Target</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Analytic and component-list prediction</td>
+<td>No slower than July's record on the same case. The CASA multiple is measured on the same input, on a case where CASA runs ≥ 60 s.</td>
+</tr>
+<tr>
+<td>Image-model prediction, CPU</td>
+<td>≥ 10× CASA on the same input (July: 3.9–4.5×). W1 user CPU is reported.</td>
+</tr>
+<tr>
+<td>Image-model prediction, Metal</td>
+<td>I/O-bound: meets the end-to-end I/O fraction below. The CASA multiple is reported.</td>
+</tr>
+<tr>
+<td>I/O-bound passes (geometry only, noise only, write only)</td>
+<td>Judged against the device's ceiling, not against CASA.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>No-regression rule.</strong> On every case, the new simulator is no slower than
+today's, within 5%. Any trade-off is recorded and needs owner approval.</p>
+<h3 id="io-target">I/O target<a class="headerlink" href="#io-target" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>The measure</strong> is a sustained MAIN-table rate: bytes on disk divided by the
+  wall time from the first row to publication, including the final sync. It
+  is measured on a dataset at least twice the size of RAM, with the page cache
+  purged first.</li>
+<li><strong>The comparison</strong> is a fraction of the same volume's raw sequential-write
+  ceiling, measured in the same session with a file larger than RAM:</li>
+<li>at least 70% for the write-only case;</li>
+<li>at least 50% end to end with Metal prediction.</li>
+<li><strong>Where it runs.</strong> Sustained runs go on GLENDENNING, the 1 TB NVMe external
+  drive (about 3 GB/s). The internal disk has 72 GB free and must stay above
+  40 GB.</li>
+<li><strong>Fast regression check.</strong> The 1 GiB internal-disk case stays as a quick
+  check, labelled cache-resident. A 4 GB <code>dd</code> on the internal disk measured
+  about 2 GB/s on 2026-10-20, but that file is smaller than RAM and so went
+  partly through the page cache.</li>
+</ul>
+<h3 id="benchmark-cases">Benchmark cases<a class="headerlink" href="#benchmark-cases" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>ALMA:</strong> about 43 antennas, 1 h of 10 s integrations, 256 channels and a
+   1024² image model.</li>
+<li><strong>VLA</strong>, of similar size.</li>
+<li><strong>MFS model with many channels:</strong> one model plane degridded at 256
+   frequencies, the common <code>simobserve</code> shape.</li>
+<li><strong>Analytic and component-list:</strong> carries July's record.</li>
+<li><strong>Write-only.</strong></li>
+</ol>
+<h2 id="6-phases">6. Phases<a class="headerlink" href="#6-phases" title="Permanent link">&para;</a></h2>
+<p>The phases are ordered by risk. Each PR is reviewed independently when it
+touches science, persistence or interop.</p>
+<h3 id="phase-1-the-first-example-an-sm-script-runs-unchanged">Phase 1, the first example: an <code>sm</code> script runs unchanged<a class="headerlink" href="#phase-1-the-first-example-an-sm-script-runs-unchanged" title="Permanent link">&para;</a></h3>
+<p>This is delivered as four PRs, in order.</p>
+<p><strong>1a. Prediction spike (the gating risk).</strong>
+- Prove that the imaging operator reproduces CASA's <code>sm.predict</code>:
+  - with <code>GridFT</code> at padding 1.3;
+  - with and without <code>setvp</code>;
+  - on a CASA-made MS, compared sample by sample with the geometry held
+    fixed.
+- If it misses 1e-3 normalized RMS and the cause cannot be fixed in the
+  operator, stop and report before going further.</p>
+<p><strong>1b. MS write path.</strong>
+- Profile the write session on the benchmark shapes.
+- Improve buffering, batch layout and overlap.
+- Persistence review.
+- Time <code>split</code> and <code>mstransform</code> before and after.
+- Run the I/O targets of §5.</p>
+<p><strong>1c. Session and observe.</strong>
+- The <code>casa-simulation</code> crate, with its module plan.
+- The <code>Simulator</code> session with <code>open</code>, <code>setconfig</code>, <code>setfeed</code>,
+  <code>setspwindow</code>, <code>setfield</code>, <code>settimes</code>, <code>setlimits</code>, <code>setauto</code>, <code>observe</code>
+  and <code>close</code>/<code>done</code>.
+- <code>simutil.readantenna</code>.
+- Writing that appends rows within staging.
+- The casacore C++ interop test.
+- <code>casars.tools.simulator</code> and its object-surface bundle.</p>
+<p><strong>1d. Predict and corrupt.</strong>
+- <code>predict</code> from a CASA image, <code>setvp</code>, <code>setoptions</code> (padding),
+  <code>setseed</code>, <code>setnoise(mode='simplenoise')</code> and <code>corrupt</code>.
+- Deferred single-pass execution.
+- Metal.
+- The benchmarks.
+- The #840 fixes in the new code.</p>
+<p><strong>Acceptance for Phase 1.</strong>
+- <strong>The scripts.</strong> A CASA <code>sm</code> script runs with only its imports changed:
+  - for a VLA configuration and an ALMA configuration;
+  - with one spectral window and one field;
+  - with 1, 2 and 4 correlations.
+- <strong>Agreement with CASA.</strong>
+  - Columns, subtables, keywords, row counts, scans and flags are identical.
+  - TIME follows decision 5.
+  - UVW agrees within 1 µm at equal stored TIME as the goal; the tolerance is
+    set from the first measurement, and the existing oracle uses 1 mm.
+  - DATA agrees within 1e-3 normalized RMS.
+- <strong>Noise.</strong> The variance of noisy minus noise-free data matches CASA's
+  effective σ:
+  - real and imaginary parts tested separately;
+  - autocorrelations separately;
+  - draws tested for independence across rows, channels and correlations.
+- <strong>Backends and workers.</strong>
+  - CPU and Metal agree within the tolerance of the imaging T0 Metal law.
+  - Geometry and noise are bitwise identical for 1 and N workers.
+- <strong>casacore C++ reads the MS.</strong>
+- <strong>Performance:</strong> the §5 targets on cases 1 to 3 and 5, plus the
+  no-regression rule.
+- <strong>Memory:</strong> a counting-law test shows peak memory under the budget as rows
+  and channels grow 10×.
+- The oracle and benchmark scripts live under <code>tools/simulation/</code>.</p>
+<h3 id="phase-2-complete-observe-and-predict">Phase 2: complete <code>observe</code> and <code>predict</code><a class="headerlink" href="#phase-2-complete-observe-and-predict" title="Permanent link">&para;</a></h3>
+<p><strong>Scope.</strong>
+- <code>observemany</code>, <code>setmosaicfield</code>, <code>setdata</code> and <code>openfromms</code>.
+- <strong>Component lists:</strong>
+  - reading CASA <code>ComponentList</code> tables, as an interop deliverable tested
+    against a fixture written by C++;
+  - the <code>cl</code> tool, as far as simulation scripts need it.
+- <strong>FTMachines:</strong>
+  - <code>mosaic</code>, including heterogeneous arrays (CPU and Metal);
+  - <code>wproject</code> (CPU only);
+  - <code>sd</code>, by image-plane sampling.
+- The default voltage patterns for VLA and EVLA.</p>
+<p><strong>Acceptance.</strong>
+- Parity with CASA for:
+  - a heterogeneous ALMA/ACA mosaic;
+  - a wide-field W case;
+  - total power;
+  - a component-list case.
+- Benchmark case 4 meets its §5 target.</p>
+<h3 id="phase-3-corruptions">Phase 3: corruptions<a class="headerlink" href="#phase-3-corruptions" title="Permanent link">&para;</a></h3>
+<p><strong>Scope.</strong>
+- <code>setnoise(mode='tsys-manual')</code>.
+- <code>setgain</code>, in fBM and random modes.
+- <code>setleakage</code>.
+- <code>setapply</code>, through <code>casa-calibration</code>.
+- <code>reset</code>.
+- Receptor pairs for 4 correlations.</p>
+<p><strong>Acceptance.</strong>
+- Statistical parity with CASA for each corruption.
+- Exact agreement for the deterministic parts: the Tsys formula, the
+  radiometer σ and the collapse order.</p>
+<h3 id="phase-4-atm">Phase 4: ATM<a class="headerlink" href="#phase-4-atm" title="Permanent link">&para;</a></h3>
+<p><strong>Scope.</strong>
+- <code>casa-atmosphere</code>.
+- <code>setnoise(mode='tsys-atm')</code>.
+- <code>settrop</code>, in individual and screen modes.</p>
+<p><strong>Acceptance.</strong>
+- Tebb and opacity agree with CASA's ATM, through the <code>at</code> tool, to about
+  1e-6 relative across its bands.
+- <code>tsys-atm</code> noise agrees with CASA statistically.</p>
+<h3 id="phase-5-simutil-and-simobserve">Phase 5: <code>simutil</code> and <code>simobserve</code><a class="headerlink" href="#phase-5-simutil-and-simobserve" title="Permanent link">&para;</a></h3>
+<p><strong>Scope.</strong>
+- The CASA-signature <code>simobserve</code> (decision 2), built on the Rust session.
+- The parts of <code>simutil</code> it uses:
+  - <code>modifymodel</code> and <code>flatimage</code>;
+  - <code>calc_pointings2</code>, including the ALMA OT tiling;
+  - pointing files;
+  - <code>noisetemp</code>, <code>bandname</code> and the direction helpers.
+- The calibrator, leakage and the project-directory outputs.
+- <code>synthetic-ms</code> replaces the family mode.
+- Callers moved to it:
+  - <code>tools/perf/imager/bench_simobserve.py</code>;
+  - <code>bench_aca_simalma.py</code>;
+  - <code>perf_harness/casa_aca_scenarios.py</code>;
+  - <code>stage_wave1_datasets.py</code>;
+  - <code>generate_wave1_casa_datasets.py</code>;
+  - the justfile's t48 target;
+  - <code>scripts/test-task-cli-hosts.py</code>.</p>
+<p><strong>Acceptance.</strong>
+- CASA <code>simobserve</code> parity on the VLA ppdisk tutorial and on an ALMA
+  configuration: the same output files, with the MS agreeing as in Phase 1.
+- Pointing lists identical to CASA's.</p>
+<h3 id="phase-6-simanalyze-and-simalma">Phase 6: <code>simanalyze</code> and <code>simalma</code><a class="headerlink" href="#phase-6-simanalyze-and-simalma" title="Permanent link">&para;</a></h3>
+<p><strong>Scope.</strong>
+- Both tasks, built on <code>imager</code>, <code>feather</code>, <code>imregrid</code>, <code>impbcor</code> and
+  <code>immath</code>.
+- The analysis step: the convolved model, the difference and the fidelity.</p>
+<p><strong>Dependencies, planned separately.</strong> Both tasks need:
+- a <code>concat</code> task;
+- single-dish imaging (<code>tsdimaging</code>).</p>
+<p><strong>Acceptance.</strong> Parity with CASA products for an ALMA case combining 12 m,
+7 m and total power.</p>
+<h3 id="phase-7-retire-the-old-code">Phase 7: retire the old code<a class="headerlink" href="#phase-7-retire-the-old-code" title="Permanent link">&para;</a></h3>
+<p><strong>Scope.</strong>
+- Delete <code>simulation.rs</code>, <code>simulation_task.rs</code> and <code>casa-simulation-synthesis</code>,
+  shrinking the allowlist.
+- Move the imaging T1 fixtures and the perf benches to the new API.
+- Update the capability matrix and the docs.</p>
+<p><strong>Acceptance.</strong> No caller of the old API remains, and <code>just quick</code> is green.</p>
+<h2 id="7-risks">7. Risks<a class="headerlink" href="#7-risks" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>The operator's model preparation is shaped for imaging.</strong> Phase 1a tests
+  it before anything is built on it.</li>
+<li><strong>ATM's size.</strong> About 27,000 lines may take more than one phase. Tests
+  against CASA's <code>at</code> tool keep the port honest.</li>
+<li><strong>The ALMA OT tiling is intricate.</strong> Pointing lists are compared with CASA's
+  exactly.</li>
+<li><strong>Shared I/O code.</strong> A faster write path touches every MS writer.</li>
+<li>The casacore C++ interop suite must stay green.</li>
+<li>The bounded write session keeps its memory model.</li>
+<li>Gains are measured on quiet runs; the fanless laptop throttles, so A/B
+    runs alternate with rests.</li>
+<li><strong>GLENDENNING must be mounted</strong> for the sustained I/O runs. It is not
+  mounted today.</li>
+<li><strong>Deferred execution changes when work happens.</strong> The tests must cover
+  scripts that interleave calls, such as <code>predict</code> twice, or <code>corrupt</code> before
+  <code>predict</code>, and check they match CASA's sequential results.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
