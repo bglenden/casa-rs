@@ -492,11 +492,15 @@ dependencies = [
  "casa-imaging-operator",
  "casa-ms",
  "casa-numerics",
+ "casa-tables",
+ "casa-test-support",
  "casa-types",
  "ndarray",
  "num-complex",
+ "serde_json",
  "tempfile",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
@@ -681,7 +685,9 @@ version = "0.27.0"
 dependencies = [
  "casa-coordinates",
  "casa-images",
+ "casa-ms",
  "casa-provider-contracts",
+ "casa-simulation",
  "casa-tables",
  "casa-types",
  "casars-frontend-services",

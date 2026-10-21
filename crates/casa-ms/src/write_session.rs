@@ -10,14 +10,14 @@ use std::thread;
 use std::time::Instant;
 
 use casa_tables::{
-    ColumnBinding, ColumnOverrides, STREAMING_SCALAR_COLUMN_BUFFER_BYTES,
-    STREAMING_TILED_COLUMN_BUFFER_BYTES, StreamedScalarType, StreamedTiledPrimitiveColumn,
-    StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column, StreamedTiledShapeCubeLayout,
-    StreamedTiledShapeValueType, StreamingScalarColumnWriter, StreamingTiledPrimitiveWriter,
+    ColumnBinding, ColumnOverrides, STREAMING_TILED_COLUMN_BUFFER_BYTES, StreamedScalarType,
+    StreamedTiledPrimitiveColumn, StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column,
+    StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledPrimitiveWriter,
     StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter, Table, TableError, TableOptions,
     TableWriteLock, install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
     install_streamed_tiled_shape_column, install_streamed_tiled_shape_complex32_column,
-    install_streamed_tiled_shape_primitive_column,
+    install_streamed_tiled_shape_primitive_column, install_undefined_tiled_shape_column,
+    streamed_scalar_columns_resident_bytes,
 };
 use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use num_complex::Complex32;
@@ -26,6 +26,16 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{MeasurementSet, MsSelectionIoBudget};
+
+mod scalars;
+mod visibility_columns;
+
+pub use scalars::ScalarColumnId;
+use scalars::ScalarWriters;
+pub use visibility_columns::VisibilityColumns;
+
+/// Bytes a visibility creation batch aims at, whatever the budget allows.
+pub const TARGET_BATCH_BYTES: usize = 32 * 1024 * 1024;
 
 /// Resource inputs for a bounded writer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -356,21 +366,15 @@ impl MeasurementSetWritePlan {
             crate::ms::casa_visibility_tile_shape(correlation_count, channel_count, telescope_name);
         let weight_tile_shape = crate::ms::casa_weight_tile_shape(&visibility_tile_shape);
         let uvw_tile_shape = crate::ms::casa_uvw_tile_shape(&visibility_tile_shape);
-        let flag_category_tile_shape = [
-            visibility_tile_shape[0],
-            visibility_tile_shape[1],
-            1,
-            visibility_tile_shape[2],
-        ];
         let scalar_columns = standard_main_scalar_column_plans();
         let scalar_bytes_per_row = scalar_columns.iter().try_fold(0usize, |total, column| {
             total
                 .checked_add(column.bytes_per_row())
                 .ok_or(MeasurementSetWriteError::ByteOverflow)
         })?;
-        let scalar_buffer_bytes = scalar_columns
-            .len()
-            .checked_mul(STREAMING_SCALAR_COLUMN_BUFFER_BYTES)
+        // The scalar writers' buffers while rows stream, and the save's
+        // finalization scratch after them.
+        let scalar_buffer_bytes = streamed_scalar_columns_resident_bytes(scalar_columns.len())
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
         let tiled_writer_bytes = [
             (
@@ -381,11 +385,6 @@ impl MeasurementSetWritePlan {
             (
                 &[correlation_count, channel_count][..],
                 &visibility_tile_shape[..],
-                1usize,
-            ),
-            (
-                &[0, correlation_count, channel_count][..],
-                &flag_category_tile_shape[..],
                 1usize,
             ),
             (&[3][..], &uvw_tile_shape[..], 8usize),
@@ -429,17 +428,26 @@ impl MeasurementSetWritePlan {
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
         let streaming_budget = resources.available_bytes - fixed_writer_bytes;
         let per_batch_budget = streaming_budget / resources.maximum_live_batches;
-        let mut batch_rows = per_batch_budget / bytes_per_row;
-        if row_count > 0 && batch_rows == 0 {
+        if row_count > 0 && per_batch_budget < bytes_per_row {
             return Err(MeasurementSetWriteError::InsufficientBudget {
                 bytes_per_row,
                 per_batch_budget,
             });
         }
+        // Batches hold whole bands of tiles (one tile along the row axis,
+        // every tile across the cell), so each batch completes its tiles; as
+        // many bands as fit the target, and at least one when the budget
+        // allows. The budget is a ceiling, not a target: a few tens of MB
+        // keep the producer and the writer overlapping with little resident
+        // memory.
+        let budget_rows = per_batch_budget / bytes_per_row;
         let tile_rows = visibility_tile_shape.get(2).copied().unwrap_or(1).max(1);
-        if batch_rows >= tile_rows {
-            batch_rows -= batch_rows % tile_rows;
-        }
+        let mut batch_rows = if budget_rows >= tile_rows {
+            (TARGET_BATCH_BYTES / bytes_per_row / tile_rows).clamp(1, budget_rows / tile_rows)
+                * tile_rows
+        } else {
+            budget_rows
+        };
         batch_rows = batch_rows.min(row_count.max(1));
         let batch_bytes = batch_rows
             .checked_mul(bytes_per_row)
@@ -470,9 +478,11 @@ impl MeasurementSetWritePlan {
                 tile_shape: Some(visibility_tile_shape.clone()),
                 create_source_column: None,
             },
+            // Every FLAG_CATEGORY cell is left undefined, as CASA's simulator
+            // leaves it, so the column holds no payload.
             MeasurementSetWriteColumnPlan {
                 name: "FLAG_CATEGORY".to_string(),
-                bytes_per_row: sample_count,
+                bytes_per_row: 0,
                 mode: MeasurementSetColumnWriteMode::Create,
                 storage_manager: MeasurementSetColumnStorage::TiledShape,
                 tile_shape: None,
@@ -740,9 +750,9 @@ impl MeasurementSetWritePlan {
         let bytes_per_row = array_bytes_per_row
             .checked_add(scalar_bytes_per_row)
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
-        let scalar_buffer_bytes = scalar_columns
-            .len()
-            .checked_mul(STREAMING_SCALAR_COLUMN_BUFFER_BYTES)
+        // The scalar writers' buffers while rows stream, and the save's
+        // finalization scratch after them.
+        let scalar_buffer_bytes = streamed_scalar_columns_resident_bytes(scalar_columns.len())
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
         if scalar_buffer_bytes > resources.available_bytes {
             return Err(MeasurementSetWriteError::InvalidPlan(format!(
@@ -907,11 +917,7 @@ pub struct MeasurementSetArrayColumnPlan {
 /// One typed standard-visibility column batch.
 #[derive(Debug)]
 pub(crate) enum MeasurementSetWriteBatch {
-    Rows {
-        data_rows: Vec<Vec<Complex32>>,
-        flag_rows: Vec<bool>,
-        uvw_rows: Vec<[f64; 3]>,
-    },
+    Columns(VisibilityColumns),
     #[cfg(test)]
     Repeated {
         data_row: Vec<Complex32>,
@@ -924,7 +930,7 @@ pub(crate) enum MeasurementSetWriteBatch {
 impl MeasurementSetWriteBatch {
     fn row_count(&self) -> usize {
         match self {
-            Self::Rows { data_rows, .. } => data_rows.len(),
+            Self::Columns(columns) => columns.row_count(),
             #[cfg(test)]
             Self::Repeated { row_count, .. } => *row_count,
         }
@@ -1151,7 +1157,6 @@ impl MeasurementSetCreateTarget {
 struct StreamedVisibilityColumns {
     data: StreamedTiledShapeComplex32Column,
     flag: StreamedTiledPrimitiveColumn,
-    flag_category: StreamedTiledPrimitiveColumn,
     uvw: StreamedTiledPrimitiveColumn,
     weight: StreamedTiledPrimitiveColumn,
     sigma: StreamedTiledPrimitiveColumn,
@@ -1163,14 +1168,16 @@ enum MeasurementSetWriteSessionState {
         sender: mpsc::SyncSender<MeasurementSetWriteBatch>,
         handle: thread::JoinHandle<Result<StreamedVisibilityColumns, MeasurementSetWriteError>>,
         sent_rows: AtomicUsize,
-        scalar_writers: HashMap<String, StreamingScalarColumnWriter>,
+        scalar_writers: ScalarWriters,
         queue_wait_nanos: AtomicU64,
         started_at: Instant,
+        /// Written batches the writer hands back for reuse, at most one.
+        recycled: mpsc::Receiver<VisibilityColumns>,
     },
     VariableArrayCreation {
         output: PathBuf,
         writers: HashMap<String, StreamingTiledShapeWriter>,
-        scalar_writers: HashMap<String, StreamingScalarColumnWriter>,
+        scalar_writers: ScalarWriters,
         started_at: Instant,
     },
     Mutation {
@@ -1232,16 +1239,8 @@ impl MeasurementSetWriteSession {
                 .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                 writers.insert(column.name.clone(), writer);
             }
-            let mut scalar_writers = HashMap::with_capacity(plan.scalar_columns.len());
-            for column in &plan.scalar_columns {
-                let writer = StreamingScalarColumnWriter::create(
-                    output.join(format!(".casa-rs.{}.scalar.tmp", column.name)),
-                    plan.row_count,
-                    column.value_type,
-                )
-                .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-                scalar_writers.insert(column.name.clone(), writer);
-            }
+            let scalar_writers =
+                ScalarWriters::create(&output, plan.row_count, &plan.scalar_columns)?;
             return Ok(Self {
                 plan,
                 state: MeasurementSetWriteSessionState::VariableArrayCreation {
@@ -1256,12 +1255,6 @@ impl MeasurementSetWriteSession {
         let correlation_count = plan.correlation_count;
         let channel_count = plan.channel_count;
         let visibility_tile_shape = plan.visibility_tile_shape.clone();
-        let flag_category_tile_shape = vec![
-            visibility_tile_shape[0],
-            visibility_tile_shape[1],
-            1,
-            visibility_tile_shape[2],
-        ];
         let data_writer = StreamingTiledShapeComplex32Writer::create(
             output.join(".casa-rs.DATA.table.f.tmp"),
             row_count,
@@ -1276,16 +1269,6 @@ impl MeasurementSetWriteSession {
             row_count,
             vec![correlation_count, channel_count],
             visibility_tile_shape,
-            StreamedTiledPrimitiveType::Bool,
-            plan.tiled_column_buffer_bytes,
-            false,
-        )
-        .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-        let flag_category_writer = StreamingTiledPrimitiveWriter::create_shape(
-            output.join(".casa-rs.FLAG_CATEGORY.table.f.tmp"),
-            row_count,
-            vec![0, correlation_count, channel_count],
-            flag_category_tile_shape,
             StreamedTiledPrimitiveType::Bool,
             plan.tiled_column_buffer_bytes,
             false,
@@ -1322,28 +1305,20 @@ impl MeasurementSetWriteSession {
         )
         .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
         let (sender, receiver) = mpsc::sync_channel(plan.queue_capacity);
+        let (returns, recycled) = mpsc::sync_channel(1);
         let handle = thread::spawn(move || {
             write_visibility_batches(
                 receiver,
+                &returns,
                 data_writer,
                 flag_writer,
-                flag_category_writer,
                 uvw_writer,
                 weight_writer,
                 sigma_writer,
                 correlation_count,
             )
         });
-        let mut scalar_writers = HashMap::with_capacity(plan.scalar_columns.len());
-        for column in &plan.scalar_columns {
-            let writer = StreamingScalarColumnWriter::create(
-                output.join(format!(".casa-rs.{}.scalar.tmp", column.name)),
-                plan.row_count,
-                column.value_type,
-            )
-            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-            scalar_writers.insert(column.name.clone(), writer);
-        }
+        let scalar_writers = ScalarWriters::create(&output, plan.row_count, &plan.scalar_columns)?;
         Ok(Self {
             plan,
             state: MeasurementSetWriteSessionState::Creation {
@@ -1354,6 +1329,7 @@ impl MeasurementSetWriteSession {
                 scalar_writers,
                 queue_wait_nanos: AtomicU64::new(0),
                 started_at: Instant::now(),
+                recycled,
             },
         })
     }
@@ -1418,35 +1394,6 @@ impl MeasurementSetWriteSession {
             .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))
     }
 
-    /// Append one fixed-width scalar cell in output row order.
-    #[doc(hidden)]
-    pub fn push_scalar_row(
-        &mut self,
-        column: &str,
-        value: Option<ScalarValue>,
-    ) -> Result<(), MeasurementSetWriteError> {
-        let scalar_writers = match &mut self.state {
-            MeasurementSetWriteSessionState::Creation { scalar_writers, .. }
-            | MeasurementSetWriteSessionState::VariableArrayCreation { scalar_writers, .. } => {
-                scalar_writers
-            }
-            MeasurementSetWriteSessionState::Mutation { .. } => {
-                return Err(MeasurementSetWriteError::InvalidPlan(
-                    "scalar cells require a creation session".to_string(),
-                ));
-            }
-        };
-        scalar_writers
-            .get_mut(column)
-            .ok_or_else(|| {
-                MeasurementSetWriteError::InvalidPlan(format!(
-                    "column {column} is not owned by this scalar creation session"
-                ))
-            })?
-            .push(value)
-            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))
-    }
-
     /// Accept a typed batch, splitting it at the immutable plan boundary.
     pub(crate) fn send_batch(
         &self,
@@ -1469,27 +1416,7 @@ impl MeasurementSetWriteSession {
             .checked_mul(self.plan.channel_count)
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
         match &batch {
-            MeasurementSetWriteBatch::Rows {
-                data_rows,
-                flag_rows,
-                uvw_rows,
-            } => {
-                if data_rows.len() != flag_rows.len() || data_rows.len() != uvw_rows.len() {
-                    return Err(MeasurementSetWriteError::InvalidPlan(format!(
-                        "batch sizes differ: DATA={} FLAG={} UVW={}",
-                        data_rows.len(),
-                        flag_rows.len(),
-                        uvw_rows.len()
-                    )));
-                }
-                if let Some((row, actual)) = data_rows.iter().enumerate().find_map(|(row, data)| {
-                    (data.len() != sample_count).then_some((row, data.len()))
-                }) {
-                    return Err(MeasurementSetWriteError::InvalidPlan(format!(
-                        "DATA row {row} has {actual} samples; plan requires {sample_count}"
-                    )));
-                }
-            }
+            MeasurementSetWriteBatch::Columns(columns) => columns.validate(sample_count)?,
             #[cfg(test)]
             MeasurementSetWriteBatch::Repeated { data_row, .. } => {
                 if data_row.len() != sample_count {
@@ -1542,6 +1469,7 @@ impl MeasurementSetWriteSession {
                 scalar_writers,
                 queue_wait_nanos,
                 started_at,
+                recycled: _,
             } => {
                 if !scalar_writers.is_empty() {
                     return Err(MeasurementSetWriteError::InvalidPlan(
@@ -1563,7 +1491,7 @@ impl MeasurementSetWriteSession {
                     )));
                 }
                 let telemetry = telemetry(&streamed);
-                install_streamed_columns(main, &output, streamed)?;
+                install_streamed_columns(main, &output, &plan, streamed)?;
                 Ok(complete_telemetry(
                     telemetry,
                     &plan,
@@ -1738,7 +1666,7 @@ impl MeasurementSetWriteSession {
                     column.name
                 )));
             }
-            let streamed = writers.remove(&column.name).ok_or_else(|| {
+            let streamed = writers.take(&column.name).ok_or_else(|| {
                 MeasurementSetWriteError::InvalidPlan(format!(
                     "missing scalar writer for {}",
                     column.name
@@ -2298,9 +2226,9 @@ fn mutation_values_bytes(
 #[allow(clippy::too_many_arguments)]
 fn write_visibility_batches(
     receiver: mpsc::Receiver<MeasurementSetWriteBatch>,
+    returns: &mpsc::SyncSender<VisibilityColumns>,
     mut data_writer: StreamingTiledShapeComplex32Writer,
     mut flag_writer: StreamingTiledPrimitiveWriter,
-    mut flag_category_writer: StreamingTiledPrimitiveWriter,
     mut uvw_writer: StreamingTiledPrimitiveWriter,
     mut weight_writer: StreamingTiledPrimitiveWriter,
     mut sigma_writer: StreamingTiledPrimitiveWriter,
@@ -2310,30 +2238,30 @@ fn write_visibility_batches(
     let sigma_row = vec![1.0f32; correlation_count];
     for batch in receiver {
         match batch {
-            MeasurementSetWriteBatch::Rows {
-                data_rows,
-                flag_rows,
-                uvw_rows,
-            } => {
-                let row_count = data_rows.len();
+            MeasurementSetWriteBatch::Columns(columns) => {
+                let row_count = columns.row_count();
                 data_writer
-                    .push_rows(&data_rows)
+                    .push_rows(&columns.data)
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                 flag_writer
-                    .push_bool_fill_rows(&flag_rows)
-                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-                flag_category_writer
-                    .push_zero_rows(row_count)
+                    .push_bool_fill_rows(&columns.flag_row)
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                 uvw_writer
-                    .push_f64_rows(&uvw_rows)
+                    .push_f64_rows(&columns.uvw)
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-                weight_writer
-                    .push_repeated_f32_row(&weight_row, row_count)
-                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-                sigma_writer
-                    .push_repeated_f32_row(&sigma_row, row_count)
-                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                visibility_columns::push_per_row_cells(
+                    &mut weight_writer,
+                    &columns.weight,
+                    &weight_row,
+                    row_count,
+                )?;
+                visibility_columns::push_per_row_cells(
+                    &mut sigma_writer,
+                    &columns.sigma,
+                    &sigma_row,
+                    row_count,
+                )?;
+                visibility_columns::recycle(returns, columns);
             }
             #[cfg(test)]
             MeasurementSetWriteBatch::Repeated {
@@ -2347,9 +2275,6 @@ fn write_visibility_batches(
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                 flag_writer
                     .push_repeated_bool_fill_row(flag_row, row_count)
-                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-                flag_category_writer
-                    .push_zero_rows(row_count)
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                 uvw_writer
                     .push_repeated_f64_row(&uvw_row, row_count)
@@ -2368,9 +2293,6 @@ fn write_visibility_batches(
             .finish()
             .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?,
         flag: flag_writer
-            .finish()
-            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?,
-        flag_category: flag_category_writer
             .finish()
             .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?,
         uvw: uvw_writer
@@ -2399,12 +2321,8 @@ fn telemetry(streamed: &StreamedVisibilityColumns) -> MeasurementSetWriteTelemet
             streamed.flag.write_seconds(),
             streamed.flag.bytes_written(),
         ),
-        column_telemetry(
-            "FLAG_CATEGORY",
-            streamed.flag_category.assemble_seconds(),
-            streamed.flag_category.write_seconds(),
-            streamed.flag_category.bytes_written(),
-        ),
+        // FLAG_CATEGORY's cells are undefined: nothing is assembled or written.
+        column_telemetry("FLAG_CATEGORY", 0.0, 0.0, 0),
         column_telemetry(
             "UVW",
             streamed.uvw.assemble_seconds(),
@@ -2473,6 +2391,7 @@ fn column_telemetry(
 fn install_streamed_columns(
     main: &casa_tables::Table,
     output: &Path,
+    plan: &MeasurementSetWritePlan,
     streamed: StreamedVisibilityColumns,
 ) -> Result<(), MeasurementSetWriteError> {
     let sequence = |column: &str| {
@@ -2487,11 +2406,22 @@ fn install_streamed_columns(
         .map_err(|error| install_error("DATA", error))?;
     install_streamed_tiled_shape_primitive_column(output, sequence("FLAG")?, "FLAG", streamed.flag)
         .map_err(|error| install_error("FLAG", error))?;
-    install_streamed_tiled_shape_primitive_column(
+    // Undefined cells, laid out as casacore leaves a column no row has
+    // written; the default tile is the one a later hypercube would get.
+    let visibility_tile = &plan.visibility_tile_shape;
+    install_undefined_tiled_shape_column(
         output,
         sequence("FLAG_CATEGORY")?,
         "FLAG_CATEGORY",
-        streamed.flag_category,
+        plan.row_count,
+        StreamedTiledPrimitiveType::Bool,
+        3,
+        &[
+            visibility_tile[0],
+            visibility_tile[1],
+            1,
+            visibility_tile[2],
+        ],
     )
     .map_err(|error| install_error("FLAG_CATEGORY", error))?;
     install_streamed_tiled_column_primitive_column(output, sequence("UVW")?, "UVW", streamed.uvw)
@@ -2575,6 +2505,58 @@ mod tests {
     }
 
     #[test]
+    fn batches_are_whole_tile_bands_near_the_target_however_large_the_budget() {
+        // 64 GiB of budget: the batch still follows the target, not memory.
+        for channels in [16, 256, 1024, 4096] {
+            let plan = MeasurementSetWritePlan::visibility_creation(
+                50_000_000,
+                2,
+                channels,
+                "ALMA",
+                MeasurementSetWriteResources {
+                    available_bytes: 64 * 1024 * 1024 * 1024,
+                    maximum_live_batches: 2,
+                    tiled_column_buffer_bytes: STREAMING_TILED_COLUMN_BUFFER_BYTES,
+                },
+            )
+            .expect("write plan");
+            let tile_rows = plan.visibility_tile_shape[2];
+            let band_bytes = tile_rows * plan.bytes_per_row;
+            assert!(plan.batch_rows.is_multiple_of(tile_rows), "{channels}");
+            // As many bands as fit the target, and at least one.
+            assert!(
+                plan.batch_bytes <= TARGET_BATCH_BYTES.max(band_bytes),
+                "{channels}: {}",
+                plan.batch_bytes
+            );
+            assert!(
+                plan.batch_bytes + band_bytes > TARGET_BATCH_BYTES,
+                "{channels}: {}",
+                plan.batch_bytes
+            );
+            assert_eq!(plan.queue_capacity, 1, "{channels}");
+        }
+    }
+
+    #[test]
+    fn a_budget_below_one_tile_band_still_plans_rows_that_fit() {
+        let plan = MeasurementSetWritePlan::visibility_creation(
+            100_000,
+            2,
+            1024,
+            "ALMA",
+            MeasurementSetWriteResources {
+                available_bytes: 96 * 1024 * 1024,
+                maximum_live_batches: 2,
+                tiled_column_buffer_bytes: STREAMING_TILED_COLUMN_BUFFER_BYTES,
+            },
+        )
+        .expect("write plan");
+        assert!(plan.batch_rows < plan.visibility_tile_shape[2]);
+        assert!(plan.maximum_resident_bytes <= 96 * 1024 * 1024);
+    }
+
+    #[test]
     fn plan_rejects_one_byte_below_one_row() {
         let row_plan = MeasurementSetWritePlan::visibility_creation(
             1,
@@ -2634,10 +2616,12 @@ mod tests {
         )
         .expect("plan with I/O buffers");
 
+        // DATA, FLAG, UVW, WEIGHT and SIGMA each hold a buffer; FLAG_CATEGORY
+        // is written undefined, with no writer.
         assert_eq!(
             plan_with_io_buffers.maximum_resident_bytes
                 - plan_without_io_buffers.maximum_resident_bytes,
-            6 * per_column_buffer
+            5 * per_column_buffer
         );
     }
 
@@ -2658,6 +2642,7 @@ mod tests {
         plan.batch_rows = 1;
         plan.batch_bytes = plan.bytes_per_row;
         let (sender, receiver) = mpsc::sync_channel(0);
+        let (_returns, recycled) = mpsc::sync_channel(1);
         let session = MeasurementSetWriteSession {
             plan,
             state: MeasurementSetWriteSessionState::Creation {
@@ -2669,16 +2654,18 @@ mod tests {
                     ))
                 }),
                 sent_rows: AtomicUsize::new(0),
-                scalar_writers: HashMap::new(),
+                scalar_writers: ScalarWriters::default(),
                 queue_wait_nanos: AtomicU64::new(0),
                 started_at: Instant::now(),
+                recycled,
             },
         };
         let error = session
-            .send_batch(MeasurementSetWriteBatch::Rows {
-                data_rows: vec![vec![Complex32::new(1.0, 0.0)]; 2],
-                flag_rows: vec![false; 2],
-                uvw_rows: vec![[0.0; 3]; 2],
+            .send_visibility_columns(VisibilityColumns {
+                data: vec![Complex32::new(1.0, 0.0); 2],
+                flag_row: vec![false; 2],
+                uvw: vec![[0.0; 3]; 2],
+                ..VisibilityColumns::default()
             })
             .expect_err("oversized batch must be rejected");
         assert!(error.to_string().contains("plan permits at most 1"));
@@ -2687,7 +2674,8 @@ mod tests {
 
     #[test]
     fn columnar_plan_accounts_for_every_scalar_writer_buffer() {
-        let scalar_buffer_bytes = 2 * STREAMING_SCALAR_COLUMN_BUFFER_BYTES;
+        let scalar_buffer_bytes =
+            streamed_scalar_columns_resident_bytes(2).expect("two scalar columns");
         let arrays = vec![MeasurementSetArrayColumnPlan {
             name: "DATA".to_string(),
             value_type: StreamedTiledShapeValueType::Complex32,

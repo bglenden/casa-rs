@@ -25,6 +25,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# casars.tools.simulator loads a measures runtime at sm.open; unless one is
+# configured, test against the bundled snapshot, as the Rust tests in CI do.
+if [[ -z "${CASA_RS_MEASURESPATH:-}" ]]; then
+  measures_root="$tmp_root/casa-measures"
+  mkdir -p "$measures_root"
+  tar -xzf crates/casa-measures-data/data/casa-measures-runtime.tar.gz -C "$measures_root"
+  cp crates/casa-measures-data/data/casa-measures-runtime.provenance.json \
+    "$measures_root/.casa-rs-measures-provenance.json"
+  export CASA_RS_MEASURESPATH="$measures_root"
+fi
+
 editable_venv="$tmp_root/editable-venv"
 
 echo "==> Installing editable casars package and running Python tests"

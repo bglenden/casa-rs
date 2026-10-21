@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "purpose": "simulation Phase 1c (#841): observe-only sm scenarios run by CASA and by casa-rs",
+  "notes": [
+    "settimes precedes setfield except in simobserve-order, so SOURCE.TIME is the reference time, not the time of open.",
+    "Configurations and times keep every scenario free of shadowing, whose CASA flags are a recorded divergence."
+  ],
+  "scenarios": [
+    {
+      "name": "vla-d-rrll",
+      "config": {"cfg": "vla.d.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "LBAND", "freq": "1.4GHz", "deltafreq": "1MHz", "freqresolution": "1MHz", "refcode": "TOPO", "nchannels": 64, "stokes": "RR LL"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "src", "sourcedirection": ["J2000", "13h00m00.0", "+34d00m00.0"]},
+        {"op": "observe", "sourcename": "src", "spwname": "LBAND", "starttime": "-600s", "stoptime": "-300s"},
+        {"op": "observe", "sourcename": "src", "spwname": "LBAND", "starttime": "300s", "stoptime": "600s"}
+      ]
+    },
+    {
+      "name": "vla-d-rr-noauto",
+      "config": {"cfg": "vla.d.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "LBAND", "freq": "1.4GHz", "deltafreq": "2MHz", "freqresolution": "2MHz", "refcode": "LSRK", "nchannels": 16, "stokes": "RR"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "30s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "src", "sourcedirection": ["J2000", "13h00m00.0", "+34d00m00.0"]},
+        {"op": "observe", "sourcename": "src", "spwname": "LBAND", "starttime": "-900s", "stoptime": "900s"}
+      ]
+    },
+    {
+      "name": "vla-a-full-elevation",
+      "config": {"cfg": "vla.a.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "CBAND", "freq": "5GHz", "deltafreq": "4MHz", "freqresolution": "4MHz", "refcode": "TOPO", "nchannels": 8, "stokes": "RR RL LR LL"},
+        {"op": "setfeed", "mode": "perfect R L"},
+        {"op": "setlimits", "shadowlimit": 1e-6, "elevationlimit": "10deg"},
+        {"op": "setauto", "autocorrwt": 0.5},
+        {"op": "settimes", "integrationtime": "60s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "low", "sourcedirection": ["J2000", "13h00m00.0", "-44d00m00.0"]},
+        {"op": "observe", "sourcename": "low", "spwname": "CBAND", "starttime": "-7200s", "stoptime": "7200s"}
+      ]
+    },
+    {
+      "name": "alma-xxyy",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "spw0", "freq": "230GHz", "deltafreq": "15.625MHz", "freqresolution": "15.625MHz", "refcode": "LSRK", "nchannels": 32, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "6s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "spw0", "starttime": "-300s", "stoptime": "300s"}
+      ]
+    },
+    {
+      "name": "alma-xx",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "spw0", "freq": "100GHz", "deltafreq": "-31.25MHz", "freqresolution": "31.25MHz", "refcode": "TOPO", "nchannels": 8, "stokes": "XX"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": false, "referencetime": ["UTC", "2026/03/21/03:00:00"]},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "target", "spwname": "spw0", "starttime": "0s", "stoptime": "120s"}
+      ]
+    },
+    {
+      "name": "alma-full-two-fields",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "calls": [
+        {"op": "setspwindow", "spwname": "lo", "freq": "345GHz", "deltafreq": "7.8125MHz", "freqresolution": "7.8125MHz", "refcode": "LSRK", "nchannels": 16, "stokes": "XX XY YX YY"},
+        {"op": "setspwindow", "spwname": "hi", "freq": "357GHz", "deltafreq": "7.8125MHz", "freqresolution": "7.8125MHz", "refcode": "LSRK", "nchannels": 16, "stokes": "XX XY YX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "setfield", "sourcename": "cal", "sourcedirection": ["J2000", "09h30m00.0", "-25d00m00.0"], "calcode": "C"},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "observe", "sourcename": "cal", "spwname": "lo", "starttime": "-600s", "stoptime": "-540s", "state_obs_mode": "CALIBRATE_PHASE.ON_SOURCE"},
+        {"op": "observe", "sourcename": "target", "spwname": "lo", "starttime": "-530s", "stoptime": "-300s"},
+        {"op": "observe", "sourcename": "target", "spwname": "hi", "starttime": "-290s", "stoptime": "-100s", "add_observation": true, "observer": "someone", "project": "2026.1.00001.S"},
+        {"op": "observe", "sourcename": "cal", "spwname": "hi", "starttime": "-90s", "stoptime": "-30s", "state_obs_mode": "CALIBRATE_PHASE.ON_SOURCE"}
+      ]
+    },
+    {
+      "name": "vla-local",
+      "config": {
+        "local": {
+          "telescopename": "VLA",
+          "x": [0.0, 100.0, -250.0, 400.0, 30.0],
+          "y": [0.0, 200.0, 80.0, -150.0, -600.0],
+          "z": [0.0, 1.0, -2.0, 0.5, 3.0],
+          "dishdiameter": [25.0, 25.0, 25.0, 25.0, 25.0],
+          "antname": ["L0", "L1", "L2", "L3", "L4"],
+          "padname": ["P0", "P1", "P2", "P3", "P4"],
+          "referencelocation": "VLA"
+        },
+        "mount": "alt-az"
+      },
+      "calls": [
+        {"op": "setspwindow", "spwname": "XBAND", "freq": "8.4GHz", "deltafreq": "50MHz", "freqresolution": "50MHz", "refcode": "TOPO", "nchannels": 4, "stokes": "RR LL"},
+        {"op": "settimes", "integrationtime": "20s", "usehourangle": true, "referencetime": ["UTC", "2026/06/21/12:00:00"]},
+        {"op": "setfield", "sourcename": "src", "sourcedirection": ["J2000", "18h00m00.0", "+20d00m00.0"]},
+        {"op": "observe", "sourcename": "src", "spwname": "XBAND", "starttime": "-200s", "stoptime": "200s"}
+      ]
+    },
+    {
+      "name": "simobserve-order",
+      "config": {"cfg": "alma.cycle10.3.cfg", "mount": "alt-az"},
+      "ignore": ["SOURCE.TIME"],
+      "calls": [
+        {"op": "setspwindow", "spwname": "band6", "freq": "230GHz", "deltafreq": "62.5MHz", "freqresolution": "62.5MHz", "refcode": "LSRK", "nchannels": 4, "stokes": "XX YY"},
+        {"op": "setfeed", "mode": "perfect X Y"},
+        {"op": "setfield", "sourcename": "target", "sourcedirection": ["J2000", "10h00m00.0", "-30d00m00.0"]},
+        {"op": "setauto", "autocorrwt": 0.0},
+        {"op": "settimes", "integrationtime": "10s", "usehourangle": true, "referencetime": ["UTC", "2026/03/21/00:00:00"]},
+        {"op": "observe", "sourcename": "target", "spwname": "band6", "starttime": "-150s", "stoptime": "150s"}
+      ]
+    }
+  ]
+}

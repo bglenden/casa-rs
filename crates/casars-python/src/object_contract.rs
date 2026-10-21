@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Canonical object-surface schema bundle for `casars.data`.
+//! Canonical object-surface schema bundle for `casars.data` and the CASA
+//! tools of `casars.tools`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -13,6 +14,8 @@ use schemars::schema::RootSchema;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
+
+use crate::tools::TOOLS;
 
 /// Stable protocol name advertised by the `casars.data` object bundle.
 pub const DATA_OBJECT_PROTOCOL_NAME: &str = "casars_data_objects";
@@ -309,8 +312,13 @@ impl DataObjectSchemaBundle {
         let column_input_schema = schema_for!(LogicalColumnInputValue);
         let column_output_schema = schema_for!(LogicalColumnOutputValue);
         let written_count_schema = schema_for!(usize);
+        let tools = Self::tool_contracts();
 
-        let components = merged_components([
+        let mut components = ProviderComponentSchemas::new();
+        for tool in &tools {
+            components.extend(Self::object_components(tool));
+        }
+        components.extend(merged_components([
             &open_schema,
             &array_region_schema,
             &plane_request_schema,
@@ -339,143 +347,164 @@ impl DataObjectSchemaBundle {
             &column_input_schema,
             &column_output_schema,
             &written_count_schema,
-        ]);
+        ]));
+
+        let mut objects = vec![
+            ObjectTypeContract {
+                name: "Image".to_string(),
+                constructors: vec![ObjectConstructorDescriptor {
+                    name: "open".to_string(),
+                    parameters_schema: open_schema.clone(),
+                }],
+                properties: vec![
+                    ObjectPropertyDescriptor {
+                        name: "shape".to_string(),
+                        value_schema: shape_schema.clone(),
+                        readable: true,
+                        writable: false,
+                    },
+                    ObjectPropertyDescriptor {
+                        name: "pixel_type".to_string(),
+                        value_schema: pixel_type_schema.clone(),
+                        readable: true,
+                        writable: false,
+                    },
+                    ObjectPropertyDescriptor {
+                        name: "units".to_string(),
+                        value_schema: units_schema.clone(),
+                        readable: true,
+                        writable: false,
+                    },
+                    ObjectPropertyDescriptor {
+                        name: "image_info".to_string(),
+                        value_schema: output_record_schema.clone(),
+                        readable: true,
+                        writable: false,
+                    },
+                    ObjectPropertyDescriptor {
+                        name: "misc_info".to_string(),
+                        value_schema: output_record_schema.clone(),
+                        readable: true,
+                        writable: false,
+                    },
+                    ObjectPropertyDescriptor {
+                        name: "mask_names".to_string(),
+                        value_schema: string_list_schema.clone(),
+                        readable: true,
+                        writable: false,
+                    },
+                    ObjectPropertyDescriptor {
+                        name: "default_mask_name".to_string(),
+                        value_schema: optional_string_schema.clone(),
+                        readable: true,
+                        writable: false,
+                    },
+                ],
+                methods: Self::image_methods(
+                    &array_region_schema,
+                    &image_put_slice_schema,
+                    &plane_request_schema,
+                    &logical_array_schema,
+                    optional_logical_array_schema,
+                ),
+                lifecycle_operations: Vec::new(),
+            },
+            ObjectTypeContract {
+                name: "Table".to_string(),
+                constructors: vec![ObjectConstructorDescriptor {
+                    name: "open".to_string(),
+                    parameters_schema: open_schema,
+                }],
+                properties: vec![
+                    ObjectPropertyDescriptor {
+                        name: "row_count".to_string(),
+                        value_schema: row_count_schema,
+                        readable: true,
+                        writable: false,
+                    },
+                    ObjectPropertyDescriptor {
+                        name: "column_names".to_string(),
+                        value_schema: string_list_schema,
+                        readable: true,
+                        writable: false,
+                    },
+                    ObjectPropertyDescriptor {
+                        name: "keywords".to_string(),
+                        value_schema: output_record_schema.clone(),
+                        readable: true,
+                        writable: false,
+                    },
+                ],
+                methods: vec![
+                    ObjectMethodDescriptor {
+                        name: "column_keywords".to_string(),
+                        parameters_schema: table_column_keywords_request_schema,
+                        result_schema: Some(optional_output_record_schema),
+                        mutating: false,
+                    },
+                    ObjectMethodDescriptor {
+                        name: "get_cell".to_string(),
+                        parameters_schema: table_cell_request_schema,
+                        result_schema: Some(output_value_schema),
+                        mutating: false,
+                    },
+                    ObjectMethodDescriptor {
+                        name: "set_cell".to_string(),
+                        parameters_schema: table_set_cell_schema,
+                        result_schema: None,
+                        mutating: true,
+                    },
+                    ObjectMethodDescriptor {
+                        name: "get_column".to_string(),
+                        parameters_schema: table_column_request_schema,
+                        result_schema: Some(column_output_schema),
+                        mutating: false,
+                    },
+                    ObjectMethodDescriptor {
+                        name: "put_column".to_string(),
+                        parameters_schema: table_put_column_schema,
+                        result_schema: Some(written_count_schema),
+                        mutating: true,
+                    },
+                    ObjectMethodDescriptor {
+                        name: "set_column_keywords".to_string(),
+                        parameters_schema: table_set_column_keywords_schema,
+                        result_schema: None,
+                        mutating: true,
+                    },
+                ],
+                lifecycle_operations: Vec::new(),
+            },
+        ];
+        objects.extend(tools);
 
         Self {
             protocol: DataObjectProtocolInfo::current(),
-            semantic: ObjectSemanticContract {
-                objects: vec![
-                    ObjectTypeContract {
-                        name: "Image".to_string(),
-                        constructors: vec![ObjectConstructorDescriptor {
-                            name: "open".to_string(),
-                            parameters_schema: open_schema.clone(),
-                        }],
-                        properties: vec![
-                            ObjectPropertyDescriptor {
-                                name: "shape".to_string(),
-                                value_schema: shape_schema.clone(),
-                                readable: true,
-                                writable: false,
-                            },
-                            ObjectPropertyDescriptor {
-                                name: "pixel_type".to_string(),
-                                value_schema: pixel_type_schema.clone(),
-                                readable: true,
-                                writable: false,
-                            },
-                            ObjectPropertyDescriptor {
-                                name: "units".to_string(),
-                                value_schema: units_schema.clone(),
-                                readable: true,
-                                writable: false,
-                            },
-                            ObjectPropertyDescriptor {
-                                name: "image_info".to_string(),
-                                value_schema: output_record_schema.clone(),
-                                readable: true,
-                                writable: false,
-                            },
-                            ObjectPropertyDescriptor {
-                                name: "misc_info".to_string(),
-                                value_schema: output_record_schema.clone(),
-                                readable: true,
-                                writable: false,
-                            },
-                            ObjectPropertyDescriptor {
-                                name: "mask_names".to_string(),
-                                value_schema: string_list_schema.clone(),
-                                readable: true,
-                                writable: false,
-                            },
-                            ObjectPropertyDescriptor {
-                                name: "default_mask_name".to_string(),
-                                value_schema: optional_string_schema.clone(),
-                                readable: true,
-                                writable: false,
-                            },
-                        ],
-                        methods: Self::image_methods(
-                            &array_region_schema,
-                            &image_put_slice_schema,
-                            &plane_request_schema,
-                            &logical_array_schema,
-                            optional_logical_array_schema,
-                        ),
-                        lifecycle_operations: Vec::new(),
-                    },
-                    ObjectTypeContract {
-                        name: "Table".to_string(),
-                        constructors: vec![ObjectConstructorDescriptor {
-                            name: "open".to_string(),
-                            parameters_schema: open_schema,
-                        }],
-                        properties: vec![
-                            ObjectPropertyDescriptor {
-                                name: "row_count".to_string(),
-                                value_schema: row_count_schema,
-                                readable: true,
-                                writable: false,
-                            },
-                            ObjectPropertyDescriptor {
-                                name: "column_names".to_string(),
-                                value_schema: string_list_schema,
-                                readable: true,
-                                writable: false,
-                            },
-                            ObjectPropertyDescriptor {
-                                name: "keywords".to_string(),
-                                value_schema: output_record_schema.clone(),
-                                readable: true,
-                                writable: false,
-                            },
-                        ],
-                        methods: vec![
-                            ObjectMethodDescriptor {
-                                name: "column_keywords".to_string(),
-                                parameters_schema: table_column_keywords_request_schema,
-                                result_schema: Some(optional_output_record_schema),
-                                mutating: false,
-                            },
-                            ObjectMethodDescriptor {
-                                name: "get_cell".to_string(),
-                                parameters_schema: table_cell_request_schema,
-                                result_schema: Some(output_value_schema),
-                                mutating: false,
-                            },
-                            ObjectMethodDescriptor {
-                                name: "set_cell".to_string(),
-                                parameters_schema: table_set_cell_schema,
-                                result_schema: None,
-                                mutating: true,
-                            },
-                            ObjectMethodDescriptor {
-                                name: "get_column".to_string(),
-                                parameters_schema: table_column_request_schema,
-                                result_schema: Some(column_output_schema),
-                                mutating: false,
-                            },
-                            ObjectMethodDescriptor {
-                                name: "put_column".to_string(),
-                                parameters_schema: table_put_column_schema,
-                                result_schema: Some(written_count_schema),
-                                mutating: true,
-                            },
-                            ObjectMethodDescriptor {
-                                name: "set_column_keywords".to_string(),
-                                parameters_schema: table_set_column_keywords_schema,
-                                result_schema: None,
-                                mutating: true,
-                            },
-                        ],
-                        lifecycle_operations: Vec::new(),
-                    },
-                ],
-            },
+            semantic: ObjectSemanticContract { objects },
             components,
             annotations: Self::python_annotations(),
             projections: Self::python_projections(),
         }
+    }
+
+    /// The object contracts of the CASA tools of `casars.tools`, in
+    /// [`TOOLS`] order. Every tool entry of the bundle (contract,
+    /// annotations, projection) comes from that one list.
+    fn tool_contracts() -> Vec<ObjectTypeContract> {
+        TOOLS.iter().map(|tool| tool.object_contract()).collect()
+    }
+
+    /// The component schemas an object's constructors and methods define.
+    fn object_components(object: &ObjectTypeContract) -> ProviderComponentSchemas {
+        let constructors = object
+            .constructors
+            .iter()
+            .map(|constructor| &constructor.parameters_schema);
+        let methods = object
+            .methods
+            .iter()
+            .map(|method| &method.parameters_schema);
+        merged_components(constructors.chain(methods))
     }
 
     /// Method descriptors of the `Image` object: the slice, plane and mask
@@ -518,7 +547,7 @@ impl DataObjectSchemaBundle {
     /// Python presentation annotations: the value-model notes and the Python
     /// class and return types of each object.
     fn python_annotations() -> JsonValue {
-        json!({
+        let mut annotations = json!({
             "python": {
                 "module": "casars.data",
                 "notes": {
@@ -545,19 +574,27 @@ impl DataObjectSchemaBundle {
                     }
                 }
             }
-        })
+        });
+        for tool in TOOLS {
+            annotations["python"]["objects"][tool.name] = tool.python_annotation();
+        }
+        annotations
     }
 
-    /// Projection metadata mapping each object to its `casars.data` class.
+    /// Projection metadata mapping each object to its Python class: the
+    /// `casars.data` classes, and the CASA tools, which name their own module
+    /// and carry their parameter order.
     fn python_projections() -> ProviderProjectionMetadata {
+        let mut objects = vec![
+            json!({ "name": "Image", "class_name": "Image" }),
+            json!({ "name": "Table", "class_name": "Table" }),
+        ];
+        objects.extend(TOOLS.iter().map(|tool| tool.python_projection()));
         ProviderProjectionMetadata {
             cli: None,
             python: Some(json!({
                 "module": "casars.data",
-                "objects": [
-                    { "name": "Image", "class_name": "Image" },
-                    { "name": "Table", "class_name": "Table" }
-                ]
+                "objects": objects
             })),
         }
     }
@@ -590,9 +627,27 @@ mod tests {
             DATA_OBJECT_PROTOCOL_VERSION
         );
         assert_eq!(bundle.protocol.surface_kind, ProviderSurfaceKind::Object);
-        assert_eq!(bundle.semantic.objects.len(), 2);
-        assert_eq!(bundle.semantic.objects[0].name, "Image");
-        assert_eq!(bundle.semantic.objects[1].name, "Table");
+        let names = bundle
+            .semantic
+            .objects
+            .iter()
+            .map(|object| object.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["Image", "Table", "simulator", "measures", "quanta"]);
+        let annotated = bundle.annotations["python"]["objects"]
+            .as_object()
+            .expect("annotated objects");
+        let projected = bundle
+            .projections
+            .python
+            .as_ref()
+            .expect("python projection")["objects"]
+            .as_array()
+            .expect("projected objects")
+            .len();
+        assert_eq!((annotated.len(), projected), (names.len(), names.len()));
+        assert!(bundle.components.contains_key("CasaQuantityArgument"));
+        assert!(bundle.components.contains_key("CasaMeasureArgument"));
         assert_eq!(
             bundle
                 .projections

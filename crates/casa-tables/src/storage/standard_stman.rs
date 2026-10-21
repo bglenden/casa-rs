@@ -35,13 +35,14 @@ use super::canonical::{
     write_u16_be, write_u16_le, write_u32_be, write_u32_le,
 };
 use super::data_type::CasacoreDataType;
+use super::scalar_sources::SCALAR_BLOCK_CELLS;
 use super::stman_aipsio::{ColumnRawData, extract_row_value};
 use super::stman_array_file::{StManArrayFileReader, StManArrayFileWriter};
 use super::table_control::ColumnDescContents;
-use super::{RequiredScalarColumnData, ScalarColumnSource, ScalarColumnSources, StorageError};
+use super::{RequiredScalarColumnData, ScalarColumnSources, StorageError};
 
 const SSM_HEADER_SIZE: u64 = 512;
-const DEFAULT_SSM_BUCKET_SIZE: u32 = 32768;
+pub(super) const DEFAULT_SSM_BUCKET_SIZE: u32 = 32768;
 
 type SparseScalarCell = (usize, Option<ScalarValue>);
 type SparseScalarColumn = Option<Vec<SparseScalarCell>>;
@@ -2124,13 +2125,7 @@ pub(crate) fn write_ssm_file_scalar_columns(
             "SSM scalar column writer only supports scalar non-record columns".to_string(),
         ));
     }
-    let column_sources = ScalarColumnSources {
-        row_count: nrrow,
-        columns: scalar_columns
-            .iter()
-            .map(|values| ScalarColumnSource::Materialized(values.to_vec()))
-            .collect(),
-    };
+    let column_sources = ScalarColumnSources::materialized(nrrow, scalar_columns);
     write_ssm_file_scalar_column_sources(file_path, col_descs, &column_sources, big_endian)
 }
 
@@ -2573,32 +2568,53 @@ fn write_ssm_fixed_scalar_sources_streaming(
     let mut file = File::create(file_path)?;
     file.write_all(&header)?;
     let mut unused_string_buckets = Vec::new();
+    // One block of encoded cells, at most 8 bytes each, whichever column
+    // fills it.
+    let widest_cell = col_sizes_bits
+        .iter()
+        .map(|bits| bits.div_ceil(8).min(8))
+        .max()
+        .unwrap_or(0);
+    let mut encoded =
+        Vec::with_capacity(SCALAR_BLOCK_CELLS.min(rows_per_bucket as usize) * widest_cell);
     for bucket_index in 0..nr_data_buckets {
         let mut bucket = vec![0u8; bucket_size as usize];
         let first_row = bucket_index * rows_per_bucket as usize;
         let end_row = (first_row + rows_per_bucket as usize).min(nrrow);
         let rows_in_bucket = end_row - first_row;
-        let mut constant_columns = vec![false; ncol];
+        // A column is written whole when it is one constant run or its
+        // source encodes a block of cells; the rest go cell by cell.
+        let mut written_columns = vec![false; ncol];
         for (col_idx, col_desc) in col_descs.iter().enumerate() {
-            let Some([run]) = scalar_columns.scalar_runs(col_idx) else {
-                continue;
-            };
-            if run.start_row() != 0 {
-                continue;
+            let column_offset = column_offsets[col_idx] as usize;
+            if let Some([run]) = scalar_columns.scalar_runs(col_idx)
+                && run.start_row() == 0
+            {
+                written_columns[col_idx] = write_constant_scalar_column_to_bucket(
+                    &mut bucket,
+                    column_offset,
+                    rows_in_bucket,
+                    col_desc,
+                    run.value(),
+                    big_endian,
+                );
             }
-            constant_columns[col_idx] = write_constant_scalar_column_to_bucket(
-                &mut bucket,
-                column_offsets[col_idx] as usize,
-                rows_in_bucket,
-                col_desc,
-                run.value(),
-                big_endian,
-            );
+            if !written_columns[col_idx] {
+                written_columns[col_idx] = write_source_cells_to_bucket(
+                    &mut bucket[column_offset..],
+                    scalar_columns,
+                    col_idx,
+                    first_row..end_row,
+                    col_desc.data_type,
+                    big_endian,
+                    &mut encoded,
+                )?;
+            }
         }
         for row in first_row..end_row {
             let row_in_bucket = row - first_row;
             for (col_idx, col_desc) in col_descs.iter().enumerate() {
-                if constant_columns[col_idx] {
+                if written_columns[col_idx] {
                     continue;
                 }
                 let scalar_value = scalar_columns.value(col_idx, row)?;
@@ -2712,6 +2728,55 @@ fn repeat_fixed_scalar_bytes(
     }
 }
 
+/// Write `column`'s cells `rows` to its area of a bucket, `dst`, a block of
+/// [`SCALAR_BLOCK_CELLS`] at a time through `encoded`, if its source encodes
+/// them ([`ScalarColumnSources::encoded_cells`]). Returns whether it did;
+/// otherwise the caller writes the cells one by one.
+fn write_source_cells_to_bucket(
+    dst: &mut [u8],
+    scalar_columns: &ScalarColumnSources<'_>,
+    column: usize,
+    rows: std::ops::Range<usize>,
+    data_type: CasacoreDataType,
+    big_endian: bool,
+    encoded: &mut Vec<u8>,
+) -> Result<bool, StorageError> {
+    let mut written_bytes = 0;
+    let mut first = rows.start;
+    while first < rows.end {
+        let end = rows.end.min(first + SCALAR_BLOCK_CELLS);
+        encoded.clear();
+        if !scalar_columns.encoded_cells(column, first..end, data_type, big_endian, encoded)? {
+            return Ok(false);
+        }
+        // A block of Bool cells starts on a byte of packed bits.
+        let offset = if data_type == CasacoreDataType::TpBool {
+            (first - rows.start) / 8
+        } else {
+            written_bytes
+        };
+        write_encoded_cells_to_bucket(&mut dst[offset..], data_type, encoded);
+        written_bytes += encoded.len();
+        first = end;
+    }
+    Ok(true)
+}
+
+/// Write a column's consecutive cells, encoded as
+/// [`ScalarColumnSources::encoded_cells`] gives them, from the start of `dst`:
+/// a `Bool` as one bit per cell, other types as their bytes.
+fn write_encoded_cells_to_bucket(dst: &mut [u8], data_type: CasacoreDataType, encoded: &[u8]) {
+    if data_type == CasacoreDataType::TpBool {
+        for (cell, &value) in encoded.iter().enumerate() {
+            if value != 0 {
+                dst[cell / 8] |= 1 << (cell % 8);
+            }
+        }
+    } else {
+        dst[..encoded.len()].copy_from_slice(encoded);
+    }
+}
+
 /// Write a single cell value into a data bucket using the specified byte order.
 #[allow(clippy::too_many_arguments)]
 fn write_cell_to_bucket(
@@ -2813,17 +2878,14 @@ fn write_cell_to_bucket(
                         arr.shape().to_vec(),
                         arr.t().iter().cloned().collect::<Vec<_>>(),
                     ),
+                    // An unwritten cell of a variable-shape column stays
+                    // undefined: casacore's SSMIndStringColumn reads a zero
+                    // length as no array in the row.
+                    _ if col_desc.shape.is_empty() => return,
                     _ => {
-                        let shape = if col_desc.shape.is_empty() {
-                            Vec::new()
-                        } else {
-                            col_desc.shape.iter().map(|&dim| dim as usize).collect()
-                        };
-                        let count = if shape.is_empty() {
-                            0
-                        } else {
-                            shape.iter().product()
-                        };
+                        let shape: Vec<usize> =
+                            col_desc.shape.iter().map(|&dim| dim as usize).collect();
+                        let count = shape.iter().product();
                         (shape, vec![String::new(); count])
                     }
                 };

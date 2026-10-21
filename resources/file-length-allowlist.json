@@ -35,7 +35,6 @@
     "crates/casa-ms/src/transform.rs",
     "crates/casa-ms/src/visibility_buffer.rs",
     "crates/casa-ms/src/write_session.rs",
-    "crates/casa-ms/tests/ms_full_verify_vs_cpp.rs",
     "crates/casa-ms/tests/msexplore_casa_parity.rs",
     "crates/casa-ms/tests/msexplore_cli.rs",
     "crates/casa-provider-contracts/src/parameters.rs",

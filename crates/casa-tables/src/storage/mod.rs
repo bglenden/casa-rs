@@ -4,6 +4,7 @@
 pub(crate) mod canonical;
 pub(crate) mod data_type;
 pub(crate) mod incremental_stman;
+mod scalar_sources;
 mod selected_cells;
 pub(crate) mod standard_stman;
 pub(crate) mod stman_aipsio;
@@ -20,8 +21,8 @@ pub use tiled_stman::{
     TilePixel, TiledArrayStorage, TiledArrayStorageLayout, TiledFileIoStats,
     install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
     install_streamed_tiled_shape_column, install_streamed_tiled_shape_complex32_column,
-    install_streamed_tiled_shape_primitive_column, set_table_cache_budget_bytes,
-    table_cache_budget_bytes,
+    install_streamed_tiled_shape_primitive_column, install_undefined_tiled_shape_column,
+    set_table_cache_budget_bytes, table_cache_budget_bytes,
 };
 pub(crate) mod virtual_bitflags;
 pub(crate) mod virtual_compress;
@@ -30,10 +31,8 @@ pub(crate) mod virtual_forward;
 pub(crate) mod virtual_scaled_array;
 pub(crate) mod virtual_taql_column;
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, File};
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -43,10 +42,10 @@ use thiserror::Error;
 
 use crate::schema::{SchemaError, TableSchema};
 use crate::table::{
-    ColumnOverride, ColumnOverrides, GeneratedScalarColumn, GeneratedScalarValueRun,
-    RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, SelectedArray1DCells,
-    SelectedArray1DCellsMut, SelectedArray1DShape, SelectedArray2DCells, SelectedArray2DCellsMut,
-    SelectedArray2DShape, SelectedReadFootprint, StreamedScalarColumn, StreamedScalarType,
+    ColumnOverride, ColumnOverrides, RequiredScalarColumnDestination,
+    RequiredScalarColumnValuesMut, SelectedArray1DCells, SelectedArray1DCellsMut,
+    SelectedArray1DShape, SelectedArray2DCells, SelectedArray2DCellsMut, SelectedArray2DShape,
+    SelectedReadFootprint,
 };
 use crate::table_path::add_directory_for_link;
 
@@ -57,6 +56,9 @@ use self::incremental_stman::{
     read_ism_scalar_column_rows, write_ism_file, write_ism_file_indexed,
     write_ism_file_scalar_column_sources,
 };
+use self::scalar_sources::scalar_override_columns_for_group;
+pub use self::scalar_sources::streamed_scalar_columns_resident_bytes;
+pub(crate) use self::scalar_sources::{EncodedCells, ScalarColumnSources};
 pub(crate) use self::selected_cells::{cell_read_footprint, channel_read_footprint};
 use self::standard_stman::{
     read_ssm_array_column_rows, read_ssm_file, read_ssm_file_columns,
@@ -379,140 +381,6 @@ fn filter_rows_for_save(
         .collect()
 }
 
-pub(crate) enum ScalarColumnSource<'a> {
-    Materialized(Vec<Option<ScalarValue>>),
-    Generated(&'a GeneratedScalarColumn),
-    Streamed(RefCell<StreamedScalarColumnReader>),
-}
-
-impl<'a> ScalarColumnSource<'a> {
-    pub(crate) fn value(&self, row: usize) -> Result<Option<ScalarValue>, StorageError> {
-        match self {
-            Self::Materialized(values) => Ok(values.get(row).cloned().unwrap_or(None)),
-            Self::Generated(column) => Ok(column.value(row)),
-            Self::Streamed(reader) => reader.borrow_mut().value(row),
-        }
-    }
-
-    pub(crate) fn scalar_runs(&self) -> Option<&'a [GeneratedScalarValueRun]> {
-        match self {
-            Self::Materialized(_) => None,
-            Self::Generated(column) => column.scalar_runs(),
-            Self::Streamed(_) => None,
-        }
-    }
-}
-
-pub(crate) struct StreamedScalarColumnReader {
-    reader: BufReader<File>,
-    path: PathBuf,
-    row_count: usize,
-    scalar_type: StreamedScalarType,
-    next_row: usize,
-}
-
-impl StreamedScalarColumnReader {
-    fn open(column: &StreamedScalarColumn) -> Result<Self, StorageError> {
-        let file = File::open(column.path())?;
-        let expected_bytes = column
-            .row_count()
-            .checked_mul(column.scalar_type().record_bytes())
-            .ok_or_else(|| {
-                StorageError::FormatMismatch(format!(
-                    "streamed scalar source {} byte length overflow",
-                    column.path().display()
-                ))
-            })?;
-        let actual_bytes = usize::try_from(file.metadata()?.len()).map_err(|_| {
-            StorageError::FormatMismatch(format!(
-                "streamed scalar source {} is too large for this platform",
-                column.path().display()
-            ))
-        })?;
-        if actual_bytes != expected_bytes {
-            return Err(StorageError::FormatMismatch(format!(
-                "streamed scalar source {} has {actual_bytes} bytes, expected {expected_bytes}",
-                column.path().display()
-            )));
-        }
-        Ok(Self {
-            reader: BufReader::with_capacity(64 * 1024, file),
-            path: column.path().to_path_buf(),
-            row_count: column.row_count(),
-            scalar_type: column.scalar_type(),
-            next_row: 0,
-        })
-    }
-
-    fn value(&mut self, row: usize) -> Result<Option<ScalarValue>, StorageError> {
-        if row >= self.row_count {
-            return Err(StorageError::FormatMismatch(format!(
-                "streamed scalar source {} row {row} exceeds {} rows",
-                self.path.display(),
-                self.row_count
-            )));
-        }
-        if row != self.next_row {
-            let offset = row
-                .checked_mul(self.scalar_type.record_bytes())
-                .ok_or_else(|| {
-                    StorageError::FormatMismatch(format!(
-                        "streamed scalar source {} row offset overflow",
-                        self.path.display()
-                    ))
-                })?;
-            self.reader.seek(SeekFrom::Start(offset as u64))?;
-        }
-        let mut record = [0u8; 9];
-        self.reader
-            .read_exact(&mut record[..self.scalar_type.record_bytes()])?;
-        self.next_row = row + 1;
-        if record[0] == 0 {
-            return Ok(None);
-        }
-        let value = match self.scalar_type {
-            StreamedScalarType::Bool => ScalarValue::Bool(record[1] != 0),
-            StreamedScalarType::Int32 => {
-                ScalarValue::Int32(i32::from_le_bytes(record[1..5].try_into().unwrap()))
-            }
-            StreamedScalarType::Float32 => {
-                ScalarValue::Float32(f32::from_le_bytes(record[1..5].try_into().unwrap()))
-            }
-            StreamedScalarType::Float64 => {
-                ScalarValue::Float64(f64::from_le_bytes(record[1..9].try_into().unwrap()))
-            }
-        };
-        Ok(Some(value))
-    }
-}
-
-pub(crate) struct ScalarColumnSources<'a> {
-    row_count: usize,
-    columns: Vec<ScalarColumnSource<'a>>,
-}
-
-impl<'a> ScalarColumnSources<'a> {
-    pub(crate) fn row_count(&self) -> usize {
-        self.row_count
-    }
-
-    pub(crate) fn column_count(&self) -> usize {
-        self.columns.len()
-    }
-
-    pub(crate) fn value(
-        &self,
-        column: usize,
-        row: usize,
-    ) -> Result<Option<ScalarValue>, StorageError> {
-        self.columns[column].value(row)
-    }
-
-    pub(crate) fn scalar_runs(&self, column: usize) -> Option<&'a [GeneratedScalarValueRun]> {
-        self.columns[column].scalar_runs()
-    }
-}
-
 fn override_value_for_row(
     column_overrides: &ColumnOverrides,
     column: &str,
@@ -576,51 +444,6 @@ fn project_column_values_for_group<'a>(
             row.get(col_name)
         })
         .collect()
-}
-
-fn scalar_override_columns_for_group<'a>(
-    group_col_descs: &[table_control::ColumnDescContents],
-    column_overrides: &'a ColumnOverrides,
-    row_count: usize,
-) -> Result<Option<ScalarColumnSources<'a>>, StorageError> {
-    let mut columns = Vec::with_capacity(group_col_descs.len());
-    for desc in group_col_descs {
-        if desc.is_array || desc.is_record() {
-            return Ok(None);
-        }
-        let Some(override_value) = column_overrides.get(&desc.col_name) else {
-            return Ok(None);
-        };
-        match override_value {
-            ColumnOverride::Values(values) => {
-                let mut scalar_values = Vec::with_capacity(values.len());
-                for value in values {
-                    match value {
-                        Some(Value::Scalar(value)) => scalar_values.push(Some(value.clone())),
-                        Some(other) => {
-                            return Err(StorageError::FormatMismatch(format!(
-                                "column override {} expected scalar values, found {:?}",
-                                desc.col_name,
-                                other.kind()
-                            )));
-                        }
-                        None => scalar_values.push(None),
-                    }
-                }
-                columns.push(ScalarColumnSource::Materialized(scalar_values));
-            }
-            ColumnOverride::GeneratedScalar(column) => {
-                columns.push(ScalarColumnSource::Generated(column));
-            }
-            ColumnOverride::StreamedScalar(column) => {
-                columns.push(ScalarColumnSource::Streamed(RefCell::new(
-                    StreamedScalarColumnReader::open(column)?,
-                )));
-            }
-            ColumnOverride::Deferred => return Ok(None),
-        }
-    }
-    Ok(Some(ScalarColumnSources { row_count, columns }))
 }
 
 /// Composite storage manager that dispatches per data manager type.

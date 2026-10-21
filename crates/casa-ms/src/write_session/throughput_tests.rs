@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Instant;
 
-use casa_tables::{ColumnOverrides, GeneratedScalarColumn};
+use casa_tables::{ColumnOverrides, GeneratedScalarColumn, StreamedScalarValues};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 use num_complex::Complex32;
@@ -225,6 +225,271 @@ fn ignored_main_table_throughput_fixture() {
         "CASA_RS_MS_THROUGHPUT_REPORT={}",
         serde_json::to_string(&report).expect("serialize report")
     );
+}
+
+/// What a real producer sends (simulation, `split`): distinct DATA per row,
+/// per-row flags and uvw in `Rows` batches of the planned size, and every
+/// standard MAIN scalar column pushed a batch at a time
+/// (`CASA_RS_MS_THROUGHPUT_SCALARS=rows` pushes them cell by cell instead),
+/// all on the producer thread. Prints one report with the producer's build,
+/// scalar and send time next to the writer's telemetry.
+#[test]
+#[ignore = "explicit realistic MeasurementSet producer throughput probe"]
+fn ignored_realistic_main_table_throughput_fixture() {
+    let env_usize = |name: &str, default: usize| {
+        std::env::var(name)
+            .ok()
+            .map_or(default, |value| value.parse().expect("an integer"))
+    };
+    let root = std::env::var_os("CASA_RS_MS_THROUGHPUT_ROOT")
+        .map(PathBuf::from)
+        .expect("CASA_RS_MS_THROUGHPUT_ROOT must name an empty benchmark directory");
+    let channel_count = env_usize("CASA_RS_MS_THROUGHPUT_CHANNELS", 256);
+    let baselines = env_usize("CASA_RS_MS_THROUGHPUT_BASELINES", 903);
+    let row_count = env_usize("CASA_RS_MS_THROUGHPUT_ROWS", baselines * 360);
+    let columnar_scalars = std::env::var("CASA_RS_MS_THROUGHPUT_SCALARS").as_deref() != Ok("rows");
+    fs::create_dir_all(&root).expect("create benchmark root");
+    let output = root.join(format!("realistic-{channel_count}ch.ms"));
+    assert!(!output.exists(), "refusing to replace {}", output.display());
+    let total_started = Instant::now();
+
+    let output_target = MeasurementSetCreateTarget::prepare(&output, false).expect("output target");
+    let staging = output_target.staging_path().to_path_buf();
+    let mut measurement_set = MeasurementSet::create(
+        &staging,
+        MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+    )
+    .expect("create MeasurementSet descriptor");
+    fs::create_dir_all(&staging).expect("create staging directory");
+    populate_minimal_metadata(&mut measurement_set, channel_count);
+    populate_realistic_metadata(&mut measurement_set);
+    let resources = MeasurementSetWriteResources::from_system_memory(2).expect("resources");
+    let plan = MeasurementSetWritePlan::visibility_creation(
+        row_count,
+        CORRELATION_COUNT,
+        channel_count,
+        "ALMA",
+        resources,
+    )
+    .expect("visibility write plan");
+    let planned_maximum_resident_bytes = plan.maximum_resident_bytes();
+    let batch_rows = plan.batch_rows().max(1);
+    let mut session = MeasurementSetWriteSession::start(&staging, plan).expect("write session");
+
+    let samples = CORRELATION_COUNT * channel_count;
+    let [mut build_seconds, mut scalar_seconds, mut send_seconds] = [0.0f64; 3];
+    let mut first = 0;
+    while first < row_count {
+        let rows = first..row_count.min(first + batch_rows);
+        let started = Instant::now();
+        let mut batch = session.visibility_columns();
+        for row in rows.clone() {
+            push_distinct_data_row(row, samples, &mut batch.data);
+            batch.flag_row.push(row.is_multiple_of(97));
+            let baseline = (row % baselines) as f64;
+            batch.uvw.push([baseline, -0.5 * baseline, 0.1 * baseline]);
+        }
+        build_seconds += started.elapsed().as_secs_f64();
+        let started = Instant::now();
+        if columnar_scalars {
+            push_standard_scalar_columns(&mut session, rows.clone(), baselines);
+        } else {
+            for row in rows.clone() {
+                push_standard_scalars(&mut session, row, baselines);
+            }
+        }
+        scalar_seconds += started.elapsed().as_secs_f64();
+        let started = Instant::now();
+        session
+            .send_visibility_columns(batch)
+            .expect("send visibility batch");
+        send_seconds += started.elapsed().as_secs_f64();
+        first = rows.end;
+    }
+
+    let mut overrides = ColumnOverrides::for_row_count(row_count);
+    for column in ["DATA", "FLAG", "FLAG_CATEGORY", "UVW", "WEIGHT", "SIGMA"] {
+        overrides.insert_deferred(column);
+    }
+    let finish_started = Instant::now();
+    let telemetry = session
+        .save_and_finish(&mut measurement_set, &overrides)
+        .expect("finish MeasurementSet");
+    let finish_seconds = finish_started.elapsed().as_secs_f64();
+    output_target.commit().expect("publish MeasurementSet");
+    let application_write_seconds = total_started.elapsed().as_secs_f64();
+    let sync_started = Instant::now();
+    sync_tree(&output);
+    let durable_sync_seconds = sync_started.elapsed().as_secs_f64();
+    let (logical_size_bytes, _, file_count) = tree_size(&output);
+    let durable_write_seconds = total_started.elapsed().as_secs_f64();
+
+    let report = json!({
+        "schema_version": 1,
+        "kind": "measurement_set_realistic_producer_throughput_fixture",
+        "channel_count": channel_count,
+        "correlation_count": CORRELATION_COUNT,
+        "row_count": row_count,
+        "batch_rows": batch_rows,
+        "scalar_pushes": if columnar_scalars { "columns" } else { "rows" },
+        "logical_size_bytes": logical_size_bytes,
+        "file_count": file_count,
+        "planned_maximum_resident_bytes": planned_maximum_resident_bytes,
+        "producer_build_seconds": build_seconds,
+        "producer_scalar_seconds": scalar_seconds,
+        "producer_send_seconds": send_seconds,
+        "finish_seconds": finish_seconds,
+        "application_write_seconds": application_write_seconds,
+        "durable_sync_seconds": durable_sync_seconds,
+        "durable_write_seconds": durable_write_seconds,
+        "durable_logical_mb_per_second": rate(logical_size_bytes, durable_write_seconds),
+        "writer_telemetry": telemetry,
+        "peak_rss_bytes": peak_rss_bytes(),
+    });
+    println!(
+        "CASA_RS_MS_THROUGHPUT_REPORT={}",
+        serde_json::to_string(&report).expect("serialize report")
+    );
+}
+
+/// The rest of what readers such as `mstransform` require: 43 antennas, so
+/// that every benchmark ANTENNA1/ANTENNA2 exists, and one field.
+fn populate_realistic_metadata(measurement_set: &mut MeasurementSet) {
+    let mut antennas = measurement_set.antenna_mut().expect("ANTENNA");
+    for antenna in 1..43 {
+        let name = format!("BENCH{antenna:02}");
+        antennas
+            .add_antenna(
+                &name,
+                &name,
+                "GROUND-BASED",
+                "ALT-AZ",
+                [
+                    -1_601_185.0 + 30.0 * antenna as f64,
+                    -5_041_977.0,
+                    3_554_875.0,
+                ],
+                [0.0; 3],
+                12.0,
+            )
+            .expect("add antenna");
+    }
+    let direction = || {
+        Value::Array(ArrayValue::Float64(
+            ArrayD::from_shape_vec(vec![2, 1], vec![2.6, -0.5]).expect("direction shape"),
+        ))
+    };
+    measurement_set
+        .subtable_mut(SubtableId::Field)
+        .expect("FIELD")
+        .add_row(RecordValue::new(vec![
+            RecordField::new("CODE", Value::Scalar(ScalarValue::String(String::new()))),
+            RecordField::new("DELAY_DIR", direction()),
+            RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+            RecordField::new(
+                "NAME",
+                Value::Scalar(ScalarValue::String("target".to_string())),
+            ),
+            RecordField::new("NUM_POLY", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new("PHASE_DIR", direction()),
+            RecordField::new("REFERENCE_DIR", direction()),
+            RecordField::new("SOURCE_ID", Value::Scalar(ScalarValue::Int32(-1))),
+            RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(4.0e9))),
+        ]))
+        .expect("add FIELD row");
+}
+
+/// Append a DATA row whose values differ from row to row.
+fn push_distinct_data_row(row: usize, samples: usize, data: &mut Vec<Complex32>) {
+    let seed = (row as u32).wrapping_mul(0x85EB_CA6B);
+    data.extend((0..samples).map(|index| {
+        let mixed = (index as u32 ^ seed)
+            .wrapping_mul(0x9E37_79B9)
+            .rotate_left(13);
+        Complex32::new(
+            f32::from_bits(0x3f00_0000 | (mixed & 0x007f_ffff)),
+            f32::from_bits(0xbf00_0000 | (mixed.rotate_left(7) & 0x007f_ffff)),
+        )
+    }));
+}
+
+/// The 16 standard MAIN scalars of a batch, pushed a column at a time.
+fn push_standard_scalar_columns(
+    session: &mut MeasurementSetWriteSession,
+    rows: std::ops::Range<usize>,
+    baselines: usize,
+) {
+    let time = rows
+        .clone()
+        .map(|row| 4.0e9 + (row / baselines) as f64 * 10.0)
+        .collect::<Vec<_>>();
+    let baseline = rows.clone().map(|row| (row % baselines) as i32);
+    let antenna1 = baseline
+        .clone()
+        .map(|baseline| baseline / 43)
+        .collect::<Vec<_>>();
+    let antenna2 = baseline.map(|baseline| baseline % 43).collect::<Vec<_>>();
+    let flag_row = rows
+        .clone()
+        .map(|row| row.is_multiple_of(97))
+        .collect::<Vec<_>>();
+    let mut push = |column: &str, values: StreamedScalarValues<'_>| {
+        let id = session.scalar_column(column).expect("scalar column");
+        session
+            .push_scalar_column(id, values)
+            .expect("push scalar column");
+    };
+    push("ANTENNA1", StreamedScalarValues::Int32(&antenna1));
+    push("ANTENNA2", StreamedScalarValues::Int32(&antenna2));
+    push("FLAG_ROW", StreamedScalarValues::Bool(&flag_row));
+    push("TIME", StreamedScalarValues::Float64(&time));
+    push("TIME_CENTROID", StreamedScalarValues::Float64(&time));
+    for (column, value) in [
+        ("ARRAY_ID", ScalarValue::Int32(0)),
+        ("DATA_DESC_ID", ScalarValue::Int32(0)),
+        ("EXPOSURE", ScalarValue::Float64(10.0)),
+        ("FEED1", ScalarValue::Int32(0)),
+        ("FEED2", ScalarValue::Int32(0)),
+        ("FIELD_ID", ScalarValue::Int32(0)),
+        ("INTERVAL", ScalarValue::Float64(10.0)),
+        ("OBSERVATION_ID", ScalarValue::Int32(0)),
+        ("PROCESSOR_ID", ScalarValue::Int32(0)),
+        ("SCAN_NUMBER", ScalarValue::Int32(1)),
+        ("STATE_ID", ScalarValue::Int32(0)),
+    ] {
+        let id = session.scalar_column(column).expect("scalar column");
+        session
+            .push_repeated_scalar(id, Some(value), rows.len())
+            .expect("push repeated scalar");
+    }
+}
+
+/// The 16 standard MAIN scalars of one row, pushed by name a cell at a time.
+fn push_standard_scalars(session: &mut MeasurementSetWriteSession, row: usize, baselines: usize) {
+    let time = 4.0e9 + (row / baselines) as f64 * 10.0;
+    let baseline = (row % baselines) as i32;
+    for (column, value) in [
+        ("ANTENNA1", ScalarValue::Int32(baseline / 43)),
+        ("ANTENNA2", ScalarValue::Int32(baseline % 43)),
+        ("ARRAY_ID", ScalarValue::Int32(0)),
+        ("DATA_DESC_ID", ScalarValue::Int32(0)),
+        ("EXPOSURE", ScalarValue::Float64(10.0)),
+        ("FEED1", ScalarValue::Int32(0)),
+        ("FEED2", ScalarValue::Int32(0)),
+        ("FIELD_ID", ScalarValue::Int32(0)),
+        ("FLAG_ROW", ScalarValue::Bool(row.is_multiple_of(97))),
+        ("INTERVAL", ScalarValue::Float64(10.0)),
+        ("OBSERVATION_ID", ScalarValue::Int32(0)),
+        ("PROCESSOR_ID", ScalarValue::Int32(0)),
+        ("SCAN_NUMBER", ScalarValue::Int32(1)),
+        ("STATE_ID", ScalarValue::Int32(0)),
+        ("TIME", ScalarValue::Float64(time)),
+        ("TIME_CENTROID", ScalarValue::Float64(time)),
+    ] {
+        session
+            .push_scalar_row(column, Some(value))
+            .expect("push scalar");
+    }
 }
 
 fn estimated_physical_bytes_per_row(channel_count: usize) -> usize {

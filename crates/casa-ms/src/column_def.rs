@@ -104,19 +104,20 @@ pub enum KeywordValueType {
 /// Returns [`SchemaError::DuplicateColumn`] if any two columns share the
 /// same name.
 pub fn build_table_schema(columns: &[ColumnDef]) -> Result<TableSchema, SchemaError> {
-    let col_schemas: Vec<ColumnSchema> = columns
-        .iter()
-        .map(|def| match def.column_kind {
-            ColumnKind::Scalar => ColumnSchema::scalar(def.name, def.data_type),
-            ColumnKind::FixedArray { shape } => {
-                ColumnSchema::array_fixed(def.name, def.data_type, shape.to_vec())
-            }
-            ColumnKind::VariableArray { ndim } => {
-                ColumnSchema::array_variable(def.name, def.data_type, Some(ndim))
-            }
-        })
-        .collect();
-    TableSchema::new(col_schemas)
+    TableSchema::new(columns.iter().map(column_schema).collect())
+}
+
+/// The [`ColumnSchema`] of one [`ColumnDef`], without its keywords.
+pub fn column_schema(def: &ColumnDef) -> ColumnSchema {
+    match def.column_kind {
+        ColumnKind::Scalar => ColumnSchema::scalar(def.name, def.data_type),
+        ColumnKind::FixedArray { shape } => {
+            ColumnSchema::array_fixed(def.name, def.data_type, shape.to_vec())
+        }
+        ColumnKind::VariableArray { ndim } => {
+            ColumnSchema::array_variable(def.name, def.data_type, Some(ndim))
+        }
+    }
 }
 
 #[cfg(test)]

@@ -17,6 +17,17 @@ CASA behaviours casa-rs does not follow:
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide).
+Simulator behaviours casa-rs does not follow:
+[TIME as TAI](#the-simulator-stores-tai-as-utc),
+[shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
+[relabelled spectral-window frames](#setspwindow-relabels-every-spectral-windows-frame),
+[unconvertible coordinate systems](#setconfig-accepts-coordinate-systems-it-cannot-convert),
+[quantities in the wrong units](#the-tools-convert-quantities-whose-units-do-not-conform),
+[calls before `setconfig`](#simulator-calls-before-setconfig-abort-the-process),
+[a zero integration time](#a-zero-integration-time-adds-rows-without-bound),
+[`readantenna`'s observatory fallback](#simutilreadantenna-averages-a-stale-loop-variable),
+[`readantenna`'s names after blank lines](#simutilreadantenna-names-antennas-after-blank-lines),
+[the measures tool's default frame](#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -414,3 +425,154 @@ ALMA's 10.7 m effective diameter was chosen against CASA's beam, so casa-rs
 tabulates the same expression (`casa_numerics::AnnularApertureVoltageTable`)
 and its predictions match CASA's to 1.6e-7. The simulator's beam test checks
 CASA's formula rather than the physical one.
+
+## The simulator stores TAI as UTC
+
+- Date noted: 2026-10-20
+- Status: CASA behaviour casa-rs does not follow (#841, plan decision 5)
+- Affected code: `ms/MSOper/NewMSSimulator.cc` (`observe`, lines 1262-1280)
+
+`observe` converts the reference epoch to TAI and adds its seconds to the
+start and stop offsets, then writes the result into TIME, whose MEASINFO says
+UTC. The data therefore start 37 s (TAI − UTC since 2017) after the requested
+epoch. The geometry is computed with the stored number read as UT1 (line
+1546), so CASA's data are self-consistent; only the schedule is shifted.
+
+casa-rs stores the requested UTC, and also reads the stored TIME as UT1 for
+the geometry, so its uvw agree with CASA's at equal stored TIME. A parity run
+requests a start 37 s later on the casa-rs side and compares rows at equal
+TIME (`tools/simulation/compare_sm_ms.py`).
+
+## The simulator charges shadowing to the antenna in front
+
+- Date noted: 2026-10-21
+- Status: likely CASA bug; casa-rs does not follow it (#841)
+- Affected code: `ms/MSOper/NewMSSimulator.cc` (`blockage`, lines 1780-1815)
+
+A row's uvw is `R·(X₁ − X₂)`, so `w > 0` puts antenna 1 nearer the source.
+`blockage` zeroes antenna 2's blocked fraction when `w > 0` and antenna 1's
+when `w < 0`, which leaves the blockage on the antenna in front, the one that
+does the blocking. CASA's own flagger (`FlagAgentShadow`, since casapy 4.1)
+flags the antenna behind. casa-rs's simulator flags the antenna behind
+(`casa_ms::shadowing::ShadowedAntenna::Behind`); the CASA convention remains
+available as `CasaSimulatorFront`.
+
+## `setspwindow` relabels every spectral window's frame
+
+- Date noted: 2026-10-21
+- Status: CASA bug; casa-rs does not follow it (#841)
+- Affected code: `ms/MSOper/NewMSSimulator.cc` (`initSpWindows`, line 750)
+
+Each `setspwindow` call ends with `measFreqRef().fillColumn(freqType)`, which
+writes the new window's frame into MEAS_FREQ_REF for every row of
+SPECTRAL_WINDOW. A TOPO window followed by an LSRK one ends with both
+labelled LSRK, although their frequencies were given in different frames.
+casa-rs writes each window's own frame.
+
+## `setconfig` accepts coordinate systems it cannot convert
+
+- Date noted: 2026-10-21
+- Status: CASA bug; casa-rs does not follow it (#841)
+- Affected code: `ms/MSOper/NewMSSimulator.cc` (`initAnt`, lines 452-456;
+  `longlat2global`, lines 566-575)
+
+For `coordsystem='longlat'`, `longlat2global` logs SEVERE "not yet
+implemented"; for an unknown name, `initAnt` logs SEVERE "Unknown coordinate
+system type". In both cases the antennas are added at the Earth's centre and
+`setconfig` returns True, so the script continues with an array whose
+geometry is meaningless. In casa-rs, `longlat` raises RuntimeError and an
+unknown name logs CASA's message and returns False; neither adds antennas.
+
+## The tools convert quantities whose units do not conform
+
+- Date noted: 2026-10-21
+- Status: CASA bug; casa-rs does not follow it (#841)
+- Affected code: casatools' argument conversion (`casaQuantity`,
+  `casaMDirection`) used by `simulator_cmpt.cc` and the other tools
+
+A tool argument such as `integrationtime` or `freq` is read as a quantity
+and converted to the unit the method needs without checking that the units
+conform. CASA 6.7.6 takes `integrationtime='10Jy'` as 1e-25 s,
+`integrationtime='10m'` (metres, perhaps meant as minutes) as 10 s and
+`freq='1s'` as 1 Hz. A direction string whose second or third token does
+not read keeps the previous value, so `'J2000 12h00m00 garbage'` has a
+declination of 180°. casa-rs refuses both with casacore's "From/to units
+not consistent" or a parse error. The conversions CASA defines between
+dimensions are kept: a dimensionless number is the SI unit, an angle is a
+time at 360° a day, and a length is a frequency through c.
+
+## Simulator calls before `setconfig` abort the process
+
+- Date noted: 2026-10-21
+- Status: CASA bug; casa-rs does not follow it (#841)
+- Affected code: `ms/MSOper/NewMSSimulator.cc` (`initFeeds`, `observe`)
+
+`setfeed` or `observe` before any `setconfig` builds a table slice over zero
+antennas. casacore's array code throws `std::runtime_error` (an empty
+Slicer), which the tool binding does not catch, and the Python process
+aborts. casa-rs raises RuntimeError from `setfeed`, and `observe` returns
+False with "Antenna information not yet defined".
+
+## A zero integration time adds rows without bound
+
+- Date noted: 2026-10-21
+- Status: CASA bug; casa-rs does not follow it (#841)
+- Affected code: `simulator_cmpt.cc` (`settimes`, line 221);
+  `ms/MSOper/NewMSSimulator.cc` (`observe`)
+
+`settimes` asserts only that the integration time is not negative, and
+`settimes()` with no arguments sets 0 s. `observe` then divides the scan's
+span by zero to count integrations; over a nonzero span this adds billions of
+rows before the disk fills. casa-rs's `observe` returns False for an
+integration time that is not positive ("observe: the integration time must be
+positive").
+
+## `simutil.readantenna` averages a stale loop variable
+
+- Date noted: 2026-10-21
+- Status: CASA bug; casa-rs does not follow it (#841)
+- Affected code: `casatasks/src/private/simutil.py` (`readantenna`, lines
+  1783-1791)
+
+When a configuration file gives absolute coordinates, names no known
+observatory and has no `COFA` header, `readantenna` means to place the
+observatory at the mean antenna position. It averages `x`, `y` and `z`,
+which are the loop variables of the UTM branch, rather than the antenna
+lists `stnx`, `stny` and `stnz`. For an XYZ file the names are unbound and
+the call raises UnboundLocalError; for a UTM file the observatory becomes
+the last antenna. It then assigns `xyz2long`'s (longitude, latitude,
+height) to (latitude, longitude, height), so the two angles are swapped.
+casa-rs converts the mean antenna position, as the comment intends
+(`casa_simulation::readantenna`, which lists its smaller divergences).
+
+## `simutil.readantenna` names antennas after blank lines
+
+- Date noted: 2026-10-21
+- Status: CASA bug; casa-rs does not follow it (#841)
+- Affected code: `casatasks/src/private/simutil.py` (`readantenna`)
+
+`readantenna` skips a line with fewer than four values, but still appends a
+default `A%02d` pad and antenna name for it, so the names run ahead of the
+positions by one for every such line. CASA's own `WSRT.cfg` has two blank
+lines, so
+`readantenna` returns 16 names for 14 antennas, starting `A00, A01, RT0`,
+and a CASA simulation of WSRT names every dish wrongly. casa-rs skips such
+lines entirely.
+
+## The measures tool converts with a frame at MJD 0 and the geocentre
+
+- Date noted: 2026-10-21
+- Status: CASA behaviour; casa-rs does not follow it (#841)
+- Affected code: `casatools/src/tools/measures/measures_cmpt.cc` (the
+  `measures` constructor)
+
+The `measures` tool starts with a frame of a default epoch (MJD 0 UTC), a
+default position (the zero vector) and a default direction (the J2000
+pole). A conversion that needs a frame element `me.doframe` has not set uses
+these without a warning, so `me.measure(me.direction('J2000', '12h00m00',
+'45d00m00'), 'AZEL')` in a fresh tool returns an azimuth and elevation for
+1858-11-17 at the centre of the Earth (casacore only notes, at INFO, that MJD
+0 is outside its Earth-orientation table). After `me.done()` the frame is
+empty and the same call fails with "Cannot convert due to missing frame
+information". casa-rs's tool starts with the empty frame, so such a
+conversion always fails with that message until `doframe` sets the element.

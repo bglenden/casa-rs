@@ -9,6 +9,7 @@ mod lattice_oracle_impl;
 pub mod measures_interop;
 mod measures_oracle;
 mod measures_sequence;
+pub mod ms_digest;
 pub mod ms_interop;
 mod oracle_ffi;
 mod oracle_runtime;

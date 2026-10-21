@@ -234,7 +234,11 @@ fn parse_exponent(bytes: &[u8], pos: &mut usize) -> i32 {
     }
 
     while *pos < bytes.len() && bytes[*pos].is_ascii_digit() {
-        value = value * 10 + (bytes[*pos] - b'0') as i32;
+        // Saturate: unit strings come from users (`Quantity::read`), and a
+        // long digit run must not overflow.
+        value = value
+            .saturating_mul(10)
+            .saturating_add((bytes[*pos] - b'0') as i32);
         has_digits = true;
         *pos += 1;
     }

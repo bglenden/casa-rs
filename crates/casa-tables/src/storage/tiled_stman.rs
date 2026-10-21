@@ -373,11 +373,15 @@ use super::{StorageError, StorageProfiler, TileLayoutPlanner};
 mod casacore_tiled_data_tests;
 #[cfg(test)]
 mod casacore_tiled_order_tests;
+mod shape_cube;
+use shape_cube::{DirectShapeCubeWriter, ShapeCubeWorkingSet};
 mod tile_columns;
 use tile_columns::{
     TileColumns, bound_tile_layout, in_tile_order, rows_reached, tile_columns, tile_target,
     untiled_column_error, writer_tile_order,
 };
+mod undefined_column;
+pub use undefined_column::install_undefined_tiled_shape_column;
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -6441,10 +6445,18 @@ impl StreamingTiledShapeComplex32Writer {
         Ok(())
     }
 
-    /// Append a batch of row cells with one timing and dispatch boundary.
-    pub fn push_rows(&mut self, rows: &[Vec<Complex32>]) -> Result<(), StorageError> {
+    /// Append row cells stored back to back, with one timing and dispatch
+    /// boundary.
+    pub fn push_rows(&mut self, rows: &[Complex32]) -> Result<(), StorageError> {
+        let cell_values: usize = self.cell_shape.iter().product();
+        if cell_values == 0 || !rows.len().is_multiple_of(cell_values) {
+            return Err(StorageError::FormatMismatch(format!(
+                "streamed TiledShape rows hold {} values, not a whole number of {cell_values}-value cells",
+                rows.len()
+            )));
+        }
         let assemble_started = Instant::now();
-        for row in rows {
+        for row in rows.chunks_exact(cell_values) {
             self.push_row_untimed(row)?;
         }
         self.assemble_seconds += assemble_started.elapsed().as_secs_f64();
@@ -6826,21 +6838,6 @@ impl StreamedTiledShapeCubeLayout {
     }
 }
 
-#[derive(Debug)]
-struct DirectShapeCubeWriter {
-    temp_data_path: PathBuf,
-    file: File,
-    cell_shape: Vec<usize>,
-    row_count: usize,
-    rows_written: usize,
-    tile_shape: Vec<usize>,
-    tile_plans: Vec<StreamedPrimitiveTilePlan>,
-    non_row_tile_count: usize,
-    rows_per_tile: usize,
-    tile_cell_nelem: usize,
-    bucket_size: usize,
-}
-
 #[derive(Debug, Clone)]
 struct DirectShapeCubePayload {
     temp_data_path: PathBuf,
@@ -6911,6 +6908,9 @@ pub struct StreamingTiledShapeWriter {
     rows_written: usize,
     shape_to_cube: HashMap<Vec<usize>, usize>,
     cubes: Vec<DirectShapeCubeWriter>,
+    /// The tile-row scratch every cube writes its rows through, sized for
+    /// the largest cube's tile row.
+    tile_row: Vec<u8>,
     row_map: Vec<u32>,
     cube_map: Vec<u32>,
     pos_map: Vec<u32>,
@@ -6946,8 +6946,7 @@ impl StreamingTiledShapeWriter {
         let mut row_count = 0usize;
         let mut cell_rank = None;
         let mut default_tile_shape = Vec::new();
-        let elem_size = value_type.elem_size();
-        let mut working_bytes = 0usize;
+        let mut working_set = ShapeCubeWorkingSet::default();
 
         for (cube_index, layout) in layouts.into_iter().enumerate() {
             if layout.row_count == 0 {
@@ -7002,120 +7001,44 @@ impl StreamingTiledShapeWriter {
                     "streamed TiledShape row maps support at most u32::MAX rows".to_string(),
                 ));
             }
-            let cell_nelem = layout.cell_shape.iter().try_fold(1usize, |acc, &dim| {
-                acc.checked_mul(dim).ok_or_else(|| {
-                    StorageError::FormatMismatch(
-                        "streamed TiledShape cell size overflows usize".to_string(),
-                    )
-                })
-            })?;
-            let tile_cell_nelem = layout.tile_shape[..layout.cell_shape.len()]
-                .iter()
-                .try_fold(1usize, |acc, &dim| {
-                    acc.checked_mul(dim).ok_or_else(|| {
-                        StorageError::FormatMismatch(
-                            "streamed TiledShape tile size overflows usize".to_string(),
-                        )
-                    })
-                })?;
-            let row_bytes = cell_nelem.checked_mul(elem_size).ok_or_else(|| {
-                StorageError::FormatMismatch(
-                    "streamed TiledShape row byte size overflows usize".to_string(),
-                )
-            })?;
-            let tile_row_bytes = tile_cell_nelem.checked_mul(elem_size).ok_or_else(|| {
-                StorageError::FormatMismatch(
-                    "streamed TiledShape tile-row size overflows usize".to_string(),
-                )
-            })?;
-            let packed_bool_bytes = if value_type == StreamedTiledShapeValueType::Bool {
-                tile_cell_nelem.div_ceil(8) + 1
-            } else {
-                0
-            };
-            working_bytes = working_bytes.max(
-                row_bytes
-                    .checked_add(tile_row_bytes)
-                    .and_then(|bytes| bytes.checked_add(packed_bool_bytes))
-                    .ok_or_else(|| {
-                        StorageError::FormatMismatch(
-                            "streamed TiledShape working set overflows usize".to_string(),
-                        )
-                    })?,
-            );
-
-            let mut cube_shape = layout.cell_shape.clone();
-            cube_shape.push(layout.row_count);
-            let tiles_per_dim: Vec<usize> = cube_shape
-                .iter()
-                .zip(layout.tile_shape.iter())
-                .map(|(&cube, &tile)| cube.div_ceil(tile))
-                .collect();
-            let cell_tiles_per_dim = &tiles_per_dim[..layout.cell_shape.len()];
-            let non_row_tile_count = cell_tiles_per_dim.iter().product::<usize>();
-            let tile_plans = (0..non_row_tile_count)
-                .map(|tile_index| {
-                    let tile_pos = linear_to_nd(tile_index, cell_tiles_per_dim);
-                    let cell_start: Vec<usize> = tile_pos
-                        .iter()
-                        .enumerate()
-                        .map(|(axis, &pos)| pos * layout.tile_shape[axis])
-                        .collect();
-                    let actual_extent: Vec<usize> = cell_start
-                        .iter()
-                        .enumerate()
-                        .map(|(axis, &start)| {
-                            std::cmp::min(layout.tile_shape[axis], layout.cell_shape[axis] - start)
-                        })
-                        .collect();
-                    StreamedPrimitiveTilePlan {
-                        cell_start,
-                        actual_extent,
-                    }
-                })
-                .collect();
-            let (bucket_size, _) =
-                compute_tile_layout(&[value_type.casacore_type()], &layout.tile_shape);
-            let tile_count = tiles_per_dim.iter().try_fold(1usize, |acc, &count| {
-                acc.checked_mul(count).ok_or_else(|| {
-                    StorageError::FormatMismatch(
-                        "streamed TiledShape tile count overflows usize".to_string(),
-                    )
-                })
-            })?;
-            let bytes_written = tile_count.checked_mul(bucket_size).ok_or_else(|| {
-                StorageError::FormatMismatch(
-                    "streamed TiledShape file size overflows usize".to_string(),
-                )
-            })?;
-            let cube_temp_path = streamed_shape_cube_temp_path(&temp_data_path, cube_index);
-            let file = OpenOptions::new()
-                .create(true)
-                .truncate(true)
-                .read(true)
-                .write(true)
-                .open(&cube_temp_path)?;
-            file.set_len(bytes_written as u64)?;
-            let rows_per_tile = *layout.tile_shape.last().expect("validated tile row axis");
-            cubes.push(DirectShapeCubeWriter {
-                temp_data_path: cube_temp_path,
-                file,
-                cell_shape: layout.cell_shape,
-                row_count: layout.row_count,
-                rows_written: 0,
-                tile_shape: layout.tile_shape,
-                tile_plans,
-                non_row_tile_count,
-                rows_per_tile,
-                tile_cell_nelem,
-                bucket_size,
-            });
+            let (cube, cube_working_set) = DirectShapeCubeWriter::create(
+                streamed_shape_cube_temp_path(&temp_data_path, cube_index),
+                layout,
+                value_type,
+            )?;
+            working_set = working_set.max(cube_working_set);
+            cubes.push(cube);
         }
 
+        // The largest encoded row, tile row and packed Bool tile row are
+        // held at once, though they may belong to different cubes: the
+        // tile-row scratch is shared and sized for the largest.
+        let mut working_bytes = working_set.bytes().ok_or_else(|| {
+            StorageError::FormatMismatch(
+                "streamed TiledShape working set overflows usize".to_string(),
+            )
+        })?;
         if working_bytes > memory_budget_bytes {
             return Err(StorageError::FormatMismatch(format!(
                 "streamed TiledShape working set {working_bytes} exceeds memory budget {memory_budget_bytes}"
             )));
+        }
+        // Each cube assembles its bands in memory when they fit the budget
+        // beside the working set and the largest row map the rows can need.
+        let band_bytes = cubes
+            .iter()
+            .map(DirectShapeCubeWriter::band_bytes)
+            .sum::<usize>();
+        let largest_row_map = row_count.saturating_mul(3 * std::mem::size_of::<u32>());
+        if working_bytes
+            .saturating_add(band_bytes)
+            .saturating_add(largest_row_map)
+            <= memory_budget_bytes
+        {
+            cubes
+                .iter_mut()
+                .for_each(DirectShapeCubeWriter::buffer_bands);
+            working_bytes += band_bytes;
         }
 
         Ok(Self {
@@ -7127,6 +7050,7 @@ impl StreamingTiledShapeWriter {
             rows_written: 0,
             shape_to_cube,
             cubes,
+            tile_row: vec![0; working_set.tile_row_bytes],
             row_map: Vec::new(),
             cube_map: Vec::new(),
             pos_map: Vec::new(),
@@ -7256,6 +7180,7 @@ impl StreamingTiledShapeWriter {
                         "streamed TiledShape final file size overflows usize".to_string(),
                     )
                 })?;
+            cube.finish_band()?;
             cube.file.flush()?;
             cube.file.set_len(actual_bytes_written as u64)?;
             remapped_cube_indices[old_cube_index + 1] = (cubes.len() + 1) as u32;
@@ -7343,9 +7268,8 @@ impl StreamingTiledShapeWriter {
         let global_row = self.rows_written as u32;
         let pos_in_cube = cube.rows_written as u32;
         let write_started = Instant::now();
-        write_direct_shape_cube_row(cube, self.value_type, encoded)?;
+        cube.write_row(self.value_type, encoded, &mut self.tile_row)?;
         self.write_seconds += write_started.elapsed().as_secs_f64();
-        cube.rows_written += 1;
         self.rows_written += 1;
         self.append_row_mapping(global_row, (cube_index + 1) as u32, pos_in_cube)?;
         Ok(())
@@ -7398,54 +7322,6 @@ fn streamed_shape_cube_temp_path(base: &Path, cube_index: usize) -> PathBuf {
     let mut path = base.as_os_str().to_os_string();
     path.push(format!(".cube{cube_index}"));
     PathBuf::from(path)
-}
-
-fn write_direct_shape_cube_row(
-    cube: &mut DirectShapeCubeWriter,
-    value_type: StreamedTiledShapeValueType,
-    encoded: &[u8],
-) -> Result<(), StorageError> {
-    let elem_size = value_type.elem_size();
-    let cell_rank = cube.cell_shape.len();
-    let tile_cell_shape = &cube.tile_shape[..cell_rank];
-    let row_tile_index = cube.rows_written / cube.rows_per_tile;
-    let row_in_tile = cube.rows_written % cube.rows_per_tile;
-    let mut tile_row = vec![0u8; cube.tile_cell_nelem * elem_size];
-
-    for (cell_tile_index, plan) in cube.tile_plans.iter().enumerate() {
-        tile_row.fill(0);
-        copy_cube_to_tile(
-            encoded,
-            &cube.cell_shape,
-            &mut tile_row,
-            tile_cell_shape,
-            &plan.cell_start,
-            &plan.actual_extent,
-            elem_size,
-        );
-        let tile_index = row_tile_index * cube.non_row_tile_count + cell_tile_index;
-        let bucket_start = tile_index * cube.bucket_size;
-        if value_type == StreamedTiledShapeValueType::Bool {
-            let bit_offset = row_in_tile * cube.tile_cell_nelem;
-            let byte_offset = bit_offset / 8;
-            let bit_in_byte = bit_offset % 8;
-            let byte_count = (bit_in_byte + cube.tile_cell_nelem).div_ceil(8);
-            let mut packed = vec![0u8; byte_count];
-            cube.file
-                .seek(SeekFrom::Start((bucket_start + byte_offset) as u64))?;
-            cube.file.read_exact(&mut packed)?;
-            write_bool_bits_from_bytes(&mut packed, bit_in_byte, &tile_row);
-            cube.file
-                .seek(SeekFrom::Start((bucket_start + byte_offset) as u64))?;
-            cube.file.write_all(&packed)?;
-        } else {
-            let row_offset = row_in_tile * cube.tile_cell_nelem * elem_size;
-            cube.file
-                .seek(SeekFrom::Start((bucket_start + row_offset) as u64))?;
-            cube.file.write_all(&tile_row)?;
-        }
-    }
-    Ok(())
 }
 
 /// Install a completed heterogeneous payload using casacore's canonical

@@ -34,14 +34,28 @@ use super::canonical::{
     write_u32_be, write_u32_le,
 };
 use super::data_type::CasacoreDataType;
+use super::scalar_sources::SCALAR_BLOCK_CELLS;
 use super::stman_aipsio::ColumnRawData;
 use super::stman_aipsio::scalar_value_is_default;
 use super::stman_array_file::StManArrayFileReader;
 use super::table_control::ColumnDescContents;
-use super::{RequiredScalarColumnData, ScalarColumnSource, ScalarColumnSources, StorageError};
+use super::{EncodedCells, RequiredScalarColumnData, ScalarColumnSources, StorageError};
 use crate::table::GeneratedScalarValueRun;
 
 const ISM_HEADER_SIZE: u64 = 512;
+
+/// Rows of values a scalar bucket is sized for.
+const ISM_BUCKET_TARGET_ROWS: usize = 32;
+
+/// The most a fixed-width scalar column adds to a bucket's size per row:
+/// an 8-byte value and its 8-byte index entry.
+const ISM_MAX_SCALAR_ROW_BYTES: usize = 16;
+
+/// Heap the scalar source writer holds per column while it assembles a
+/// bucket: the bucket it writes, beside the data and index it is building,
+/// which grow by doubling to at most twice their bytes.
+pub(super) const ISM_SCALAR_BUCKET_BYTES_PER_COLUMN: usize =
+    4 * ISM_BUCKET_TARGET_ROWS * ISM_MAX_SCALAR_ROW_BYTES;
 
 type SparseScalarRowValues = Vec<(usize, Option<casa_types::ScalarValue>)>;
 
@@ -2180,13 +2194,7 @@ pub(crate) fn write_ism_file_scalar_columns(
             "ISM scalar column writer only supports scalar non-record columns".to_string(),
         ));
     }
-    let column_sources = ScalarColumnSources {
-        row_count: nrrow,
-        columns: scalar_columns
-            .iter()
-            .map(|values| ScalarColumnSource::Materialized(values.to_vec()))
-            .collect(),
-    };
+    let column_sources = ScalarColumnSources::materialized(nrrow, scalar_columns);
     write_ism_file_scalar_column_sources(file_path, col_descs, &column_sources, big_endian)
 }
 
@@ -2238,7 +2246,7 @@ pub(crate) fn write_ism_file_scalar_column_sources(
     let bucket_size = if bytes_per_row == 0 {
         128u32
     } else {
-        let target = (bytes_per_row * 32 + 4) as u32;
+        let target = (bytes_per_row * ISM_BUCKET_TARGET_ROWS + 4) as u32;
         target.clamp(128, 327680)
     };
 
@@ -2331,55 +2339,64 @@ pub(crate) fn write_ism_file_scalar_column_sources(
         };
         bucket_start_rows.push(0);
 
-        for row_idx in 0..nrrow {
-            let rel_row = (row_idx - *bucket_start_rows.last().unwrap()) as u32;
-
-            let mut new_data_estimate = 0usize;
-            let mut row_encoded_values = Vec::with_capacity(ncol);
-            for col_idx in 0..ncol {
+        // Each column's cells are encoded a block of rows at a time; the
+        // bucket decisions then run row by row over the encoded bytes.
+        let mut cells = (0..ncol)
+            .map(|_| EncodedCells::default())
+            .collect::<Vec<_>>();
+        for block_start in (0..nrrow).step_by(SCALAR_BLOCK_CELLS) {
+            let block = block_start..nrrow.min(block_start + SCALAR_BLOCK_CELLS);
+            for (col_idx, cells) in cells.iter_mut().enumerate() {
                 let (dt, nrelem) = col_info[col_idx];
-                let scalar_value = scalar_columns.value(col_idx, row_idx)?;
-                let encoded =
-                    encode_scalar_column_value_bytes(scalar_value.as_ref(), dt, nrelem, big_endian);
-                if rel_row == 0 || encoded != last_values[col_idx] {
-                    new_data_estimate += encoded.len();
-                }
-                row_encoded_values.push(encoded);
+                cells.fill(
+                    scalar_columns,
+                    col_idx,
+                    block.clone(),
+                    dt,
+                    big_endian,
+                    |value| encode_scalar_column_value_bytes(value, dt, nrelem, big_endian),
+                )?;
             }
+            for row_idx in block {
+                let cell = |col_idx: usize| cells[col_idx].cell(row_idx - block_start);
+                let rel_row = (row_idx - *bucket_start_rows.last().unwrap()) as u32;
 
-            let current_index_size: usize = current
-                .col_indices
-                .iter()
-                .map(|(row_nrs, _)| 4 + (row_nrs.len() + 1) * 4 + (row_nrs.len() + 1) * 4)
-                .sum();
-            let total_estimate =
-                4 + current.data.len() + new_data_estimate + current_index_size + ncol * 12;
+                let new_data_estimate: usize = (0..ncol)
+                    .map(cell)
+                    .zip(&last_values)
+                    .filter(|(encoded, last)| rel_row == 0 || encoded != last)
+                    .map(|(encoded, _)| encoded.len())
+                    .sum();
 
-            if rel_row > 0 && total_estimate > bucket_size as usize {
-                write_bucket(&mut file, &current)?;
-                nr_buckets += 1;
-                current = BucketBuilder {
-                    data: Vec::new(),
-                    col_indices: (0..ncol).map(|_| (Vec::new(), Vec::new())).collect(),
-                };
-                bucket_start_rows.push(row_idx);
-                for (col_idx, encoded) in row_encoded_values.into_iter().enumerate() {
-                    let offset = current.data.len() as u32;
-                    current.data.extend_from_slice(&encoded);
-                    current.col_indices[col_idx].0.push(0);
-                    current.col_indices[col_idx].1.push(offset);
-                    last_values[col_idx] = encoded;
+                let current_index_size: usize = current
+                    .col_indices
+                    .iter()
+                    .map(|(row_nrs, _)| 4 + (row_nrs.len() + 1) * 4 + (row_nrs.len() + 1) * 4)
+                    .sum();
+                let total_estimate =
+                    4 + current.data.len() + new_data_estimate + current_index_size + ncol * 12;
+
+                let starts_bucket = rel_row > 0 && total_estimate > bucket_size as usize;
+                if starts_bucket {
+                    write_bucket(&mut file, &current)?;
+                    nr_buckets += 1;
+                    current = BucketBuilder {
+                        data: Vec::new(),
+                        col_indices: (0..ncol).map(|_| (Vec::new(), Vec::new())).collect(),
+                    };
+                    bucket_start_rows.push(row_idx);
                 }
-                continue;
-            }
-
-            for (col_idx, encoded) in row_encoded_values.into_iter().enumerate() {
-                if rel_row == 0 || encoded != last_values[col_idx] {
-                    let offset = current.data.len() as u32;
-                    current.data.extend_from_slice(&encoded);
-                    current.col_indices[col_idx].0.push(rel_row);
-                    current.col_indices[col_idx].1.push(offset);
-                    last_values[col_idx] = encoded;
+                let rel_row = if starts_bucket { 0 } else { rel_row };
+                for (col_idx, last) in last_values.iter_mut().enumerate() {
+                    let encoded = cell(col_idx);
+                    if rel_row == 0 || encoded != last.as_slice() {
+                        let offset = current.data.len() as u32;
+                        current.data.extend_from_slice(encoded);
+                        current.col_indices[col_idx].0.push(rel_row);
+                        current.col_indices[col_idx].1.push(offset);
+                        last.clear();
+                        last.extend_from_slice(encoded);
+                    }
                 }
             }
         }

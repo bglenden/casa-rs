@@ -12,6 +12,8 @@
 //!   (equivalent to the formatting subset of C++ `MVAngle`).
 //! - **[`MvTime`]** — calendar/time formatting for Modified Julian Date values
 //!   (equivalent to the formatting subset of C++ `MVTime`).
+//! - **[`format`](mod@format)** — casacore's full `MVAngle::print` and `MVTime::print`
+//!   formatting, with their format names, and `MVTime`'s calendar fields.
 //! - **[`constants`]** — physical constants as [`Quantity`] values (equivalent
 //!   to C++ `QC`).
 //!
@@ -37,8 +39,10 @@ pub mod angle;
 pub mod constants;
 pub mod dim;
 pub mod error;
+pub mod format;
 pub mod parser;
 pub mod quantity;
+pub mod read;
 pub mod registry;
 pub mod registry_data;
 pub mod time;
@@ -50,6 +54,7 @@ pub use angle::MvAngle;
 pub use dim::{Dimension, UnitDim};
 pub use error::UnitError;
 pub use quantity::Quantity;
+pub use read::{QuantityReadError, casacore_unit_name, unique_prefix_index};
 pub use time::MvTime;
 pub use unit::Unit;
 pub use unit_val::UnitVal;

@@ -38,3 +38,11 @@ their checked `.pyi` file is regenerated from
 ## `casars.tasks`
 
 ::: casars.tasks
+
+## `casars.tools`
+
+::: casars.tools
+
+## `casars.simutil`
+
+::: casars.simutil
