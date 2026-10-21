@@ -123,6 +123,7 @@
    "casa-imaging-operator",
    "casa-ms",
    "casa-numerics",
+   "casa-tables",
    "casa-types"
   ]
  },

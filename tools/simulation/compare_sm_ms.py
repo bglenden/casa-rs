@@ -29,13 +29,15 @@ import sys
 import numpy as np
 from casatools import table
 
-# Absolute tolerances by column; other float columns use DEFAULT_TOLERANCE.
+# Absolute tolerances by column, added to RELATIVE_TOLERANCE times the
+# value; other float columns use DEFAULT_TOLERANCE. Times are seconds near
+# 5e9, where a double's spacing is about 1e-6 s.
 TOLERANCES = {
     "UVW": 1e-3,
-    "TIME": 1e-6,
-    "TIME_CENTROID": 1e-6,
-    "TIME_RANGE": 1e-6,
-    "TIME_ORIGIN": 1e-6,
+    "TIME": 2e-6,
+    "TIME_CENTROID": 2e-6,
+    "TIME_RANGE": 2e-6,
+    "TIME_ORIGIN": 2e-6,
     "POSITION": 1e-6,
     "DIRECTION": 1e-12,
     "TARGET": 1e-12,
@@ -44,6 +46,29 @@ TOLERANCES = {
     "REFERENCE_DIR": 1e-12,
 }
 DEFAULT_TOLERANCE = 1e-9
+RELATIVE_TOLERANCE = 1e-14
+
+# Differences that are expected, with the reason. A difference whose key
+# (`TABLE.COLUMN:aspect`) is listed is reported as known and does not fail.
+KNOWN = {
+    "MAIN.MODEL_DATA:missing": "plan decision 6: DATA only",
+    "MAIN.CORRECTED_DATA:missing": "plan decision 6: DATA only",
+    "MAIN.FLAG_CATEGORY:defined": "casa-ms writes zero-size FLAG_CATEGORY cells where CASA leaves them undefined (#847)",
+    "MAIN.UVW:keywords": "casa-ms's UVW MEASINFO lacks casacore's default Ref ITRF (#847)",
+    "POINTING.TARGET:ndim": "casa-ms's POINTING.TARGET has ndim 2, casacore's -1 (#847)",
+    "SOURCE.DIRECTION:ndim": "CASA's simulator makes SOURCE arrays variable-shaped; casa-ms follows casacore's MSSource (fixed [2])",
+    "SOURCE.DIRECTION:shape": "as SOURCE.DIRECTION:ndim",
+    "SOURCE.DIRECTION:option": "as SOURCE.DIRECTION:ndim",
+    "SOURCE.PROPER_MOTION:ndim": "as SOURCE.DIRECTION:ndim",
+    "SOURCE.PROPER_MOTION:shape": "as SOURCE.DIRECTION:ndim",
+    "SOURCE.PROPER_MOTION:option": "as SOURCE.DIRECTION:ndim",
+    "SOURCE.POSITION:ndim": "casa-tables writes an unspecified dimensionality as 0, casacore as -1 (#847)",
+    "SOURCE.REST_FREQUENCY:ndim": "as SOURCE.POSITION:ndim",
+    "SOURCE.SYSVEL:ndim": "as SOURCE.POSITION:ndim",
+    "SOURCE.TRANSITION:ndim": "as SOURCE.POSITION:ndim",
+    "OBSERVATION.LOG:defined": "casa-tables stores an unwritten cell of a fixed-rank array column as an empty array (#847)",
+    "OBSERVATION.SCHEDULE:defined": "as OBSERVATION.LOG:defined",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,6 +78,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--only", nargs="*", help="compare only these scenarios")
     parser.add_argument("--uvw-tolerance-m", type=float, default=TOLERANCES["UVW"])
     parser.add_argument("--json", help="write the report here as JSON")
+    parser.add_argument("--verbose", action="store_true", help="also list the known differences")
     return parser.parse_args()
 
 
@@ -97,38 +123,52 @@ def cells(tb, path: str, column: str, rows: int):
             return []
         values = []
         for row in range(rows):
-            values.append(tb.getcell(column, row) if tb.iscelldefined(column, row) else None)
+            if not tb.iscelldefined(column, row):
+                values.append(None)
+                continue
+            try:
+                values.append(tb.getcell(column, row))
+            except RuntimeError as error:
+                values.append(f"<unreadable: {error}>")
         return values
     finally:
         tb.close()
 
 
-def compare_values(name: str, a, b, tolerance: float) -> tuple[bool, float | None, str]:
-    """Whether two cell lists agree, the largest numeric difference, and a note."""
+def compare_values(a, b, tolerance: float) -> tuple[str | None, float | None, str]:
+    """How two cell lists differ (None if they agree, else the aspect), the
+    largest numeric difference, and a note. Floats agree within `tolerance`
+    plus RELATIVE_TOLERANCE of their size."""
     if len(a) != len(b):
-        return False, None, f"{len(a)} against {len(b)} cells"
+        return "cells", None, f"{len(a)} against {len(b)} cells"
     largest = 0.0
     numeric = False
     for row, (x, y) in enumerate(zip(a, b)):
-        if (x is None) != (y is None):
-            return False, None, f"row {row}: defined {x is not None} against {y is not None}"
+        if (x is None) != (y is None) or isinstance(x, str) != isinstance(y, str):
+            return "defined", None, f"row {row}: CASA {'undefined' if x is None else repr(x)[:40]}, casa-rs {'undefined' if y is None else repr(y)[:40]}"
         if x is None:
             continue
         xa, ya = np.asarray(x), np.asarray(y)
         if xa.shape != ya.shape:
-            return False, None, f"row {row}: shape {xa.shape} against {ya.shape}"
+            return "shape", None, f"row {row}: shape {xa.shape} against {ya.shape}"
         if xa.dtype.kind in "fc" or ya.dtype.kind in "fc":
             numeric = True
             if xa.size:
-                difference = float(np.max(np.abs(xa.astype(complex) - ya.astype(complex))))
-                if not np.isfinite(difference):
-                    return False, None, f"row {row}: non-finite"
-                largest = max(largest, difference)
+                xc, yc = xa.astype(complex), ya.astype(complex)
+                difference = np.abs(xc - yc)
+                if not np.all(np.isfinite(difference)):
+                    return "values", None, f"row {row}: non-finite"
+                largest = max(largest, float(np.max(difference)))
+                allowed = tolerance + RELATIVE_TOLERANCE * np.maximum(np.abs(xc), np.abs(yc))
+                if np.any(difference > allowed):
+                    index = int(np.argmax(difference - allowed))
+                    return "values", largest, (
+                        f"row {row}: difference {float(difference.flat[index]):.3g} over "
+                        f"{float(allowed.flat[index]):.3g} ({xc.flat[index]} against {yc.flat[index]})"
+                    )
         elif not np.array_equal(xa, ya):
-            return False, None, f"row {row}: {x!r} against {y!r}"
-    if numeric and largest > tolerance:
-        return False, largest, f"largest difference {largest:.3g} over {tolerance:.3g}"
-    return True, (largest if numeric else None), ""
+            return "values", None, f"row {row}: {x!r} against {y!r}"
+    return None, (largest if numeric else None), ""
 
 
 def normalise_keywords(value):
@@ -144,15 +184,21 @@ def normalise_keywords(value):
 
 def compare_scenario(name: str, casa_ms: str, casars_ms: str, ignore: set[str], uvw_tol: float) -> dict:
     tb = table()
-    report = {"name": name, "differences": [], "largest": {}}
-    differ = report["differences"].append
+    report = {"name": name, "differences": [], "known": [], "largest": {}}
+
+    def differ(key: str, message: str) -> None:
+        if key in KNOWN:
+            report["known"].append(f"{message} [known: {KNOWN[key]}]")
+        else:
+            report["differences"].append(message)
+
     tables = {"MAIN": ("", "")}
     casa_sub = subtables(tb, casa_ms)
     casars_sub = subtables(tb, casars_ms)
     for missing in sorted(set(casa_sub) - set(casars_sub)):
-        differ(f"subtable {missing} missing from casa-rs")
+        differ(f"{missing}:missing", f"subtable {missing} missing from casa-rs")
     for extra in sorted(set(casars_sub) - set(casa_sub)):
-        differ(f"subtable {extra} only in casa-rs")
+        differ(f"{extra}:extra", f"subtable {extra} only in casa-rs")
     for sub in sorted(set(casa_sub) & set(casars_sub)):
         tables[sub] = (sub, sub)
     for label, (casa_rel, casars_rel) in tables.items():
@@ -161,16 +207,16 @@ def compare_scenario(name: str, casa_ms: str, casars_ms: str, ignore: set[str], 
         a = describe(tb, casa_path)
         b = describe(tb, casars_path)
         if a["rows"] != b["rows"]:
-            differ(f"{label}: {a['rows']} rows in CASA, {b['rows']} in casa-rs")
-        for key in ("type", "subType"):
+            differ(f"{label}:rows", f"{label}: {a['rows']} rows in CASA, {b['rows']} in casa-rs")
+        for key in ("type", "subType", "readme"):
             if a["info"].get(key) != b["info"].get(key):
-                differ(f"{label}: TableInfo {key} {a['info'].get(key)!r} against {b['info'].get(key)!r}")
+                differ(f"{label}:info", f"{label}: TableInfo {key} {a['info'].get(key)!r} against {b['info'].get(key)!r}")
         if normalise_keywords(a["keywords"]) != normalise_keywords(b["keywords"]):
-            differ(f"{label}: keywords {normalise_keywords(a['keywords'])} against {normalise_keywords(b['keywords'])}")
+            differ(f"{label}:keywords", f"{label}: keywords {normalise_keywords(a['keywords'])} against {normalise_keywords(b['keywords'])}")
         for column in sorted(set(a["columns"]) - set(b["columns"])):
-            differ(f"{label}.{column}: missing from casa-rs")
+            differ(f"{label}.{column}:missing", f"{label}.{column}: missing from casa-rs")
         for column in sorted(set(b["columns"]) - set(a["columns"])):
-            differ(f"{label}.{column}: only in casa-rs")
+            differ(f"{label}.{column}:extra", f"{label}.{column}: only in casa-rs")
         for column in sorted(set(a["columns"]) & set(b["columns"])):
             qualified = f"{label}.{column}"
             if qualified in ignore:
@@ -178,12 +224,12 @@ def compare_scenario(name: str, casa_ms: str, casars_ms: str, ignore: set[str], 
             da, db = a["columns"][column], b["columns"][column]
             for key in ("valueType", "ndim", "shape"):
                 if da[key] != db[key]:
-                    differ(f"{qualified}: descriptor {key} {da[key]!r} against {db[key]!r}")
+                    differ(f"{qualified}:{key}", f"{qualified}: descriptor {key} {da[key]!r} against {db[key]!r}")
             if (da["option"] & 4) != (db["option"] & 4):
-                differ(f"{qualified}: fixed-shape option {da['option']} against {db['option']}")
+                differ(f"{qualified}:option", f"{qualified}: fixed-shape option {da['option']} against {db['option']}")
             ka, kb = normalise_keywords(da["keywords"]), normalise_keywords(db["keywords"])
             if ka != kb:
-                differ(f"{qualified}: column keywords {ka} against {kb}")
+                differ(f"{qualified}:keywords", f"{qualified}: column keywords {ka} against {kb}")
             if a["rows"] != b["rows"]:
                 continue
             values_a = cells(tb, casa_path, column, a["rows"])
@@ -191,14 +237,14 @@ def compare_scenario(name: str, casa_ms: str, casars_ms: str, ignore: set[str], 
             if label == "MAIN" and column == "DATA":
                 for side, values in (("CASA", values_a), ("casa-rs", values_b)):
                     if any(v is not None and np.any(np.asarray(v) != 0) for v in values):
-                        differ(f"MAIN.DATA: {side} has nonzero data")
+                        differ("MAIN.DATA:nonzero", f"MAIN.DATA: {side} has nonzero data")
                 continue
             tolerance = uvw_tol if column == "UVW" else TOLERANCES.get(column, DEFAULT_TOLERANCE)
-            ok, largest, note = compare_values(qualified, values_a, values_b, tolerance)
+            aspect, largest, note = compare_values(values_a, values_b, tolerance)
             if largest is not None:
                 report["largest"][qualified] = largest
-            if not ok:
-                differ(f"{qualified}: {note}")
+            if aspect is not None:
+                differ(f"{qualified}:{aspect}", f"{qualified}: {note}")
     return report
 
 
@@ -213,7 +259,7 @@ def main() -> int:
             continue
         casars_ms = os.path.join(args.casars, name + ".ms")
         if not os.path.isdir(casars_ms):
-            reports.append({"name": name, "differences": ["casa-rs MS missing"], "largest": {}})
+            reports.append({"name": name, "differences": ["casa-rs MS missing"], "known": [], "largest": {}})
             continue
         reports.append(
             compare_scenario(name, scenario["ms"], casars_ms, set(scenario.get("ignore", [])), args.uvw_tolerance_m)
@@ -222,11 +268,15 @@ def main() -> int:
     for report in reports:
         uvw = report["largest"].get("MAIN.UVW")
         status = "OK" if not report["differences"] else f"{len(report['differences'])} differences"
-        print(f"{report['name']}: {status}" + (f" (UVW within {uvw:.3g} m)" if uvw is not None else ""))
+        known = f", {len(report['known'])} known" if report["known"] else ""
+        print(f"{report['name']}: {status}{known}" + (f" (UVW within {uvw:.3g} m)" if uvw is not None else ""))
         for line in report["differences"][:40]:
             print("   ", line)
         if len(report["differences"]) > 40:
             print(f"    ... {len(report['differences']) - 40} more")
+        if args.verbose:
+            for line in report["known"]:
+                print("    known:", line)
         failed += bool(report["differences"])
     if args.json:
         with open(args.json, "w", encoding="utf-8") as handle:

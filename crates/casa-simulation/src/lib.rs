@@ -11,8 +11,17 @@
 //!
 //! | CASA | casa-rs |
 //! |---|---|
+//! | the `sm` tool's session (`open`, the setters, `observe`, `close`) | [`session::Simulator`] |
 //! | `sm.predict` with `GridFT` (`setoptions(ftmachine='ft')`) | [`predict::ModelPredictor`] |
 //! | the model image `sm.predict` reads | [`predict::SkyModel`] |
 //! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`predict::PrimaryBeam`] |
 
 pub mod predict;
+pub mod session;
+mod write;
+
+pub use session::array::{ArrayConfig, CoordinateSystem};
+pub use session::error::{CasaOutcome, SimulatorError, SimulatorResult};
+pub use session::observe::{ObserveSpec, StateSpec};
+pub use session::spectral::SpectralWindowSpec;
+pub use session::{Simulator, SimulatorOptions};
