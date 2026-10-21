@@ -504,8 +504,9 @@ impl Chunk {
     }
 }
 
-/// Row chunks of a wave on `workers` workers.
-const fn chunks(workers: usize) -> usize {
+/// Row chunks of a wave on `workers` workers, and of a
+/// [`super::BlockPredictor`]'s.
+pub(super) const fn chunks(workers: usize) -> usize {
     workers * CHUNKS_PER_WORKER
 }
 
@@ -695,6 +696,7 @@ impl<'w, 'p> Wave<'w, 'p> {
             pass.backend,
             pass.metal_stage_timing,
             shape.prediction(count),
+            pass.model.is_some(),
             if pass.model.is_some() {
                 block.rows * shape.cells
             } else {

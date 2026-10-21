@@ -10,21 +10,30 @@
 //! the first domain writes the cells and later ones add to them. On Metal
 //! the cells stay on the device, which predicts one chunk's batch while
 //! the host places the next.
+//!
+//! [`BlockPredictor`] is the same path for a caller that is not a major
+//! cycle: the simulator, which predicts the rows it writes.
 
 use std::ops::Range;
 
 use casa_imaging_metal::MetalBackend;
 use casa_imaging_operator::{
-    CpuBackend, DeviceNativeCells, MeasurementOperator, NativeModel, NativeTarget,
+    CpuBackend, DeviceNativeCells, GridPrecision, MeasurementOperator, NativeModel, NativeTarget,
     PredictionScratch, PreparedModelGrids, SpectralResampler,
 };
 use num_complex::Complex32;
 
 use super::block::{cell_of, row_at};
-use super::{BackendChoice, NativeBlock, PassError, WorkerTeam, chunk_ranges, slices};
+use super::{
+    BackendChoice, BlockShape, CHUNK_PLACEMENTS, NativeBlock, PassError, WorkerTeam, chunk_ranges,
+    chunk_rows, slices,
+};
 
 /// One image domain's share of a prediction: its operator, the resampler
 /// that maps native rows to its planes, and its prepared model.
+///
+/// A [`BlockPredictor`] predicts `Σ_d A_d·m_d` over its domains, each row
+/// read in the projection of its own domain ([`NativeBlock::row`]).
 #[derive(Clone, Copy)]
 pub struct PredictionDomain<'a> {
     /// The measurement operator.
@@ -158,40 +167,51 @@ impl<'w> BlockPrediction<'w> {
 
     /// Chunks of `shape` for the domains of `domains`, each with a predictor
     /// per domain on `backend` (with `stage_timing`, a Metal predictor logs
-    /// its usage when it drops), and a store of `cells` native cells: in
-    /// device memory on Metal, in host memory, which grows to the block,
-    /// otherwise.
+    /// its usage when it drops) whose CPU batch is allocated `with_model`,
+    /// and a store of `cells` native cells: in device memory on Metal, in
+    /// host memory, which grows to the block, otherwise.
     pub(super) fn new(
         domains: impl Iterator<Item = (&'w MeasurementOperator, &'w SpectralResampler)> + Clone,
         backend: BackendChoice,
         stage_timing: bool,
         shape: PredictionShape,
+        with_model: bool,
         cells: usize,
     ) -> Result<Self, PassError> {
-        let chunks = (0..shape.chunks)
-            .map(|_| {
-                Ok(PredictionChunk {
-                    rows: 0..0,
-                    scratch: SpectralResampler::prediction_scratch(
-                        domains.clone().map(|(_, resampler)| resampler),
-                        shape.npol,
-                        shape.channels,
-                        shape.rows,
-                    ),
-                    predictors: domains
-                        .clone()
-                        .map(|(operator, _)| {
-                            Ok(match backend {
-                                BackendChoice::Cpu => Predictor::Cpu(CpuBackend::new()),
-                                BackendChoice::Metal => Predictor::Metal(Box::new(
-                                    MetalBackend::new(operator.cf(), stage_timing)?,
-                                )),
-                            })
-                        })
-                        .collect::<Result<_, PassError>>()?,
-                })
-            })
-            .collect::<Result<_, PassError>>()?;
+        // A CPU predictor's batch, allocated once `with_model`.
+        let samples = if with_model {
+            shape.predicted(domains.clone().map(|(_, resampler)| resampler))
+        } else {
+            0
+        };
+        // Records of exactly the chunks and domains, as `record_bytes`
+        // charges them: collecting fallibly would size them by growth.
+        let mut chunks = Vec::with_capacity(shape.chunks);
+        for _ in 0..shape.chunks {
+            let mut predictors = Vec::with_capacity(domains.clone().count());
+            for (operator, _) in domains.clone() {
+                predictors.push(match backend {
+                    BackendChoice::Cpu => Predictor::Cpu(CpuBackend::for_prediction(
+                        operator.polarization().correlations().len(),
+                        operator.basis().data_terms(),
+                        samples,
+                    )),
+                    BackendChoice::Metal => {
+                        Predictor::Metal(Box::new(MetalBackend::new(operator.cf(), stage_timing)?))
+                    }
+                });
+            }
+            chunks.push(PredictionChunk {
+                rows: 0..0,
+                scratch: SpectralResampler::prediction_scratch(
+                    domains.clone().map(|(_, resampler)| resampler),
+                    shape.npol,
+                    shape.channels,
+                    shape.rows,
+                ),
+                predictors,
+            });
+        }
         let store = match backend {
             BackendChoice::Metal if cells > 0 => {
                 NativeStore::Device(MetalBackend::native_cells(cells)?)
@@ -260,6 +280,79 @@ impl<'w> BlockPrediction<'w> {
         Ok(())
     }
 
+    /// The model at native cells of every selected sample of `block`'s rows,
+    /// summed over `domains`, in row order into `out`: on the CPU directly,
+    /// on Metal from the device store once every predictor has completed.
+    fn predict_into(
+        &mut self,
+        block: &NativeBlock,
+        team: &WorkerTeam,
+        domains: &[PredictionDomain<'_>],
+        out: &mut [Complex32],
+    ) -> Result<(), PassError> {
+        match &self.store {
+            NativeStore::Host(_) => predict_rows(
+                &mut self.chunks,
+                self.rows,
+                block,
+                team,
+                domains,
+                false,
+                Cells::Host(out),
+            )?,
+            NativeStore::Device(store) => {
+                predict_rows(
+                    &mut self.chunks,
+                    self.rows,
+                    block,
+                    team,
+                    domains,
+                    false,
+                    Cells::Device(store),
+                )?;
+                complete(&mut self.chunks)?;
+                // SAFETY: only the predictors' work writes the cells, every
+                // command of it has completed, and none is issued while the
+                // slice lives.
+                out.copy_from_slice(&unsafe { store.host_cells() }[..out.len()]);
+            }
+        }
+        debug_assert!(
+            self.chunks
+                .iter()
+                .all(|chunk| chunk.scratch.capacity_bytes() == self.scratch_bytes),
+            "a chunk predicts within the batch it was allocated"
+        );
+        Ok(())
+    }
+
+    /// Bytes [`Self::new`]'s records hold for the domains of `domains` on
+    /// `backend` with `chunks` chunks, beside [`Self::bytes`]: each chunk's
+    /// record and its predictors' (a Metal one boxed), a CPU predictor's
+    /// per-sample buffers ([`CpuBackend::prediction_sample_bytes`]), and a
+    /// slice's hand-off of the chunks to the team, with each chunk's result.
+    fn record_bytes<'d>(
+        domains: impl Iterator<Item = (&'d MeasurementOperator, &'d SpectralResampler)>,
+        backend: BackendChoice,
+        chunks: usize,
+    ) -> u64 {
+        let per_domain = domains
+            .map(|(operator, _)| {
+                size_of::<Predictor<'_>>() as u64
+                    + match backend {
+                        BackendChoice::Cpu => CpuBackend::prediction_sample_bytes(
+                            operator.polarization().correlations().len(),
+                            operator.basis().data_terms(),
+                        ),
+                        BackendChoice::Metal => size_of::<MetalBackend<'_>>() as u64,
+                    }
+            })
+            .sum::<u64>();
+        let hand_off = size_of::<(&mut PredictionChunk<'_>, ChunkCells<'_>)>()
+            + size_of::<Result<(), PassError>>();
+        chunks as u64 * (size_of::<PredictionChunk<'_>>() as u64 + per_domain + hand_off as u64)
+    }
+
     /// The model at native cells, as a residual reads it.
     pub(super) fn native_model(&self) -> NativeModel<'_> {
         match &self.store {
@@ -287,6 +380,188 @@ impl<'w> BlockPrediction<'w> {
     /// Wait for every Metal predictor's work, and learn whether any failed.
     pub(super) fn complete(&mut self) -> Result<(), PassError> {
         complete(&mut self.chunks)
+    }
+}
+
+/// Predicts blocks of native rows, `Σ_d A_d·m_d` over its image domains
+/// (`SIMapperCollection::degrid`), for a caller that is not a major cycle:
+/// the simulator, which predicts the rows it writes. It is the major-cycle
+/// pass's own prediction ([`super::MajorCyclePass`]): each row as
+/// [`SpectralResampler::predict_row`] predicts it, a flagged row, a flagged
+/// sample and an autocorrelation (unless the domain's resampler is
+/// [`SpectralResampler::predicting_autocorrelations`]) predicting zero.
+///
+/// The rows are predicted in row chunks on a [`WorkerTeam`], on the CPU or
+/// on Metal ([`BackendChoice`]). Each chunk keeps one prediction batch and
+/// one backend per domain, so a predictor holds [`Self::bytes`] whatever
+/// blocks within its [`BlockShape`] it predicts; on Metal the model at the
+/// block's native cells is formed in device memory and copied out. A
+/// domain's model grids, and on Metal their device copy, are the caller's
+/// to admit ([`PreparedModelGrids::bytes`]).
+///
+/// The CPU's predictions do not depend on the workers, the chunking or how
+/// the rows are split into blocks; Metal's agree with them to the device's
+/// `f32` arithmetic.
+pub struct BlockPredictor<'w> {
+    domains: Vec<PredictionDomain<'w>>,
+    block: BlockShape,
+    prediction: BlockPrediction<'w>,
+}
+
+impl<'w> BlockPredictor<'w> {
+    /// The chunks a predictor over `domains` for blocks of `block` on
+    /// `workers` workers predicts in: as many as a major-cycle wave's, each
+    /// of the rows whose degridded samples fit [`CHUNK_PLACEMENTS`] and at
+    /// most a block's share.
+    fn shape(
+        domains: &[PredictionDomain<'_>],
+        block: BlockShape,
+        workers: usize,
+    ) -> PredictionShape {
+        let chunks = super::wave::chunks(workers);
+        let row = domains
+            .iter()
+            .map(|domain| {
+                domain
+                    .resampler
+                    .prediction_samples_per_row(block.channels())
+            })
+            .max()
+            .unwrap_or(0);
+        PredictionShape {
+            npol: block.correlations,
+            channels: block.channels(),
+            rows: chunk_rows(row, block.rows, chunks, CHUNK_PLACEMENTS),
+            chunks,
+        }
+    }
+
+    /// Bytes [`Self::new`] holds, and [`Self::predict_into`] while it runs,
+    /// for the same arguments: each chunk's prediction batch and record,
+    /// each chunk's backend per domain with what it keeps
+    /// ([`CpuBackend::batch_bytes`] and its per-sample buffers; on Metal
+    /// [`casa_imaging_metal::ring_bytes`], [`casa_imaging_metal::batch_bytes`]
+    /// and [`casa_imaging_metal::kernel_bytes`]), on Metal the model at the
+    /// largest block's native cells in device memory, and a call's hand-off
+    /// of the chunks to the team. The rows, the model grids and the output
+    /// are the caller's.
+    #[must_use]
+    pub fn bytes(
+        domains: &[PredictionDomain<'_>],
+        backend: BackendChoice,
+        block: BlockShape,
+        workers: usize,
+    ) -> u64 {
+        let shape = Self::shape(domains, block, workers);
+        let pairs = domains
+            .iter()
+            .map(|domain| (domain.operator, domain.resampler));
+        let store = match backend {
+            BackendChoice::Cpu => 0,
+            BackendChoice::Metal => super::wave::prediction_bytes(block),
+        };
+        BlockPrediction::bytes(pairs.clone(), backend, true, shape)
+            + BlockPrediction::record_bytes(pairs, backend, shape.chunks)
+            + size_of_val(domains) as u64
+            + store
+    }
+
+    /// A predictor of blocks of at most `block` (rows, channels and
+    /// correlations; each row projected on every domain) over `domains` on
+    /// `backend`, in the chunks of `workers` workers; with `stage_timing`,
+    /// each Metal backend logs its usage when it drops
+    /// ([`casa_imaging_metal::METAL_STAGE_TIMING`]).
+    ///
+    /// # Errors
+    ///
+    /// [`PassError::NoDomains`] without a domain, [`PassError::Workers`]
+    /// for no workers, and on Metal [`PassError::Operator`] when the host
+    /// has no device.
+    ///
+    /// # Panics
+    ///
+    /// On Metal, when an operator is not `f32`: the device grids are `f32`.
+    pub fn new(
+        domains: &[PredictionDomain<'w>],
+        backend: BackendChoice,
+        block: BlockShape,
+        workers: usize,
+        stage_timing: bool,
+    ) -> Result<Self, PassError> {
+        if domains.is_empty() {
+            return Err(PassError::NoDomains);
+        }
+        if workers == 0 {
+            return Err(PassError::Workers);
+        }
+        if backend == BackendChoice::Metal {
+            assert!(
+                domains
+                    .iter()
+                    .all(|domain| domain.operator.precision() == GridPrecision::F32),
+                "Metal predicts from f32 grids (D2)"
+            );
+        }
+        let shape = Self::shape(domains, block, workers);
+        let cells = match backend {
+            BackendChoice::Cpu => 0,
+            BackendChoice::Metal => block.rows * block.channels() * block.correlations,
+        };
+        let prediction = BlockPrediction::new(
+            domains
+                .iter()
+                .map(|domain| (domain.operator, domain.resampler)),
+            backend,
+            stage_timing,
+            shape,
+            true,
+            cells,
+        )?;
+        Ok(Self {
+            domains: domains.to_vec(),
+            block,
+            prediction,
+        })
+    }
+
+    /// The model visibility of every selected sample of `block`'s rows,
+    /// summed over the domains, into `out` as `[row][channel][correlation]`
+    /// in the block's row order, on `team`. Every value of `out` is
+    /// written.
+    ///
+    /// # Errors
+    ///
+    /// A row the operators reject ([`PassError::Operator`]), or a device
+    /// failure on Metal.
+    ///
+    /// # Panics
+    ///
+    /// When `block` exceeds the predictor's [`BlockShape`], does not project
+    /// each row on every domain, or `out` is not one value per sample.
+    pub fn predict_into(
+        &mut self,
+        block: &NativeBlock,
+        team: &WorkerTeam,
+        out: &mut [Complex32],
+    ) -> Result<(), PassError> {
+        assert_eq!(
+            block.domains(),
+            self.domains.len(),
+            "a block projects each row on every domain of the predictor"
+        );
+        assert!(
+            block.len() <= self.block.rows
+                && block.channels() <= self.block.channels()
+                && block.correlations() == self.block.correlations,
+            "a block fits the shape the predictor was made for"
+        );
+        assert_eq!(
+            out.len(),
+            block.len() * block.channels() * block.correlations(),
+            "one prediction per selected sample"
+        );
+        self.prediction
+            .predict_into(block, team, &self.domains, out)
     }
 }
 

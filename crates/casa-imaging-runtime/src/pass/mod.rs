@@ -14,6 +14,9 @@
 //! otherwise. Each wave of planes ([`Residency`]) ends with the per-plane
 //! transforms, single-threaded per worker, and hands each domain's
 //! [`NormalImages`] to the caller before the next wave starts.
+//!
+//! A caller that only predicts, such as the simulator, uses the pass's
+//! block prediction through [`BlockPredictor`].
 
 mod block;
 mod partition;
@@ -35,6 +38,7 @@ use casa_imaging_operator::{
 
 pub use block::{BlockShape, DomainProjection, NativeBlock, NativeRowHeader, RowAddress};
 pub use partition::{PLACEMENT_WORK, Partition, Region, Residency, WEIGHT_SUM_WORK, WaveDemand};
+pub use prediction::{BlockPredictor, PredictionDomain};
 pub use row_work::{
     MeasuredRowWork, ModeWork, needs_row_work, row_work_pass_bytes, run_row_work_pass,
 };
