@@ -28,9 +28,11 @@ use thiserror::Error;
 use crate::{MeasurementSet, MsSelectionIoBudget};
 
 mod scalars;
+mod visibility_columns;
 
 pub use scalars::ScalarColumnId;
 use scalars::ScalarWriters;
+pub use visibility_columns::VisibilityColumns;
 
 /// Bytes a visibility creation batch aims at, whatever the budget allows.
 pub const TARGET_BATCH_BYTES: usize = 32 * 1024 * 1024;
@@ -924,11 +926,7 @@ pub struct MeasurementSetArrayColumnPlan {
 /// One typed standard-visibility column batch.
 #[derive(Debug)]
 pub(crate) enum MeasurementSetWriteBatch {
-    Rows {
-        data_rows: Vec<Vec<Complex32>>,
-        flag_rows: Vec<bool>,
-        uvw_rows: Vec<[f64; 3]>,
-    },
+    Columns(VisibilityColumns),
     #[cfg(test)]
     Repeated {
         data_row: Vec<Complex32>,
@@ -941,7 +939,7 @@ pub(crate) enum MeasurementSetWriteBatch {
 impl MeasurementSetWriteBatch {
     fn row_count(&self) -> usize {
         match self {
-            Self::Rows { data_rows, .. } => data_rows.len(),
+            Self::Columns(columns) => columns.row_count(),
             #[cfg(test)]
             Self::Repeated { row_count, .. } => *row_count,
         }
@@ -1183,6 +1181,8 @@ enum MeasurementSetWriteSessionState {
         scalar_writers: ScalarWriters,
         queue_wait_nanos: AtomicU64,
         started_at: Instant,
+        /// Written batches the writer hands back for reuse, at most one.
+        recycled: mpsc::Receiver<VisibilityColumns>,
     },
     VariableArrayCreation {
         output: PathBuf,
@@ -1331,9 +1331,11 @@ impl MeasurementSetWriteSession {
         )
         .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
         let (sender, receiver) = mpsc::sync_channel(plan.queue_capacity);
+        let (returns, recycled) = mpsc::sync_channel(1);
         let handle = thread::spawn(move || {
             write_visibility_batches(
                 receiver,
+                &returns,
                 data_writer,
                 flag_writer,
                 flag_category_writer,
@@ -1354,6 +1356,7 @@ impl MeasurementSetWriteSession {
                 scalar_writers,
                 queue_wait_nanos: AtomicU64::new(0),
                 started_at: Instant::now(),
+                recycled,
             },
         })
     }
@@ -1440,27 +1443,7 @@ impl MeasurementSetWriteSession {
             .checked_mul(self.plan.channel_count)
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
         match &batch {
-            MeasurementSetWriteBatch::Rows {
-                data_rows,
-                flag_rows,
-                uvw_rows,
-            } => {
-                if data_rows.len() != flag_rows.len() || data_rows.len() != uvw_rows.len() {
-                    return Err(MeasurementSetWriteError::InvalidPlan(format!(
-                        "batch sizes differ: DATA={} FLAG={} UVW={}",
-                        data_rows.len(),
-                        flag_rows.len(),
-                        uvw_rows.len()
-                    )));
-                }
-                if let Some((row, actual)) = data_rows.iter().enumerate().find_map(|(row, data)| {
-                    (data.len() != sample_count).then_some((row, data.len()))
-                }) {
-                    return Err(MeasurementSetWriteError::InvalidPlan(format!(
-                        "DATA row {row} has {actual} samples; plan requires {sample_count}"
-                    )));
-                }
-            }
+            MeasurementSetWriteBatch::Columns(columns) => columns.validate(sample_count)?,
             #[cfg(test)]
             MeasurementSetWriteBatch::Repeated { data_row, .. } => {
                 if data_row.len() != sample_count {
@@ -1513,6 +1496,7 @@ impl MeasurementSetWriteSession {
                 scalar_writers,
                 queue_wait_nanos,
                 started_at,
+                recycled: _,
             } => {
                 if !scalar_writers.is_empty() {
                     return Err(MeasurementSetWriteError::InvalidPlan(
@@ -2269,6 +2253,7 @@ fn mutation_values_bytes(
 #[allow(clippy::too_many_arguments)]
 fn write_visibility_batches(
     receiver: mpsc::Receiver<MeasurementSetWriteBatch>,
+    returns: &mpsc::SyncSender<VisibilityColumns>,
     mut data_writer: StreamingTiledShapeComplex32Writer,
     mut flag_writer: StreamingTiledPrimitiveWriter,
     mut flag_category_writer: StreamingTiledPrimitiveWriter,
@@ -2281,24 +2266,21 @@ fn write_visibility_batches(
     let sigma_row = vec![1.0f32; correlation_count];
     for batch in receiver {
         match batch {
-            MeasurementSetWriteBatch::Rows {
-                data_rows,
-                flag_rows,
-                uvw_rows,
-            } => {
-                let row_count = data_rows.len();
+            MeasurementSetWriteBatch::Columns(columns) => {
+                let row_count = columns.row_count();
                 data_writer
-                    .push_rows(&data_rows)
+                    .push_rows(&columns.data)
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                 flag_writer
-                    .push_bool_fill_rows(&flag_rows)
+                    .push_bool_fill_rows(&columns.flag_row)
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                 flag_category_writer
                     .push_zero_rows(row_count)
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                 uvw_writer
-                    .push_f64_rows(&uvw_rows)
+                    .push_f64_rows(&columns.uvw)
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
+                visibility_columns::recycle(returns, columns);
                 weight_writer
                     .push_repeated_f32_row(&weight_row, row_count)
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
@@ -2681,6 +2663,7 @@ mod tests {
         plan.batch_rows = 1;
         plan.batch_bytes = plan.bytes_per_row;
         let (sender, receiver) = mpsc::sync_channel(0);
+        let (_returns, recycled) = mpsc::sync_channel(1);
         let session = MeasurementSetWriteSession {
             plan,
             state: MeasurementSetWriteSessionState::Creation {
@@ -2695,13 +2678,14 @@ mod tests {
                 scalar_writers: ScalarWriters::default(),
                 queue_wait_nanos: AtomicU64::new(0),
                 started_at: Instant::now(),
+                recycled,
             },
         };
         let error = session
-            .send_batch(MeasurementSetWriteBatch::Rows {
-                data_rows: vec![vec![Complex32::new(1.0, 0.0)]; 2],
-                flag_rows: vec![false; 2],
-                uvw_rows: vec![[0.0; 3]; 2],
+            .send_visibility_columns(VisibilityColumns {
+                data: vec![Complex32::new(1.0, 0.0); 2],
+                flag_row: vec![false; 2],
+                uvw: vec![[0.0; 3]; 2],
             })
             .expect_err("oversized batch must be rejected");
         assert!(error.to_string().contains("plan permits at most 1"));

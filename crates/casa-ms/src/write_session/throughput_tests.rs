@@ -282,21 +282,13 @@ fn ignored_realistic_main_table_throughput_fixture() {
     while first < row_count {
         let rows = first..row_count.min(first + batch_rows);
         let started = Instant::now();
-        let data_rows = rows
-            .clone()
-            .map(|row| distinct_data_row(row, samples))
-            .collect::<Vec<_>>();
-        let flag_rows = rows
-            .clone()
-            .map(|row| row.is_multiple_of(97))
-            .collect::<Vec<_>>();
-        let uvw_rows = rows
-            .clone()
-            .map(|row| {
-                let baseline = (row % baselines) as f64;
-                [baseline, -0.5 * baseline, 0.1 * baseline]
-            })
-            .collect::<Vec<_>>();
+        let mut batch = session.visibility_columns();
+        for row in rows.clone() {
+            push_distinct_data_row(row, samples, &mut batch.data);
+            batch.flag_row.push(row.is_multiple_of(97));
+            let baseline = (row % baselines) as f64;
+            batch.uvw.push([baseline, -0.5 * baseline, 0.1 * baseline]);
+        }
         build_seconds += started.elapsed().as_secs_f64();
         let started = Instant::now();
         if columnar_scalars {
@@ -309,11 +301,7 @@ fn ignored_realistic_main_table_throughput_fixture() {
         scalar_seconds += started.elapsed().as_secs_f64();
         let started = Instant::now();
         session
-            .send_batch(MeasurementSetWriteBatch::Rows {
-                data_rows,
-                flag_rows,
-                uvw_rows,
-            })
+            .send_visibility_columns(batch)
             .expect("send visibility batch");
         send_seconds += started.elapsed().as_secs_f64();
         first = rows.end;
@@ -411,20 +399,18 @@ fn populate_realistic_metadata(measurement_set: &mut MeasurementSet) {
         .expect("add FIELD row");
 }
 
-/// A DATA row whose values differ from row to row.
-fn distinct_data_row(row: usize, samples: usize) -> Vec<Complex32> {
+/// Append a DATA row whose values differ from row to row.
+fn push_distinct_data_row(row: usize, samples: usize, data: &mut Vec<Complex32>) {
     let seed = (row as u32).wrapping_mul(0x85EB_CA6B);
-    (0..samples)
-        .map(|index| {
-            let mixed = (index as u32 ^ seed)
-                .wrapping_mul(0x9E37_79B9)
-                .rotate_left(13);
-            Complex32::new(
-                f32::from_bits(0x3f00_0000 | (mixed & 0x007f_ffff)),
-                f32::from_bits(0xbf00_0000 | (mixed.rotate_left(7) & 0x007f_ffff)),
-            )
-        })
-        .collect()
+    data.extend((0..samples).map(|index| {
+        let mixed = (index as u32 ^ seed)
+            .wrapping_mul(0x9E37_79B9)
+            .rotate_left(13);
+        Complex32::new(
+            f32::from_bits(0x3f00_0000 | (mixed & 0x007f_ffff)),
+            f32::from_bits(0xbf00_0000 | (mixed.rotate_left(7) & 0x007f_ffff)),
+        )
+    }));
 }
 
 /// The 16 standard MAIN scalars of a batch, pushed a column at a time.

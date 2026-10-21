@@ -11,8 +11,8 @@ use super::SyntheticObservationRequest;
 use crate::error::{MsError, MsResult};
 use crate::write_session::{
     MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
-    MeasurementSetWriteBatch, MeasurementSetWriteError, MeasurementSetWritePlan,
-    MeasurementSetWriteResources, MeasurementSetWriteSession, standard_main_scalar_column_plans,
+    MeasurementSetWriteError, MeasurementSetWritePlan, MeasurementSetWriteResources,
+    MeasurementSetWriteSession, standard_main_scalar_column_plans,
 };
 
 /// Streamed MAIN array columns (`DATA`, `FLAG`, `FLAG_CATEGORY`, `UVW`,
@@ -92,13 +92,15 @@ impl MainArrayWriter {
             |error: MeasurementSetWriteError| MsError::SyntheticObservation(error.to_string());
         let unit_weights = match &self.route {
             MainArrayRoute::UniformShape => {
+                let mut batch = self.session.visibility_columns();
+                for row in &data_rows {
+                    batch.data.extend_from_slice(row);
+                }
+                batch.flag_row.extend_from_slice(flag_rows);
+                batch.uvw.extend_from_slice(uvw_rows);
                 return self
                     .session
-                    .send_batch(MeasurementSetWriteBatch::Rows {
-                        data_rows,
-                        flag_rows: flag_rows.to_vec(),
-                        uvw_rows: uvw_rows.to_vec(),
-                    })
+                    .send_visibility_columns(batch)
                     .map_err(io_error);
             }
             MainArrayRoute::MixedShapes { unit_weights } => unit_weights,

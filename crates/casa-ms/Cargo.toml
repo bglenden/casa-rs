@@ -150,3 +150,7 @@ path = "tests/spectral_envelope_memory.rs"
 [[test]]
 name = "visibility_write_memory"
 path = "tests/visibility_write_memory.rs"
+
+[[test]]
+name = "creation_write_memory"
+path = "tests/creation_write_memory.rs"

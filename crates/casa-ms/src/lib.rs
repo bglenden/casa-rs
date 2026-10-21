@@ -221,8 +221,8 @@ pub use write_session::{
     MeasurementSetMutationColumnValues, MeasurementSetScalarColumnPlan,
     MeasurementSetWriteColumnPlan, MeasurementSetWriteError, MeasurementSetWriteOperation,
     MeasurementSetWritePlan, MeasurementSetWriteResources, MeasurementSetWriteSession,
-    MeasurementSetWriteTelemetry, maximum_visibility_cell_elements,
-    standard_main_scalar_column_plans,
+    MeasurementSetWriteTelemetry, ScalarColumnId, TARGET_BATCH_BYTES, VisibilityColumns,
+    maximum_visibility_cell_elements, standard_main_scalar_column_plans,
 };
 
 /// The most heap the provider [`open_measures_runtime`] returns holds while

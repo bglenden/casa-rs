@@ -6441,10 +6441,18 @@ impl StreamingTiledShapeComplex32Writer {
         Ok(())
     }
 
-    /// Append a batch of row cells with one timing and dispatch boundary.
-    pub fn push_rows(&mut self, rows: &[Vec<Complex32>]) -> Result<(), StorageError> {
+    /// Append row cells stored back to back, with one timing and dispatch
+    /// boundary.
+    pub fn push_rows(&mut self, rows: &[Complex32]) -> Result<(), StorageError> {
+        let cell_values: usize = self.cell_shape.iter().product();
+        if cell_values == 0 || !rows.len().is_multiple_of(cell_values) {
+            return Err(StorageError::FormatMismatch(format!(
+                "streamed TiledShape rows hold {} values, not a whole number of {cell_values}-value cells",
+                rows.len()
+            )));
+        }
         let assemble_started = Instant::now();
-        for row in rows {
+        for row in rows.chunks_exact(cell_values) {
             self.push_row_untimed(row)?;
         }
         self.assemble_seconds += assemble_started.elapsed().as_secs_f64();
