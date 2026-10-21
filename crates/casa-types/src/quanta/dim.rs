@@ -91,7 +91,9 @@ impl UnitDim {
         let mut result = [0i8; NDIM];
         let mut i = 0;
         while i < NDIM {
-            result[i] = (self.dims[i] as i32 * n) as i8;
+            // Wrapping, like the narrowing cast: a user-written power such as
+            // `J2000` (J to the 2000th, as casacore reads it) must not panic.
+            result[i] = (self.dims[i] as i32).wrapping_mul(n) as i8;
             i += 1;
         }
         Self { dims: result }
