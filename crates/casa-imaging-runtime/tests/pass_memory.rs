@@ -385,9 +385,13 @@ fn predictor_holds_at_most_its_bytes(
     let cells = channels * 2;
     let mut out = vec![Complex32::default(); BLOCK_ROWS * cells];
     // What the caller and the team hold apart from the predictor is made
-    // first: the models' device copies on Metal, and the team's threads'
-    // first parking (each boxes its lock and condition variable on macOS),
-    // which a whole prediction on the team and a pause give them time for.
+    // first: the models' device copies on Metal, and what the team's
+    // threads allocate when they first park. Each boxes its condition
+    // variable then (a 48-byte `pthread_cond_t` on macOS): measuring at
+    // once on a just-built team, six of these laws at a time counted one or
+    // two such allocations from the team's threads in 77 of 90 runs, and
+    // after a 50 ms pause in none of 90. A whole prediction on the team and
+    // the pause let every thread park first.
     {
         let mut warm = BlockPredictor::new(domains, backend, shape, workers, false).expect("warm");
         for block in &blocks {
