@@ -167,23 +167,24 @@ impl<'w> BlockPrediction<'w> {
 
     /// Chunks of `shape` for the domains of `domains`, each with a predictor
     /// per domain on `backend` (with `stage_timing`, a Metal predictor logs
-    /// its usage when it drops) whose CPU batch is allocated `with_model`,
-    /// and a store of `cells` native cells: in device memory on Metal, in
-    /// host memory, which grows to the block, otherwise.
+    /// its usage when it drops), and a store of `cells` native cells: in
+    /// device memory on Metal, in host memory, which grows to the block,
+    /// otherwise.
+    ///
+    /// With `allocate_batches` a CPU predictor's batch is allocated once, at
+    /// its largest, as a [`super::BlockPredictor`], which predicts every
+    /// block, needs. A wave leaves it to grow with the blocks it predicts,
+    /// as it always has: a fused-residual or pipelined pass never predicts
+    /// through it.
     pub(super) fn new(
         domains: impl Iterator<Item = (&'w MeasurementOperator, &'w SpectralResampler)> + Clone,
         backend: BackendChoice,
         stage_timing: bool,
         shape: PredictionShape,
-        with_model: bool,
+        allocate_batches: bool,
         cells: usize,
     ) -> Result<Self, PassError> {
-        // A CPU predictor's batch, allocated once `with_model`.
-        let samples = if with_model {
-            shape.predicted(domains.clone().map(|(_, resampler)| resampler))
-        } else {
-            0
-        };
+        let samples = shape.predicted(domains.clone().map(|(_, resampler)| resampler));
         // Records of exactly the chunks and domains, as `record_bytes`
         // charges them: collecting fallibly would size them by growth.
         let mut chunks = Vec::with_capacity(shape.chunks);
@@ -191,11 +192,14 @@ impl<'w> BlockPrediction<'w> {
             let mut predictors = Vec::with_capacity(domains.clone().count());
             for (operator, _) in domains.clone() {
                 predictors.push(match backend {
-                    BackendChoice::Cpu => Predictor::Cpu(CpuBackend::for_prediction(
-                        operator.polarization().correlations().len(),
-                        operator.basis().data_terms(),
-                        samples,
-                    )),
+                    BackendChoice::Cpu if allocate_batches => {
+                        Predictor::Cpu(CpuBackend::for_prediction(
+                            operator.polarization().correlations().len(),
+                            operator.basis().data_terms(),
+                            samples,
+                        ))
+                    }
+                    BackendChoice::Cpu => Predictor::Cpu(CpuBackend::new()),
                     BackendChoice::Metal => {
                         Predictor::Metal(Box::new(MetalBackend::new(operator.cf(), stage_timing)?))
                     }
