@@ -50,7 +50,8 @@ still in use. Retired phase plans and finished-wave evidence were removed on
 2026-10-05; retrieve them from git history at commit `08542713b7`.
 
 Canonical active planning and work status live in GitHub issues and pull
-requests.
+requests. The active simulation programme (#841) follows
+[`simulation/simulation-plan-20261020.md`](simulation/simulation-plan-20261020.md).
 
 ## Documentation conventions
 
