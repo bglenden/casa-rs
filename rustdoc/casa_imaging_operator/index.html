@@ -60,7 +60,10 @@ coordinate states them.</dd><dt><a class="struct" href="struct.MeasurementOperat
 kernel set and precision.</dd><dt><a class="struct" href="struct.ModeSet.html" title="struct casa_imaging_operator::ModeSet">ModeSet</a></dt><dd>The modes one accumulator holds; each present mode owns its own terms
 and <code>sumwt</code>.</dd><dt><a class="struct" href="struct.ModelImages.html" title="struct casa_imaging_operator::ModelImages">Model<wbr>Images</a></dt><dd>Model coefficient images for a range of planes, in requested
 polarization coordinates.</dd><dt><a class="struct" href="struct.ModelPlane.html" title="struct casa_imaging_operator::ModelPlane">Model<wbr>Plane</a></dt><dd>Model images of one plane: <code>images[term * pols + pol]</code>, each <code>[y][x]</code>
-over the image extent.</dd><dt><a class="struct" href="struct.MosaicPb.html" title="struct casa_imaging_operator::MosaicPb">Mosaic<wbr>Pb</a></dt><dd>The mosaic primary-beam kernel set: dense complex cells per dish-class
+over the image extent.</dd><dt><a class="struct" href="struct.ModelPlaneGrids.html" title="struct casa_imaging_operator::ModelPlaneGrids">Model<wbr>Plane<wbr>Grids</a></dt><dd>One plane’s model grids within <a href="struct.PreparedModelGrids.html" title="struct casa_imaging_operator::PreparedModelGrids"><code>PreparedModelGrids</code></a>: every grid
+polarization and Taylor term of grid plane <a href="struct.ModelPlaneGrids.html#method.plane" title="method casa_imaging_operator::ModelPlaneGrids::plane"><code>Self::plane</code></a>, which
+<a href="struct.MeasurementOperator.html#method.fill_model_plane" title="method casa_imaging_operator::MeasurementOperator::fill_model_plane"><code>MeasurementOperator::fill_model_plane</code></a>
+fills from that plane’s model images.</dd><dt><a class="struct" href="struct.MosaicPb.html" title="struct casa_imaging_operator::MosaicPb">Mosaic<wbr>Pb</a></dt><dd>The mosaic primary-beam kernel set: dense complex cells per dish-class
 pair and frequency cell with <code>FT[PB²]</code> weight cells, unit-sum
 normalisation, the per-row pointing ramp, scalar Mueller routing and
 CASA’s split sinc correction.</dd><dt><a class="struct" href="struct.MosaicScreens.html" title="struct casa_imaging_operator::MosaicScreens">Mosaic<wbr>Screens</a></dt><dd>A mosaic set’s beam products transformed on their screens and cropped

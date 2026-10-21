@@ -252,117 +252,113 @@
 <a href=#252 id=252 data-nosnippet>252</a>            <span class="self">self</span>.shape.rows
 <a href=#253 id=253 data-nosnippet>253</a>        );
 <a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">for _ in </span><span class="number">1</span>..pass.chunk_sets {
-<a href=#255 id=255 data-nosnippet>255</a>            sets.push(
-<a href=#256 id=256 data-nosnippet>256</a>                (<span class="number">0</span>..count)
-<a href=#257 id=257 data-nosnippet>257</a>                    .map(|<span class="kw">_</span>| Chunk::new(<span class="self">self</span>.shape, pass.domains))
-<a href=#258 id=258 data-nosnippet>258</a>                    .collect(),
-<a href=#259 id=259 data-nosnippet>259</a>            );
-<a href=#260 id=260 data-nosnippet>260</a>        }
-<a href=#261 id=261 data-nosnippet>261</a>        <span class="kw">let </span>pipeline = Pipeline {
-<a href=#262 id=262 data-nosnippet>262</a>            sets: sets
-<a href=#263 id=263 data-nosnippet>263</a>                .into_iter()
-<a href=#264 id=264 data-nosnippet>264</a>                .map(|chunks| ChunkSet {
-<a href=#265 id=265 data-nosnippet>265</a>                    chunks: RwLock::new(chunks),
-<a href=#266 id=266 data-nosnippet>266</a>                    filled: AtomicUsize::new(<span class="number">0</span>),
-<a href=#267 id=267 data-nosnippet>267</a>                    pending: AtomicUsize::new(<span class="number">0</span>),
-<a href=#268 id=268 data-nosnippet>268</a>                })
-<a href=#269 id=269 data-nosnippet>269</a>                .collect(),
-<a href=#270 id=270 data-nosnippet>270</a>            lanes: std::mem::take(<span class="kw-2">&amp;mut </span><span class="self">self</span>.domains[<span class="number">0</span>].owners)
-<a href=#271 id=271 data-nosnippet>271</a>                .into_iter()
-<a href=#272 id=272 data-nosnippet>272</a>                .map(|owner| Lane {
-<a href=#273 id=273 data-nosnippet>273</a>                    owner: Mutex::new(owner),
-<a href=#274 id=274 data-nosnippet>274</a>                    queue: Mutex::new((VecDeque::new(), <span class="bool-val">false</span>)),
-<a href=#275 id=275 data-nosnippet>275</a>                })
-<a href=#276 id=276 data-nosnippet>276</a>                .collect(),
-<a href=#277 id=277 data-nosnippet>277</a>            released: Mutex::new(()),
-<a href=#278 id=278 data-nosnippet>278</a>            freed: Condvar::new(),
-<a href=#279 id=279 data-nosnippet>279</a>            failure: Mutex::new(<span class="prelude-val">None</span>),
-<a href=#280 id=280 data-nosnippet>280</a>            stopped: AtomicBool::new(<span class="bool-val">false</span>),
-<a href=#281 id=281 data-nosnippet>281</a>        };
-<a href=#282 id=282 data-nosnippet>282</a>        <span class="kw">let </span><span class="kw-2">mut </span>next = <span class="number">0</span>;
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="kw">let </span><span class="kw-2">mut </span>waiting = std::time::Duration::ZERO;
-<a href=#284 id=284 data-nosnippet>284</a>        <span class="kw">let </span>streamed = team
-<a href=#285 id=285 data-nosnippet>285</a>            .in_place_scope(|scope| {
-<a href=#286 id=286 data-nosnippet>286</a>                <span class="kw">let </span>streamed = stream_blocks(source, cancel, timing, |block| {
-<a href=#287 id=287 data-nosnippet>287</a>                    <span class="kw">let </span>rows = block.len();
-<a href=#288 id=288 data-nosnippet>288</a>                    <span class="kw">for </span>slice <span class="kw">in </span>slices(rows, count, <span class="self">self</span>.shape.rows) {
-<a href=#289 id=289 data-nosnippet>289</a>                        <span class="kw">let </span>set = next;
-<a href=#290 id=290 data-nosnippet>290</a>                        next = (next + <span class="number">1</span>) % pipeline.sets.len();
-<a href=#291 id=291 data-nosnippet>291</a>                        <span class="kw">let </span>started = std::time::Instant::now();
-<a href=#292 id=292 data-nosnippet>292</a>                        <span class="kw">let </span>free = pipeline.wait_free(set);
-<a href=#293 id=293 data-nosnippet>293</a>                        waiting += started.elapsed();
-<a href=#294 id=294 data-nosnippet>294</a>                        <span class="kw">if </span>!free {
-<a href=#295 id=295 data-nosnippet>295</a>                            <span class="kw">return </span><span class="prelude-val">Err</span>(pipeline
-<a href=#296 id=296 data-nosnippet>296</a>                                .take_failure()
-<a href=#297 id=297 data-nosnippet>297</a>                                .unwrap_or(PassError::OwnerPanicked));
-<a href=#298 id=298 data-nosnippet>298</a>                        }
-<a href=#299 id=299 data-nosnippet>299</a>                        <span class="kw">let </span>placing = std::time::Instant::now();
-<a href=#300 id=300 data-nosnippet>300</a>                        <span class="kw">let </span><span class="kw-2">mut </span>chunks = pipeline.sets[set]
-<a href=#301 id=301 data-nosnippet>301</a>                            .chunks
-<a href=#302 id=302 data-nosnippet>302</a>                            .write()
-<a href=#303 id=303 data-nosnippet>303</a>                            .unwrap_or_else(PoisonError::into_inner);
-<a href=#304 id=304 data-nosnippet>304</a>                        <span class="kw">let </span><span class="kw-2">mut </span>filled = <span class="number">0</span>;
-<a href=#305 id=305 data-nosnippet>305</a>                        <span class="kw">for </span>(chunk, rows) <span class="kw">in </span>chunks.iter_mut().zip(chunk_ranges(slice, count)) {
-<a href=#306 id=306 data-nosnippet>306</a>                            chunk.rows = rows;
-<a href=#307 id=307 data-nosnippet>307</a>                            filled += <span class="number">1</span>;
-<a href=#308 id=308 data-nosnippet>308</a>                        }
-<a href=#309 id=309 data-nosnippet>309</a>                        <span class="self">self</span>.placer(block, <span class="number">0</span>, <span class="bool-val">true</span>)
-<a href=#310 id=310 data-nosnippet>310</a>                            .place(team, <span class="kw-2">&amp;mut </span>chunks[..filled])<span class="question-mark">?</span>;
-<a href=#311 id=311 data-nosnippet>311</a>                        <span class="kw">let </span>placed = <span class="kw-2">&amp;</span>chunks[..filled];
-<a href=#312 id=312 data-nosnippet>312</a>                        <span class="self">self</span>.domains[<span class="number">0</span>].add_row_work(placed);
-<a href=#313 id=313 data-nosnippet>313</a>                        <span class="self">self</span>.samples += placed.iter().map(|chunk| chunk.placed).sum::&lt;u64&gt;();
-<a href=#314 id=314 data-nosnippet>314</a>                        drop(chunks);
-<a href=#315 id=315 data-nosnippet>315</a>                        <span class="kw">let </span>held = <span class="kw-2">&amp;</span>pipeline.sets[set];
-<a href=#316 id=316 data-nosnippet>316</a>                        held.filled.store(filled, Ordering::Release);
-<a href=#317 id=317 data-nosnippet>317</a>                        held.pending.store(pipeline.lanes.len(), Ordering::Release);
-<a href=#318 id=318 data-nosnippet>318</a>                        <span class="self">self</span>.stages.placing += placing.elapsed();
-<a href=#319 id=319 data-nosnippet>319</a>                        <span class="kw">for </span>(index, lane) <span class="kw">in </span>pipeline.lanes.iter().enumerate() {
-<a href=#320 id=320 data-nosnippet>320</a>                            <span class="kw">let </span><span class="kw-2">mut </span>queue =
-<a href=#321 id=321 data-nosnippet>321</a>                                lane.queue.lock().unwrap_or_else(PoisonError::into_inner);
-<a href=#322 id=322 data-nosnippet>322</a>                            queue.<span class="number">0</span>.push_back(set);
-<a href=#323 id=323 data-nosnippet>323</a>                            <span class="kw">if </span>!queue.<span class="number">1 </span>{
-<a href=#324 id=324 data-nosnippet>324</a>                                queue.<span class="number">1 </span>= <span class="bool-val">true</span>;
-<a href=#325 id=325 data-nosnippet>325</a>                                <span class="kw">let </span>pipeline = <span class="kw-2">&amp;</span>pipeline;
-<a href=#326 id=326 data-nosnippet>326</a>                                scope.spawn(<span class="kw">move </span>|<span class="kw">_</span>| drain(pipeline, index, work));
-<a href=#327 id=327 data-nosnippet>327</a>                            }
-<a href=#328 id=328 data-nosnippet>328</a>                        }
-<a href=#329 id=329 data-nosnippet>329</a>                    }
-<a href=#330 id=330 data-nosnippet>330</a>                    <span class="self">self</span>.weight_base += rows * block.channels();
-<a href=#331 id=331 data-nosnippet>331</a>                    <span class="prelude-val">Ok</span>(())
-<a href=#332 id=332 data-nosnippet>332</a>                });
-<a href=#333 id=333 data-nosnippet>333</a>                <span class="comment">// Every queued set is accumulated, or released unaccumulated
-<a href=#334 id=334 data-nosnippet>334</a>                // once the pipeline stops; the scope then joins the tasks.
-<a href=#335 id=335 data-nosnippet>335</a>                </span><span class="kw">let </span>started = std::time::Instant::now();
-<a href=#336 id=336 data-nosnippet>336</a>                <span class="kw">for </span>set <span class="kw">in </span><span class="number">0</span>..pipeline.sets.len() {
-<a href=#337 id=337 data-nosnippet>337</a>                    <span class="kw">if </span>!pipeline.wait_free(set) {
-<a href=#338 id=338 data-nosnippet>338</a>                        <span class="kw">break</span>;
-<a href=#339 id=339 data-nosnippet>339</a>                    }
-<a href=#340 id=340 data-nosnippet>340</a>                }
-<a href=#341 id=341 data-nosnippet>341</a>                waiting += started.elapsed();
-<a href=#342 id=342 data-nosnippet>342</a>                streamed
-<a href=#343 id=343 data-nosnippet>343</a>            })
-<a href=#344 id=344 data-nosnippet>344</a>            .expect(<span class="string">"a pipelined wave's team has threads"</span>);
-<a href=#345 id=345 data-nosnippet>345</a>        <span class="kw">let </span>failure = pipeline.take_failure();
-<a href=#346 id=346 data-nosnippet>346</a>        <span class="self">self</span>.stages.accumulating += waiting;
-<a href=#347 id=347 data-nosnippet>347</a>        <span class="self">self</span>.stages.pipelined = <span class="bool-val">true</span>;
-<a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">let </span>Pipeline { sets, lanes, .. } = pipeline;
-<a href=#349 id=349 data-nosnippet>349</a>        <span class="self">self</span>.chunks = sets
-<a href=#350 id=350 data-nosnippet>350</a>            .into_iter()
-<a href=#351 id=351 data-nosnippet>351</a>            .next()
-<a href=#352 id=352 data-nosnippet>352</a>            .expect(<span class="string">"the first set"</span>)
-<a href=#353 id=353 data-nosnippet>353</a>            .chunks
-<a href=#354 id=354 data-nosnippet>354</a>            .into_inner()
-<a href=#355 id=355 data-nosnippet>355</a>            .unwrap_or_else(PoisonError::into_inner);
-<a href=#356 id=356 data-nosnippet>356</a>        <span class="self">self</span>.domains[<span class="number">0</span>].owners = lanes
-<a href=#357 id=357 data-nosnippet>357</a>            .into_iter()
-<a href=#358 id=358 data-nosnippet>358</a>            .map(|lane| {
-<a href=#359 id=359 data-nosnippet>359</a>                lane.owner
-<a href=#360 id=360 data-nosnippet>360</a>                    .into_inner()
-<a href=#361 id=361 data-nosnippet>361</a>                    .map_err(|<span class="kw">_</span>| PassError::OwnerPanicked)
-<a href=#362 id=362 data-nosnippet>362</a>            })
-<a href=#363 id=363 data-nosnippet>363</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#364 id=364 data-nosnippet>364</a>        <span class="kw">let </span>blocks = streamed<span class="question-mark">?</span>;
-<a href=#365 id=365 data-nosnippet>365</a>        failure.map_or(<span class="prelude-val">Ok</span>(blocks), <span class="prelude-val">Err</span>)
-<a href=#366 id=366 data-nosnippet>366</a>    }
-<a href=#367 id=367 data-nosnippet>367</a>}
+<a href=#255 id=255 data-nosnippet>255</a>            sets.push((<span class="number">0</span>..count).map(|<span class="kw">_</span>| Chunk::new(<span class="self">self</span>.shape)).collect());
+<a href=#256 id=256 data-nosnippet>256</a>        }
+<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">let </span>pipeline = Pipeline {
+<a href=#258 id=258 data-nosnippet>258</a>            sets: sets
+<a href=#259 id=259 data-nosnippet>259</a>                .into_iter()
+<a href=#260 id=260 data-nosnippet>260</a>                .map(|chunks| ChunkSet {
+<a href=#261 id=261 data-nosnippet>261</a>                    chunks: RwLock::new(chunks),
+<a href=#262 id=262 data-nosnippet>262</a>                    filled: AtomicUsize::new(<span class="number">0</span>),
+<a href=#263 id=263 data-nosnippet>263</a>                    pending: AtomicUsize::new(<span class="number">0</span>),
+<a href=#264 id=264 data-nosnippet>264</a>                })
+<a href=#265 id=265 data-nosnippet>265</a>                .collect(),
+<a href=#266 id=266 data-nosnippet>266</a>            lanes: std::mem::take(<span class="kw-2">&amp;mut </span><span class="self">self</span>.domains[<span class="number">0</span>].owners)
+<a href=#267 id=267 data-nosnippet>267</a>                .into_iter()
+<a href=#268 id=268 data-nosnippet>268</a>                .map(|owner| Lane {
+<a href=#269 id=269 data-nosnippet>269</a>                    owner: Mutex::new(owner),
+<a href=#270 id=270 data-nosnippet>270</a>                    queue: Mutex::new((VecDeque::new(), <span class="bool-val">false</span>)),
+<a href=#271 id=271 data-nosnippet>271</a>                })
+<a href=#272 id=272 data-nosnippet>272</a>                .collect(),
+<a href=#273 id=273 data-nosnippet>273</a>            released: Mutex::new(()),
+<a href=#274 id=274 data-nosnippet>274</a>            freed: Condvar::new(),
+<a href=#275 id=275 data-nosnippet>275</a>            failure: Mutex::new(<span class="prelude-val">None</span>),
+<a href=#276 id=276 data-nosnippet>276</a>            stopped: AtomicBool::new(<span class="bool-val">false</span>),
+<a href=#277 id=277 data-nosnippet>277</a>        };
+<a href=#278 id=278 data-nosnippet>278</a>        <span class="kw">let </span><span class="kw-2">mut </span>next = <span class="number">0</span>;
+<a href=#279 id=279 data-nosnippet>279</a>        <span class="kw">let </span><span class="kw-2">mut </span>waiting = std::time::Duration::ZERO;
+<a href=#280 id=280 data-nosnippet>280</a>        <span class="kw">let </span>streamed = team
+<a href=#281 id=281 data-nosnippet>281</a>            .in_place_scope(|scope| {
+<a href=#282 id=282 data-nosnippet>282</a>                <span class="kw">let </span>streamed = stream_blocks(source, cancel, timing, |block| {
+<a href=#283 id=283 data-nosnippet>283</a>                    <span class="kw">let </span>rows = block.len();
+<a href=#284 id=284 data-nosnippet>284</a>                    <span class="kw">for </span>slice <span class="kw">in </span>slices(rows, count, <span class="self">self</span>.shape.rows) {
+<a href=#285 id=285 data-nosnippet>285</a>                        <span class="kw">let </span>set = next;
+<a href=#286 id=286 data-nosnippet>286</a>                        next = (next + <span class="number">1</span>) % pipeline.sets.len();
+<a href=#287 id=287 data-nosnippet>287</a>                        <span class="kw">let </span>started = std::time::Instant::now();
+<a href=#288 id=288 data-nosnippet>288</a>                        <span class="kw">let </span>free = pipeline.wait_free(set);
+<a href=#289 id=289 data-nosnippet>289</a>                        waiting += started.elapsed();
+<a href=#290 id=290 data-nosnippet>290</a>                        <span class="kw">if </span>!free {
+<a href=#291 id=291 data-nosnippet>291</a>                            <span class="kw">return </span><span class="prelude-val">Err</span>(pipeline
+<a href=#292 id=292 data-nosnippet>292</a>                                .take_failure()
+<a href=#293 id=293 data-nosnippet>293</a>                                .unwrap_or(PassError::OwnerPanicked));
+<a href=#294 id=294 data-nosnippet>294</a>                        }
+<a href=#295 id=295 data-nosnippet>295</a>                        <span class="kw">let </span>placing = std::time::Instant::now();
+<a href=#296 id=296 data-nosnippet>296</a>                        <span class="kw">let </span><span class="kw-2">mut </span>chunks = pipeline.sets[set]
+<a href=#297 id=297 data-nosnippet>297</a>                            .chunks
+<a href=#298 id=298 data-nosnippet>298</a>                            .write()
+<a href=#299 id=299 data-nosnippet>299</a>                            .unwrap_or_else(PoisonError::into_inner);
+<a href=#300 id=300 data-nosnippet>300</a>                        <span class="kw">let </span><span class="kw-2">mut </span>filled = <span class="number">0</span>;
+<a href=#301 id=301 data-nosnippet>301</a>                        <span class="kw">for </span>(chunk, rows) <span class="kw">in </span>chunks.iter_mut().zip(chunk_ranges(slice, count)) {
+<a href=#302 id=302 data-nosnippet>302</a>                            chunk.rows = rows;
+<a href=#303 id=303 data-nosnippet>303</a>                            filled += <span class="number">1</span>;
+<a href=#304 id=304 data-nosnippet>304</a>                        }
+<a href=#305 id=305 data-nosnippet>305</a>                        <span class="self">self</span>.placer(block, <span class="number">0</span>, <span class="bool-val">true</span>)
+<a href=#306 id=306 data-nosnippet>306</a>                            .place(team, <span class="kw-2">&amp;mut </span>chunks[..filled])<span class="question-mark">?</span>;
+<a href=#307 id=307 data-nosnippet>307</a>                        <span class="kw">let </span>placed = <span class="kw-2">&amp;</span>chunks[..filled];
+<a href=#308 id=308 data-nosnippet>308</a>                        <span class="self">self</span>.domains[<span class="number">0</span>].add_row_work(placed);
+<a href=#309 id=309 data-nosnippet>309</a>                        <span class="self">self</span>.samples += placed.iter().map(|chunk| chunk.placed).sum::&lt;u64&gt;();
+<a href=#310 id=310 data-nosnippet>310</a>                        drop(chunks);
+<a href=#311 id=311 data-nosnippet>311</a>                        <span class="kw">let </span>held = <span class="kw-2">&amp;</span>pipeline.sets[set];
+<a href=#312 id=312 data-nosnippet>312</a>                        held.filled.store(filled, Ordering::Release);
+<a href=#313 id=313 data-nosnippet>313</a>                        held.pending.store(pipeline.lanes.len(), Ordering::Release);
+<a href=#314 id=314 data-nosnippet>314</a>                        <span class="self">self</span>.stages.placing += placing.elapsed();
+<a href=#315 id=315 data-nosnippet>315</a>                        <span class="kw">for </span>(index, lane) <span class="kw">in </span>pipeline.lanes.iter().enumerate() {
+<a href=#316 id=316 data-nosnippet>316</a>                            <span class="kw">let </span><span class="kw-2">mut </span>queue =
+<a href=#317 id=317 data-nosnippet>317</a>                                lane.queue.lock().unwrap_or_else(PoisonError::into_inner);
+<a href=#318 id=318 data-nosnippet>318</a>                            queue.<span class="number">0</span>.push_back(set);
+<a href=#319 id=319 data-nosnippet>319</a>                            <span class="kw">if </span>!queue.<span class="number">1 </span>{
+<a href=#320 id=320 data-nosnippet>320</a>                                queue.<span class="number">1 </span>= <span class="bool-val">true</span>;
+<a href=#321 id=321 data-nosnippet>321</a>                                <span class="kw">let </span>pipeline = <span class="kw-2">&amp;</span>pipeline;
+<a href=#322 id=322 data-nosnippet>322</a>                                scope.spawn(<span class="kw">move </span>|<span class="kw">_</span>| drain(pipeline, index, work));
+<a href=#323 id=323 data-nosnippet>323</a>                            }
+<a href=#324 id=324 data-nosnippet>324</a>                        }
+<a href=#325 id=325 data-nosnippet>325</a>                    }
+<a href=#326 id=326 data-nosnippet>326</a>                    <span class="self">self</span>.weight_base += rows * block.channels();
+<a href=#327 id=327 data-nosnippet>327</a>                    <span class="prelude-val">Ok</span>(())
+<a href=#328 id=328 data-nosnippet>328</a>                });
+<a href=#329 id=329 data-nosnippet>329</a>                <span class="comment">// Every queued set is accumulated, or released unaccumulated
+<a href=#330 id=330 data-nosnippet>330</a>                // once the pipeline stops; the scope then joins the tasks.
+<a href=#331 id=331 data-nosnippet>331</a>                </span><span class="kw">let </span>started = std::time::Instant::now();
+<a href=#332 id=332 data-nosnippet>332</a>                <span class="kw">for </span>set <span class="kw">in </span><span class="number">0</span>..pipeline.sets.len() {
+<a href=#333 id=333 data-nosnippet>333</a>                    <span class="kw">if </span>!pipeline.wait_free(set) {
+<a href=#334 id=334 data-nosnippet>334</a>                        <span class="kw">break</span>;
+<a href=#335 id=335 data-nosnippet>335</a>                    }
+<a href=#336 id=336 data-nosnippet>336</a>                }
+<a href=#337 id=337 data-nosnippet>337</a>                waiting += started.elapsed();
+<a href=#338 id=338 data-nosnippet>338</a>                streamed
+<a href=#339 id=339 data-nosnippet>339</a>            })
+<a href=#340 id=340 data-nosnippet>340</a>            .expect(<span class="string">"a pipelined wave's team has threads"</span>);
+<a href=#341 id=341 data-nosnippet>341</a>        <span class="kw">let </span>failure = pipeline.take_failure();
+<a href=#342 id=342 data-nosnippet>342</a>        <span class="self">self</span>.stages.accumulating += waiting;
+<a href=#343 id=343 data-nosnippet>343</a>        <span class="self">self</span>.stages.pipelined = <span class="bool-val">true</span>;
+<a href=#344 id=344 data-nosnippet>344</a>        <span class="kw">let </span>Pipeline { sets, lanes, .. } = pipeline;
+<a href=#345 id=345 data-nosnippet>345</a>        <span class="self">self</span>.chunks = sets
+<a href=#346 id=346 data-nosnippet>346</a>            .into_iter()
+<a href=#347 id=347 data-nosnippet>347</a>            .next()
+<a href=#348 id=348 data-nosnippet>348</a>            .expect(<span class="string">"the first set"</span>)
+<a href=#349 id=349 data-nosnippet>349</a>            .chunks
+<a href=#350 id=350 data-nosnippet>350</a>            .into_inner()
+<a href=#351 id=351 data-nosnippet>351</a>            .unwrap_or_else(PoisonError::into_inner);
+<a href=#352 id=352 data-nosnippet>352</a>        <span class="self">self</span>.domains[<span class="number">0</span>].owners = lanes
+<a href=#353 id=353 data-nosnippet>353</a>            .into_iter()
+<a href=#354 id=354 data-nosnippet>354</a>            .map(|lane| {
+<a href=#355 id=355 data-nosnippet>355</a>                lane.owner
+<a href=#356 id=356 data-nosnippet>356</a>                    .into_inner()
+<a href=#357 id=357 data-nosnippet>357</a>                    .map_err(|<span class="kw">_</span>| PassError::OwnerPanicked)
+<a href=#358 id=358 data-nosnippet>358</a>            })
+<a href=#359 id=359 data-nosnippet>359</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#360 id=360 data-nosnippet>360</a>        <span class="kw">let </span>blocks = streamed<span class="question-mark">?</span>;
+<a href=#361 id=361 data-nosnippet>361</a>        failure.map_or(<span class="prelude-val">Ok</span>(blocks), <span class="prelude-val">Err</span>)
+<a href=#362 id=362 data-nosnippet>362</a>    }
+<a href=#363 id=363 data-nosnippet>363</a>}
 </code></pre></div></section></main></body></html>
