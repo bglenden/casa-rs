@@ -50,6 +50,34 @@ impl CpuBackend {
         Self::default()
     }
 
+    /// A backend for predictions of blocks of at most `samples` placements
+    /// of `npol` correlations from a model of `terms` Taylor terms, its
+    /// buffers allocated once: its per-sample buffers
+    /// ([`Self::prediction_sample_bytes`]) and its batch
+    /// ([`Self::batch_bytes`]), which such blocks never grow
+    /// ([`Work::PredictNative`]).
+    #[must_use]
+    pub fn for_prediction(npol: usize, terms: usize, samples: usize) -> Self {
+        Self {
+            powers: Vec::with_capacity(terms),
+            prediction: Vec::with_capacity(npol),
+            norms: Vec::with_capacity(npol),
+            // One gather per Mueller plane a grid polarization routes, at
+            // most one per visibility polarization.
+            gathered: Vec::with_capacity(npol),
+            batch: Vec::with_capacity(samples * npol),
+            ..Self::default()
+        }
+    }
+
+    /// Bytes [`Self::for_prediction`] allocates beside its batch.
+    #[must_use]
+    pub const fn prediction_sample_bytes(npol: usize, terms: usize) -> u64 {
+        (terms * size_of::<f64>()
+            + 2 * npol * size_of::<Complex64>()
+            + npol * size_of::<(u8, Complex64)>()) as u64
+    }
+
     /// Bytes the backend keeps after blocks of at most `samples` placements
     /// of `npol` correlations: its batch, which holds a block's native
     /// predictions ([`Work::PredictNative`]) or its residual values at

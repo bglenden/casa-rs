@@ -342,41 +342,10 @@ fn prepare_and_run(
     Ok(native::run(&problem, run, summary)?)
 }
 
-/// The charge of the process-wide caches every run fills and that keep what
-/// they hold after it: the table-read cache, with the MeasurementSet's
-/// tiles, and FFTW's plan cache. The first run to be admitted takes it for
-/// the process.
-static PROCESS_CACHES: std::sync::OnceLock<casa_imaging_runtime::Reservation> =
-    std::sync::OnceLock::new();
-
-/// Bytes the process-wide caches hold at most.
-#[must_use]
-pub fn process_cache_bytes() -> u64 {
-    (casa_ms::table_read_cache_bytes() + casa_imaging_operator::FFT_PLAN_CACHE_BYTES) as u64
-}
-
-/// Charge the process-wide caches if no run has yet. Of runs admitted at
-/// once, one keeps its charge and the others release theirs.
-fn admit_process_caches(context: &RunContext) -> Result<(), ApplicationDispatchError> {
-    if PROCESS_CACHES.get().is_none() {
-        let charge = casa_imaging_runtime::admit(
-            &context.host,
-            &context.policy,
-            &casa_imaging_runtime::Demand {
-                phase: "process caches",
-                memory: process_cache_bytes(),
-            },
-        )
-        .map_err(ApplicationDispatchError::Admission)?;
-        // A concurrent run that set it first holds the charge.
-        let _ = PROCESS_CACHES.set(charge);
-    }
-    Ok(())
-}
-
 /// Compile `request` for its native run, with the charge of the Measures
 /// catalogs compiling loads for the run. They are admitted before compile
-/// opens anything, after the process's caches ([`admit_process_caches`]);
+/// opens anything, after the process's caches
+/// ([`casa_imaging_runtime::charge_process_caches`]);
 /// the MeasurementSet walks are admitted once its rows are known
 /// ([`compile::prepare`]) and released once the selected observation is
 /// resolved. The device the request resolves to is set in
@@ -397,7 +366,8 @@ fn compile_run(
     request
         .validate()
         .map_err(ApplicationDispatchError::Request)?;
-    admit_process_caches(context)?;
+    casa_imaging_runtime::charge_process_caches(&context.host, &context.policy)
+        .map_err(ApplicationDispatchError::Admission)?;
     let resident = casa_imaging_runtime::admit(
         &context.host,
         &context.policy,

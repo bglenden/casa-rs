@@ -278,7 +278,7 @@ fn a_completed_cube_keeps_its_cache_charged_until_its_state_drops() {
     let (host, policy) = (context.host, context.policy);
     let free = casa_imaging_runtime::free_memory(&host, &policy);
     let table_cache = if free == policy.memory(&host) {
-        casa_imaging_application::process_cache_bytes()
+        casa_imaging_runtime::process_cache_bytes()
     } else {
         0
     };

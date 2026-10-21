@@ -674,6 +674,104 @@ pub fn normalised_peak(images: &NormalImages, sums: &NormalImages) -> f64 {
     peak
 }
 
+/// What a row of [`prediction_rows`] is besides its data.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RowKind {
+    Cross,
+    /// An autocorrelation, at zero `uvw` and no phase shift.
+    Auto,
+    /// A flagged row.
+    Flagged,
+}
+
+/// Row `index`'s kind in [`prediction_rows`]: every seventh row from the
+/// third an autocorrelation, every eleventh from the fifth flagged.
+pub fn row_kind(index: usize) -> RowKind {
+    if index % 7 == 3 {
+        RowKind::Auto
+    } else if index % 11 == 5 {
+        RowKind::Flagged
+    } else {
+        RowKind::Cross
+    }
+}
+
+/// `count` random rows ([`Rows::random`]) on `domains` domains, each
+/// further one rotated, whose autocorrelations ([`row_kind`]) lie at zero
+/// `uvw`; [`prediction_block`] gives them their kinds.
+pub fn prediction_rows(
+    count: usize,
+    seed: u64,
+    operator: &MeasurementOperator,
+    domains: usize,
+) -> Rows {
+    prediction_rows_at(count, seed, operator, domains, frequencies())
+}
+
+/// [`prediction_rows`] at `frequencies`.
+pub fn prediction_rows_at(
+    count: usize,
+    seed: u64,
+    operator: &MeasurementOperator,
+    domains: usize,
+    frequencies: Vec<f64>,
+) -> Rows {
+    let mut rows = Rows::at(count, seed, operator.geometry(), frequencies);
+    for domain in 1..domains {
+        rows.add_domain(0.3 * domain as f64, seed + domain as u64);
+    }
+    for (index, row) in rows.rows.iter_mut().enumerate() {
+        if row_kind(index) == RowKind::Auto {
+            for projection in &mut row.projections {
+                projection.uvw_m = [0.0; 3];
+                projection.phase_shift_m = 0.0;
+            }
+        }
+    }
+    rows
+}
+
+/// The rows `range` of `rows` as one block, each row flagged or an
+/// autocorrelation as its [`row_kind`] says.
+pub fn prediction_block(rows: &Rows, range: std::ops::Range<usize>) -> NativeBlock {
+    let channels = (0..rows.frequencies.len() as u32).collect::<Vec<_>>();
+    let mut block = NativeBlock::default();
+    block.reset(rows.rows[0].projections.len(), &channels, &[0, 1]);
+    for index in range {
+        let row = &rows.rows[index];
+        let mut row_context = context(index);
+        if row_kind(index) == RowKind::Auto {
+            row_context.antennas = [row_context.antennas[1]; 2];
+        }
+        block.push_row(
+            NativeRowHeader {
+                row_flag: row_kind(index) == RowKind::Flagged,
+                context: row_context,
+                address: RowAddress {
+                    physical_row: index as u64,
+                    data_description: 0,
+                },
+            },
+            &row.projections,
+            &rows.frequencies,
+            &row.values,
+            &row.weights,
+            &row.flags,
+        );
+    }
+    block
+}
+
+/// The shape of [`prediction_block`]s of at most `rows` rows of `source`.
+pub fn prediction_shape(source: &Rows, rows: usize) -> BlockShape {
+    BlockShape {
+        rows,
+        spectrum: RowSpectrum::evenly_spaced(source.frequencies.len()),
+        correlations: 2,
+        domains: source.rows[0].projections.len(),
+    }
+}
+
 /// The worst difference between `a` and `b`: over their data, PSF and
 /// weight images, each relative to its own peak, and their `sumwt`.
 pub fn worst_relative(a: &NormalImages, b: &NormalImages) -> f64 {
