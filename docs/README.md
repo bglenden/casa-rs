@@ -10,7 +10,9 @@ This directory holds stable project documentation.
 
 casa-rs is used from the Python package `casars` and the headless `casars`
 task host (`casars run`, `casars params`); see
-[ADR-0017](adr/0017-python-first-surface.md).
+[ADR-0017](adr/0017-python-first-surface.md). All computation is in Rust,
+and the Python package is only its interface; see
+[ADR-0018](adr/0018-rust-computes-python-is-the-interface.md).
 
 - [`python/index.md`](python/index.md)
   - the Python package: data access, tasks, parameters, and plotting

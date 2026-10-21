@@ -601,3 +601,4 @@ never makes a route available.
 | 0015 | Run-local imaging ownership without content attestation | accepted |
 | 0016 | Imaging foundation | accepted |
 | 0017 | Python and headless task providers are the product surface | accepted |
+| 0018 | Rust computes; Python is the interface | accepted |

@@ -64,6 +64,9 @@ When sources disagree: code/tests/CI > ADRs > ARCHITECTURE/TESTING > issues.
   oracle only; never ship a task, app, or surface that delegates to CASA
   (casatasks, casatools, or a CASA install) at runtime
   (`scripts/check-no-casa-runtime.py` enforces this).
+- Computation lives in Rust. The Python package presents CASA's names and
+  signatures, converts data and starts the work. Logic that CASA writes in
+  Python, such as task scripts and `simutil`, is ported to Rust (ADR-0018).
 - Idiomatic Rust, not a C++ API mirror. Search for existing behaviour before
   adding code.
 - Crate names: `casa-*` for libraries, `casars-*` for apps and runtimes.
