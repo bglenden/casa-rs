@@ -10,13 +10,16 @@ oracle's manifest, the comparison opens `<casa>/<name>.ms` and
 - **the descriptors:** each table's TableInfo (type and subType), its
   non-table keywords, and every column's value type, dimensionality,
   fixed-shape option and keywords (units and MEASINFO);
-- **the cells:** every column, row by row. DATA must be zero in both. Floats
-  pass within a per-column tolerance, and UVW's largest difference is
-  reported.
+- **the cells:** every column, row by row: which cells are defined, their
+  shapes and their values. DATA must also be zero in both. Floats pass
+  within a per-column tolerance, and UVW's largest difference is reported.
 
 Data managers are not compared; the plan lets them differ. A scenario's
 `ignore` entries (`TABLE.COLUMN`) are skipped. The exit status is 1 if any
 scenario differs.
+
+`test_compare_sm_ms.py` tests the cell comparison; it needs only NumPy, as
+`casatools` is imported only to read tables.
 """
 
 from __future__ import annotations
@@ -27,7 +30,6 @@ import os
 import sys
 
 import numpy as np
-from casatools import table
 
 # Absolute tolerances by column, added to RELATIVE_TOLERANCE times the
 # value; other float columns use DEFAULT_TOLERANCE. Times are seconds near
@@ -164,6 +166,20 @@ def compare_values(a, b, tolerance: float) -> tuple[str | None, float | None, st
     return None, (largest if numeric else None), ""
 
 
+def data_differences(casa: list, casars: list) -> list[tuple[str, str]]:
+    """MAIN.DATA's differences, as (`TABLE.COLUMN:aspect`, message) pairs:
+    nonzero data on either side, then the comparison every column gets
+    (which cells are defined, their shapes and their values)."""
+    found = []
+    for side, values in (("CASA", casa), ("casa-rs", casars)):
+        if any(value is not None and np.any(np.asarray(value) != 0) for value in values):
+            found.append(("MAIN.DATA:nonzero", f"MAIN.DATA: {side} has nonzero data"))
+    aspect, _, note = compare_values(casa, casars, TOLERANCES.get("DATA", DEFAULT_TOLERANCE))
+    if aspect is not None:
+        found.append((f"MAIN.DATA:{aspect}", f"MAIN.DATA: {note}"))
+    return found
+
+
 def normalise_keywords(value):
     """Keywords as JSON-comparable values (NumPy arrays become lists)."""
     if isinstance(value, dict):
@@ -176,6 +192,8 @@ def normalise_keywords(value):
 
 
 def compare_scenario(name: str, casa_ms: str, casars_ms: str, ignore: set[str], uvw_tol: float) -> dict:
+    from casatools import table
+
     tb = table()
     report = {"name": name, "differences": [], "known": [], "largest": {}}
 
@@ -228,9 +246,8 @@ def compare_scenario(name: str, casa_ms: str, casars_ms: str, ignore: set[str], 
             values_a = cells(tb, casa_path, column, a["rows"])
             values_b = cells(tb, casars_path, column, b["rows"])
             if label == "MAIN" and column == "DATA":
-                for side, values in (("CASA", values_a), ("casa-rs", values_b)):
-                    if any(v is not None and np.any(np.asarray(v) != 0) for v in values):
-                        differ("MAIN.DATA:nonzero", f"MAIN.DATA: {side} has nonzero data")
+                for key, message in data_differences(values_a, values_b):
+                    differ(key, message)
                 continue
             tolerance = uvw_tol if column == "UVW" else TOLERANCES.get(column, DEFAULT_TOLERANCE)
             aspect, largest, note = compare_values(values_a, values_b, tolerance)

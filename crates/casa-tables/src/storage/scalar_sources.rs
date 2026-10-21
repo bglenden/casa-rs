@@ -5,7 +5,8 @@
 //! streamed from a construction file. The storage-manager writers read a
 //! source a run of rows at a time as encoded cells, so a streamed column of
 //! fixed-width values is decoded in blocks, without a [`ScalarValue`] per
-//! cell.
+//! cell. What a save holds for its streamed columns is bounded
+//! ([`streamed_scalar_columns_resident_bytes`]).
 
 use std::cell::RefCell;
 use std::fs::File;
@@ -17,14 +18,68 @@ use casa_types::ScalarValue;
 
 use super::StorageError;
 use super::data_type::CasacoreDataType;
+use super::incremental_stman::ISM_SCALAR_BUCKET_BYTES_PER_COLUMN;
+use super::standard_stman::DEFAULT_SSM_BUCKET_SIZE;
 use super::table_control::ColumnDescContents;
 use crate::table::{
     ColumnOverride, ColumnOverrides, GeneratedScalarColumn, GeneratedScalarValueRun,
-    StreamedScalarColumn, StreamedScalarType,
+    STREAMING_SCALAR_COLUMN_BUFFER_BYTES, StreamedScalarColumn, StreamedScalarType,
 };
 
-/// Cells a streamed source decodes per read.
-const READ_CELLS: usize = 4096;
+/// Cells a streamed source decodes per read, and a storage-manager writer
+/// encodes per block.
+pub(crate) const SCALAR_BLOCK_CELLS: usize = 4096;
+
+// A block of Bool cells ends on a byte of packed bits.
+const _: () = assert!(SCALAR_BLOCK_CELLS.is_multiple_of(8));
+
+/// Bytes of the buffer a streamed source reads its construction file
+/// through.
+const READER_BUFFER_BYTES: usize = 64 * 1024;
+
+/// The widest construction record, a validity byte and a `Float64`.
+const MAX_RECORD_BYTES: usize = StreamedScalarType::Float64.record_bytes();
+
+/// The widest encoded cell, a `Float64`.
+const MAX_CELL_BYTES: usize = MAX_RECORD_BYTES - 1;
+
+/// Heap a table save holds for each streamed scalar column while it writes
+/// the column's storage-manager group: the source's read buffer and block
+/// of construction records, the column's block of encoded cells (an
+/// IncrementalStMan writer keeps one per column), and its share of the
+/// group's IncrementalStMan bucket.
+const SAVE_BYTES_PER_COLUMN: usize = READER_BUFFER_BYTES
+    + SCALAR_BLOCK_CELLS * MAX_RECORD_BYTES
+    + SCALAR_BLOCK_CELLS * MAX_CELL_BYTES
+    + ISM_SCALAR_BUCKET_BYTES_PER_COLUMN;
+
+/// Heap a table save holds once, for the group it is writing: a
+/// StandardStMan bucket and the block of encoded cells it is filled from.
+const SAVE_BYTES_PER_GROUP: usize =
+    DEFAULT_SSM_BUCKET_SIZE as usize + SCALAR_BLOCK_CELLS * MAX_CELL_BYTES;
+
+/// Heap that `column_count` streamed scalar columns hold at most: the
+/// larger of what their construction writers hold while rows are appended
+/// ([`STREAMING_SCALAR_COLUMN_BUFFER_BYTES`] each) and what a table save
+/// holds while it encodes them into StandardStMan or IncrementalStMan
+/// buckets. The writers are finished before the save opens the sources, so
+/// the two are never held at once. A planner reserves this beside its other
+/// buffers (ADR-0008); `None` if it overflows.
+///
+/// The bound excludes each manager's index of its buckets, a few bytes per
+/// bucket written.
+#[doc(hidden)]
+pub fn streamed_scalar_columns_resident_bytes(column_count: usize) -> Option<usize> {
+    let appending = column_count.checked_mul(STREAMING_SCALAR_COLUMN_BUFFER_BYTES)?;
+    let saving = if column_count == 0 {
+        0
+    } else {
+        column_count
+            .checked_mul(SAVE_BYTES_PER_COLUMN)?
+            .checked_add(SAVE_BYTES_PER_GROUP)?
+    };
+    Some(appending.max(saving))
+}
 
 pub(crate) enum ScalarColumnSource<'a> {
     Materialized(Vec<Option<ScalarValue>>),
@@ -78,7 +133,8 @@ pub(crate) struct StreamedScalarColumnReader {
     row_count: usize,
     scalar_type: StreamedScalarType,
     next_row: usize,
-    /// Construction records of one block read, at most [`READ_CELLS`].
+    /// Construction records of one block read, at most
+    /// [`SCALAR_BLOCK_CELLS`].
     records: Vec<u8>,
 }
 
@@ -107,7 +163,7 @@ impl StreamedScalarColumnReader {
             )));
         }
         Ok(Self {
-            reader: BufReader::with_capacity(64 * 1024, file),
+            reader: BufReader::with_capacity(READER_BUFFER_BYTES, file),
             path: column.path().to_path_buf(),
             row_count: column.row_count(),
             scalar_type: column.scalar_type(),
@@ -154,6 +210,7 @@ impl StreamedScalarColumnReader {
     /// Append the encodings of cells `rows` to `out`, as the storage-manager
     /// writers encode a scalar of this type: the value in the table's byte
     /// order (a `Bool` as one 0 or 1 byte), and zeros for an undefined cell.
+    /// `out` grows once, to exactly what the cells need.
     fn read_encoded(
         &mut self,
         rows: Range<usize>,
@@ -162,11 +219,12 @@ impl StreamedScalarColumnReader {
     ) -> Result<(), StorageError> {
         self.seek_to(rows.clone())?;
         let record_bytes = self.scalar_type.record_bytes();
+        out.reserve_exact(rows.len() * (record_bytes - 1));
         let undefined = [0u8; 8];
         let undefined = &undefined[..record_bytes - 1];
         let mut first = rows.start;
         while first < rows.end {
-            let cells = (rows.end - first).min(READ_CELLS);
+            let cells = (rows.end - first).min(SCALAR_BLOCK_CELLS);
             self.records.resize(cells * record_bytes, 0);
             self.reader.read_exact(&mut self.records)?;
             for record in self.records.chunks_exact(record_bytes) {

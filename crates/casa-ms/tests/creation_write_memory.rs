@@ -8,7 +8,9 @@
 //! session's heap beyond what was live before it stays within the plan's
 //! writer-owned bytes ([`MeasurementSetWritePlan::maximum_resident_bytes`])
 //! and the producer's own batch. Finalizing the scalar columns and saving
-//! MAIN do not grow with the row count either.
+//! MAIN do not grow with the row count either. A plan of scalar columns
+//! alone, at the smallest budget it admits, holds its plan through the
+//! save that encodes them; a smaller budget is refused.
 //!
 //! This binary's global allocator counts the live heap; the counters are
 //! the process's, so each law runs alone in a process of its own
@@ -19,10 +21,14 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use casa_ms::{
-    MeasurementSet, MeasurementSetBuilder, MeasurementSetCreateTarget, MeasurementSetWritePlan,
-    MeasurementSetWriteResources, MeasurementSetWriteSession, OptionalMainColumn,
+    MeasurementSet, MeasurementSetBuilder, MeasurementSetCreateTarget,
+    MeasurementSetScalarColumnPlan, MeasurementSetWritePlan, MeasurementSetWriteResources,
+    MeasurementSetWriteSession, OptionalMainColumn, standard_main_scalar_column_plans,
 };
-use casa_tables::{ColumnOverrides, StreamedScalarValues};
+use casa_tables::{
+    ColumnOverrides, StreamedScalarType, StreamedScalarValues,
+    streamed_scalar_columns_resident_bytes,
+};
 use casa_types::ScalarValue;
 use num_complex::Complex32;
 
@@ -341,4 +347,154 @@ fn a_creation_session_holds_no_more_for_more_rows() {
         small.finishing,
         large.finishing
     );
+}
+
+/// Rows per batch of the scalar-only creation.
+const SCALAR_BATCH_ROWS: usize = 1024;
+
+/// Resources of one live batch.
+fn one_batch(available_bytes: usize) -> MeasurementSetWriteResources {
+    MeasurementSetWriteResources {
+        available_bytes,
+        maximum_live_batches: 1,
+        tiled_column_buffer_bytes: 0,
+    }
+}
+
+fn scalar_row_bytes(columns: &[MeasurementSetScalarColumnPlan]) -> usize {
+    columns
+        .iter()
+        .map(|column| match column.value_type {
+            StreamedScalarType::Bool => 2,
+            StreamedScalarType::Int32 | StreamedScalarType::Float32 => 5,
+            StreamedScalarType::Float64 => 9,
+        })
+        .sum()
+}
+
+/// Create a MeasurementSet of `rows` rows whose session streams MAIN's 16
+/// scalar columns and nothing else, at the smallest budget that admits
+/// [`SCALAR_BATCH_ROWS`]-row batches.
+fn create_scalars(root: &Path, rows: usize) -> Peaks {
+    let output = root.join(format!("scalars-{rows}.ms"));
+    let target = MeasurementSetCreateTarget::prepare(&output, false).expect("output target");
+    let staging = target.staging_path().to_path_buf();
+    let mut measurement_set =
+        MeasurementSet::create(&staging, MeasurementSetBuilder::new()).expect("create MS");
+    std::fs::create_dir_all(&staging).expect("staging directory");
+    let columns = standard_main_scalar_column_plans();
+    let reserved = streamed_scalar_columns_resident_bytes(columns.len()).expect("reservation");
+    let available = reserved + SCALAR_BATCH_ROWS * scalar_row_bytes(&columns);
+    let plan = MeasurementSetWritePlan::variable_array_creation(
+        rows,
+        Vec::new(),
+        columns.clone(),
+        one_batch(available),
+    )
+    .expect("scalar plan");
+    assert_eq!(plan.batch_rows(), SCALAR_BATCH_ROWS);
+    let planned = plan.maximum_resident_bytes() as u64;
+    // The producer's runs, allocated once, before the measurement.
+    let mut ints = Vec::with_capacity(SCALAR_BATCH_ROWS);
+    let mut doubles = Vec::with_capacity(SCALAR_BATCH_ROWS);
+    let mut flags = Vec::with_capacity(SCALAR_BATCH_ROWS);
+    let mut overrides = ColumnOverrides::for_row_count(rows);
+    for column in ["FLAG", "FLAG_CATEGORY", "UVW", "WEIGHT", "SIGMA"] {
+        overrides.insert_deferred(column);
+    }
+
+    let baseline = LIVE.load(Ordering::Relaxed);
+    PEAK.store(baseline, Ordering::Relaxed);
+    let mut session = MeasurementSetWriteSession::start(&staging, plan).expect("session");
+    let mut first = 0;
+    while first < rows {
+        let batch = first..rows.min(first + SCALAR_BATCH_ROWS);
+        ints.clear();
+        doubles.clear();
+        flags.clear();
+        for row in batch.clone() {
+            ints.push((row % 351) as i32);
+            doubles.push(4.0e9 + (row / 351) as f64 * 10.0);
+            flags.push(row.is_multiple_of(97));
+        }
+        for column in &columns {
+            let id = session.scalar_column(&column.name).expect("scalar column");
+            let values = match column.value_type {
+                StreamedScalarType::Bool => StreamedScalarValues::Bool(&flags),
+                StreamedScalarType::Int32 => StreamedScalarValues::Int32(&ints),
+                StreamedScalarType::Float64 => StreamedScalarValues::Float64(&doubles),
+                other => panic!("no {other:?} MAIN column"),
+            };
+            session.push_scalar_column(id, values).expect("push run");
+        }
+        first = batch.end;
+    }
+    let streaming = PEAK.load(Ordering::Relaxed) - baseline;
+
+    PEAK.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+    session
+        .save_and_finish(&mut measurement_set, &overrides)
+        .expect("finish MeasurementSet");
+    let finishing = PEAK.load(Ordering::Relaxed) - baseline;
+    Peaks {
+        planned,
+        producer_batch: 0,
+        streaming,
+        finishing,
+    }
+}
+
+#[test]
+fn a_scalar_creation_session_saves_within_its_plan() {
+    if !alone("a_scalar_creation_session_saves_within_its_plan") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("tempdir");
+    let peaks = create_scalars(root.path(), 3 * 4096 + 123);
+    println!(
+        "planned {} streaming peak {} finishing peak {}",
+        peaks.planned, peaks.streaming, peaks.finishing
+    );
+    for (phase, peak) in [
+        ("streaming", peaks.streaming),
+        ("finishing", peaks.finishing),
+    ] {
+        assert!(
+            peak <= peaks.planned + SLACK_BYTES,
+            "{phase} held {peak} bytes; plan {}",
+            peaks.planned
+        );
+    }
+}
+
+#[test]
+fn a_scalar_plan_reserves_the_save_that_encodes_it() {
+    let time = vec![MeasurementSetScalarColumnPlan {
+        name: "TIME".to_string(),
+        value_type: StreamedScalarType::Float64,
+    }];
+    // The review's case: the column's append buffer and one batch fit, but
+    // not the save's read buffer, records and encoded block.
+    let error = MeasurementSetWritePlan::variable_array_creation(
+        4096,
+        Vec::new(),
+        time.clone(),
+        one_batch(65_545),
+    )
+    .expect_err("the save's scratch does not fit");
+    assert!(
+        error.to_string().contains("scalar column buffers require"),
+        "{error}"
+    );
+    let reserved = streamed_scalar_columns_resident_bytes(1).expect("reservation");
+    let plan = MeasurementSetWritePlan::variable_array_creation(
+        4096,
+        Vec::new(),
+        time,
+        one_batch(reserved + 9),
+    )
+    .expect("the reservation and one row fit");
+    assert_eq!(plan.batch_rows(), 1);
+    assert!(plan.maximum_resident_bytes() >= reserved);
+    assert!(plan.maximum_resident_bytes() <= reserved + 9);
 }
