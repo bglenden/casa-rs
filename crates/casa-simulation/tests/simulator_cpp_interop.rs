@@ -14,10 +14,10 @@
 
 use std::path::Path;
 
-use casa_ms::MeasurementSetWriteResources;
+use casa_imaging_runtime::{HostResources, ResourcePolicy};
 use casa_simulation::{
-    ArrayConfig, CoordinateSystem, ObserveSpec, Simulator, SimulatorOptions, SpectralWindowSpec,
-    StateSpec,
+    ArrayConfig, BackendRequest, CoordinateSystem, ObserveSpec, SessionResources, Simulator,
+    SimulatorOptions, SpectralWindowSpec, StateSpec,
 };
 use casa_test_support::ms_digest;
 use casa_test_support::ms_interop::MeasurementSetOracle;
@@ -29,8 +29,17 @@ use casa_types::measures::{EpochRef, MEpoch, MPosition};
 fn options() -> SimulatorOptions {
     SimulatorOptions {
         measures: deterministic_measures_provider(),
-        write_resources: MeasurementSetWriteResources::from_system_memory(2)
-            .expect("write resources"),
+        resources: SessionResources::pinned(
+            HostResources {
+                threads: 4,
+                performance_cores: 4,
+                available_memory: 4 << 30,
+                metal: false,
+            },
+            ResourcePolicy::Balanced,
+            BackendRequest::Cpu,
+        )
+        .expect("resources"),
         // 2024-06-01 00:00 UTC.
         now: MEpoch::from_mjd(60_462.0, EpochRef::UTC),
     }

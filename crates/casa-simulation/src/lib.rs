@@ -28,4 +28,7 @@ pub use session::array::{ArrayConfig, CoordinateSystem};
 pub use session::error::{CasaOutcome, SimulatorError, SimulatorResult};
 pub use session::observe::{ObserveSpec, StateSpec};
 pub use session::spectral::SpectralWindowSpec;
-pub use session::{DEFAULT_SEED, NoiseSpec, Simulator, SimulatorOptions};
+pub use session::{
+    BackendRequest, DEFAULT_SEED, ExecutionControls, NoiseSpec, SessionResources, Simulator,
+    SimulatorOptions, UnknownBackend,
+};

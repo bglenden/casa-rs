@@ -18,25 +18,34 @@
 //! and a `corrupt` after every scenario's own calls, with the seed of
 //! `--seed` when given, so a noise-free scenario can be timed with noise.
 //!
+//! `--workers`, `--memory-budget` (bytes) and `--backend` are the Python
+//! tool's constructor controls; the session's streaming workers are printed,
+//! and each `close`'s pass summary (workers, bytes, stage times) goes to
+//! standard error.
+//!
 //! ```text
 //! cargo run --release -p casa-simulation --example observe_scenarios -- \
 //!     <casa-oracle-dir>/manifest.json <out-dir> [--casa-time-shift-s 37] \
-//!     [--simplenoise-jy 0.1 [--seed 11111]]
+//!     [--simplenoise-jy 0.1 [--seed 11111]] [--workers 4] \
+//!     [--memory-budget 1073741824] [--backend auto]
 //! ```
 
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use casa_ms::MeasurementSetWriteResources;
 use casa_simulation::{
-    ArrayConfig, CoordinateSystem, NoiseSpec, ObserveSpec, Simulator, SimulatorOptions,
-    SpectralWindowSpec, StateSpec,
+    ArrayConfig, BackendRequest, CoordinateSystem, ExecutionControls, NoiseSpec, ObserveSpec,
+    SessionResources, Simulator, SimulatorOptions, SpectralWindowSpec, StateSpec,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{EpochRef, MEpoch, MPosition};
 use serde_json::Value;
+use tracing_subscriber::filter::Targets;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 fn number(call: &Value, key: &str) -> f64 {
     call[key]
@@ -151,12 +160,17 @@ fn set_noise(session: &mut Simulator, call: &Value) {
         .expect("setnoise");
 }
 
-fn run_scenario(scenario: &Value, out: &Path, shift_s: f64, extra_noise: Option<ExtraNoise>) {
+fn run_scenario(
+    scenario: &Value,
+    out: &Path,
+    shift_s: f64,
+    extra_noise: Option<ExtraNoise>,
+    resources: SessionResources,
+) {
     let name = scenario["name"].as_str().expect("scenario name");
     let options = SimulatorOptions {
         measures: casa_ms::open_measures_runtime().expect("measures runtime"),
-        write_resources: MeasurementSetWriteResources::from_system_memory(2)
-            .expect("write resources"),
+        resources,
         now: now_utc(),
     };
     let mut session = Simulator::open(out.join(format!("{name}.ms")), options);
@@ -233,6 +247,7 @@ fn main() {
     let mut shift_s = 37.0;
     let mut sigma_jy = None;
     let mut seed = None;
+    let mut controls = ExecutionControls::default();
     while let Some(flag) = args.next() {
         match flag.as_str() {
             "--casa-time-shift-s" => {
@@ -242,15 +257,42 @@ fn main() {
                 sigma_jy = Some(args.next().expect("Jy").parse().expect("a number"));
             }
             "--seed" => seed = Some(args.next().expect("seed").parse().expect("an integer")),
+            "--workers" => {
+                let workers: usize = args.next().expect("workers").parse().expect("a count");
+                controls.workers = Some(NonZeroUsize::new(workers).expect("positive"));
+            }
+            "--memory-budget" => {
+                controls.memory_budget =
+                    Some(args.next().expect("bytes").parse().expect("a byte count"));
+            }
+            "--backend" => {
+                controls.backend = BackendRequest::from_str(&args.next().expect("backend"))
+                    .expect("auto, cpu or metal");
+            }
             other => panic!("unknown argument {other}"),
         }
     }
+    // The pass summary `close` reports: workers, bytes and stage times.
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(std::io::stderr),
+        )
+        .with(Targets::new().with_target("casa_simulation::write", tracing::Level::INFO))
+        .init();
+    let resources = SessionResources::from_controls(&controls).expect("session resources");
+    println!(
+        "workers: {} streaming beside the writer ({:?})",
+        resources.cores().streaming_workers,
+        resources.policy()
+    );
     let extra_noise = sigma_jy.map(|sigma_jy| ExtraNoise { sigma_jy, seed });
     let manifest: Value =
         serde_json::from_str(&std::fs::read_to_string(&manifest).expect("read manifest"))
             .expect("manifest JSON");
     std::fs::create_dir_all(&out).expect("output directory");
     for scenario in manifest["scenarios"].as_array().expect("scenarios") {
-        run_scenario(scenario, &out, shift_s, extra_noise);
+        run_scenario(scenario, &out, shift_s, extra_noise, resources);
     }
 }

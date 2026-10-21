@@ -13,14 +13,16 @@
 
 use std::path::Path;
 
+use casa_imaging_runtime::{HostResources, ResourcePolicy};
+use casa_ms::MeasurementSet;
 use casa_ms::columns::data_columns::DataColumn;
 use casa_ms::columns::flag_columns::FlagRowColumn;
 use casa_ms::columns::main_ids::{antenna1, antenna2};
 use casa_ms::columns::weight_columns::{SigmaColumn, WeightColumn};
-use casa_ms::{MeasurementSet, MeasurementSetWritePlan, MeasurementSetWriteResources};
 use casa_simulation::{
-    ArrayConfig, CasaOutcome, CoordinateSystem, DEFAULT_SEED, NoiseSpec, ObserveSpec, Simulator,
-    SimulatorOptions, SimulatorResult, SpectralWindowSpec, StateSpec,
+    ArrayConfig, BackendRequest, CasaOutcome, CoordinateSystem, DEFAULT_SEED, NoiseSpec,
+    ObserveSpec, SessionResources, Simulator, SimulatorOptions, SimulatorResult,
+    SpectralWindowSpec, StateSpec,
 };
 use casa_types::ArrayValue;
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -35,16 +37,35 @@ const SIGMA_JY: f64 = 0.1;
 const ANTENNAS: usize = 10;
 const CHANNELS: usize = 4;
 
-fn options(write_resources: MeasurementSetWriteResources) -> SimulatorOptions {
+fn options(resources: SessionResources) -> SimulatorOptions {
     SimulatorOptions {
         measures: casa_test_support::deterministic_measures_provider(),
-        write_resources,
+        resources,
         now: MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC),
     }
 }
 
-fn system_resources() -> MeasurementSetWriteResources {
-    MeasurementSetWriteResources::from_system_memory(2).expect("write resources")
+/// A pinned eight-thread host, with a policy of `workers` workers (the
+/// writer's thread among them) and 1 GiB.
+fn resources_with(workers: usize) -> SessionResources {
+    SessionResources::pinned(
+        HostResources {
+            threads: 8,
+            performance_cores: 8,
+            available_memory: 4 << 30,
+            metal: false,
+        },
+        ResourcePolicy::Explicit {
+            workers,
+            memory: 1 << 30,
+        },
+        BackendRequest::Cpu,
+    )
+    .expect("resources")
+}
+
+fn system_resources() -> SessionResources {
+    resources_with(1)
 }
 
 /// `count` 25 m antennas at the VLA, 100 m apart.
@@ -91,7 +112,7 @@ fn scan(start_s: f64, stop_s: f64) -> ObserveSpec {
 
 /// A session with `ANTENNAS` antennas (autocorrelations written), one
 /// `CHANNELS`-channel window of `stokes`, and one field, before `observe`.
-fn configured(path: &Path, stokes: &str, resources: MeasurementSetWriteResources) -> Simulator {
+fn configured(path: &Path, stokes: &str, resources: SessionResources) -> Simulator {
     let mut session = Simulator::open(path, options(resources));
     session
         .set_config(&vla_config(ANTENNAS))
@@ -233,7 +254,7 @@ fn write(
 fn write_with(
     path: &Path,
     stokes: &str,
-    resources: MeasurementSetWriteResources,
+    resources: SessionResources,
     steps: impl FnOnce(&mut Simulator) -> SimulatorResult<()>,
 ) -> Main {
     let mut session = configured(path, stokes, resources);
@@ -400,40 +421,12 @@ fn a_step_covers_only_the_scans_observed_before_it() {
     );
 }
 
+/// Batch sizes are covered with whole-MeasurementSet digests in the
+/// pipeline's own tests (`write::tests`).
 #[test]
-fn draws_are_the_same_for_the_same_seed_and_any_batch_size() {
+fn draws_are_the_same_for_the_same_seed_and_any_worker_count() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = |name: &str| directory.path().join(name);
-    let rows = 100 * ANTENNAS * (ANTENNAS + 1) / 2;
-    let budget = |available_bytes| MeasurementSetWriteResources {
-        available_bytes,
-        maximum_live_batches: 2,
-        tiled_column_buffer_bytes: 4096,
-    };
-    let batch_rows = |resources| {
-        MeasurementSetWritePlan::visibility_creation(rows, 2, CHANNELS, "VLA", resources)
-            .map_or(0, |plan| plan.batch_rows())
-    };
-    // The smallest budget giving batches of at least 97 rows: a prime, so
-    // batches split integrations (55 rows) and do not divide the MS.
-    let (mut low, mut high) = (1_usize, 1 << 30);
-    while high - low > 1 {
-        let middle = low + (high - low) / 2;
-        if batch_rows(budget(middle)) >= 97 {
-            high = middle;
-        } else {
-            low = middle;
-        }
-    }
-    let small = budget(high);
-    let small_rows = batch_rows(small);
-    let large_rows = batch_rows(system_resources());
-    assert!(
-        small_rows < large_rows
-            && !rows.is_multiple_of(small_rows)
-            && !small_rows.is_multiple_of(55),
-        "the budgets batch differently: {small_rows} and {large_rows} rows of {rows}"
-    );
     let seeded = |session: &mut Simulator| {
         session.set_seed(7);
         once(session)?;
@@ -442,7 +435,12 @@ fn draws_are_the_same_for_the_same_seed_and_any_batch_size() {
     };
     let first = samples(&write(&path("first.ms"), "XX YY", seeded));
     let again = samples(&write(&path("again.ms"), "XX YY", seeded));
-    let batched = samples(&write_with(&path("batched.ms"), "XX YY", small, seeded));
+    let workers = samples(&write_with(
+        &path("workers.ms"),
+        "XX YY",
+        resources_with(5),
+        seeded,
+    ));
     let bits = |values: &[Complex32]| {
         values
             .iter()
@@ -455,9 +453,9 @@ fn draws_are_the_same_for_the_same_seed_and_any_batch_size() {
         "the same seed draws the same noise"
     );
     assert_eq!(
-        bits(&batched),
+        bits(&workers),
         bits(&first),
-        "batching does not change the noise"
+        "four workers draw the same noise as one"
     );
     let other = samples(&write(&path("other.ms"), "XX YY", |session| {
         session.set_seed(8);

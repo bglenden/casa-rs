@@ -10,6 +10,11 @@
 //! in a plan of which scans each covers, and applied as `close` writes each
 //! row (`plan`, `corruption`).
 //!
+//! `close` runs within the session's [`SessionResources`]: it admits what it
+//! holds against the imaging runtime's resource policy and computes each
+//! write batch's geometry and noise on the runtime's worker team, so the
+//! MeasurementSet is bitwise the same for any budget or worker count.
+//!
 //! The setters keep CASA's semantics, including order-dependent ones:
 //! `setfield` records the reference time and first spectral window in force
 //! when it is called, `setconfig` and `setfeed` append, and `observe` reads
@@ -24,16 +29,17 @@ mod feeds;
 pub mod fields;
 pub mod observe;
 pub(crate) mod plan;
+pub mod resources;
 pub mod spectral;
 #[cfg(test)]
 mod tests;
 
 pub use corruption::{DEFAULT_SEED, NoiseSpec};
+pub use resources::{BackendRequest, ExecutionControls, SessionResources, UnknownBackend};
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use casa_ms::MeasurementSetWriteResources;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
 
@@ -46,35 +52,32 @@ use observe::{Observation, ObserveSpec, Scan, StateSpec, Times};
 use plan::{DataPlan, NoiseTerm};
 use spectral::{SpectralWindow, SpectralWindowSpec};
 
-/// Controls CASA's `sm` lacks: the session's measures data, memory and the
-/// clock that stands for "now".
+/// Controls CASA's `sm` lacks: the session's measures data, its resources
+/// and the clock that stands for "now".
 #[derive(Clone)]
 pub struct SimulatorOptions {
     /// Measures data (Earth orientation, observatories).
     pub measures: Arc<dyn MeasuresProvider>,
-    /// The write session's memory and buffers.
-    pub write_resources: MeasurementSetWriteResources,
+    /// The host, memory budget, workers and backend `close` runs with.
+    pub resources: SessionResources,
     /// The time the session opens, UTC: CASA's reference time until
     /// `settimes`.
     pub now: MEpoch,
 }
 
 impl SimulatorOptions {
-    /// The production options: the discovered measures data, a write budget
-    /// from the machine's physical memory (two live batches), and the system
-    /// clock as "now".
+    /// The production options: the discovered measures data, `resources`,
+    /// and the system clock as "now".
     ///
     /// # Errors
     ///
-    /// No measures data was found, or the memory budget could not be read.
-    pub fn from_system() -> SimulatorResult<Self> {
+    /// No measures data was found.
+    pub fn from_system(resources: SessionResources) -> SimulatorResult<Self> {
         let measures = casa_ms::open_measures_runtime()
             .map_err(|error| SimulatorError::raised(format!("measures data: {error}")))?;
-        let write_resources = MeasurementSetWriteResources::from_system_memory(2)
-            .map_err(|error| SimulatorError::raised(format!("memory budget: {error}")))?;
         Ok(Self {
             measures,
-            write_resources,
+            resources,
             now: system_now(),
         })
     }

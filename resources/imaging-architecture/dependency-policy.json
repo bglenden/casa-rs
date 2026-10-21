@@ -121,6 +121,7 @@
    "casa-images",
    "casa-imaging-model",
    "casa-imaging-operator",
+   "casa-imaging-runtime",
    "casa-ms",
    "casa-numerics",
    "casa-tables",

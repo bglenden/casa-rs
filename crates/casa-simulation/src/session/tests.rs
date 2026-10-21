@@ -3,7 +3,8 @@
 //! observations and states, what a scan captures when it is observed, and
 //! the MeasurementSet `close` writes.
 
-use casa_ms::{MeasurementSet, MeasurementSetWriteResources, SubTable};
+use casa_imaging_runtime::{HostResources, ResourcePolicy};
+use casa_ms::{MeasurementSet, SubTable};
 use casa_types::measures::EpochRef;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ScalarValue, Value};
@@ -17,8 +18,17 @@ const REFERENCE_MJD: f64 = 60_462.0;
 fn options() -> SimulatorOptions {
     SimulatorOptions {
         measures: casa_test_support::deterministic_measures_provider(),
-        write_resources: MeasurementSetWriteResources::from_system_memory(2)
-            .expect("write resources"),
+        resources: SessionResources::pinned(
+            HostResources {
+                threads: 4,
+                performance_cores: 4,
+                available_memory: 4 << 30,
+                metal: false,
+            },
+            ResourcePolicy::Balanced,
+            BackendRequest::Cpu,
+        )
+        .expect("resources"),
         now: MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC),
     }
 }
