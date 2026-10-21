@@ -202,8 +202,17 @@ fn is_unit_byte(byte: u8) -> bool {
 /// casacore's `Unit::check` renaming: `**` and `^` dropped, `*` as `.`,
 /// blanks as `.` (or `/` when a run of blanks holds one), `//` as `.`, runs of
 /// dots collapsed (to `/` when they hold one) and leading and trailing dots
-/// removed.
-fn casacore_unit_name(text: &str) -> String {
+/// removed. casacore names every unit it builds this way, so ` m.s-1`
+/// (`UnitDim`'s output) is `m.s-1`.
+///
+/// ```
+/// use casa_types::quanta::casacore_unit_name;
+///
+/// assert_eq!(casacore_unit_name(" m.s-1"), "m.s-1");
+/// assert_eq!(casacore_unit_name("Jy beam-1"), "Jy.beam-1");
+/// assert_eq!(casacore_unit_name("km/(s)"), "km/(s)");
+/// ```
+pub fn casacore_unit_name(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut first = Vec::with_capacity(bytes.len());
     let mut index = 0;
