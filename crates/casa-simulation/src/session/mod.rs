@@ -21,6 +21,8 @@ mod feeds;
 pub mod fields;
 pub mod observe;
 pub mod spectral;
+#[cfg(test)]
+mod tests;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
