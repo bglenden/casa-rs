@@ -1460,7 +1460,7 @@ fn shift_direction_true_angle(
     ))
 }
 
-fn gridft_projection_between_j2000_directions(
+pub(crate) fn gridft_projection_between_j2000_directions(
     raw_uvw_m: [f64; 3],
     source_direction_rad: [f64; 2],
     target_direction_rad: [f64; 2],

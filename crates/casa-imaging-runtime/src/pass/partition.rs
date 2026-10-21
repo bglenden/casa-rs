@@ -703,8 +703,8 @@ mod tests {
     use super::*;
     use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
     use casa_imaging_operator::{
-        Basis, GridGeometry, GridPadding, GridPrecision, ImageExtent, PolarizationRouting,
-        Spheroidal,
+        Basis, GridGeometry, GridPadding, GridPrecision, ImageExtent, PaddingFactor,
+        PolarizationRouting, Spheroidal,
     };
 
     fn spheroidal_operator() -> MeasurementOperator {
@@ -714,7 +714,7 @@ mod tests {
                 increment_rad: [-1.0e-5, 1.0e-5],
                 reference_pixel: [32, 32],
             },
-            GridPadding::CasaComposite,
+            GridPadding::CasaComposite(PaddingFactor::TCLEAN),
         )
         .expect("geometry");
         let polarization = PolarizationRouting::compile(

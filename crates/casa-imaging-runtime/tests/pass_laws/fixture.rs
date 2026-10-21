@@ -7,9 +7,10 @@ use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
     Basis, CellHold, CfKey, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding,
     GridPrecision, ImageCorrection, ImageExtent, KernelNormalisation, MeasurementOperator, ModeSet,
-    ModelImages, ModelPlane, ModelPrescale, MuellerRouting, NativeRow, NormalImages, PlaneRange,
-    PolarizationRouting, PredictionScratch, PreparedModelGrids, RowContext, RowSpectrum,
-    SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, TapLayout, WeightingGeneration,
+    ModelImages, ModelPlane, ModelPrescale, MuellerRouting, NativeRow, NormalImages, PaddingFactor,
+    PlaneRange, PolarizationRouting, PredictionScratch, PreparedModelGrids, RowContext,
+    RowSpectrum, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, TapLayout,
+    WeightingGeneration,
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, DomainProjection,
@@ -279,7 +280,7 @@ pub fn geometry(image: usize) -> GridGeometry {
             increment_rad: INCREMENT_RAD,
             reference_pixel: [image / 2, image / 2],
         },
-        GridPadding::CasaComposite,
+        GridPadding::CasaComposite(PaddingFactor::TCLEAN),
     )
     .expect("geometry")
 }

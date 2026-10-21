@@ -1,0 +1,26 @@
+[package]
+name = "casa-simulation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "CASA-compatible MeasurementSet simulation: the simulator tool and the simobserve tasks"
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-coordinates = { path = "../casa-coordinates" }
+casa-images = { path = "../casa-images" }
+casa-imaging-model = { path = "../casa-imaging-model" }
+casa-imaging-operator = { path = "../casa-imaging-operator" }
+casa-ms = { path = "../casa-ms" }
+casa-simulation-synthesis = { path = "../casa-simulation-synthesis" }
+casa-types = { path = "../casa-types" }
+ndarray.workspace = true
+num-complex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

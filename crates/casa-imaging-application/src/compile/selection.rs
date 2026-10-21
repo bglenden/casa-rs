@@ -515,42 +515,7 @@ pub(super) fn visibility_column(
 }
 
 fn correlation_type(code: i32) -> Result<CorrelationType, PrepareError> {
-    use CorrelationType::*;
-    Ok(match code {
-        1 => StokesI,
-        2 => StokesQ,
-        3 => StokesU,
-        4 => StokesV,
-        5 => CircularRr,
-        6 => CircularRl,
-        7 => CircularLr,
-        8 => CircularLl,
-        9 => LinearXx,
-        10 => LinearXy,
-        11 => LinearYx,
-        12 => LinearYy,
-        13 => MixedRx,
-        14 => MixedRy,
-        15 => MixedLx,
-        16 => MixedLy,
-        17 => MixedXr,
-        18 => MixedXl,
-        19 => MixedYr,
-        20 => MixedYl,
-        21 => QuasiOrthogonalPp,
-        22 => QuasiOrthogonalPq,
-        23 => QuasiOrthogonalQp,
-        24 => QuasiOrthogonalQq,
-        25 => RightCircular,
-        26 => LeftCircular,
-        27 => Linear,
-        28 => PolarizedIntensity,
-        29 => LinearPolarizedIntensity,
-        30 => FractionalPolarizedIntensity,
-        31 => FractionalLinearPolarizedIntensity,
-        32 => PolarizationAngle,
-        _ => return Err(PrepareError::UnsupportedCorrelation { code }),
-    })
+    CorrelationType::from_casa_code(code).ok_or(PrepareError::UnsupportedCorrelation { code })
 }
 
 #[cfg(test)]

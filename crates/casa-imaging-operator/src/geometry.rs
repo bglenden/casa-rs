@@ -21,12 +21,46 @@ pub struct ImageExtent {
 pub enum GridPadding {
     /// Grid and image coincide (mosaic and AW kernel sets).
     None,
-    /// CASA `padding = 1.2`: each axis grows to an even length whose prime
-    /// factors are 2, 3 and 5 (standard and W-projection kernel sets).
-    CasaComposite,
+    /// CASA `FTMachine` padding (standard and W-projection kernel sets):
+    /// each axis of `n` pixels grows to
+    /// `CompositeNumber::nextLargerEven(Int(factor · n − 0.5))`, the first
+    /// even length above the padded size whose prime factors are 2, 3
+    /// and 5.
+    CasaComposite(PaddingFactor),
 }
 
-const CASA_PADDING_FACTOR: f64 = 1.2;
+/// A CASA grid padding factor (`padding_p`), held as the `Float` CASA
+/// multiplies it in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PaddingFactor(u32);
+
+impl PaddingFactor {
+    /// tclean's padding, 1.2.
+    pub const TCLEAN: Self = Self(1.2_f32.to_bits());
+    /// The simulator tool's default padding (`sm.setoptions(padding=1.3)`).
+    pub const SIMULATOR: Self = Self(1.3_f32.to_bits());
+
+    /// A padding factor; CASA keeps only factors of at least 1.
+    ///
+    /// # Errors
+    ///
+    /// A factor below 1 or not finite.
+    pub fn new(factor: f32) -> Result<Self, OperatorError> {
+        if factor.is_finite() && factor >= 1.0 {
+            Ok(Self(factor.to_bits()))
+        } else {
+            Err(OperatorError::Geometry {
+                reason: "padding factor must be finite and at least 1",
+            })
+        }
+    }
+
+    /// The factor.
+    #[must_use]
+    pub fn get(self) -> f32 {
+        f32::from_bits(self.0)
+    }
+}
 
 /// The padded uv grid, its relation to the image and the mapping from
 /// baseline coordinates to grid cells.
@@ -87,9 +121,9 @@ impl GridGeometry {
         }
         let grid_shape = match padding {
             GridPadding::None => image.shape,
-            GridPadding::CasaComposite => [
-                casa_composite_padded_len(nx, CASA_PADDING_FACTOR),
-                casa_composite_padded_len(ny, CASA_PADDING_FACTOR),
+            GridPadding::CasaComposite(factor) => [
+                casa_composite_padded_len(nx, factor),
+                casa_composite_padded_len(ny, factor),
             ],
         };
         if grid_shape.iter().any(|extent| extent % 2 != 0) {
@@ -208,14 +242,17 @@ impl GridGeometry {
     }
 }
 
-/// CASA's padded grid length: `floor(factor · n − 0.5)`, at least `n`, even,
-/// and composed only of the primes 2, 3 and 5.
-fn casa_composite_padded_len(image_len: usize, factor: f64) -> usize {
-    next_larger_even_composite(((factor * image_len as f64 - 0.5).floor() as usize).max(image_len))
+/// CASA's padded grid length, `nextLargerEven(Int(padding_p*Float(n)-0.5))`
+/// (`GridFT::init`): the product is a `Float`, the `0.5` a `double`, `Int`
+/// truncates, and `CompositeNumber::nextLargerEven` takes the first even
+/// 2·3·5 composite strictly above its argument.
+fn casa_composite_padded_len(image_len: usize, factor: PaddingFactor) -> usize {
+    let padded = f64::from(factor.get() * image_len as f32) - 0.5;
+    next_larger_even_composite(padded as usize + 1)
 }
 
-/// casacore `CompositeNumber::nextLargerEven`: the smallest even number
-/// at least `n` whose prime factors are 2, 3 and 5.
+/// The smallest even number at least `n` whose prime factors are 2, 3 and
+/// 5. casacore's `CompositeNumber::nextLargerEven(m)` is this of `m + 1`.
 pub(crate) fn next_larger_even_composite(n: usize) -> usize {
     let mut value = n.max(2);
     if !value.is_multiple_of(2) {
@@ -247,17 +284,42 @@ mod tests {
                 increment_rad: [-1.0e-5, 1.0e-5],
                 reference_pixel: [nx / 2, ny / 2],
             },
-            GridPadding::CasaComposite,
+            GridPadding::CasaComposite(PaddingFactor::TCLEAN),
         )
         .expect("valid geometry")
     }
 
     #[test]
     fn casa_padding_is_even_and_composite() {
-        assert_eq!(casa_composite_padded_len(64, 1.2), 80);
-        assert_eq!(casa_composite_padded_len(100, 1.2), 120);
-        assert_eq!(casa_composite_padded_len(1024, 1.2), 1250);
-        assert_eq!(casa_composite_padded_len(7, 1.2), 8);
+        let tclean = PaddingFactor::TCLEAN;
+        assert_eq!(casa_composite_padded_len(64, tclean), 80);
+        assert_eq!(casa_composite_padded_len(100, tclean), 120);
+        assert_eq!(casa_composite_padded_len(1024, tclean), 1250);
+        assert_eq!(casa_composite_padded_len(7, tclean), 8);
+    }
+
+    #[test]
+    fn casa_padding_steps_past_a_composite_padded_size() {
+        // `Int(1.2 · 81 − 0.5) = 96` is itself an even composite, and
+        // `nextLargerEven` takes the next one (#842).
+        let tclean = PaddingFactor::TCLEAN;
+        for (image, grid) in [(81, 100), (101, 128), (121, 150), (161, 200)] {
+            assert_eq!(casa_composite_padded_len(image, tclean), grid, "{image}");
+        }
+        let simulator = PaddingFactor::SIMULATOR;
+        assert_eq!(casa_composite_padded_len(250, simulator), 360);
+        assert_eq!(casa_composite_padded_len(256, simulator), 360);
+        // The product is a `Float`: 1.3f · 185 is just below 240.5, so
+        // `Int(… − 0.5)` is 239, not 240.
+        assert_eq!(casa_composite_padded_len(185, simulator), 240);
+        assert_eq!(casa_composite_padded_len(385, simulator), 500);
+    }
+
+    #[test]
+    fn padding_factors_below_one_are_refused() {
+        assert_eq!(PaddingFactor::new(1.3).map(PaddingFactor::get), Ok(1.3));
+        assert!(PaddingFactor::new(0.9).is_err());
+        assert!(PaddingFactor::new(f32::NAN).is_err());
     }
 
     #[test]
@@ -335,7 +397,7 @@ mod tests {
                     increment_rad: [-1.0e-5, 1.0e-5],
                     reference_pixel: reference,
                 },
-                GridPadding::CasaComposite,
+                GridPadding::CasaComposite(PaddingFactor::TCLEAN),
             );
             assert_eq!(
                 geometry,
@@ -351,7 +413,7 @@ mod tests {
                 increment_rad: [-1.0e-5, 1.0e-5],
                 reference_pixel: [40, 24],
             },
-            GridPadding::CasaComposite,
+            GridPadding::CasaComposite(PaddingFactor::TCLEAN),
         )
         .expect("fits exactly");
         assert_eq!(edge.image_origin(), [0, 16]);

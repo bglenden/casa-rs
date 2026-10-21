@@ -483,6 +483,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-simulation"
+version = "0.27.0"
+dependencies = [
+ "casa-coordinates",
+ "casa-images",
+ "casa-imaging-model",
+ "casa-imaging-operator",
+ "casa-ms",
+ "casa-simulation-synthesis",
+ "casa-types",
+ "ndarray",
+ "num-complex",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "casa-simulation-synthesis"
 version = "0.27.0"
 dependencies = [
