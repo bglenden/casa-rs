@@ -9,17 +9,24 @@
 //! within the most the session's reservations held at once (its model
 //! grids, their preparation, the writer and the pipeline) and a fixed
 //! allowance, and within the budget. Ten times the integrations, at either
-//! channel count, holds at most 256 KiB more: nothing the session keeps
-//! grows with the rows (MAIN's geometry is computed an integration at a time
-//! into the batch; POINTING is generated as it is saved).
+//! channel count, holds at most 256 KiB and one write batch more: nothing
+//! the session keeps grows with the rows (MAIN's geometry is computed an
+//! integration at a time into the batch; POINTING is generated as it is
+//! saved).
+//!
+//! The write batch is the writer's: it holds one batch or two, and keeps one
+//! it has written for the producer, with how it keeps pace, all within its
+//! plan, so a longer write may peak with one more. The least of three
+//! measured runs is compared, as one run's timing can add a batch more.
 //!
 //! The process caches (table tiles, FFT plans) are charged once per process
 //! and held for it, so the law charges them before measuring; the budget is
 //! theirs plus the session's own ([`Case::budget`]), which is small enough
 //! that the base cases are written in several batches, so that ten times
-//! the rows batch alike. Each case runs once unmeasured first, so one-time
-//! state (measures and FFT plans, tracing's callsites) is out of the
-//! measurement, and to read the pass's batches.
+//! the rows batch alike. Every case runs once unmeasured before any is
+//! measured, so state a process keeps once it has run a session (measures
+//! and FFT plans, tracing's callsites) is out of every measurement, and to
+//! read the pass's batches.
 //!
 //! This binary's global allocator counts the live heap; the counters are
 //! the process's, so each law runs alone in a process of its own
@@ -50,6 +57,7 @@ use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{EpochRef, MEpoch, MeasuresProvider};
 use ndarray::{ArrayD, IxDyn};
+use num_complex::Complex32;
 use pass_summary::{PassSummary, capture};
 
 #[global_allocator]
@@ -181,7 +189,7 @@ fn alone(name: &str) -> bool {
 /// writer's and the workers' threads, and the tables' metadata at the save.
 const ALLOWANCE_BYTES: u64 = 512 * 1024;
 
-/// What ten times the integrations may add.
+/// What ten times the integrations may add beside one write batch.
 const ROWS_ALLOWANCE_BYTES: u64 = 256 * 1024;
 
 /// 2024-06-01 00:00 UTC.
@@ -275,18 +283,28 @@ struct Case {
     /// The session's own budget, beside the process caches' charge. The
     /// writer gets half of what is free at `close`, and its tiled columns'
     /// streaming buffers alone take about 46 MB at 32 channels and 57 MB at
-    /// 320; a few MB more make batches of a few thousand rows, and of a few
-    /// hundred.
+    /// 320; a little more makes batches of several hundred rows.
     budget: u64,
 }
 
-/// The session budget of the 32-channel cases: batches of 2,048 rows.
-const BUDGET_32: u64 = 100 << 20;
+/// The session budget of the 32-channel cases: batches of about 730 rows,
+/// small enough that one write batch (about 0.4 MB) leaves the comparison
+/// of ten times the rows sensitive to some 20 bytes a row.
+const BUDGET_32: u64 = (90 << 20) + (512 << 10);
 
-/// The session budget of the 320-channel cases: batches of about 500 rows.
+/// The session budget of the 320-channel cases: batches of about 460 rows.
 const BUDGET_320: u64 = 120 << 20;
 
-const CASES: [Case; 4] = [
+/// Measured runs of each case, of which the least peak is compared.
+const MEASURED_RUNS: usize = 3;
+
+/// The cases, and after them `rows x2`: below 8,192 rows (the base cases'
+/// 4,200) MAIN's streamed scalar columns stay within their 64 KiB buffers
+/// and are saved from memory, within the writer's admitted scalar buffers;
+/// with larger batches that put the save above the streaming peak, by about
+/// 0.75 MB at 32 channels. Twice the base's rows are past it, so ten times
+/// the rows are also held to that case.
+const CASES: [Case; 5] = [
     Case {
         name: "base",
         integrations: 200,
@@ -310,6 +328,12 @@ const CASES: [Case; 4] = [
         integrations: 2_000,
         channels: 320,
         budget: BUDGET_320,
+    },
+    Case {
+        name: "rows x2",
+        integrations: 400,
+        channels: 32,
+        budget: BUDGET_32,
     },
 ];
 
@@ -381,37 +405,76 @@ fn simulate(case: Case, ms: &Path, model: &Path, measures: &Arc<dyn MeasuresProv
     sm.close().expect("close");
 }
 
-/// What one measured session held.
+/// What a case's measured sessions held.
 #[derive(Debug, Clone, Copy)]
 struct Held {
-    /// The heap's peak beyond what was live before `sm.open`.
-    heap: u64,
-    /// The most the session's reservations held at once.
+    /// The least and the most of the runs' heap peaks beyond what was live
+    /// before `sm.open`.
+    least: u64,
+    most: u64,
+    /// The most the session's reservations held at once, in any run.
     admitted: u64,
+    /// The most heap a run left live after `close` beyond what was live
+    /// before `sm.open`: what a session leaves behind.
+    left: i64,
 }
 
-/// Run `case` once to warm the process and read its pass, then once
-/// measured.
-fn measure(case: Case, root: &Path, measures: &Arc<dyn MeasuresProvider>) -> (Held, PassSummary) {
+/// Bytes of one of `case`'s write batches as `pass` batched it: DATA, and
+/// FLAG_ROW, UVW, WEIGHT and SIGMA of each row.
+fn write_batch_bytes(case: Case, pass: &PassSummary) -> u64 {
+    let samples = 2 * case.channels as u64;
+    pass.batch_rows * (samples * size_of::<Complex32>() as u64 + 1 + 24 + 4 + 4)
+}
+
+/// The directory of `case` under `root`, and its model.
+fn case_paths(case: Case, root: &Path) -> (PathBuf, PathBuf) {
     let directory = root.join(case.name.replace(' ', "-"));
+    let model = directory.join("model.image");
+    (directory, model)
+}
+
+/// Write `case`'s model and run its session once, unmeasured: the process
+/// then holds whatever a session's first run leaves, and the pass's
+/// summary says how it batched.
+fn warm(case: Case, root: &Path, measures: &Arc<dyn MeasuresProvider>) -> PassSummary {
+    let (directory, model) = case_paths(case, root);
     std::fs::create_dir_all(&directory).expect("case directory");
-    let model: PathBuf = directory.join("model.image");
     write_model(&model, case.channels);
     let warm = directory.join("warm.ms");
     let ((), pass) = capture(|| simulate(case, &warm, &model, measures));
     std::fs::remove_dir_all(&warm).expect("remove the warm-up");
-    let ms = directory.join("measured.ms");
+    pass.expect("the pass's summary")
+}
 
-    let reserved = reserved_memory();
-    let baseline = LIVE.load(Ordering::Relaxed);
-    PEAK.store(baseline, Ordering::Relaxed);
-    let window = ReservationWindow::open();
-    simulate(case, &ms, &model, measures);
-    let admitted = window.close() - reserved;
-    let heap = PEAK.load(Ordering::Relaxed) - baseline;
-    drop(window);
+/// Run `case`'s session [`MEASURED_RUNS`] times more, measured, once every
+/// case has warmed.
+fn measure(case: Case, root: &Path, measures: &Arc<dyn MeasuresProvider>) -> Held {
+    let (directory, model) = case_paths(case, root);
+    let ms = directory.join("measured.ms");
+    let mut held = Held {
+        least: u64::MAX,
+        most: 0,
+        admitted: 0,
+        left: i64::MIN,
+    };
+    for _ in 0..MEASURED_RUNS {
+        let reserved = reserved_memory();
+        let baseline = LIVE.load(Ordering::Relaxed);
+        PEAK.store(baseline, Ordering::Relaxed);
+        let window = ReservationWindow::open();
+        simulate(case, &ms, &model, measures);
+        let admitted = window.close() - reserved;
+        let heap = PEAK.load(Ordering::Relaxed) - baseline;
+        let left = LIVE.load(Ordering::Relaxed) as i64 - baseline as i64;
+        drop(window);
+        std::fs::remove_dir_all(&ms).expect("remove the run");
+        held.least = held.least.min(heap);
+        held.most = held.most.max(heap);
+        held.admitted = held.admitted.max(admitted);
+        held.left = held.left.max(left);
+    }
     std::fs::remove_dir_all(&directory).expect("remove the case");
-    (Held { heap, admitted }, pass.expect("the pass's summary"))
+    held
 }
 
 #[test]
@@ -423,18 +486,22 @@ fn a_session_holds_its_admission_and_no_more_for_more_rows() {
     charge_process_caches(resources.host(), resources.policy()).expect("the process caches");
     let measures = casa_test_support::deterministic_measures_provider();
     let root = tempfile::tempdir().expect("temporary directory");
+    let passes = CASES.map(|case| warm(case, root.path(), &measures));
     let mut held = Vec::new();
-    for case in CASES {
-        let (session, pass) = measure(case, root.path(), &measures);
+    for (case, pass) in CASES.into_iter().zip(passes) {
+        let session = measure(case, root.path(), &measures);
         println!(
-            "{}: {} rows in {} batches of {}: heap {} admitted {} ({} reserved at close)",
+            "{}: {} rows in {} batches of {}: heap {} to {}, admitted {} ({} reserved at \
+             close), at most {} left after close",
             case.name,
             pass.rows,
             pass.batches,
             pass.batch_rows,
-            session.heap,
+            session.least,
+            session.most,
             session.admitted,
-            pass.reserved_bytes
+            pass.reserved_bytes,
+            session.left
         );
         assert_eq!(pass.backend, "Cpu", "{}", case.name);
         assert!(
@@ -443,21 +510,23 @@ fn a_session_holds_its_admission_and_no_more_for_more_rows() {
             case.name
         );
         assert!(
-            session.heap <= session.admitted + ALLOWANCE_BYTES,
+            session.most <= session.admitted + ALLOWANCE_BYTES,
             "{}: the heap grew {} bytes, beyond the {} admitted and the allowance",
             case.name,
-            session.heap,
+            session.most,
             session.admitted
         );
         assert!(
-            session.heap <= case.budget,
+            session.most <= case.budget,
             "{}: the heap grew {} bytes, beyond the budget",
             case.name,
-            session.heap
+            session.most
         );
         held.push((session, pass));
     }
-    for (few, many) in [(0, 1), (2, 3)] {
+    // Ten times the rows against the base at each channel count, and against
+    // twice the base's rows at 32 channels.
+    for (few, many) in [(0, 1), (2, 3), (4, 1)] {
         let (few_case, many_case) = (CASES[few], CASES[many]);
         let ((few, few_pass), (many, many_pass)) = (&held[few], &held[many]);
         assert_eq!(
@@ -465,12 +534,19 @@ fn a_session_holds_its_admission_and_no_more_for_more_rows() {
             "{} and {} write batches alike",
             few_case.name, many_case.name
         );
+        let allowance = ROWS_ALLOWANCE_BYTES + write_batch_bytes(many_case, many_pass);
+        println!(
+            "{} - {}: {} bytes (allowed {allowance})",
+            many_case.name,
+            few_case.name,
+            many.least as i64 - few.least as i64
+        );
         assert!(
-            many.heap <= few.heap + ROWS_ALLOWANCE_BYTES,
+            many.least <= few.least + allowance,
             "{}: the heap grew {} bytes, against {} for {}",
             many_case.name,
-            many.heap,
-            few.heap,
+            many.least,
+            few.least,
             few_case.name
         );
     }
