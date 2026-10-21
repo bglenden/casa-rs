@@ -20,8 +20,8 @@ const JY_PER_PIXEL: &str = "Jy/pixel";
 /// Jy/pixel, with the direction of pixel `(nx/2, ny/2)` and the frequency of
 /// every plane.
 ///
-/// Opening reads the header; the pixels are read a plane at a time
-/// ([`Self::read_plane`]), so preparing a cube holds one plane per worker
+/// Opening reads the header; the pixels are read a plane at a time while
+/// the model is prepared, so preparing a cube holds one plane per worker
 /// rather than the cube. The image is never written: CASA's `predict`
 /// rewrites the model's spectral units and frame in place, casa-rs reads
 /// them as they are.
