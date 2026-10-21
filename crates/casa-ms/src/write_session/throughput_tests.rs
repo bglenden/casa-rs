@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Instant;
 
-use casa_tables::{ColumnOverrides, GeneratedScalarColumn};
+use casa_tables::{ColumnOverrides, GeneratedScalarColumn, StreamedScalarValues};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 use num_complex::Complex32;
@@ -229,9 +229,10 @@ fn ignored_main_table_throughput_fixture() {
 
 /// What a real producer sends (simulation, `split`): distinct DATA per row,
 /// per-row flags and uvw in `Rows` batches of the planned size, and every
-/// standard MAIN scalar column pushed row by row, all on the producer
-/// thread. Prints one report with the producer's build, scalar and send time
-/// next to the writer's telemetry.
+/// standard MAIN scalar column pushed a batch at a time
+/// (`CASA_RS_MS_THROUGHPUT_SCALARS=rows` pushes them cell by cell instead),
+/// all on the producer thread. Prints one report with the producer's build,
+/// scalar and send time next to the writer's telemetry.
 #[test]
 #[ignore = "explicit realistic MeasurementSet producer throughput probe"]
 fn ignored_realistic_main_table_throughput_fixture() {
@@ -246,6 +247,7 @@ fn ignored_realistic_main_table_throughput_fixture() {
     let channel_count = env_usize("CASA_RS_MS_THROUGHPUT_CHANNELS", 256);
     let baselines = env_usize("CASA_RS_MS_THROUGHPUT_BASELINES", 903);
     let row_count = env_usize("CASA_RS_MS_THROUGHPUT_ROWS", baselines * 360);
+    let columnar_scalars = std::env::var("CASA_RS_MS_THROUGHPUT_SCALARS").as_deref() != Ok("rows");
     fs::create_dir_all(&root).expect("create benchmark root");
     let output = root.join(format!("realistic-{channel_count}ch.ms"));
     assert!(!output.exists(), "refusing to replace {}", output.display());
@@ -297,8 +299,12 @@ fn ignored_realistic_main_table_throughput_fixture() {
             .collect::<Vec<_>>();
         build_seconds += started.elapsed().as_secs_f64();
         let started = Instant::now();
-        for row in rows.clone() {
-            push_standard_scalars(&mut session, row, baselines);
+        if columnar_scalars {
+            push_standard_scalar_columns(&mut session, rows.clone(), baselines);
+        } else {
+            for row in rows.clone() {
+                push_standard_scalars(&mut session, row, baselines);
+            }
         }
         scalar_seconds += started.elapsed().as_secs_f64();
         let started = Instant::now();
@@ -337,6 +343,7 @@ fn ignored_realistic_main_table_throughput_fixture() {
         "correlation_count": CORRELATION_COUNT,
         "row_count": row_count,
         "batch_rows": batch_rows,
+        "scalar_pushes": if columnar_scalars { "columns" } else { "rows" },
         "logical_size_bytes": logical_size_bytes,
         "file_count": file_count,
         "planned_maximum_resident_bytes": planned_maximum_resident_bytes,
@@ -420,8 +427,58 @@ fn distinct_data_row(row: usize, samples: usize) -> Vec<Complex32> {
         .collect()
 }
 
-/// The 16 standard MAIN scalars of one row, pushed as the simulator pushes
-/// them.
+/// The 16 standard MAIN scalars of a batch, pushed a column at a time.
+fn push_standard_scalar_columns(
+    session: &mut MeasurementSetWriteSession,
+    rows: std::ops::Range<usize>,
+    baselines: usize,
+) {
+    let time = rows
+        .clone()
+        .map(|row| 4.0e9 + (row / baselines) as f64 * 10.0)
+        .collect::<Vec<_>>();
+    let baseline = rows.clone().map(|row| (row % baselines) as i32);
+    let antenna1 = baseline
+        .clone()
+        .map(|baseline| baseline / 43)
+        .collect::<Vec<_>>();
+    let antenna2 = baseline.map(|baseline| baseline % 43).collect::<Vec<_>>();
+    let flag_row = rows
+        .clone()
+        .map(|row| row.is_multiple_of(97))
+        .collect::<Vec<_>>();
+    let mut push = |column: &str, values: StreamedScalarValues<'_>| {
+        let id = session.scalar_column(column).expect("scalar column");
+        session
+            .push_scalar_column(id, values)
+            .expect("push scalar column");
+    };
+    push("ANTENNA1", StreamedScalarValues::Int32(&antenna1));
+    push("ANTENNA2", StreamedScalarValues::Int32(&antenna2));
+    push("FLAG_ROW", StreamedScalarValues::Bool(&flag_row));
+    push("TIME", StreamedScalarValues::Float64(&time));
+    push("TIME_CENTROID", StreamedScalarValues::Float64(&time));
+    for (column, value) in [
+        ("ARRAY_ID", ScalarValue::Int32(0)),
+        ("DATA_DESC_ID", ScalarValue::Int32(0)),
+        ("EXPOSURE", ScalarValue::Float64(10.0)),
+        ("FEED1", ScalarValue::Int32(0)),
+        ("FEED2", ScalarValue::Int32(0)),
+        ("FIELD_ID", ScalarValue::Int32(0)),
+        ("INTERVAL", ScalarValue::Float64(10.0)),
+        ("OBSERVATION_ID", ScalarValue::Int32(0)),
+        ("PROCESSOR_ID", ScalarValue::Int32(0)),
+        ("SCAN_NUMBER", ScalarValue::Int32(1)),
+        ("STATE_ID", ScalarValue::Int32(0)),
+    ] {
+        let id = session.scalar_column(column).expect("scalar column");
+        session
+            .push_repeated_scalar(id, Some(value), rows.len())
+            .expect("push repeated scalar");
+    }
+}
+
+/// The 16 standard MAIN scalars of one row, pushed by name a cell at a time.
 fn push_standard_scalars(session: &mut MeasurementSetWriteSession, row: usize, baselines: usize) {
     let time = 4.0e9 + (row / baselines) as f64 * 10.0;
     let baseline = (row % baselines) as i32;

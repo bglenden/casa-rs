@@ -13,9 +13,9 @@ use casa_tables::{
     ColumnBinding, ColumnOverrides, STREAMING_SCALAR_COLUMN_BUFFER_BYTES,
     STREAMING_TILED_COLUMN_BUFFER_BYTES, StreamedScalarType, StreamedTiledPrimitiveColumn,
     StreamedTiledPrimitiveType, StreamedTiledShapeComplex32Column, StreamedTiledShapeCubeLayout,
-    StreamedTiledShapeValueType, StreamingScalarColumnWriter, StreamingTiledPrimitiveWriter,
-    StreamingTiledShapeComplex32Writer, StreamingTiledShapeWriter, Table, TableError, TableOptions,
-    TableWriteLock, install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
+    StreamedTiledShapeValueType, StreamingTiledPrimitiveWriter, StreamingTiledShapeComplex32Writer,
+    StreamingTiledShapeWriter, Table, TableError, TableOptions, TableWriteLock,
+    install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
     install_streamed_tiled_shape_column, install_streamed_tiled_shape_complex32_column,
     install_streamed_tiled_shape_primitive_column,
 };
@@ -26,6 +26,11 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{MeasurementSet, MsSelectionIoBudget};
+
+mod scalars;
+
+pub use scalars::ScalarColumnId;
+use scalars::ScalarWriters;
 
 /// Bytes a visibility creation batch aims at, whatever the budget allows.
 pub const TARGET_BATCH_BYTES: usize = 32 * 1024 * 1024;
@@ -1175,14 +1180,14 @@ enum MeasurementSetWriteSessionState {
         sender: mpsc::SyncSender<MeasurementSetWriteBatch>,
         handle: thread::JoinHandle<Result<StreamedVisibilityColumns, MeasurementSetWriteError>>,
         sent_rows: AtomicUsize,
-        scalar_writers: HashMap<String, StreamingScalarColumnWriter>,
+        scalar_writers: ScalarWriters,
         queue_wait_nanos: AtomicU64,
         started_at: Instant,
     },
     VariableArrayCreation {
         output: PathBuf,
         writers: HashMap<String, StreamingTiledShapeWriter>,
-        scalar_writers: HashMap<String, StreamingScalarColumnWriter>,
+        scalar_writers: ScalarWriters,
         started_at: Instant,
     },
     Mutation {
@@ -1244,16 +1249,8 @@ impl MeasurementSetWriteSession {
                 .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                 writers.insert(column.name.clone(), writer);
             }
-            let mut scalar_writers = HashMap::with_capacity(plan.scalar_columns.len());
-            for column in &plan.scalar_columns {
-                let writer = StreamingScalarColumnWriter::create(
-                    output.join(format!(".casa-rs.{}.scalar.tmp", column.name)),
-                    plan.row_count,
-                    column.value_type,
-                )
-                .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-                scalar_writers.insert(column.name.clone(), writer);
-            }
+            let scalar_writers =
+                ScalarWriters::create(&output, plan.row_count, &plan.scalar_columns)?;
             return Ok(Self {
                 plan,
                 state: MeasurementSetWriteSessionState::VariableArrayCreation {
@@ -1346,16 +1343,7 @@ impl MeasurementSetWriteSession {
                 correlation_count,
             )
         });
-        let mut scalar_writers = HashMap::with_capacity(plan.scalar_columns.len());
-        for column in &plan.scalar_columns {
-            let writer = StreamingScalarColumnWriter::create(
-                output.join(format!(".casa-rs.{}.scalar.tmp", column.name)),
-                plan.row_count,
-                column.value_type,
-            )
-            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-            scalar_writers.insert(column.name.clone(), writer);
-        }
+        let scalar_writers = ScalarWriters::create(&output, plan.row_count, &plan.scalar_columns)?;
         Ok(Self {
             plan,
             state: MeasurementSetWriteSessionState::Creation {
@@ -1427,35 +1415,6 @@ impl MeasurementSetWriteSession {
     pub fn push_undefined_row(&mut self, column: &str) -> Result<(), MeasurementSetWriteError> {
         self.variable_array_writer_mut(column)?
             .push_undefined_row()
-            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))
-    }
-
-    /// Append one fixed-width scalar cell in output row order.
-    #[doc(hidden)]
-    pub fn push_scalar_row(
-        &mut self,
-        column: &str,
-        value: Option<ScalarValue>,
-    ) -> Result<(), MeasurementSetWriteError> {
-        let scalar_writers = match &mut self.state {
-            MeasurementSetWriteSessionState::Creation { scalar_writers, .. }
-            | MeasurementSetWriteSessionState::VariableArrayCreation { scalar_writers, .. } => {
-                scalar_writers
-            }
-            MeasurementSetWriteSessionState::Mutation { .. } => {
-                return Err(MeasurementSetWriteError::InvalidPlan(
-                    "scalar cells require a creation session".to_string(),
-                ));
-            }
-        };
-        scalar_writers
-            .get_mut(column)
-            .ok_or_else(|| {
-                MeasurementSetWriteError::InvalidPlan(format!(
-                    "column {column} is not owned by this scalar creation session"
-                ))
-            })?
-            .push(value)
             .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))
     }
 
@@ -1750,7 +1709,7 @@ impl MeasurementSetWriteSession {
                     column.name
                 )));
             }
-            let streamed = writers.remove(&column.name).ok_or_else(|| {
+            let streamed = writers.take(&column.name).ok_or_else(|| {
                 MeasurementSetWriteError::InvalidPlan(format!(
                     "missing scalar writer for {}",
                     column.name
@@ -2733,7 +2692,7 @@ mod tests {
                     ))
                 }),
                 sent_rows: AtomicUsize::new(0),
-                scalar_writers: HashMap::new(),
+                scalar_writers: ScalarWriters::default(),
                 queue_wait_nanos: AtomicU64::new(0),
                 started_at: Instant::now(),
             },

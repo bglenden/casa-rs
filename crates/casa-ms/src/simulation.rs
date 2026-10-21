@@ -14,8 +14,8 @@ use casa_coordinates::{
 use casa_simulation_synthesis::{
     AiryPrimaryBeam, AiryVoltagePattern, ImageGeometry, StandardMfsModelPredictor,
 };
-use casa_tables::ColumnOverrides;
 use casa_tables::table_measures::{MeasureType, TableMeasDesc};
+use casa_tables::{ColumnOverrides, StreamedScalarValues};
 use casa_types::measures::MeasuresProvider;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
@@ -2651,32 +2651,47 @@ fn push_synthetic_scalar_rows(
     } else {
         1
     };
-    for (pair, flag_row) in row_pairs.iter().zip(flag_rows) {
-        for (column, value) in [
-            ("ANTENNA1", ScalarValue::Int32(pair.antenna1 as i32)),
-            ("ANTENNA2", ScalarValue::Int32(pair.antenna2 as i32)),
-            ("ARRAY_ID", ScalarValue::Int32(0)),
-            (
-                "DATA_DESC_ID",
-                ScalarValue::Int32(identity.data_description_id as i32),
-            ),
-            ("EXPOSURE", ScalarValue::Float64(integration_seconds)),
-            ("FEED1", ScalarValue::Int32(0)),
-            ("FEED2", ScalarValue::Int32(0)),
-            ("FIELD_ID", ScalarValue::Int32(identity.field_id as i32)),
-            ("FLAG_ROW", ScalarValue::Bool(*flag_row)),
-            ("INTERVAL", ScalarValue::Float64(integration_seconds)),
-            ("OBSERVATION_ID", ScalarValue::Int32(0)),
-            ("PROCESSOR_ID", ScalarValue::Int32(0)),
-            ("SCAN_NUMBER", ScalarValue::Int32(scan_number)),
-            ("STATE_ID", ScalarValue::Int32(0)),
-            ("TIME", ScalarValue::Float64(identity.time)),
-            ("TIME_CENTROID", ScalarValue::Float64(identity.time)),
-        ] {
-            writer
-                .push_scalar_row(column, Some(value))
-                .map_err(|error| MsError::SyntheticObservation(error.to_string()))?;
-        }
+    let error =
+        |error: crate::MeasurementSetWriteError| MsError::SyntheticObservation(error.to_string());
+    // One batch is one time sample: only the baseline and its flag vary.
+    let antenna1 = row_pairs
+        .iter()
+        .map(|pair| pair.antenna1 as i32)
+        .collect::<Vec<_>>();
+    let antenna2 = row_pairs
+        .iter()
+        .map(|pair| pair.antenna2 as i32)
+        .collect::<Vec<_>>();
+    for (column, values) in [
+        ("ANTENNA1", StreamedScalarValues::Int32(&antenna1)),
+        ("ANTENNA2", StreamedScalarValues::Int32(&antenna2)),
+        ("FLAG_ROW", StreamedScalarValues::Bool(flag_rows)),
+    ] {
+        let column = writer.scalar_column(column).map_err(error)?;
+        writer.push_scalar_column(column, values).map_err(error)?;
+    }
+    for (column, value) in [
+        ("ARRAY_ID", ScalarValue::Int32(0)),
+        (
+            "DATA_DESC_ID",
+            ScalarValue::Int32(identity.data_description_id as i32),
+        ),
+        ("EXPOSURE", ScalarValue::Float64(integration_seconds)),
+        ("FEED1", ScalarValue::Int32(0)),
+        ("FEED2", ScalarValue::Int32(0)),
+        ("FIELD_ID", ScalarValue::Int32(identity.field_id as i32)),
+        ("INTERVAL", ScalarValue::Float64(integration_seconds)),
+        ("OBSERVATION_ID", ScalarValue::Int32(0)),
+        ("PROCESSOR_ID", ScalarValue::Int32(0)),
+        ("SCAN_NUMBER", ScalarValue::Int32(scan_number)),
+        ("STATE_ID", ScalarValue::Int32(0)),
+        ("TIME", ScalarValue::Float64(identity.time)),
+        ("TIME_CENTROID", ScalarValue::Float64(identity.time)),
+    ] {
+        let column = writer.scalar_column(column).map_err(error)?;
+        writer
+            .push_repeated_scalar(column, Some(value), row_pairs.len())
+            .map_err(error)?;
     }
     Ok(())
 }
