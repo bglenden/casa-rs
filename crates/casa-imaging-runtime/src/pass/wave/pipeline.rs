@@ -252,11 +252,7 @@ impl Wave<'_, '_> {
             self.shape.rows
         );
         for _ in 1..pass.chunk_sets {
-            sets.push(
-                (0..count)
-                    .map(|_| Chunk::new(self.shape, pass.domains))
-                    .collect(),
-            );
+            sets.push((0..count).map(|_| Chunk::new(self.shape)).collect());
         }
         let pipeline = Pipeline {
             sets: sets

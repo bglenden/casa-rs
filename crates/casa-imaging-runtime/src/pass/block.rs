@@ -319,6 +319,22 @@ impl NativeBlock {
     }
 }
 
+/// The row at `position`: of the block's locality order when `ordered`
+/// ([`NativeBlock::ordered_row`]), else the row itself.
+pub(super) fn row_at(block: &NativeBlock, ordered: bool, position: usize) -> usize {
+    if ordered {
+        block.ordered_row(position)
+    } else {
+        position
+    }
+}
+
+/// The first native cell of the row at `position` of a block of `channels`
+/// channels.
+pub(super) fn cell_of(position: usize, channels: usize) -> u32 {
+    u32::try_from(position * channels).expect("a block's native cells fit u32 indices")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

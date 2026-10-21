@@ -17,6 +17,7 @@
 
 mod block;
 mod partition;
+mod prediction;
 mod row_work;
 mod stream;
 mod team;
