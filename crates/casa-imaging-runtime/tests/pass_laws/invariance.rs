@@ -5,8 +5,9 @@
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
     Basis, CellHold, DensityCellRule, DensityGridShape, GridGeometry, GridPadding, GridPrecision,
-    ImageExtent, MeasurementOperator, ModeSet, NormalImages, PlaneRange, PolarizationRouting,
-    SampleBuffer, SpectralResampler, WPlaneCount, WPlanes, WeightingGeneration, build_density_grid,
+    ImageExtent, MeasurementOperator, ModeSet, NormalImages, PaddingFactor, PlaneRange,
+    PolarizationRouting, SampleBuffer, SpectralResampler, WPlaneCount, WPlanes,
+    WeightingGeneration, build_density_grid,
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockShape, BoundedSource, CHUNK_PLACEMENTS, Cancel, MajorCyclePass,
@@ -612,7 +613,7 @@ fn the_row_work_pass_measures_what_a_first_pass_reports() {
             increment_rad: [-2.0e-3, 2.0e-3],
             reference_pixel: [IMAGE / 2, IMAGE / 2],
         },
-        GridPadding::CasaComposite,
+        GridPadding::CasaComposite(PaddingFactor::TCLEAN),
     )
     .expect("geometry");
     let kernels = WPlanes::new(&wide, &polarization, WPlaneCount::Fixed(16)).expect("planes");

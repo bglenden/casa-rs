@@ -9,8 +9,8 @@ use casa_imaging_model::{
 use casa_imaging_operator::{
     AiryDish, AwCatalog, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet, DensityCellRule,
     DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
-    MosaicPb, MosaicWindow, PolarizationRouting, SpectralAxis, SpectralResampler, Spheroidal,
-    WPlaneCount, WPlanes,
+    MosaicPb, MosaicWindow, PaddingFactor, PolarizationRouting, SpectralAxis, SpectralResampler,
+    Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::{BackendChoice, RowSamples};
 use casa_imaging_runtime::{
@@ -271,7 +271,9 @@ pub(crate) fn domain_operator(
     let kind = kernel_set_kind(problem);
     // Each CASA facet's GridFT pads its own facet grid.
     let padding = match kind {
-        KernelSetKind::Standard | KernelSetKind::WPlanes => GridPadding::CasaComposite,
+        KernelSetKind::Standard | KernelSetKind::WPlanes => {
+            GridPadding::CasaComposite(PaddingFactor::TCLEAN)
+        }
         KernelSetKind::Mosaic | KernelSetKind::Aw => GridPadding::None,
     };
     let geometry = GridGeometry::new(extent, padding)?;

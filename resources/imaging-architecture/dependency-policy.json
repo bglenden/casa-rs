@@ -58,6 +58,7 @@
   "casa-imaging-runtime": "execution",
   "casa-imaging-metal": "backend",
   "casa-simulation-synthesis": "science",
+  "casa-simulation": "application",
   "casars": "frontend",
   "casars-frontend-services": "frontend",
   "casars-imager": "frontend",
@@ -114,6 +115,15 @@
   "casa-simulation-synthesis": [
    "casa-fft",
    "casa-numerics"
+  ],
+  "casa-simulation": [
+   "casa-coordinates",
+   "casa-images",
+   "casa-imaging-model",
+   "casa-imaging-operator",
+   "casa-ms",
+   "casa-numerics",
+   "casa-types"
   ]
  },
  "device_dependency_prefixes": [
@@ -144,6 +154,7 @@
     "crates/casa-imaging-deconvolution/src",
     "crates/casa-imaging-products/src",
     "crates/casa-imaging-application/src",
+    "crates/casa-simulation/src",
     "crates/casa-provider-contracts/src",
     "crates/casars/src",
     "crates/casars-frontend-services/src",
@@ -186,6 +197,7 @@
     "crates/casa-imaging-runtime/src",
     "crates/casa-imaging-metal/src",
     "crates/casa-imaging-application/src",
+    "crates/casa-simulation/src",
     "crates/casa-fft/src",
     "crates/casa-ms/src",
     "crates/casa-tables/src",
@@ -227,6 +239,7 @@
     "crates/casa-imaging-runtime/src",
     "crates/casa-imaging-metal/src",
     "crates/casa-imaging-application/src",
+    "crates/casa-simulation/src",
     "crates/casa-fft/src",
     "crates/casa-ms/src",
     "crates/casa-tables/src",
@@ -263,7 +276,8 @@
     "crates/casa-imaging-products/src",
     "crates/casa-imaging-runtime/src",
     "crates/casa-imaging-metal/src",
-    "crates/casa-imaging-application/src"
+    "crates/casa-imaging-application/src",
+    "crates/casa-simulation/src"
    ],
    "extensions": [
     ".rs"

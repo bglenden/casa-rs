@@ -669,6 +669,47 @@ pub enum CorrelationType {
 }
 
 impl CorrelationType {
+    /// The correlation a MeasurementSet `POLARIZATION.CORR_TYPE` code names
+    /// (casacore `Stokes::StokesTypes`), or `None` for an unknown code.
+    #[must_use]
+    pub const fn from_casa_code(code: i32) -> Option<Self> {
+        Some(match code {
+            1 => Self::StokesI,
+            2 => Self::StokesQ,
+            3 => Self::StokesU,
+            4 => Self::StokesV,
+            5 => Self::CircularRr,
+            6 => Self::CircularRl,
+            7 => Self::CircularLr,
+            8 => Self::CircularLl,
+            9 => Self::LinearXx,
+            10 => Self::LinearXy,
+            11 => Self::LinearYx,
+            12 => Self::LinearYy,
+            13 => Self::MixedRx,
+            14 => Self::MixedRy,
+            15 => Self::MixedLx,
+            16 => Self::MixedLy,
+            17 => Self::MixedXr,
+            18 => Self::MixedXl,
+            19 => Self::MixedYr,
+            20 => Self::MixedYl,
+            21 => Self::QuasiOrthogonalPp,
+            22 => Self::QuasiOrthogonalPq,
+            23 => Self::QuasiOrthogonalQp,
+            24 => Self::QuasiOrthogonalQq,
+            25 => Self::RightCircular,
+            26 => Self::LeftCircular,
+            27 => Self::Linear,
+            28 => Self::PolarizedIntensity,
+            29 => Self::LinearPolarizedIntensity,
+            30 => Self::FractionalPolarizedIntensity,
+            31 => Self::FractionalLinearPolarizedIntensity,
+            32 => Self::PolarizationAngle,
+            _ => return None,
+        })
+    }
+
     /// Return whether this stored correlation participates directly in a Stokes-I solve.
     #[must_use]
     pub const fn contributes_to_stokes_i(self) -> bool {

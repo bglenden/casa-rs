@@ -13,7 +13,7 @@ use casa_imaging_operator::{
     ModelPrescale, Placement, PlaneRange, PolarizationRouting, RowContext, SampleBuffer,
     Spheroidal, TapLayout, WPlaneCount, WPlanes, Work,
 };
-use casa_imaging_operator::{GridGeometry, GridPadding, ImageExtent};
+use casa_imaging_operator::{GridGeometry, GridPadding, ImageExtent, PaddingFactor};
 use common::{IMAGE, Rng, buffer, placements, samples};
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
@@ -43,7 +43,7 @@ fn geometry() -> GridGeometry {
             increment_rad: [-WIDE_INCREMENT_RAD, WIDE_INCREMENT_RAD],
             reference_pixel: [IMAGE / 2, IMAGE / 2],
         },
-        GridPadding::CasaComposite,
+        GridPadding::CasaComposite(PaddingFactor::TCLEAN),
     )
     .expect("wide geometry")
 }
@@ -188,7 +188,7 @@ fn the_screen_is_the_padded_image_stepped_to_the_strict_even_composite_for_sever
                 increment_rad: [-WIDE_INCREMENT_RAD, WIDE_INCREMENT_RAD],
                 reference_pixel: [image / 2, image / 2],
             },
-            GridPadding::CasaComposite,
+            GridPadding::CasaComposite(PaddingFactor::TCLEAN),
         )
         .expect("geometry");
         let set =
