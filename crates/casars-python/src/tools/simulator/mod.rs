@@ -33,9 +33,9 @@ pub(crate) mod surface;
 use std::ffi::CString;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use casa_simulation::{CasaOutcome, Simulator, SimulatorError, SimulatorResult};
+use casa_simulation::{CasaOutcome, SessionResources, Simulator, SimulatorError, SimulatorResult};
 use casa_types::measures::MeasuresProvider;
-use pyo3::exceptions::{PyNotImplementedError, PyResourceWarning, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyNotImplementedError, PyResourceWarning, PyRuntimeError};
 use pyo3::prelude::*;
 use pyo3::sync::MutexExt;
 
@@ -53,13 +53,24 @@ pub(crate) struct Session {
 
 /// CASA's `simulator` tool.
 ///
-/// `simulator(*, memory_budget=None)`: `memory_budget` caps, in bytes, the
-/// memory the MeasurementSet writer may use; `None` derives it from the
-/// machine's physical memory.
+/// `simulator(*, memory_budget=None, backend='auto', workers=None)` takes
+/// only casa-rs's controls, keyword-only (ADR-0019 item 3):
+/// - `memory_budget` caps, in bytes, what a session holds at once while
+///   `close` writes: the MeasurementSet writer gets half of it and the
+///   geometry and noise the rest. `None` takes three quarters of the
+///   machine's free memory.
+/// - `backend` is the device to predict on: `'auto'`, `'cpu'` or `'metal'`.
+///   Noise is computed on the CPU whatever the backend; `'metal'` on a
+///   machine without a Metal device raises `RuntimeError`.
+/// - `workers` is the number of threads `close` keeps busy, the writer's
+///   among them; `None` takes three quarters of the machine's threads, at
+///   most its performance cores.
+///
+/// The MeasurementSet is bitwise the same whatever the controls.
 #[pyclass(name = "simulator", module = "casars.tools", frozen)]
 pub(crate) struct PySimulator {
     state: Mutex<Option<Session>>,
-    memory_budget: Option<usize>,
+    resources: SessionResources,
 }
 
 impl PySimulator {
@@ -153,16 +164,14 @@ impl Drop for PySimulator {
 #[pymethods]
 impl PySimulator {
     #[new]
-    #[pyo3(signature = (*, memory_budget = None))]
-    fn new(memory_budget: Option<usize>) -> PyResult<Self> {
-        if memory_budget == Some(0) {
-            return Err(PyValueError::new_err(
-                "memory_budget must be a positive number of bytes",
-            ));
-        }
+    #[pyo3(signature = (*, memory_budget = None, backend = "auto", workers = None))]
+    fn new(memory_budget: Option<i64>, backend: &str, workers: Option<i64>) -> PyResult<Self> {
+        let controls = lifecycle::execution_controls(memory_budget, backend, workers)?;
+        let resources =
+            SessionResources::from_controls(&controls).map_err(|error| raised(&error))?;
         Ok(Self {
             state: Mutex::new(None),
-            memory_budget,
+            resources,
         })
     }
 

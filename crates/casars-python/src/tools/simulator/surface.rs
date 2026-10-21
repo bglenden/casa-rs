@@ -22,8 +22,13 @@ use CasaDefault::{Bool, Empty, Float, Floats, Int, Ints, Text, Texts};
 use Kind as K;
 use Status::{DeprecatedInCasa, DisabledInCasa, Implemented, NotYetImplemented};
 
-/// The keyword-only constructor controls CASA lacks (ADR-0019 item 3).
-const CONSTRUCTOR: &[Parameter] = &[param("memory_budget", K::Int, CasaDefault::None)];
+/// The keyword-only constructor controls CASA lacks (ADR-0019 item 3), with
+/// casa-rs's defaults: CASA's constructor takes none.
+const CONSTRUCTOR: &[Parameter] = &[
+    param("memory_budget", K::Int, CasaDefault::None),
+    param("backend", K::Text, Text("auto")),
+    param("workers", K::Int, CasaDefault::None),
+];
 
 const STATE: [Parameter; 9] = [
     param("add_observation", K::Bool, Bool(false)),

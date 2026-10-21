@@ -107,17 +107,47 @@ def test_signatures_match_a_live_casa_when_one_is_importable() -> None:
         assert describe(getattr(simulator, name)) == describe(getattr(live, name)), name
 
 
+CONSTRUCTOR = [("memory_budget", None), ("backend", "auto"), ("workers", None)]
+
+
 def test_the_constructor_adds_only_keyword_only_controls() -> None:
     # CASA's constructor takes (*args, **kwargs) and ignores them.
     assert [entry["kind"] for entry in CASA["constructor"]] == ["VAR_POSITIONAL", "VAR_KEYWORD"]
     parameters = inspect.signature(simulator).parameters.values()
     assert [(p.name, p.kind, p.default) for p in parameters] == [
-        ("memory_budget", inspect.Parameter.KEYWORD_ONLY, None)
+        (name, inspect.Parameter.KEYWORD_ONLY, default) for name, default in CONSTRUCTOR
     ]
     with pytest.raises(TypeError):
         simulator(1)  # type: ignore[misc]
-    with pytest.raises(ValueError, match="memory_budget"):
-        simulator(memory_budget=0)
+
+
+@pytest.mark.parametrize(
+    ("controls", "message"),
+    [
+        ({"memory_budget": 0}, "memory_budget must be a positive number of bytes, not 0"),
+        ({"memory_budget": -1}, "memory_budget must be a positive number of bytes, not -1"),
+        ({"workers": 0}, "workers must be a positive number of threads, not 0"),
+        ({"workers": -2}, "workers must be a positive number of threads, not -2"),
+        ({"backend": "gpu"}, "backend must be 'auto', 'cpu' or 'metal', not 'gpu'"),
+        ({"backend": "CPU"}, "backend must be 'auto', 'cpu' or 'metal', not 'CPU'"),
+    ],
+)
+def test_constructor_controls_out_of_range_raise_value_error(
+    controls: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValueError) as raised:
+        simulator(**controls)
+    assert str(raised.value) == message
+
+
+def test_the_constructor_takes_each_backend() -> None:
+    assert simulator(backend="auto", workers=1, memory_budget=1 << 30).type() == "Simulator"
+    assert simulator(backend="cpu").type() == "Simulator"
+    # 'metal' needs a device: on a machine without one it raises at once.
+    try:
+        simulator(backend="metal")
+    except RuntimeError as error:
+        assert "Metal device" in str(error)
 
 
 def test_the_bundle_describes_the_class_signatures() -> None:
@@ -144,8 +174,11 @@ def test_the_bundle_describes_the_class_signatures() -> None:
             assert parameter.default == default, (name, parameter.name)
             assert type(parameter.default) is type(default), (name, parameter.name)
     constructor = contract["constructors"][0]["parameters_schema"]["properties"]
-    assert projection["constructor_keyword_only"] == list(constructor) == ["memory_budget"]
-    assert constructor["memory_budget"]["default"] is None
+    # The schema's properties are unordered; the projection carries the order.
+    assert projection["constructor_keyword_only"] == [name for name, _ in CONSTRUCTOR]
+    assert set(constructor) == {name for name, _ in CONSTRUCTOR}
+    for name, default in CONSTRUCTOR:
+        assert constructor[name]["default"] == default, name
     status = bundle["annotations"]["python"]["objects"]["simulator"]["method_status"]
     assert {name for name, value in status.items() if value == "implemented"} == IMPLEMENTED
     assert {name for name, value in status.items() if value == "not_yet_implemented"} == (
@@ -440,9 +473,9 @@ def test_omitted_arguments_behave_as_casas_defaults(tmp_path: Path) -> None:
     assert Table.open(tmp_path / "omitted.ms").row_count == 18
 
 
-def noisy(path: Path, seed: int | None) -> np.ndarray:
+def noisy(path: Path, seed: int | None, **controls: Any) -> np.ndarray:
     """DATA of a 300 s session after `setseed(seed)`, 0.1 Jy and one corrupt."""
-    sm = simulator()
+    sm = simulator(**controls)
     sm.open(str(path))
     configure(sm)
     assert sm.observe("F", "L", starttime="0s", stoptime="300s")
@@ -482,6 +515,29 @@ def test_the_seed_decides_the_draws(tmp_path: Path) -> None:
     # Without setseed, CASA's simulator seed 11111, not the binding default.
     assert np.array_equal(noisy(tmp_path / "default.ms", None), noisy(tmp_path / "s.ms", 11111))
     assert not np.array_equal(noisy(tmp_path / "unset.ms", None), noisy(tmp_path / "b.ms", 185349251))
+
+
+@needs_measures
+def test_the_controls_do_not_change_what_close_writes(tmp_path: Path) -> None:
+    first = noisy(tmp_path / "default.ms", 5)
+    for name, controls in [
+        ("one.ms", {"workers": 1}),
+        ("four.ms", {"workers": 4, "backend": "cpu"}),
+        ("budget.ms", {"memory_budget": 256 << 20, "workers": 3}),
+    ]:
+        assert np.array_equal(noisy(tmp_path / name, 5, **controls), first), name
+
+
+@needs_measures
+def test_a_budget_too_small_for_close_raises_and_writes_nothing(tmp_path: Path) -> None:
+    sm = simulator(memory_budget=1 << 20)
+    sm.open(str(tmp_path / "small.ms"))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    with pytest.raises(RuntimeError, match="MeasurementSet writer needs .* bytes"):
+        sm.close()
+    assert not (tmp_path / "small.ms").exists()
+    assert sm.name() == ""
 
 
 @needs_measures

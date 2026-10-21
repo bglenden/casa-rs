@@ -1,31 +1,76 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The session's lifecycle: `open`, `close`/`done`, `name` and `summary`.
+//! The session's lifecycle: the constructor's controls, `open`,
+//! `close`/`done`, `name` and `summary`.
 
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use casa_simulation::{Simulator, SimulatorOptions, SimulatorResult};
+use casa_simulation::{
+    BackendRequest, ExecutionControls, Simulator, SimulatorOptions, SimulatorResult,
+};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use super::{LOGGER, PySimulator, Session, raised};
 use crate::tools::{LogLine, emit};
+
+/// The constructor's controls, each checked: a positive `memory_budget` in
+/// bytes, a `backend` of `'auto'`, `'cpu'` or `'metal'`, and a positive
+/// `workers` count; `None` for the session's defaults. A value out of range
+/// raises `ValueError`.
+pub(super) fn execution_controls(
+    memory_budget: Option<i64>,
+    backend: &str,
+    workers: Option<i64>,
+) -> PyResult<ExecutionControls> {
+    let memory_budget = memory_budget
+        .map(|bytes| {
+            u64::try_from(bytes)
+                .ok()
+                .filter(|bytes| *bytes > 0)
+                .ok_or_else(|| {
+                    PyValueError::new_err(format!(
+                        "memory_budget must be a positive number of bytes, not {bytes}"
+                    ))
+                })
+        })
+        .transpose()?;
+    let workers = workers
+        .map(|count| {
+            usize::try_from(count)
+                .ok()
+                .and_then(NonZeroUsize::new)
+                .ok_or_else(|| {
+                    PyValueError::new_err(format!(
+                        "workers must be a positive number of threads, not {count}"
+                    ))
+                })
+        })
+        .transpose()?;
+    let backend = backend
+        .parse::<BackendRequest>()
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    Ok(ExecutionControls {
+        memory_budget,
+        workers,
+        backend,
+    })
+}
 
 /// `sm.open(ms)`: close (write) any open session, then start one that will
 /// create `ms` at `close`. CASA's reference time until `settimes` is the
 /// time of this call. The GIL is released while the previous session writes
 /// and the measures data loads.
 pub(super) fn open(tool: &PySimulator, py: Python<'_>, ms: &str) -> PyResult<bool> {
-    let budget = tool.memory_budget;
+    let resources = tool.resources;
     let path = PathBuf::from(ms);
     py.detach(move || -> SimulatorResult<()> {
         let mut state = tool.lock();
         if let Some(previous) = state.take() {
             previous.simulator.close()?;
         }
-        let mut options = SimulatorOptions::from_system()?;
-        if let Some(bytes) = budget {
-            options.write_resources.available_bytes = bytes;
-        }
+        let options = SimulatorOptions::from_system(resources)?;
         let measures = Arc::clone(&options.measures);
         *state = Some(Session {
             simulator: Simulator::open(path, options),
