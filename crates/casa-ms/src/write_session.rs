@@ -25,7 +25,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{MeasurementSet, MsSelectionIoBudget};
+use crate::{MeasurementSet, MsSelectionIoBudget, SubtableColumnOverrides};
 
 mod scalars;
 mod visibility_columns;
@@ -1589,16 +1589,35 @@ impl MeasurementSetWriteSession {
     /// Save a prepared descriptor and install all session-owned creation columns.
     #[doc(hidden)]
     pub fn save_and_finish(
+        self,
+        measurement_set: &mut MeasurementSet,
+        column_overrides: &ColumnOverrides,
+    ) -> Result<MeasurementSetWriteTelemetry, MeasurementSetWriteError> {
+        self.save_and_finish_with_subtables(
+            measurement_set,
+            column_overrides,
+            &SubtableColumnOverrides::new(),
+        )
+    }
+
+    /// [`save_and_finish`](Self::save_and_finish), also writing the
+    /// subtable columns `subtables` overrides, as
+    /// [`MeasurementSet::save_with_column_overrides`] does: a creator's
+    /// generated subtable, such as a simulator's POINTING, is written in the
+    /// same save as MAIN without its rows held in memory.
+    #[doc(hidden)]
+    pub fn save_and_finish_with_subtables(
         mut self,
         measurement_set: &mut MeasurementSet,
         column_overrides: &ColumnOverrides,
+        subtables: &SubtableColumnOverrides,
     ) -> Result<MeasurementSetWriteTelemetry, MeasurementSetWriteError> {
         let scalar_finalize_started = Instant::now();
         let scalar_columns = self.finish_scalar_columns(column_overrides)?;
         let scalar_finalize_seconds = scalar_finalize_started.elapsed().as_secs_f64();
         let save_started = Instant::now();
         measurement_set
-            .save_with_main_column_overrides(&scalar_columns.overrides)
+            .save_with_column_overrides(&scalar_columns.overrides, subtables)
             .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
         let save_seconds = save_started.elapsed().as_secs_f64();
         let telemetry = self.finish(measurement_set.main_table())?;

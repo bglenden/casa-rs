@@ -68,6 +68,7 @@ pub mod shadowing;
 pub mod simulation;
 pub mod simulation_task;
 pub mod spectral_selection;
+mod subtable_overrides;
 pub mod subtables;
 pub mod task_contract;
 pub mod transform;
@@ -193,6 +194,7 @@ pub use spectral_selection::{
     resolve_channel_selector_selection, resolve_contiguous_channel_selection,
     velocity_ms_from_frequency_hz,
 };
+pub use subtable_overrides::SubtableColumnOverrides;
 pub use subtables::{
     MsAntenna, MsAntennaMut, MsDataDescription, MsDataDescriptionMut, MsDoppler, MsDopplerMut,
     MsFeed, MsFeedMut, MsField, MsFieldMut, MsFlagCmd, MsFlagCmdMut, MsFreqOffset, MsFreqOffsetMut,

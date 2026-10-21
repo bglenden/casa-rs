@@ -25,6 +25,7 @@ use crate::column_def::ColumnDef;
 use crate::error::{MsError, MsResult};
 use crate::metadata::{measinfo_for, quantum_units_for};
 use crate::schema::{SubtableId, main_table::VisibilityDataColumn};
+use crate::subtable_overrides::SubtableColumnOverrides;
 use crate::subtables::{
     MsAntenna, MsAntennaMut, MsDataDescription, MsDataDescriptionMut, MsDoppler, MsDopplerMut,
     MsFeed, MsFeedMut, MsField, MsFieldMut, MsFlagCmd, MsFlagCmdMut, MsFreqOffset, MsFreqOffsetMut,
@@ -408,21 +409,47 @@ impl MeasurementSet {
         })
     }
 
-    pub(crate) fn save_with_main_column_overrides(
+    /// Save MAIN and every subtable as [`save`](Self::save) does, writing
+    /// the columns `main` and `subtables` override from the overrides
+    /// instead of from rows held in memory.
+    ///
+    /// The overrides of a table follow
+    /// [`TableWritePlan::save_with_column_overrides`](casa_tables::TableWritePlan::save_with_column_overrides):
+    /// they may set its row count and give columns as materialized values,
+    /// generated cells or, for MAIN, deferred columns another path installs.
+    /// A subtable is written with the same storage managers as
+    /// [`save`](Self::save) writes it, so overriding every column of a
+    /// subtable with its cells writes the same files as holding them as
+    /// rows. The in-memory tables are not changed: a subtable saved from
+    /// generated cells keeps the rows it held.
+    ///
+    /// # Errors
+    ///
+    /// [`MsError::MissingSubtable`] when `subtables` names a subtable this
+    /// MeasurementSet does not have, before anything is written; otherwise
+    /// as [`save`](Self::save), and when an override does not fit its table.
+    pub fn save_with_column_overrides(
         &mut self,
-        column_overrides: &ColumnOverrides,
+        main: &ColumnOverrides,
+        subtables: &SubtableColumnOverrides,
     ) -> MsResult<()> {
         let path = self
             .path
             .as_ref()
             .ok_or_else(|| MsError::VersionError("MS has no path; use save_as()".to_string()))?
             .clone();
+        if let Some((missing, _)) = subtables
+            .iter()
+            .find(|(id, _)| !self.subtables.contains_key(id))
+        {
+            return Err(MsError::MissingSubtable(missing.name().to_string()));
+        }
 
         self.refresh_subtable_paths(&path);
         self.sync_main_metadata(&path);
         let mut locks = self.lock_tables_for_in_place_save(&path, true)?;
         locks.record(None);
-        save_main_table_with_policy_and_column_overrides(&mut self.main, &path, column_overrides)?;
+        save_main_table_with_policy_and_column_overrides(&mut self.main, &path, main)?;
 
         let subtable_paths = self
             .subtables
@@ -431,9 +458,15 @@ impl MeasurementSet {
             .collect::<HashMap<_, _>>();
         for (id, table) in &mut self.subtables {
             locks.record(Some(*id));
-            table
-                .prepare_write()
-                .save(measurement_set_table_options(&subtable_paths[id]))?;
+            let options = measurement_set_table_options(&subtable_paths[id]);
+            match subtables.get(*id) {
+                Some(overrides) => table.prepare_write().save_with_column_overrides(
+                    options,
+                    &HashMap::new(),
+                    overrides,
+                )?,
+                None => table.prepare_write().save(options)?,
+            }
         }
         locks.release()?;
 
@@ -1776,8 +1809,11 @@ mod tests {
         fs::create_dir(&main_table_dat).unwrap();
         fs::write(main_table_dat.join("blocker"), b"").unwrap();
         assert!(
-            ms.save_with_main_column_overrides(&ColumnOverrides::default())
-                .is_err()
+            ms.save_with_column_overrides(
+                &ColumnOverrides::default(),
+                &SubtableColumnOverrides::new()
+            )
+            .is_err()
         );
         drop(ms);
 
