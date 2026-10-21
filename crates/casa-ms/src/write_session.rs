@@ -27,6 +27,9 @@ use thiserror::Error;
 
 use crate::{MeasurementSet, MsSelectionIoBudget};
 
+/// Bytes a visibility creation batch aims at, whatever the budget allows.
+pub const TARGET_BATCH_BYTES: usize = 32 * 1024 * 1024;
+
 /// Resource inputs for a bounded writer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MeasurementSetWriteResources {
@@ -429,17 +432,26 @@ impl MeasurementSetWritePlan {
             .ok_or(MeasurementSetWriteError::ByteOverflow)?;
         let streaming_budget = resources.available_bytes - fixed_writer_bytes;
         let per_batch_budget = streaming_budget / resources.maximum_live_batches;
-        let mut batch_rows = per_batch_budget / bytes_per_row;
-        if row_count > 0 && batch_rows == 0 {
+        if row_count > 0 && per_batch_budget < bytes_per_row {
             return Err(MeasurementSetWriteError::InsufficientBudget {
                 bytes_per_row,
                 per_batch_budget,
             });
         }
+        // Batches hold whole bands of tiles (one tile along the row axis,
+        // every tile across the cell), so each batch completes its tiles; as
+        // many bands as fit the target, and at least one when the budget
+        // allows. The budget is a ceiling, not a target: a few tens of MB
+        // keep the producer and the writer overlapping with little resident
+        // memory.
+        let budget_rows = per_batch_budget / bytes_per_row;
         let tile_rows = visibility_tile_shape.get(2).copied().unwrap_or(1).max(1);
-        if batch_rows >= tile_rows {
-            batch_rows -= batch_rows % tile_rows;
-        }
+        let mut batch_rows = if budget_rows >= tile_rows {
+            (TARGET_BATCH_BYTES / bytes_per_row / tile_rows).clamp(1, budget_rows / tile_rows)
+                * tile_rows
+        } else {
+            budget_rows
+        };
         batch_rows = batch_rows.min(row_count.max(1));
         let batch_bytes = batch_rows
             .checked_mul(bytes_per_row)
@@ -2572,6 +2584,58 @@ mod tests {
                 .count()
                 >= 16
         );
+    }
+
+    #[test]
+    fn batches_are_whole_tile_bands_near_the_target_however_large_the_budget() {
+        // 64 GiB of budget: the batch still follows the target, not memory.
+        for channels in [16, 256, 1024, 4096] {
+            let plan = MeasurementSetWritePlan::visibility_creation(
+                50_000_000,
+                2,
+                channels,
+                "ALMA",
+                MeasurementSetWriteResources {
+                    available_bytes: 64 * 1024 * 1024 * 1024,
+                    maximum_live_batches: 2,
+                    tiled_column_buffer_bytes: STREAMING_TILED_COLUMN_BUFFER_BYTES,
+                },
+            )
+            .expect("write plan");
+            let tile_rows = plan.visibility_tile_shape[2];
+            let band_bytes = tile_rows * plan.bytes_per_row;
+            assert!(plan.batch_rows.is_multiple_of(tile_rows), "{channels}");
+            // As many bands as fit the target, and at least one.
+            assert!(
+                plan.batch_bytes <= TARGET_BATCH_BYTES.max(band_bytes),
+                "{channels}: {}",
+                plan.batch_bytes
+            );
+            assert!(
+                plan.batch_bytes + band_bytes > TARGET_BATCH_BYTES,
+                "{channels}: {}",
+                plan.batch_bytes
+            );
+            assert_eq!(plan.queue_capacity, 1, "{channels}");
+        }
+    }
+
+    #[test]
+    fn a_budget_below_one_tile_band_still_plans_rows_that_fit() {
+        let plan = MeasurementSetWritePlan::visibility_creation(
+            100_000,
+            2,
+            1024,
+            "ALMA",
+            MeasurementSetWriteResources {
+                available_bytes: 96 * 1024 * 1024,
+                maximum_live_batches: 2,
+                tiled_column_buffer_bytes: STREAMING_TILED_COLUMN_BUFFER_BYTES,
+            },
+        )
+        .expect("write plan");
+        assert!(plan.batch_rows < plan.visibility_tile_shape[2]);
+        assert!(plan.maximum_resident_bytes <= 96 * 1024 * 1024);
     }
 
     #[test]

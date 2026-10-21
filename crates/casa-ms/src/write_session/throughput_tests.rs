@@ -227,6 +227,228 @@ fn ignored_main_table_throughput_fixture() {
     );
 }
 
+/// What a real producer sends (simulation, `split`): distinct DATA per row,
+/// per-row flags and uvw in `Rows` batches of the planned size, and every
+/// standard MAIN scalar column pushed row by row, all on the producer
+/// thread. Prints one report with the producer's build, scalar and send time
+/// next to the writer's telemetry.
+#[test]
+#[ignore = "explicit realistic MeasurementSet producer throughput probe"]
+fn ignored_realistic_main_table_throughput_fixture() {
+    let env_usize = |name: &str, default: usize| {
+        std::env::var(name)
+            .ok()
+            .map_or(default, |value| value.parse().expect("an integer"))
+    };
+    let root = std::env::var_os("CASA_RS_MS_THROUGHPUT_ROOT")
+        .map(PathBuf::from)
+        .expect("CASA_RS_MS_THROUGHPUT_ROOT must name an empty benchmark directory");
+    let channel_count = env_usize("CASA_RS_MS_THROUGHPUT_CHANNELS", 256);
+    let baselines = env_usize("CASA_RS_MS_THROUGHPUT_BASELINES", 903);
+    let row_count = env_usize("CASA_RS_MS_THROUGHPUT_ROWS", baselines * 360);
+    fs::create_dir_all(&root).expect("create benchmark root");
+    let output = root.join(format!("realistic-{channel_count}ch.ms"));
+    assert!(!output.exists(), "refusing to replace {}", output.display());
+    let total_started = Instant::now();
+
+    let output_target = MeasurementSetCreateTarget::prepare(&output, false).expect("output target");
+    let staging = output_target.staging_path().to_path_buf();
+    let mut measurement_set = MeasurementSet::create(
+        &staging,
+        MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+    )
+    .expect("create MeasurementSet descriptor");
+    fs::create_dir_all(&staging).expect("create staging directory");
+    populate_minimal_metadata(&mut measurement_set, channel_count);
+    populate_realistic_metadata(&mut measurement_set);
+    let resources = MeasurementSetWriteResources::from_system_memory(2).expect("resources");
+    let plan = MeasurementSetWritePlan::visibility_creation(
+        row_count,
+        CORRELATION_COUNT,
+        channel_count,
+        "ALMA",
+        resources,
+    )
+    .expect("visibility write plan");
+    let planned_maximum_resident_bytes = plan.maximum_resident_bytes();
+    let batch_rows = plan.batch_rows().max(1);
+    let mut session = MeasurementSetWriteSession::start(&staging, plan).expect("write session");
+
+    let samples = CORRELATION_COUNT * channel_count;
+    let [mut build_seconds, mut scalar_seconds, mut send_seconds] = [0.0f64; 3];
+    let mut first = 0;
+    while first < row_count {
+        let rows = first..row_count.min(first + batch_rows);
+        let started = Instant::now();
+        let data_rows = rows
+            .clone()
+            .map(|row| distinct_data_row(row, samples))
+            .collect::<Vec<_>>();
+        let flag_rows = rows
+            .clone()
+            .map(|row| row.is_multiple_of(97))
+            .collect::<Vec<_>>();
+        let uvw_rows = rows
+            .clone()
+            .map(|row| {
+                let baseline = (row % baselines) as f64;
+                [baseline, -0.5 * baseline, 0.1 * baseline]
+            })
+            .collect::<Vec<_>>();
+        build_seconds += started.elapsed().as_secs_f64();
+        let started = Instant::now();
+        for row in rows.clone() {
+            push_standard_scalars(&mut session, row, baselines);
+        }
+        scalar_seconds += started.elapsed().as_secs_f64();
+        let started = Instant::now();
+        session
+            .send_batch(MeasurementSetWriteBatch::Rows {
+                data_rows,
+                flag_rows,
+                uvw_rows,
+            })
+            .expect("send visibility batch");
+        send_seconds += started.elapsed().as_secs_f64();
+        first = rows.end;
+    }
+
+    let mut overrides = ColumnOverrides::for_row_count(row_count);
+    for column in ["DATA", "FLAG", "FLAG_CATEGORY", "UVW", "WEIGHT", "SIGMA"] {
+        overrides.insert_deferred(column);
+    }
+    let finish_started = Instant::now();
+    let telemetry = session
+        .save_and_finish(&mut measurement_set, &overrides)
+        .expect("finish MeasurementSet");
+    let finish_seconds = finish_started.elapsed().as_secs_f64();
+    output_target.commit().expect("publish MeasurementSet");
+    let application_write_seconds = total_started.elapsed().as_secs_f64();
+    let sync_started = Instant::now();
+    sync_tree(&output);
+    let durable_sync_seconds = sync_started.elapsed().as_secs_f64();
+    let (logical_size_bytes, _, file_count) = tree_size(&output);
+    let durable_write_seconds = total_started.elapsed().as_secs_f64();
+
+    let report = json!({
+        "schema_version": 1,
+        "kind": "measurement_set_realistic_producer_throughput_fixture",
+        "channel_count": channel_count,
+        "correlation_count": CORRELATION_COUNT,
+        "row_count": row_count,
+        "batch_rows": batch_rows,
+        "logical_size_bytes": logical_size_bytes,
+        "file_count": file_count,
+        "planned_maximum_resident_bytes": planned_maximum_resident_bytes,
+        "producer_build_seconds": build_seconds,
+        "producer_scalar_seconds": scalar_seconds,
+        "producer_send_seconds": send_seconds,
+        "finish_seconds": finish_seconds,
+        "application_write_seconds": application_write_seconds,
+        "durable_sync_seconds": durable_sync_seconds,
+        "durable_write_seconds": durable_write_seconds,
+        "durable_logical_mb_per_second": rate(logical_size_bytes, durable_write_seconds),
+        "writer_telemetry": telemetry,
+        "peak_rss_bytes": peak_rss_bytes(),
+    });
+    println!(
+        "CASA_RS_MS_THROUGHPUT_REPORT={}",
+        serde_json::to_string(&report).expect("serialize report")
+    );
+}
+
+/// The rest of what readers such as `mstransform` require: 43 antennas, so
+/// that every benchmark ANTENNA1/ANTENNA2 exists, and one field.
+fn populate_realistic_metadata(measurement_set: &mut MeasurementSet) {
+    let mut antennas = measurement_set.antenna_mut().expect("ANTENNA");
+    for antenna in 1..43 {
+        let name = format!("BENCH{antenna:02}");
+        antennas
+            .add_antenna(
+                &name,
+                &name,
+                "GROUND-BASED",
+                "ALT-AZ",
+                [
+                    -1_601_185.0 + 30.0 * antenna as f64,
+                    -5_041_977.0,
+                    3_554_875.0,
+                ],
+                [0.0; 3],
+                12.0,
+            )
+            .expect("add antenna");
+    }
+    let direction = || {
+        Value::Array(ArrayValue::Float64(
+            ArrayD::from_shape_vec(vec![2, 1], vec![2.6, -0.5]).expect("direction shape"),
+        ))
+    };
+    measurement_set
+        .subtable_mut(SubtableId::Field)
+        .expect("FIELD")
+        .add_row(RecordValue::new(vec![
+            RecordField::new("CODE", Value::Scalar(ScalarValue::String(String::new()))),
+            RecordField::new("DELAY_DIR", direction()),
+            RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+            RecordField::new(
+                "NAME",
+                Value::Scalar(ScalarValue::String("target".to_string())),
+            ),
+            RecordField::new("NUM_POLY", Value::Scalar(ScalarValue::Int32(0))),
+            RecordField::new("PHASE_DIR", direction()),
+            RecordField::new("REFERENCE_DIR", direction()),
+            RecordField::new("SOURCE_ID", Value::Scalar(ScalarValue::Int32(-1))),
+            RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(4.0e9))),
+        ]))
+        .expect("add FIELD row");
+}
+
+/// A DATA row whose values differ from row to row.
+fn distinct_data_row(row: usize, samples: usize) -> Vec<Complex32> {
+    let seed = (row as u32).wrapping_mul(0x85EB_CA6B);
+    (0..samples)
+        .map(|index| {
+            let mixed = (index as u32 ^ seed)
+                .wrapping_mul(0x9E37_79B9)
+                .rotate_left(13);
+            Complex32::new(
+                f32::from_bits(0x3f00_0000 | (mixed & 0x007f_ffff)),
+                f32::from_bits(0xbf00_0000 | (mixed.rotate_left(7) & 0x007f_ffff)),
+            )
+        })
+        .collect()
+}
+
+/// The 16 standard MAIN scalars of one row, pushed as the simulator pushes
+/// them.
+fn push_standard_scalars(session: &mut MeasurementSetWriteSession, row: usize, baselines: usize) {
+    let time = 4.0e9 + (row / baselines) as f64 * 10.0;
+    let baseline = (row % baselines) as i32;
+    for (column, value) in [
+        ("ANTENNA1", ScalarValue::Int32(baseline / 43)),
+        ("ANTENNA2", ScalarValue::Int32(baseline % 43)),
+        ("ARRAY_ID", ScalarValue::Int32(0)),
+        ("DATA_DESC_ID", ScalarValue::Int32(0)),
+        ("EXPOSURE", ScalarValue::Float64(10.0)),
+        ("FEED1", ScalarValue::Int32(0)),
+        ("FEED2", ScalarValue::Int32(0)),
+        ("FIELD_ID", ScalarValue::Int32(0)),
+        ("FLAG_ROW", ScalarValue::Bool(row.is_multiple_of(97))),
+        ("INTERVAL", ScalarValue::Float64(10.0)),
+        ("OBSERVATION_ID", ScalarValue::Int32(0)),
+        ("PROCESSOR_ID", ScalarValue::Int32(0)),
+        ("SCAN_NUMBER", ScalarValue::Int32(1)),
+        ("STATE_ID", ScalarValue::Int32(0)),
+        ("TIME", ScalarValue::Float64(time)),
+        ("TIME_CENTROID", ScalarValue::Float64(time)),
+    ] {
+        session
+            .push_scalar_row(column, Some(value))
+            .expect("push scalar");
+    }
+}
+
 fn estimated_physical_bytes_per_row(channel_count: usize) -> usize {
     let visibility = CORRELATION_COUNT * channel_count * std::mem::size_of::<Complex32>();
     let packed_flags = (CORRELATION_COUNT * channel_count).div_ceil(8);
