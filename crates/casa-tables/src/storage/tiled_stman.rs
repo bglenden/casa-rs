@@ -380,6 +380,8 @@ use tile_columns::{
     TileColumns, bound_tile_layout, in_tile_order, rows_reached, tile_columns, tile_target,
     untiled_column_error, writer_tile_order,
 };
+mod undefined_column;
+pub use undefined_column::install_undefined_tiled_shape_column;
 
 // ---------------------------------------------------------------------------
 // Data structures

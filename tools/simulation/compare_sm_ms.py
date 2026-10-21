@@ -53,7 +53,6 @@ RELATIVE_TOLERANCE = 1e-14
 KNOWN = {
     "MAIN.MODEL_DATA:missing": "plan decision 6: DATA only",
     "MAIN.CORRECTED_DATA:missing": "plan decision 6: DATA only",
-    "MAIN.FLAG_CATEGORY:defined": "casa-ms writes zero-size FLAG_CATEGORY cells where CASA leaves them undefined (#847)",
     "MAIN.UVW:keywords": "casa-ms's UVW MEASINFO lacks casacore's default Ref ITRF (#847)",
     "POINTING.TARGET:ndim": "casa-ms's POINTING.TARGET has ndim 2, casacore's -1 (#847)",
     "SOURCE.DIRECTION:ndim": "CASA's simulator makes SOURCE arrays variable-shaped; casa-ms follows casacore's MSSource (fixed [2])",
@@ -62,12 +61,6 @@ KNOWN = {
     "SOURCE.PROPER_MOTION:ndim": "as SOURCE.DIRECTION:ndim",
     "SOURCE.PROPER_MOTION:shape": "as SOURCE.DIRECTION:ndim",
     "SOURCE.PROPER_MOTION:option": "as SOURCE.DIRECTION:ndim",
-    "SOURCE.POSITION:ndim": "casa-tables writes an unspecified dimensionality as 0, casacore as -1 (#847)",
-    "SOURCE.REST_FREQUENCY:ndim": "as SOURCE.POSITION:ndim",
-    "SOURCE.SYSVEL:ndim": "as SOURCE.POSITION:ndim",
-    "SOURCE.TRANSITION:ndim": "as SOURCE.POSITION:ndim",
-    "OBSERVATION.LOG:defined": "casa-tables stores an unwritten cell of a fixed-rank array column as an empty array (#847)",
-    "OBSERVATION.SCHEDULE:defined": "as OBSERVATION.LOG:defined",
 }
 
 

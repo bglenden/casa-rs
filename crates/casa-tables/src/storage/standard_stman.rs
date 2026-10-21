@@ -2841,17 +2841,14 @@ fn write_cell_to_bucket(
                         arr.shape().to_vec(),
                         arr.t().iter().cloned().collect::<Vec<_>>(),
                     ),
+                    // An unwritten cell of a variable-shape column stays
+                    // undefined: casacore's SSMIndStringColumn reads a zero
+                    // length as no array in the row.
+                    _ if col_desc.shape.is_empty() => return,
                     _ => {
-                        let shape = if col_desc.shape.is_empty() {
-                            Vec::new()
-                        } else {
-                            col_desc.shape.iter().map(|&dim| dim as usize).collect()
-                        };
-                        let count = if shape.is_empty() {
-                            0
-                        } else {
-                            shape.iter().product()
-                        };
+                        let shape: Vec<usize> =
+                            col_desc.shape.iter().map(|&dim| dim as usize).collect();
+                        let count = shape.iter().product();
                         (shape, vec![String::new(); count])
                     }
                 };

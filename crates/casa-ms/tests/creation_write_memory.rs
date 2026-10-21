@@ -273,10 +273,18 @@ fn create(root: &Path, rows: usize) -> Peaks {
     let finishing = PEAK.load(Ordering::Relaxed) - baseline;
     drop(measurement_set);
     target.commit().expect("publish MeasurementSet");
-    assert_eq!(
-        MeasurementSet::open(&output).expect("reopen").row_count(),
-        rows
-    );
+    let reopened = MeasurementSet::open(&output).expect("reopen");
+    assert_eq!(reopened.row_count(), rows);
+    // FLAG_CATEGORY is left undefined, as CASA's simulator leaves it (#847).
+    for row in [0, rows - 1] {
+        assert!(
+            !reopened
+                .main_table()
+                .is_cell_defined(row, "FLAG_CATEGORY")
+                .expect("FLAG_CATEGORY exists"),
+            "FLAG_CATEGORY row {row} is undefined"
+        );
+    }
     Peaks {
         planned,
         producer_batch,

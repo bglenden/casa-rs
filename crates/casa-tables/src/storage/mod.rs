@@ -21,8 +21,8 @@ pub use tiled_stman::{
     TilePixel, TiledArrayStorage, TiledArrayStorageLayout, TiledFileIoStats,
     install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
     install_streamed_tiled_shape_column, install_streamed_tiled_shape_complex32_column,
-    install_streamed_tiled_shape_primitive_column, set_table_cache_budget_bytes,
-    table_cache_budget_bytes,
+    install_streamed_tiled_shape_primitive_column, install_undefined_tiled_shape_column,
+    set_table_cache_budget_bytes, table_cache_budget_bytes,
 };
 pub(crate) mod virtual_bitflags;
 pub(crate) mod virtual_compress;

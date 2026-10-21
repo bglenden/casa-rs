@@ -2242,6 +2242,9 @@ impl ColumnDescContents {
             ColumnType::Array(ArrayShapeContract::Variable { ndim: Some(n) }) => {
                 (*n as i32, vec![])
             }
+            // casacore's ArrayColumnDesc writes a dimensionality left open
+            // as -1; readers take any value below 1 the same way.
+            ColumnType::Array(ArrayShapeContract::Variable { ndim: None }) => (-1, vec![]),
             _ => (0, vec![]),
         };
 

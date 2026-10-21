@@ -17,7 +17,7 @@ use casa_tables::{
     StreamingTiledShapeWriter, Table, TableError, TableOptions, TableWriteLock,
     install_streamed_tiled_column, install_streamed_tiled_column_primitive_column,
     install_streamed_tiled_shape_column, install_streamed_tiled_shape_complex32_column,
-    install_streamed_tiled_shape_primitive_column,
+    install_streamed_tiled_shape_primitive_column, install_undefined_tiled_shape_column,
 };
 use casa_types::{ArrayValue, PrimitiveType, ScalarValue, Value};
 use num_complex::Complex32;
@@ -366,12 +366,6 @@ impl MeasurementSetWritePlan {
             crate::ms::casa_visibility_tile_shape(correlation_count, channel_count, telescope_name);
         let weight_tile_shape = crate::ms::casa_weight_tile_shape(&visibility_tile_shape);
         let uvw_tile_shape = crate::ms::casa_uvw_tile_shape(&visibility_tile_shape);
-        let flag_category_tile_shape = [
-            visibility_tile_shape[0],
-            visibility_tile_shape[1],
-            1,
-            visibility_tile_shape[2],
-        ];
         let scalar_columns = standard_main_scalar_column_plans();
         let scalar_bytes_per_row = scalar_columns.iter().try_fold(0usize, |total, column| {
             total
@@ -391,11 +385,6 @@ impl MeasurementSetWritePlan {
             (
                 &[correlation_count, channel_count][..],
                 &visibility_tile_shape[..],
-                1usize,
-            ),
-            (
-                &[0, correlation_count, channel_count][..],
-                &flag_category_tile_shape[..],
                 1usize,
             ),
             (&[3][..], &uvw_tile_shape[..], 8usize),
@@ -489,9 +478,11 @@ impl MeasurementSetWritePlan {
                 tile_shape: Some(visibility_tile_shape.clone()),
                 create_source_column: None,
             },
+            // Every FLAG_CATEGORY cell is left undefined, as CASA's simulator
+            // leaves it, so the column holds no payload.
             MeasurementSetWriteColumnPlan {
                 name: "FLAG_CATEGORY".to_string(),
-                bytes_per_row: sample_count,
+                bytes_per_row: 0,
                 mode: MeasurementSetColumnWriteMode::Create,
                 storage_manager: MeasurementSetColumnStorage::TiledShape,
                 tile_shape: None,
@@ -1166,7 +1157,6 @@ impl MeasurementSetCreateTarget {
 struct StreamedVisibilityColumns {
     data: StreamedTiledShapeComplex32Column,
     flag: StreamedTiledPrimitiveColumn,
-    flag_category: StreamedTiledPrimitiveColumn,
     uvw: StreamedTiledPrimitiveColumn,
     weight: StreamedTiledPrimitiveColumn,
     sigma: StreamedTiledPrimitiveColumn,
@@ -1265,12 +1255,6 @@ impl MeasurementSetWriteSession {
         let correlation_count = plan.correlation_count;
         let channel_count = plan.channel_count;
         let visibility_tile_shape = plan.visibility_tile_shape.clone();
-        let flag_category_tile_shape = vec![
-            visibility_tile_shape[0],
-            visibility_tile_shape[1],
-            1,
-            visibility_tile_shape[2],
-        ];
         let data_writer = StreamingTiledShapeComplex32Writer::create(
             output.join(".casa-rs.DATA.table.f.tmp"),
             row_count,
@@ -1285,16 +1269,6 @@ impl MeasurementSetWriteSession {
             row_count,
             vec![correlation_count, channel_count],
             visibility_tile_shape,
-            StreamedTiledPrimitiveType::Bool,
-            plan.tiled_column_buffer_bytes,
-            false,
-        )
-        .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-        let flag_category_writer = StreamingTiledPrimitiveWriter::create_shape(
-            output.join(".casa-rs.FLAG_CATEGORY.table.f.tmp"),
-            row_count,
-            vec![0, correlation_count, channel_count],
-            flag_category_tile_shape,
             StreamedTiledPrimitiveType::Bool,
             plan.tiled_column_buffer_bytes,
             false,
@@ -1338,7 +1312,6 @@ impl MeasurementSetWriteSession {
                 &returns,
                 data_writer,
                 flag_writer,
-                flag_category_writer,
                 uvw_writer,
                 weight_writer,
                 sigma_writer,
@@ -1518,7 +1491,7 @@ impl MeasurementSetWriteSession {
                     )));
                 }
                 let telemetry = telemetry(&streamed);
-                install_streamed_columns(main, &output, streamed)?;
+                install_streamed_columns(main, &output, &plan, streamed)?;
                 Ok(complete_telemetry(
                     telemetry,
                     &plan,
@@ -2256,7 +2229,6 @@ fn write_visibility_batches(
     returns: &mpsc::SyncSender<VisibilityColumns>,
     mut data_writer: StreamingTiledShapeComplex32Writer,
     mut flag_writer: StreamingTiledPrimitiveWriter,
-    mut flag_category_writer: StreamingTiledPrimitiveWriter,
     mut uvw_writer: StreamingTiledPrimitiveWriter,
     mut weight_writer: StreamingTiledPrimitiveWriter,
     mut sigma_writer: StreamingTiledPrimitiveWriter,
@@ -2273,9 +2245,6 @@ fn write_visibility_batches(
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                 flag_writer
                     .push_bool_fill_rows(&columns.flag_row)
-                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-                flag_category_writer
-                    .push_zero_rows(row_count)
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                 uvw_writer
                     .push_f64_rows(&columns.uvw)
@@ -2307,9 +2276,6 @@ fn write_visibility_batches(
                 flag_writer
                     .push_repeated_bool_fill_row(flag_row, row_count)
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
-                flag_category_writer
-                    .push_zero_rows(row_count)
-                    .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
                 uvw_writer
                     .push_repeated_f64_row(&uvw_row, row_count)
                     .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?;
@@ -2327,9 +2293,6 @@ fn write_visibility_batches(
             .finish()
             .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?,
         flag: flag_writer
-            .finish()
-            .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?,
-        flag_category: flag_category_writer
             .finish()
             .map_err(|error| MeasurementSetWriteError::Column(error.to_string()))?,
         uvw: uvw_writer
@@ -2358,12 +2321,8 @@ fn telemetry(streamed: &StreamedVisibilityColumns) -> MeasurementSetWriteTelemet
             streamed.flag.write_seconds(),
             streamed.flag.bytes_written(),
         ),
-        column_telemetry(
-            "FLAG_CATEGORY",
-            streamed.flag_category.assemble_seconds(),
-            streamed.flag_category.write_seconds(),
-            streamed.flag_category.bytes_written(),
-        ),
+        // FLAG_CATEGORY's cells are undefined: nothing is assembled or written.
+        column_telemetry("FLAG_CATEGORY", 0.0, 0.0, 0),
         column_telemetry(
             "UVW",
             streamed.uvw.assemble_seconds(),
@@ -2432,6 +2391,7 @@ fn column_telemetry(
 fn install_streamed_columns(
     main: &casa_tables::Table,
     output: &Path,
+    plan: &MeasurementSetWritePlan,
     streamed: StreamedVisibilityColumns,
 ) -> Result<(), MeasurementSetWriteError> {
     let sequence = |column: &str| {
@@ -2446,11 +2406,22 @@ fn install_streamed_columns(
         .map_err(|error| install_error("DATA", error))?;
     install_streamed_tiled_shape_primitive_column(output, sequence("FLAG")?, "FLAG", streamed.flag)
         .map_err(|error| install_error("FLAG", error))?;
-    install_streamed_tiled_shape_primitive_column(
+    // Undefined cells, laid out as casacore leaves a column no row has
+    // written; the default tile is the one a later hypercube would get.
+    let visibility_tile = &plan.visibility_tile_shape;
+    install_undefined_tiled_shape_column(
         output,
         sequence("FLAG_CATEGORY")?,
         "FLAG_CATEGORY",
-        streamed.flag_category,
+        plan.row_count,
+        StreamedTiledPrimitiveType::Bool,
+        3,
+        &[
+            visibility_tile[0],
+            visibility_tile[1],
+            1,
+            visibility_tile[2],
+        ],
     )
     .map_err(|error| install_error("FLAG_CATEGORY", error))?;
     install_streamed_tiled_column_primitive_column(output, sequence("UVW")?, "UVW", streamed.uvw)
@@ -2645,10 +2616,12 @@ mod tests {
         )
         .expect("plan with I/O buffers");
 
+        // DATA, FLAG, UVW, WEIGHT and SIGMA each hold a buffer; FLAG_CATEGORY
+        // is written undefined, with no writer.
         assert_eq!(
             plan_with_io_buffers.maximum_resident_bytes
                 - plan_without_io_buffers.maximum_resident_bytes,
-            6 * per_column_buffer
+            5 * per_column_buffer
         );
     }
 
