@@ -60,9 +60,16 @@ const COLUMNS: [Column; 5] = [
     },
 ];
 
-fn save(path: &Path, manager: DataManagerKind, endian: EndianFormat, streamed: bool) {
+fn save(
+    path: &Path,
+    columns: &[&Column],
+    rows: usize,
+    manager: DataManagerKind,
+    endian: EndianFormat,
+    streamed: bool,
+) {
     let schema = TableSchema::new(
-        COLUMNS
+        columns
             .iter()
             .map(|column| ColumnSchema::scalar(column.name, column.primitive))
             .collect(),
@@ -70,17 +77,17 @@ fn save(path: &Path, manager: DataManagerKind, endian: EndianFormat, streamed: b
     .expect("schema");
     let mut table = Table::with_schema(schema);
     fs::create_dir_all(path).expect("table directory");
-    let mut overrides = ColumnOverrides::for_row_count(ROWS);
+    let mut overrides = ColumnOverrides::for_row_count(rows);
     let mut bindings = HashMap::new();
-    for column in &COLUMNS {
+    for column in columns {
         if streamed {
             let mut writer = StreamingScalarColumnWriter::create(
                 path.join(format!(".{}.scalar.tmp", column.name)),
-                ROWS,
+                rows,
                 column.streamed,
             )
             .expect("construction source");
-            for row in 0..ROWS {
+            for row in 0..rows {
                 writer.push((column.value)(row)).expect("push");
             }
             overrides.insert_streamed_scalar(column.name, writer.finish().expect("finish"));
@@ -93,7 +100,7 @@ fn save(path: &Path, manager: DataManagerKind, endian: EndianFormat, streamed: b
                 StreamedScalarType::Float32 => ScalarValue::Float32(0.0),
                 StreamedScalarType::Float64 => ScalarValue::Float64(0.0),
             };
-            let values = (0..ROWS)
+            let values = (0..rows)
                 .map(|row| Some(Value::Scalar((column.value)(row).unwrap_or(zero.clone()))))
                 .collect();
             overrides.insert_values(column.name, values);
@@ -116,7 +123,7 @@ fn save(path: &Path, manager: DataManagerKind, endian: EndianFormat, streamed: b
             &overrides,
         )
         .expect("save");
-    for column in &COLUMNS {
+    for column in columns {
         let _ = fs::remove_file(path.join(format!(".{}.scalar.tmp", column.name)));
     }
 }
@@ -136,40 +143,82 @@ fn files(path: &Path) -> Vec<(String, Vec<u8>)> {
     files
 }
 
+/// Save `columns` of `rows` rows from in-memory values and from streamed
+/// sources under `root`, in `manager` and both byte orders, and assert that
+/// the two write the same files and the streamed table reads back its
+/// defined values.
+fn assert_streamed_writes_in_memory_files(
+    root: &Path,
+    columns: &[&Column],
+    rows: usize,
+    manager: DataManagerKind,
+) {
+    for endian in [EndianFormat::LittleEndian, EndianFormat::BigEndian] {
+        let names = columns.iter().map(|column| column.name).collect::<Vec<_>>();
+        let case = format!("{manager:?}-{endian:?}-{}-{rows}", names.join("-"));
+        let in_memory = root.join(format!("{case}-values"));
+        let streamed = root.join(format!("{case}-streamed"));
+        save(&in_memory, columns, rows, manager, endian, false);
+        save(&streamed, columns, rows, manager, endian, true);
+        let expected = files(&in_memory);
+        assert!(
+            expected.iter().any(|(name, _)| name.starts_with("table.f")),
+            "{case}: no data file in {expected:?}",
+            expected = expected.iter().map(|(name, _)| name).collect::<Vec<_>>()
+        );
+        assert!(files(&streamed) == expected, "{case}: files differ");
+
+        let reopened = Table::open(TableOptions::new(&streamed)).expect("reopen");
+        for column in columns {
+            let stored = reopened
+                .column_accessor(column.name)
+                .and_then(|cells| cells.scalar_cells_owned())
+                .expect("read column");
+            assert_eq!(stored.len(), rows);
+            for (row, stored) in stored.into_iter().enumerate() {
+                if let Some(expected) = (column.value)(row) {
+                    assert_eq!(stored, Some(expected), "{case} {} row {row}", column.name);
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn streamed_sources_write_the_files_of_in_memory_values() {
     let root = tempfile::tempdir().expect("tempdir");
+    let columns = COLUMNS.iter().collect::<Vec<_>>();
     for manager in [
         DataManagerKind::StandardStMan,
         DataManagerKind::IncrementalStMan,
     ] {
-        for endian in [EndianFormat::LittleEndian, EndianFormat::BigEndian] {
-            let case = format!("{manager:?}-{endian:?}");
-            let in_memory = root.path().join(format!("{case}-values"));
-            let streamed = root.path().join(format!("{case}-streamed"));
-            save(&in_memory, manager, endian, false);
-            save(&streamed, manager, endian, true);
-            let expected = files(&in_memory);
-            assert!(
-                expected.iter().any(|(name, _)| name.starts_with("table.f")),
-                "{case}: no data file in {expected:?}",
-                expected = expected.iter().map(|(name, _)| name).collect::<Vec<_>>()
-            );
-            assert!(files(&streamed) == expected, "{case}: files differ");
+        assert_streamed_writes_in_memory_files(root.path(), &columns, ROWS, manager);
+    }
+}
 
-            let reopened = Table::open(TableOptions::new(&streamed)).expect("reopen");
-            for column in &COLUMNS {
-                let stored = reopened
-                    .column_accessor(column.name)
-                    .and_then(|cells| cells.scalar_cells_owned())
-                    .expect("read column");
-                assert_eq!(stored.len(), ROWS);
-                for (row, stored) in stored.into_iter().enumerate() {
-                    if let Some(expected) = (column.value)(row) {
-                        assert_eq!(stored, Some(expected), "{case} {} row {row}", column.name);
-                    }
-                }
-            }
-        }
+/// A StandardStMan bucket of one column holds several encoding blocks, which
+/// the writer fills a block at a time: a Bool bucket of 262,144 rows ends
+/// inside its fourth block, and Float32 and Int32 buckets of 8,192 rows hold
+/// two blocks each, the last bucket one partial block.
+#[test]
+fn streamed_sources_fill_standard_buckets_a_block_at_a_time() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let column = |name: &str| {
+        COLUMNS
+            .iter()
+            .find(|column| column.name == name)
+            .expect("column")
+    };
+    for (name, rows) in [
+        ("FLAG_ROW", 3 * 4096 + 123),
+        ("GAIN", 20_000),
+        ("ANTENNA1", 20_000),
+    ] {
+        assert_streamed_writes_in_memory_files(
+            root.path(),
+            &[column(name)],
+            rows,
+            DataManagerKind::StandardStMan,
+        );
     }
 }
