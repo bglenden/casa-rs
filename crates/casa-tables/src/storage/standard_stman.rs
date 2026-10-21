@@ -38,7 +38,7 @@ use super::data_type::CasacoreDataType;
 use super::stman_aipsio::{ColumnRawData, extract_row_value};
 use super::stman_array_file::{StManArrayFileReader, StManArrayFileWriter};
 use super::table_control::ColumnDescContents;
-use super::{RequiredScalarColumnData, ScalarColumnSource, ScalarColumnSources, StorageError};
+use super::{RequiredScalarColumnData, ScalarColumnSources, StorageError};
 
 const SSM_HEADER_SIZE: u64 = 512;
 const DEFAULT_SSM_BUCKET_SIZE: u32 = 32768;
@@ -2124,13 +2124,7 @@ pub(crate) fn write_ssm_file_scalar_columns(
             "SSM scalar column writer only supports scalar non-record columns".to_string(),
         ));
     }
-    let column_sources = ScalarColumnSources {
-        row_count: nrrow,
-        columns: scalar_columns
-            .iter()
-            .map(|values| ScalarColumnSource::Materialized(values.to_vec()))
-            .collect(),
-    };
+    let column_sources = ScalarColumnSources::materialized(nrrow, scalar_columns);
     write_ssm_file_scalar_column_sources(file_path, col_descs, &column_sources, big_endian)
 }
 
@@ -2573,32 +2567,51 @@ fn write_ssm_fixed_scalar_sources_streaming(
     let mut file = File::create(file_path)?;
     file.write_all(&header)?;
     let mut unused_string_buckets = Vec::new();
+    let mut encoded = Vec::new();
     for bucket_index in 0..nr_data_buckets {
         let mut bucket = vec![0u8; bucket_size as usize];
         let first_row = bucket_index * rows_per_bucket as usize;
         let end_row = (first_row + rows_per_bucket as usize).min(nrrow);
         let rows_in_bucket = end_row - first_row;
-        let mut constant_columns = vec![false; ncol];
+        // A column is written whole when it is one constant run or its
+        // source encodes a block of cells; the rest go cell by cell.
+        let mut written_columns = vec![false; ncol];
         for (col_idx, col_desc) in col_descs.iter().enumerate() {
-            let Some([run]) = scalar_columns.scalar_runs(col_idx) else {
-                continue;
-            };
-            if run.start_row() != 0 {
-                continue;
+            let column_offset = column_offsets[col_idx] as usize;
+            if let Some([run]) = scalar_columns.scalar_runs(col_idx)
+                && run.start_row() == 0
+            {
+                written_columns[col_idx] = write_constant_scalar_column_to_bucket(
+                    &mut bucket,
+                    column_offset,
+                    rows_in_bucket,
+                    col_desc,
+                    run.value(),
+                    big_endian,
+                );
             }
-            constant_columns[col_idx] = write_constant_scalar_column_to_bucket(
-                &mut bucket,
-                column_offsets[col_idx] as usize,
-                rows_in_bucket,
-                col_desc,
-                run.value(),
-                big_endian,
-            );
+            if !written_columns[col_idx] {
+                encoded.clear();
+                written_columns[col_idx] = scalar_columns.encoded_cells(
+                    col_idx,
+                    first_row..end_row,
+                    col_desc.data_type,
+                    big_endian,
+                    &mut encoded,
+                )?;
+                if written_columns[col_idx] {
+                    write_encoded_cells_to_bucket(
+                        &mut bucket[column_offset..],
+                        col_desc.data_type,
+                        &encoded,
+                    );
+                }
+            }
         }
         for row in first_row..end_row {
             let row_in_bucket = row - first_row;
             for (col_idx, col_desc) in col_descs.iter().enumerate() {
-                if constant_columns[col_idx] {
+                if written_columns[col_idx] {
                     continue;
                 }
                 let scalar_value = scalar_columns.value(col_idx, row)?;
@@ -2709,6 +2722,21 @@ fn repeat_fixed_scalar_bytes(
             column_offset + filled_rows * width,
         );
         filled_rows += copy_rows;
+    }
+}
+
+/// Write a column's consecutive cells, encoded as
+/// [`ScalarColumnSources::encoded_cells`] gives them, from the start of `dst`:
+/// a `Bool` as one bit per cell, other types as their bytes.
+fn write_encoded_cells_to_bucket(dst: &mut [u8], data_type: CasacoreDataType, encoded: &[u8]) {
+    if data_type == CasacoreDataType::TpBool {
+        for (cell, &value) in encoded.iter().enumerate() {
+            if value != 0 {
+                dst[cell / 8] |= 1 << (cell % 8);
+            }
+        }
+    } else {
+        dst[..encoded.len()].copy_from_slice(encoded);
     }
 }
 
