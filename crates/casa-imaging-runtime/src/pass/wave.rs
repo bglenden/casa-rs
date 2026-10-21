@@ -696,7 +696,7 @@ impl<'w, 'p> Wave<'w, 'p> {
             pass.backend,
             pass.metal_stage_timing,
             shape.prediction(count),
-            pass.model.is_some(),
+            false,
             if pass.model.is_some() {
                 block.rows * shape.cells
             } else {
