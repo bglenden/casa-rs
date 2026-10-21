@@ -949,6 +949,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#the-airy-beams-blockage-term-uses-the-inverse-length-ratio" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Airy beam's blockage term uses the inverse length ratio
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -974,7 +985,8 @@ CASA behaviours casa-rs follows for parity:
 <a href="#aw-projection-predicts-with-the-unrotated-w">AW-projection prediction w</a>,
 <a href="#matrixcleaner-counts-the-iteration-that-stops-it">MatrixCleaner's stop iteration</a>,
 <a href="#peak-searches-let-rounding-choose-between-equal-pixels">exact peak comparisons</a>,
-<a href="#the-multi-term-weight-normalization-override-is-never-called">multi-term weight normalization</a>.
+<a href="#the-multi-term-weight-normalization-override-is-never-called">multi-term weight normalization</a>,
+<a href="#the-airy-beams-blockage-term-uses-the-inverse-length-ratio">the Airy beam's blockage term</a>.
 CASA behaviours casa-rs does not follow:
 <a href="#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes">odd-size scale convolutions</a>,
 <a href="#matrixcleaners-step-residual-forgets-earlier-steps">MatrixCleaner's step residual</a>,
@@ -1313,6 +1325,28 @@ confirms the same mechanism there and in the odd-moment weight images.</p>
 division) from <code>facet · (n / N)</code>, so when <code>N</code> does not divide <code>n</code> the top and
 right remainder strips belong to no facet: CASA grids and cleans nothing
 there, silently. casa-rs refuses such a layout (<code>NonDivisibleFacetLayout</code>).</p>
+<h2 id="the-airy-beams-blockage-term-uses-the-inverse-length-ratio">The Airy beam's blockage term uses the inverse length ratio<a class="headerlink" href="#the-airy-beams-blockage-term-uses-the-inverse-length-ratio" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-10-21</li>
+<li>Status: likely CASA bug; casa-rs follows it (#841, PR #843)</li>
+<li>Affected code: <code>synthesis/TransformMachines/PBMath1DAiry.cc</code> (<code>fillPBArray</code>)</li>
+</ul>
+<p>For a dish of diameter <code>D</code> with a central blockage of diameter <code>b</code>, the
+voltage pattern is proportional to <code>D²·jinc(x) − b²·jinc(x·b/D)</code>, where
+<code>jinc(x) = 2J₁(x)/x</code> and <code>x = πDθ/λ</code>. <code>fillPBArray</code> tabulates
+<code>(areaRatio·jinc(x) − jinc(x·lengthRatio)) / (areaRatio − 1)</code> with
+<code>lengthRatio = D/b</code>, so it evaluates the blockage term at <code>x·D/b</code> instead of
+<code>x·b/D</code>.</p>
+<p>For ALMA's default pattern (10.7 m, 0.75 m blockage), the power in the main
+lobe comes out about 1% above the physical pattern: 0.507 against 0.500 at
+the physical half-power radius, and 0.901 against 0.892 at 42% of that
+radius. Every Airy pattern CASA builds this way is affected: the simulator's
+<code>setvp</code>, imaging's primary beams and the mosaic gridder's <code>HetArrayConvFunc</code>
+dishes.</p>
+<p>ALMA's 10.7 m effective diameter was chosen against CASA's beam, so casa-rs
+tabulates the same expression (<code>casa_numerics::AnnularApertureVoltageTable</code>)
+and its predictions match CASA's to 1.6e-7. The simulator's beam test checks
+CASA's formula rather than the physical one.</p>
 
 
 

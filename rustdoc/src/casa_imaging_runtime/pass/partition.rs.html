@@ -703,8 +703,8 @@
 <a href=#703 id=703 data-nosnippet>703</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#704 id=704 data-nosnippet>704</a>    <span class="kw">use </span>casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 <a href=#705 id=705 data-nosnippet>705</a>    <span class="kw">use </span>casa_imaging_operator::{
-<a href=#706 id=706 data-nosnippet>706</a>        Basis, GridGeometry, GridPadding, GridPrecision, ImageExtent, PolarizationRouting,
-<a href=#707 id=707 data-nosnippet>707</a>        Spheroidal,
+<a href=#706 id=706 data-nosnippet>706</a>        Basis, GridGeometry, GridPadding, GridPrecision, ImageExtent, PaddingFactor,
+<a href=#707 id=707 data-nosnippet>707</a>        PolarizationRouting, Spheroidal,
 <a href=#708 id=708 data-nosnippet>708</a>    };
 <a href=#709 id=709 data-nosnippet>709</a>
 <a href=#710 id=710 data-nosnippet>710</a>    <span class="kw">fn </span>spheroidal_operator() -&gt; MeasurementOperator {
@@ -714,7 +714,7 @@
 <a href=#714 id=714 data-nosnippet>714</a>                increment_rad: [-<span class="number">1.0e-5</span>, <span class="number">1.0e-5</span>],
 <a href=#715 id=715 data-nosnippet>715</a>                reference_pixel: [<span class="number">32</span>, <span class="number">32</span>],
 <a href=#716 id=716 data-nosnippet>716</a>            },
-<a href=#717 id=717 data-nosnippet>717</a>            GridPadding::CasaComposite,
+<a href=#717 id=717 data-nosnippet>717</a>            GridPadding::CasaComposite(PaddingFactor::TCLEAN),
 <a href=#718 id=718 data-nosnippet>718</a>        )
 <a href=#719 id=719 data-nosnippet>719</a>        .expect(<span class="string">"geometry"</span>);
 <a href=#720 id=720 data-nosnippet>720</a>        <span class="kw">let </span>polarization = PolarizationRouting::compile(
