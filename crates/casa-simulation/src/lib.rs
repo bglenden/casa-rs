@@ -15,8 +15,10 @@
 //! | `sm.predict` with `GridFT` (`setoptions(ftmachine='ft')`) | [`predict::ModelPredictor`] |
 //! | the model image `sm.predict` reads | [`predict::SkyModel`] |
 //! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`predict::PrimaryBeam`] |
+//! | `simutil.readantenna(antab)` | [`readantenna::read_antenna_config`] |
 
 pub mod predict;
+pub mod readantenna;
 pub mod session;
 mod write;
 
