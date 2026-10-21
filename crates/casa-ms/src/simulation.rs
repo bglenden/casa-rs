@@ -37,8 +37,10 @@ use std::time::{Duration, Instant};
 use crate::column_def::{ColumnDef, ColumnKind};
 use crate::derived::engine::polarization_operator_angle;
 use crate::error::{MsError, MsResult};
-use crate::flagging::shadowed_antennas_from_projected_baselines;
 use crate::schema::{self, SubtableId};
+use crate::shadowing::{
+    CASA_SHADOW_FRACTION_LIMIT, ProjectedBaseline, ShadowedAntenna, shadowed_antennas,
+};
 use crate::write_session::{MeasurementSetCreateTarget, MeasurementSetWriteSession};
 use crate::{MeasurementSet, MeasurementSetBuilder, OptionalMainColumn};
 
@@ -2357,17 +2359,17 @@ fn shadowed_antennas_for_rows(
     rows: &[MainRowVisibilitySpec],
     antennas: &[SyntheticAntenna],
 ) -> Vec<bool> {
-    shadowed_antennas_from_projected_baselines(
+    shadowed_antennas(
         antennas.len(),
-        rows.iter().map(|spec| {
-            (
-                spec.antenna1,
-                spec.antenna2,
-                spec.uvw,
-                antennas[spec.antenna1].dish_diameter_m,
-                antennas[spec.antenna2].dish_diameter_m,
-            )
+        rows.iter().map(|spec| ProjectedBaseline {
+            antenna1: spec.antenna1,
+            antenna2: spec.antenna2,
+            uvw_m: spec.uvw,
+            diameter1_m: antennas[spec.antenna1].dish_diameter_m,
+            diameter2_m: antennas[spec.antenna2].dish_diameter_m,
         }),
+        CASA_SHADOW_FRACTION_LIMIT,
+        ShadowedAntenna::CasaSimulatorFront,
     )
 }
 

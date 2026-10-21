@@ -64,6 +64,7 @@ mod selected_observation;
 mod selected_observation_buffer;
 mod selected_pointing;
 pub mod selection;
+pub mod shadowing;
 pub mod simulation;
 pub mod simulation_task;
 pub mod spectral_selection;
