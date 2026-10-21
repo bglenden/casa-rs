@@ -61,7 +61,7 @@ pub use aw::{
     EvlaApertureModel, EvlaAwWorkspace, NativeAwGenerationError, NativeAwPair, NativeAwPlane,
     NativeCacheLock, NativeCacheState, NativeManifest,
 };
-pub use backend::{GridBackend, PreparedModelGrids, Work};
+pub use backend::{GridBackend, ModelPlaneGrids, PreparedModelGrids, Work};
 pub use continuum::{
     ContinuumFitError, ContinuumFitStatus, ContinuumRowInput, ContinuumRowResult, ContinuumSample,
     fit_and_subtract_continuum,

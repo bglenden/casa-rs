@@ -321,7 +321,7 @@ fn measure(request: &ImagingRequest, workers: usize, ceiling: u64) -> Measured {
     let process = held_by_process();
     assert_eq!(
         process,
-        casa_imaging_application::process_cache_bytes(),
+        casa_imaging_runtime::process_cache_bytes(),
         "the MeasurementSet was warmed, and no reservation of a run outlives it"
     );
     FIXED.store(

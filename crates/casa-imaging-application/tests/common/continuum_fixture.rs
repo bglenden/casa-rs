@@ -765,7 +765,7 @@ pub(super) fn context_with(policy: ResourcePolicy) -> RunContext {
 /// the process-wide caches and the Measures catalogs. A ceiling meant for a
 /// run's own phases adds it.
 pub(super) fn compile_resident() -> u64 {
-    casa_imaging_application::process_cache_bytes() + casa_ms::MEASURES_RUNTIME_BYTES as u64
+    casa_imaging_runtime::process_cache_bytes() + casa_ms::MEASURES_RUNTIME_BYTES as u64
 }
 
 /// Run `request` in [`context`].

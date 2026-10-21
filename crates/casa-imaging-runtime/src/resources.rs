@@ -394,6 +394,46 @@ pub fn admit(
     })
 }
 
+/// Bytes the process-wide caches hold at most: the table-read cache, with a
+/// MeasurementSet's tiles, and FFTW's plan cache, which every imaging run
+/// and simulator session fills and which keep what they hold after it.
+#[must_use]
+pub fn process_cache_bytes() -> u64 {
+    (casa_ms::table_read_cache_bytes() + casa_imaging_operator::FFT_PLAN_CACHE_BYTES) as u64
+}
+
+/// The process caches' charge, taken by the first caller admitted.
+static PROCESS_CACHES: OnceLock<Reservation> = OnceLock::new();
+
+/// Charge the process-wide caches ([`process_cache_bytes`]) against
+/// `policy` on `host`, unless the process already holds their charge: it is
+/// taken once, by the first caller admitted, and held for the process. Of
+/// callers admitted at once, one keeps its charge and the others release
+/// theirs. A run or session calls this before it fills the caches.
+///
+/// # Errors
+///
+/// [`Admission`] when the caches do not fit what `policy` leaves free.
+pub fn charge_process_caches(
+    host: &HostResources,
+    policy: &ResourcePolicy,
+) -> Result<(), Admission> {
+    if PROCESS_CACHES.get().is_none() {
+        let charge = admit(
+            host,
+            policy,
+            &Demand {
+                phase: "process caches",
+                memory: process_cache_bytes(),
+            },
+        )?;
+        // A concurrent caller that set it first holds the charge, and this
+        // one's is released.
+        let _ = PROCESS_CACHES.set(charge);
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 fn performance_cores() -> Option<u64> {
     sysctl_u64("hw.perflevel0.physicalcpu").ok()

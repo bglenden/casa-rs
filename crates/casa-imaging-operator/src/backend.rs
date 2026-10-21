@@ -83,6 +83,97 @@ impl PreparedModelGrids {
         let offset = self.layout.block_offset(plane_local, pol, term);
         &T::cells(&self.storage)[offset..offset + self.layout.block_cells()]
     }
+
+    /// Bytes the grids' cells hold in host memory; a device copy
+    /// ([`Self::device_copy`]), once made, holds as many again in the
+    /// device's.
+    #[must_use]
+    pub const fn bytes(&self) -> u64 {
+        self.layout.bytes(self.storage.precision()) as u64
+    }
+
+    /// Every plane's grids, in plane order, each for
+    /// [`MeasurementOperator::fill_model_plane`](crate::MeasurementOperator::fill_model_plane):
+    /// the planes are disjoint, so they can be filled at once on several
+    /// threads. Any device copy is dropped, since the cells change; a
+    /// device backend copies the filled grids again when it first meets
+    /// them.
+    pub fn planes_mut(&mut self) -> Vec<ModelPlaneGrids<'_>> {
+        let Self {
+            layout,
+            storage,
+            device,
+        } = self;
+        drop(device.take());
+        let layout: &AccumulatorLayout = layout;
+        let per_plane = layout.pols() * layout.terms() * layout.block_cells();
+        let first = layout.planes().start;
+        let plane = |index: usize| first + index as u32;
+        match storage {
+            GridStorage::F32(cells) => cells
+                .chunks_exact_mut(per_plane)
+                .enumerate()
+                .map(|(index, cells)| ModelPlaneGrids {
+                    layout,
+                    plane: plane(index),
+                    cells: PlaneCells::F32(cells),
+                })
+                .collect(),
+            GridStorage::F64(cells) => cells
+                .chunks_exact_mut(per_plane)
+                .enumerate()
+                .map(|(index, cells)| ModelPlaneGrids {
+                    layout,
+                    plane: plane(index),
+                    cells: PlaneCells::F64(cells),
+                })
+                .collect(),
+            GridStorage::Device(cells) => cells
+                .cells_mut()
+                .chunks_exact_mut(per_plane)
+                .enumerate()
+                .map(|(index, cells)| ModelPlaneGrids {
+                    layout,
+                    plane: plane(index),
+                    cells: PlaneCells::F32(cells),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// One plane's model grids within [`PreparedModelGrids`]: every grid
+/// polarization and Taylor term of grid plane [`Self::plane`], which
+/// [`MeasurementOperator::fill_model_plane`](crate::MeasurementOperator::fill_model_plane)
+/// fills from that plane's model images.
+pub struct ModelPlaneGrids<'a> {
+    pub(crate) layout: &'a AccumulatorLayout,
+    plane: u32,
+    pub(crate) cells: PlaneCells<'a>,
+}
+
+impl ModelPlaneGrids<'_> {
+    /// The grid plane these grids hold.
+    #[must_use]
+    pub const fn plane(&self) -> u32 {
+        self.plane
+    }
+}
+
+impl std::fmt::Debug for ModelPlaneGrids<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ModelPlaneGrids")
+            .field("plane", &self.plane)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The cells of one plane's grids, `[pol][term][y][x]`, in the grids'
+/// precision.
+pub(crate) enum PlaneCells<'a> {
+    F32(&'a mut [Complex<f32>]),
+    F64(&'a mut [Complex<f64>]),
 }
 
 impl Clone for PreparedModelGrids {

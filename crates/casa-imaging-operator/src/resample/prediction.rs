@@ -287,7 +287,9 @@ impl SpectralResampler {
     /// (`GridFT::get`, then `FTMachine::interpolateFrequencyFromgrid`).
     ///
     /// A flagged row, a flagged correlation, a native channel off the output
-    /// axis and a sample whose kernel leaves the grid predict zero.
+    /// axis and a sample whose kernel leaves the grid predict zero, and so
+    /// does an autocorrelation unless the resampler is
+    /// [`Self::predicting_autocorrelations`].
     /// A constant or Taylor basis, `nearest` mapping and the one-channel
     /// bypass degrid each native channel at its own frequency on its mapped
     /// plane. `linear` mapping degrids the output channels CASA degrids for
@@ -335,8 +337,9 @@ impl SpectralResampler {
     }
 
     /// Add `row`'s degridded samples to the batch `scratch` began, as
-    /// [`Self::predict_row`] degrids them; a flagged row or an
-    /// autocorrelation adds none.
+    /// [`Self::predict_row`] degrids them; a flagged row adds none, nor an
+    /// autocorrelation unless the resampler is
+    /// [`Self::predicting_autocorrelations`].
     ///
     /// # Errors
     ///
@@ -356,7 +359,7 @@ impl SpectralResampler {
             ..
         } = scratch;
         let start = placements.len();
-        if row.row_flag || is_autocorrelation(row) {
+        if row.row_flag || (!self.autocorrelations && is_autocorrelation(row)) {
             return Ok(PlacedRow { start, end: start });
         }
         let native = row.frequencies_hz;

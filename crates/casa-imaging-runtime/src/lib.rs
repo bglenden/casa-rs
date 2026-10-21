@@ -26,7 +26,8 @@ pub use minor::{
 };
 pub use resources::{
     Admission, Admitted, CoreAllocation, Demand, HostError, HostResources, Reservation,
-    ReservationWindow, ResourcePolicy, STREAM_PRODUCERS, admit, free_memory, reserved_memory,
+    ReservationWindow, ResourcePolicy, STREAM_PRODUCERS, admit, charge_process_caches, free_memory,
+    process_cache_bytes, reserved_memory,
 };
 pub use source_access::{
     FRAME_MARGIN, SourceAccessError, bootstrap_source_budget, finalize_source_access, row_layout,

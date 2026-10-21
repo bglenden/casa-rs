@@ -20,13 +20,15 @@ use std::sync::PoisonError;
 
 use casa_imaging_metal::MetalBackend;
 use casa_imaging_operator::{
-    ConvolutionFunctionSet, CpuBackend, DeviceNativeCells, GridAccumulator, GridBackend,
-    GridPrecision, Mode, NativeModel, NativeTarget, NormalImages, Placement, PlaneRange,
-    PredictionScratch, PreparedModelGrids, SampleBlock, SampleBuffer, SpectralResampler, Work,
+    ConvolutionFunctionSet, CpuBackend, GridAccumulator, GridBackend, GridPrecision, Mode,
+    NativeModel, NormalImages, Placement, PlaneRange, PreparedModelGrids, SampleBlock,
+    SampleBuffer, Work,
 };
 use num_complex::Complex32;
 
+use super::block::{cell_of, row_at};
 use super::partition::Router;
+use super::prediction::{BlockPrediction, PredictionDomain, PredictionShape};
 use super::{
     BackendChoice, BlockShape, MajorCyclePass, NativeBlock, Partition, PassDomain, PassError,
     VisibilitySink, WeightCache, WorkerTeam, chunk_placements, chunk_ranges, chunk_rows, slices,
@@ -334,13 +336,13 @@ impl Placer<'_, '_, '_> {
     }
 }
 
-/// One row chunk's placements on the wave's planes, by owner, and its
-/// prediction batch.
+/// One row chunk's placements on the wave's planes, by owner.
 ///
 /// Every buffer is allocated once, for a chunk's rows of the source's widest
 /// row ([`ChunkShape`]), and each owner's can take every placement of the
 /// chunk, so a chunk holds [`ChunkShape::bytes`] however its placements fall
-/// among the owners.
+/// among the owners. The chunk's rows are predicted apart, in the same
+/// slices ([`BlockPrediction`]).
 struct Chunk {
     rows: Range<usize>,
     /// Each owner's placements, in row order, with their native endpoints
@@ -351,7 +353,6 @@ struct Chunk {
     /// over it.
     weight_owned: SampleBuffer,
     placed: u64,
-    prediction: PredictionScratch,
     /// The gridding work of the chunk's placements by anchor row, on a
     /// region-partitioned domain ([`Router::owner_and_work`]); merged into
     /// the domain's after each slice.
@@ -382,12 +383,6 @@ struct ChunkShape {
     /// Whether placements carry native endpoints (a residual at native
     /// channels).
     sourced: bool,
-    /// Samples the prediction batch of the chunk's rows degrids at most.
-    predicted: usize,
-    /// Bytes the prediction batch of the chunk's rows holds
-    /// ([`SpectralResampler::prediction_scratch`]) with each row's span in
-    /// it.
-    prediction: u64,
     /// Grid rows of the region-partitioned domain with the most: the
     /// length of the chunk's work histogram ([`Chunk::row_work`]).
     grid_rows: usize,
@@ -431,22 +426,6 @@ impl ChunkShape {
             owners,
             weight,
             sourced,
-            predicted: rows
-                * domains
-                    .iter()
-                    .map(|domain| {
-                        domain
-                            .resampler
-                            .prediction_samples_per_row(block.channels())
-                    })
-                    .max()
-                    .unwrap_or(0),
-            prediction: SpectralResampler::prediction_scratch_bytes(
-                domains.iter().map(|domain| domain.resampler),
-                block.correlations,
-                block.channels(),
-                rows,
-            ),
             grid_rows: domains
                 .iter()
                 .filter(|domain| domain.partition.splits_rows())
@@ -481,46 +460,27 @@ impl ChunkShape {
     }
 
     /// Bytes a chunk of this shape holds: each owner's and the weight
-    /// owner's placements, its prediction batch and its work histogram.
+    /// owner's placements and its work histogram.
     const fn bytes(self) -> u64 {
         self.owners as u64 * self.buffer_bytes(self.placements)
             + SampleBuffer::bytes(self.npol, self.weight_placements())
-            + self.prediction
             + (self.grid_rows * size_of::<u64>()) as u64
+    }
+
+    /// What the wave's [`BlockPrediction`] predicts this shape's rows
+    /// with: the same chunks, of the same rows.
+    const fn prediction(self, chunks: usize) -> PredictionShape {
+        PredictionShape {
+            npol: self.npol,
+            channels: self.channels,
+            rows: self.rows,
+            chunks,
+        }
     }
 }
 
-/// The backend that predicts one domain's batch for one chunk and forms the
-/// model at its rows' native cells ([`Work::PredictNative`]): the pass's,
-/// so that on Metal the model never leaves the device and the device works
-/// on one chunk's batch while the host places the next chunk's.
-enum Predictor<'w> {
-    Cpu(CpuBackend),
-    Metal(Box<MetalBackend<'w>>),
-}
-
-/// One predictor per domain on `backend`, for one chunk.
-fn predictors<'w>(
-    domains: &[PassDomain<'w>],
-    backend: BackendChoice,
-    stage_timing: bool,
-) -> Result<Vec<Predictor<'w>>, PassError> {
-    domains
-        .iter()
-        .map(|domain| {
-            Ok(match backend {
-                BackendChoice::Cpu => Predictor::Cpu(CpuBackend::new()),
-                BackendChoice::Metal => Predictor::Metal(Box::new(MetalBackend::new(
-                    domain.operator.cf(),
-                    stage_timing,
-                )?)),
-            })
-        })
-        .collect()
-}
-
 impl Chunk {
-    fn new(shape: ChunkShape, domains: &[PassDomain<'_>]) -> Self {
+    fn new(shape: ChunkShape) -> Self {
         Self {
             rows: 0..0,
             owned: (0..shape.owners)
@@ -528,12 +488,6 @@ impl Chunk {
                 .collect(),
             weight_owned: SampleBuffer::with_capacity(shape.npol, shape.weight_placements()),
             placed: 0,
-            prediction: SpectralResampler::prediction_scratch(
-                domains.iter().map(|domain| domain.resampler),
-                shape.npol,
-                shape.channels,
-                shape.rows,
-            ),
             row_work: Vec::with_capacity(shape.grid_rows),
         }
     }
@@ -546,27 +500,22 @@ impl Chunk {
             .map(SampleBuffer::capacity_bytes)
             .sum::<u64>()
             + self.weight_owned.capacity_bytes()
-            + self.prediction.capacity_bytes()
             + (self.row_work.capacity() * size_of::<u64>()) as u64
     }
 }
 
-/// Row chunks of a wave on `workers` workers.
-const fn chunks(workers: usize) -> usize {
+/// Row chunks of a wave on `workers` workers, and of a
+/// [`super::BlockPredictor`]'s.
+pub(super) const fn chunks(workers: usize) -> usize {
     workers * CHUNKS_PER_WORKER
 }
 
 /// Bytes a wave places with on `workers` workers over blocks of `block`,
-/// gridding the weight image when `weight`: its row chunks and, with a
-/// model, its backends' batches. On Metal each chunk's predictors keep a
-/// ring, a prediction batch and their own copies of the kernel cells they
-/// meet ([`casa_imaging_metal::ring_bytes`],
-/// [`casa_imaging_metal::batch_bytes`], [`casa_imaging_metal::kernel_bytes`];
-/// #793 review); on the CPU each chunk's predictors keep their batch's
-/// predictions, and each owner of a pass forming residuals at native
-/// channels the residual values of a chunk's placements
-/// ([`CpuBackend::batch_bytes`]). They grow with the source's block only up
-/// to `placements` a chunk.
+/// gridding the weight image when `weight`: its row chunks, their
+/// prediction ([`BlockPrediction::bytes`]) and, on the CPU with a model,
+/// each owner's batch when the pass forms residuals at native channels:
+/// the residual values of a chunk's placements ([`CpuBackend::batch_bytes`]).
+/// They grow with the source's block only up to `placements` a chunk.
 pub(super) fn chunk_bytes(
     domains: &[PassDomain<'_>],
     backend: BackendChoice,
@@ -579,34 +528,23 @@ pub(super) fn chunk_bytes(
     let count = chunks(workers);
     let sourced = super::native_residuals(domains, with_model);
     let shape = ChunkShape::new(domains, block, weight, sourced, count, placements);
-    let device = match backend {
-        BackendChoice::Cpu if with_model => {
-            let owners = if sourced {
-                domains
-                    .iter()
-                    .map(|domain| domain.partition.owners())
-                    .sum::<usize>()
-            } else {
-                0
-            };
-            (count * domains.len()) as u64 * CpuBackend::batch_bytes(shape.npol, shape.predicted)
-                + owners as u64 * CpuBackend::batch_bytes(shape.npol, shape.placements)
-        }
-        BackendChoice::Cpu => 0,
-        BackendChoice::Metal if with_model => {
-            let kernels = domains
-                .iter()
-                .map(|domain| casa_imaging_metal::kernel_bytes(domain.operator.cf()))
-                .sum::<u64>();
-            count as u64
-                * (domains.len() as u64
-                    * (casa_imaging_metal::ring_bytes(shape.npol)
-                        + casa_imaging_metal::batch_bytes(shape.npol, shape.predicted))
-                    + kernels)
-        }
-        BackendChoice::Metal => 0,
+    let owners = match backend {
+        BackendChoice::Cpu if with_model && sourced => domains
+            .iter()
+            .map(|domain| domain.partition.owners())
+            .sum::<usize>(),
+        BackendChoice::Cpu | BackendChoice::Metal => 0,
     };
-    count as u64 * shape.bytes() + device
+    count as u64 * shape.bytes()
+        + owners as u64 * CpuBackend::batch_bytes(shape.npol, shape.placements)
+        + BlockPrediction::bytes(
+            domains
+                .iter()
+                .map(|domain| (domain.operator, domain.resampler)),
+            backend,
+            with_model,
+            shape.prediction(count),
+        )
 }
 
 /// Bytes the model at native cells of one block of `block` holds, which a
@@ -614,14 +552,6 @@ pub(super) fn chunk_bytes(
 /// on Metal in the device's.
 pub(super) const fn prediction_bytes(block: BlockShape) -> u64 {
     (block.rows * block.channels() * block.correlations * size_of::<Complex32>()) as u64
-}
-
-/// The model at a block's native cells, `[position][channel][correlation]`
-/// by the rows' positions in the block: in host memory for CPU predictors,
-/// in the device's for Metal ones, which form it and read it there.
-enum NativeStore {
-    Host(Vec<Complex32>),
-    Device(DeviceNativeCells),
 }
 
 pub(super) struct Wave<'w, 'p> {
@@ -633,9 +563,12 @@ pub(super) struct Wave<'w, 'p> {
     /// What each chunk was allocated for.
     shape: ChunkShape,
     chunks: Vec<Chunk>,
-    /// Each chunk's [`Predictor`] per domain.
-    predictors: Vec<Vec<Predictor<'w>>>,
-    predictions: NativeStore,
+    /// Each domain's operator, resampler and model, when the pass has a
+    /// model.
+    predicted: Vec<PredictionDomain<'w>>,
+    /// The model at the block's native cells, which the wave forms on the
+    /// same slices of chunks as it places.
+    prediction: BlockPrediction<'w>,
     samples: u64,
     /// The pass's kept weights and whether an earlier pass filled them.
     weights: Option<(&'w WeightCache, bool)>,
@@ -745,19 +678,31 @@ impl<'w, 'p> Wave<'w, 'p> {
             .collect::<Result<_, PassError>>()?;
         // A pass with a model predicts each block, for its native residuals or
         // for a visibility writer.
-        let predictions = if pass.model.is_some() {
-            block.rows * shape.cells
-        } else {
-            0
-        };
-        let predictions = match pass.backend {
-            BackendChoice::Metal if predictions > 0 => {
-                NativeStore::Device(MetalBackend::native_cells(predictions)?)
-            }
-            BackendChoice::Cpu | BackendChoice::Metal => {
-                NativeStore::Host(Vec::with_capacity(predictions))
-            }
-        };
+        let predicted = models.map_or_else(Vec::new, |models| {
+            pass.domains
+                .iter()
+                .zip(models)
+                .map(|(domain, model)| PredictionDomain {
+                    operator: domain.operator,
+                    resampler: domain.resampler,
+                    model,
+                })
+                .collect()
+        });
+        let prediction = BlockPrediction::new(
+            pass.domains
+                .iter()
+                .map(|domain| (domain.operator, domain.resampler)),
+            pass.backend,
+            pass.metal_stage_timing,
+            shape.prediction(count),
+            pass.model.is_some(),
+            if pass.model.is_some() {
+                block.rows * shape.cells
+            } else {
+                0
+            },
+        )?;
         Ok(Self {
             pass,
             planes,
@@ -765,13 +710,9 @@ impl<'w, 'p> Wave<'w, 'p> {
             native_residuals,
             check_spacing: false,
             shape,
-            chunks: (0..count)
-                .map(|_| Chunk::new(shape, pass.domains))
-                .collect(),
-            predictors: (0..count)
-                .map(|_| predictors(pass.domains, pass.backend, pass.metal_stage_timing))
-                .collect::<Result<_, _>>()?,
-            predictions,
+            chunks: (0..count).map(|_| Chunk::new(shape)).collect(),
+            predicted,
+            prediction,
             samples: 0,
             weights: pass.weight_cache().map(|cache| (cache, cache.filled())),
             weight_base: 0,
@@ -832,38 +773,15 @@ impl<'w, 'p> Wave<'w, 'p> {
         let ordered = !sink_predictions;
         let cells = block.channels() * block.correlations();
         if self.native_residuals || sink_predictions {
-            if let NativeStore::Host(predictions) = &mut self.predictions {
-                // The first domain with a model writes every cell of the
-                // rows it predicts, so stale cells never reach a sample;
-                // without a model the cells stay zero.
-                if predictions.len() < rows * cells
-                    || self.domains.iter().all(|domain| domain.model.is_none())
-                {
-                    predictions.clear();
-                    predictions.resize(rows * cells, Complex32::default());
-                }
-            }
-            // The same slices as placement, so no chunk predicts more rows
-            // than its batch was allocated for.
-            let chunks = self.chunks.len();
-            for slice in slices(rows, chunks, self.shape.rows) {
-                let mut count = 0;
-                for (chunk, rows) in self
-                    .chunks
-                    .iter_mut()
-                    .zip(chunk_ranges(slice.clone(), chunks))
-                {
-                    chunk.rows = rows;
-                    count += 1;
-                }
-                let started = std::time::Instant::now();
-                self.predict(block, team, count, slice, ordered)?;
-                self.stages.predicting += started.elapsed();
-            }
+            // The same slices of chunks as placement.
+            let started = std::time::Instant::now();
+            self.prediction
+                .predict(block, team, &self.predicted, ordered)?;
+            self.stages.predicting += started.elapsed();
         }
         if let Some(sink) = visibilities {
             let predictions: &[Complex32] = if sink.predictions {
-                self.host_predictions(rows * cells)?
+                self.prediction.host_cells(rows * cells)?
             } else {
                 &[]
             };
@@ -942,10 +860,9 @@ impl<'w, 'p> Wave<'w, 'p> {
         self.stages.placing += placing.elapsed();
         let accumulating = std::time::Instant::now();
         let model = domain.model.filter(|_| !self.native_residuals);
-        let native = self.native_residuals.then(|| match &self.predictions {
-            NativeStore::Host(cells) => NativeModel::Host { cells, first: 0 },
-            NativeStore::Device(cells) => NativeModel::Device(cells),
-        });
+        let native = self
+            .native_residuals
+            .then(|| self.prediction.native_model());
         let weight_owner = domain.router.weight_owner();
         team.for_each_mut(&mut domain.owners, |owner_index, owner| {
             let subtract = Subtract { model, native };
@@ -953,131 +870,6 @@ impl<'w, 'p> Wave<'w, 'p> {
         })?;
         self.stages.accumulating += accumulating.elapsed();
         Ok(chunks.iter().map(|chunk| chunk.placed).sum())
-    }
-
-    /// The model at native cells of every selected sample of the rows
-    /// `slice` of `block`, which the first `count` chunks hold, summed over
-    /// every domain's model (`SIMapperCollection::degrid`), `[row][channel]
-    /// [correlation]`, into their rows of the wave's model store, which stay
-    /// zero without a model. Rows are by position in the block's locality
-    /// order when `ordered` ([`row_at`]).
-    ///
-    /// Domain by domain, every chunk places its rows' samples in one batch
-    /// with its rows' native terms and hands it to its predictor
-    /// ([`Work::PredictNative`]): the first domain writes the cells and
-    /// later ones add to them. A Metal predictor leaves the work on the
-    /// device, which runs it before any later device work that reads the
-    /// cells, while the host places the next chunk's batch.
-    fn predict(
-        &mut self,
-        block: &NativeBlock,
-        team: &WorkerTeam,
-        count: usize,
-        slice: Range<usize>,
-        ordered: bool,
-    ) -> Result<(), PassError> {
-        if self.domains.iter().all(|domain| domain.model.is_none()) {
-            return Ok(());
-        }
-        let channels = block.channels();
-        let cells = channels * block.correlations();
-        let pass = self.pass;
-        let shape = self.shape;
-        let models = self
-            .domains
-            .iter()
-            .map(|domain| domain.model)
-            .collect::<Vec<_>>();
-        let mut pieces = Vec::with_capacity(count);
-        let chunks = self.chunks[..count].iter_mut().zip(&mut self.predictors);
-        match &mut self.predictions {
-            NativeStore::Host(predictions) => {
-                let mut remaining = &mut predictions[slice.start * cells..slice.end * cells];
-                for (chunk, predictors) in chunks {
-                    let (head, tail) = remaining.split_at_mut(chunk.rows.len() * cells);
-                    remaining = tail;
-                    pieces.push((chunk, predictors, ChunkCells::Host(head)));
-                }
-            }
-            NativeStore::Device(cells) => {
-                for (chunk, predictors) in chunks {
-                    pieces.push((chunk, predictors, ChunkCells::Device(cells)));
-                }
-            }
-        }
-        let mut add = false;
-        for (index, (target, model)) in pass.domains.iter().zip(&models).enumerate() {
-            let Some(model) = *model else {
-                continue;
-            };
-            let npol = target.operator.polarization().correlations().len();
-            team.for_each_mut(&mut pieces, |_, (chunk, predictors, cells)| {
-                chunk.prediction.begin(npol);
-                for position in chunk.rows.clone() {
-                    let row = block.row(index, row_at(block, ordered, position));
-                    let placed = target.resampler.place_prediction(
-                        target.operator,
-                        model,
-                        &row,
-                        &mut chunk.prediction,
-                    )?;
-                    target.resampler.native_terms(
-                        &row,
-                        npol,
-                        placed,
-                        &mut chunk.prediction,
-                        cell_of(position, channels),
-                    );
-                }
-                let cf = target.operator.cf();
-                match (&mut predictors[index], cells) {
-                    (Predictor::Cpu(backend), ChunkCells::Host(cells)) => {
-                        let first = cell_of(chunk.rows.start, channels);
-                        let target = NativeTarget::Host { cells, first };
-                        chunk
-                            .prediction
-                            .apply_native(backend, cf, model, target, add)?;
-                    }
-                    (Predictor::Metal(backend), ChunkCells::Device(cells)) => {
-                        let backend: &mut MetalBackend<'_> = backend;
-                        let target = NativeTarget::Device(cells);
-                        chunk
-                            .prediction
-                            .apply_native(backend, cf, model, target, add)?;
-                    }
-                    _ => unreachable!("a wave's predictors and model store share its backend"),
-                }
-                Ok::<_, PassError>(())
-            })?;
-            add = true;
-        }
-        debug_assert!(
-            pieces
-                .iter()
-                .all(|(chunk, ..)| chunk.capacity_bytes() == shape.bytes()),
-            "a chunk predicts within the buffers it was allocated"
-        );
-        Ok(())
-    }
-
-    /// The model at the first `len` native cells of the block for the host:
-    /// on Metal once every predictor's work, which alone writes the cells,
-    /// has completed.
-    fn host_predictions(&mut self, len: usize) -> Result<&[Complex32], PassError> {
-        match &self.predictions {
-            NativeStore::Host(cells) => Ok(&cells[..len]),
-            NativeStore::Device(cells) => {
-                for predictor in self.predictors.iter_mut().flatten() {
-                    if let Predictor::Metal(backend) = predictor {
-                        backend.complete()?;
-                    }
-                }
-                // SAFETY: only the predictors' work writes the cells, every
-                // command of it has completed, and none is issued while the
-                // slice, which borrows the wave, lives.
-                Ok(&unsafe { cells.host_cells() }[..len])
-            }
-        }
     }
 
     /// Each domain's gridding work by anchor row, when it is split into
@@ -1095,11 +887,7 @@ impl<'w, 'p> Wave<'w, 'p> {
         // Metal owners leave their last grid work running on the device, and
         // Metal predictors their native models: complete both, and learn
         // whether any failed, before any accumulator is read.
-        for predictor in self.predictors.iter_mut().flatten() {
-            if let Predictor::Metal(backend) = predictor {
-                backend.complete()?;
-            }
-        }
+        self.prediction.complete()?;
         // The weight image's last summed contributions go to the grid first:
         // accumulation, which the stages count as such.
         let flushing = std::time::Instant::now();
@@ -1204,30 +992,6 @@ impl<'w, 'p> Wave<'w, 'p> {
         }
         Ok(images)
     }
-}
-
-/// The row at `position`: of the block's locality order when `ordered`
-/// ([`NativeBlock::ordered_row`]), else the row itself.
-fn row_at(block: &NativeBlock, ordered: bool, position: usize) -> usize {
-    if ordered {
-        block.ordered_row(position)
-    } else {
-        position
-    }
-}
-
-/// One chunk's share of the wave's model store while it predicts.
-enum ChunkCells<'c> {
-    /// The chunk's rows' host cells.
-    Host(&'c mut [Complex32]),
-    /// The device cells of the whole block.
-    Device(&'c DeviceNativeCells),
-}
-
-/// The first native cell of the row at `position` of a block of `channels`
-/// channels.
-fn cell_of(position: usize, channels: usize) -> u32 {
-    u32::try_from(position * channels).expect("a block's native cells fit u32 indices")
 }
 
 /// What an owner subtracts from its data terms: the domain's model at each

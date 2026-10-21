@@ -11,8 +11,8 @@ mod common;
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use casa_imaging_operator::{
     Basis, CpuBackend, GridBackend, GridPrecision, MeasurementOperator, ModelImages, ModelPlane,
-    ModelPrescale, NativeRow, PredictionScratch, PreparedModelGrids, RowContext, SampleBuffer,
-    SpectralAxis, SpectralKernel, SpectralResampler, WeightingGeneration, Work,
+    ModelPrescale, NativeRow, PlaneRange, PredictionScratch, PreparedModelGrids, RowContext,
+    SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, WeightingGeneration, Work,
 };
 use common::{IMAGE, operator};
 use ndarray::Array2;
@@ -377,13 +377,243 @@ fn wide_output_channels_reproduce_a_flat_spectrum_and_unmapped_channels_predict_
     }
 }
 
+/// One row of `frequencies_hz` at `uvw_m` on `antennas`, every sample
+/// unflagged.
+fn row_on<'a>(
+    uvw_m: [f64; 3],
+    antennas: [u32; 2],
+    frequencies_hz: &'a [f64],
+    cells: (&'a [Complex32], &'a [f32], &'a [bool]),
+) -> NativeRow<'a> {
+    NativeRow {
+        uvw_m,
+        phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
+        frequencies_hz,
+        values: cells.0,
+        weights: cells.1,
+        flags: cells.2,
+        row_flag: false,
+        context: RowContext {
+            antennas,
+            ..context()
+        },
+    }
+}
+
+/// `row`'s prediction by `resampler` alone.
+fn predict_one(
+    resampler: &SpectralResampler,
+    operator: &MeasurementOperator,
+    model: &PreparedModelGrids,
+    row: &NativeRow<'_>,
+) -> Vec<Complex32> {
+    let mut out = vec![Complex32::new(9.0, 9.0); row.values.len()];
+    resampler
+        .predict_row(
+            operator,
+            &mut CpuBackend::new(),
+            model,
+            row,
+            &mut PredictionScratch::default(),
+            &mut out,
+        )
+        .expect("prediction");
+    out
+}
+
+/// CASA's simulator predicts autocorrelations (its `GridFT` has `usezero`
+/// true): an autocorrelation row predicts what a cross-correlation of zero
+/// length predicts, bit for bit, under direct, nearest and linear mapping;
+/// a point model's zero spacing is its flux, and an extended model's the
+/// sum of its pixels; and a resampler not asked to predicts zero, as
+/// tclean's `GridFT` does.
+#[test]
+fn an_autocorrelation_predicts_the_zero_spacing_only_when_asked() {
+    let axis = SpectralAxis::new(1.0e9, 1.0e6, 4).expect("axis");
+    let resamplers = [
+        SpectralResampler::direct(Basis::Constant).expect("direct"),
+        SpectralResampler::channel_local(axis, SpectralKernel::Nearest),
+        SpectralResampler::channel_local(axis, SpectralKernel::Linear),
+    ];
+    // Natives at output channel centres, which a linear mapping predicts
+    // as those channels' own values.
+    let frequencies = [1.0e9, 1.001e9, 1.002e9];
+    let values = vec![Complex32::default(); frequencies.len() * 2];
+    let weights = vec![1.0; frequencies.len() * 2];
+    let flags = vec![false; frequencies.len() * 2];
+    let cells = (&values[..], &weights[..], &flags[..]);
+    for resampler in resamplers {
+        for precision in [GridPrecision::F32, GridPrecision::F64] {
+            let operator = operator(precision, resampler.basis(), &XX_YY, &STOKES_I);
+            let planes = resampler.basis().planes() as usize;
+            let point = point_model(&operator, &vec![1.7; planes]);
+            // An extended model: a 5 × 3 patch of unequal pixels about the
+            // reference pixel.
+            let mut extended = ModelImages {
+                first_plane: 0,
+                planes: Vec::new(),
+            };
+            let mut sum = 0.0_f64;
+            let mut image = Array2::zeros((IMAGE, IMAGE));
+            for (index, (y, x)) in (IMAGE / 2 - 1..=IMAGE / 2 + 1)
+                .flat_map(|y| (IMAGE / 2 - 2..=IMAGE / 2 + 2).map(move |x| (y, x)))
+                .enumerate()
+            {
+                let value = 0.1 + 0.05 * index as f32;
+                image[(y, x)] = value;
+                sum += f64::from(value);
+            }
+            extended.planes = vec![
+                ModelPlane {
+                    images: vec![image],
+                };
+                planes
+            ];
+            let extended = operator
+                .prepare_model(&extended, ModelPrescale::Unit)
+                .expect("extended model");
+            let auto = row_on([0.0; 3], [3, 3], &frequencies, cells);
+            let zero_length = row_on([0.0; 3], [2, 3], &frequencies, cells);
+            let predicting = resampler.predicting_autocorrelations();
+            assert!(predicting.predicts_autocorrelations());
+            assert!(!resampler.predicts_autocorrelations(), "off by default");
+            for (label, model, flux) in [("point", &point, 1.7), ("extended", &extended, sum)] {
+                let label = format!("{resampler:?} {precision:?} {label}");
+                let predicted = predict_one(&predicting, &operator, model, &auto);
+                assert_eq!(
+                    predicted,
+                    predict_one(&predicting, &operator, model, &zero_length),
+                    "{label}: an autocorrelation predicts a zero-length baseline"
+                );
+                assert_eq!(
+                    predicted,
+                    predict_one(&resampler, &operator, model, &zero_length),
+                    "{label}: the option leaves cross-correlations alone"
+                );
+                for value in &predicted {
+                    assert!(
+                        (f64::from(value.re) - flux).abs() <= 1.0e-4 * flux
+                            && f64::from(value.im).abs() <= 1.0e-6 * flux,
+                        "{label}: the zero spacing {value} is the model's flux {flux}"
+                    );
+                }
+                assert!(
+                    predict_one(&resampler, &operator, model, &auto)
+                        .iter()
+                        .all(|value| *value == Complex32::default()),
+                    "{label}: an autocorrelation predicts zero unless asked"
+                );
+            }
+        }
+    }
+}
+
+/// Model grids prepared plane by plane, the planes filled out of order on
+/// threads of their own, equal [`MeasurementOperator::prepare_model`]'s bit
+/// for bit: in both precisions, with a prescale, over several grid
+/// polarizations, and over several planes or several Taylor terms. Grids
+/// filled twice hold only the second fill, and grids of another operator
+/// are refused.
+#[test]
+fn model_grids_filled_plane_by_plane_equal_the_prepared_model() {
+    let rr_ll = [CorrelationType::CircularRr, CorrelationType::CircularLl];
+    let i_v = [
+        PolarizationCoordinate::StokesI,
+        PolarizationCoordinate::StokesV,
+    ];
+    let cube = SpectralAxis::new(1.0e9, 1.0e6, 5).expect("axis");
+    let bases = [
+        SpectralResampler::channel_local(cube, SpectralKernel::Nearest).basis(),
+        Basis::Taylor {
+            terms: 2,
+            reference_hz: 1.0e9,
+        },
+    ];
+    let mut seed = 7_u32;
+    let mut pixel = move || {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        f32::from(u16::try_from(seed >> 16).expect("16 bits")) / 65_536.0 - 0.5
+    };
+    for basis in bases {
+        for precision in [GridPrecision::F32, GridPrecision::F64] {
+            let operator = operator(precision, basis, &rr_ll, &i_v);
+            let planes = basis.planes() as usize;
+            let images = basis.data_terms() * i_v.len();
+            let model = ModelImages {
+                first_plane: 0,
+                planes: (0..planes)
+                    .map(|_| ModelPlane {
+                        images: (0..images)
+                            .map(|_| Array2::from_shape_fn((IMAGE, IMAGE), |_| pixel()))
+                            .collect(),
+                    })
+                    .collect(),
+            };
+            let prescale = (0..planes)
+                .map(|_| Array2::from_shape_fn((IMAGE, IMAGE), |_| 0.5 + pixel()))
+                .collect::<Vec<_>>();
+            let prepared = operator
+                .prepare_model(&model, ModelPrescale::Planes(&prescale))
+                .expect("prepared");
+            let mut grids = operator
+                .empty_model_grids(prepared.layout().planes())
+                .expect("empty grids");
+            assert_eq!(grids.bytes(), prepared.bytes());
+            assert_eq!(
+                grids.bytes(),
+                prepared.layout().bytes(precision) as u64,
+                "the grids' bytes are their cells'"
+            );
+            // A first fill from other images, replaced by the second.
+            for target in grids.planes_mut() {
+                let other = &model.planes[(target.plane() as usize + 1) % planes];
+                operator
+                    .fill_model_plane(other, None, target)
+                    .expect("first fill");
+            }
+            std::thread::scope(|scope| {
+                for target in grids.planes_mut().into_iter().rev() {
+                    let operator = &operator;
+                    let plane = target.plane() as usize;
+                    let (images, factor) = (&model.planes[plane], &prescale[plane]);
+                    scope.spawn(move || {
+                        operator
+                            .fill_model_plane(images, Some(factor), target)
+                            .expect("filled");
+                    });
+                }
+            });
+            assert!(grids == prepared, "{basis:?} {precision:?}");
+        }
+    }
+    let operator64 = operator(GridPrecision::F64, Basis::Constant, &XX_YY, &STOKES_I);
+    let operator32 = operator(GridPrecision::F32, Basis::Constant, &XX_YY, &STOKES_I);
+    let plane = ModelPlane {
+        images: vec![Array2::zeros((IMAGE, IMAGE))],
+    };
+    let mut grids = operator64
+        .empty_model_grids(PlaneRange::single(0))
+        .expect("empty grids");
+    let target = grids.planes_mut().pop().expect("one plane");
+    assert!(
+        operator32.fill_model_plane(&plane, None, target).is_err(),
+        "grids of another precision are refused"
+    );
+    assert!(
+        operator64.empty_model_grids(PlaneRange::single(1)).is_err(),
+        "planes past the basis are refused"
+    );
+}
+
 /// A batch predicts each row as that row alone does, and a scratch made for
 /// a batch of the widest rows never grows. Batches of three rows of every
 /// width up to the widest, narrow after wide, with a flagged row and an
 /// autocorrelation among them, give bit-identical visibilities to each
 /// row's own [`SpectralResampler::predict_row`] and keep every buffer at
 /// the capacity [`PredictionScratch::bytes`] charges, for direct, nearest
-/// and linear resamplers and widths that are not powers of two.
+/// and linear resamplers, widths that are not powers of two, and
+/// autocorrelations predicted or not.
 #[test]
 fn a_batch_predicts_each_row_as_alone_within_what_it_charges() {
     let axis =
@@ -394,9 +624,12 @@ fn a_batch_predicts_each_row_as_alone_within_what_it_charges() {
         SpectralResampler::channel_local(axis(3.0e6, 37), SpectralKernel::Linear),
         SpectralResampler::channel_local(axis(0.5e6, 301), SpectralKernel::Linear),
     ];
+    let resamplers = resamplers
+        .into_iter()
+        .flat_map(|resampler| [resampler, resampler.predicting_autocorrelations()]);
     let widest = 257;
     let rows_per_batch = 3;
-    for resampler in &resamplers {
+    for resampler in &resamplers.collect::<Vec<_>>() {
         let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
         let model = point_model(&operator, &vec![1.0; resampler.basis().planes() as usize]);
         let mut scratch =
