@@ -5,7 +5,8 @@
 //! The class declares every method of CASA's installed binding with CASA's
 //! names, parameter order and effective defaults ([`surface`]), and each
 //! method delegates to a free function: the session's lifecycle in
-//! `lifecycle`, the setters and `observe` in `setup`, thermal noise
+//! `lifecycle`, the setters and `observe` in `setup`, prediction
+//! (`predict`, `setoptions`, `setvp`) in `prediction`, thermal noise
 //! (`setseed`, `setnoise`, `corrupt`, `reset`) in `corruption`, and the
 //! methods casa-rs does not implement yet, or that CASA disables, in `stubs`.
 //!
@@ -19,13 +20,15 @@
 //! `NotImplementedError` naming the phase that implements it.
 //!
 //! Divergence: the MeasurementSet is written at `close` or `done` (and by an
-//! `open` that replaces the session), never while observing, so `corrupt`
-//! records the noise and `close` writes it. A tool dropped with planned
+//! `open` that replaces the session), never while observing, so `predict`
+//! prepares the model and `corrupt` records the noise, and `close` writes
+//! both. A tool dropped with planned
 //! scans and no `close` writes nothing, where CASA leaves the partly written
 //! MS on disk; the drop emits a `ResourceWarning`.
 
 mod corruption;
 mod lifecycle;
+mod prediction;
 mod setup;
 mod stubs;
 pub(crate) mod surface;
@@ -60,7 +63,8 @@ pub(crate) struct Session {
 ///   geometry and noise the rest. `None` takes three quarters of the
 ///   machine's free memory.
 /// - `backend` is the device to predict on: `'auto'`, `'cpu'` or `'metal'`.
-///   Noise is computed on the CPU whatever the backend; `'metal'` on a
+///   Noise is computed on the CPU whatever the backend, and so, until the
+///   Metal prediction is enabled (#841), is the prediction; `'metal'` on a
 ///   machine without a Metal device raises `RuntimeError`.
 /// - `workers` is the number of threads `close` keeps busy, the writer's
 ///   among them; `None` takes three quarters of the machine's threads, at
@@ -473,65 +477,90 @@ impl PySimulator {
         stubs::not_yet_implemented("setdata")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
+    /// Predict the model image into the rows observed so far, replacing
+    /// their DATA or, with `incremental`, adding to it; written at `close`.
+    /// One CASA image (Stokes I, J2000) is implemented; a component list or
+    /// several images raise `NotImplementedError`.
     #[pyo3(
-        signature = (imagename = None, complist = None, incremental = None),
+        signature = (imagename = StringList::of(&[]), complist = "", incremental = false),
         text_signature = "($self, imagename=[], complist='', incremental=False)"
     )]
     fn predict(
         &self,
-        imagename: Option<&Bound<'_, PyAny>>,
-        complist: Option<&Bound<'_, PyAny>>,
-        incremental: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        imagename: StringList,
+        complist: &str,
+        incremental: bool,
     ) -> PyResult<bool> {
-        stubs::not_yet_implemented("predict")
+        prediction::predict(self, py, imagename.0, complist, incremental)
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Set how `predict` grids: `GridFT` (`ftmachine='ft'`) with the
+    /// spheroidal `gridfunction='SF'` is implemented, and `padding` is
+    /// used; other FTMachines and grid functions raise
+    /// `NotImplementedError`.
     #[allow(unused_variables, clippy::too_many_arguments)]
     #[pyo3(
         signature = (
-            ftmachine = None, cache = None, tile = None, gridfunction = None, location = None,
-            padding = None, facets = None, maxdata = None, wprojplanes = None
+            ftmachine = "ft", cache = 0, tile = 16, gridfunction = "SF",
+            location = Variant::Empty, padding = 1.3, facets = 1, maxdata = 2000.0,
+            wprojplanes = 1
         ),
         text_signature = "($self, ftmachine='ft', cache=0, tile=16, gridfunction='SF', location=[], padding=1.3, facets=1, maxdata=2000.0, wprojplanes=1)"
     )]
     fn setoptions(
         &self,
-        ftmachine: Option<&Bound<'_, PyAny>>,
-        cache: Option<&Bound<'_, PyAny>>,
-        tile: Option<&Bound<'_, PyAny>>,
-        gridfunction: Option<&Bound<'_, PyAny>>,
-        location: Option<&Bound<'_, PyAny>>,
-        padding: Option<&Bound<'_, PyAny>>,
-        facets: Option<&Bound<'_, PyAny>>,
-        maxdata: Option<&Bound<'_, PyAny>>,
-        wprojplanes: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        ftmachine: &str,
+        cache: i64,
+        tile: i64,
+        gridfunction: &str,
+        location: Variant,
+        padding: f64,
+        facets: i64,
+        maxdata: f64,
+        wprojplanes: i64,
     ) -> PyResult<bool> {
-        stubs::not_yet_implemented("setoptions")
+        let request = prediction::OptionsRequest {
+            ftmachine,
+            grid_function: gridfunction,
+            location,
+            padding,
+        };
+        prediction::setoptions(self, py, &request)
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Set whether `predict` applies the primary beam (`dovp`): the
+    /// telescope's default voltage pattern, implemented for ALMA and ACA.
+    /// A voltage-pattern table raises `NotImplementedError`.
     #[allow(unused_variables, clippy::too_many_arguments)]
     #[pyo3(
         signature = (
-            dovp = None, usedefaultvp = None, vptable = None, dosquint = None,
-            parangleinc = None, skyposthreshold = None, pblimit = None
+            dovp = true, usedefaultvp = true, vptable = "", dosquint = true,
+            parangleinc = Variant::Empty, skyposthreshold = Variant::Empty, pblimit = 0.01
         ),
         text_signature = "($self, dovp=True, usedefaultvp=True, vptable='', dosquint=True, parangleinc=[], skyposthreshold=[], pblimit=0.01)"
     )]
     fn setvp(
         &self,
-        dovp: Option<&Bound<'_, PyAny>>,
-        usedefaultvp: Option<&Bound<'_, PyAny>>,
-        vptable: Option<&Bound<'_, PyAny>>,
-        dosquint: Option<&Bound<'_, PyAny>>,
-        parangleinc: Option<&Bound<'_, PyAny>>,
-        skyposthreshold: Option<&Bound<'_, PyAny>>,
-        pblimit: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        dovp: bool,
+        usedefaultvp: bool,
+        vptable: &str,
+        dosquint: bool,
+        parangleinc: Variant,
+        skyposthreshold: Variant,
+        pblimit: f64,
     ) -> PyResult<bool> {
-        stubs::not_yet_implemented("setvp")
+        let request = prediction::VoltagePatternRequest {
+            dovp,
+            use_default_vp: usedefaultvp,
+            vp_table: vptable,
+            do_squint: dosquint,
+            parallactic_angle_increment: parangleinc,
+            sky_position_threshold: skyposthreshold,
+        };
+        prediction::setvp(self, py, &request)
     }
 
     /// Apply every noise term to the rows observed so far; the noise is

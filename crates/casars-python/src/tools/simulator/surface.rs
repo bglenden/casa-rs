@@ -239,7 +239,7 @@ const METHODS: &[Method] = &[
             param("complist", K::Text, Text("")),
             param("incremental", K::Bool, Bool(false)),
         ],
-        NotYetImplemented,
+        Implemented,
     ),
     method(
         "setoptions",
@@ -254,7 +254,7 @@ const METHODS: &[Method] = &[
             param("maxdata", K::Float, Float(2000.0)),
             param("wprojplanes", K::Int, Int(1)),
         ],
-        NotYetImplemented,
+        Implemented,
     ),
     method(
         "setvp",
@@ -267,7 +267,7 @@ const METHODS: &[Method] = &[
             param("skyposthreshold", K::Quantity, Empty),
             param("pblimit", K::Float, Float(0.01)),
         ],
-        NotYetImplemented,
+        Implemented,
     ),
     method("corrupt", &[], Implemented),
     method("reset", &[], Implemented),

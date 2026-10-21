@@ -39,11 +39,11 @@ REFERENCE = "UTC 2020/01/01/00:00:00"
 IMPLEMENTED = {
     "open", "close", "done", "name", "type", "summary", "setconfig", "setfeed",
     "setspwindow", "setfield", "settimes", "setlimits", "setauto", "observe",
-    "setseed", "setnoise", "corrupt", "reset",
+    "setseed", "setnoise", "corrupt", "reset", "predict", "setoptions", "setvp",
 }
 NOT_YET_IMPLEMENTED = {
-    "openfromms", "observemany", "setmosaicfield", "setdata", "predict", "setoptions",
-    "setvp", "setapply", "setgain", "settrop", "setleakage",
+    "openfromms", "observemany", "setmosaicfield", "setdata", "setapply", "setgain",
+    "settrop", "setleakage",
 }
 DISABLED_IN_CASA = {"setbandpass", "setpa", "setpointingerror"}
 
@@ -290,6 +290,9 @@ def test_methods_before_open_return_false_and_log_only_setconfig(
         assert sm.setnoise(simplenoise="10 furlong") is False
         assert sm.corrupt() is False
         assert sm.reset() is False
+        assert sm.setoptions(ftmachine="mosaic", location="garbage") is False
+        assert sm.setvp(vptable="vp.tab", usedefaultvp=False, parangleinc="10 furlong") is False
+        assert sm.predict() is False
         assert caplog.messages == []
         assert sm.setconfig() is False
         assert caplog.messages == ["The sm tool must be opened first."]
@@ -576,4 +579,56 @@ def test_corrupt_raises_for_three_correlations(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="No such VisVector type"):
         sm.corrupt()
     sm.reset()
+    sm.close()
+
+
+def test_predict_opens_its_images_first_even_before_open(tmp_path: Path) -> None:
+    # CASA's binding opens every named image before it asks the simulator,
+    # so a missing or unreadable image raises whether or not a session is
+    # open.
+    with pytest.raises(RuntimeError, match="does not exist"):
+        simulator().predict(imagename=str(tmp_path / "missing.image"))
+    plain = tmp_path / "plain.txt"
+    plain.write_text("x", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="Unable to open image"):
+        simulator().predict(imagename=[str(plain)])
+
+
+@needs_measures
+def test_predict_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.predict() is False
+        assert sm.predict(imagename=[""]) is False
+    assert caplog.messages == ["Failed to create SkyEquation: No model images found"] * 2
+    with pytest.raises(NotImplementedError, match="complist.*Phase 2"):
+        sm.predict(complist=str(tmp_path / "model.cl"))
+    with pytest.raises(RuntimeError, match="does not exist"):
+        sm.predict(imagename=str(tmp_path / "missing.image"))
+    sm.close()
+    assert np.all(np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA")) == 0)
+
+
+@needs_measures
+def test_setoptions_and_setvp_follow_casa(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.setoptions(padding=1.5) is True
+    # CASA keeps a padding of at least 1 and ignores the rest.
+    assert sm.setoptions(padding=0.5) is True
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        assert sm.setoptions(location=1.0) is True
+    assert caplog.messages == ["Could not convert location 1 to a Position Measures"]
+    with pytest.raises(NotImplementedError, match="mosaic.*Phase 2"):
+        sm.setoptions(ftmachine="mosaic")
+    with pytest.raises(NotImplementedError, match="gridfunction"):
+        sm.setoptions(gridfunction="BOX")
+    assert sm.setvp() is True
+    assert sm.setvp(dovp=False, parangleinc="5deg") is True
+    with pytest.raises(NotImplementedError, match="vptable"):
+        sm.setvp(usedefaultvp=False, vptable="vp.tab")
+    with pytest.raises(RuntimeError, match="in converting quantity"):
+        sm.setvp(parangleinc="10 furlong")
     sm.close()
