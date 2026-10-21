@@ -283,8 +283,10 @@ These choices are open to objection.
   - default limits;
   - SIGMA and WEIGHT left at their geometric values after `corrupt`;
   - noise scaling: independent real and imaginary draws for
-    cross-correlations, one real draw for autocorrelations, and no noise in
-    the cross-hands of 4-correlation data;
+    cross-correlations, one real draw for autocorrelations, and an
+    independent draw for every correlation, the cross-hands of
+    4-correlation data included (measured on CASA 6.7.6 in Phase 1d; this
+    plan first said the cross-hands get none, #841);
   - fBM normalisation;
   - scan numbering;
   - autocorrelation defaults.
