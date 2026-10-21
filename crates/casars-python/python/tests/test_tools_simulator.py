@@ -39,11 +39,11 @@ REFERENCE = "UTC 2020/01/01/00:00:00"
 IMPLEMENTED = {
     "open", "close", "done", "name", "type", "summary", "setconfig", "setfeed",
     "setspwindow", "setfield", "settimes", "setlimits", "setauto", "observe",
+    "setseed", "setnoise", "corrupt", "reset",
 }
 NOT_YET_IMPLEMENTED = {
     "openfromms", "observemany", "setmosaicfield", "setdata", "predict", "setoptions",
-    "setvp", "corrupt", "reset", "setapply", "setgain", "settrop", "setleakage",
-    "setnoise", "setseed",
+    "setvp", "setapply", "setgain", "settrop", "setleakage",
 }
 DISABLED_IN_CASA = {"setbandpass", "setpa", "setpointingerror"}
 
@@ -253,6 +253,10 @@ def test_methods_before_open_return_false_and_log_only_setconfig(
         assert sm.setauto() is False
         assert sm.setfeed(mode="perfect R L") is False
         assert sm.setbandpass() is False
+        assert sm.setseed() is False
+        assert sm.setnoise(simplenoise="10 furlong") is False
+        assert sm.corrupt() is False
+        assert sm.reset() is False
         assert caplog.messages == []
         assert sm.setconfig() is False
         assert caplog.messages == ["The sm tool must be opened first."]
@@ -327,6 +331,8 @@ def test_casa_conversion_failures_log_and_continue(
         (lambda sm: sm.setconfig(x=[0.0, 1.0], y=[0.0], z=[0.0, 1.0]), "Failed AlwaysAssert"),
         (lambda sm: sm.setconfig(referencelocation="NOWHERE"), "Could not understand Position"),
         (lambda sm: sm.oldsetnoise(), "deprecated in CASA"),
+        (lambda sm: sm.setnoise(simplenoise="0.1K"), "Cannot convert K to Jy"),
+        (lambda sm: sm.setnoise(pground="garbage"), "in converting quantity"),
     ],
 )
 @needs_measures
@@ -432,3 +438,86 @@ def test_omitted_arguments_behave_as_casas_defaults(tmp_path: Path) -> None:
     # Hour-angle mode by default: the scan is centred on transit, not on the
     # reference time; 4 antennas without autocorrelations in 3 integrations.
     assert Table.open(tmp_path / "omitted.ms").row_count == 18
+
+
+def noisy(path: Path, seed: int | None) -> np.ndarray:
+    """DATA of a 300 s session after `setseed(seed)`, 0.1 Jy and one corrupt."""
+    sm = simulator()
+    sm.open(str(path))
+    configure(sm)
+    assert sm.observe("F", "L", starttime="0s", stoptime="300s")
+    if seed is not None:
+        assert sm.setseed(seed) is True
+    assert sm.setnoise(mode="simplenoise", simplenoise="0.1Jy") is True
+    assert sm.corrupt() is True
+    sm.close()
+    return np.asarray(Table.open(path).get_column("DATA"))
+
+
+@needs_measures
+def test_setnoise_and_corrupt_add_casas_thermal_noise_at_close(tmp_path: Path) -> None:
+    data = noisy(tmp_path / "noisy.ms", 5)
+    main = Table.open(tmp_path / "noisy.ms")
+    # 4 antennas with autocorrelations: 10 rows in each of 30 integrations.
+    assert data.shape == (300, 2, 4)
+    auto = np.asarray(main.get_column("ANTENNA1")) == np.asarray(main.get_column("ANTENNA2"))
+    cross = data[~auto]
+    # Each real and imaginary part has σ² = 0.01, within five standard errors.
+    tolerance = 5 * 0.01 * np.sqrt(2 / cross.size)
+    assert abs(np.var(cross.real) - 0.01) < tolerance
+    assert abs(np.var(cross.imag) - 0.01) < tolerance
+    # Autocorrelations get real noise only.
+    assert np.all(data[auto].imag == 0.0)
+    assert np.var(data[auto].real) > 0.005
+    assert np.array_equal(np.asarray(main.get_column("WEIGHT")), np.ones((300, 2)))
+
+
+@needs_measures
+def test_the_seed_decides_the_draws(tmp_path: Path) -> None:
+    first = noisy(tmp_path / "first.ms", 5)
+    assert np.array_equal(noisy(tmp_path / "again.ms", 5), first)
+    assert not np.array_equal(noisy(tmp_path / "other.ms", 6), first)
+    # CASA's binding keeps a seed's low 32 bits.
+    assert np.array_equal(noisy(tmp_path / "wrapped.ms", 5 + 2**32), first)
+    # Without setseed, CASA's simulator seed 11111, not the binding default.
+    assert np.array_equal(noisy(tmp_path / "default.ms", None), noisy(tmp_path / "s.ms", 11111))
+    assert not np.array_equal(noisy(tmp_path / "unset.ms", None), noisy(tmp_path / "b.ms", 185349251))
+
+
+@needs_measures
+def test_setnoise_outcomes_follow_casa(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        # Before observe CASA has no rows to size the term on.
+        assert sm.setnoise(simplenoise="0.1Jy") is False
+        assert sm.observe("F", "L", starttime="0s", stoptime="30s")
+        assert sm.setnoise(mode="bogus") is False
+    assert caplog.messages[0].startswith("Caught exception: Error in Simulator::create_corrupt")
+    assert caplog.messages[1:] == ["Caught exception: unsupported mode bogus in setnoise()"]
+    with pytest.raises(NotImplementedError, match="tsys-manual.*Phase 3"):
+        sm.setnoise(mode="tsys-manual")
+    with pytest.raises(NotImplementedError, match="tsys-atm.*Phase 4"):
+        sm.setnoise(mode="tsys-atm")
+    with pytest.raises(NotImplementedError, match="OTF=False"):
+        sm.setnoise(simplenoise="0.1Jy", OTF=False)
+    # None of those added a term; `[]` is 0 Jy.
+    assert sm.setnoise() is True
+    assert sm.reset() is True
+    assert sm.corrupt() is True
+    sm.close()
+    data = np.asarray(Table.open(tmp_path / "x.ms").get_column("DATA"))
+    assert np.all(data == 0)
+
+
+@needs_measures
+def test_corrupt_raises_for_three_correlations(tmp_path: Path) -> None:
+    sm = opened(tmp_path)
+    configure(sm)
+    assert sm.setspwindow(spwname="T", freq="1.4GHz", deltafreq="1MHz", nchannels=4, stokes="XX XY YY")
+    assert sm.observe("F", "T", starttime="0s", stoptime="30s")
+    assert sm.setnoise(simplenoise="0.1Jy") is True
+    with pytest.raises(RuntimeError, match="No such VisVector type"):
+        sm.corrupt()
+    sm.reset()
+    sm.close()

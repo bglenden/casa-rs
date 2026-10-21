@@ -5,21 +5,26 @@
 //! The class declares every method of CASA's installed binding with CASA's
 //! names, parameter order and effective defaults ([`surface`]), and each
 //! method delegates to a free function: the session's lifecycle in
-//! `lifecycle`, the setters and `observe` in `setup`, and the methods casa-rs
-//! does not implement yet, or that CASA disables, in `stubs`.
+//! `lifecycle`, the setters and `observe` in `setup`, thermal noise
+//! (`setseed`, `setnoise`, `corrupt`, `reset`) in `corruption`, and the
+//! methods casa-rs does not implement yet, or that CASA disables, in `stubs`.
 //!
 //! CASA's outcomes are kept: before `open` every method but `type`, `close`
 //! and `done` returns `False` (or `''`) without converting its arguments, and
 //! `setconfig` also logs "The sm tool must be opened first."; a failure CASA
 //! reports by logging and returning `False` is logged at ERROR on the Python
 //! logger `casars.tools.simulator`; a failure CASA raises is a
-//! `RuntimeError`.
+//! `RuntimeError`. What CASA does and casa-rs does not yet (a whole method,
+//! or a mode such as `setnoise(mode='tsys-atm')`) raises
+//! `NotImplementedError` naming the phase that implements it.
 //!
 //! Divergence: the MeasurementSet is written at `close` or `done` (and by an
-//! `open` that replaces the session), never while observing. A tool dropped
-//! with planned scans and no `close` writes nothing, where CASA leaves the
-//! partly written MS on disk; the drop emits a `ResourceWarning`.
+//! `open` that replaces the session), never while observing, so `corrupt`
+//! records the noise and `close` writes it. A tool dropped with planned
+//! scans and no `close` writes nothing, where CASA leaves the partly written
+//! MS on disk; the drop emits a `ResourceWarning`.
 
+mod corruption;
 mod lifecycle;
 mod setup;
 mod stubs;
@@ -30,7 +35,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use casa_simulation::{CasaOutcome, Simulator, SimulatorError, SimulatorResult};
 use casa_types::measures::MeasuresProvider;
-use pyo3::exceptions::{PyResourceWarning, PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyNotImplementedError, PyResourceWarning, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::MutexExt;
 
@@ -97,7 +102,8 @@ impl PySimulator {
 }
 
 /// CASA's outcome for a session result: `True`, `False` with the message
-/// logged at ERROR, or a `RuntimeError`.
+/// logged at ERROR, or a `RuntimeError`; or `NotImplementedError` for what
+/// casa-rs does not do yet.
 fn outcome(result: SimulatorResult<()>, lines: &mut Vec<LogLine>) -> PyResult<bool> {
     match result {
         Ok(()) => Ok(true),
@@ -107,6 +113,9 @@ fn outcome(result: SimulatorResult<()>, lines: &mut Vec<LogLine>) -> PyResult<bo
                 Ok(false)
             }
             CasaOutcome::Raises => Err(raised(&error)),
+            CasaOutcome::NotYetImplemented => {
+                Err(PyNotImplementedError::new_err(error.message().to_string()))
+            }
         },
     }
 }
@@ -516,14 +525,15 @@ impl PySimulator {
         stubs::not_yet_implemented("setvp")
     }
 
-    /// Not yet implemented in casa-rs.
-    fn corrupt(&self) -> PyResult<bool> {
-        stubs::not_yet_implemented("corrupt")
+    /// Apply every noise term to the rows observed so far; the noise is
+    /// written at `close`.
+    fn corrupt(&self, py: Python<'_>) -> PyResult<bool> {
+        corruption::corrupt(self, py)
     }
 
-    /// Not yet implemented in casa-rs.
-    fn reset(&self) -> PyResult<bool> {
-        stubs::not_yet_implemented("reset")
+    /// Remove every noise term; noise `corrupt` already applied stays.
+    fn reset(&self, py: Python<'_>) -> PyResult<bool> {
+        corruption::reset(self, py)
     }
 
     /// Disabled in CASA: logs CASA's error and returns `False`.
@@ -662,40 +672,53 @@ impl PySimulator {
         stubs::deprecated_oldsetnoise()
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Add a noise term with the current seed. `mode='simplenoise'` adds
+    /// σ = `simplenoise` (Jy) to each real and imaginary part; the Tsys
+    /// modes, and `OTF=False`, raise `NotImplementedError`.
     #[allow(unused_variables, non_snake_case, clippy::too_many_arguments)]
     #[pyo3(
         signature = (
-            mode = None, table = None, simplenoise = None, pground = None, relhum = None,
-            altitude = None, waterheight = None, pwv = None, tatmos = None, tau = None,
-            antefficiency = None, spillefficiency = None, correfficiency = None, trx = None,
-            tground = None, tcmb = None, OTF = None, senscoeff = None, rxtype = None
+            mode = "simplenoise", table = "", simplenoise = Variant::Empty,
+            pground = Variant::Empty, relhum = 20.0, altitude = Variant::Empty,
+            waterheight = Variant::Empty, pwv = Variant::Empty, tatmos = 250.0, tau = 0.1,
+            antefficiency = 0.8, spillefficiency = 0.85, correfficiency = 0.88, trx = 50.0,
+            tground = 270.0, tcmb = 2.73, OTF = true, senscoeff = 0.0, rxtype = 0
         ),
         text_signature = "($self, mode='simplenoise', table='', simplenoise=[], pground=[], relhum=20.0, altitude=[], waterheight=[], pwv=[], tatmos=250.0, tau=0.1, antefficiency=0.8, spillefficiency=0.85, correfficiency=0.88, trx=50.0, tground=270.0, tcmb=2.73, OTF=True, senscoeff=0.0, rxtype=0)"
     )]
     fn setnoise(
         &self,
-        mode: Option<&Bound<'_, PyAny>>,
-        table: Option<&Bound<'_, PyAny>>,
-        simplenoise: Option<&Bound<'_, PyAny>>,
-        pground: Option<&Bound<'_, PyAny>>,
-        relhum: Option<&Bound<'_, PyAny>>,
-        altitude: Option<&Bound<'_, PyAny>>,
-        waterheight: Option<&Bound<'_, PyAny>>,
-        pwv: Option<&Bound<'_, PyAny>>,
-        tatmos: Option<&Bound<'_, PyAny>>,
-        tau: Option<&Bound<'_, PyAny>>,
-        antefficiency: Option<&Bound<'_, PyAny>>,
-        spillefficiency: Option<&Bound<'_, PyAny>>,
-        correfficiency: Option<&Bound<'_, PyAny>>,
-        trx: Option<&Bound<'_, PyAny>>,
-        tground: Option<&Bound<'_, PyAny>>,
-        tcmb: Option<&Bound<'_, PyAny>>,
-        OTF: Option<&Bound<'_, PyAny>>,
-        senscoeff: Option<&Bound<'_, PyAny>>,
-        rxtype: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        mode: &str,
+        table: &str,
+        simplenoise: Variant,
+        pground: Variant,
+        relhum: f64,
+        altitude: Variant,
+        waterheight: Variant,
+        pwv: Variant,
+        tatmos: f64,
+        tau: f64,
+        antefficiency: f64,
+        spillefficiency: f64,
+        correfficiency: f64,
+        trx: f64,
+        tground: f64,
+        tcmb: f64,
+        OTF: bool,
+        senscoeff: f64,
+        rxtype: i64,
     ) -> PyResult<bool> {
-        stubs::not_yet_implemented("setnoise")
+        let request = corruption::NoiseRequest {
+            mode,
+            simple_noise: simplenoise,
+            ground_pressure: pground,
+            altitude,
+            water_height: waterheight,
+            water_vapour: pwv,
+            on_the_fly: OTF,
+        };
+        corruption::setnoise(self, py, &request)
     }
 
     /// Disabled in CASA: logs CASA's error and returns `False`.
@@ -714,10 +737,10 @@ impl PySimulator {
         stubs::disabled_in_casa(self, py)
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (seed = None), text_signature = "($self, seed=185349251)")]
-    fn setseed(&self, seed: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
-        stubs::not_yet_implemented("setseed")
+    /// Set the seed of the noise terms set from now on (CASA's is 11111
+    /// until this is called).
+    #[pyo3(signature = (seed = 185_349_251), text_signature = "($self, seed=185349251)")]
+    fn setseed(&self, py: Python<'_>, seed: i64) -> PyResult<bool> {
+        corruption::setseed(self, py, seed)
     }
 }

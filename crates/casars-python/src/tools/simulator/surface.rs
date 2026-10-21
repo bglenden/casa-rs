@@ -264,8 +264,8 @@ const METHODS: &[Method] = &[
         ],
         NotYetImplemented,
     ),
-    method("corrupt", &[], NotYetImplemented),
-    method("reset", &[], NotYetImplemented),
+    method("corrupt", &[], Implemented),
+    method("reset", &[], Implemented),
     method(
         "setbandpass",
         &[
@@ -333,7 +333,7 @@ const METHODS: &[Method] = &[
         NotYetImplemented,
     ),
     method("oldsetnoise", &OLDSETNOISE, DeprecatedInCasa),
-    method("setnoise", &SETNOISE, NotYetImplemented),
+    method("setnoise", &SETNOISE, Implemented),
     method(
         "setpa",
         &[
@@ -346,7 +346,7 @@ const METHODS: &[Method] = &[
     method(
         "setseed",
         &[param("seed", K::Int, Int(185_349_251))],
-        NotYetImplemented,
+        Implemented,
     ),
 ];
 
