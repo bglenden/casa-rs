@@ -1,11 +1,14 @@
 # Python Support
 
-`casa-rs-python` installs as `casars` and separates three public concerns:
+`casa-rs-python` installs as `casars` and separates four public concerns:
 
 - `casars.data` provides in-process access to persistent CASA-style images and
   tables.
 - `casars.tasks` provides higher-level task wrappers backed by the versioned
   provider binaries.
+- `casars.tools` provides CASA's tools as classes under CASA's names, with
+  CASA's methods, parameter order and defaults, so a CASA script changes only
+  its imports (ADR-0019). The first is `simulator`, CASA's `sm`.
 - `casars.parameters` is the accepted common API for typed task profiles
   described by ADR-0006 and the current-only option in ADR-0012.
 

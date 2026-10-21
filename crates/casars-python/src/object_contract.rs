@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Canonical object-surface schema bundle for `casars.data`.
+//! Canonical object-surface schema bundle for `casars.data` and the CASA
+//! tools of `casars.tools`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -13,6 +14,8 @@ use schemars::schema::RootSchema;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
+
+use crate::tools::simulator::surface as simulator_surface;
 
 /// Stable protocol name advertised by the `casars.data` object bundle.
 pub const DATA_OBJECT_PROTOCOL_NAME: &str = "casars_data_objects";
@@ -309,8 +312,10 @@ impl DataObjectSchemaBundle {
         let column_input_schema = schema_for!(LogicalColumnInputValue);
         let column_output_schema = schema_for!(LogicalColumnOutputValue);
         let written_count_schema = schema_for!(usize);
+        let simulator = simulator_surface::object_contract();
 
-        let components = merged_components([
+        let mut components = Self::object_components(&simulator);
+        components.extend(merged_components([
             &open_schema,
             &array_region_schema,
             &plane_request_schema,
@@ -339,7 +344,7 @@ impl DataObjectSchemaBundle {
             &column_input_schema,
             &column_output_schema,
             &written_count_schema,
-        ]);
+        ]));
 
         Self {
             protocol: DataObjectProtocolInfo::current(),
@@ -470,12 +475,26 @@ impl DataObjectSchemaBundle {
                         ],
                         lifecycle_operations: Vec::new(),
                     },
+                    simulator,
                 ],
             },
             components,
             annotations: Self::python_annotations(),
             projections: Self::python_projections(),
         }
+    }
+
+    /// The component schemas an object's constructors and methods define.
+    fn object_components(object: &ObjectTypeContract) -> ProviderComponentSchemas {
+        let constructors = object
+            .constructors
+            .iter()
+            .map(|constructor| &constructor.parameters_schema);
+        let methods = object
+            .methods
+            .iter()
+            .map(|method| &method.parameters_schema);
+        merged_components(constructors.chain(methods))
     }
 
     /// Method descriptors of the `Image` object: the slice, plane and mask
@@ -542,13 +561,16 @@ impl DataObjectSchemaBundle {
                             "get_column": "numpy.ndarray | list[numpy.ndarray] | list[Any]",
                             "column_keywords": "dict[str, Any] | None"
                         }
-                    }
+                    },
+                    "simulator": simulator_surface::python_annotation()
                 }
             }
         })
     }
 
-    /// Projection metadata mapping each object to its `casars.data` class.
+    /// Projection metadata mapping each object to its Python class: the
+    /// `casars.data` classes, and the CASA tools, which name their own module
+    /// and carry their parameter order.
     fn python_projections() -> ProviderProjectionMetadata {
         ProviderProjectionMetadata {
             cli: None,
@@ -556,7 +578,8 @@ impl DataObjectSchemaBundle {
                 "module": "casars.data",
                 "objects": [
                     { "name": "Image", "class_name": "Image" },
-                    { "name": "Table", "class_name": "Table" }
+                    { "name": "Table", "class_name": "Table" },
+                    simulator_surface::python_projection()
                 ]
             })),
         }
@@ -590,9 +613,12 @@ mod tests {
             DATA_OBJECT_PROTOCOL_VERSION
         );
         assert_eq!(bundle.protocol.surface_kind, ProviderSurfaceKind::Object);
-        assert_eq!(bundle.semantic.objects.len(), 2);
+        assert_eq!(bundle.semantic.objects.len(), 3);
         assert_eq!(bundle.semantic.objects[0].name, "Image");
         assert_eq!(bundle.semantic.objects[1].name, "Table");
+        assert_eq!(bundle.semantic.objects[2].name, "simulator");
+        assert!(bundle.components.contains_key("CasaQuantityArgument"));
+        assert!(bundle.components.contains_key("CasaMeasureArgument"));
         assert_eq!(
             bundle
                 .projections

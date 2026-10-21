@@ -38,7 +38,8 @@ def test_data_schema_bundle_reports_object_surface() -> None:
     assert "LogicalComplex128" in bundle["components"]
 
     objects = {entry["name"]: entry for entry in bundle["semantic"]["objects"]}
-    assert set(objects) == {"Image", "Table"}
+    # The CASA tools of casars.tools share the bundle (test_tools_simulator.py).
+    assert set(objects) == {"Image", "Table", "simulator"}
     assert {prop["name"] for prop in objects["Image"]["properties"]} == {
         "shape",
         "pixel_type",

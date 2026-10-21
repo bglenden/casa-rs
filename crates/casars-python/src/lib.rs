@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+mod convert;
 mod object_contract;
+mod tools;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -937,11 +939,13 @@ fn data_schema_bundle_json() -> PyResult<String> {
 fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     // Keep the generated UniFFI frontend boundary in this extension module so
     // Python wheels need only one native library. The Python package loads
-    // these exported symbols through its generated UniFFI module; PyO3 remains
-    // reserved for the NumPy-oriented Image and Table object API below.
+    // these exported symbols through its generated UniFFI module; PyO3 carries
+    // the NumPy-oriented Image and Table object API and the CASA tools of
+    // `casars.tools` (ADR-0019) below.
     let _ = casars_frontend_services::application_catalog();
     module.add_class::<PyImage>()?;
     module.add_class::<PyTable>()?;
+    module.add_class::<tools::simulator::PySimulator>()?;
     module.add_function(wrap_pyfunction!(data_protocol_info_json, module)?)?;
     module.add_function(wrap_pyfunction!(data_schema_bundle_json, module)?)?;
     Ok(())

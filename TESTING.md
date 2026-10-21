@@ -327,6 +327,9 @@ affected gate.
   `scripts/test-frontend-services-python.sh`, and
   `scripts/test-python-package.sh`. The `casars` task host's end-to-end
   behaviour is covered by `cargo test -p casars --test casars_cli`.
+  `scripts/test-python-package.sh` runs the `casars.tools` tests against the
+  bundled measures snapshot unless `CASA_RS_MEASURESPATH` names a runtime;
+  run directly, those tests skip when no runtime is installed.
 
 ## Imaging tiers and evidence
 

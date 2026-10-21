@@ -1,0 +1,723 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! `casars.tools.simulator`: CASA's `simulator` tool (`sm`) over
+//! [`casa_simulation::Simulator`].
+//!
+//! The class declares every method of CASA's installed binding with CASA's
+//! names, parameter order and effective defaults ([`surface`]), and each
+//! method delegates to a free function: the session's lifecycle in
+//! `lifecycle`, the setters and `observe` in `setup`, and the methods casa-rs
+//! does not implement yet, or that CASA disables, in `stubs`.
+//!
+//! CASA's outcomes are kept: before `open` every method but `type`, `close`
+//! and `done` returns `False` (or `''`) without converting its arguments, and
+//! `setconfig` also logs "The sm tool must be opened first."; a failure CASA
+//! reports by logging and returning `False` is logged at ERROR on the Python
+//! logger `casars.tools.simulator`; a failure CASA raises is a
+//! `RuntimeError`.
+//!
+//! Divergence: the MeasurementSet is written at `close` or `done` (and by an
+//! `open` that replaces the session), never while observing. A tool dropped
+//! with planned scans and no `close` writes nothing, where CASA leaves the
+//! partly written MS on disk; the drop emits a `ResourceWarning`.
+
+mod lifecycle;
+mod setup;
+mod stubs;
+pub(crate) mod surface;
+
+use std::ffi::CString;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+
+use casa_simulation::{CasaOutcome, Simulator, SimulatorError, SimulatorResult};
+use casa_types::measures::MeasuresProvider;
+use pyo3::exceptions::{PyResourceWarning, PyRuntimeError, PyValueError};
+use pyo3::prelude::*;
+use pyo3::sync::MutexExt;
+
+use crate::convert::{DoubleList, StringList, Variant};
+use crate::tools::{LogLine, emit};
+
+/// The Python logger CASA's `sm` messages go to.
+const LOGGER: &str = "casars.tools.simulator";
+
+/// An open session: the simulator and the measures data it was opened with.
+pub(crate) struct Session {
+    simulator: Simulator,
+    measures: Arc<dyn MeasuresProvider>,
+}
+
+/// CASA's `simulator` tool.
+///
+/// `simulator(*, memory_budget=None)`: `memory_budget` caps, in bytes, the
+/// memory the MeasurementSet writer may use; `None` derives it from the
+/// machine's physical memory.
+#[pyclass(name = "simulator", module = "casars.tools", frozen)]
+pub(crate) struct PySimulator {
+    state: Mutex<Option<Session>>,
+    memory_budget: Option<usize>,
+}
+
+impl PySimulator {
+    /// The session lock, taken without the GIL (inside `Python::detach`).
+    fn lock(&self) -> MutexGuard<'_, Option<Session>> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The session lock, taken with the GIL attached; waiting for it
+    /// releases the GIL.
+    fn lock_attached(&self, py: Python<'_>) -> MutexGuard<'_, Option<Session>> {
+        self.state
+            .lock_py_attached(py)
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Runs `work` on the open session and logs what it reports once the lock
+    /// is released. Before `open`, returns `None` without running it.
+    fn on_session<T>(
+        &self,
+        py: Python<'_>,
+        work: impl FnOnce(&mut Session, &mut Vec<LogLine>) -> PyResult<T>,
+    ) -> PyResult<Option<T>> {
+        let mut lines = Vec::new();
+        let result = {
+            let mut state = self.lock_attached(py);
+            match state.as_mut() {
+                Some(session) => work(session, &mut lines).map(Some),
+                None => Ok(None),
+            }
+        };
+        emit(py, LOGGER, &lines)?;
+        result
+    }
+
+    /// Whether a session is open.
+    fn is_open(&self, py: Python<'_>) -> bool {
+        self.lock_attached(py).is_some()
+    }
+}
+
+/// CASA's outcome for a session result: `True`, `False` with the message
+/// logged at ERROR, or a `RuntimeError`.
+fn outcome(result: SimulatorResult<()>, lines: &mut Vec<LogLine>) -> PyResult<bool> {
+    match result {
+        Ok(()) => Ok(true),
+        Err(error) => match error.outcome() {
+            CasaOutcome::ReturnsFalse => {
+                lines.push(LogLine::error(error.message()));
+                Ok(false)
+            }
+            CasaOutcome::Raises => Err(raised(&error)),
+        },
+    }
+}
+
+/// A session error as the `RuntimeError` CASA raises.
+fn raised(error: &SimulatorError) -> PyErr {
+    PyRuntimeError::new_err(error.message().to_string())
+}
+
+impl Drop for PySimulator {
+    fn drop(&mut self) {
+        let state = self.state.get_mut().unwrap_or_else(PoisonError::into_inner);
+        let Some(session) = state.take() else {
+            return;
+        };
+        let scans = session.simulator.scan_count();
+        if scans == 0 {
+            return;
+        }
+        let message = format!(
+            "simulator for {} was dropped with {scans} planned scan(s) and no close(); \
+             nothing was written (casa-rs writes the MeasurementSet at close or done)",
+            session.simulator.name().display()
+        );
+        Python::attach(|py| {
+            let category = py.get_type::<PyResourceWarning>();
+            let message = CString::new(message).unwrap_or_default();
+            if let Err(error) = PyErr::warn(py, category.as_any(), &message, 1) {
+                error.write_unraisable(py, None);
+            }
+        });
+    }
+}
+
+#[pymethods]
+impl PySimulator {
+    #[new]
+    #[pyo3(signature = (*, memory_budget = None))]
+    fn new(memory_budget: Option<usize>) -> PyResult<Self> {
+        if memory_budget == Some(0) {
+            return Err(PyValueError::new_err(
+                "memory_budget must be a positive number of bytes",
+            ));
+        }
+        Ok(Self {
+            state: Mutex::new(None),
+            memory_budget,
+        })
+    }
+
+    /// Start a new MeasurementSet `ms`, closing (writing) any open one.
+    #[pyo3(signature = (ms = ""), text_signature = "($self, ms='')")]
+    fn open(&self, py: Python<'_>, ms: &str) -> PyResult<bool> {
+        lifecycle::open(self, py, ms)
+    }
+
+    /// Write the MeasurementSet and end the session.
+    fn close(&self, py: Python<'_>) -> PyResult<bool> {
+        lifecycle::close(self, py)
+    }
+
+    /// Write the MeasurementSet and end the session (as `close`).
+    fn done(&self, py: Python<'_>) -> PyResult<bool> {
+        lifecycle::close(self, py)
+    }
+
+    /// The MeasurementSet's name, or `''` before `open`.
+    fn name(&self, py: Python<'_>) -> String {
+        lifecycle::name(self, py)
+    }
+
+    /// Log a summary of the session; `False` before `open`.
+    fn summary(&self, py: Python<'_>) -> PyResult<bool> {
+        lifecycle::summary(self, py)
+    }
+
+    /// The tool type, `'Simulator'`.
+    #[pyo3(name = "type")]
+    fn tool_type(&self) -> &'static str {
+        "Simulator"
+    }
+
+    /// Set the integration time and the reference time of `observe`.
+    #[pyo3(
+        signature = (integrationtime = Variant::Empty, usehourangle = true, referencetime = Variant::Empty),
+        text_signature = "($self, integrationtime=[], usehourangle=True, referencetime=[])"
+    )]
+    fn settimes(
+        &self,
+        py: Python<'_>,
+        integrationtime: Variant,
+        usehourangle: bool,
+        referencetime: Variant,
+    ) -> PyResult<bool> {
+        setup::settimes(self, py, &integrationtime, usehourangle, &referencetime)
+    }
+
+    /// Plan a scan of `sourcename` in spectral window `spwname`.
+    #[allow(clippy::too_many_arguments, reason = "CASA's observe signature")]
+    #[pyo3(
+        signature = (
+            sourcename = "", spwname = "", starttime = Variant::Empty, stoptime = Variant::Empty,
+            add_observation = false, state_sig = true, state_ref = false, state_cal = 0.0,
+            state_load = 0.0, state_sub_scan = 0, state_obs_mode = "OBSERVE_TARGET.ON_SOURCE",
+            observer = "CASA simulator", project = "CASA simulation"
+        ),
+        text_signature = "($self, sourcename='', spwname='', starttime=[], stoptime=[], add_observation=False, state_sig=True, state_ref=False, state_cal=0.0, state_load=0.0, state_sub_scan=0, state_obs_mode='OBSERVE_TARGET.ON_SOURCE', observer='CASA simulator', project='CASA simulation')"
+    )]
+    fn observe(
+        &self,
+        py: Python<'_>,
+        sourcename: &str,
+        spwname: &str,
+        starttime: Variant,
+        stoptime: Variant,
+        add_observation: bool,
+        state_sig: bool,
+        state_ref: bool,
+        state_cal: f64,
+        state_load: f64,
+        state_sub_scan: i64,
+        state_obs_mode: &str,
+        observer: &str,
+        project: &str,
+    ) -> PyResult<bool> {
+        let request = setup::ObserveRequest {
+            source: sourcename,
+            spectral_window: spwname,
+            start: starttime,
+            stop: stoptime,
+            add_observation,
+            state: setup::StateRequest {
+                sig: state_sig,
+                reference: state_ref,
+                cal: state_cal,
+                load: state_load,
+                sub_scan: state_sub_scan,
+                obs_mode: state_obs_mode,
+            },
+            observer,
+            project,
+        };
+        setup::observe(self, py, &request)
+    }
+
+    /// Set the shadowing and elevation limits of `observe`.
+    #[pyo3(
+        signature = (shadowlimit = 1e-6, elevationlimit = Variant::Empty),
+        text_signature = "($self, shadowlimit=1e-06, elevationlimit=[])"
+    )]
+    fn setlimits(
+        &self,
+        py: Python<'_>,
+        shadowlimit: f64,
+        elevationlimit: Variant,
+    ) -> PyResult<bool> {
+        setup::setlimits(self, py, shadowlimit, &elevationlimit)
+    }
+
+    /// Set the autocorrelation weight; autocorrelations are written when it
+    /// is positive.
+    #[pyo3(signature = (autocorrwt = 0.0), text_signature = "($self, autocorrwt=0.0)")]
+    fn setauto(&self, py: Python<'_>, autocorrwt: f64) -> PyResult<bool> {
+        setup::setauto(self, py, autocorrwt)
+    }
+
+    /// Add antennas.
+    #[allow(clippy::too_many_arguments, reason = "CASA's setconfig signature")]
+    #[pyo3(
+        signature = (
+            telescopename = "VLA", x = DoubleList::of(&[0.0]), y = DoubleList::of(&[0.0]),
+            z = DoubleList::of(&[0.0]), dishdiameter = DoubleList::of(&[0.0]),
+            offset = DoubleList::of(&[0.0]), mount = StringList::of(&["ALT-AZ"]),
+            antname = StringList::of(&["A"]), padname = StringList::of(&["P"]),
+            coordsystem = "global", referencelocation = Variant::Empty
+        ),
+        text_signature = "($self, telescopename='VLA', x=[0.0], y=[0.0], z=[0.0], dishdiameter=[0.0], offset=[0.0], mount=['ALT-AZ'], antname=['A'], padname=['P'], coordsystem='global', referencelocation=[])"
+    )]
+    fn setconfig(
+        &self,
+        py: Python<'_>,
+        telescopename: &str,
+        x: DoubleList,
+        y: DoubleList,
+        z: DoubleList,
+        dishdiameter: DoubleList,
+        offset: DoubleList,
+        mount: StringList,
+        antname: StringList,
+        padname: StringList,
+        coordsystem: &str,
+        referencelocation: Variant,
+    ) -> PyResult<bool> {
+        let request = setup::ConfigRequest {
+            telescope: telescopename,
+            x: x.0,
+            y: y.0,
+            z: z.0,
+            dish_diameter: dishdiameter.0,
+            offset: offset.0,
+            mount: mount.0,
+            antenna_names: antname.0,
+            pad_names: padname.0,
+            coordinate_system: coordsystem,
+            reference_location: referencelocation,
+        };
+        setup::setconfig(self, py, request)
+    }
+
+    /// Add one perfect feed per antenna.
+    #[pyo3(
+        signature = (mode = "", x = DoubleList::of(&[0.0]), y = DoubleList::of(&[0.0]), pol = StringList::of(&["R"])),
+        text_signature = "($self, mode='', x=[0.0], y=[0.0], pol=['R'])"
+    )]
+    fn setfeed(
+        &self,
+        py: Python<'_>,
+        mode: &str,
+        x: DoubleList,
+        y: DoubleList,
+        pol: StringList,
+    ) -> PyResult<bool> {
+        setup::setfeed(self, py, mode, &x.0, &y.0, &pol.0)
+    }
+
+    /// Add a field and its source.
+    #[pyo3(
+        signature = (sourcename = "SOURCE", sourcedirection = Variant::Empty, calcode = "", distance = Variant::Empty),
+        text_signature = "($self, sourcename='SOURCE', sourcedirection=[], calcode='', distance=[])"
+    )]
+    fn setfield(
+        &self,
+        py: Python<'_>,
+        sourcename: &str,
+        sourcedirection: Variant,
+        calcode: &str,
+        distance: Variant,
+    ) -> PyResult<bool> {
+        setup::setfield(self, py, sourcename, &sourcedirection, calcode, &distance)
+    }
+
+    /// Add a spectral window and its polarization setup.
+    #[allow(clippy::too_many_arguments, reason = "CASA's setspwindow signature")]
+    #[pyo3(
+        signature = (
+            spwname = "XBAND", freq = Variant::Empty, deltafreq = Variant::Empty,
+            freqresolution = Variant::Empty, refcode = "TOPO", nchannels = 1, stokes = "RR LL"
+        ),
+        text_signature = "($self, spwname='XBAND', freq=[], deltafreq=[], freqresolution=[], refcode='TOPO', nchannels=1, stokes='RR LL')"
+    )]
+    fn setspwindow(
+        &self,
+        py: Python<'_>,
+        spwname: &str,
+        freq: Variant,
+        deltafreq: Variant,
+        freqresolution: Variant,
+        refcode: &str,
+        nchannels: i64,
+        stokes: &str,
+    ) -> PyResult<bool> {
+        let request = setup::WindowRequest {
+            name: spwname,
+            frequency: freq,
+            width: deltafreq,
+            resolution: freqresolution,
+            frame: refcode,
+            channels: nchannels,
+            stokes,
+        };
+        setup::setspwindow(self, py, &request)
+    }
+
+    /// Not yet implemented in casa-rs.
+    #[allow(unused_variables)]
+    #[pyo3(signature = (ms = None), text_signature = "($self, ms='')")]
+    fn openfromms(&self, ms: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
+        stubs::not_yet_implemented("openfromms")
+    }
+
+    /// Not yet implemented in casa-rs.
+    #[allow(unused_variables, clippy::too_many_arguments)]
+    #[pyo3(
+        signature = (
+            sourcenames = None, spwname = None, starttimes = None, stoptimes = None,
+            directions = None, add_observation = None, state_sig = None, state_ref = None,
+            state_cal = None, state_load = None, state_sub_scan = None, state_obs_mode = None,
+            observer = None, project = None
+        ),
+        text_signature = "($self, sourcenames=[], spwname='', starttimes=['0s'], stoptimes=['3600s'], directions=[''], add_observation=False, state_sig=True, state_ref=False, state_cal=0.0, state_load=0.0, state_sub_scan=0, state_obs_mode='OBSERVE_TARGET#ON_SOURCE', observer='CASA simulator', project='CASA simulation')"
+    )]
+    fn observemany(
+        &self,
+        sourcenames: Option<&Bound<'_, PyAny>>,
+        spwname: Option<&Bound<'_, PyAny>>,
+        starttimes: Option<&Bound<'_, PyAny>>,
+        stoptimes: Option<&Bound<'_, PyAny>>,
+        directions: Option<&Bound<'_, PyAny>>,
+        add_observation: Option<&Bound<'_, PyAny>>,
+        state_sig: Option<&Bound<'_, PyAny>>,
+        state_ref: Option<&Bound<'_, PyAny>>,
+        state_cal: Option<&Bound<'_, PyAny>>,
+        state_load: Option<&Bound<'_, PyAny>>,
+        state_sub_scan: Option<&Bound<'_, PyAny>>,
+        state_obs_mode: Option<&Bound<'_, PyAny>>,
+        observer: Option<&Bound<'_, PyAny>>,
+        project: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        stubs::not_yet_implemented("observemany")
+    }
+
+    /// Not yet implemented in casa-rs.
+    #[allow(unused_variables, clippy::too_many_arguments)]
+    #[pyo3(
+        signature = (
+            sourcename = None, calcode = None, fieldcenter = None, xmosp = None, ymosp = None,
+            mosspacing = None, distance = None
+        ),
+        text_signature = "($self, sourcename='SOURCE', calcode='', fieldcenter=[], xmosp=1, ymosp=1, mosspacing=[], distance=[])"
+    )]
+    fn setmosaicfield(
+        &self,
+        sourcename: Option<&Bound<'_, PyAny>>,
+        calcode: Option<&Bound<'_, PyAny>>,
+        fieldcenter: Option<&Bound<'_, PyAny>>,
+        xmosp: Option<&Bound<'_, PyAny>>,
+        ymosp: Option<&Bound<'_, PyAny>>,
+        mosspacing: Option<&Bound<'_, PyAny>>,
+        distance: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        stubs::not_yet_implemented("setmosaicfield")
+    }
+
+    /// Not yet implemented in casa-rs.
+    #[allow(unused_variables)]
+    #[pyo3(
+        signature = (spwid = None, fieldid = None, msselect = None),
+        text_signature = "($self, spwid=[0], fieldid=[0], msselect='')"
+    )]
+    fn setdata(
+        &self,
+        spwid: Option<&Bound<'_, PyAny>>,
+        fieldid: Option<&Bound<'_, PyAny>>,
+        msselect: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        stubs::not_yet_implemented("setdata")
+    }
+
+    /// Not yet implemented in casa-rs.
+    #[allow(unused_variables)]
+    #[pyo3(
+        signature = (imagename = None, complist = None, incremental = None),
+        text_signature = "($self, imagename=[], complist='', incremental=False)"
+    )]
+    fn predict(
+        &self,
+        imagename: Option<&Bound<'_, PyAny>>,
+        complist: Option<&Bound<'_, PyAny>>,
+        incremental: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        stubs::not_yet_implemented("predict")
+    }
+
+    /// Not yet implemented in casa-rs.
+    #[allow(unused_variables, clippy::too_many_arguments)]
+    #[pyo3(
+        signature = (
+            ftmachine = None, cache = None, tile = None, gridfunction = None, location = None,
+            padding = None, facets = None, maxdata = None, wprojplanes = None
+        ),
+        text_signature = "($self, ftmachine='ft', cache=0, tile=16, gridfunction='SF', location=[], padding=1.3, facets=1, maxdata=2000.0, wprojplanes=1)"
+    )]
+    fn setoptions(
+        &self,
+        ftmachine: Option<&Bound<'_, PyAny>>,
+        cache: Option<&Bound<'_, PyAny>>,
+        tile: Option<&Bound<'_, PyAny>>,
+        gridfunction: Option<&Bound<'_, PyAny>>,
+        location: Option<&Bound<'_, PyAny>>,
+        padding: Option<&Bound<'_, PyAny>>,
+        facets: Option<&Bound<'_, PyAny>>,
+        maxdata: Option<&Bound<'_, PyAny>>,
+        wprojplanes: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        stubs::not_yet_implemented("setoptions")
+    }
+
+    /// Not yet implemented in casa-rs.
+    #[allow(unused_variables, clippy::too_many_arguments)]
+    #[pyo3(
+        signature = (
+            dovp = None, usedefaultvp = None, vptable = None, dosquint = None,
+            parangleinc = None, skyposthreshold = None, pblimit = None
+        ),
+        text_signature = "($self, dovp=True, usedefaultvp=True, vptable='', dosquint=True, parangleinc=[], skyposthreshold=[], pblimit=0.01)"
+    )]
+    fn setvp(
+        &self,
+        dovp: Option<&Bound<'_, PyAny>>,
+        usedefaultvp: Option<&Bound<'_, PyAny>>,
+        vptable: Option<&Bound<'_, PyAny>>,
+        dosquint: Option<&Bound<'_, PyAny>>,
+        parangleinc: Option<&Bound<'_, PyAny>>,
+        skyposthreshold: Option<&Bound<'_, PyAny>>,
+        pblimit: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        stubs::not_yet_implemented("setvp")
+    }
+
+    /// Not yet implemented in casa-rs.
+    fn corrupt(&self) -> PyResult<bool> {
+        stubs::not_yet_implemented("corrupt")
+    }
+
+    /// Not yet implemented in casa-rs.
+    fn reset(&self) -> PyResult<bool> {
+        stubs::not_yet_implemented("reset")
+    }
+
+    /// Disabled in CASA: logs CASA's error and returns `False`.
+    #[allow(unused_variables)]
+    #[pyo3(
+        signature = (mode = None, table = None, interval = None, amplitude = None),
+        text_signature = "($self, mode='calculate', table='', interval=[], amplitude=[0.0])"
+    )]
+    fn setbandpass(
+        &self,
+        py: Python<'_>,
+        mode: Option<&Bound<'_, PyAny>>,
+        table: Option<&Bound<'_, PyAny>>,
+        interval: Option<&Bound<'_, PyAny>>,
+        amplitude: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        stubs::disabled_in_casa(self, py)
+    }
+
+    /// Not yet implemented in casa-rs.
+    #[allow(unused_variables, clippy::too_many_arguments)]
+    #[pyo3(
+        signature = (
+            table = None, r#type = None, t = None, field = None, interp = None, calwt = None,
+            spwmap = None, opacity = None
+        ),
+        text_signature = "($self, table='', type='', t=0.0, field=[], interp='linear', calwt=False, spwmap=[-1], opacity=0.0)"
+    )]
+    fn setapply(
+        &self,
+        table: Option<&Bound<'_, PyAny>>,
+        r#type: Option<&Bound<'_, PyAny>>,
+        t: Option<&Bound<'_, PyAny>>,
+        field: Option<&Bound<'_, PyAny>>,
+        interp: Option<&Bound<'_, PyAny>>,
+        calwt: Option<&Bound<'_, PyAny>>,
+        spwmap: Option<&Bound<'_, PyAny>>,
+        opacity: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        stubs::not_yet_implemented("setapply")
+    }
+
+    /// Not yet implemented in casa-rs.
+    #[allow(unused_variables)]
+    #[pyo3(
+        signature = (mode = None, table = None, interval = None, amplitude = None),
+        text_signature = "($self, mode='fbm', table='', interval=[], amplitude=[0.01])"
+    )]
+    fn setgain(
+        &self,
+        mode: Option<&Bound<'_, PyAny>>,
+        table: Option<&Bound<'_, PyAny>>,
+        interval: Option<&Bound<'_, PyAny>>,
+        amplitude: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        stubs::not_yet_implemented("setgain")
+    }
+
+    /// Not yet implemented in casa-rs.
+    #[allow(unused_variables, clippy::too_many_arguments)]
+    #[pyo3(
+        signature = (
+            mode = None, table = None, pwv = None, deltapwv = None, beta = None,
+            windspeed = None, simint = None
+        ),
+        text_signature = "($self, mode='screen', table='', pwv=3.0, deltapwv=0.15, beta=1.1, windspeed=7.0, simint=-1.0)"
+    )]
+    fn settrop(
+        &self,
+        mode: Option<&Bound<'_, PyAny>>,
+        table: Option<&Bound<'_, PyAny>>,
+        pwv: Option<&Bound<'_, PyAny>>,
+        deltapwv: Option<&Bound<'_, PyAny>>,
+        beta: Option<&Bound<'_, PyAny>>,
+        windspeed: Option<&Bound<'_, PyAny>>,
+        simint: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        stubs::not_yet_implemented("settrop")
+    }
+
+    /// Disabled in CASA: logs CASA's error and returns `False`.
+    #[allow(unused_variables)]
+    #[pyo3(
+        signature = (epjtablename = None, applypointingoffsets = None, dopbcorrection = None),
+        text_signature = "($self, epjtablename='', applypointingoffsets=False, dopbcorrection=False)"
+    )]
+    fn setpointingerror(
+        &self,
+        py: Python<'_>,
+        epjtablename: Option<&Bound<'_, PyAny>>,
+        applypointingoffsets: Option<&Bound<'_, PyAny>>,
+        dopbcorrection: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        stubs::disabled_in_casa(self, py)
+    }
+
+    /// Not yet implemented in casa-rs.
+    #[allow(unused_variables)]
+    #[pyo3(
+        signature = (mode = None, table = None, amplitude = None, offset = None),
+        text_signature = "($self, mode='constant', table='', amplitude=[0.01], offset=[0.0])"
+    )]
+    fn setleakage(
+        &self,
+        mode: Option<&Bound<'_, PyAny>>,
+        table: Option<&Bound<'_, PyAny>>,
+        amplitude: Option<&Bound<'_, PyAny>>,
+        offset: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        stubs::not_yet_implemented("setleakage")
+    }
+
+    /// Deprecated in CASA; casa-rs provides `setnoise` instead.
+    #[allow(unused_variables, clippy::too_many_arguments)]
+    #[pyo3(
+        signature = (
+            mode = None, table = None, simplenoise = None, antefficiency = None,
+            correfficiency = None, spillefficiency = None, tau = None, trx = None, tatmos = None,
+            tcmb = None
+        ),
+        text_signature = "($self, mode='calculate', table='', simplenoise=[], antefficiency=0.8, correfficiency=0.85, spillefficiency=0.85, tau=0.1, trx=50.0, tatmos=230.0, tcmb=2.7)"
+    )]
+    fn oldsetnoise(
+        &self,
+        mode: Option<&Bound<'_, PyAny>>,
+        table: Option<&Bound<'_, PyAny>>,
+        simplenoise: Option<&Bound<'_, PyAny>>,
+        antefficiency: Option<&Bound<'_, PyAny>>,
+        correfficiency: Option<&Bound<'_, PyAny>>,
+        spillefficiency: Option<&Bound<'_, PyAny>>,
+        tau: Option<&Bound<'_, PyAny>>,
+        trx: Option<&Bound<'_, PyAny>>,
+        tatmos: Option<&Bound<'_, PyAny>>,
+        tcmb: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        stubs::deprecated_oldsetnoise()
+    }
+
+    /// Not yet implemented in casa-rs.
+    #[allow(unused_variables, non_snake_case, clippy::too_many_arguments)]
+    #[pyo3(
+        signature = (
+            mode = None, table = None, simplenoise = None, pground = None, relhum = None,
+            altitude = None, waterheight = None, pwv = None, tatmos = None, tau = None,
+            antefficiency = None, spillefficiency = None, correfficiency = None, trx = None,
+            tground = None, tcmb = None, OTF = None, senscoeff = None, rxtype = None
+        ),
+        text_signature = "($self, mode='simplenoise', table='', simplenoise=[], pground=[], relhum=20.0, altitude=[], waterheight=[], pwv=[], tatmos=250.0, tau=0.1, antefficiency=0.8, spillefficiency=0.85, correfficiency=0.88, trx=50.0, tground=270.0, tcmb=2.73, OTF=True, senscoeff=0.0, rxtype=0)"
+    )]
+    fn setnoise(
+        &self,
+        mode: Option<&Bound<'_, PyAny>>,
+        table: Option<&Bound<'_, PyAny>>,
+        simplenoise: Option<&Bound<'_, PyAny>>,
+        pground: Option<&Bound<'_, PyAny>>,
+        relhum: Option<&Bound<'_, PyAny>>,
+        altitude: Option<&Bound<'_, PyAny>>,
+        waterheight: Option<&Bound<'_, PyAny>>,
+        pwv: Option<&Bound<'_, PyAny>>,
+        tatmos: Option<&Bound<'_, PyAny>>,
+        tau: Option<&Bound<'_, PyAny>>,
+        antefficiency: Option<&Bound<'_, PyAny>>,
+        spillefficiency: Option<&Bound<'_, PyAny>>,
+        correfficiency: Option<&Bound<'_, PyAny>>,
+        trx: Option<&Bound<'_, PyAny>>,
+        tground: Option<&Bound<'_, PyAny>>,
+        tcmb: Option<&Bound<'_, PyAny>>,
+        OTF: Option<&Bound<'_, PyAny>>,
+        senscoeff: Option<&Bound<'_, PyAny>>,
+        rxtype: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        stubs::not_yet_implemented("setnoise")
+    }
+
+    /// Disabled in CASA: logs CASA's error and returns `False`.
+    #[allow(unused_variables)]
+    #[pyo3(
+        signature = (mode = None, table = None, interval = None),
+        text_signature = "($self, mode='calculate', table='', interval=[])"
+    )]
+    fn setpa(
+        &self,
+        py: Python<'_>,
+        mode: Option<&Bound<'_, PyAny>>,
+        table: Option<&Bound<'_, PyAny>>,
+        interval: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        stubs::disabled_in_casa(self, py)
+    }
+
+    /// Not yet implemented in casa-rs.
+    #[allow(unused_variables)]
+    #[pyo3(signature = (seed = None), text_signature = "($self, seed=185349251)")]
+    fn setseed(&self, seed: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
+        stubs::not_yet_implemented("setseed")
+    }
+}

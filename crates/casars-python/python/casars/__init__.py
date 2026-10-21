@@ -23,15 +23,16 @@ __all__ = [
     "data",
     "parameters",
     "tasks",
+    "tools",
     "__version__",
 ]
 
 
 def __getattr__(name: str) -> Any:
-    """Load the data surface lazily so task wrappers work without `_core`."""
+    """Load the data and tool surfaces lazily so task wrappers work without `_core`."""
 
-    if name == "imexplore":
-        return import_module(".imexplore", __name__)
+    if name in {"imexplore", "tools"}:
+        return import_module(f".{name}", __name__)
     if name in {"data", "Image", "Table"}:
         data_module = import_module(".data", __name__)
 

@@ -686,6 +686,7 @@ dependencies = [
  "casa-coordinates",
  "casa-images",
  "casa-provider-contracts",
+ "casa-simulation",
  "casa-tables",
  "casa-types",
  "casars-frontend-services",
