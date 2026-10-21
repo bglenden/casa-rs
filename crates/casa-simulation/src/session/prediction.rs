@@ -19,9 +19,9 @@
 //! degrids them into the rows it writes.
 //!
 //! Divergences: CASA rewrites the model image's spectral units and frame in
-//! place; casa-rs never writes it. MODEL_DATA and CORRECTED_DATA are not
-//! written (plan decision 6), even for an incremental predict, whose sum CASA
-//! forms through MODEL_DATA.
+//! place; casa-rs never writes it (`docs/CASA (C++) bugs.md`). MODEL_DATA
+//! and CORRECTED_DATA are not written (plan decision 6), even for an
+//! incremental predict, whose sum CASA forms through MODEL_DATA.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -69,7 +69,10 @@ impl PredictSpec {
 
     /// The check casatools' binding makes before `Simulator::predict`, even
     /// before `open`: every named image exists and opens as an image
-    /// (`ImageFactory::fromFile`).
+    /// (`ImageFactory::fromFile`). Here it must open as the simulator reads
+    /// it, a CASA image of `Float` pixels: CASA's binding also accepts FITS
+    /// and complex images, which its simulator then refuses with `False`
+    /// (`docs/CASA (C++) bugs.md`).
     ///
     /// # Errors
     ///

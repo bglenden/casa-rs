@@ -17,6 +17,12 @@
 //! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`Simulator::set_vp`], [`predict::PrimaryBeam`] |
 //! | `sm.setseed`, `sm.setnoise(mode='simplenoise')`, `sm.corrupt`, `sm.reset` | [`Simulator::set_seed`], [`Simulator::set_noise`], [`Simulator::corrupt`], [`Simulator::reset`] |
 //! | `simutil.readantenna(antab)` | [`readantenna::read_antenna_config`] |
+//!
+//! CASA's `sm` has no execution controls; a session's memory budget, workers
+//! and backend ([`ExecutionControls`], [`SessionResources`]) are the Python
+//! tool's constructor arguments. `close` predicts a model on the CPU or the
+//! host's Metal device and draws noise on the CPU. Where the session departs
+//! from CASA is recorded in `docs/CASA (C++) bugs.md`.
 
 mod corrupt;
 pub mod predict;

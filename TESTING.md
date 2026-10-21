@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-10-20
+Last reality check: 2026-10-21
 Verification: just verify
 
 ## Test categories
@@ -253,6 +253,16 @@ waves) and T1's `metal::` cases. Each compares Metal with the CPU on the same
 input. On a host without a unified-memory Metal 3 device these laws print
 `skipped: no Metal device` and pass, so a Metal gate must run outside command
 sandboxes on Apple silicon; a skip is not evidence that a Metal workload ran.
+
+The simulator has its own Metal law: `cargo nextest run -p casa-simulation
+--test backends --no-capture`, outside the sandbox, predicts sessions on both
+backends and prints each case's `max |metal − cpu| / max |cpu|` (the T0 limit
+is `1e-4`). Its casacore interop test,
+`cargo nextest run -p casa-simulation --features cpp-interop-tests --test
+simulator_cpp_interop`, needs `pkg-config casacore`: C++ casacore digests
+the MeasurementSets the session writes, and the digests must equal casa-rs's.
+Its counting law (`--test session_memory`) runs alone in a process of its
+own, as the other counting laws do.
 
 Large spectral-cube storage changes additionally run the sparse logical-capacity
 test and the explicit release throughput guard:
