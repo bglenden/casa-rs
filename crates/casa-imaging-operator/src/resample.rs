@@ -360,7 +360,8 @@ fn sample_flagged(row: &NativeRow<'_>, npol: usize, source: Source) -> bool {
 
 /// Whether `row` correlates an antenna with itself, which CASA's imaging
 /// `GridFT` neither grids nor degrids (`GridFT::put`/`get` flag the row
-/// when `usezero` is false, as tclean builds it).
+/// when `usezero` is false, as tclean builds it). A resampler
+/// [`SpectralResampler::predicting_autocorrelations`] still predicts it.
 fn is_autocorrelation(row: &NativeRow<'_>) -> bool {
     row.context.antennas[0] == row.context.antennas[1]
 }
@@ -560,6 +561,9 @@ impl WeightSlots<'_> {
 pub struct SpectralResampler {
     sampling: Sampling,
     basis: Basis,
+    /// Whether a prediction degrids autocorrelation rows
+    /// ([`Self::predicting_autocorrelations`]).
+    autocorrelations: bool,
 }
 
 impl SpectralResampler {
@@ -574,6 +578,7 @@ impl SpectralResampler {
         Ok(Self {
             sampling: Sampling::Direct,
             basis,
+            autocorrelations: false,
         })
     }
 
@@ -589,7 +594,30 @@ impl SpectralResampler {
             basis: Basis::ChannelLocal {
                 planes: output.channels,
             },
+            autocorrelations: false,
         }
+    }
+
+    /// This resampler, predicting autocorrelation rows as well: each is
+    /// degridded at its own `uvw` like any other row, which for a baseline
+    /// of zero length is the model's zero spacing. CASA's simulator builds
+    /// its `GridFT` with `usezero` true and so predicts them
+    /// (`Simulator::createSkyEquation`; `GridFT::get` flags them only when
+    /// `usezero` is false, as tclean's does). Gridding never places them
+    /// ([`Self::place`]), and without this a prediction gives them zero.
+    #[must_use]
+    pub const fn predicting_autocorrelations(self) -> Self {
+        Self {
+            autocorrelations: true,
+            ..self
+        }
+    }
+
+    /// Whether predictions degrid autocorrelation rows
+    /// ([`Self::predicting_autocorrelations`]).
+    #[must_use]
+    pub const fn predicts_autocorrelations(&self) -> bool {
+        self.autocorrelations
     }
 
     /// Whether every native channel is one sample on its own
@@ -680,6 +708,7 @@ impl SpectralResampler {
             basis: Basis::ChannelLocal {
                 planes: axis.channels,
             },
+            ..*self
         })
     }
 

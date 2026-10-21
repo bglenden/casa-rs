@@ -9,7 +9,7 @@ use crate::accumulator::{
     AccumulatorLayout, GridAccumulator, GridPrecision, GridScalar, GridStorage, Mode, ModeSet,
     PlaneRange, Tile,
 };
-use crate::backend::PreparedModelGrids;
+use crate::backend::{ModelPlaneGrids, PlaneCells, PreparedModelGrids};
 use crate::convolution::{CellHold, ConvolutionFunctionSet};
 use crate::error::OperatorError;
 use crate::fft::PlaneFft;
@@ -336,116 +336,174 @@ impl MeasurementOperator {
 
     /// Prepare `model` for degridding: expand requested polarizations to
     /// grid planes, multiply by `prescale` and the correction, embed in the
-    /// padded grid and transform forward.
+    /// padded grid and transform forward. This is
+    /// [`Self::empty_model_grids`] for the model's planes, each then filled
+    /// by [`Self::fill_model_plane`] in turn.
     pub fn prepare_model(
         &self,
         model: &ModelImages,
         prescale: ModelPrescale<'_>,
     ) -> Result<PreparedModelGrids, OperatorError> {
-        let planes = PlaneRange::new(
-            model.first_plane,
-            model.first_plane + model.planes.len() as u32,
-        );
+        let planes = u32::try_from(model.planes.len())
+            .ok()
+            .and_then(|count| model.first_plane.checked_add(count))
+            .ok_or(OperatorError::ModelShape {
+                reason: "plane range exceeds the basis",
+            })?;
+        if let ModelPrescale::Planes(factors) = prescale
+            && factors.len() != model.planes.len()
+        {
+            return Err(OperatorError::ModelShape {
+                reason: "one prescale image per model plane",
+            });
+        }
+        let mut grids = self.empty_model_grids(PlaneRange::new(model.first_plane, planes))?;
+        for (index, (plane, target)) in model.planes.iter().zip(grids.planes_mut()).enumerate() {
+            let factor = match prescale {
+                ModelPrescale::Unit => None,
+                ModelPrescale::Planes(factors) => Some(&factors[index]),
+            };
+            self.fill_model_plane(plane, factor, target)?;
+        }
+        Ok(grids)
+    }
+
+    /// Zeroed model grids for `planes`, in the operator's precision, whose
+    /// planes [`Self::fill_model_plane`] fills one at a time
+    /// ([`PreparedModelGrids::planes_mut`]). They hold
+    /// [`PreparedModelGrids::bytes`], which a caller admits before it calls
+    /// this.
+    ///
+    /// # Errors
+    ///
+    /// [`OperatorError::ModelShape`] when `planes` reaches past the basis.
+    pub fn empty_model_grids(
+        &self,
+        planes: PlaneRange,
+    ) -> Result<PreparedModelGrids, OperatorError> {
         if planes.end > self.basis.planes() {
             return Err(OperatorError::ModelShape {
                 reason: "plane range exceeds the basis",
             });
         }
-        let terms = self.basis.data_terms();
-        let requested = self.polarization.requested().len();
-        let image_shape = self.geometry.image().shape;
-        let expected = [image_shape[1], image_shape[0]];
-        for plane in &model.planes {
-            if plane.images.len() != terms * requested {
-                return Err(OperatorError::ModelShape {
-                    reason: "images per plane must be terms × requested polarizations",
-                });
-            }
-            if plane.images.iter().any(|image| image.shape() != expected) {
-                return Err(OperatorError::ModelShape {
-                    reason: "image shape must be [ny, nx] of the image extent",
-                });
-            }
-        }
-        if let ModelPrescale::Planes(factors) = prescale {
-            if factors.len() != model.planes.len() {
-                return Err(OperatorError::ModelShape {
-                    reason: "one prescale image per model plane",
-                });
-            }
-            if factors.iter().any(|factor| factor.shape() != expected) {
-                return Err(OperatorError::ModelShape {
-                    reason: "prescale image shape must be [ny, nx] of the image extent",
-                });
-            }
-        }
-        let layout = AccumulatorLayout::new(
+        let layout = self.model_layout(planes);
+        let storage = GridStorage::zeros(self.precision, layout.cells());
+        Ok(PreparedModelGrids::new(layout, storage))
+    }
+
+    /// The layout of model grids over `planes`: the data terms of every
+    /// grid polarization over the whole grid.
+    fn model_layout(&self, planes: PlaneRange) -> AccumulatorLayout {
+        AccumulatorLayout::new(
             self.geometry.clone(),
             planes,
             self.polarization.grid_pols(),
             ModeSet::DATA,
-            terms,
+            self.basis.data_terms(),
             self.basis.psf_terms(),
             None,
-        );
-        let storage = match self.precision {
-            GridPrecision::F32 => {
-                GridStorage::F32(self.model_grids::<f32>(&layout, model, prescale)?)
-            }
-            GridPrecision::F64 => {
-                GridStorage::F64(self.model_grids::<f64>(&layout, model, prescale)?)
-            }
-        };
-        Ok(PreparedModelGrids::new(layout, storage))
+        )
     }
 
-    fn model_grids<T: GridScalar>(
+    /// Fill one plane's model grids `grids` from that plane's model images
+    /// `plane` (term-major, polarization-minor, as [`ModelPlane`] holds
+    /// them): expand the requested polarizations to grid polarizations,
+    /// multiply by the plane's `prescale` and the correction, embed in the
+    /// padded grid and transform forward, as [`Self::prepare_model`] does
+    /// for each plane. Everything the grids held before is replaced.
+    ///
+    /// # Errors
+    ///
+    /// [`OperatorError::ModelShape`] when the images or the prescale are
+    /// not of the image extent, when `plane` has another number of images
+    /// than terms × requested polarizations, or when `grids` were made for
+    /// another operator's grid, polarizations, terms or precision; a
+    /// transform failure.
+    pub fn fill_model_plane(
+        &self,
+        plane: &ModelPlane,
+        prescale: Option<&Array2<f32>>,
+        grids: ModelPlaneGrids<'_>,
+    ) -> Result<(), OperatorError> {
+        let terms = self.basis.data_terms();
+        let requested = self.polarization.requested().len();
+        let image_shape = self.geometry.image().shape;
+        let expected = [image_shape[1], image_shape[0]];
+        if plane.images.len() != terms * requested {
+            return Err(OperatorError::ModelShape {
+                reason: "images per plane must be terms × requested polarizations",
+            });
+        }
+        if plane.images.iter().any(|image| image.shape() != expected) {
+            return Err(OperatorError::ModelShape {
+                reason: "image shape must be [ny, nx] of the image extent",
+            });
+        }
+        if prescale.is_some_and(|factor| factor.shape() != expected) {
+            return Err(OperatorError::ModelShape {
+                reason: "prescale image shape must be [ny, nx] of the image extent",
+            });
+        }
+        let layout = grids.layout;
+        if *layout != self.model_layout(layout.planes()) {
+            return Err(OperatorError::ModelShape {
+                reason: "the model grids were made for another operator",
+            });
+        }
+        match (grids.cells, self.precision) {
+            (PlaneCells::F32(cells), GridPrecision::F32) => {
+                self.fill_plane_cells(layout, plane, prescale, cells)
+            }
+            (PlaneCells::F64(cells), GridPrecision::F64) => {
+                self.fill_plane_cells(layout, plane, prescale, cells)
+            }
+            _ => Err(OperatorError::ModelShape {
+                reason: "the model grids were made for another operator",
+            }),
+        }
+    }
+
+    /// [`Self::fill_model_plane`] on the plane's `[pol][term][y][x]` cells.
+    fn fill_plane_cells<T: GridScalar>(
         &self,
         layout: &AccumulatorLayout,
-        model: &ModelImages,
-        prescale: ModelPrescale<'_>,
-    ) -> Result<Vec<Complex<T>>, OperatorError> {
+        plane: &ModelPlane,
+        factor: Option<&Array2<f32>>,
+        cells: &mut [Complex<T>],
+    ) -> Result<(), OperatorError> {
         let [nx, ny] = self.geometry.grid_shape();
         let [ix, iy] = self.geometry.image_origin();
         let image_shape = self.geometry.image().shape;
         let correction = self.cf.image_correction();
         let requested = self.polarization.requested().len();
-        let gpols = self.polarization.grid_pols();
-        let terms = layout.terms();
         let mut fft = PlaneFft::<T>::new([nx, ny], self.measured_fft())?;
-        let mut cells = vec![Complex::<T>::default(); layout.cells()];
-        for (plane_local, plane) in model.planes.iter().enumerate() {
-            let factor = match prescale {
-                ModelPrescale::Unit => None,
-                ModelPrescale::Planes(factors) => Some(&factors[plane_local]),
-            };
-            for term in 0..terms {
-                for gpol in 0..gpols {
-                    let offset = layout.block_offset(plane_local, gpol, term);
-                    let grid = &mut cells[offset..offset + layout.block_cells()];
-                    for y in 0..image_shape[1] {
-                        for x in 0..image_shape[0] {
-                            let mut value = Complex64::default();
-                            for pol in 0..requested {
-                                let coefficient = self.polarization.from_requested(gpol, pol);
-                                if coefficient != Complex64::default() {
-                                    value += coefficient
-                                        * f64::from(plane.images[term * requested + pol][(y, x)]);
-                                }
+        for term in 0..layout.terms() {
+            for gpol in 0..layout.pols() {
+                let offset = layout.block_offset(0, gpol, term);
+                let grid = &mut cells[offset..offset + layout.block_cells()];
+                grid.fill(Complex::default());
+                for y in 0..image_shape[1] {
+                    for x in 0..image_shape[0] {
+                        let mut value = Complex64::default();
+                        for pol in 0..requested {
+                            let coefficient = self.polarization.from_requested(gpol, pol);
+                            if coefficient != Complex64::default() {
+                                value += coefficient
+                                    * f64::from(plane.images[term * requested + pol][(y, x)]);
                             }
-                            if let Some(factor) = factor {
-                                value *= f64::from(factor[(y, x)]);
-                            }
-                            value *= correction.model_at(ix + x, iy + y);
-                            grid[(iy + y) * nx + ix + x] =
-                                Complex::new(T::from_f64(value.re), T::from_f64(value.im));
                         }
+                        if let Some(factor) = factor {
+                            value *= f64::from(factor[(y, x)]);
+                        }
+                        value *= correction.model_at(ix + x, iy + y);
+                        grid[(iy + y) * nx + ix + x] =
+                            Complex::new(T::from_f64(value.re), T::from_f64(value.im));
                     }
-                    fft.transform(grid, false)?;
                 }
+                fft.transform(grid, false)?;
             }
         }
-        Ok(cells)
+        Ok(())
     }
 
     /// Transform an accumulator to unnormalised images: inverse FFT,
