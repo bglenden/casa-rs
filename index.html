@@ -784,7 +784,9 @@ Verification: just docs-check</p>
 <h2 id="user-surfaces">User Surfaces<a class="headerlink" href="#user-surfaces" title="Permanent link">&para;</a></h2>
 <p>casa-rs is used from the Python package <code>casars</code> and the headless <code>casars</code>
 task host (<code>casars run</code>, <code>casars params</code>); see
-<a href="adr/0017-python-first-surface/">ADR-0017</a>.</p>
+<a href="adr/0017-python-first-surface/">ADR-0017</a>. All computation is in Rust,
+and the Python package is only its interface; see
+<a href="adr/0018-rust-computes-python-is-the-interface/">ADR-0018</a>.</p>
 <ul>
 <li><a href="python/"><code>python/index.md</code></a></li>
 <li>the Python package: data access, tasks, parameters, and plotting</li>
