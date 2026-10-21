@@ -853,14 +853,40 @@ idiomatic Rust request.</p>
 <h3 id="object-surfaces">Object Surfaces<a class="headerlink" href="#object-surfaces" title="Permanent link">&para;</a></h3>
 <p>Object surfaces expose stateful handles with constructors, properties, methods,
 and lifecycle operations.</p>
-<p>Examples:</p>
+<p>The object surfaces are:</p>
 <ul>
 <li><code>casars.data.Image</code></li>
 <li><code>casars.data.Table</code></li>
+<li><code>casars.tools.simulator</code>, CASA's <code>sm</code> tool (ADR-0019)</li>
+<li><code>casars.tools.measures</code>, CASA's <code>me</code> tool</li>
+<li><code>casars.tools.quanta</code>, CASA's <code>qa</code> tool</li>
 </ul>
-<p>These are persistent data access APIs used in-process from Rust or Python.
-They are not forced into the task-binary model and have no standalone
-executable.</p>
+<p>The <code>casars.data</code> classes are persistent data access APIs; the <code>casars.tools</code>
+classes are CASA tools with CASA's method names, parameter order and
+effective defaults. All are used in-process from Python, are not forced into
+the task-binary model and have no standalone executable. One bundle,
+<code>casars_data_objects</code> (<code>casars.data.schema_bundle()</code>, protocol version 1),
+describes them all; its tool entries all come from one list of the
+<code>casars.tools</code> classes, and each names its own module in its projection
+entry (<a href="../python/versioning/">Compatibility</a>).
+<code>casars.simutil</code>, a port of CASA's <code>simutil</code> helper class rather than a CASA
+tool, is not an object surface and is not in the bundle.</p>
+<p>A CASA tool's entry carries:</p>
+<ul>
+<li>each method's parameters as a JSON Schema object whose properties give the
+  value kind and the installed CASA binding's default (a parameter without a
+  default is <code>required</code>); CASA's <code>any</code> parameters refer to the shared
+  <code>CasaQuantityArgument</code> and <code>CasaMeasureArgument</code> components, and its
+  <code>record</code> parameters are JSON objects;</li>
+<li>each method's result kind (a boolean, string, record, list of strings or
+  array of numbers);</li>
+<li>in <code>projections.python</code>, the tool's module and class and the parameter
+  order of its constructor (keyword-only casa-rs controls) and of each
+  method, which JSON Schema's properties do not keep;</li>
+<li>in <code>annotations.python</code>, whether casa-rs implements each method.</li>
+</ul>
+<p>The Python tests compare each tool's entry with <code>inspect.signature</code> of the
+class and with the installed CASA binding.</p>
 <p>Machine-facing shape:</p>
 <ul>
 <li>a versioned schema bundle describing constructors, properties, methods, and
@@ -1052,10 +1078,13 @@ a second default or migration implementation.</p>
 <li><code>imhead</code> and <code>imstat</code>: task surfaces served by <code>imexplore</code></li>
 <li><code>casars.data.Image</code>: object surface</li>
 <li><code>casars.data.Table</code>: object surface</li>
+<li><code>casars.tools.simulator</code>: object surface</li>
+<li><code>casars.tools.measures</code>: object surface</li>
+<li><code>casars.tools.quanta</code>: object surface</li>
 </ul>
 <p>All 27 catalog surfaces have task definitions; the
 <a href="../reference/task-parameters/">generated parameter reference</a> lists them. The
-<code>casars</code> task host and the two object surfaces are not parameter-profile
+<code>casars</code> task host and the five object surfaces are not parameter-profile
 surfaces.</p>
 <h2 id="implementation-guidance">Implementation Guidance<a class="headerlink" href="#implementation-guidance" title="Permanent link">&para;</a></h2>
 <ul>

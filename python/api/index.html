@@ -1452,6 +1452,50 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#casarstools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        casars.tools
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tools
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casarssimutil" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        casars.simutil
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.simutil" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simutil
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2331,6 +2375,50 @@
     <span class="md-ellipsis">
       
         split
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casarstools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        casars.tools
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tools
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casarssimutil" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        casars.simutil
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#casars.simutil" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simutil
       
     </span>
   </a>
@@ -8288,6 +8376,107 @@ stderr are retained on the returned completion and on
     </div>
 
 </div>
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="casarstools"><code>casars.tools</code><a class="headerlink" href="#casarstools" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-module">
+
+
+
+<a id="casars.tools"></a>
+    <div class="doc doc-contents first">
+
+        <p>CASA tools for casa-rs, under CASA's class names (ADR-0019).</p>
+<p>A CASA script changes only its imports::</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars.tools</span><span class="w"> </span><span class="kn">import</span> <span class="n">measures</span><span class="p">,</span> <span class="n">quanta</span><span class="p">,</span> <span class="n">simulator</span>
+
+<span class="n">me</span> <span class="o">=</span> <span class="n">measures</span><span class="p">()</span>
+<span class="n">sm</span> <span class="o">=</span> <span class="n">simulator</span><span class="p">()</span>
+<span class="n">sm</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">"sim.ms"</span><span class="p">)</span>
+<span class="n">sm</span><span class="o">.</span><span class="n">setconfig</span><span class="p">(</span><span class="n">referencelocation</span><span class="o">=</span><span class="n">me</span><span class="o">.</span><span class="n">observatory</span><span class="p">(</span><span class="s2">"VLA"</span><span class="p">),</span> <span class="o">...</span><span class="p">)</span>
+</code></pre></div>
+
+<p>Each tool is a class in the <code>casars._core</code> extension, with CASA's method
+names, parameter order and defaults declared in Rust. This module adds only
+the module path.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div><h2 id="casarssimutil"><code>casars.simutil</code><a class="headerlink" href="#casarssimutil" title="Permanent link">&para;</a></h2>
+
+
+<div class="doc doc-object doc-module">
+
+
+
+<a id="casars.simutil"></a>
+    <div class="doc doc-contents first">
+
+        <p>CASA's <code>simutil</code> helper class for casa-rs.</p>
+<p>A CASA script changes only its import::</p>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">casars</span><span class="w"> </span><span class="kn">import</span> <span class="n">simutil</span>
+
+<span class="n">u</span> <span class="o">=</span> <span class="n">simutil</span><span class="o">.</span><span class="n">simutil</span><span class="p">()</span>
+<span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">z</span><span class="p">,</span> <span class="n">d</span><span class="p">,</span> <span class="n">padnames</span><span class="p">,</span> <span class="n">antnames</span><span class="p">,</span> <span class="n">telescope</span><span class="p">,</span> <span class="n">posobs</span> <span class="o">=</span> <span class="n">u</span><span class="o">.</span><span class="n">readantenna</span><span class="p">(</span><span class="s2">"vla.d.cfg"</span><span class="p">)</span>
+</code></pre></div>
+
+<p>In CASA, <code>simutil</code> is a Python helper class in the private <code>simutil</code> module of
+CASA's task package, not a CASA tool, so it is not in <code>casars.tools</code> or in the
+object-surface bundle. casa-rs implements its <code>readantenna</code> in Rust (the class
+lives in the <code>casars._core</code> extension, ADR-0018); the rest of <code>simutil</code> comes
+with <code>simobserve</code>. <code>casars.simutil</code> is the class's public import: CASA's
+<code>private</code> path would mislabel a supported entry point.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
 
 
 

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["array","error","fields","observe","spectral"],"struct":["Simulator","SimulatorOptions"]};

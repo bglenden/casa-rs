@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CASA_SHADOW_FRACTION_LIMIT"],"enum":["ShadowedAntenna"],"fn":["shadowed_antennas"],"struct":["ProjectedBaseline"]};

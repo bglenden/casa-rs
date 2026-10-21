@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["labelled_table","measurement_set_manifest","table_row_digest","table_row_field_manifest","table_rows_digest"]};

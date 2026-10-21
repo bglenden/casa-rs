@@ -715,12 +715,19 @@
 
 
 <h1 id="python-support">Python Support<a class="headerlink" href="#python-support" title="Permanent link">&para;</a></h1>
-<p><code>casa-rs-python</code> installs as <code>casars</code> and separates three public concerns:</p>
+<p><code>casa-rs-python</code> installs as <code>casars</code> and separates four public concerns:</p>
 <ul>
 <li><code>casars.data</code> provides in-process access to persistent CASA-style images and
   tables.</li>
 <li><code>casars.tasks</code> provides higher-level task wrappers backed by the versioned
   provider binaries.</li>
+<li><code>casars.tools</code> provides CASA's tools as classes under CASA's names, with
+  CASA's methods, parameter order and defaults, so a CASA script changes only
+  its imports (ADR-0019): <code>simulator</code> (CASA's <code>sm</code>), <code>measures</code> (<code>me</code>) and
+  <code>quanta</code> (<code>qa</code>). Methods casa-rs does not implement yet raise
+  <code>NotImplementedError</code>. <code>casars.simutil</code> provides <code>readantenna</code> of CASA's
+  <code>simutil</code> helper class (<code>casatasks.private.simutil</code>), which is not a tool;
+  <code>from casars import simutil</code> is its public import.</li>
 <li><code>casars.parameters</code> is the accepted common API for typed task profiles
   described by ADR-0006 and the current-only option in ADR-0012.</li>
 </ul>
@@ -757,8 +764,9 @@ CASA-named keyword wrapper and typing stub per task. Their signatures
 deliberately use an unset sentinel instead of copying catalog defaults into
 Python.</p>
 <p>Generated UniFFI (<code>casars._frontend</code>, from <code>casars-frontend-services</code>) owns
-task, parameter, and result transport. PyO3 is retained only for the
-<code>casars.data.Image</code> and <code>casars.data.Table</code> NumPy object layer; the wheel still
+task, parameter, and result transport. PyO3 carries the in-process objects:
+the <code>casars.data.Image</code> and <code>casars.data.Table</code> NumPy object layer, the CASA
+tool classes of <code>casars.tools</code> and the <code>casars.simutil</code> class. The wheel still
 ships one native <code>_core</code> library rather than two competing application
 bindings.</p>
 <h2 id="plotting-and-image-inspection">Plotting and image inspection<a class="headerlink" href="#plotting-and-image-inspection" title="Permanent link">&para;</a></h2>

@@ -104,87 +104,88 @@
 <a href=#104 id=104 data-nosnippet>104</a>/// Returns [`SchemaError::DuplicateColumn`] if any two columns share the
 <a href=#105 id=105 data-nosnippet>105</a>/// same name.
 <a href=#106 id=106 data-nosnippet>106</a></span><span class="kw">pub fn </span>build_table_schema(columns: <span class="kw-2">&amp;</span>[ColumnDef]) -&gt; <span class="prelude-ty">Result</span>&lt;TableSchema, SchemaError&gt; {
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">let </span>col_schemas: Vec&lt;ColumnSchema&gt; = columns
-<a href=#108 id=108 data-nosnippet>108</a>        .iter()
-<a href=#109 id=109 data-nosnippet>109</a>        .map(|def| <span class="kw">match </span>def.column_kind {
-<a href=#110 id=110 data-nosnippet>110</a>            ColumnKind::Scalar =&gt; ColumnSchema::scalar(def.name, def.data_type),
-<a href=#111 id=111 data-nosnippet>111</a>            ColumnKind::FixedArray { shape } =&gt; {
-<a href=#112 id=112 data-nosnippet>112</a>                ColumnSchema::array_fixed(def.name, def.data_type, shape.to_vec())
-<a href=#113 id=113 data-nosnippet>113</a>            }
-<a href=#114 id=114 data-nosnippet>114</a>            ColumnKind::VariableArray { ndim } =&gt; {
-<a href=#115 id=115 data-nosnippet>115</a>                ColumnSchema::array_variable(def.name, def.data_type, <span class="prelude-val">Some</span>(ndim))
-<a href=#116 id=116 data-nosnippet>116</a>            }
-<a href=#117 id=117 data-nosnippet>117</a>        })
-<a href=#118 id=118 data-nosnippet>118</a>        .collect();
-<a href=#119 id=119 data-nosnippet>119</a>    TableSchema::new(col_schemas)
-<a href=#120 id=120 data-nosnippet>120</a>}
-<a href=#121 id=121 data-nosnippet>121</a>
-<a href=#122 id=122 data-nosnippet>122</a><span class="attr">#[cfg(test)]
-<a href=#123 id=123 data-nosnippet>123</a></span><span class="kw">mod </span>tests {
-<a href=#124 id=124 data-nosnippet>124</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#125 id=125 data-nosnippet>125</a>
-<a href=#126 id=126 data-nosnippet>126</a>    <span class="kw">const </span>TEST_COLS: <span class="kw-2">&amp;</span>[ColumnDef] = <span class="kw-2">&amp;</span>[
-<a href=#127 id=127 data-nosnippet>127</a>        ColumnDef {
-<a href=#128 id=128 data-nosnippet>128</a>            name: <span class="string">"COL_A"</span>,
-<a href=#129 id=129 data-nosnippet>129</a>            data_type: PrimitiveType::Int32,
-<a href=#130 id=130 data-nosnippet>130</a>            column_kind: ColumnKind::Scalar,
-<a href=#131 id=131 data-nosnippet>131</a>            unit: <span class="string">""</span>,
-<a href=#132 id=132 data-nosnippet>132</a>            measure_type: <span class="prelude-val">None</span>,
-<a href=#133 id=133 data-nosnippet>133</a>            measure_ref: <span class="string">""</span>,
-<a href=#134 id=134 data-nosnippet>134</a>            comment: <span class="string">"test scalar"</span>,
-<a href=#135 id=135 data-nosnippet>135</a>        },
-<a href=#136 id=136 data-nosnippet>136</a>        ColumnDef {
-<a href=#137 id=137 data-nosnippet>137</a>            name: <span class="string">"COL_B"</span>,
-<a href=#138 id=138 data-nosnippet>138</a>            data_type: PrimitiveType::Float64,
-<a href=#139 id=139 data-nosnippet>139</a>            column_kind: ColumnKind::FixedArray { shape: <span class="kw-2">&amp;</span>[<span class="number">3</span>] },
-<a href=#140 id=140 data-nosnippet>140</a>            unit: <span class="string">"m"</span>,
-<a href=#141 id=141 data-nosnippet>141</a>            measure_type: <span class="prelude-val">Some</span>(MeasureType::Position),
-<a href=#142 id=142 data-nosnippet>142</a>            measure_ref: <span class="string">"ITRF"</span>,
-<a href=#143 id=143 data-nosnippet>143</a>            comment: <span class="string">"test fixed array"</span>,
-<a href=#144 id=144 data-nosnippet>144</a>        },
-<a href=#145 id=145 data-nosnippet>145</a>        ColumnDef {
-<a href=#146 id=146 data-nosnippet>146</a>            name: <span class="string">"COL_C"</span>,
-<a href=#147 id=147 data-nosnippet>147</a>            data_type: PrimitiveType::Complex32,
-<a href=#148 id=148 data-nosnippet>148</a>            column_kind: ColumnKind::VariableArray { ndim: <span class="number">2 </span>},
-<a href=#149 id=149 data-nosnippet>149</a>            unit: <span class="string">""</span>,
-<a href=#150 id=150 data-nosnippet>150</a>            measure_type: <span class="prelude-val">None</span>,
-<a href=#151 id=151 data-nosnippet>151</a>            measure_ref: <span class="string">""</span>,
-<a href=#152 id=152 data-nosnippet>152</a>            comment: <span class="string">"test variable array"</span>,
-<a href=#153 id=153 data-nosnippet>153</a>        },
-<a href=#154 id=154 data-nosnippet>154</a>    ];
-<a href=#155 id=155 data-nosnippet>155</a>
-<a href=#156 id=156 data-nosnippet>156</a>    <span class="attr">#[test]
-<a href=#157 id=157 data-nosnippet>157</a>    </span><span class="kw">fn </span>build_schema_from_column_defs() {
-<a href=#158 id=158 data-nosnippet>158</a>        <span class="kw">let </span>schema = build_table_schema(TEST_COLS).expect(<span class="string">"valid schema"</span>);
-<a href=#159 id=159 data-nosnippet>159</a>        <span class="macro">assert_eq!</span>(schema.columns().len(), <span class="number">3</span>);
-<a href=#160 id=160 data-nosnippet>160</a>        <span class="macro">assert!</span>(schema.contains_column(<span class="string">"COL_A"</span>));
-<a href=#161 id=161 data-nosnippet>161</a>        <span class="macro">assert!</span>(schema.contains_column(<span class="string">"COL_B"</span>));
-<a href=#162 id=162 data-nosnippet>162</a>        <span class="macro">assert!</span>(schema.contains_column(<span class="string">"COL_C"</span>));
-<a href=#163 id=163 data-nosnippet>163</a>    }
-<a href=#164 id=164 data-nosnippet>164</a>
-<a href=#165 id=165 data-nosnippet>165</a>    <span class="attr">#[test]
-<a href=#166 id=166 data-nosnippet>166</a>    </span><span class="kw">fn </span>build_schema_rejects_duplicates() {
-<a href=#167 id=167 data-nosnippet>167</a>        <span class="kw">let </span>dups = <span class="kw-2">&amp;</span>[
-<a href=#168 id=168 data-nosnippet>168</a>            ColumnDef {
-<a href=#169 id=169 data-nosnippet>169</a>                name: <span class="string">"DUP"</span>,
-<a href=#170 id=170 data-nosnippet>170</a>                data_type: PrimitiveType::Int32,
-<a href=#171 id=171 data-nosnippet>171</a>                column_kind: ColumnKind::Scalar,
-<a href=#172 id=172 data-nosnippet>172</a>                unit: <span class="string">""</span>,
-<a href=#173 id=173 data-nosnippet>173</a>                measure_type: <span class="prelude-val">None</span>,
-<a href=#174 id=174 data-nosnippet>174</a>                measure_ref: <span class="string">""</span>,
-<a href=#175 id=175 data-nosnippet>175</a>                comment: <span class="string">""</span>,
-<a href=#176 id=176 data-nosnippet>176</a>            },
-<a href=#177 id=177 data-nosnippet>177</a>            ColumnDef {
-<a href=#178 id=178 data-nosnippet>178</a>                name: <span class="string">"DUP"</span>,
-<a href=#179 id=179 data-nosnippet>179</a>                data_type: PrimitiveType::Float64,
-<a href=#180 id=180 data-nosnippet>180</a>                column_kind: ColumnKind::Scalar,
-<a href=#181 id=181 data-nosnippet>181</a>                unit: <span class="string">""</span>,
-<a href=#182 id=182 data-nosnippet>182</a>                measure_type: <span class="prelude-val">None</span>,
-<a href=#183 id=183 data-nosnippet>183</a>                measure_ref: <span class="string">""</span>,
-<a href=#184 id=184 data-nosnippet>184</a>                comment: <span class="string">""</span>,
-<a href=#185 id=185 data-nosnippet>185</a>            },
-<a href=#186 id=186 data-nosnippet>186</a>        ];
-<a href=#187 id=187 data-nosnippet>187</a>        <span class="macro">assert!</span>(build_table_schema(dups).is_err());
-<a href=#188 id=188 data-nosnippet>188</a>    }
-<a href=#189 id=189 data-nosnippet>189</a>}
+<a href=#107 id=107 data-nosnippet>107</a>    TableSchema::new(columns.iter().map(column_schema).collect())
+<a href=#108 id=108 data-nosnippet>108</a>}
+<a href=#109 id=109 data-nosnippet>109</a>
+<a href=#110 id=110 data-nosnippet>110</a><span class="doccomment">/// The [`ColumnSchema`] of one [`ColumnDef`], without its keywords.
+<a href=#111 id=111 data-nosnippet>111</a></span><span class="kw">pub fn </span>column_schema(def: <span class="kw-2">&amp;</span>ColumnDef) -&gt; ColumnSchema {
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">match </span>def.column_kind {
+<a href=#113 id=113 data-nosnippet>113</a>        ColumnKind::Scalar =&gt; ColumnSchema::scalar(def.name, def.data_type),
+<a href=#114 id=114 data-nosnippet>114</a>        ColumnKind::FixedArray { shape } =&gt; {
+<a href=#115 id=115 data-nosnippet>115</a>            ColumnSchema::array_fixed(def.name, def.data_type, shape.to_vec())
+<a href=#116 id=116 data-nosnippet>116</a>        }
+<a href=#117 id=117 data-nosnippet>117</a>        ColumnKind::VariableArray { ndim } =&gt; {
+<a href=#118 id=118 data-nosnippet>118</a>            ColumnSchema::array_variable(def.name, def.data_type, <span class="prelude-val">Some</span>(ndim))
+<a href=#119 id=119 data-nosnippet>119</a>        }
+<a href=#120 id=120 data-nosnippet>120</a>    }
+<a href=#121 id=121 data-nosnippet>121</a>}
+<a href=#122 id=122 data-nosnippet>122</a>
+<a href=#123 id=123 data-nosnippet>123</a><span class="attr">#[cfg(test)]
+<a href=#124 id=124 data-nosnippet>124</a></span><span class="kw">mod </span>tests {
+<a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#126 id=126 data-nosnippet>126</a>
+<a href=#127 id=127 data-nosnippet>127</a>    <span class="kw">const </span>TEST_COLS: <span class="kw-2">&amp;</span>[ColumnDef] = <span class="kw-2">&amp;</span>[
+<a href=#128 id=128 data-nosnippet>128</a>        ColumnDef {
+<a href=#129 id=129 data-nosnippet>129</a>            name: <span class="string">"COL_A"</span>,
+<a href=#130 id=130 data-nosnippet>130</a>            data_type: PrimitiveType::Int32,
+<a href=#131 id=131 data-nosnippet>131</a>            column_kind: ColumnKind::Scalar,
+<a href=#132 id=132 data-nosnippet>132</a>            unit: <span class="string">""</span>,
+<a href=#133 id=133 data-nosnippet>133</a>            measure_type: <span class="prelude-val">None</span>,
+<a href=#134 id=134 data-nosnippet>134</a>            measure_ref: <span class="string">""</span>,
+<a href=#135 id=135 data-nosnippet>135</a>            comment: <span class="string">"test scalar"</span>,
+<a href=#136 id=136 data-nosnippet>136</a>        },
+<a href=#137 id=137 data-nosnippet>137</a>        ColumnDef {
+<a href=#138 id=138 data-nosnippet>138</a>            name: <span class="string">"COL_B"</span>,
+<a href=#139 id=139 data-nosnippet>139</a>            data_type: PrimitiveType::Float64,
+<a href=#140 id=140 data-nosnippet>140</a>            column_kind: ColumnKind::FixedArray { shape: <span class="kw-2">&amp;</span>[<span class="number">3</span>] },
+<a href=#141 id=141 data-nosnippet>141</a>            unit: <span class="string">"m"</span>,
+<a href=#142 id=142 data-nosnippet>142</a>            measure_type: <span class="prelude-val">Some</span>(MeasureType::Position),
+<a href=#143 id=143 data-nosnippet>143</a>            measure_ref: <span class="string">"ITRF"</span>,
+<a href=#144 id=144 data-nosnippet>144</a>            comment: <span class="string">"test fixed array"</span>,
+<a href=#145 id=145 data-nosnippet>145</a>        },
+<a href=#146 id=146 data-nosnippet>146</a>        ColumnDef {
+<a href=#147 id=147 data-nosnippet>147</a>            name: <span class="string">"COL_C"</span>,
+<a href=#148 id=148 data-nosnippet>148</a>            data_type: PrimitiveType::Complex32,
+<a href=#149 id=149 data-nosnippet>149</a>            column_kind: ColumnKind::VariableArray { ndim: <span class="number">2 </span>},
+<a href=#150 id=150 data-nosnippet>150</a>            unit: <span class="string">""</span>,
+<a href=#151 id=151 data-nosnippet>151</a>            measure_type: <span class="prelude-val">None</span>,
+<a href=#152 id=152 data-nosnippet>152</a>            measure_ref: <span class="string">""</span>,
+<a href=#153 id=153 data-nosnippet>153</a>            comment: <span class="string">"test variable array"</span>,
+<a href=#154 id=154 data-nosnippet>154</a>        },
+<a href=#155 id=155 data-nosnippet>155</a>    ];
+<a href=#156 id=156 data-nosnippet>156</a>
+<a href=#157 id=157 data-nosnippet>157</a>    <span class="attr">#[test]
+<a href=#158 id=158 data-nosnippet>158</a>    </span><span class="kw">fn </span>build_schema_from_column_defs() {
+<a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">let </span>schema = build_table_schema(TEST_COLS).expect(<span class="string">"valid schema"</span>);
+<a href=#160 id=160 data-nosnippet>160</a>        <span class="macro">assert_eq!</span>(schema.columns().len(), <span class="number">3</span>);
+<a href=#161 id=161 data-nosnippet>161</a>        <span class="macro">assert!</span>(schema.contains_column(<span class="string">"COL_A"</span>));
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="macro">assert!</span>(schema.contains_column(<span class="string">"COL_B"</span>));
+<a href=#163 id=163 data-nosnippet>163</a>        <span class="macro">assert!</span>(schema.contains_column(<span class="string">"COL_C"</span>));
+<a href=#164 id=164 data-nosnippet>164</a>    }
+<a href=#165 id=165 data-nosnippet>165</a>
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="attr">#[test]
+<a href=#167 id=167 data-nosnippet>167</a>    </span><span class="kw">fn </span>build_schema_rejects_duplicates() {
+<a href=#168 id=168 data-nosnippet>168</a>        <span class="kw">let </span>dups = <span class="kw-2">&amp;</span>[
+<a href=#169 id=169 data-nosnippet>169</a>            ColumnDef {
+<a href=#170 id=170 data-nosnippet>170</a>                name: <span class="string">"DUP"</span>,
+<a href=#171 id=171 data-nosnippet>171</a>                data_type: PrimitiveType::Int32,
+<a href=#172 id=172 data-nosnippet>172</a>                column_kind: ColumnKind::Scalar,
+<a href=#173 id=173 data-nosnippet>173</a>                unit: <span class="string">""</span>,
+<a href=#174 id=174 data-nosnippet>174</a>                measure_type: <span class="prelude-val">None</span>,
+<a href=#175 id=175 data-nosnippet>175</a>                measure_ref: <span class="string">""</span>,
+<a href=#176 id=176 data-nosnippet>176</a>                comment: <span class="string">""</span>,
+<a href=#177 id=177 data-nosnippet>177</a>            },
+<a href=#178 id=178 data-nosnippet>178</a>            ColumnDef {
+<a href=#179 id=179 data-nosnippet>179</a>                name: <span class="string">"DUP"</span>,
+<a href=#180 id=180 data-nosnippet>180</a>                data_type: PrimitiveType::Float64,
+<a href=#181 id=181 data-nosnippet>181</a>                column_kind: ColumnKind::Scalar,
+<a href=#182 id=182 data-nosnippet>182</a>                unit: <span class="string">""</span>,
+<a href=#183 id=183 data-nosnippet>183</a>                measure_type: <span class="prelude-val">None</span>,
+<a href=#184 id=184 data-nosnippet>184</a>                measure_ref: <span class="string">""</span>,
+<a href=#185 id=185 data-nosnippet>185</a>                comment: <span class="string">""</span>,
+<a href=#186 id=186 data-nosnippet>186</a>            },
+<a href=#187 id=187 data-nosnippet>187</a>        ];
+<a href=#188 id=188 data-nosnippet>188</a>        <span class="macro">assert!</span>(build_table_schema(dups).is_err());
+<a href=#189 id=189 data-nosnippet>189</a>    }
+<a href=#190 id=190 data-nosnippet>190</a>}
 </code></pre></div></section></main></body></html>

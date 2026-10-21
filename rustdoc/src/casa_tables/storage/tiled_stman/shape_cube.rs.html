@@ -1,0 +1,391 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-tables/src/storage/tiled_stman/shape_cube.rs`."><title>shape_cube.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="casa_tables" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_tables/storage/tiled_stman/</div>shape_cube.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<a href=#2 id=2 data-nosnippet>2</a></span><span class="doccomment">//! One hypercube of a streamed `TiledShapeStMan` column, written a row at a
+<a href=#3 id=3 data-nosnippet>3</a>//! time.
+<a href=#4 id=4 data-nosnippet>4</a>//!
+<a href=#5 id=5 data-nosnippet>5</a>//! A row fills its slot in every tile across the cell, in the band of tiles
+<a href=#6 id=6 data-nosnippet>6</a>//! that holds it along the row axis. Tiles are numbered with the row axis
+<a href=#7 id=7 data-nosnippet>7</a>//! slowest, so a band is contiguous in the cube's file. A cube whose band
+<a href=#8 id=8 data-nosnippet>8</a>//! fits the writer's budget assembles each band in memory and writes it with
+<a href=#9 id=9 data-nosnippet>9</a>//! one call when its last row arrives. Otherwise each tile row is written in
+<a href=#10 id=10 data-nosnippet>10</a>//! place as it is pushed, a Bool tile row by reading back the bytes it
+<a href=#11 id=11 data-nosnippet>11</a>//! shares with its neighbours. The cubes of a column share one tile-row
+<a href=#12 id=12 data-nosnippet>12</a>//! scratch, held by the column's writer ([`ShapeCubeWorkingSet`]).
+<a href=#13 id=13 data-nosnippet>13</a>
+<a href=#14 id=14 data-nosnippet>14</a></span><span class="kw">use </span>std::fs::{File, OpenOptions};
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>std::io::{Read, Seek, SeekFrom, Write};
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>std::path::PathBuf;
+<a href=#17 id=17 data-nosnippet>17</a>
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use super</span>::{
+<a href=#19 id=19 data-nosnippet>19</a>    StreamedPrimitiveTilePlan, StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType,
+<a href=#20 id=20 data-nosnippet>20</a>    compute_tile_layout, copy_cube_to_tile, linear_to_nd,
+<a href=#21 id=21 data-nosnippet>21</a>};
+<a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span><span class="kw">crate</span>::storage::StorageError;
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span><span class="kw">crate</span>::storage::canonical::write_bool_bits_from_bytes;
+<a href=#24 id=24 data-nosnippet>24</a>
+<a href=#25 id=25 data-nosnippet>25</a><span class="attr">#[derive(Debug)]
+<a href=#26 id=26 data-nosnippet>26</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>DirectShapeCubeWriter {
+<a href=#27 id=27 data-nosnippet>27</a>    <span class="kw">pub</span>(<span class="kw">super</span>) temp_data_path: PathBuf,
+<a href=#28 id=28 data-nosnippet>28</a>    <span class="kw">pub</span>(<span class="kw">super</span>) file: File,
+<a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">pub</span>(<span class="kw">super</span>) cell_shape: Vec&lt;usize&gt;,
+<a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">pub</span>(<span class="kw">super</span>) row_count: usize,
+<a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">pub</span>(<span class="kw">super</span>) rows_written: usize,
+<a href=#32 id=32 data-nosnippet>32</a>    <span class="kw">pub</span>(<span class="kw">super</span>) tile_shape: Vec&lt;usize&gt;,
+<a href=#33 id=33 data-nosnippet>33</a>    tile_plans: Vec&lt;StreamedPrimitiveTilePlan&gt;,
+<a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">pub</span>(<span class="kw">super</span>) non_row_tile_count: usize,
+<a href=#35 id=35 data-nosnippet>35</a>    <span class="kw">pub</span>(<span class="kw">super</span>) rows_per_tile: usize,
+<a href=#36 id=36 data-nosnippet>36</a>    tile_cell_nelem: usize,
+<a href=#37 id=37 data-nosnippet>37</a>    <span class="kw">pub</span>(<span class="kw">super</span>) bucket_size: usize,
+<a href=#38 id=38 data-nosnippet>38</a>    <span class="doccomment">/// Every tile of the band being assembled; empty when the cube writes
+<a href=#39 id=39 data-nosnippet>39</a>    /// each tile row in place.
+<a href=#40 id=40 data-nosnippet>40</a>    </span>band: Vec&lt;u8&gt;,
+<a href=#41 id=41 data-nosnippet>41</a>}
+<a href=#42 id=42 data-nosnippet>42</a>
+<a href=#43 id=43 data-nosnippet>43</a><span class="doccomment">/// The bytes a cube works in while it writes a row.
+<a href=#44 id=44 data-nosnippet>44</a>///
+<a href=#45 id=45 data-nosnippet>45</a>/// The encoded row and a Bool tile row's packed bytes live only while the
+<a href=#46 id=46 data-nosnippet>46</a>/// row is written; the tile row is the writer's scratch, shared by every
+<a href=#47 id=47 data-nosnippet>47</a>/// cube and sized for the largest. A column holds, at once, its largest
+<a href=#48 id=48 data-nosnippet>48</a>/// encoded row, its largest tile row and its largest packed Bool tile row,
+<a href=#49 id=49 data-nosnippet>49</a>/// which may come from different cubes ([`Self::max`], [`Self::bytes`]).
+<a href=#50 id=50 data-nosnippet>50</a></span><span class="attr">#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+<a href=#51 id=51 data-nosnippet>51</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ShapeCubeWorkingSet {
+<a href=#52 id=52 data-nosnippet>52</a>    <span class="doccomment">/// One row's cell, encoded.
+<a href=#53 id=53 data-nosnippet>53</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) row_bytes: usize,
+<a href=#54 id=54 data-nosnippet>54</a>    <span class="doccomment">/// One tile row of the cell.
+<a href=#55 id=55 data-nosnippet>55</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) tile_row_bytes: usize,
+<a href=#56 id=56 data-nosnippet>56</a>    <span class="doccomment">/// One Bool tile row's packed bits and the byte they may share.
+<a href=#57 id=57 data-nosnippet>57</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) packed_bool_bytes: usize,
+<a href=#58 id=58 data-nosnippet>58</a>}
+<a href=#59 id=59 data-nosnippet>59</a>
+<a href=#60 id=60 data-nosnippet>60</a><span class="kw">impl </span>ShapeCubeWorkingSet {
+<a href=#61 id=61 data-nosnippet>61</a>    <span class="doccomment">/// The larger of each part of `self` and `other`.
+<a href=#62 id=62 data-nosnippet>62</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>max(<span class="self">self</span>, other: <span class="self">Self</span>) -&gt; <span class="self">Self </span>{
+<a href=#63 id=63 data-nosnippet>63</a>        <span class="self">Self </span>{
+<a href=#64 id=64 data-nosnippet>64</a>            row_bytes: <span class="self">self</span>.row_bytes.max(other.row_bytes),
+<a href=#65 id=65 data-nosnippet>65</a>            tile_row_bytes: <span class="self">self</span>.tile_row_bytes.max(other.tile_row_bytes),
+<a href=#66 id=66 data-nosnippet>66</a>            packed_bool_bytes: <span class="self">self</span>.packed_bool_bytes.max(other.packed_bool_bytes),
+<a href=#67 id=67 data-nosnippet>67</a>        }
+<a href=#68 id=68 data-nosnippet>68</a>    }
+<a href=#69 id=69 data-nosnippet>69</a>
+<a href=#70 id=70 data-nosnippet>70</a>    <span class="doccomment">/// Every part, held at once.
+<a href=#71 id=71 data-nosnippet>71</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>bytes(<span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;usize&gt; {
+<a href=#72 id=72 data-nosnippet>72</a>        <span class="self">self</span>.row_bytes
+<a href=#73 id=73 data-nosnippet>73</a>            .checked_add(<span class="self">self</span>.tile_row_bytes)<span class="question-mark">?
+<a href=#74 id=74 data-nosnippet>74</a>            </span>.checked_add(<span class="self">self</span>.packed_bool_bytes)
+<a href=#75 id=75 data-nosnippet>75</a>    }
+<a href=#76 id=76 data-nosnippet>76</a>}
+<a href=#77 id=77 data-nosnippet>77</a>
+<a href=#78 id=78 data-nosnippet>78</a><span class="kw">impl </span>DirectShapeCubeWriter {
+<a href=#79 id=79 data-nosnippet>79</a>    <span class="doccomment">/// Create the cube's file at `temp_data_path`, sized for every planned
+<a href=#80 id=80 data-nosnippet>80</a>    /// row, and return the writer with the bytes it works in per row.
+<a href=#81 id=81 data-nosnippet>81</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>create(
+<a href=#82 id=82 data-nosnippet>82</a>        temp_data_path: PathBuf,
+<a href=#83 id=83 data-nosnippet>83</a>        layout: StreamedTiledShapeCubeLayout,
+<a href=#84 id=84 data-nosnippet>84</a>        value_type: StreamedTiledShapeValueType,
+<a href=#85 id=85 data-nosnippet>85</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(<span class="self">Self</span>, ShapeCubeWorkingSet), StorageError&gt; {
+<a href=#86 id=86 data-nosnippet>86</a>        <span class="kw">let </span>elem_size = value_type.elem_size();
+<a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">let </span>overflow = |what: <span class="kw-2">&amp;</span>str| {
+<a href=#88 id=88 data-nosnippet>88</a>            StorageError::FormatMismatch(<span class="macro">format!</span>(<span class="string">"streamed TiledShape {what} overflows usize"</span>))
+<a href=#89 id=89 data-nosnippet>89</a>        };
+<a href=#90 id=90 data-nosnippet>90</a>        <span class="kw">let </span>product = |extents: <span class="kw-2">&amp;</span>[usize], what: <span class="kw-2">&amp;</span>str| {
+<a href=#91 id=91 data-nosnippet>91</a>            extents
+<a href=#92 id=92 data-nosnippet>92</a>                .iter()
+<a href=#93 id=93 data-nosnippet>93</a>                .try_fold(<span class="number">1usize</span>, |acc, <span class="kw-2">&amp;</span>dim| acc.checked_mul(dim))
+<a href=#94 id=94 data-nosnippet>94</a>                .ok_or_else(|| overflow(what))
+<a href=#95 id=95 data-nosnippet>95</a>        };
+<a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">let </span>cell_rank = layout.cell_shape.len();
+<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">let </span>cell_nelem = product(<span class="kw-2">&amp;</span>layout.cell_shape, <span class="string">"cell size"</span>)<span class="question-mark">?</span>;
+<a href=#98 id=98 data-nosnippet>98</a>        <span class="kw">let </span>tile_cell_nelem = product(<span class="kw-2">&amp;</span>layout.tile_shape[..cell_rank], <span class="string">"tile size"</span>)<span class="question-mark">?</span>;
+<a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">let </span>row_bytes = cell_nelem
+<a href=#100 id=100 data-nosnippet>100</a>            .checked_mul(elem_size)
+<a href=#101 id=101 data-nosnippet>101</a>            .ok_or_else(|| overflow(<span class="string">"row byte size"</span>))<span class="question-mark">?</span>;
+<a href=#102 id=102 data-nosnippet>102</a>        <span class="kw">let </span>tile_row_bytes = tile_cell_nelem
+<a href=#103 id=103 data-nosnippet>103</a>            .checked_mul(elem_size)
+<a href=#104 id=104 data-nosnippet>104</a>            .ok_or_else(|| overflow(<span class="string">"tile-row size"</span>))<span class="question-mark">?</span>;
+<a href=#105 id=105 data-nosnippet>105</a>        <span class="kw">let </span>packed_bool_bytes = <span class="kw">if </span>value_type == StreamedTiledShapeValueType::Bool {
+<a href=#106 id=106 data-nosnippet>106</a>            tile_cell_nelem.div_ceil(<span class="number">8</span>) + <span class="number">1
+<a href=#107 id=107 data-nosnippet>107</a>        </span>} <span class="kw">else </span>{
+<a href=#108 id=108 data-nosnippet>108</a>            <span class="number">0
+<a href=#109 id=109 data-nosnippet>109</a>        </span>};
+<a href=#110 id=110 data-nosnippet>110</a>        <span class="kw">let </span>working_set = ShapeCubeWorkingSet {
+<a href=#111 id=111 data-nosnippet>111</a>            row_bytes,
+<a href=#112 id=112 data-nosnippet>112</a>            tile_row_bytes,
+<a href=#113 id=113 data-nosnippet>113</a>            packed_bool_bytes,
+<a href=#114 id=114 data-nosnippet>114</a>        };
+<a href=#115 id=115 data-nosnippet>115</a>        working_set.bytes().ok_or_else(|| overflow(<span class="string">"working set"</span>))<span class="question-mark">?</span>;
+<a href=#116 id=116 data-nosnippet>116</a>
+<a href=#117 id=117 data-nosnippet>117</a>        <span class="kw">let </span><span class="kw-2">mut </span>cube_shape = layout.cell_shape.clone();
+<a href=#118 id=118 data-nosnippet>118</a>        cube_shape.push(layout.row_count);
+<a href=#119 id=119 data-nosnippet>119</a>        <span class="kw">let </span>tiles_per_dim: Vec&lt;usize&gt; = cube_shape
+<a href=#120 id=120 data-nosnippet>120</a>            .iter()
+<a href=#121 id=121 data-nosnippet>121</a>            .zip(layout.tile_shape.iter())
+<a href=#122 id=122 data-nosnippet>122</a>            .map(|(<span class="kw-2">&amp;</span>cube, <span class="kw-2">&amp;</span>tile)| cube.div_ceil(tile))
+<a href=#123 id=123 data-nosnippet>123</a>            .collect();
+<a href=#124 id=124 data-nosnippet>124</a>        <span class="kw">let </span>cell_tiles_per_dim = <span class="kw-2">&amp;</span>tiles_per_dim[..cell_rank];
+<a href=#125 id=125 data-nosnippet>125</a>        <span class="kw">let </span>non_row_tile_count = cell_tiles_per_dim.iter().product::&lt;usize&gt;();
+<a href=#126 id=126 data-nosnippet>126</a>        <span class="kw">let </span>tile_plans = (<span class="number">0</span>..non_row_tile_count)
+<a href=#127 id=127 data-nosnippet>127</a>            .map(|tile_index| {
+<a href=#128 id=128 data-nosnippet>128</a>                <span class="kw">let </span>tile_pos = linear_to_nd(tile_index, cell_tiles_per_dim);
+<a href=#129 id=129 data-nosnippet>129</a>                <span class="kw">let </span>cell_start: Vec&lt;usize&gt; = tile_pos
+<a href=#130 id=130 data-nosnippet>130</a>                    .iter()
+<a href=#131 id=131 data-nosnippet>131</a>                    .enumerate()
+<a href=#132 id=132 data-nosnippet>132</a>                    .map(|(axis, <span class="kw-2">&amp;</span>pos)| pos * layout.tile_shape[axis])
+<a href=#133 id=133 data-nosnippet>133</a>                    .collect();
+<a href=#134 id=134 data-nosnippet>134</a>                <span class="kw">let </span>actual_extent: Vec&lt;usize&gt; = cell_start
+<a href=#135 id=135 data-nosnippet>135</a>                    .iter()
+<a href=#136 id=136 data-nosnippet>136</a>                    .enumerate()
+<a href=#137 id=137 data-nosnippet>137</a>                    .map(|(axis, <span class="kw-2">&amp;</span>start)| {
+<a href=#138 id=138 data-nosnippet>138</a>                        std::cmp::min(layout.tile_shape[axis], layout.cell_shape[axis] - start)
+<a href=#139 id=139 data-nosnippet>139</a>                    })
+<a href=#140 id=140 data-nosnippet>140</a>                    .collect();
+<a href=#141 id=141 data-nosnippet>141</a>                StreamedPrimitiveTilePlan {
+<a href=#142 id=142 data-nosnippet>142</a>                    cell_start,
+<a href=#143 id=143 data-nosnippet>143</a>                    actual_extent,
+<a href=#144 id=144 data-nosnippet>144</a>                }
+<a href=#145 id=145 data-nosnippet>145</a>            })
+<a href=#146 id=146 data-nosnippet>146</a>            .collect();
+<a href=#147 id=147 data-nosnippet>147</a>        <span class="kw">let </span>(bucket_size, <span class="kw">_</span>) =
+<a href=#148 id=148 data-nosnippet>148</a>            compute_tile_layout(<span class="kw-2">&amp;</span>[value_type.casacore_type()], <span class="kw-2">&amp;</span>layout.tile_shape);
+<a href=#149 id=149 data-nosnippet>149</a>        <span class="kw">let </span>file_bytes = product(<span class="kw-2">&amp;</span>tiles_per_dim, <span class="string">"tile count"</span>)<span class="question-mark">?
+<a href=#150 id=150 data-nosnippet>150</a>            </span>.checked_mul(bucket_size)
+<a href=#151 id=151 data-nosnippet>151</a>            .ok_or_else(|| overflow(<span class="string">"file size"</span>))<span class="question-mark">?</span>;
+<a href=#152 id=152 data-nosnippet>152</a>        <span class="kw">let </span>file = OpenOptions::new()
+<a href=#153 id=153 data-nosnippet>153</a>            .create(<span class="bool-val">true</span>)
+<a href=#154 id=154 data-nosnippet>154</a>            .truncate(<span class="bool-val">true</span>)
+<a href=#155 id=155 data-nosnippet>155</a>            .read(<span class="bool-val">true</span>)
+<a href=#156 id=156 data-nosnippet>156</a>            .write(<span class="bool-val">true</span>)
+<a href=#157 id=157 data-nosnippet>157</a>            .open(<span class="kw-2">&amp;</span>temp_data_path)<span class="question-mark">?</span>;
+<a href=#158 id=158 data-nosnippet>158</a>        file.set_len(file_bytes <span class="kw">as </span>u64)<span class="question-mark">?</span>;
+<a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">let </span>rows_per_tile = <span class="kw-2">*</span>layout.tile_shape.last().expect(<span class="string">"validated tile row axis"</span>);
+<a href=#160 id=160 data-nosnippet>160</a>        <span class="kw">let </span>cube = <span class="self">Self </span>{
+<a href=#161 id=161 data-nosnippet>161</a>            temp_data_path,
+<a href=#162 id=162 data-nosnippet>162</a>            file,
+<a href=#163 id=163 data-nosnippet>163</a>            cell_shape: layout.cell_shape,
+<a href=#164 id=164 data-nosnippet>164</a>            row_count: layout.row_count,
+<a href=#165 id=165 data-nosnippet>165</a>            rows_written: <span class="number">0</span>,
+<a href=#166 id=166 data-nosnippet>166</a>            tile_shape: layout.tile_shape,
+<a href=#167 id=167 data-nosnippet>167</a>            tile_plans,
+<a href=#168 id=168 data-nosnippet>168</a>            non_row_tile_count,
+<a href=#169 id=169 data-nosnippet>169</a>            rows_per_tile,
+<a href=#170 id=170 data-nosnippet>170</a>            tile_cell_nelem,
+<a href=#171 id=171 data-nosnippet>171</a>            bucket_size,
+<a href=#172 id=172 data-nosnippet>172</a>            band: Vec::new(),
+<a href=#173 id=173 data-nosnippet>173</a>        };
+<a href=#174 id=174 data-nosnippet>174</a>        <span class="prelude-val">Ok</span>((cube, working_set))
+<a href=#175 id=175 data-nosnippet>175</a>    }
+<a href=#176 id=176 data-nosnippet>176</a>
+<a href=#177 id=177 data-nosnippet>177</a>    <span class="doccomment">/// Bytes of one band: every tile across the cell, one tile along the row
+<a href=#178 id=178 data-nosnippet>178</a>    /// axis.
+<a href=#179 id=179 data-nosnippet>179</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>band_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#180 id=180 data-nosnippet>180</a>        <span class="self">self</span>.non_row_tile_count * <span class="self">self</span>.bucket_size
+<a href=#181 id=181 data-nosnippet>181</a>    }
+<a href=#182 id=182 data-nosnippet>182</a>
+<a href=#183 id=183 data-nosnippet>183</a>    <span class="doccomment">/// Assemble each band in memory from now on.
+<a href=#184 id=184 data-nosnippet>184</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>buffer_bands(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#185 id=185 data-nosnippet>185</a>        <span class="self">self</span>.band = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="self">self</span>.band_bytes()];
+<a href=#186 id=186 data-nosnippet>186</a>    }
+<a href=#187 id=187 data-nosnippet>187</a>
+<a href=#188 id=188 data-nosnippet>188</a>    <span class="doccomment">/// Write the next row's cell, `encoded` in the cube's cell order, one
+<a href=#189 id=189 data-nosnippet>189</a>    /// tile row at a time through `tile_row`, the column's scratch of at
+<a href=#190 id=190 data-nosnippet>190</a>    /// least this cube's tile-row bytes.
+<a href=#191 id=191 data-nosnippet>191</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_row(
+<a href=#192 id=192 data-nosnippet>192</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#193 id=193 data-nosnippet>193</a>        value_type: StreamedTiledShapeValueType,
+<a href=#194 id=194 data-nosnippet>194</a>        encoded: <span class="kw-2">&amp;</span>[u8],
+<a href=#195 id=195 data-nosnippet>195</a>        tile_row: <span class="kw-2">&amp;mut </span>[u8],
+<a href=#196 id=196 data-nosnippet>196</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), StorageError&gt; {
+<a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">let </span>elem_size = value_type.elem_size();
+<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">let </span>cell_rank = <span class="self">self</span>.cell_shape.len();
+<a href=#199 id=199 data-nosnippet>199</a>        <span class="kw">let </span>row_tile_index = <span class="self">self</span>.rows_written / <span class="self">self</span>.rows_per_tile;
+<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">let </span>row_in_tile = <span class="self">self</span>.rows_written % <span class="self">self</span>.rows_per_tile;
+<a href=#201 id=201 data-nosnippet>201</a>        <span class="kw">let </span>tile_row_bytes = <span class="self">self</span>.tile_cell_nelem * elem_size;
+<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">let </span>tile_row = <span class="kw-2">&amp;mut </span>tile_row[..tile_row_bytes];
+<a href=#203 id=203 data-nosnippet>203</a>        <span class="kw">for </span>(cell_tile_index, plan) <span class="kw">in </span><span class="self">self</span>.tile_plans.iter().enumerate() {
+<a href=#204 id=204 data-nosnippet>204</a>            tile_row.fill(<span class="number">0</span>);
+<a href=#205 id=205 data-nosnippet>205</a>            copy_cube_to_tile(
+<a href=#206 id=206 data-nosnippet>206</a>                encoded,
+<a href=#207 id=207 data-nosnippet>207</a>                <span class="kw-2">&amp;</span><span class="self">self</span>.cell_shape,
+<a href=#208 id=208 data-nosnippet>208</a>                tile_row,
+<a href=#209 id=209 data-nosnippet>209</a>                <span class="kw-2">&amp;</span><span class="self">self</span>.tile_shape[..cell_rank],
+<a href=#210 id=210 data-nosnippet>210</a>                <span class="kw-2">&amp;</span>plan.cell_start,
+<a href=#211 id=211 data-nosnippet>211</a>                <span class="kw-2">&amp;</span>plan.actual_extent,
+<a href=#212 id=212 data-nosnippet>212</a>                elem_size,
+<a href=#213 id=213 data-nosnippet>213</a>            );
+<a href=#214 id=214 data-nosnippet>214</a>            <span class="kw">let </span>band_offset = cell_tile_index * <span class="self">self</span>.bucket_size;
+<a href=#215 id=215 data-nosnippet>215</a>            <span class="kw">let </span>bucket_start = row_tile_index * <span class="self">self</span>.band_bytes() + band_offset;
+<a href=#216 id=216 data-nosnippet>216</a>            <span class="kw">if </span>value_type == StreamedTiledShapeValueType::Bool {
+<a href=#217 id=217 data-nosnippet>217</a>                <span class="kw">let </span>bit_offset = row_in_tile * <span class="self">self</span>.tile_cell_nelem;
+<a href=#218 id=218 data-nosnippet>218</a>                <span class="kw">let </span>byte_offset = bit_offset / <span class="number">8</span>;
+<a href=#219 id=219 data-nosnippet>219</a>                <span class="kw">let </span>bit_in_byte = bit_offset % <span class="number">8</span>;
+<a href=#220 id=220 data-nosnippet>220</a>                <span class="kw">let </span>byte_count = (bit_in_byte + <span class="self">self</span>.tile_cell_nelem).div_ceil(<span class="number">8</span>);
+<a href=#221 id=221 data-nosnippet>221</a>                <span class="kw">if </span><span class="self">self</span>.band.is_empty() {
+<a href=#222 id=222 data-nosnippet>222</a>                    <span class="kw">let </span><span class="kw-2">mut </span>packed = <span class="macro">vec!</span>[<span class="number">0u8</span>; byte_count];
+<a href=#223 id=223 data-nosnippet>223</a>                    <span class="self">self</span>.file
+<a href=#224 id=224 data-nosnippet>224</a>                        .seek(SeekFrom::Start((bucket_start + byte_offset) <span class="kw">as </span>u64))<span class="question-mark">?</span>;
+<a href=#225 id=225 data-nosnippet>225</a>                    <span class="self">self</span>.file.read_exact(<span class="kw-2">&amp;mut </span>packed)<span class="question-mark">?</span>;
+<a href=#226 id=226 data-nosnippet>226</a>                    write_bool_bits_from_bytes(<span class="kw-2">&amp;mut </span>packed, bit_in_byte, tile_row);
+<a href=#227 id=227 data-nosnippet>227</a>                    <span class="self">self</span>.file
+<a href=#228 id=228 data-nosnippet>228</a>                        .seek(SeekFrom::Start((bucket_start + byte_offset) <span class="kw">as </span>u64))<span class="question-mark">?</span>;
+<a href=#229 id=229 data-nosnippet>229</a>                    <span class="self">self</span>.file.write_all(<span class="kw-2">&amp;</span>packed)<span class="question-mark">?</span>;
+<a href=#230 id=230 data-nosnippet>230</a>                } <span class="kw">else </span>{
+<a href=#231 id=231 data-nosnippet>231</a>                    <span class="kw">let </span>start = band_offset + byte_offset;
+<a href=#232 id=232 data-nosnippet>232</a>                    write_bool_bits_from_bytes(
+<a href=#233 id=233 data-nosnippet>233</a>                        <span class="kw-2">&amp;mut </span><span class="self">self</span>.band[start..start + byte_count],
+<a href=#234 id=234 data-nosnippet>234</a>                        bit_in_byte,
+<a href=#235 id=235 data-nosnippet>235</a>                        tile_row,
+<a href=#236 id=236 data-nosnippet>236</a>                    );
+<a href=#237 id=237 data-nosnippet>237</a>                }
+<a href=#238 id=238 data-nosnippet>238</a>            } <span class="kw">else </span>{
+<a href=#239 id=239 data-nosnippet>239</a>                <span class="kw">let </span>row_offset = row_in_tile * tile_row_bytes;
+<a href=#240 id=240 data-nosnippet>240</a>                <span class="kw">if </span><span class="self">self</span>.band.is_empty() {
+<a href=#241 id=241 data-nosnippet>241</a>                    <span class="self">self</span>.file
+<a href=#242 id=242 data-nosnippet>242</a>                        .seek(SeekFrom::Start((bucket_start + row_offset) <span class="kw">as </span>u64))<span class="question-mark">?</span>;
+<a href=#243 id=243 data-nosnippet>243</a>                    <span class="self">self</span>.file.write_all(tile_row)<span class="question-mark">?</span>;
+<a href=#244 id=244 data-nosnippet>244</a>                } <span class="kw">else </span>{
+<a href=#245 id=245 data-nosnippet>245</a>                    <span class="kw">let </span>start = band_offset + row_offset;
+<a href=#246 id=246 data-nosnippet>246</a>                    <span class="self">self</span>.band[start..start + tile_row_bytes].copy_from_slice(tile_row);
+<a href=#247 id=247 data-nosnippet>247</a>                }
+<a href=#248 id=248 data-nosnippet>248</a>            }
+<a href=#249 id=249 data-nosnippet>249</a>        }
+<a href=#250 id=250 data-nosnippet>250</a>        <span class="self">self</span>.rows_written += <span class="number">1</span>;
+<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">if </span>!<span class="self">self</span>.band.is_empty() &amp;&amp; <span class="self">self</span>.rows_written.is_multiple_of(<span class="self">self</span>.rows_per_tile) {
+<a href=#252 id=252 data-nosnippet>252</a>            <span class="self">self</span>.write_band(row_tile_index)<span class="question-mark">?</span>;
+<a href=#253 id=253 data-nosnippet>253</a>        }
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="prelude-val">Ok</span>(())
+<a href=#255 id=255 data-nosnippet>255</a>    }
+<a href=#256 id=256 data-nosnippet>256</a>
+<a href=#257 id=257 data-nosnippet>257</a>    <span class="doccomment">/// Write the last band if rows ended inside it. Its rows past the last
+<a href=#258 id=258 data-nosnippet>258</a>    /// are zero, as they are in the file.
+<a href=#259 id=259 data-nosnippet>259</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>finish_band(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), StorageError&gt; {
+<a href=#260 id=260 data-nosnippet>260</a>        <span class="kw">if </span>!<span class="self">self</span>.band.is_empty() &amp;&amp; !<span class="self">self</span>.rows_written.is_multiple_of(<span class="self">self</span>.rows_per_tile) {
+<a href=#261 id=261 data-nosnippet>261</a>            <span class="self">self</span>.write_band(<span class="self">self</span>.rows_written / <span class="self">self</span>.rows_per_tile)<span class="question-mark">?</span>;
+<a href=#262 id=262 data-nosnippet>262</a>        }
+<a href=#263 id=263 data-nosnippet>263</a>        <span class="prelude-val">Ok</span>(())
+<a href=#264 id=264 data-nosnippet>264</a>    }
+<a href=#265 id=265 data-nosnippet>265</a>
+<a href=#266 id=266 data-nosnippet>266</a>    <span class="kw">fn </span>write_band(<span class="kw-2">&amp;mut </span><span class="self">self</span>, row_tile_index: usize) -&gt; <span class="prelude-ty">Result</span>&lt;(), StorageError&gt; {
+<a href=#267 id=267 data-nosnippet>267</a>        <span class="self">self</span>.file
+<a href=#268 id=268 data-nosnippet>268</a>            .seek(SeekFrom::Start((row_tile_index * <span class="self">self</span>.band.len()) <span class="kw">as </span>u64))<span class="question-mark">?</span>;
+<a href=#269 id=269 data-nosnippet>269</a>        <span class="self">self</span>.file.write_all(<span class="kw-2">&amp;</span><span class="self">self</span>.band)<span class="question-mark">?</span>;
+<a href=#270 id=270 data-nosnippet>270</a>        <span class="self">self</span>.band.fill(<span class="number">0</span>);
+<a href=#271 id=271 data-nosnippet>271</a>        <span class="prelude-val">Ok</span>(())
+<a href=#272 id=272 data-nosnippet>272</a>    }
+<a href=#273 id=273 data-nosnippet>273</a>}
+<a href=#274 id=274 data-nosnippet>274</a>
+<a href=#275 id=275 data-nosnippet>275</a><span class="attr">#[cfg(test)]
+<a href=#276 id=276 data-nosnippet>276</a></span><span class="kw">mod </span>tests {
+<a href=#277 id=277 data-nosnippet>277</a>    <span class="kw">use </span>num_complex::Complex32;
+<a href=#278 id=278 data-nosnippet>278</a>
+<a href=#279 id=279 data-nosnippet>279</a>    <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::{StreamedTiledShapeColumn, StreamingTiledShapeWriter};
+<a href=#280 id=280 data-nosnippet>280</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#281 id=281 data-nosnippet>281</a>
+<a href=#282 id=282 data-nosnippet>282</a>    <span class="doccomment">/// Two shapes, each tiled in two tiles across the cell; the first ends
+<a href=#283 id=283 data-nosnippet>283</a>    /// inside a band, and undefined rows fall between them.
+<a href=#284 id=284 data-nosnippet>284</a>    </span><span class="kw">fn </span>layouts() -&gt; Vec&lt;StreamedTiledShapeCubeLayout&gt; {
+<a href=#285 id=285 data-nosnippet>285</a>        <span class="macro">vec!</span>[
+<a href=#286 id=286 data-nosnippet>286</a>            StreamedTiledShapeCubeLayout::new(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">5</span>], <span class="number">9</span>, <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">3</span>, <span class="number">3</span>]),
+<a href=#287 id=287 data-nosnippet>287</a>            StreamedTiledShapeCubeLayout::new(<span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">4</span>], <span class="number">5</span>, <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">4</span>, <span class="number">2</span>]),
+<a href=#288 id=288 data-nosnippet>288</a>        ]
+<a href=#289 id=289 data-nosnippet>289</a>    }
+<a href=#290 id=290 data-nosnippet>290</a>
+<a href=#291 id=291 data-nosnippet>291</a>    <span class="doccomment">/// The pushes: `Some(0)` a row of the first shape, `Some(1)` of the
+<a href=#292 id=292 data-nosnippet>292</a>    /// second, `None` an undefined row.
+<a href=#293 id=293 data-nosnippet>293</a>    </span><span class="kw">const </span>ORDER: [<span class="prelude-ty">Option</span>&lt;usize&gt;; <span class="number">14</span>] = [
+<a href=#294 id=294 data-nosnippet>294</a>        <span class="prelude-val">Some</span>(<span class="number">0</span>),
+<a href=#295 id=295 data-nosnippet>295</a>        <span class="prelude-val">Some</span>(<span class="number">0</span>),
+<a href=#296 id=296 data-nosnippet>296</a>        <span class="prelude-val">Some</span>(<span class="number">1</span>),
+<a href=#297 id=297 data-nosnippet>297</a>        <span class="prelude-val">None</span>,
+<a href=#298 id=298 data-nosnippet>298</a>        <span class="prelude-val">Some</span>(<span class="number">0</span>),
+<a href=#299 id=299 data-nosnippet>299</a>        <span class="prelude-val">Some</span>(<span class="number">1</span>),
+<a href=#300 id=300 data-nosnippet>300</a>        <span class="prelude-val">Some</span>(<span class="number">1</span>),
+<a href=#301 id=301 data-nosnippet>301</a>        <span class="prelude-val">Some</span>(<span class="number">0</span>),
+<a href=#302 id=302 data-nosnippet>302</a>        <span class="prelude-val">None</span>,
+<a href=#303 id=303 data-nosnippet>303</a>        <span class="prelude-val">Some</span>(<span class="number">0</span>),
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="prelude-val">Some</span>(<span class="number">1</span>),
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="prelude-val">Some</span>(<span class="number">0</span>),
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="prelude-val">None</span>,
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="prelude-val">Some</span>(<span class="number">0</span>),
+<a href=#308 id=308 data-nosnippet>308</a>    ];
+<a href=#309 id=309 data-nosnippet>309</a>
+<a href=#310 id=310 data-nosnippet>310</a>    <span class="kw">fn </span>write(
+<a href=#311 id=311 data-nosnippet>311</a>        dir: <span class="kw-2">&amp;</span>std::path::Path,
+<a href=#312 id=312 data-nosnippet>312</a>        name: <span class="kw-2">&amp;</span>str,
+<a href=#313 id=313 data-nosnippet>313</a>        value_type: StreamedTiledShapeValueType,
+<a href=#314 id=314 data-nosnippet>314</a>        budget: usize,
+<a href=#315 id=315 data-nosnippet>315</a>    ) -&gt; (StreamedTiledShapeColumn, Vec&lt;Vec&lt;u8&gt;&gt;) {
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">let </span><span class="kw-2">mut </span>writer =
+<a href=#317 id=317 data-nosnippet>317</a>            StreamingTiledShapeWriter::create(dir.join(name), value_type, layouts(), budget, <span class="bool-val">true</span>)
+<a href=#318 id=318 data-nosnippet>318</a>                .expect(<span class="string">"create writer"</span>);
+<a href=#319 id=319 data-nosnippet>319</a>        <span class="kw">let </span>shapes = [[<span class="number">2usize</span>, <span class="number">5</span>], [<span class="number">2</span>, <span class="number">4</span>]];
+<a href=#320 id=320 data-nosnippet>320</a>        <span class="kw">for </span>(row, shape) <span class="kw">in </span>ORDER.iter().enumerate() {
+<a href=#321 id=321 data-nosnippet>321</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(shape) = shape <span class="kw">else </span>{
+<a href=#322 id=322 data-nosnippet>322</a>                writer.push_undefined_row().expect(<span class="string">"undefined row"</span>);
+<a href=#323 id=323 data-nosnippet>323</a>                <span class="kw">continue</span>;
+<a href=#324 id=324 data-nosnippet>324</a>            };
+<a href=#325 id=325 data-nosnippet>325</a>            <span class="kw">let </span>cell = shapes[<span class="kw-2">*</span>shape];
+<a href=#326 id=326 data-nosnippet>326</a>            <span class="kw">let </span>samples = cell[<span class="number">0</span>] * cell[<span class="number">1</span>];
+<a href=#327 id=327 data-nosnippet>327</a>            <span class="kw">if </span>value_type == StreamedTiledShapeValueType::Bool {
+<a href=#328 id=328 data-nosnippet>328</a>                <span class="kw">let </span>values = (<span class="number">0</span>..samples)
+<a href=#329 id=329 data-nosnippet>329</a>                    .map(|sample| (row * <span class="number">7 </span>+ sample * <span class="number">3</span>) % <span class="number">5 </span>&lt; <span class="number">2</span>)
+<a href=#330 id=330 data-nosnippet>330</a>                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#331 id=331 data-nosnippet>331</a>                writer.push_bool_row(<span class="kw-2">&amp;</span>cell, <span class="kw-2">&amp;</span>values).expect(<span class="string">"bool row"</span>);
+<a href=#332 id=332 data-nosnippet>332</a>            } <span class="kw">else </span>{
+<a href=#333 id=333 data-nosnippet>333</a>                <span class="kw">let </span>values = (<span class="number">0</span>..samples)
+<a href=#334 id=334 data-nosnippet>334</a>                    .map(|sample| Complex32::new(row <span class="kw">as </span>f32, sample <span class="kw">as </span>f32 + <span class="number">0.5</span>))
+<a href=#335 id=335 data-nosnippet>335</a>                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#336 id=336 data-nosnippet>336</a>                writer
+<a href=#337 id=337 data-nosnippet>337</a>                    .push_complex32_row(<span class="kw-2">&amp;</span>cell, <span class="kw-2">&amp;</span>values)
+<a href=#338 id=338 data-nosnippet>338</a>                    .expect(<span class="string">"complex row"</span>);
+<a href=#339 id=339 data-nosnippet>339</a>            }
+<a href=#340 id=340 data-nosnippet>340</a>        }
+<a href=#341 id=341 data-nosnippet>341</a>        <span class="kw">let </span>column = writer.finish().expect(<span class="string">"finish"</span>);
+<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">let </span>files = column
+<a href=#343 id=343 data-nosnippet>343</a>            .cubes
+<a href=#344 id=344 data-nosnippet>344</a>            .iter()
+<a href=#345 id=345 data-nosnippet>345</a>            .map(|cube| std::fs::read(<span class="kw-2">&amp;</span>cube.temp_data_path).expect(<span class="string">"cube file"</span>))
+<a href=#346 id=346 data-nosnippet>346</a>            .collect();
+<a href=#347 id=347 data-nosnippet>347</a>        (column, files)
+<a href=#348 id=348 data-nosnippet>348</a>    }
+<a href=#349 id=349 data-nosnippet>349</a>
+<a href=#350 id=350 data-nosnippet>350</a>    <span class="attr">#[test]
+<a href=#351 id=351 data-nosnippet>351</a>    </span><span class="kw">fn </span>band_buffered_cubes_write_the_files_of_in_place_rows() {
+<a href=#352 id=352 data-nosnippet>352</a>        <span class="kw">let </span>dir = tempfile::tempdir().expect(<span class="string">"tempdir"</span>);
+<a href=#353 id=353 data-nosnippet>353</a>        <span class="kw">for </span>value_type <span class="kw">in </span>[
+<a href=#354 id=354 data-nosnippet>354</a>            StreamedTiledShapeValueType::Complex32,
+<a href=#355 id=355 data-nosnippet>355</a>            StreamedTiledShapeValueType::Bool,
+<a href=#356 id=356 data-nosnippet>356</a>        ] {
+<a href=#357 id=357 data-nosnippet>357</a>            <span class="comment">// A budget that holds the working set and the largest row map,
+<a href=#358 id=358 data-nosnippet>358</a>            // but not the bands, keeps every tile row in place.
+<a href=#359 id=359 data-nosnippet>359</a>            </span><span class="kw">let </span>elem = value_type.elem_size();
+<a href=#360 id=360 data-nosnippet>360</a>            <span class="kw">let </span>packed = <span class="kw">if </span>value_type == StreamedTiledShapeValueType::Bool {
+<a href=#361 id=361 data-nosnippet>361</a>                <span class="number">6usize</span>.div_ceil(<span class="number">8</span>) + <span class="number">1
+<a href=#362 id=362 data-nosnippet>362</a>            </span>} <span class="kw">else </span>{
+<a href=#363 id=363 data-nosnippet>363</a>                <span class="number">0
+<a href=#364 id=364 data-nosnippet>364</a>            </span>};
+<a href=#365 id=365 data-nosnippet>365</a>            <span class="kw">let </span>working = <span class="number">10 </span>* elem + <span class="number">6 </span>* elem + packed;
+<a href=#366 id=366 data-nosnippet>366</a>            <span class="kw">let </span>in_place_budget = working + ORDER.len() * <span class="number">3 </span>* size_of::&lt;u32&gt;();
+<a href=#367 id=367 data-nosnippet>367</a>            <span class="kw">let </span>(direct, direct_files) = write(
+<a href=#368 id=368 data-nosnippet>368</a>                dir.path(),
+<a href=#369 id=369 data-nosnippet>369</a>                <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{value_type:?}.direct"</span>),
+<a href=#370 id=370 data-nosnippet>370</a>                value_type,
+<a href=#371 id=371 data-nosnippet>371</a>                in_place_budget,
+<a href=#372 id=372 data-nosnippet>372</a>            );
+<a href=#373 id=373 data-nosnippet>373</a>            <span class="kw">let </span>(banded, banded_files) = write(
+<a href=#374 id=374 data-nosnippet>374</a>                dir.path(),
+<a href=#375 id=375 data-nosnippet>375</a>                <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{value_type:?}.banded"</span>),
+<a href=#376 id=376 data-nosnippet>376</a>                value_type,
+<a href=#377 id=377 data-nosnippet>377</a>                <span class="number">1 </span>&lt;&lt; <span class="number">20</span>,
+<a href=#378 id=378 data-nosnippet>378</a>            );
+<a href=#379 id=379 data-nosnippet>379</a>            <span class="macro">assert!</span>(
+<a href=#380 id=380 data-nosnippet>380</a>                banded.max_resident_bytes() &gt; direct.max_resident_bytes(),
+<a href=#381 id=381 data-nosnippet>381</a>                <span class="string">"{value_type:?}: the large budget buffers bands"
+<a href=#382 id=382 data-nosnippet>382</a>            </span>);
+<a href=#383 id=383 data-nosnippet>383</a>            <span class="macro">assert_eq!</span>(direct_files.len(), <span class="number">2</span>);
+<a href=#384 id=384 data-nosnippet>384</a>            <span class="macro">assert_eq!</span>(direct_files, banded_files, <span class="string">"{value_type:?} cube files"</span>);
+<a href=#385 id=385 data-nosnippet>385</a>            <span class="macro">assert_eq!</span>(direct.row_map, banded.row_map);
+<a href=#386 id=386 data-nosnippet>386</a>            <span class="macro">assert_eq!</span>(direct.cube_map, banded.cube_map);
+<a href=#387 id=387 data-nosnippet>387</a>            <span class="macro">assert_eq!</span>(direct.pos_map, banded.pos_map);
+<a href=#388 id=388 data-nosnippet>388</a>        }
+<a href=#389 id=389 data-nosnippet>389</a>    }
+<a href=#390 id=390 data-nosnippet>390</a>}
+</code></pre></div></section></main></body></html>

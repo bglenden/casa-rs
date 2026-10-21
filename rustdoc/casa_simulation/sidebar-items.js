@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["predict"]};
+window.SIDEBAR_ITEMS = {"mod":["predict","readantenna","session"]};

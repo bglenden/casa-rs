@@ -1,0 +1,122 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Antenna configuration files: CASA’s `simutil.readantenna`."><title>casa_simulation::readantenna - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_simulation" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module readantenna</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../casa_simulation/index.html">casa_<wbr>simulation</a><span class="version">0.27.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module readantenna</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#the-format" title="The format">The format</a></li><li><a href="#the-observatory-position" title="The observatory position">The observatory position</a></li><li><a href="#where-this-differs-from-casa" title="Where this differs from CASA">Where this differs from CASA</a></li></ul><h3><a href="#modules">Module Items</a></h3><ul class="block"><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate casa_<wbr>simulation</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">casa_simulation</a></div><h1>Module <span>readantenna</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/casa_simulation/readantenna.rs.html#2-526">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Antenna configuration files: CASA’s <code>simutil.readantenna</code>.</p>
+<p><code>simobserve</code> and <code>simalma</code> read the array from a text file such as
+CASA’s <code>alma.cycle10.3.cfg</code>:</p>
+<div class="example-wrap"><pre class="language-text"><code># observatory=ALMA
+# coordsys=LOC (local tangent plane)
+# x             y               z             diam  station  ant
+-5.850273514   -125.9985379    -1.590364043   12.   A058     DA41
+-19.90369337    52.82680653    -1.892119601   12.   A023     DA42</code></pre></div>
+<p><a href="fn.read_antenna_config.html" title="fn casa_simulation::readantenna::read_antenna_config"><code>read_antenna_config</code></a> reads one and returns what CASA’s
+<code>readantenna</code> returns: Earth-centred (ITRF) antenna positions, dish
+diameters, pad and antenna names, the telescope name and the observatory
+position.</p>
+<h2 id="the-format"><a class="doc-anchor" href="#the-format">§</a>The format</h2>
+<ul>
+<li><strong>Header lines</strong> start with <code>#</code>. When the text after the <code>#</code> holds
+exactly one <code>=</code>, the two sides, stripped of every <code>#</code> and of
+surrounding white space, are a <code>key=value</code> parameter; the key is all
+the text before the <code>=</code>. Other header lines are comments. Headers may
+appear anywhere, and a later duplicate wins.</li>
+<li><strong>Antenna lines</strong> lose everything from their first <code>#</code>. Their
+white-space-separated columns are x, y, z, diameter (metres, parsed as
+Python’s <code>float</code>), the pad (station) name and the antenna name. With
+five columns the pad is also the antenna name; with four, both are
+<code>A%02d</code> for the antenna’s index.</li>
+<li><strong><code>coordsys</code></strong> (required) says what x, y, z are. Its value is
+upper-cased; <code>XYZ</code> and <code>UTM</code> must match exactly and <code>LOC</code> matches its
+first three characters (CASA’s own files say
+<code>coordsys=LOC (local tangent plane)</code>).
+<ul>
+<li><code>XYZ</code>: ITRF x, y, z, used as they are.</li>
+<li><code>UTM</code>: easting, northing and elevation, with the required headers
+<code>zone</code>, <code>datum</code> (a code of <a href="geodesy/constant.DATUMS.html" title="constant casa_simulation::readantenna::geodesy::DATUMS"><code>geodesy::DATUMS</code></a>, case-sensitive) and
+<code>hemisphere</code> (south when its first letter is <code>S</code> or <code>s</code>), converted
+with <a href="geodesy/fn.utm_to_xyz.html" title="fn casa_simulation::readantenna::geodesy::utm_to_xyz"><code>geodesy::utm_to_xyz</code></a>.</li>
+<li><code>LOC</code>: east, north and up offsets from the observatory, converted
+with <a href="geodesy/fn.local_to_itrf.html" title="fn casa_simulation::readantenna::geodesy::local_to_itrf"><code>geodesy::local_to_itrf</code></a> at the observatory’s geodetic WGS 84
+latitude, longitude and height.</li>
+</ul>
+</li>
+<li><strong><code>observatory</code></strong> names the telescope (<code>SIMULATED</code> without one).</li>
+<li><strong><code>COFA=lon,lat</code></strong> (degrees) sets the observatory position, at height
+zero; it overrides a known observatory, with a warning.</li>
+</ul>
+<h2 id="the-observatory-position"><a class="doc-anchor" href="#the-observatory-position">§</a>The observatory position</h2>
+<p>In CASA’s order:</p>
+<ol>
+<li><code>COFA</code>, when given.</li>
+<li>A known observatory: the measures provider’s observatory table
+(CASA’s <code>me.observatory</code>), converted to WGS 84. The name matches as
+casacore’s <code>MeasTable::Observatory</code> matches it: a case-insensitive
+exact match, else the one table name that is a prefix of the
+telescope name (CASA’s <code>aca.tp.cfg</code> says <code>observatory=ALMASD</code>, which
+is ALMA). Two such names (<code>GB</code> and <code>GBT</code> for <code>GBTX</code>) match none.</li>
+<li>Otherwise a <code>LOC</code> file is an error, and for absolute coordinates the
+observatory is the mean antenna position, converted to WGS 84 with
+<a href="geodesy/fn.xyz_to_geodetic.html" title="fn casa_simulation::readantenna::geodesy::xyz_to_geodetic"><code>geodesy::xyz_to_geodetic</code></a>.</li>
+</ol>
+<p>The position is returned in WGS 84, as CASA returns it.</p>
+<h2 id="where-this-differs-from-casa"><a class="doc-anchor" href="#where-this-differs-from-casa">§</a>Where this differs from CASA</h2>
+<p>CASA’s <code>readantenna</code> has bugs on some paths. These follow its evident
+intent instead. Each was confirmed by running CASA 6.7.6 unless it says
+otherwise.</p>
+<ul>
+<li><strong>Blank and short lines.</strong> Lines that are neither headers nor
+antennas (blank lines, lines with fewer than four columns) are
+skipped. CASA means to skip them (<code>pass  # ignore empty rows</code>) but
+appends a default <code>A%02d</code> pad and antenna name for each, numbered by
+line. Its name lists then outgrow the positions and pair with the
+wrong antennas: for CASA’s <code>WSRT.cfg</code>, whose header has two blank
+lines, it returns 16 names for 14 antennas, starting <code>A00</code>, <code>A01</code>,
+<code>RT0</code>.</li>
+<li><strong>The mean position.</strong> For an unknown observatory without <code>COFA</code>, CASA
+averages the loop variable <code>x</code> left over from the coordinate
+conversion. For <code>XYZ</code> files that variable does not exist and CASA
+raises <code>UnboundLocalError</code>; for <code>UTM</code> files it is the last antenna’s
+x, y, z. CASA also unpacks <code>xyz2long</code>’s longitude, latitude, height as
+latitude, longitude, height, so its position has the two angles
+swapped. Here the observatory is <code>xyz2long</code> of the mean of the ITRF
+antenna positions, as CASA’s comment says.</li>
+<li><strong>Errors.</strong>
+<ul>
+<li>A <code>coordsys</code> that is none of <code>XYZ</code>, <code>UTM</code>, <code>LOC…</code> is an error. CASA
+returns no positions (and, through the blank-line bug, one name per
+antenna line).</li>
+<li>A non-integer <code>zone</code>, an empty <code>hemisphere</code> and a malformed <code>COFA</code>
+are errors with messages in CASA’s style, where CASA lets Python’s
+<code>ValueError</code> or <code>IndexError</code> escape.</li>
+<li>A number that does not parse is CASA’s <code>Could not read file</code> error,
+with the line and the text added.</li>
+<li><code>zone</code> and <code>datum</code> are checked even when there are no antennas,
+where CASA never converts them (from CASA’s source).</li>
+</ul>
+</li>
+<li><strong>Unresolvable names.</strong> CASA counts a telescope as known when any
+table name is a substring of it, then looks it up with
+<code>me.observatory</code>, which can fail (<code>xALMAx</code>). CASA then raises
+<code>KeyError</code> for a <code>LOC</code> file and takes the mean-position path otherwise;
+here such a name is simply unknown.</li>
+<li><strong>Prefix ambiguity.</strong> casacore also counts a longer table name that
+starts with the telescope name as a candidate (<code>MWA3</code> matches both
+<code>MWA</code> and <code>MWA32T</code>, so neither; from casacore’s <code>MUString::minimaxNC</code>).
+The measures provider only answers exact lookups and cannot list its
+table, so that case resolves to the shorter name here.</li>
+<li><strong><code>COFA</code> height.</strong> The observatory is at height 0. casacore stores a
+zero-height WGS 84 position as a 1e-6 m vector, so CASA’s position, and
+the height its <code>LOC</code> conversion uses, is 1e-6 m.</li>
+<li><strong>Conversion to WGS 84</strong> of an observatory tabulated in ITRF uses
+[<code>MPosition::convert_to</code>] (SOFA’s <code>gc2gd</code>) rather than casacore’s
+iteration. For real sites they agree to about 1e-14 rad and 1e-9 m.
+CASA’s table also has placeholder entries at or near the geocentre
+(<code>VLBA</code> and <code>EVN</code> at ITRF (1e-6, 0, 0) m; <code>LOFAR</code>, <code>OVRO_MMA</code> and
+<code>SUNRISE</code> within a kilometre of it), whose geodetic positions are
+meaningless either way: for CASA’s <code>vlba.cfg</code> CASA’s observatory is
+(0, 0, 742.93 m) and this one (0, 0, −6378137 m). <code>XYZ</code> antenna
+positions do not depend on it.</li>
+<li><strong>Numbers</strong> with non-ASCII decimal digits, which Python’s <code>float</code>
+accepts, are rejected (from Python’s documentation).</li>
+</ul>
+</div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="geodesy/index.html" title="mod casa_simulation::readantenna::geodesy">geodesy</a></dt><dd>The geodesy of CASA’s <code>simutil</code>: its datum and ellipsoid tables and its
+conversions between UTM, geodetic and Earth-centred coordinates.</dd></dl><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.AntennaConfigFile.html" title="struct casa_simulation::readantenna::AntennaConfigFile">Antenna<wbr>Config<wbr>File</a></dt><dd>An antenna configuration file as CASA’s <code>readantenna</code> returns it.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.ConfigCoordinates.html" title="enum casa_simulation::readantenna::ConfigCoordinates">Config<wbr>Coordinates</a></dt><dd>How a configuration file gives its antenna positions (<code>coordsys</code>).</dd><dt><a class="enum" href="enum.ObservatorySource.html" title="enum casa_simulation::readantenna::ObservatorySource">Observatory<wbr>Source</a></dt><dd>Where <a href="struct.AntennaConfigFile.html#structfield.observatory" title="field casa_simulation::readantenna::AntennaConfigFile::observatory"><code>AntennaConfigFile::observatory</code></a> comes from.</dd><dt><a class="enum" href="enum.ReadAntennaError.html" title="enum casa_simulation::readantenna::ReadAntennaError">Read<wbr>Antenna<wbr>Error</a></dt><dd>A configuration file that cannot be read. Where CASA reports the same
+failure, the message is CASA’s.</dd></dl><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><dl class="item-table"><dt><a class="constant" href="constant.SIMULATED_TELESCOPE.html" title="constant casa_simulation::readantenna::SIMULATED_TELESCOPE">SIMULATED_<wbr>TELESCOPE</a></dt><dd>The telescope name CASA uses when the file has no <code>observatory</code> header.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.read_antenna_config.html" title="fn casa_simulation::readantenna::read_antenna_config">read_<wbr>antenna_<wbr>config</a></dt><dd>Read an antenna configuration file (CASA’s <code>simutil.readantenna</code>).</dd><dt><a class="fn" href="fn.read_antenna_config_str.html" title="fn casa_simulation::readantenna::read_antenna_config_str">read_<wbr>antenna_<wbr>config_<wbr>str</a></dt><dd>Read an antenna configuration from its text; <a href="fn.read_antenna_config.html" title="fn casa_simulation::readantenna::read_antenna_config"><code>read_antenna_config</code></a>
+without the file.</dd></dl></section></div></main></body></html>

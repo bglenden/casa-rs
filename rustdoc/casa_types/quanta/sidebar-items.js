@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["angle","constants","dim","error","parser","quantity","registry","registry_data","time","unit","unit_val"]};
+window.SIDEBAR_ITEMS = {"mod":["angle","constants","dim","error","format","parser","quantity","read","registry","registry_data","time","unit","unit_val"]};

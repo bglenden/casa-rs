@@ -11,9 +11,20 @@
 <a href=#11 id=11 data-nosnippet>11</a>//!
 <a href=#12 id=12 data-nosnippet>12</a>//! | CASA | casa-rs |
 <a href=#13 id=13 data-nosnippet>13</a>//! |---|---|
-<a href=#14 id=14 data-nosnippet>14</a>//! | `sm.predict` with `GridFT` (`setoptions(ftmachine='ft')`) | [`predict::ModelPredictor`] |
-<a href=#15 id=15 data-nosnippet>15</a>//! | the model image `sm.predict` reads | [`predict::SkyModel`] |
-<a href=#16 id=16 data-nosnippet>16</a>//! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`predict::PrimaryBeam`] |
-<a href=#17 id=17 data-nosnippet>17</a>
-<a href=#18 id=18 data-nosnippet>18</a></span><span class="kw">pub mod </span>predict;
+<a href=#14 id=14 data-nosnippet>14</a>//! | the `sm` tool's session (`open`, the setters, `observe`, `close`) | [`session::Simulator`] |
+<a href=#15 id=15 data-nosnippet>15</a>//! | `sm.predict` with `GridFT` (`setoptions(ftmachine='ft')`) | [`predict::ModelPredictor`] |
+<a href=#16 id=16 data-nosnippet>16</a>//! | the model image `sm.predict` reads | [`predict::SkyModel`] |
+<a href=#17 id=17 data-nosnippet>17</a>//! | `sm.setvp(dovp=True)` with an Airy voltage pattern | [`predict::PrimaryBeam`] |
+<a href=#18 id=18 data-nosnippet>18</a>//! | `simutil.readantenna(antab)` | [`readantenna::read_antenna_config`] |
+<a href=#19 id=19 data-nosnippet>19</a>
+<a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">pub mod </span>predict;
+<a href=#21 id=21 data-nosnippet>21</a><span class="kw">pub mod </span>readantenna;
+<a href=#22 id=22 data-nosnippet>22</a><span class="kw">pub mod </span>session;
+<a href=#23 id=23 data-nosnippet>23</a><span class="kw">mod </span>write;
+<a href=#24 id=24 data-nosnippet>24</a>
+<a href=#25 id=25 data-nosnippet>25</a><span class="kw">pub use </span>session::array::{ArrayConfig, CoordinateSystem};
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">pub use </span>session::error::{CasaOutcome, SimulatorError, SimulatorResult};
+<a href=#27 id=27 data-nosnippet>27</a><span class="kw">pub use </span>session::observe::{ObserveSpec, StateSpec};
+<a href=#28 id=28 data-nosnippet>28</a><span class="kw">pub use </span>session::spectral::SpectralWindowSpec;
+<a href=#29 id=29 data-nosnippet>29</a><span class="kw">pub use </span>session::{Simulator, SimulatorOptions};
 </code></pre></div></section></main></body></html>
