@@ -42,3 +42,7 @@ their checked `.pyi` file is regenerated from
 ## `casars.tools`
 
 ::: casars.tools
+
+## `casars.simutil`
+
+::: casars.simutil

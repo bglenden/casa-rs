@@ -2,7 +2,7 @@
 //! Methods casa-rs does not implement yet, and those CASA itself disables or
 //! deprecates.
 
-use pyo3::exceptions::{PyNotImplementedError, PyRuntimeError};
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
 use super::{LOGGER, PySimulator};
@@ -14,9 +14,7 @@ const DISABLED: &str =
 
 /// A method a later simulation phase implements (#841).
 pub(super) fn not_yet_implemented(method: &str) -> PyResult<bool> {
-    Err(PyNotImplementedError::new_err(format!(
-        "simulator.{method} is not yet implemented in casa-rs"
-    )))
+    crate::tools::not_yet_implemented("simulator", method)
 }
 
 /// `setbandpass`, `setpa` and `setpointingerror`, which CASA disables: after

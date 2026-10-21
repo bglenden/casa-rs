@@ -3,6 +3,7 @@
 //! 6.7.6 `sm` probes (2026-10-21): the SOURCE TIME, FIELD PHASE_DIR and
 //! ANTENNA POSITION each argument produced.
 
+use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::{NamedSourceDirection, ObservatoryPosition};
 
 use super::*;

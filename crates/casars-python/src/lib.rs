@@ -946,6 +946,9 @@ fn _core(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyImage>()?;
     module.add_class::<PyTable>()?;
     module.add_class::<tools::simulator::PySimulator>()?;
+    module.add_class::<tools::measures::PyMeasures>()?;
+    module.add_class::<tools::quanta::PyQuanta>()?;
+    module.add_class::<tools::simutil::PySimutil>()?;
     module.add_function(wrap_pyfunction!(data_protocol_info_json, module)?)?;
     module.add_function(wrap_pyfunction!(data_schema_bundle_json, module)?)?;
     Ok(())

@@ -18,6 +18,7 @@ extension-module = ["pyo3/extension-module"]
 [dependencies]
 casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
+casa-ms = { path = "../casa-ms" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-simulation = { path = "../casa-simulation" }
 casa-tables = { path = "../casa-tables" }

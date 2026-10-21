@@ -26,7 +26,8 @@ Simulator behaviours casa-rs does not follow:
 [calls before `setconfig`](#simulator-calls-before-setconfig-abort-the-process),
 [a zero integration time](#a-zero-integration-time-adds-rows-without-bound),
 [`readantenna`'s observatory fallback](#simutilreadantenna-averages-a-stale-loop-variable),
-[`readantenna`'s names after blank lines](#simutilreadantenna-names-antennas-after-blank-lines).
+[`readantenna`'s names after blank lines](#simutilreadantenna-names-antennas-after-blank-lines),
+[the measures tool's default frame](#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -557,3 +558,21 @@ lines, so
 `readantenna` returns 16 names for 14 antennas, starting `A00, A01, RT0`,
 and a CASA simulation of WSRT names every dish wrongly. casa-rs skips such
 lines entirely.
+
+## The measures tool converts with a frame at MJD 0 and the geocentre
+
+- Date noted: 2026-10-21
+- Status: CASA behaviour; casa-rs does not follow it (#841)
+- Affected code: `casatools/src/tools/measures/measures_cmpt.cc` (the
+  `measures` constructor)
+
+The `measures` tool starts with a frame of a default epoch (MJD 0 UTC), a
+default position (the zero vector) and a default direction (the J2000
+pole). A conversion that needs a frame element `me.doframe` has not set uses
+these without a warning, so `me.measure(me.direction('J2000', '12h00m00',
+'45d00m00'), 'AZEL')` in a fresh tool returns an azimuth and elevation for
+1858-11-17 at the centre of the Earth (casacore only notes, at INFO, that MJD
+0 is outside its Earth-orientation table). After `me.done()` the frame is
+empty and the same call fails with "Cannot convert due to missing frame
+information". casa-rs's tool starts with the empty frame, so such a
+conversion always fails with that message until `doframe` sets the element.

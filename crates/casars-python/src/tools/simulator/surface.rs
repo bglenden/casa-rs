@@ -1,135 +1,21 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The `simulator` tool's surface: every method of CASA's installed
 //! `simulator` binding with its parameters, value kinds and effective
-//! defaults (CASA 6.7.6), and the object-surface contract built from them.
+//! defaults (CASA 6.7.6), in the shared [`crate::tools::surface`] form.
 //!
-//! The pyo3 declarations in [`super`] carry the same names and defaults
-//! (`signature` and `text_signature` must be literals, so they cannot be
-//! generated from this table). `python/tests/test_tools_simulator.py` keeps
-//! the three in step: it checks that `inspect.signature` of every method
-//! equals this table as the bundle publishes it, and equals the installed
-//! CASA binding (`python/tests/data/casa_simulator_signatures.json`).
+//! The pyo3 declarations in [`super`] carry the same names and defaults.
+//! `python/tests/test_tools_simulator.py` keeps the three in step: it checks
+//! that `inspect.signature` of every method equals this table as the bundle
+//! publishes it, and equals the installed CASA binding
+//! (`python/tests/data/casa_simulator_signatures.json`).
 
-use casa_provider_contracts::{
-    ObjectConstructorDescriptor, ObjectMethodDescriptor, ObjectTypeContract,
+use crate::tools::surface::{
+    CasaDefault, Kind, Method, Parameter, Returns, Status, ToolSurface, param,
 };
-use schemars::schema::RootSchema;
-use serde_json::{Map, Value as JsonValue, json};
 
-/// How a parameter's Python value is read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Kind {
-    /// A `str`.
-    Text,
-    /// A `bool`.
-    Bool,
-    /// A `float` (an `int` is accepted).
-    Float,
-    /// An `int`.
-    Int,
-    /// A sequence of numbers, or one number.
-    Floats,
-    /// A sequence of integers, or one integer.
-    Ints,
-    /// A sequence of `str`, or one `str`.
-    Texts,
-    /// CASA's `any` read as a quantity.
-    Quantity,
-    /// CASA's `any` read as an epoch, direction or position measure.
-    Measure,
-    /// CASA's `any` with no fixed reading.
-    Any,
-}
-
-/// A default as the installed CASA binding declares it.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum CasaDefault {
-    /// A `str`.
-    Text(&'static str),
-    /// A `bool`.
-    Bool(bool),
-    /// A `float`.
-    Float(f64),
-    /// An `int`.
-    Int(i64),
-    /// A list of floats.
-    Floats(&'static [f64]),
-    /// A list of ints.
-    Ints(&'static [i64]),
-    /// A list of `str`.
-    Texts(&'static [&'static str]),
-    /// `[]`, the default of every `any` parameter.
-    Empty,
-    /// `None` (casa-rs constructor controls only).
-    None,
-}
-
-impl CasaDefault {
-    /// The default as JSON, as Python's `json` reads it back.
-    pub(crate) fn to_json(self) -> JsonValue {
-        match self {
-            Self::Text(text) => json!(text),
-            Self::Bool(flag) => json!(flag),
-            Self::Float(value) => json!(value),
-            Self::Int(value) => json!(value),
-            Self::Floats(values) => json!(values),
-            Self::Ints(values) => json!(values),
-            Self::Texts(values) => json!(values),
-            Self::Empty => json!([]),
-            Self::None => JsonValue::Null,
-        }
-    }
-}
-
-/// One parameter.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Parameter {
-    pub(crate) name: &'static str,
-    pub(crate) kind: Kind,
-    pub(crate) default: CasaDefault,
-}
-
-/// What casa-rs does with a method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Status {
-    /// Implemented.
-    Implemented,
-    /// Raises `NotImplementedError` until a later simulation phase.
-    NotYetImplemented,
-    /// Disabled in CASA itself: logs CASA's error and returns `False`.
-    DisabledInCasa,
-    /// Deprecated in CASA: raises, naming the replacement.
-    DeprecatedInCasa,
-}
-
-/// One method.
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct Method {
-    pub(crate) name: &'static str,
-    pub(crate) parameters: &'static [Parameter],
-    /// Whether the method returns a `str` (else a `bool`).
-    pub(crate) returns_text: bool,
-    pub(crate) status: Status,
-    /// Whether the method writes the MeasurementSet.
-    pub(crate) writes: bool,
-}
-
-const fn param(name: &'static str, kind: Kind, default: CasaDefault) -> Parameter {
-    Parameter {
-        name,
-        kind,
-        default,
-    }
-}
-
+/// A simulator method: they all return a `bool`, except `name` and `type`.
 const fn method(name: &'static str, parameters: &'static [Parameter], status: Status) -> Method {
-    Method {
-        name,
-        parameters,
-        returns_text: false,
-        status,
-        writes: false,
-    }
+    crate::tools::surface::method(name, parameters, Returns::Bool, status)
 }
 
 use CasaDefault::{Bool, Empty, Float, Floats, Int, Ints, Text, Texts};
@@ -137,7 +23,7 @@ use Kind as K;
 use Status::{DeprecatedInCasa, DisabledInCasa, Implemented, NotYetImplemented};
 
 /// The keyword-only constructor controls CASA lacks (ADR-0019 item 3).
-pub(crate) const CONSTRUCTOR: &[Parameter] = &[param("memory_budget", K::Int, CasaDefault::None)];
+const CONSTRUCTOR: &[Parameter] = &[param("memory_budget", K::Int, CasaDefault::None)];
 
 const STATE: [Parameter; 9] = [
     param("add_observation", K::Bool, Bool(false)),
@@ -238,27 +124,27 @@ const MS: [Parameter; 1] = [param("ms", K::Text, Text(""))];
 
 /// Every public method of CASA's installed `simulator` binding, in its
 /// order.
-pub(crate) const METHODS: &[Method] = &[
+const METHODS: &[Method] = &[
     Method {
-        writes: true,
+        mutating: true,
         ..method("open", &MS, Implemented)
     },
     method("openfromms", &MS, NotYetImplemented),
     Method {
-        writes: true,
+        mutating: true,
         ..method("close", &[], Implemented)
     },
     Method {
-        writes: true,
+        mutating: true,
         ..method("done", &[], Implemented)
     },
     Method {
-        returns_text: true,
+        returns: Returns::Text,
         ..method("name", &[], Implemented)
     },
     method("summary", &[], Implemented),
     Method {
-        returns_text: true,
+        returns: Returns::Text,
         ..method("type", &[], Implemented)
     },
     method(
@@ -464,185 +350,11 @@ pub(crate) const METHODS: &[Method] = &[
     ),
 ];
 
-/// The object contract of `casars.tools.simulator`.
-pub(crate) fn object_contract() -> ObjectTypeContract {
-    ObjectTypeContract {
-        name: "simulator".to_string(),
-        constructors: vec![ObjectConstructorDescriptor {
-            name: "simulator".to_string(),
-            parameters_schema: parameters_schema(CONSTRUCTOR),
-        }],
-        properties: Vec::new(),
-        methods: METHODS
-            .iter()
-            .map(|method| ObjectMethodDescriptor {
-                name: method.name.to_string(),
-                parameters_schema: parameters_schema(method.parameters),
-                result_schema: Some(root_schema(if method.returns_text {
-                    json!({"type": "string"})
-                } else {
-                    json!({"type": "boolean"})
-                })),
-                mutating: method.writes,
-            })
-            .collect(),
-        lifecycle_operations: vec!["open".to_string(), "close".to_string(), "done".to_string()],
-    }
-}
-
-/// The Python projection of the tool: its module and class, the parameter
-/// order of the constructor (keyword-only) and of each method (positional or
-/// keyword), which JSON Schema's unordered properties do not carry.
-pub(crate) fn python_projection() -> JsonValue {
-    let names = |parameters: &[Parameter]| {
-        parameters
-            .iter()
-            .map(|parameter| parameter.name)
-            .collect::<Vec<_>>()
-    };
-    let methods = METHODS
-        .iter()
-        .map(|method| (method.name.to_string(), json!(names(method.parameters))))
-        .collect::<Map<_, _>>();
-    json!({
-        "name": "simulator",
-        "class_name": "simulator",
-        "module": "casars.tools",
-        "constructor_keyword_only": names(CONSTRUCTOR),
-        "method_parameters": methods,
-    })
-}
-
-/// Python annotations: the class and what casa-rs does with each method.
-pub(crate) fn python_annotation() -> JsonValue {
-    let status = METHODS
-        .iter()
-        .map(|method| {
-            let status = match method.status {
-                Status::Implemented => "implemented",
-                Status::NotYetImplemented => "not_yet_implemented",
-                Status::DisabledInCasa => "disabled_in_casa",
-                Status::DeprecatedInCasa => "deprecated_in_casa",
-            };
-            (method.name.to_string(), json!(status))
-        })
-        .collect::<Map<_, _>>();
-    json!({
-        "python_class": "casars.tools.simulator",
-        "casa_tool": "simulator",
-        "casa_version": "6.7.6",
-        "method_status": status,
-    })
-}
-
-/// A JSON Schema object of `parameters` with their defaults.
-fn parameters_schema(parameters: &[Parameter]) -> RootSchema {
-    let properties = parameters
-        .iter()
-        .map(|parameter| {
-            let mut schema = kind_schema(parameter.kind);
-            let default = parameter.default.to_json();
-            if schema.get("$ref").is_some() {
-                schema = json!({"allOf": [schema]});
-            }
-            if parameter.default == CasaDefault::None {
-                schema = json!({"anyOf": [schema, {"type": "null"}]});
-            }
-            schema["default"] = default;
-            (parameter.name.to_string(), schema)
-        })
-        .collect::<Map<_, _>>();
-    let mut root = json!({
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "type": "object",
-        "properties": properties,
-        "additionalProperties": false,
-    });
-    let definitions = argument_definitions(parameters);
-    if !definitions.is_empty() {
-        root["definitions"] = JsonValue::Object(definitions);
-    }
-    root_schema(root)
-}
-
-/// The schema of one value kind.
-fn kind_schema(kind: Kind) -> JsonValue {
-    let list_of =
-        |item: JsonValue| json!({"anyOf": [item.clone(), {"type": "array", "items": item}]});
-    match kind {
-        Kind::Text => json!({"type": "string"}),
-        Kind::Bool => json!({"type": "boolean"}),
-        Kind::Float => json!({"type": "number"}),
-        Kind::Int => json!({"type": "integer"}),
-        Kind::Floats => list_of(json!({"type": "number"})),
-        Kind::Ints => list_of(json!({"type": "integer"})),
-        Kind::Texts => list_of(json!({"type": "string"})),
-        Kind::Quantity => json!({"$ref": "#/definitions/CasaQuantityArgument"}),
-        Kind::Measure => json!({"$ref": "#/definitions/CasaMeasureArgument"}),
-        Kind::Any => json!({}),
-    }
-}
-
-/// The shared definitions `parameters` refer to.
-fn argument_definitions(parameters: &[Parameter]) -> Map<String, JsonValue> {
-    let uses = |kind| parameters.iter().any(|parameter| parameter.kind == kind);
-    let mut definitions = Map::new();
-    let empty = json!({"type": "array", "maxItems": 0});
-    if uses(Kind::Quantity) || uses(Kind::Measure) {
-        definitions.insert(
-            "CasaQuantityRecord".to_string(),
-            json!({
-                "description": "A quantity record, as qa.quantity returns it.",
-                "type": "object",
-                "properties": {"value": {"type": "number"}, "unit": {"type": "string"}},
-                "required": ["value", "unit"],
-            }),
-        );
-    }
-    if uses(Kind::Quantity) {
-        definitions.insert(
-            "CasaQuantityArgument".to_string(),
-            json!({
-                "description": "A CASA quantity: a string such as '10s' or '12h30m', a quantity record, or a number in the parameter's SI unit; [] or None is 0.",
-                "anyOf": [
-                    {"type": "string"},
-                    {"type": "number"},
-                    {"$ref": "#/definitions/CasaQuantityRecord"},
-                    empty,
-                    {"type": "null"},
-                ],
-            }),
-        );
-    }
-    if uses(Kind::Measure) {
-        definitions.insert(
-            "CasaMeasureArgument".to_string(),
-            json!({
-                "description": "A CASA measure: a string such as 'J2000 12h00m00 34d00m00', a list of such tokens, or a measure record; an epoch also takes a number of MJD days; [] or None is the parameter's default.",
-                "anyOf": [
-                    {"type": "string"},
-                    {"type": "array", "items": {"type": "string"}},
-                    {
-                        "type": "object",
-                        "properties": {
-                            "type": {"type": "string"},
-                            "refer": {"type": "string"},
-                            "m0": {"$ref": "#/definitions/CasaQuantityRecord"},
-                            "m1": {"$ref": "#/definitions/CasaQuantityRecord"},
-                            "m2": {"$ref": "#/definitions/CasaQuantityRecord"},
-                        },
-                        "required": ["type", "refer"],
-                    },
-                    {"type": "number"},
-                    empty,
-                    {"type": "null"},
-                ],
-            }),
-        );
-    }
-    definitions
-}
-
-fn root_schema(value: JsonValue) -> RootSchema {
-    serde_json::from_value(value).expect("the simulator surface schemas are valid JSON Schema")
-}
+/// `casars.tools.simulator`.
+pub(crate) const SURFACE: ToolSurface = ToolSurface {
+    name: "simulator",
+    module: "casars.tools",
+    constructor: CONSTRUCTOR,
+    methods: METHODS,
+    lifecycle: &["open", "close", "done"],
+};

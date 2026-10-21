@@ -8,7 +8,11 @@
   provider binaries.
 - `casars.tools` provides CASA's tools as classes under CASA's names, with
   CASA's methods, parameter order and defaults, so a CASA script changes only
-  its imports (ADR-0019). The first is `simulator`, CASA's `sm`.
+  its imports (ADR-0019): `simulator` (CASA's `sm`), `measures` (`me`) and
+  `quanta` (`qa`). Methods casa-rs does not implement yet raise
+  `NotImplementedError`. `casars.simutil` provides `readantenna` of CASA's
+  `simutil` helper class (`casatasks.private.simutil`), which is not a tool;
+  its module path is provisional.
 - `casars.parameters` is the accepted common API for typed task profiles
   described by ADR-0006 and the current-only option in ADR-0012.
 
@@ -52,8 +56,9 @@ deliberately use an unset sentinel instead of copying catalog defaults into
 Python.
 
 Generated UniFFI (`casars._frontend`, from `casars-frontend-services`) owns
-task, parameter, and result transport. PyO3 is retained only for the
-`casars.data.Image` and `casars.data.Table` NumPy object layer; the wheel still
+task, parameter, and result transport. PyO3 carries the in-process objects:
+the `casars.data.Image` and `casars.data.Table` NumPy object layer, the CASA
+tool classes of `casars.tools` and the `casars.simutil` class. The wheel still
 ships one native `_core` library rather than two competing application
 bindings.
 

@@ -1,0 +1,40 @@
+{
+  "casa_version": "6.7.6-14",
+  "constructor": [
+    {
+      "default": "''",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "direction"
+    },
+    {
+      "default": "{'unit': 'GHz', 'value': 245.0}",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "centerfreq"
+    },
+    {
+      "default": "{'unit': 'GHz', 'value': 1.0}",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "bandwidth"
+    },
+    {
+      "default": "{'unit': 'h', 'value': 0.0}",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "totaltime"
+    },
+    {
+      "default": "False",
+      "kind": "POSITIONAL_OR_KEYWORD",
+      "name": "verbose"
+    }
+  ],
+  "methods": {
+    "readantenna": [
+      {
+        "default": "None",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "antab"
+      }
+    ]
+  },
+  "tool": "simutil"
+}

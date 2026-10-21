@@ -22,12 +22,16 @@
 //! (CASA's string-vector typemap replaces only the default's first element,
 //! keeps the default for `[]` and ignores tuples).
 
+pub(crate) mod holder;
 pub(crate) mod measures;
+pub(crate) mod quantum;
+pub(crate) mod value;
 
 use std::collections::BTreeMap;
 use std::fmt;
 
-use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim};
+use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, casacore_unit_name};
+use numpy::{PyReadonlyArrayDyn, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyString};
@@ -88,6 +92,9 @@ pub(crate) enum Variant {
     Texts(Vec<String>),
     /// A non-empty sequence of numbers.
     Numbers(Vec<f64>),
+    /// A NumPy array of two or more dimensions, its values in Fortran
+    /// (column-major) order, as casatools' `variant` holds them.
+    Array { shape: Vec<usize>, values: Vec<f64> },
     /// A `dict` with `str` keys.
     Record(BTreeMap<String, Variant>),
     /// Anything else, kept as its `repr` for messages.
@@ -102,8 +109,15 @@ impl Variant {
             Self::Bool(value) => value.to_string(),
             Self::Number(value) => value.to_string(),
             Self::Text(text) => text.clone(),
-            Self::Texts(texts) => format!("[{}]", texts.join(", ")),
-            Self::Numbers(values) => format!(
+            Self::Texts(texts) => format!(
+                "[{}]",
+                texts
+                    .iter()
+                    .map(|text| format!("\"{text}\""))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            Self::Numbers(values) | Self::Array { values, .. } => format!(
                 "[{}]",
                 values
                     .iter()
@@ -149,6 +163,9 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
     if object.is_instance_of::<PyInt>() || object.is_instance_of::<PyFloat>() {
         return Ok(Variant::Number(object.extract::<f64>()?));
     }
+    if let Some(array) = numeric_array(object)? {
+        return Ok(array);
+    }
     if is_sequence(object)? {
         return sequence_variant(object);
     }
@@ -156,6 +173,33 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
         return Ok(Variant::Number(number));
     }
     Ok(Variant::Other(object.repr()?.to_string()))
+}
+
+/// A numeric NumPy array of two or more dimensions as [`Variant::Array`];
+/// `None` for anything else (one-dimensional arrays are sequences).
+fn numeric_array(object: &Bound<'_, PyAny>) -> PyResult<Option<Variant>> {
+    let Ok(ndim) = object
+        .getattr("ndim")
+        .and_then(|ndim| ndim.extract::<usize>())
+    else {
+        return Ok(None);
+    };
+    if ndim < 2 || !object.hasattr("astype")? {
+        return Ok(None);
+    }
+    let kind = object
+        .getattr("dtype")
+        .and_then(|dtype| dtype.getattr("kind"))
+        .and_then(|kind| kind.extract::<String>());
+    if !matches!(kind.as_deref(), Ok("f" | "i" | "u")) {
+        return Ok(None);
+    }
+    let doubles = object.call_method1("astype", ("float64",))?;
+    let array = doubles.extract::<PyReadonlyArrayDyn<'_, f64>>()?;
+    let shape = array.shape().to_vec();
+    // Fortran order of the array is C order of its transpose.
+    let values = array.as_array().t().iter().copied().collect();
+    Ok(Some(Variant::Array { shape, values }))
 }
 
 /// Whether `object` is a list, tuple, NumPy array or similar sized iterable
@@ -199,6 +243,32 @@ fn sequence_variant(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
         Some(numbers) => Variant::Numbers(numbers),
         None => Variant::Other(object.repr()?.to_string()),
     })
+}
+
+/// A record parameter (casatools' `record`): a `dict`. Anything else is the
+/// `TypeError` CASA's binding raises.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RecordArg(pub(crate) BTreeMap<String, Variant>);
+
+impl RecordArg {
+    /// The empty record, the binding default `{}`.
+    pub(crate) fn empty() -> Self {
+        Self(BTreeMap::new())
+    }
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for RecordArg {
+    type Error = PyErr;
+
+    fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        if !object.is_instance_of::<PyDict>() {
+            return Err(PyTypeError::new_err("is not a dictionary"));
+        }
+        match variant_from_python(&object)? {
+            Variant::Record(record) => Ok(Self(record)),
+            _ => unreachable!("a dict reads as a record"),
+        }
+    }
 }
 
 /// A vector-of-doubles parameter: a sequence of numbers, or one number.
@@ -304,12 +374,17 @@ pub(crate) fn quantity(value: &Variant) -> ConvertResult<Quantity> {
             &value.describe(),
             " in converting quantity",
         )),
+        // A record of several values reads, then fails to be one quantity.
         Variant::Record(record) => quantity_record(record).map_err(|error| {
-            ConvertError::runtime(format!("Error {error} in converting quantity"))
+            if error.starts_with("Wrong") {
+                ConvertError::runtime(error)
+            } else {
+                ConvertError::runtime(format!("Error {error} in converting quantity"))
+            }
         }),
         Variant::Number(number) => Ok(Quantity::dimensionless(*number)),
         Variant::Bool(flag) => Ok(Quantity::dimensionless(f64::from(u8::from(*flag)))),
-        Variant::Empty | Variant::Numbers(_) | Variant::Other(_) => {
+        Variant::Empty | Variant::Numbers(_) | Variant::Array { .. } | Variant::Other(_) => {
             Ok(Quantity::dimensionless(0.0))
         }
     }
@@ -374,14 +449,21 @@ fn quantity_read_error(text: &str, context: &str) -> ConvertError {
 /// 'unit': str}`. The error is casacore's wording without the context.
 pub(crate) fn quantity_record(record: &BTreeMap<String, Variant>) -> Result<Quantity, String> {
     let (Some(value), Some(Variant::Text(unit))) = (record.get("value"), record.get("unit")) else {
-        return Err("Illegal Quantity record in QuantumHolder::fromRecord\n".to_string());
+        return Err("Illegal Quantum record in QuantumHolder::fromRecord\n".to_string());
     };
     let value = match value {
         Variant::Number(number) => *number,
         Variant::Numbers(numbers) if numbers.len() == 1 => numbers[0],
         _ => return Err("Wrong QuantumHolder to convert asQuantumDouble".to_string()),
     };
-    Quantity::new(value, unit).map_err(|_| format!("Unit::check Illegal unit string '{unit}'"))
+    Ok(Quantity::with_unit(value, casacore_unit(unit)?))
+}
+
+/// casacore's `Unit(name)`: the name normalised as `Unit::check` normalises
+/// it, failing with casacore's message for a name it cannot read.
+pub(crate) fn casacore_unit(name: &str) -> Result<Unit, String> {
+    Unit::new(&casacore_unit_name(name))
+        .map_err(|_| format!("Unit::check Illegal unit string '{name}'"))
 }
 
 #[cfg(test)]

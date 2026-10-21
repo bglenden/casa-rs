@@ -76,19 +76,27 @@ The object surfaces are:
 - `casars.data.Image`
 - `casars.data.Table`
 - `casars.tools.simulator`, CASA's `sm` tool (ADR-0019)
+- `casars.tools.measures`, CASA's `me` tool
+- `casars.tools.quanta`, CASA's `qa` tool
 
 The `casars.data` classes are persistent data access APIs; the `casars.tools`
 classes are CASA tools with CASA's method names, parameter order and
 effective defaults. All are used in-process from Python, are not forced into
 the task-binary model and have no standalone executable. One bundle,
-`casars_data_objects` (`casars.data.schema_bundle()`), describes them all.
+`casars_data_objects` (`casars.data.schema_bundle()`), describes them all;
+its tool entries all come from one list of the `casars.tools` classes.
+`casars.simutil`, a port of CASA's `simutil` helper class rather than a CASA
+tool, is not an object surface and is not in the bundle.
 
 A CASA tool's entry carries:
 
 - each method's parameters as a JSON Schema object whose properties give the
-  value kind and the installed CASA binding's default; CASA's `any`
-  parameters refer to the shared `CasaQuantityArgument` and
-  `CasaMeasureArgument` components;
+  value kind and the installed CASA binding's default (a parameter without a
+  default is `required`); CASA's `any` parameters refer to the shared
+  `CasaQuantityArgument` and `CasaMeasureArgument` components, and its
+  `record` parameters are JSON objects;
+- each method's result kind (a boolean, string, record, list of strings or
+  array of numbers);
 - in `projections.python`, the tool's module and class and the parameter
   order of its constructor (keyword-only casa-rs controls) and of each
   method, which JSON Schema's properties do not keep;
@@ -323,10 +331,12 @@ a second default or migration implementation.
 - `casars.data.Image`: object surface
 - `casars.data.Table`: object surface
 - `casars.tools.simulator`: object surface
+- `casars.tools.measures`: object surface
+- `casars.tools.quanta`: object surface
 
 All 27 catalog surfaces have task definitions; the
 [generated parameter reference](reference/task-parameters.md) lists them. The
-`casars` task host and the three object surfaces are not parameter-profile
+`casars` task host and the five object surfaces are not parameter-profile
 surfaces.
 
 ## Implementation Guidance
