@@ -13,7 +13,7 @@ use std::ops::Range;
 
 use casa_imaging_operator::{
     AccumulatorLayout, CellHold, CellLocation, CfKey, ConvolutionFunctionSet, KernelNormalisation,
-    Mode, SampleBlock, TapLayout,
+    Mode, Placement, SampleBlock, TapLayout,
 };
 use num_complex::{Complex32, Complex64};
 
@@ -282,7 +282,7 @@ pub(crate) struct Targets<'a> {
 }
 
 impl Targets<'_> {
-    fn geometry(&self) -> &casa_imaging_operator::GridGeometry {
+    pub(crate) fn geometry(&self) -> &casa_imaging_operator::GridGeometry {
         self.adjoint
             .as_ref()
             .map(|(layout, _)| layout.geometry())
@@ -420,6 +420,88 @@ pub(crate) fn prepare(
                 }
             }
         }
+    }
+}
+
+/// The largest difference of phase-centre phase, in radians, at which two
+/// samples that read the same taps of the same model share one prediction:
+/// 2⁻³⁰, 64 times below the resolution of an `f32` unit phasor (2⁻²⁴), so
+/// the shared prediction differs from the sample's own by less than its
+/// rounding.
+const SHARED_PHASE_RAD: f64 = 1.0 / (1u64 << 30) as f64;
+
+/// What the prediction kernel reads of a sample beside its phasor: its
+/// kernel cell and location, its plane, its signs of w, its pointing
+/// gradient and, for a model of several terms, its Taylor variable.
+#[derive(Clone, Copy, PartialEq)]
+struct Gathered {
+    cf: CfKey,
+    location: CellLocation,
+    plane: u32,
+    w_positive: bool,
+    prediction_w_positive: bool,
+    gradient: [u32; 2],
+    spectral: u32,
+}
+
+/// The distinct predictions of a native prediction's `block`: each run of
+/// consecutive samples that read the same taps of the same model, with
+/// phases within [`SHARED_PHASE_RAD`] of the run's first, is predicted
+/// once, as its first sample. `distinct` receives those samples and
+/// `batch_of` each sample's index among them; a model of `terms` terms
+/// reads the Taylor variable, which then also tells samples apart.
+///
+/// A row's neighbouring channels sit a small fraction of a cell apart in
+/// uv, so they mostly share their kernel's fine offset: in a quarter hour
+/// of ALMA at 4096 channels across 2 GHz, 97.8% of samples repeated the
+/// one before (#855). The degridded value of a fine offset is the same for
+/// every sample at it, as CASA's gather reads the nearest one.
+pub(crate) fn distinct_predictions(
+    known: &KnownTables,
+    block: &SampleBlock<'_>,
+    geometry: &casa_imaging_operator::GridGeometry,
+    terms: u32,
+    distinct: &mut Vec<Placement>,
+    batch_of: &mut Vec<u32>,
+) {
+    distinct.clear();
+    batch_of.clear();
+    // Exactly a block, so the scratch stays within its charge
+    // (`crate::batch_bytes` of the largest block).
+    distinct.reserve_exact(block.len());
+    batch_of.reserve_exact(block.len());
+    let mut table: Option<(CfKey, &KnownTable)> = None;
+    let mut run: Option<(Gathered, f64)> = None;
+    for placement in block.placements {
+        let known = match table {
+            Some((key, known)) if key == placement.cf => known,
+            _ => {
+                let known = &known[&(placement.cf, TapsKind::Imaging)];
+                table = Some((placement.cf, known));
+                known
+            }
+        };
+        let gathered = Gathered {
+            cf: placement.cf,
+            location: geometry.locate(placement.u, placement.v, known.oversampling),
+            plane: placement.plane,
+            w_positive: placement.w > 0.0,
+            prediction_w_positive: placement.prediction_w_positive,
+            gradient: placement.gradient.map(f32::to_bits),
+            spectral: if terms > 1 {
+                placement.spectral.to_bits()
+            } else {
+                0
+            },
+        };
+        let shared = run.is_some_and(|(first, phase)| {
+            first == gathered && (placement.phase - phase).abs() <= SHARED_PHASE_RAD
+        });
+        if !shared {
+            distinct.push(*placement);
+            run = Some((gathered, placement.phase));
+        }
+        batch_of.push(u32::try_from(distinct.len() - 1).expect("a batch fits u32 indices"));
     }
 }
 
