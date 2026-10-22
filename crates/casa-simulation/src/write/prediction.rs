@@ -26,7 +26,6 @@
 //! the blocks or the batches.
 
 use std::collections::HashMap;
-use std::convert::Infallible;
 
 use casa_imaging_operator::{RowContext, RowSpectrum};
 use casa_imaging_runtime::pass::{
@@ -225,8 +224,11 @@ impl<'s> PredictionStage<'s> {
     }
 
     /// Rows of a small block for write batches of `batch_rows` rows: as
-    /// many as [`SMALL_BLOCK_BYTES`] holds, at most a batch and at least
-    /// one.
+    /// many as [`SMALL_BLOCK_BYTES`] holds of native rows with all their
+    /// samples, at most a batch and at least one. The block itself shares
+    /// its rows' samples ([`NativeBlock::reset_shared`]), but what the
+    /// predictor holds per row (its model cells and their output) is of
+    /// that size.
     pub(super) fn small_block_rows(&self, batch_rows: usize) -> usize {
         let row = self.block_shape(1, self.largest_domains()).bytes().max(1);
         usize::try_from(SMALL_BLOCK_BYTES / row)
@@ -236,8 +238,9 @@ impl<'s> PredictionStage<'s> {
 
     /// Bytes the stage holds while `close` predicts blocks of `rows` rows
     /// with `workers` workers: the predictor of the segment that needs most
-    /// ([`BlockPredictor::bytes`]), one block of native rows and each row's
-    /// projections, and on Metal the device copy of every model grid
+    /// ([`BlockPredictor::bytes`]), one block of native rows sharing their
+    /// samples ([`BlockShape::shared_bytes`]) and each row's projections,
+    /// and on Metal the device copy of every model grid
     /// ([`casa_imaging_operator::PreparedModelGrids::device_copy`]) and a
     /// block's noise rows and the most noise terms of a scan, here and in
     /// the predictor ([`BlockPredictor::noise_bytes`]).
@@ -269,7 +272,7 @@ impl<'s> PredictionStage<'s> {
                     + BlockPredictor::noise_bytes(self.backend, shape, terms)
             }
         };
-        predictor + shape.bytes() + projections + device
+        predictor + shape.shared_bytes() + projections + device
     }
 
     /// Allocate the block of `rows` rows, predicted with `workers` workers,
@@ -278,7 +281,7 @@ impl<'s> PredictionStage<'s> {
         self.block_rows = rows.max(1);
         self.workers = workers.max(1);
         let domains = self.largest_domains();
-        self.block = NativeBlock::with_capacity(self.block_shape(self.block_rows, domains));
+        self.block = NativeBlock::shared_with_capacity(self.block_shape(self.block_rows, domains));
         self.projections = Vec::with_capacity(domains);
         if self.noises_on_device() {
             self.noise_rows = Vec::with_capacity(self.block_rows);
@@ -395,11 +398,13 @@ impl<'s> PredictionStage<'s> {
     /// `first_row`, projected on `segment`'s domains.
     fn fill_block(&mut self, segment: usize, scan: &Scan, rows: &[RowGeometry], first_row: u64) {
         let segment = &self.segments[segment];
-        let frequencies = &self.frequencies[scan.spectral_window_id];
-        self.block.reset(
+        // Every row of the scan has its window's frequencies, and unit
+        // weights and no sample flags, so the block keeps them once.
+        self.block.reset_shared(
             segment.domains.len(),
             &self.channel_indices,
             &self.correlation_indices,
+            &self.frequencies[scan.spectral_window_id],
         );
         for (offset, row) in rows.iter().enumerate() {
             self.projections.clear();
@@ -428,19 +433,7 @@ impl<'s> PredictionStage<'s> {
                     data_description: scan.spectral_window_id as i32,
                 },
             };
-            let pushed = self.block.push_row_with(
-                header,
-                &self.projections,
-                frequencies,
-                |_, weights, _| {
-                    weights.fill(1.0);
-                    Ok::<_, Infallible>(())
-                },
-            );
-            match pushed {
-                Ok(()) => {}
-                Err(never) => match never {},
-            }
+            self.block.push_shared_row(header, &self.projections);
         }
     }
 }
