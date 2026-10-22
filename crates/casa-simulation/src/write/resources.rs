@@ -24,6 +24,7 @@
 //! The model grids themselves were admitted by `predict`, and are held.
 //! A refusal is a typed [`Admission`] carried by the session error.
 
+use casa_imaging_runtime::pass::BackendChoice;
 use casa_imaging_runtime::{Admission, CoreAllocation, Demand, Reservation, admit, free_memory};
 use casa_ms::{MeasurementSetWriteError, MeasurementSetWritePlan, MeasurementSetWriteResources};
 use casa_tables::STREAMING_TILED_COLUMN_BUFFER_BYTES;
@@ -116,7 +117,8 @@ pub(super) fn admit_main_write(
         },
     )
     .map_err(SimulatorError::admission)?;
-    let policy_cores = resources.cores();
+    let policy_cores = resources
+        .close_cores(prediction.is_some_and(|stage| stage.backend() == BackendChoice::Metal));
     let free = free_memory(host, policy);
     let batch_rows = plan.batch_rows();
     let demand = |cores: CoreAllocation, block_rows: usize, beside_rows: usize| {

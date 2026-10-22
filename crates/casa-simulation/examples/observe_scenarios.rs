@@ -357,8 +357,9 @@ fn main() {
         .init();
     let resources = SessionResources::from_controls(&controls).expect("session resources");
     println!(
-        "workers: {} streaming beside the writer ({:?})",
-        resources.cores().streaming_workers,
+        "workers: {} streaming beside the writer, {} when close predicts on Metal ({:?})",
+        resources.close_cores(false).streaming_workers,
+        resources.close_cores(true).streaming_workers,
         resources.policy()
     );
     let extra_noise = sigma_jy.map(|sigma_jy| ExtraNoise { sigma_jy, seed });
