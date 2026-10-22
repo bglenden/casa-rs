@@ -72,6 +72,8 @@ pub(super) struct PredictionStage<'s> {
     block_rows: usize,
     workers: usize,
     block: NativeBlock,
+    /// Time spent filling blocks of native rows.
+    fill_time: std::time::Duration,
     projections: Vec<DomainProjection>,
     /// The predictor of the segment last predicted.
     predictor: Option<(usize, BlockPredictor<'s>)>,
@@ -163,6 +165,7 @@ impl<'s> PredictionStage<'s> {
             block_rows: 0,
             workers: 0,
             block: NativeBlock::default(),
+            fill_time: std::time::Duration::ZERO,
             projections: Vec::new(),
             predictor: None,
             channel_indices: (0..channels as u32).collect(),
@@ -173,6 +176,12 @@ impl<'s> PredictionStage<'s> {
     /// The backend the stage predicts on.
     pub(super) fn backend(&self) -> BackendChoice {
         self.backend
+    }
+
+    /// Time spent filling blocks of native rows, which the producer does
+    /// alone before the team predicts them.
+    pub(super) fn fill_time(&self) -> std::time::Duration {
+        self.fill_time
     }
 
     /// Whether a step predicts scan `scan`'s rows.
@@ -272,12 +281,14 @@ impl<'s> PredictionStage<'s> {
             let mut block_start = start;
             while block_start < end {
                 let block_end = (block_start + self.block_rows).min(end);
+                let started = std::time::Instant::now();
                 self.fill_block(
                     segment,
                     scan,
                     &rows[block_start..block_end],
                     first_row + block_start as u64,
                 );
+                self.fill_time += started.elapsed();
                 let Some((_, predictor)) = &mut self.predictor else {
                     unreachable!("selected above");
                 };

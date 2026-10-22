@@ -146,6 +146,13 @@ impl<'s> Pipeline<'s> {
         }
     }
 
+    /// Time the prediction spent filling blocks of native rows.
+    pub(super) fn block_fill_time(&self) -> Duration {
+        self.prediction
+            .as_ref()
+            .map_or(Duration::ZERO, PredictionStage::fill_time)
+    }
+
     /// Write every row of the scans: `next` yields each integration with
     /// rows, as (scan, stored TIME), in MAIN order.
     pub(super) fn write_rows(

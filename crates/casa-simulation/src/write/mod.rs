@@ -216,6 +216,7 @@ fn write_main<'s>(
         geometry_s = times.geometry.as_secs_f64(),
         zero_s = times.zero.as_secs_f64(),
         predict_s = times.predict.as_secs_f64(),
+        block_fill_s = pipeline.block_fill_time().as_secs_f64(),
         cells_s = times.cells.as_secs_f64(),
         beside_rows = admission.beside_rows,
         together_s = times.together.as_secs_f64(),
